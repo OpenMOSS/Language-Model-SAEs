@@ -153,7 +153,14 @@ def train_sae(
                 per_token_l2_loss = (aux_data["x_hat"] - batch).pow(2).sum(dim=-1)
                 total_variance = (batch - batch.mean(0)).pow(2).sum(dim=-1)
 
+                l2_norm_error = per_token_l2_loss.sqrt().mean()
+                l2_norm_error_ratio = l2_norm_error / batch.norm(p=2, dim=-1).mean()
+
+
                 if cfg.use_ddp:
+                    dist.reduce(l2_norm_error, dst=0, op=dist.ReduceOp.AVG)
+                    dist.reduce(l2_norm_error_ratio, dst=0, op=dist.ReduceOp.AVG)
+
                     if cfg.rank == 0:
                         per_token_l2_loss_list = [torch.zeros_like(per_token_l2_loss) for _ in range(dist.get_world_size())]
                         total_variance_list = [torch.zeros_like(total_variance) for _ in range(dist.get_world_size())]
@@ -182,6 +189,8 @@ def train_sae(
                             "metrics/explained_variance_std": explained_variance.std().item(),
                             "metrics/l0": l0.item(),
                             "metrics/mean_thomson_potential": mean_thomson_potential.item(),
+                            "metrics/l2_norm_error": l2_norm_error.item(),
+                            "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
                             # sparsity
                             "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
                             "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
