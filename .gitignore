@@ -182,3 +182,5 @@ activations
 data
 legacy
 run.py
+checkpoints
+wandb
