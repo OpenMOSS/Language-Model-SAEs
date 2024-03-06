@@ -9,8 +9,8 @@ from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
 from core.sae import SparseAutoEncoder
-# from core.activation_store import ActivationStore
-from core.activation_store_theirs import ActivationStoreTheirs
+from core.activation.activation_store import ActivationStore
+# from core.activation_store_theirs import ActivationStoreTheirs
 from core.config import LanguageModelSAERunnerConfig
 from core.utils import compute_attention_mask
 
@@ -18,14 +18,14 @@ from core.utils import compute_attention_mask
 def run_evals(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
-    activation_store: ActivationStoreTheirs,
+    activation_store: ActivationStore,
     cfg: LanguageModelSAERunnerConfig,
     n_training_steps: int,
 ):
     hook_point = cfg.hook_point
 
     ### Evals
-    eval_tokens = activation_store.get_batch_tokens()
+    eval_tokens = activation_store.next_tokens(cfg.store_batch_size)
 
     # Get Reconstruction Score
     losses_df = recons_loss_batched(
@@ -82,7 +82,7 @@ def run_evals(
 def recons_loss_batched(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
-    activation_store: ActivationStoreTheirs,
+    activation_store: ActivationStore,
     cfg: LanguageModelSAERunnerConfig,
     n_batches: int = 100,
 ):
@@ -90,7 +90,7 @@ def recons_loss_batched(
     if (not cfg.use_ddp or cfg.rank == 0):
         pbar = tqdm(total=n_batches, desc="Evaluation", smoothing=0.01)
     for _ in range(n_batches):
-        batch_tokens = activation_store.get_batch_tokens()
+        batch_tokens = activation_store.next_tokens(cfg.store_batch_size)
         score, loss, recons_loss, zero_abl_loss = get_recons_loss(
             model, sae, cfg, batch_tokens
         )

@@ -10,8 +10,8 @@ from transformer_lens import HookedTransformer
 from tqdm import tqdm
 import wandb
 
-# from core.activation_store import ActivationStore
-from core.activation_store_theirs import ActivationStoreTheirs
+from core.activation.activation_store import ActivationStore
+# from core.activation_store_theirs import ActivationStoreTheirs
 from core.sae import SparseAutoEncoder
 from core.config import LanguageModelSAERunnerConfig
 from core.optim import get_scheduler
@@ -21,7 +21,7 @@ from core.utils import print_once
 def train_sae(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
-    activation_store: ActivationStoreTheirs,
+    activation_store: ActivationStore,
     cfg: LanguageModelSAERunnerConfig,
 ):
     total_training_tokens = cfg.total_training_tokens
@@ -40,11 +40,11 @@ def train_sae(
             range(0, total_training_tokens, total_training_tokens // cfg.n_checkpoints)
         )[1:]
 
-    # activation_store.initialize()
+    activation_store.initialize()
 
     # Initialize the SAE Decoder Bias
     if not cfg.use_ddp or cfg.rank == 0:
-        sae.initialize_decoder_bias(activation_store.storage_buffer.detach())
+        sae.initialize_decoder_bias(activation_store._store["activation"])
 
     sae_module = sae
     if cfg.use_ddp:
@@ -70,8 +70,8 @@ def train_sae(
     while n_training_tokens < total_training_tokens:
         sae.train()
         # Get the next batch of activations
-        # batch = activation_store.next(batch_size=cfg.train_batch_size)["activation"]
-        batch = activation_store.next_batch()
+        batch = activation_store.next(batch_size=cfg.train_batch_size)["activation"]
+        # batch = activation_store.next_batch()
 
         sae_module.set_decoder_norm_to_unit_norm()
 
