@@ -35,7 +35,9 @@ class ActivationStore:
 
     def refill(self):
         while self.__len__() < self.buffer_size:
-            new_act = self.act_source.next(self.buffer_size // self.d_model)
+            new_act = self.act_source.next()
+            if new_act is None:
+                break
             for k, v in new_act.items():
                 v = v.to(self.device)
                 if k not in self._store:

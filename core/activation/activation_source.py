@@ -10,12 +10,9 @@ from einops import rearrange, repeat
 
 
 class ActivationSource(ABC):
-    def next(self, batch_size: int) -> Dict[str, torch.Tensor] | None:
+    def next(self) -> Dict[str, torch.Tensor] | None:
         """
         Get the next batch of activations.
-
-        Args:
-            batch_size: The size of the batch to return.
 
         Returns:
             A dictionary where the keys are the names of the activations and the values are tensors of shape (batch_size, d_model). If there are no more activations, return None.
@@ -71,45 +68,23 @@ class TokenActivationSource(ActivationSource):
         self.act_name = act_name
         self.device = device
         self.dtype = dtype
-        self.act_buffer = {
-            "activation": torch.empty((0, d_model), dtype=dtype, device=device),
-            "position": torch.empty((0,), dtype=torch.long, device=device),
-            "context": torch.empty((0, seq_len), dtype=torch.long, device=device),
-        }
     
-    def next(self, batch_size: int) -> Dict[str, torch.Tensor] | None:
-        while self.act_buffer["activation"].size(0) < batch_size:
-            tokens = self.token_source.next(self.token_batch_size)
+    def next(self) -> Dict[str, torch.Tensor] | None:
+        tokens = self.token_source.next(self.token_batch_size)
 
-            if tokens is None:
-                return None
-            
-            _, cache = self.model.run_with_cache(tokens, names_filter=[self.act_name])
+        if tokens is None:
+            return None
+        
+        _, cache = self.model.run_with_cache(tokens, names_filter=[self.act_name])
 
-            seq_len = tokens.size(1)
-
-            self.act_buffer["activation"] = torch.cat([
-                self.act_buffer["activation"], 
-                rearrange(cache[self.act_name].to(dtype=self.dtype, device=self.device), "b l d -> (b l) d")
-            ], dim=0)
-            self.act_buffer["position"] = torch.cat([
-                self.act_buffer["position"],
-                repeat(torch.arange(seq_len, device=self.device, dtype=torch.long), 'l -> (b l)', b=batch_size)
-            ], dim=0)
-            self.act_buffer["context"] = torch.cat([
-                self.act_buffer["context"],
-                repeat(tokens.to(dtype=torch.long), 'b l -> (b repeat) l', repeat=seq_len)
-            ], dim=0)
+        batch_size = tokens.size(0)
+        seq_len = tokens.size(1)
 
         ret = {
-            "activation": self.act_buffer["activation"][:batch_size],
-            "position": self.act_buffer["position"][:batch_size],
-            "context": self.act_buffer["context"][:batch_size],
+            "activation": rearrange(cache[self.act_name].to(dtype=self.dtype, device=self.device), "b l d -> (b l) d"),
+            "position": repeat(torch.arange(seq_len, device=self.device, dtype=torch.long), 'l -> (b l)', b=batch_size),
+            "context": repeat(tokens.to(dtype=torch.long), 'b l -> (b repeat) l', repeat=seq_len),
         }
-
-        self.act_buffer["activation"] = self.act_buffer["activation"][batch_size:]
-        self.act_buffer["position"] = self.act_buffer["position"][batch_size:]
-        self.act_buffer["context"] = self.act_buffer["context"][batch_size:]
 
         return ret
     
