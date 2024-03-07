@@ -22,9 +22,6 @@ cfg = ActivationGenerationConfig(
     
     use_ddp = use_ddp,
     device = "cuda",
-    seed = 42,
-    n_checkpoints = 10,
-    checkpoint_path = "checkpoints",
     dtype = torch.float32,
 )
 
