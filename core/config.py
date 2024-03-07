@@ -19,7 +19,7 @@ class RunnerConfig(ABC):
 
     # Data Generating Function (Model + Training Distibuion)
     model_name: str = "gpt2"
-    hook_point: str = "blocks.{layer}.hook_mlp_out"
+    hook_point: str = "blocks.0.hook_mlp_out"
     dataset_path: str = "openwebtext"
     is_dataset_tokenized: bool = False
     is_dataset_on_disk: bool = False
@@ -110,6 +110,10 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
         if self.run_name is None:
             self.run_name = f"{self.d_sae}-L1-{self.l1_coefficient}-LR-{self.lr}-Tokens-{self.total_training_tokens:3.3e}"
 
+        print_once(
+            f"Run name: {self.run_name}"
+        )
+
         if self.decoder_bias_init_method not in ["geometric_median", "mean", "zeros"]:
             raise ValueError(
                 f"b_dec_init_method must be geometric_median, mean, or zeros. Got {self.decoder_bias_init_method}"
@@ -127,10 +131,6 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
         self.checkpoint_path = f"{self.checkpoint_path}/{unique_id}"
         if not self.use_ddp or self.rank == 0:
             os.makedirs(self.checkpoint_path)
-
-        print_once(
-            f"Run name: {self.d_sae}-L1-{self.l1_coefficient}-LR-{self.lr}-Tokens-{self.total_training_tokens:3.3e}"
-        )
 
         self.effective_batch_size = self.train_batch_size * self.world_size if self.use_ddp else self.train_batch_size
         print_once(f"Effective batch size: {self.effective_batch_size}")
