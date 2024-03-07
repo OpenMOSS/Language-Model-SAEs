@@ -1,4 +1,5 @@
-from core.activation.activation_source import TokenActivationSource, TokenSource
+from core.activation.activation_source import TokenActivationSource
+from core.activation.token_source import TokenSource
 
 from datasets import load_dataset
 from transformer_lens import HookedTransformer
