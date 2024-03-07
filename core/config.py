@@ -19,6 +19,8 @@ class RunnerConfig(ABC):
 
     # Data Generating Function (Model + Training Distibuion)
     model_name: str = "gpt2"
+    cache_dir: Optional[str] = None
+
     hook_point: str = "blocks.0.hook_mlp_out"
     dataset_path: str = "openwebtext"
     is_dataset_tokenized: bool = False

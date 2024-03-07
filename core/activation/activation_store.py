@@ -80,7 +80,7 @@ class ActivationStore:
             raise NotImplementedError
         else:           
             if not cfg.is_dataset_on_disk:
-                dataset = load_dataset(cfg.dataset_path, split="train")
+                dataset = load_dataset(cfg.dataset_path, split="train", cache_dir=cfg.cache_dir)
             else:
                 dataset = load_from_disk(cfg.dataset_path)
             if cfg.use_ddp:
