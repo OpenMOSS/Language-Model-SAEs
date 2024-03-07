@@ -1,5 +1,5 @@
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional, cast
 
 import torch
@@ -181,7 +181,7 @@ class LanguageModelSAERunnerConfig(SAERunnerConfig, WandbConfig, ActivationStore
 
 @dataclass
 class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
-    hook_points: list[str] = []
+    hook_points: list[str] = field(default_factory=list)
 
     activation_save_path: Optional[str] = None # Defaults to "activations/{dataset}/{model}_{context_size}"
 
