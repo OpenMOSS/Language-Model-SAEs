@@ -3,7 +3,7 @@ import os
 import torch.distributed as dist
 
 from core.config import ActivationGenerationConfig
-from core.runner import language_model_sae_runner
+from core.runner import activation_generation_runner
 
 use_ddp = False
 
@@ -25,7 +25,7 @@ cfg = ActivationGenerationConfig(
     dtype = torch.float32,
 )
 
-sparse_autoencoder = language_model_sae_runner(cfg)
+activation_generation_runner(cfg)
 
 if use_ddp:
     dist.destroy_process_group()
