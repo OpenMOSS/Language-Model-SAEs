@@ -4,15 +4,13 @@ import wandb
 
 from transformer_lens import HookedTransformer
 
-from core.config import LanguageModelSAERunnerConfig
+from core.config import ActivationGenerationConfig, LanguageModelSAERunnerConfig
 from core.sae import SparseAutoEncoder
+from core.activation.activation_dataset import make_activation_dataset
 from core.activation.activation_store import ActivationStore
-# from core.activation_store_theirs import ActivationStoreTheirs
 from core.sae_training import train_sae
 
 def language_model_sae_runner(cfg: LanguageModelSAERunnerConfig):
-    """ """
-
     if cfg.from_pretrained_path is not None:
         # TODO: Implement this
         raise NotImplementedError
@@ -20,7 +18,7 @@ def language_model_sae_runner(cfg: LanguageModelSAERunnerConfig):
         model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir)
         model.eval()
         sae = SparseAutoEncoder(cfg).to(cfg.device)
-        activation_Store = ActivationStore.from_config(model=model, cfg=cfg)
+        activation_store = ActivationStore.from_config(model=model, cfg=cfg)
         
     if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
         wandb.init(project=cfg.wandb_project, config=cast(Any, cfg), name=cfg.run_name, entity=cfg.wandb_entity)
@@ -29,7 +27,7 @@ def language_model_sae_runner(cfg: LanguageModelSAERunnerConfig):
     sparse_autoencoder = train_sae(
         model,
         sae,
-        activation_Store,
+        activation_store,
         cfg,
     )
 
@@ -37,3 +35,9 @@ def language_model_sae_runner(cfg: LanguageModelSAERunnerConfig):
         wandb.finish()
 
     return sparse_autoencoder
+
+def activation_generation_runner(cfg: ActivationGenerationConfig):
+    model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir)
+    model.eval()
+    
+    make_activation_dataset(model, cfg)

@@ -11,7 +11,6 @@ from tqdm import tqdm
 import wandb
 
 from core.activation.activation_store import ActivationStore
-# from core.activation_store_theirs import ActivationStoreTheirs
 from core.sae import SparseAutoEncoder
 from core.config import LanguageModelSAERunnerConfig
 from core.optim import get_scheduler
@@ -136,7 +135,7 @@ def train_sae(
                 act_freq_scores = torch.zeros(cfg.d_sae, device=cfg.device)
                 n_frac_active_tokens = torch.tensor([0], device=cfg.device, dtype=torch.int)
 
-            if ((n_training_steps + 1) % cfg.wandb_log_frequency == 0):
+            if ((n_training_steps + 1) % cfg.log_frequency == 0):
                 # metrics for currents acts
                 l0 = (aux_data["feature_acts"] > 0).float().sum(-1).mean()
                 l_rec = loss_data["l_rec"].mean()

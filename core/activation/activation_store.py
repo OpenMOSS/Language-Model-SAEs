@@ -7,8 +7,9 @@ from transformer_lens import HookedTransformer
 
 from datasets import load_dataset, load_from_disk
 
-from core.config import RunnerConfig
-from core.activation.activation_source import ActivationSource, TokenActivationSource, TokenSource
+from core.config import ActivationStoreConfig
+from core.activation.activation_source import ActivationSource, TokenActivationSource
+from core.activation.token_source import TokenSource
 
 class ActivationStore:
     def __init__(self, 
@@ -74,29 +75,12 @@ class ActivationStore:
         raise NotImplementedError("This method is only implemented for TokenActivationSource")
     
     @staticmethod
-    def from_config(model: HookedTransformer, cfg: RunnerConfig):
+    def from_config(model: HookedTransformer, cfg: ActivationStoreConfig):
         if cfg.use_cached_activations:
             # TODO: Implement this
             raise NotImplementedError
-        else:           
-            if not cfg.is_dataset_on_disk:
-                dataset = load_dataset(cfg.dataset_path, split="train", cache_dir=cfg.cache_dir)
-            else:
-                dataset = load_from_disk(cfg.dataset_path)
-            if cfg.use_ddp:
-                shard_id = cfg.rank
-                shard = dataset.shard(num_shards=cfg.world_size, index=shard_id)
-            else:
-                shard = dataset
-                
-            dataloader = torch.utils.data.DataLoader(shard, batch_size=cfg.store_batch_size)
-            token_source = TokenSource(
-                dataloader=dataloader,
-                model=model,
-                is_dataset_tokenized=cfg.is_dataset_tokenized,
-                seq_len=cfg.context_size,
-                device=cfg.device,
-            )
+        else:
+            token_source = TokenSource.from_config(model=model, cfg=cfg)
             
             return ActivationStore(
                 act_source=TokenActivationSource(

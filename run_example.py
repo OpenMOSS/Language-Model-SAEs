@@ -51,12 +51,13 @@ cfg = LanguageModelSAERunnerConfig(
     log_to_wandb = True,
     wandb_project= "gpt2-sae",
     wandb_entity = None,
-    wandb_log_frequency=100,
 
     # Evaluation
     eval_frequency=1000,
     
     # Misc
+    log_frequency=100,
+    
     use_ddp = use_ddp,
     device = "cuda",
     seed = 42,

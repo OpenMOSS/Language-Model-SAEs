@@ -11,34 +11,10 @@ import os
 
 from core.utils import print_once
 
+from transformer_lens.loading_from_pretrained import get_official_model_name
+
 @dataclass
-class RunnerConfig(ABC):
-    """
-    The config that's shared across all runners.
-    """
-
-    # Data Generating Function (Model + Training Distibuion)
-    model_name: str = "gpt2"
-    cache_dir: Optional[str] = None
-
-    hook_point: str = "blocks.0.hook_mlp_out"
-    dataset_path: str = "openwebtext"
-    is_dataset_tokenized: bool = False
-    is_dataset_on_disk: bool = False
-    context_size: int = 128
-    use_cached_activations: bool = False
-    cached_activations_path: Optional[str] = (
-        None  # Defaults to "activations/{dataset}/{model}/{full_hook_name}_{hook_point_head_index}"
-    )
-
-    # SAE Parameters
-    d_model: int = 768
-
-    # Activation Store Parameters
-    n_tokens_in_buffer: int = 500_000
-    total_training_tokens: int = 300_000_000
-    store_batch_size: int = 64
-
+class RunnerConfig:
     # Misc
     use_ddp: bool = False
     device: str = "cpu"
@@ -46,36 +22,85 @@ class RunnerConfig(ABC):
     dtype: torch.dtype = torch.float32
 
     def __post_init__(self):
-        # Autofill cached_activations_path unless the user overrode it
-        if self.cached_activations_path is None:
-            self.cached_activations_path = f"activations/{self.dataset_path.replace('/', '_')}/{self.model_name.replace('/', '_')}/{self.hook_point}"
-
         # Set rank, world_size, and device if using DDP
         if self.use_ddp:
             self.rank = dist.get_rank()
             self.world_size = dist.get_world_size()
             self.device = f"cuda:{self.rank}"
 
-        
+@dataclass
+class LanguageModelConfig(RunnerConfig):
+    model_name: str = "gpt2"
+    cache_dir: Optional[str] = None
+    d_model: int = 768
 
+    def __post_init__(self):
+        super().__post_init__()
+        self.model_name = get_official_model_name(self.model_name)
 
 @dataclass
-class LanguageModelSAERunnerConfig(RunnerConfig):
-    """
-    Configuration for training a sparse autoencoder on a language model.
-    """
+class TextDatasetConfig(RunnerConfig):
+    dataset_path: str = "openwebtext"
+    cache_dir: Optional[str] = None
+    is_dataset_tokenized: bool = False
+    is_dataset_on_disk: bool = False
+    context_size: int = 128
+    store_batch_size: int = 64
 
-    # SAE Parameters
-    decoder_bias_init_method: str = "geometric_median" # The method to initialize the decoder bias. Options: geometric_median, mean, zeros
+@dataclass
+class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
+    hook_point: str = "blocks.0.hook_mlp_out"
+    use_cached_activations: bool = False
+    cached_activations_path: Optional[str] = (
+        None  # Defaults to "activations/{dataset}/{model}/{full_hook_name}_{hook_point_head_index}"
+    )
+
+    # Activation Store Parameters
+    n_tokens_in_buffer: int = 500_000
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Autofill cached_activations_path unless the user overrode it
+        if self.cached_activations_path is None:
+            self.cached_activations_path = f"activations/{self.dataset_path.replace('/', '_')}/{self.model_name.replace('/', '_')}/{self.hook_point}"
+
+@dataclass
+class WandbConfig(RunnerConfig):
+    log_to_wandb: bool = True
+    wandb_project: str = "gpt2-sae-training"
+    run_name: Optional[str] = None
+    wandb_entity: Optional[str] = None
+
+@dataclass
+class SAERunnerConfig(RunnerConfig):
+    """
+    Configuration for training or running a sparse autoencoder.
+    """
+    decoder_bias_init_method: str = "geometric_median"
     geometric_median_max_iter: Optional[int] = 1000 # The maximum number of iterations for the geometric median algorithm. Required if decoder_bias_init_method is geometric_median
     expansion_factor: int = 32
     from_pretrained_path: Optional[str] = None
     d_sae: Optional[int] = None # The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor
     norm_activation: bool = True
 
+    use_ghost_grads: bool = True
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.d_sae is None:
+            self.d_sae = self.d_model * self.expansion_factor
+
+        print_once(f"Sparse Autoencoder dimension: {self.d_sae}")
+
+@dataclass
+class LanguageModelSAERunnerConfig(SAERunnerConfig, WandbConfig, ActivationStoreConfig):
+    """
+    Configuration for training a sparse autoencoder on a language model.
+    """
+
     # Training Parameters
+    total_training_tokens: int = 300_000_000
     l1_coefficient: float = 0.00008
-    lp_norm: float = 1
     lr: float = 0.0004
     lr_scheduler_name: str = (
         "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup
@@ -84,23 +109,17 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
     train_batch_size: int = 4096
 
     # Resampling protocol args
-    use_ghost_grads: bool = True  # want to change this to true on some timeline.
     feature_sampling_window: int = 1000
     dead_feature_window: int = 5000  # unless this window is larger feature sampling,
 
-    dead_feature_threshold: float = 1e-6
-
-    # WANDB
-    log_to_wandb: bool = True
-    wandb_project: str = "gpt2-sae-training"
-    run_name: Optional[str] = None
-    wandb_entity: Optional[str] = None
-    wandb_log_frequency: int = 10
+    dead_feature_threshold: float = 1e-6    
 
     # Evaluation
     eval_frequency: int = 1000
 
     # Misc
+    log_frequency: int = 10
+
     n_checkpoints: int = 10
     checkpoint_path: str = "checkpoints"
 
@@ -140,9 +159,6 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
         total_training_steps = self.total_training_tokens // self.effective_batch_size
         print_once(f"Total training steps: {total_training_steps}")
 
-        total_wandb_updates = total_training_steps // self.wandb_log_frequency
-        print_once(f"Total wandb updates: {total_wandb_updates}")
-
         # how many times will we sample dead neurons?
         # assert self.dead_feature_window <= self.feature_sampling_window, "dead_feature_window must be smaller than feature_sampling_window"
         n_feature_window_samples = total_training_steps // self.feature_sampling_window
@@ -162,3 +178,19 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
         print_once(
             f"Number tokens in sparsity calculation window: {self.feature_sampling_window * self.effective_batch_size:.2e}"
         )
+
+@dataclass
+class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
+    hook_points: list[str] = []
+
+    activation_save_path: Optional[str] = None # Defaults to "activations/{dataset}/{model}_{context_size}"
+
+    total_generating_tokens: int = 300_000_000
+    chunk_size: int = int(0.5 * 2 ** 30) # 0.5 GB
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        if self.activation_save_path is None:
+            self.activation_save_path = f"activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
+        os.makedirs(self.activation_save_path, exist_ok=True)

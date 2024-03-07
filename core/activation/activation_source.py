@@ -8,6 +8,7 @@ from transformer_lens import HookedTransformer
 
 from einops import rearrange, repeat
 
+from core.activation.token_source import TokenSource
 
 class ActivationSource(ABC):
     def next(self) -> Dict[str, torch.Tensor] | None:
@@ -17,46 +18,7 @@ class ActivationSource(ABC):
         Returns:
             A dictionary where the keys are the names of the activations and the values are tensors of shape (batch_size, d_model). If there are no more activations, return None.
         """
-        raise NotImplementedError
-    
-class TokenSource:
-    def __init__(self, dataloader: DataLoader, model: HookedTransformer, is_dataset_tokenized: bool, seq_len: int, device: str):
-        self.dataloader = dataloader
-        self.model = model
-        self.is_dataset_tokenized = is_dataset_tokenized
-        self.seq_len = seq_len
-        self.device = device
-
-        self.data_iter = iter(self.dataloader)
-        self.token_buffer = torch.empty((0, seq_len), dtype=torch.int64, device=self.device)
-        self.bos_token_id_tensor = torch.tensor([self.model.tokenizer.bos_token_id], dtype=torch.int64, device=self.device)
-        self.resid = self.bos_token_id_tensor.clone()
-    
-    def next(self, batch_size: int) -> torch.Tensor | None:
-        while self.token_buffer.size(0) < batch_size:
-            try:
-                batch = next(self.data_iter)
-            except StopIteration:
-                return None
-            if self.is_dataset_tokenized:
-                tokens: torch.Tensor = batch["tokens"].to(self.device)
-            else:
-                tokens = self.model.to_tokens(batch["text"]).to(self.device)
-            while tokens.size(0) > 0:
-                cur_tokens = tokens[0]
-                cur_tokens = cur_tokens[torch.logical_and(cur_tokens != self.model.tokenizer.pad_token_id, cur_tokens != self.model.tokenizer.bos_token_id)]
-                self.resid = torch.cat([self.resid, self.bos_token_id_tensor.clone(), cur_tokens], dim=0)
-                while self.resid.size(0) >= self.seq_len:
-                    self.token_buffer = torch.cat([self.token_buffer, self.resid[:self.seq_len].unsqueeze(0)], dim=0)
-                    self.resid = self.resid[self.seq_len:]
-                    self.resid = torch.cat([self.bos_token_id_tensor.clone(), self.resid], dim=0)
-                tokens = tokens[1:]
-
-        ret = self.token_buffer[:batch_size]
-        self.token_buffer = self.token_buffer[batch_size:]
-
-        return ret
-    
+        raise NotImplementedError    
 class TokenActivationSource(ActivationSource):
     """
     An activation source that generates activations from a token source.
