@@ -12,7 +12,6 @@ from core.sae import SparseAutoEncoder
 from core.activation.activation_store import ActivationStore
 # from core.activation_store_theirs import ActivationStoreTheirs
 from core.config import LanguageModelSAERunnerConfig
-from core.utils import compute_attention_mask
 
 @torch.no_grad()
 def run_evals(
@@ -129,8 +128,7 @@ def get_recons_loss(
 ):
     batch_tokens = batch_tokens.to(torch.int64)
     hook_point = cfg.hook_point
-    attention_mask = compute_attention_mask(batch_tokens, model.tokenizer.pad_token_id if model.tokenizer.pad_token_id is not None else model.tokenizer.bos_token_id)
-    loss = model.forward(batch_tokens, return_type="loss", attention_mask=attention_mask)
+    loss = model.forward(batch_tokens, return_type="loss")
 
     def replacement_hook(activations: torch.Tensor, hook: Any):
         _, (_, aux) = sae.forward(activations)

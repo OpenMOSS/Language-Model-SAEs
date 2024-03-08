@@ -13,14 +13,6 @@ def print_once(
         print(*values, sep=sep, end=end)
 
 
-def compute_attention_mask(
-    batch: torch.Tensor,
-    pad_token_id: int,
-) -> torch.Tensor:
-    attention_mask = batch != pad_token_id
-    attention_mask[:, 0] = True
-    return attention_mask
-
 def compute_geometric_median(x: torch.Tensor, max_iter=1000) -> torch.Tensor:
     """
     Compute the geometric median of a point cloud x.

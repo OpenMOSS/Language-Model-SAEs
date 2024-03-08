@@ -10,7 +10,7 @@ from einops import rearrange, repeat
 import copy
 import torch.distributed as dist
 
-from core.utils import compute_attention_mask, print_once
+from core.utils import print_once
 from core.config import ActivationGenerationConfig
 from core.activation.token_source import TokenSource
 
