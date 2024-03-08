@@ -2,6 +2,8 @@ from typing import Any, cast
 
 import wandb
 
+from transformers import AutoModelForCausalLM
+
 from transformer_lens import HookedTransformer
 
 from core.config import ActivationGenerationConfig, LanguageModelSAERunnerConfig
@@ -15,7 +17,8 @@ def language_model_sae_runner(cfg: LanguageModelSAERunnerConfig):
         # TODO: Implement this
         raise NotImplementedError
     else:
-        model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir)
+        hf_model = AutoModelForCausalLM.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
+        model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
         model.eval()
         sae = SparseAutoEncoder(cfg).to(cfg.device)
         activation_store = ActivationStore.from_config(model=model, cfg=cfg)

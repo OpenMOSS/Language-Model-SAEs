@@ -33,6 +33,7 @@ class LanguageModelConfig(RunnerConfig):
     model_name: str = "gpt2"
     cache_dir: Optional[str] = None
     d_model: int = 768
+    local_files_only: bool = False
 
     def __post_init__(self):
         super().__post_init__()
