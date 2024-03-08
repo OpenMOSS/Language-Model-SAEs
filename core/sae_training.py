@@ -12,7 +12,7 @@ import wandb
 
 from core.activation.activation_store import ActivationStore
 from core.sae import SparseAutoEncoder
-from core.config import LanguageModelSAERunnerConfig
+from core.config import LanguageModelSAETrainingConfig
 from core.optim import get_scheduler
 from core.evals import run_evals
 from core.utils import print_once
@@ -21,7 +21,7 @@ def train_sae(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
     activation_store: ActivationStore,
-    cfg: LanguageModelSAERunnerConfig,
+    cfg: LanguageModelSAETrainingConfig,
 ):
     total_training_tokens = cfg.total_training_tokens
     total_training_steps = total_training_tokens // cfg.effective_batch_size

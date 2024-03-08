@@ -11,14 +11,14 @@ from transformer_lens import HookedTransformer
 from core.sae import SparseAutoEncoder
 from core.activation.activation_store import ActivationStore
 # from core.activation_store_theirs import ActivationStoreTheirs
-from core.config import LanguageModelSAERunnerConfig
+from core.config import LanguageModelSAETrainingConfig
 
 @torch.no_grad()
 def run_evals(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
     activation_store: ActivationStore,
-    cfg: LanguageModelSAERunnerConfig,
+    cfg: LanguageModelSAETrainingConfig,
     n_training_steps: int,
 ):
     hook_point = cfg.hook_point
@@ -82,7 +82,7 @@ def recons_loss_batched(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
     activation_store: ActivationStore,
-    cfg: LanguageModelSAERunnerConfig,
+    cfg: LanguageModelSAETrainingConfig,
     n_batches: int = 100,
 ):
     losses = []
@@ -123,7 +123,7 @@ def recons_loss_batched(
 def get_recons_loss(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
-    cfg: LanguageModelSAERunnerConfig,
+    cfg: LanguageModelSAETrainingConfig,
     batch_tokens: torch.Tensor,
 ):
     batch_tokens = batch_tokens.to(torch.int64)

@@ -83,6 +83,7 @@ class SAERunnerConfig(RunnerConfig):
     from_pretrained_path: Optional[str] = None
     d_sae: Optional[int] = None # The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor
     norm_activation: bool = True
+    l1_coefficient: float = 0.00008
 
     use_ghost_grads: bool = True
 
@@ -94,14 +95,13 @@ class SAERunnerConfig(RunnerConfig):
         print_once(f"Sparse Autoencoder dimension: {self.d_sae}")
 
 @dataclass
-class LanguageModelSAERunnerConfig(SAERunnerConfig, WandbConfig, ActivationStoreConfig):
+class LanguageModelSAETrainingConfig(SAERunnerConfig, WandbConfig, ActivationStoreConfig):
     """
     Configuration for training a sparse autoencoder on a language model.
     """
 
     # Training Parameters
     total_training_tokens: int = 300_000_000
-    l1_coefficient: float = 0.00008
     lr: float = 0.0004
     lr_scheduler_name: str = (
         "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup

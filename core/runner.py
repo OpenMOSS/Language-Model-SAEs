@@ -6,13 +6,13 @@ from transformers import AutoModelForCausalLM
 
 from transformer_lens import HookedTransformer
 
-from core.config import ActivationGenerationConfig, LanguageModelSAERunnerConfig
+from core.config import ActivationGenerationConfig, LanguageModelSAETrainingConfig
 from core.sae import SparseAutoEncoder
 from core.activation.activation_dataset import make_activation_dataset
 from core.activation.activation_store import ActivationStore
 from core.sae_training import train_sae
 
-def language_model_sae_runner(cfg: LanguageModelSAERunnerConfig):
+def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     if cfg.from_pretrained_path is not None:
         # TODO: Implement this
         raise NotImplementedError

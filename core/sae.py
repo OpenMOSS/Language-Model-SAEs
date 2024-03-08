@@ -3,13 +3,13 @@ import torch
 import math
 from einops import einsum
 
-from core.config import LanguageModelSAERunnerConfig
+from core.config import LanguageModelSAETrainingConfig
 from core.utils import compute_geometric_median
 
 class SparseAutoEncoder(torch.nn.Module):
     def __init__(
             self,
-            cfg: LanguageModelSAERunnerConfig
+            cfg: LanguageModelSAETrainingConfig
     ):
         super(SparseAutoEncoder, self).__init__()
 

@@ -6,7 +6,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["WANDB__SERVICE_WAIT"] = "300"
 os.environ["WANDB_API_KEY"] = "YOUR_WANDB_API_KEY"
 
-from core.config import LanguageModelSAERunnerConfig
+from core.config import LanguageModelSAETrainingConfig
 from core.runner import language_model_sae_runner
 
 use_ddp = False
@@ -15,7 +15,7 @@ if use_ddp:
     dist.init_process_group(backend='nccl')
     torch.cuda.set_device(dist.get_rank())
 
-cfg = LanguageModelSAERunnerConfig(
+cfg = LanguageModelSAETrainingConfig(
     # Data Generating Function (Model + Training Distibuion)
     model_name = "gpt2-small",
     hook_point = "blocks.0.hook_resid_pre",
