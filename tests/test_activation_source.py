@@ -43,9 +43,7 @@ def test_token_activation_source(dataloader, model):
         token_source=token_source,
         model=model,
         token_batch_size=32,
-        act_name="activation",
-        seq_len=128,
-        d_model=768,
+        hook_point="activation",
         device="cuda",
         dtype=torch.float32,
     )

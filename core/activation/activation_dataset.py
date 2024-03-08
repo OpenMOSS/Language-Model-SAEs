@@ -1,3 +1,4 @@
+from typing import Dict
 from transformer_lens import HookedTransformer
 import torch
 from tqdm.auto import tqdm
@@ -72,3 +73,11 @@ def make_activation_dataset(
         chunk_idx += 1
 
     pbar.close()
+
+@torch.no_grad()
+def list_activation_chunks(activation_path: str, hook_point: str) -> list[str]:
+    return sorted([os.path.join(activation_path, hook_point, f) for f in os.listdir(os.path.join(activation_path, hook_point)) if f.endswith(".pt")])
+
+@torch.no_grad()
+def load_activation_chunk(chunk_path: str) -> Dict[str, torch.Tensor]:
+    return torch.load(chunk_path)

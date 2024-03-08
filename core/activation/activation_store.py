@@ -5,10 +5,8 @@ import torch.utils.data
 
 from transformer_lens import HookedTransformer
 
-from datasets import load_dataset, load_from_disk
-
 from core.config import ActivationStoreConfig
-from core.activation.activation_source import ActivationSource, TokenActivationSource
+from core.activation.activation_source import ActivationSource, CachedActivationSource, TokenActivationSource
 from core.activation.token_source import TokenSource
 
 class ActivationStore:
@@ -70,31 +68,21 @@ class ActivationStore:
         return ret if len(ret) > 0 else None
         
     def next_tokens(self, batch_size: int) -> torch.Tensor | None:
-        if isinstance(self.act_source, TokenActivationSource):
-            return self.act_source.next_tokens(batch_size)
-        raise NotImplementedError("This method is only implemented for TokenActivationSource")
+        return self.act_source.next_tokens(batch_size)
     
     @staticmethod
     def from_config(model: HookedTransformer, cfg: ActivationStoreConfig):
         if cfg.use_cached_activations:
-            # TODO: Implement this
-            raise NotImplementedError
+            act_source=CachedActivationSource(cfg=cfg)
         else:
-            token_source = TokenSource.from_config(model=model, cfg=cfg)
-            
-            return ActivationStore(
-                act_source=TokenActivationSource(
-                    token_source=token_source,
-                    model=model,
-                    token_batch_size=cfg.store_batch_size,
-                    act_name=cfg.hook_point,
-                    d_model=cfg.d_model,
-                    seq_len=cfg.context_size,
-                    device=cfg.device,
-                    dtype=cfg.dtype,
-                ),
-                d_model=cfg.d_model,
-                n_tokens_in_buffer=cfg.n_tokens_in_buffer,
-                device=cfg.device,
-                use_ddp=cfg.use_ddp,
+            act_source=TokenActivationSource(
+                model=model,
+                cfg=cfg,
             )
+        return ActivationStore(
+            act_source=act_source,
+            d_model=cfg.d_model,
+            n_tokens_in_buffer=cfg.n_tokens_in_buffer,
+            device=cfg.device,
+            use_ddp=cfg.use_ddp,
+        )

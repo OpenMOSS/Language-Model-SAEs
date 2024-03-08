@@ -52,7 +52,7 @@ class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
     hook_point: str = "blocks.0.hook_mlp_out"
     use_cached_activations: bool = False
     cached_activations_path: Optional[str] = (
-        None  # Defaults to "activations/{dataset}/{model}/{full_hook_name}_{hook_point_head_index}"
+        None  # Defaults to "activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
     )
 
     # Activation Store Parameters
@@ -62,7 +62,7 @@ class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
         super().__post_init__()
         # Autofill cached_activations_path unless the user overrode it
         if self.cached_activations_path is None:
-            self.cached_activations_path = f"activations/{self.dataset_path.replace('/', '_')}/{self.model_name.replace('/', '_')}/{self.hook_point}"
+            self.cached_activations_path = f"activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
 
 @dataclass
 class WandbConfig(RunnerConfig):
