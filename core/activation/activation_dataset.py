@@ -19,7 +19,7 @@ def make_activation_dataset(
     model: HookedTransformer,
     cfg: ActivationGenerationConfig
 ):
-    element_size = torch.finfo(cfg.dtype).bits
+    element_size = torch.finfo(cfg.dtype).bits / 8
     token_act_size = element_size * cfg.d_model
     max_tokens_per_chunk = cfg.chunk_size // token_act_size
     print_once(f"Making activation dataset with approximately {max_tokens_per_chunk} tokens per chunk")
@@ -56,8 +56,7 @@ def make_activation_dataset(
             n_tokens += tokens.size(0) * tokens.size(1)
             n_tokens_in_chunk += tokens.size(0) * tokens.size(1)
 
-            pbar.update(1)
-            pbar.set_postfix({"n_tokens": n_tokens})
+            pbar.update(tokens.size(0) * tokens.size(1))
 
         position = torch.arange(cfg.context_size, device=cfg.device, dtype=torch.long).unsqueeze(0).expand(context.size(0), -1)
         
