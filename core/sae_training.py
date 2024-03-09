@@ -56,6 +56,10 @@ def train_sae(
     n_frac_active_tokens = torch.tensor([0], device=cfg.device, dtype=torch.int)
 
     optimizer = Adam(sae.parameters(), lr=cfg.lr)
+    if cfg.from_pretrained_path is not None:
+        checkpoint = torch.load(cfg.from_pretrained_path, map_location=cfg.device)
+        optimizer.load_state_dict(checkpoint["optimizer"])
+
     scheduler = get_scheduler(
         cfg.lr_scheduler_name,
         optimizer=optimizer,
@@ -63,6 +67,8 @@ def train_sae(
         training_steps=total_training_steps,
         lr_end=cfg.lr / 10,  # heuristic for now.
     )
+
+    scheduler.step()
 
     if not cfg.use_ddp or cfg.rank == 0:
         pbar = tqdm(total=total_training_tokens, desc="Training SAE", smoothing=0.01)
@@ -213,13 +219,22 @@ def train_sae(
                 )
                 sae.train()
 
-            # checkpoint if at checkpoint frequency
+            # Checkpoint if at checkpoint frequency
             if len(checkpoint_thresholds) > 0 and n_training_tokens >= checkpoint_thresholds[0] and (
                 not cfg.use_ddp or cfg.rank == 0
             ):
+                # Save the model and optimizer state
                 path = f"{cfg.checkpoint_path}/{n_training_tokens}.pt"
                 sae_module.set_decoder_norm_to_unit_norm()
-                torch.save(sae_module.state_dict(), path)
+                torch.save(
+                    {
+                        "sae": sae_module.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "n_training_steps": n_training_steps,
+                        "n_training_tokens": n_training_tokens,
+                    },
+                    path,
+                )
 
                 checkpoint_thresholds.pop(0)
 
@@ -232,3 +247,20 @@ def train_sae(
                     f"{n_training_steps}| MSE Loss {l_rec:.3f} | L1 {l_l1:.3f}"
                 )
                 pbar.update(n_tokens_current.item())
+    
+    if not cfg.use_ddp or cfg.rank == 0:
+        pbar.close()
+
+    # Save the final model
+    if not cfg.use_ddp or cfg.rank == 0:
+        path = f"{cfg.checkpoint_path}/final.pt"
+        sae_module.set_decoder_norm_to_unit_norm()
+        torch.save(
+            {
+                "sae": sae_module.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "n_training_steps": n_training_steps,
+                "n_training_tokens": n_training_tokens,
+            },
+            path,
+        )

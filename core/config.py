@@ -73,14 +73,16 @@ class WandbConfig(RunnerConfig):
     wandb_entity: Optional[str] = None
 
 @dataclass
-class SAERunnerConfig(RunnerConfig):
+class SAEConfig(RunnerConfig):
     """
     Configuration for training or running a sparse autoencoder.
     """
+    from_pretrained_path: Optional[str] = None
+    
     decoder_bias_init_method: str = "geometric_median"
     geometric_median_max_iter: Optional[int] = 1000 # The maximum number of iterations for the geometric median algorithm. Required if decoder_bias_init_method is geometric_median
     expansion_factor: int = 32
-    from_pretrained_path: Optional[str] = None
+    d_model: int = 768
     d_sae: Optional[int] = None # The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor
     norm_activation: bool = True
     l1_coefficient: float = 0.00008
@@ -95,7 +97,7 @@ class SAERunnerConfig(RunnerConfig):
         print_once(f"Sparse Autoencoder dimension: {self.d_sae}")
 
 @dataclass
-class LanguageModelSAETrainingConfig(SAERunnerConfig, WandbConfig, ActivationStoreConfig):
+class LanguageModelSAETrainingConfig(SAEConfig, WandbConfig, ActivationStoreConfig):
     """
     Configuration for training a sparse autoencoder on a language model.
     """

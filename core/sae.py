@@ -3,29 +3,29 @@ import torch
 import math
 from einops import einsum
 
-from core.config import LanguageModelSAETrainingConfig
+from core.config import SAEConfig
 from core.utils import compute_geometric_median
 
 class SparseAutoEncoder(torch.nn.Module):
     def __init__(
             self,
-            cfg: LanguageModelSAETrainingConfig
+            cfg: SAEConfig
     ):
         super(SparseAutoEncoder, self).__init__()
 
         self.cfg = cfg
 
-        self.encoder = torch.nn.Parameter(torch.empty((cfg.d_model, cfg.d_sae), dtype=cfg.dtype))
+        self.encoder = torch.nn.Parameter(torch.empty((cfg.d_model, cfg.d_sae), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.kaiming_uniform_(self.encoder)
 
-        self.decoder = torch.nn.Parameter(torch.empty((cfg.d_sae, cfg.d_model), dtype=cfg.dtype))
+        self.decoder = torch.nn.Parameter(torch.empty((cfg.d_sae, cfg.d_model), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.kaiming_uniform_(self.decoder)
         self.set_decoder_norm_to_unit_norm()
 
-        self.decoder_bias = torch.nn.Parameter(torch.empty((cfg.d_model,), dtype=cfg.dtype))
+        self.decoder_bias = torch.nn.Parameter(torch.empty((cfg.d_model,), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.zeros_(self.decoder_bias)
 
-        self.encoder_bias = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype))
+        self.encoder_bias = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.zeros_(self.encoder_bias)
 
     def forward(self, x: torch.Tensor, dead_neuron_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]:
@@ -187,3 +187,4 @@ class SparseAutoEncoder(torch.nn.Module):
         dist = torch.cdist(self.decoder, self.decoder, p=2).flatten()[1:].view(self.cfg.d_sae - 1, self.cfg.d_sae + 1)[:, :-1]
         mean_thomson_potential = (1 / dist).mean()
         return mean_thomson_potential
+    
