@@ -17,7 +17,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         # TODO: Implement this
         raise NotImplementedError
     else:
-        hf_model = AutoModelForCausalLM.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
+        hf_model = AutoModelForCausalLM.from_pretrained('gpt2', cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
         model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
         model.eval()
         sae = SparseAutoEncoder(cfg).to(cfg.device)
