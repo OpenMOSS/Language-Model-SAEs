@@ -55,7 +55,7 @@ def train_sae(
     n_forward_passes_since_fired = torch.zeros(cfg.d_sae, device=cfg.device, dtype=cfg.dtype)
     n_frac_active_tokens = torch.tensor([0], device=cfg.device, dtype=torch.int)
 
-    optimizer = Adam(sae.parameters(), lr=cfg.lr)
+    optimizer = Adam(sae.parameters(), lr=cfg.lr, betas=cfg.betas)
     if cfg.from_pretrained_path is not None:
         checkpoint = torch.load(cfg.from_pretrained_path, map_location=cfg.device)
         optimizer.load_state_dict(checkpoint["optimizer"])

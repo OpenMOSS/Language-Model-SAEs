@@ -1,6 +1,6 @@
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Any, Optional, cast
+from typing import Any, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -78,7 +78,7 @@ class SAEConfig(RunnerConfig):
     Configuration for training or running a sparse autoencoder.
     """
     from_pretrained_path: Optional[str] = None
-    
+
     decoder_bias_init_method: str = "geometric_median"
     geometric_median_max_iter: Optional[int] = 1000 # The maximum number of iterations for the geometric median algorithm. Required if decoder_bias_init_method is geometric_median
     expansion_factor: int = 32
@@ -86,6 +86,7 @@ class SAEConfig(RunnerConfig):
     d_sae: Optional[int] = None # The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor
     norm_activation: bool = True
     l1_coefficient: float = 0.00008
+    lp: int = 1
 
     use_ghost_grads: bool = True
 
@@ -105,6 +106,7 @@ class LanguageModelSAETrainingConfig(SAEConfig, WandbConfig, ActivationStoreConf
     # Training Parameters
     total_training_tokens: int = 300_000_000
     lr: float = 0.0004
+    betas: Tuple[float, float] = (0.9, 0.999)
     lr_scheduler_name: str = (
         "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup
     )

@@ -59,7 +59,7 @@ class SparseAutoEncoder(torch.nn.Module):
         l_rec = (x_hat - x).pow(2) / (x - x.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
 
         # l_l1: (batch_size,)
-        l_l1 = torch.norm(feature_acts, p=1, dim=-1)
+        l_l1 = torch.norm(feature_acts, p=self.cfg.lp, dim=-1)
 
         l_ghost_resid = torch.tensor(0.0, dtype=self.cfg.dtype, device=self.cfg.device)
 
