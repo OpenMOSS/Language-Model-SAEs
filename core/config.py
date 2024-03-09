@@ -130,8 +130,6 @@ class LanguageModelSAETrainingConfig(SAEConfig, WandbConfig, ActivationStoreConf
 
     def __post_init__(self):
         super().__post_init__()
-        if not isinstance(self.expansion_factor, list):
-            self.d_sae = self.d_model * self.expansion_factor
 
         if self.run_name is None:
             self.run_name = f"{self.d_sae}-L1-{self.l1_coefficient}-LR-{self.lr}-Tokens-{self.total_training_tokens:3.3e}"
@@ -199,3 +197,23 @@ class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
         if self.activation_save_path is None:
             self.activation_save_path = f"activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
         os.makedirs(self.activation_save_path, exist_ok=True)
+
+@dataclass
+class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
+    """
+    Configuration for analyzing a sparse autoencoder on a language model.
+    """
+
+    total_analyzing_tokens: int = 300_000_000
+    analysis_batch_size: int = 4096
+    n_samples: int = 1000
+    analysis_save_path: str = "analysis/test.pt"
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.effective_batch_size = self.analysis_batch_size * self.world_size if self.use_ddp else self.analysis_batch_size
+        print_once(f"Effective batch size: {self.effective_batch_size}")
+
+        total_training_steps = self.total_analyzing_tokens // self.effective_batch_size
+        print_once(f"Total steps: {total_training_steps}")
