@@ -108,8 +108,9 @@ class LanguageModelSAETrainingConfig(SAEConfig, WandbConfig, ActivationStoreConf
     lr: float = 0.0004
     betas: Tuple[float, float] = (0.9, 0.999)
     lr_scheduler_name: str = (
-        "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup
+        "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup, exponentialwarmup
     )
+    lr_end: Optional[float] = 1 / 32
     lr_warm_up_steps: int = 5000
     train_batch_size: int = 4096
 

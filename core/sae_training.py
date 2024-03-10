@@ -65,7 +65,7 @@ def train_sae(
         optimizer=optimizer,
         warm_up_steps=cfg.lr_warm_up_steps,
         training_steps=total_training_steps,
-        lr_end=cfg.lr / 10,  # heuristic for now.
+        lr_end=cfg.lr_end,
     )
 
     scheduler.step()
