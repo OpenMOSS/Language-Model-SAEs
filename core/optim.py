@@ -56,8 +56,7 @@ def get_scheduler(
             if steps < warm_up_steps:
                 return (steps + 1) / warm_up_steps
             else:
-                progress = (steps - warm_up_steps) / (training_steps - warm_up_steps)
-                return lr_end + (1 - lr_end) * math.exp(-progress)
+                return math.pow(lr_end, (steps - warm_up_steps) / (training_steps - warm_up_steps))
         return lr_lambda
 
     if scheduler_name is None or scheduler_name.lower() == "constant":
