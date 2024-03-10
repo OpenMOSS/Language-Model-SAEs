@@ -112,6 +112,8 @@ class SparseAutoEncoder(torch.nn.Module):
     
     @torch.no_grad()
     def initialize_decoder_bias(self, all_activations: torch.Tensor):
+        if self.cfg.norm_activation:
+            all_activations = all_activations / torch.norm(all_activations, p=2, dim=-1, keepdim=True).clamp(min=1e-8) * math.sqrt(self.cfg.d_model)
         if self.cfg.decoder_bias_init_method == "geometric_median":
             self.initialize_decoder_bias_with_geometric_median(all_activations)
         elif self.cfg.decoder_bias_init_method == "mean":
@@ -161,7 +163,13 @@ class SparseAutoEncoder(torch.nn.Module):
     
     @torch.no_grad()
     def set_decoder_norm_to_unit_norm(self):
-        self.decoder.data /= torch.norm(self.decoder.data, dim=1, keepdim=True)
+        decoder_norm = torch.norm(self.decoder, dim=1, keepdim=True)
+        if self.cfg.decoder_exactly_unit_norm:
+            self.decoder.data = self.decoder.data / decoder_norm
+        else:
+            # Set the norm of the decoder to not exceed 1
+            self.decoder.data = self.decoder.data / torch.clamp(decoder_norm, max=1.0)
+        
 
     @torch.no_grad()
     def remove_gradient_parallel_to_decoder_directions(self):
