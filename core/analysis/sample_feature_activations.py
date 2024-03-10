@@ -36,7 +36,7 @@ def sample_feature_activations(
         pbar = tqdm(total=total_analyzing_tokens, desc="Sampling activations", smoothing=0.01)
 
     elt = torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device)
-    feature_acts = torch.empty((0, cfg.d_sae, cfg.d_model), dtype=cfg.dtype, device=cfg.device)
+    feature_acts = torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device)
     contexts = torch.empty((0, cfg.d_sae, cfg.context_size), dtype=torch.long, device=cfg.device)
     positions = torch.empty((0, cfg.d_sae), dtype=torch.long, device=cfg.device)
 
@@ -58,10 +58,11 @@ def sample_feature_activations(
             # Sort elt, and extract the top n_samples
             elt, idx = torch.sort(elt, dim=0, descending=True)
             elt = elt[:cfg.n_samples]
-            feature_acts = feature_acts[idx[:cfg.n_samples]]
-            contexts = contexts[idx[:cfg.n_samples]]
-            positions = positions[idx[:cfg.n_samples]]
-            
+            idx = idx[:cfg.n_samples]
+            feature_acts = feature_acts.gather(1, idx)
+            contexts = contexts.gather(1, idx.unsqueeze(-1).expand(-1, -1, contexts.size(-1)))
+            positions = positions.gather(1, idx)
+
             n_tokens_current = torch.tensor(batch["activation"].size(0), device=cfg.device, dtype=torch.int)
             if cfg.use_ddp:
                 dist.reduce(n_tokens_current, dst=0)
@@ -97,11 +98,12 @@ def sample_feature_activations(
 
             elt, idx = torch.sort(elt, dim=0, descending=True)
             elt = elt[:cfg.n_samples]
-            feature_acts = feature_acts[idx[:cfg.n_samples]]
-            contexts = contexts[idx[:cfg.n_samples]]
-            positions = positions[idx[:cfg.n_samples]]
+            idx = idx[:cfg.n_samples]
+            feature_acts = feature_acts.gather(1, idx)
+            contexts = contexts.gather(1, idx.unsqueeze(-1).expand(-1, -1, contexts.size(-1)))
+            positions = positions.gather(1, idx)
 
-    if cfg.rank == 0:
+    if not cfg.use_ddp or cfg.rank == 0:
         torch.save(
             {
                 "elt": elt,

@@ -50,14 +50,15 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     sae = SparseAutoEncoder(cfg=cfg)
     if cfg.from_pretrained_path is not None:
         sae.load_state_dict(torch.load(cfg.from_pretrained_path, map_location=cfg.device)["sae"])
+
+    hf_model = AutoModelForCausalLM.from_pretrained('gpt2', cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
+    model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
+    model.eval()
+
     activation_store = ActivationStore.from_config(model=model, cfg=cfg)
-    sample_feature_activations(model, sae, activation_store, cfg)
+    sample_feature_activations(sae, activation_store, cfg)
 
     if not cfg.use_ddp or cfg.rank == 0:
-        hf_model = AutoModelForCausalLM.from_pretrained('gpt2', cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
-        model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
-        model.eval()
-
         feature_activations = torch.load(cfg.analysis_save_path, map_location=cfg.device)
         elt = feature_activations["elt"][0][0]
         feature_act = feature_activations["feature_acts"][0][0]
