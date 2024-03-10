@@ -50,7 +50,9 @@ def sample_feature_activations(
             ) = sae_module.forward(batch["activation"])
 
             weights = aux_data["feature_acts"].clamp(min=0.0).pow(2)
-            elt = torch.cat([elt, torch.randn(batch["activation"].size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).sqrt() / weights], dim=0)
+            elt_cur = torch.randn(batch["activation"].size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).sqrt() / weights
+            elt_cur[weights == 0.0] = -torch.inf
+            elt = torch.cat([elt, elt_cur], dim=0)
             feature_acts = torch.cat([feature_acts, aux_data["feature_acts"]], dim=0)
             contexts = torch.cat([contexts, repeat(batch["context"], 'b c -> b d c', d=cfg.d_sae)], dim=0)
             positions = torch.cat([positions, repeat(batch["position"], 'b -> b d', d=cfg.d_sae)], dim=0)
