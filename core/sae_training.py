@@ -177,7 +177,7 @@ def train_sae(
 
                 explained_variance = 1 - per_token_l2_loss / total_variance
 
-                mean_thomson_potential = sae_module.compute_thomson_potential()
+                # mean_thomson_potential = sae_module.compute_thomson_potential()
 
                 current_learning_rate = optimizer.param_groups[0]["lr"]
 
@@ -193,7 +193,7 @@ def train_sae(
                             "metrics/explained_variance": explained_variance.mean().item(),
                             "metrics/explained_variance_std": explained_variance.std().item(),
                             "metrics/l0": l0.item(),
-                            "metrics/mean_thomson_potential": mean_thomson_potential.item(),
+                            # "metrics/mean_thomson_potential": mean_thomson_potential.item(),
                             "metrics/l2_norm_error": l2_norm_error.item(),
                             "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
                             # sparsity
