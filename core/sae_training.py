@@ -76,9 +76,6 @@ def train_sae(
         sae.train()
         # Get the next batch of activations
         batch = activation_store.next(batch_size=cfg.train_batch_size)["activation"]
-        # batch = activation_store.next_batch()
-
-        sae_module.set_decoder_norm_to_unit_norm()
 
         scheduler.step()
         optimizer.zero_grad()
@@ -110,6 +107,7 @@ def train_sae(
         sae_module.remove_gradient_parallel_to_decoder_directions()
         optimizer.step()
 
+        sae_module.set_decoder_norm_to_unit_norm()
         with torch.no_grad():
             act_freq_scores += (aux_data["feature_acts"].abs() > 0).float().sum(0)
             n_frac_active_tokens += batch.size(0)
@@ -199,6 +197,7 @@ def train_sae(
                             # sparsity
                             "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
                             "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
+                            "sparsity/useful_features": sae_module.decoder.norm(p=2, dim=1).gt(0.99).sum().item(),
                             "details/current_learning_rate": current_learning_rate,
                             "details/n_training_tokens": n_training_tokens,
                         },
