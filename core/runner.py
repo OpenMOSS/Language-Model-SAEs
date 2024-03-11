@@ -60,10 +60,12 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
 
     if not cfg.use_ddp or cfg.rank == 0:
         feature_activations = torch.load(cfg.analysis_save_path, map_location=cfg.device)
+        act_times = feature_activations["act_times"][0]
         elt = feature_activations["elt"][0][0]
         feature_act = feature_activations["feature_acts"][0][0]
         context = feature_activations["contexts"][0][0]
         position = feature_activations["positions"][0][0]
+        print(f"act_times: {act_times}")
         print(f"elt: {elt}")
         print(f"feature_act: {feature_act}")
         print(f"context: {context}")

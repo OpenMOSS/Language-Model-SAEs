@@ -39,6 +39,7 @@ def sample_feature_activations(
     feature_acts = torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device)
     contexts = torch.empty((0, cfg.d_sae, cfg.context_size), dtype=torch.long, device=cfg.device)
     positions = torch.empty((0, cfg.d_sae), dtype=torch.long, device=cfg.device)
+    act_times = torch.empty((cfg.d_sae,), dtype=torch.long, device=cfg.device)
 
     with torch.no_grad():
         while n_training_tokens < total_analyzing_tokens:
@@ -49,8 +50,10 @@ def sample_feature_activations(
                 (_, aux_data),
             ) = sae_module.forward(batch["activation"])
 
+            act_times += aux_data["feature_acts"].gt(0.0).sum(dim=0)
+
             weights = aux_data["feature_acts"].clamp(min=0.0).pow(2)
-            elt_cur = torch.randn(batch["activation"].size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).sqrt() / weights
+            elt_cur = torch.rand(batch["activation"].size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).log() / weights
             elt_cur[weights == 0.0] = -torch.inf
             elt = torch.cat([elt, elt_cur], dim=0)
             feature_acts = torch.cat([feature_acts, aux_data["feature_acts"]], dim=0)
@@ -58,7 +61,7 @@ def sample_feature_activations(
             positions = torch.cat([positions, repeat(batch["position"], 'b -> b d', d=cfg.d_sae)], dim=0)
 
             # Sort elt, and extract the top n_samples
-            elt, idx = torch.sort(elt, dim=0, descending=True)
+            elt, idx = torch.sort(elt, dim=1, descending=True)
             elt = elt[:cfg.n_samples]
             idx = idx[:cfg.n_samples]
             feature_acts = feature_acts.gather(1, idx)
@@ -92,6 +95,8 @@ def sample_feature_activations(
         dist.gather(contexts, all_contexts if cfg.rank == 0 else None, dst=0)
         dist.gather(positions, all_positions if cfg.rank == 0 else None, dst=0)
 
+        dist.reduce(act_times, dst=0)
+
         if cfg.rank == 0:
             elt = torch.cat(all_elt, dim=0)
             feature_acts = torch.cat(all_feature_acts, dim=0)
@@ -108,6 +113,7 @@ def sample_feature_activations(
     if not cfg.use_ddp or cfg.rank == 0:
         torch.save(
             {
+                "act_times": act_times,
                 "elt": elt,
                 "feature_acts": feature_acts,
                 "contexts": contexts,
