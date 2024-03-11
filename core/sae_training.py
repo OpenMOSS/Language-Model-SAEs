@@ -41,8 +41,8 @@ def train_sae(
 
     activation_store.initialize()
 
-    # Initialize the SAE Decoder Bias
-    if not cfg.use_ddp or cfg.rank == 0:
+    # Initialize the SAE decoder bias if necessary
+    if cfg.use_decoder_bias and (not cfg.use_ddp or cfg.rank == 0):
         sae.initialize_decoder_bias(activation_store._store["activation"])
 
     sae_module = sae

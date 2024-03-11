@@ -22,8 +22,9 @@ class SparseAutoEncoder(torch.nn.Module):
         torch.nn.init.kaiming_uniform_(self.decoder)
         self.set_decoder_norm_to_unit_norm()
 
-        self.decoder_bias = torch.nn.Parameter(torch.empty((cfg.d_model,), dtype=cfg.dtype, device=cfg.device))
-        torch.nn.init.zeros_(self.decoder_bias)
+        if cfg.use_decoder_bias:
+            self.decoder_bias = torch.nn.Parameter(torch.empty((cfg.d_model,), dtype=cfg.dtype, device=cfg.device))
+            torch.nn.init.zeros_(self.decoder_bias)
 
         self.encoder_bias = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.zeros_(self.encoder_bias)
@@ -36,10 +37,13 @@ class SparseAutoEncoder(torch.nn.Module):
 
             # x: (batch_size, d_model)
             x = x / torch.clamp(x_norms.unsqueeze(-1), 1e-8) * math.sqrt(self.cfg.d_model)
+
+        if self.cfg.use_decoder_bias:
+            x = x - self.decoder_bias
         
         # hidden_pre: (batch_size, d_sae)
         hidden_pre = einsum(
-            x - self.decoder_bias,
+            x,
             self.encoder,
             "... d_model, d_model d_sae -> ... d_sae",
         ) + self.encoder_bias
@@ -52,7 +56,10 @@ class SparseAutoEncoder(torch.nn.Module):
             feature_acts,
             self.decoder,
             "... d_sae, d_sae d_model -> ... d_model",
-        ) + self.decoder_bias
+        )
+
+        if self.cfg.use_decoder_bias:
+            x_hat = x_hat + self.decoder_bias
 
         # Take the sum of the dense dimension in MSE loss
         # l_rec: (batch_size, d_model)
@@ -112,6 +119,8 @@ class SparseAutoEncoder(torch.nn.Module):
     
     @torch.no_grad()
     def initialize_decoder_bias(self, all_activations: torch.Tensor):
+        if not self.cfg.use_decoder_bias:
+            raise ValueError("Decoder bias is not used!")
         if self.cfg.norm_activation:
             all_activations = all_activations / torch.norm(all_activations, p=2, dim=-1, keepdim=True).clamp(min=1e-8) * math.sqrt(self.cfg.d_model)
         if self.cfg.decoder_bias_init_method == "geometric_median":

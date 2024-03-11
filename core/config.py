@@ -79,6 +79,7 @@ class SAEConfig(RunnerConfig):
     """
     from_pretrained_path: Optional[str] = None
 
+    use_decoder_bias: bool = True
     decoder_bias_init_method: str = "geometric_median"
     geometric_median_max_iter: Optional[int] = 1000 # The maximum number of iterations for the geometric median algorithm. Required if decoder_bias_init_method is geometric_median
     expansion_factor: int = 32
