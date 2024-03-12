@@ -74,7 +74,7 @@ def run_evals(
         # variance explained
         "metrics/explained_variance": explained_variance.mean().item(),
         "metrics/explained_variance_std": explained_variance.std().item(),
-        "metrics/l0": l0.item(),
+        "metrics/l0": l0.mean().item(),
         # CE Loss
         "metrics/ce_loss_score": recons_score,
         "metrics/ce_loss_without_sae": ntp_loss,
