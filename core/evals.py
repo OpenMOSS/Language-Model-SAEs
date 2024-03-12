@@ -11,14 +11,14 @@ from transformer_lens import HookedTransformer
 from core.sae import SparseAutoEncoder
 from core.activation.activation_store import ActivationStore
 # from core.activation_store_theirs import ActivationStoreTheirs
-from core.config import LanguageModelSAETrainingConfig
+from core.config import LanguageModelSAEConfig
 
 @torch.no_grad()
 def run_evals(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
     activation_store: ActivationStore,
-    cfg: LanguageModelSAETrainingConfig,
+    cfg: LanguageModelSAEConfig,
     n_training_steps: int,
 ):
     hook_point = cfg.hook_point
@@ -63,26 +63,38 @@ def run_evals(
         dist.reduce(l2_norm_out, dst=0, op=dist.ReduceOp.AVG)
     l2_norm_ratio = l2_norm_out / l2_norm_in
 
+    pseudo_x_hat = aux["x_hat"] / l2_norm_out.unsqueeze(-1) * l2_norm_in.unsqueeze(-1)
+    explained_variance = 1 - (pseudo_x_hat - original_act).pow(2).sum(dim=-1) / (original_act - original_act.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1)
+    l0 = (aux["feature_acts"] > 0).float().sum(-1)
+
+    metrics = {
+        # l2 norms
+        "metrics/l2_norm": l2_norm_out.mean().item(),
+        "metrics/l2_ratio": l2_norm_ratio.mean().item(),
+        # variance explained
+        "metrics/explained_variance": explained_variance.mean().item(),
+        "metrics/explained_variance_std": explained_variance.std().item(),
+        "metrics/l0": l0.item(),
+        # CE Loss
+        "metrics/ce_loss_score": recons_score,
+        "metrics/ce_loss_without_sae": ntp_loss,
+        "metrics/ce_loss_with_sae": recons_loss,
+        "metrics/ce_loss_with_ablation": zero_abl_loss,
+    }
+
     if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
         wandb.log(
-            {
-                # l2 norms
-                "metrics/l2_norm": l2_norm_out.mean().item(),
-                "metrics/l2_ratio": l2_norm_ratio.mean().item(),
-                # CE Loss
-                "metrics/ce_loss_score": recons_score,
-                "metrics/ce_loss_without_sae": ntp_loss,
-                "metrics/ce_loss_with_sae": recons_loss,
-                "metrics/ce_loss_with_ablation": zero_abl_loss,
-            },
+            metrics,
             step=n_training_steps + 1,
         )
+
+    return metrics
 
 def recons_loss_batched(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
     activation_store: ActivationStore,
-    cfg: LanguageModelSAETrainingConfig,
+    cfg: LanguageModelSAEConfig,
     n_batches: int = 100,
 ):
     losses = []
@@ -123,7 +135,7 @@ def recons_loss_batched(
 def get_recons_loss(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
-    cfg: LanguageModelSAETrainingConfig,
+    cfg: LanguageModelSAEConfig,
     batch_tokens: torch.Tensor,
 ):
     batch_tokens = batch_tokens.to(torch.int64)

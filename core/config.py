@@ -101,7 +101,11 @@ class SAEConfig(RunnerConfig):
         print_once(f"Sparse Autoencoder dimension: {self.d_sae}")
 
 @dataclass
-class LanguageModelSAETrainingConfig(SAEConfig, WandbConfig, ActivationStoreConfig):
+class LanguageModelSAEConfig(SAEConfig, WandbConfig, ActivationStoreConfig):
+    pass
+
+@dataclass
+class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
     """
     Configuration for training a sparse autoencoder on a language model.
     """
