@@ -53,14 +53,18 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAEConfig):
     if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
         wandb.init(project=cfg.wandb_project, config=cast(Any, cfg), name=cfg.run_name, entity=cfg.wandb_entity)
 
-    # train SAE
-    sae = run_evals(
+    result = run_evals(
         model,
         sae,
         activation_store,
         cfg,
         0
     )
+
+    # Print results in tabular format
+    if not cfg.use_ddp or cfg.rank == 0:
+        for key, value in result.items():
+            print(f"{key}: {value}")
 
     if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
         wandb.finish()
