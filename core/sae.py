@@ -29,14 +29,20 @@ class SparseAutoEncoder(torch.nn.Module):
         self.encoder_bias = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.zeros_(self.encoder_bias)
 
-    def forward(self, x: torch.Tensor, dead_neuron_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]:
-        if self.cfg.norm_activation:
-            # Normalize the activation vectors to have L2 norm equal to sqrt(d_model)
-            # x_norms: (batch_size,)
-            x_norms = torch.norm(x, 2, dim=-1)
+    def compute_norm_factor(self, x: torch.Tensor) -> torch.Tensor:
+        # Normalize the activation vectors to have L2 norm equal to sqrt(d_model)
+        if self.cfg.norm_activation == "token-wise":
+            return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True)
+        elif self.cfg.norm_activation == "batch-wise":
+            return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True).mean(keepdim=True)
+        else:
+            return torch.tensor(1.0, dtype=self.cfg.dtype, device=self.cfg.device)
 
-            # x: (batch_size, d_model)
-            x = x / torch.clamp(x_norms.unsqueeze(-1), 1e-8) * math.sqrt(self.cfg.d_model)
+    def forward(self, x: torch.Tensor, dead_neuron_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]:
+        # norm_factor: (batch_size,)
+        norm_factor = self.compute_norm_factor(x)
+
+        x = x * norm_factor
 
         if self.cfg.use_decoder_bias:
             x = x - self.decoder_bias
@@ -99,10 +105,9 @@ class SparseAutoEncoder(torch.nn.Module):
             mse_rescaling_factor = (l_rec / (l_ghost_resid + 1e-6)).detach()
             l_ghost_resid = mse_rescaling_factor * l_ghost_resid
 
-        if self.cfg.norm_activation:
-            # Recover the original scale of the activation vectors
-            # x_hat: (batch_size, activation_size)
-            x_hat = x_hat * x_norms.unsqueeze(-1) / math.sqrt(self.cfg.d_model)
+        # Recover the original scale of the activation vectors
+        # x_hat: (batch_size, activation_size)
+        x_hat = x_hat / norm_factor
 
         loss_data = {
             "l_rec": l_rec,
@@ -121,8 +126,8 @@ class SparseAutoEncoder(torch.nn.Module):
     def initialize_decoder_bias(self, all_activations: torch.Tensor):
         if not self.cfg.use_decoder_bias:
             raise ValueError("Decoder bias is not used!")
-        if self.cfg.norm_activation:
-            all_activations = all_activations / torch.norm(all_activations, p=2, dim=-1, keepdim=True).clamp(min=1e-8) * math.sqrt(self.cfg.d_model)
+        norm_factor = self.compute_norm_factor(all_activations)
+        all_activations = all_activations * norm_factor
         if self.cfg.decoder_bias_init_method == "geometric_median":
             self.initialize_decoder_bias_with_geometric_median(all_activations)
         elif self.cfg.decoder_bias_init_method == "mean":

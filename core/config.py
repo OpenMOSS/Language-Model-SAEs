@@ -85,7 +85,7 @@ class SAEConfig(RunnerConfig):
     expansion_factor: int = 32
     d_model: int = 768
     d_sae: Optional[int] = None # The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor
-    norm_activation: bool = True
+    norm_activation: str = "token-wise" # none, token-wise, batch-wise
     decoder_exactly_unit_norm: bool = True
 
     l1_coefficient: float = 0.00008
