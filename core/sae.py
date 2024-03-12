@@ -177,7 +177,7 @@ class SparseAutoEncoder(torch.nn.Module):
             self.decoder.data = self.decoder.data / decoder_norm
         else:
             # Set the norm of the decoder to not exceed 1
-            self.decoder.data = self.decoder.data / torch.clamp(decoder_norm, max=1.0)
+            self.decoder.data = self.decoder.data / torch.clamp(decoder_norm, min=1.0)
         
 
     @torch.no_grad()
