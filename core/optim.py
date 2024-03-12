@@ -63,9 +63,16 @@ def get_scheduler(
         return lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda steps: 1.0)
     elif scheduler_name.lower() == "constantwithwarmup":
         warm_up_steps = kwargs.get("warm_up_steps", 0)
+        cool_down_steps = kwargs.get("cool_down_steps", 0)
+        training_steps = kwargs.get("training_steps")
+        assert training_steps is not None, "training_steps must be provided"
         return lr_scheduler.LambdaLR(
             optimizer,
-            lr_lambda=lambda steps: min(1.0, (steps + 1) / warm_up_steps),
+            lr_lambda=lambda steps: min(
+                (steps + 1) / warm_up_steps, 
+                (training_steps - steps) / cool_down_steps, 
+                1.0
+            ),
         )
     elif scheduler_name.lower() == "linearwarmupdecay":
         warm_up_steps = kwargs.get("warm_up_steps", 0)

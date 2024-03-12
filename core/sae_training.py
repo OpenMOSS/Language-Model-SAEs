@@ -64,6 +64,7 @@ def train_sae(
         cfg.lr_scheduler_name,
         optimizer=optimizer,
         warm_up_steps=cfg.lr_warm_up_steps,
+        cool_down_steps=cfg.lr_cool_down_steps,
         training_steps=total_training_steps,
         lr_end=cfg.lr_end,
     )

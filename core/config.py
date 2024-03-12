@@ -119,6 +119,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
     )
     lr_end: Optional[float] = 1 / 32
     lr_warm_up_steps: int = 5000
+    lr_cool_down_steps: int = 10000
     train_batch_size: int = 4096
 
     # Resampling protocol args
