@@ -34,7 +34,7 @@ class SparseAutoEncoder(torch.nn.Module):
         if self.cfg.norm_activation == "token-wise":
             return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True)
         elif self.cfg.norm_activation == "batch-wise":
-            return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True).mean(keepdim=True)
+            return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True).mean(dim=-2, keepdim=True)
         else:
             return torch.tensor(1.0, dtype=self.cfg.dtype, device=self.cfg.device)
 
