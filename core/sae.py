@@ -18,9 +18,13 @@ class SparseAutoEncoder(torch.nn.Module):
         self.encoder = torch.nn.Parameter(torch.empty((cfg.d_model, cfg.d_sae), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.kaiming_uniform_(self.encoder)
 
-        # GAU Encoder
-        self.encoder_gau = torch.nn.Parameter(torch.empty((cfg.d_model, cfg.d_sae), dtype=cfg.dtype, device=cfg.device))
-        torch.nn.init.kaiming_uniform_(self.encoder_gau)
+        if cfg.use_glu_encoder:
+            # GAU Encoder
+            self.encoder_glu = torch.nn.Parameter(torch.empty((cfg.d_model, cfg.d_sae), dtype=cfg.dtype, device=cfg.device))
+            torch.nn.init.kaiming_uniform_(self.encoder_glu)
+
+            self.encoder_bias_glu = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
+            torch.nn.init.zeros_(self.encoder_bias_glu)
 
         self.decoder = torch.nn.Parameter(torch.empty((cfg.d_sae, cfg.d_model), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.kaiming_uniform_(self.decoder)
@@ -58,15 +62,15 @@ class SparseAutoEncoder(torch.nn.Module):
             "... d_model, d_model d_sae -> ... d_sae",
         ) + self.encoder_bias
 
-        if self.cfg.use_gau_encoder:
-            # hidden_pre_gau: (batch_size, d_sae)
-            hidden_pre_gau = einsum(
+        if self.cfg.use_glu_encoder:
+            # hidden_pre_glu: (batch_size, d_sae)
+            hidden_pre_glu = einsum(
                 x,
-                self.encoder_gau,
+                self.encoder_glu,
                 "... d_model, d_model d_sae -> ... d_sae",
-            )
-            hidden_pre_gau = torch.sigmoid(hidden_pre_gau)
-            hidden_pre = hidden_pre * hidden_pre_gau
+            ) + self.encoder_bias_glu
+            hidden_pre_glu = torch.sigmoid(hidden_pre_glu)
+            hidden_pre = hidden_pre * hidden_pre_glu
 
         # feature_acts: (batch_size, d_sae)
         feature_acts = torch.clamp(hidden_pre, min=0.0)
