@@ -29,8 +29,11 @@ class ActivationStore:
         self.shuffle()
 
     def shuffle(self):
+        if len(self._store) == 0:
+            return
+        perm = torch.randperm(len(self._store[next(iter(self._store))]))
         for k in self._store:
-            self._store[k] = self._store[k][torch.randperm(len(self._store[k]))]
+            self._store[k] = self._store[k][perm]
 
     def refill(self):
         while self.__len__() < self.buffer_size:
