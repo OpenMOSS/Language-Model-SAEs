@@ -4,15 +4,20 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 
-from einops import repeat
+from einops import repeat, rearrange
+
+from transformer_lens import HookedTransformer
 
 from core.sae import SparseAutoEncoder
 from core.config import LanguageModelSAEAnalysisConfig
 from core.activation.activation_store import ActivationStore
-from core.utils import print_once
+from core.utils.misc import print_once
+from core.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
+@torch.no_grad()
 def sample_feature_activations(
     sae: SparseAutoEncoder,
+    model: HookedTransformer,
     activation_store: ActivationStore,
     cfg: LanguageModelSAEAnalysisConfig,
 ):
@@ -25,58 +30,67 @@ def sample_feature_activations(
     n_training_steps = 0
     n_training_tokens = 0
 
-    sae_module = sae
     if cfg.use_ddp:
         sae = DDP(sae, device_ids=[cfg.rank], output_device=cfg.device)
-        sae_module: SparseAutoEncoder = sae.module
 
     sae.eval()
 
     if not cfg.use_ddp or cfg.rank == 0:
         pbar = tqdm(total=total_analyzing_tokens, desc="Sampling activations", smoothing=0.01)
 
-    elt = torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device)
-    feature_acts = torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device)
-    contexts = torch.empty((0, cfg.d_sae, cfg.context_size), dtype=torch.long, device=cfg.device)
-    positions = torch.empty((0, cfg.d_sae), dtype=torch.long, device=cfg.device)
-    act_times = torch.empty((cfg.d_sae,), dtype=torch.long, device=cfg.device)
+    result = {
+        "weights": torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device),
+        "elt": torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device),
+        "feature_acts": torch.empty((0, cfg.d_sae, cfg.context_size), dtype=cfg.dtype, device=cfg.device),
+        "contexts": torch.empty((0, cfg.d_sae, cfg.context_size), dtype=torch.long, device=cfg.device),
+    }
+    act_times = torch.zeros((cfg.d_sae,), dtype=torch.long, device=cfg.device)
 
-    with torch.no_grad():
-        while n_training_tokens < total_analyzing_tokens:
-            batch = activation_store.next(batch_size=cfg.analysis_batch_size)
+    sort_key = "elt" if cfg.enable_sampling else "weights"
 
-            (
-                _,
-                (_, aux_data),
-            ) = sae_module.forward(batch["activation"])
+    while n_training_tokens < total_analyzing_tokens:
+        batch = activation_store.next_tokens(cfg.store_batch_size)
 
-            act_times += aux_data["feature_acts"].gt(0.0).sum(dim=0)
+        if batch is None:
+            raise ValueError("Not enough tokens to sample")
+        
+        _, cache = model.run_with_cache(batch, names_filter=[cfg.hook_point])
+        activations = cache[cfg.hook_point].to(dtype=cfg.dtype, device=cfg.device)
 
-            weights = aux_data["feature_acts"].clamp(min=0.0).pow(2)
-            elt_cur = torch.rand(batch["activation"].size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).log() / weights
-            elt_cur[weights == 0.0] = -torch.inf
-            elt = torch.cat([elt, elt_cur], dim=0)
-            feature_acts = torch.cat([feature_acts, aux_data["feature_acts"]], dim=0)
-            contexts = torch.cat([contexts, repeat(batch["context"], 'b c -> b d c', d=cfg.d_sae)], dim=0)
-            positions = torch.cat([positions, repeat(batch["position"], 'b -> b d', d=cfg.d_sae)], dim=0)
+        (
+            _,
+            (_, aux_data),
+        ) = sae.forward(activations)
 
-            # Sort elt, and extract the top n_samples
-            elt, idx = torch.sort(elt, dim=1, descending=True)
-            elt = elt[:cfg.n_samples]
-            idx = idx[:cfg.n_samples]
-            feature_acts = feature_acts.gather(1, idx)
-            contexts = contexts.gather(1, idx.unsqueeze(-1).expand(-1, -1, contexts.size(-1)))
-            positions = positions.gather(1, idx)
+        act_times += aux_data["feature_acts"].gt(0.0).sum(dim=[0, 1])
 
-            n_tokens_current = torch.tensor(batch["activation"].size(0), device=cfg.device, dtype=torch.int)
-            if cfg.use_ddp:
-                dist.reduce(n_tokens_current, dst=0)
-            n_training_tokens += n_tokens_current.item()
+        weights = aux_data["feature_acts"].clamp(min=0.0).pow(cfg.sample_weight_exponent).max(dim=1).values
+        elt = torch.rand(batch.size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).log() / weights
+        elt[weights == 0.0] = -torch.inf
+        result = concat_dict_of_tensor(
+            result,
+            {
+                "weights": weights,
+                "elt": elt,
+                "feature_acts": rearrange(aux_data["feature_acts"], 'batch_size context_size d_sae -> batch_size d_sae context_size'),
+                "contexts": repeat(batch, 'batch_size context_size -> batch_size d_sae context_size', d_sae=cfg.d_sae),
+            },
+            dim=0,
+        )
 
-            n_training_steps += 1
+        # Sort elt, and extract the top n_samples
+        result = sort_dict_of_tensor(result, sort_dim=0, sort_key=sort_key, descending=True)
+        result = {k: v[:cfg.n_samples] for k, v in result.items()}
 
-            if not cfg.use_ddp or cfg.rank == 0:
-                pbar.update(n_tokens_current.item())
+        n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.device, dtype=torch.int)
+        if cfg.use_ddp:
+            dist.reduce(n_tokens_current, dst=0)
+        n_training_tokens += n_tokens_current.item()
+
+        n_training_steps += 1
+
+        if not cfg.use_ddp or cfg.rank == 0:
+            pbar.update(n_tokens_current.item())
 
     if not cfg.use_ddp or cfg.rank == 0:
         pbar.close()
@@ -85,39 +99,30 @@ def sample_feature_activations(
         print_once("Gathering top feature activations")
 
         if cfg.rank == 0:
-            all_elt = [torch.empty_like(elt) for _ in range(cfg.world_size)]
-            all_feature_acts = [torch.empty_like(feature_acts) for _ in range(cfg.world_size)]
-            all_contexts = [torch.empty_like(contexts) for _ in range(cfg.world_size)]
-            all_positions = [torch.empty_like(positions) for _ in range(cfg.world_size)]
+            all_result = {
+                k: [torch.empty_like(v) for _ in range(cfg.world_size)] for k, v in result.items()
+            }
 
-        dist.gather(elt, all_elt if cfg.rank == 0 else None, dst=0)
-        dist.gather(feature_acts, all_feature_acts if cfg.rank == 0 else None, dst=0)
-        dist.gather(contexts, all_contexts if cfg.rank == 0 else None, dst=0)
-        dist.gather(positions, all_positions if cfg.rank == 0 else None, dst=0)
+        for k in result:
+            dist.gather(result[k], all_result[k], dst=0)
 
         dist.reduce(act_times, dst=0)
 
         if cfg.rank == 0:
-            elt = torch.cat(all_elt, dim=0)
-            feature_acts = torch.cat(all_feature_acts, dim=0)
-            contexts = torch.cat(all_contexts, dim=0)
-            positions = torch.cat(all_positions, dim=0)
-
-            elt, idx = torch.sort(elt, dim=0, descending=True)
-            elt = elt[:cfg.n_samples]
-            idx = idx[:cfg.n_samples]
-            feature_acts = feature_acts.gather(1, idx)
-            contexts = contexts.gather(1, idx.unsqueeze(-1).expand(-1, -1, contexts.size(-1)))
-            positions = positions.gather(1, idx)
+            result = {
+                k: torch.cat(v, dim=0) for k, v in all_result.items()
+            }
+            result = sort_dict_of_tensor(result, sort_dim=0, sort_key=sort_key, descending=True)
 
     if not cfg.use_ddp or cfg.rank == 0:
+        result = {
+            k: rearrange(v, 'n_samples d_sae ... -> d_sae n_samples ...') for k, v in result.items()
+        }
+
         torch.save(
             {
                 "act_times": act_times,
-                "elt": elt,
-                "feature_acts": feature_acts,
-                "contexts": contexts,
-                "positions": positions,
+                **result,
             },
             cfg.analysis_save_path,
         )

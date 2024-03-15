@@ -4,7 +4,7 @@ import math
 from einops import einsum
 
 from core.config import SAEConfig
-from core.utils import compute_geometric_median
+from core.utils.math import compute_geometric_median
 
 class SparseAutoEncoder(torch.nn.Module):
     def __init__(

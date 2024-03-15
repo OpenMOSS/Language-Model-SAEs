@@ -15,7 +15,7 @@ from core.sae import SparseAutoEncoder
 from core.config import LanguageModelSAETrainingConfig
 from core.optim import get_scheduler
 from core.evals import run_evals
-from core.utils import print_once
+from core.utils.misc import print_once
 
 def train_sae(
     model: HookedTransformer,

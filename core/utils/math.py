@@ -1,17 +1,4 @@
 import torch
-import torch.distributed as dist
-
-def print_once(
-    *values: object,
-    sep: str | None = " ",
-    end: str | None = "\n",
-) -> None:
-    if dist.is_initialized():
-        if dist.get_rank() == 0:
-            print(*values, sep=sep, end=end)
-    else:
-        print(*values, sep=sep, end=end)
-
 
 def compute_geometric_median(x: torch.Tensor, max_iter=1000) -> torch.Tensor:
     """
@@ -38,8 +25,3 @@ def compute_geometric_median(x: torch.Tensor, max_iter=1000) -> torch.Tensor:
         y = (w.unsqueeze(-1) * x).sum(dim=0) / w.sum()
 
     return y
-
-if __name__ == "__main__":
-    # Test geometric median
-    x = torch.tensor([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
-    print(compute_geometric_median(x))  # Output: tensor([0.3333, 0.3333])

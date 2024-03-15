@@ -9,7 +9,7 @@ import wandb
 
 import os 
 
-from core.utils import print_once
+from core.utils.misc import print_once
 
 from transformer_lens.loading_from_pretrained import get_official_model_name
 
@@ -216,7 +216,8 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
     """
 
     total_analyzing_tokens: int = 300_000_000
-    analysis_batch_size: int = 4096
+    enable_sampling: bool = False # If True, we will sample the activations based on weights. Otherwise, top n_samples activations will be used.
+    sample_weight_exponent: float = 2.0
     n_samples: int = 1000
     analysis_save_path: str = "analysis/test.pt"
 

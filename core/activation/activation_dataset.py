@@ -3,14 +3,9 @@ from transformer_lens import HookedTransformer
 import torch
 from tqdm.auto import tqdm
 import os
-import json
-import datasets
-from torch.utils.data import DataLoader
-from einops import rearrange, repeat
-import copy
 import torch.distributed as dist
 
-from core.utils import print_once
+from core.utils.misc import print_once
 from core.config import ActivationGenerationConfig
 from core.activation.token_source import TokenSource
 
