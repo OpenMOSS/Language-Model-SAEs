@@ -45,6 +45,7 @@ class TextDatasetConfig(RunnerConfig):
     cache_dir: Optional[str] = None
     is_dataset_tokenized: bool = False
     is_dataset_on_disk: bool = False
+    concat_tokens: bool = True
     context_size: int = 128
     store_batch_size: int = 64
 
