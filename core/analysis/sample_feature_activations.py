@@ -22,7 +22,7 @@ def sample_feature_activations(
     cfg: LanguageModelSAEAnalysisConfig,
 ):
     total_analyzing_tokens = cfg.total_analyzing_tokens
-    total_analyzing_steps = total_analyzing_tokens // cfg.effective_batch_size
+    total_analyzing_steps = total_analyzing_tokens // cfg.store_batch_size // cfg.context_size
 
     print_once(f"Total Analyzing Tokens: {total_analyzing_tokens}")
     print_once(f"Total Analyzing Steps: {total_analyzing_steps}")

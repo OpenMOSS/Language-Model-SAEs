@@ -223,9 +223,3 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
 
     def __post_init__(self):
         super().__post_init__()
-
-        self.effective_batch_size = self.analysis_batch_size * self.world_size if self.use_ddp else self.analysis_batch_size
-        print_once(f"Effective batch size: {self.effective_batch_size}")
-
-        total_training_steps = self.total_analyzing_tokens // self.effective_batch_size
-        print_once(f"Total steps: {total_training_steps}")
