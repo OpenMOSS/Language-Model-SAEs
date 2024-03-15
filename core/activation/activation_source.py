@@ -50,21 +50,11 @@ class TokenActivationSource(ActivationSource):
         batch_size = tokens.size(0)
         seq_len = tokens.size(1)
 
-        has_bos = (tokens[:, 0] == self.model.tokenizer.bos_token_id).any()
-        assert has_bos == (tokens[:, 0] == self.model.tokenizer.bos_token_id).all(), "All or none of the tokens in the batch should start with the BOS token."
-
-        if not has_bos:
-            ret = {
-                "activation": rearrange(cache[self.cfg.hook_point].to(dtype=self.cfg.dtype, device=self.cfg.device), "b l d -> (b l) d"),
-                "position": repeat(torch.arange(seq_len, device=self.cfg.device, dtype=torch.long), 'l -> (b l)', b=batch_size),
-                "context": repeat(tokens.to(dtype=torch.long), 'b l -> (b repeat) l', repeat=seq_len),
-            }
-        else:
-            ret = {
-                "activation": rearrange(cache[self.cfg.hook_point][:, 1:].to(dtype=self.cfg.dtype, device=self.cfg.device), "b l d -> (b l) d"),
-                "position": repeat(torch.arange(seq_len, device=self.cfg.device, dtype=torch.long)[1:], 'l -> (b l)', b=batch_size),
-                "context": repeat(tokens.to(dtype=torch.long), 'b l -> (b repeat) l', repeat=seq_len - 1),
-            }
+        ret = {
+            "activation": rearrange(cache[self.cfg.hook_point].to(dtype=self.cfg.dtype, device=self.cfg.device), "b l d -> (b l) d"),
+            "position": repeat(torch.arange(seq_len, device=self.cfg.device, dtype=torch.long), 'l -> (b l)', b=batch_size),
+            "context": repeat(tokens.to(dtype=torch.long), 'b l -> (b repeat) l', repeat=seq_len),
+        }
 
         return ret
     
