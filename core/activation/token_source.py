@@ -52,7 +52,8 @@ class TokenSource:
                     tokens = tokens[1:]
             else:
                 tokens = tokens[:, 1:]
-                assert tokens.size(1) >= self.seq_len, "The sequence length of the tokens should be at least the context size."
+                if tokens.size(1) < self.seq_len:
+                    continue
                 tokens = tokens[torch.logical_and(tokens[:, self.seq_len - 1] != self.model.tokenizer.pad_token_id, tokens[:, self.seq_len - 1] != self.model.tokenizer.eos_token_id), :self.seq_len]
                 self.token_buffer = torch.cat([self.token_buffer, tokens], dim=0)
 
