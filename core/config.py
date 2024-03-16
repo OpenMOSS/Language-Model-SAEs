@@ -219,7 +219,9 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
     enable_sampling: bool = False # If True, we will sample the activations based on weights. Otherwise, top n_samples activations will be used.
     sample_weight_exponent: float = 2.0
     n_samples: int = 1000
-    analysis_save_path: str = "analysis/test.pt"
+    bin_width: float = 0.1
+    n_bins: int = 160
+    analysis_save_path: str = "analysis/test"
 
     def __post_init__(self):
         super().__post_init__()

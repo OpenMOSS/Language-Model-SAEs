@@ -6,6 +6,8 @@ import torch.distributed as dist
 
 from einops import repeat, rearrange
 
+from datasets import Dataset
+
 from transformer_lens import HookedTransformer
 
 from core.sae import SparseAutoEncoder
@@ -38,13 +40,15 @@ def sample_feature_activations(
     if not cfg.use_ddp or cfg.rank == 0:
         pbar = tqdm(total=total_analyzing_tokens, desc="Sampling activations", smoothing=0.01)
 
-    result = {
+    sample_result = {
         "weights": torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device),
         "elt": torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device),
         "feature_acts": torch.empty((0, cfg.d_sae, cfg.context_size), dtype=cfg.dtype, device=cfg.device),
         "contexts": torch.empty((0, cfg.d_sae, cfg.context_size), dtype=torch.long, device=cfg.device),
     }
     act_times = torch.zeros((cfg.d_sae,), dtype=torch.long, device=cfg.device)
+    feature_act_bin_threshold = repeat(torch.arange(0, cfg.n_bins * cfg.bin_width, cfg.bin_width, device=cfg.device, dtype=cfg.dtype), 'n_bins -> d_sae n_bins', d_sae=cfg.d_sae)
+    feature_act_bins = torch.zeros((cfg.d_sae, cfg.n_bins), dtype=torch.long, device=cfg.device)
 
     sort_key = "elt" if cfg.enable_sampling else "weights"
 
@@ -67,8 +71,8 @@ def sample_feature_activations(
         weights = aux_data["feature_acts"].clamp(min=0.0).pow(cfg.sample_weight_exponent).max(dim=1).values
         elt = torch.rand(batch.size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).log() / weights
         elt[weights == 0.0] = -torch.inf
-        result = concat_dict_of_tensor(
-            result,
+        sample_result = concat_dict_of_tensor(
+            sample_result,
             {
                 "weights": weights,
                 "elt": elt,
@@ -79,8 +83,14 @@ def sample_feature_activations(
         )
 
         # Sort elt, and extract the top n_samples
-        result = sort_dict_of_tensor(result, sort_dim=0, sort_key=sort_key, descending=True)
-        result = {k: v[:cfg.n_samples] for k, v in result.items()}
+        sample_result = sort_dict_of_tensor(sample_result, sort_dim=0, sort_key=sort_key, descending=True)
+        sample_result = {k: v[:cfg.n_samples] for k, v in sample_result.items()}
+
+        # Update feature activation bins
+        feature_act_cumsum = repeat(aux_data["feature_acts"], 'batch_size context_size d_sae -> batch_size context_size d_sae n_bins', n_bins=cfg.n_bins).gt(feature_act_bin_threshold).sum(dim=[0, 1])
+        feature_act_cumsum_roll = feature_act_cumsum.roll(-1, dims=1)
+        feature_act_cumsum_roll[:, -1] = 0
+        feature_act_bins += feature_act_cumsum - feature_act_cumsum_roll
 
         n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.device, dtype=torch.int)
         if cfg.use_ddp:
@@ -100,30 +110,31 @@ def sample_feature_activations(
 
         if cfg.rank == 0:
             all_result = {
-                k: [torch.empty_like(v) for _ in range(cfg.world_size)] for k, v in result.items()
+                k: [torch.empty_like(v) for _ in range(cfg.world_size)] for k, v in sample_result.items()
             }
 
-        for k in result:
-            dist.gather(result[k], all_result[k], dst=0)
+        for k in sample_result:
+            dist.gather(sample_result[k], all_result[k], dst=0)
 
         dist.reduce(act_times, dst=0)
+        dist.reduce(feature_act_bins, dst=0)
 
         if cfg.rank == 0:
-            result = {
+            sample_result = {
                 k: torch.cat(v, dim=0) for k, v in all_result.items()
             }
-            result = sort_dict_of_tensor(result, sort_dim=0, sort_key=sort_key, descending=True)
+            sample_result = sort_dict_of_tensor(sample_result, sort_dim=0, sort_key=sort_key, descending=True)
 
     if not cfg.use_ddp or cfg.rank == 0:
-        result = {
-            k: rearrange(v, 'n_samples d_sae ... -> d_sae n_samples ...') for k, v in result.items()
+        sample_result = {
+            k: rearrange(v, 'n_samples d_sae ... -> d_sae n_samples ...') for k, v in sample_result.items()
         }
 
-        torch.save(
-            {
-                "act_times": act_times,
-                **result,
-            },
-            cfg.analysis_save_path,
-        )
+        result = {
+            "act_times": act_times,
+            "feature_act_bins": feature_act_bins,
+            "feature_act_bin_threshold": feature_act_bin_threshold,
+            **sample_result,
+        }
 
+        Dataset.from_dict(result).save_to_disk(cfg.analysis_save_path, num_shards=1024)
