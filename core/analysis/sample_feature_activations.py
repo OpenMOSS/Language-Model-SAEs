@@ -47,8 +47,8 @@ def sample_feature_activations(
         "contexts": torch.empty((0, cfg.d_sae, cfg.context_size), dtype=torch.long, device=cfg.device),
     }
     act_times = torch.zeros((cfg.d_sae,), dtype=torch.long, device=cfg.device)
-    feature_act_bin_threshold = repeat(torch.arange(0, cfg.n_bins * cfg.bin_width, cfg.bin_width, device=cfg.device, dtype=cfg.dtype), 'n_bins -> d_sae n_bins', d_sae=cfg.d_sae)
-    feature_act_bins = torch.zeros((cfg.d_sae, cfg.n_bins), dtype=torch.long, device=cfg.device)
+    feature_act_bins = torch.arange(0, (cfg.n_bins + 1) * cfg.bin_width, cfg.bin_width, device=cfg.device, dtype=cfg.dtype)
+    feature_act_hist = torch.zeros((cfg.d_sae, cfg.n_bins), dtype=torch.long, device=cfg.device)
 
     sort_key = "elt" if cfg.enable_sampling else "weights"
 
@@ -86,11 +86,13 @@ def sample_feature_activations(
         sample_result = sort_dict_of_tensor(sample_result, sort_dim=0, sort_key=sort_key, descending=True)
         sample_result = {k: v[:cfg.n_samples] for k, v in sample_result.items()}
 
-        # Update feature activation bins
-        feature_act_cumsum = repeat(aux_data["feature_acts"], 'batch_size context_size d_sae -> batch_size context_size d_sae n_bins', n_bins=cfg.n_bins).gt(feature_act_bin_threshold).sum(dim=[0, 1])
-        feature_act_cumsum_roll = feature_act_cumsum.roll(-1, dims=1)
-        feature_act_cumsum_roll[:, -1] = 0
-        feature_act_bins += feature_act_cumsum - feature_act_cumsum_roll
+        # Update feature activation histogram
+        feature_act_hist += torch.histc(
+            aux_data["feature_acts"].clamp(min=0.0).flatten(),
+            bins=cfg.n_bins,
+            min=0.0,
+            max=(cfg.n_bins + 1) * cfg.bin_width,
+        ).view(cfg.d_sae, cfg.n_bins)
 
         n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.device, dtype=torch.int)
         if cfg.use_ddp:
@@ -117,7 +119,7 @@ def sample_feature_activations(
             dist.gather(sample_result[k], all_result[k], dst=0)
 
         dist.reduce(act_times, dst=0)
-        dist.reduce(feature_act_bins, dst=0)
+        dist.reduce(feature_act_hist, dst=0)
 
         if cfg.rank == 0:
             sample_result = {
@@ -133,7 +135,7 @@ def sample_feature_activations(
         result = {
             "act_times": act_times,
             "feature_act_bins": feature_act_bins,
-            "feature_act_bin_threshold": feature_act_bin_threshold,
+            "feature_act_hist": feature_act_hist,
             **sample_result,
         }
 
