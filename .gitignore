@@ -184,3 +184,5 @@ legacy
 run.py
 checkpoints
 wandb
+exp
+analysis-results
