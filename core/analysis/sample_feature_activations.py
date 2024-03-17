@@ -107,6 +107,7 @@ def sample_feature_activations(
     }
 
     result = {
+        "index": torch.arange(cfg.d_sae, device=cfg.device, dtype=torch.long),
         "act_times": act_times,
         "feature_acts_all": feature_acts_all,
         "max_feature_acts": max_feature_acts,
