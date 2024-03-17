@@ -1,4 +1,5 @@
 import torch
+import uvicorn
 from transformer_lens import HookedTransformer
 
 from fastapi import FastAPI
@@ -22,7 +23,7 @@ def feature_info(feature_index: int):
     n_samples = len(feature_activation["feature_acts"])
     samples = [
         {
-            "context": model.to_str_tokens(feature_activation["context"][i]),
+            "context": model.to_str_tokens(torch.tensor(feature_activation["contexts"][i], device="cuda")),
             "feature_acts": feature_activation["feature_acts"][i],
         }
         for i in range(n_samples)
@@ -33,3 +34,6 @@ def feature_info(feature_index: int):
         "max_feature_act": feature_activation["max_feature_acts"],
         "samples": samples,
     }
+
+if __name__ == "__main__":
+    uvicorn.run("app:app", port=5432, log_level="info")
