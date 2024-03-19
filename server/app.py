@@ -1,6 +1,5 @@
 import os
 
-import uvicorn
 from transformers import GPT2Tokenizer
 
 from datasets import Dataset
@@ -10,6 +9,8 @@ import msgpack
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+
+analysis_dir = os.environ.get("ANALYSIS_DIR", "analysis")
 
 app = FastAPI()
 
@@ -21,7 +22,7 @@ feature_activation_cache = {}
 
 def get_feature_activation(dictionary_name: str):
     if dictionary_name not in feature_activation_cache:
-        feature_activation_cache[dictionary_name] = Dataset.load_from_disk(f"analysis/{dictionary_name}")
+        feature_activation_cache[dictionary_name] = Dataset.load_from_disk(f"{analysis_dir}/{dictionary_name}")
     return feature_activation_cache[dictionary_name]
 
 @app.get("/dictionaries")

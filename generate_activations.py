@@ -12,7 +12,6 @@ if use_ddp:
     torch.cuda.set_device(dist.get_rank())
 
 cfg = ActivationGenerationConfig(
-    # Data Generating Function (Model + Training Distibuion)
     model_name = "gpt2",
     hook_points = ['hook_pos_embed'] + [f'blocks.{i}.hook_attn_out' for i in range(12)] + [f'blocks.{i}.hook_mlp_out' for i in range(12)],
     d_model = 768,
