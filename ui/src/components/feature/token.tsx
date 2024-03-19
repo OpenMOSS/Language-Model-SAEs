@@ -7,6 +7,7 @@ import {
   HoverCardTrigger,
 } from "../ui/hover-card";
 import { Separator } from "../ui/separator";
+import { Fragment } from "react/jsx-runtime";
 
 const getAccentClassname = (
   featureAct: number,
@@ -80,7 +81,7 @@ export const SuperToken = ({
 
   const SuperTokenInner = () => {
     return (
-      <div
+      <span
         className={cn(
           "underline decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]",
           superTokenMaxFeatureAct > 0 &&
@@ -90,7 +91,7 @@ export const SuperToken = ({
         )}
       >
         {displayText}
-      </div>
+      </span>
     );
   };
 
@@ -110,12 +111,10 @@ export const SuperToken = ({
           </div>
         )}
         {tokens.map((token, i) => (
-          <>
-            <div key={i}>
-              <TokenInfo token={token} maxFeatureAct={maxFeatureAct} />
-            </div>
+          <Fragment key={i}>
+            <TokenInfo token={token} maxFeatureAct={maxFeatureAct} />
             {i < tokens.length - 1 && <Separator />}
-          </>
+          </Fragment>
         ))}
       </HoverCardContent>
     </HoverCard>

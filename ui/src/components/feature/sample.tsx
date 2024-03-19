@@ -39,18 +39,18 @@ export const FeatureActivationSample = ({
     [[], []]
   );
   return (
-    <p className="flex flex-wrap whitespace-pre">
+    <div>
       <span className="text-gray-700 font-bold">
         Sample {sampleIndex + 1}:{" "}
       </span>
       {tokenGroups.map((tokens, i) => (
         <SuperToken
-          key={i}
+          key={`sample-${sampleIndex}-group-${i}`}
           tokens={tokens}
           maxFeatureAct={maxFeatureAct}
           sampleMaxFeatureAct={sampleMaxFeatureAct}
         />
       ))}
-    </p>
+    </div>
   );
 };

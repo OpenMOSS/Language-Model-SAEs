@@ -1,3 +1,5 @@
+import os
+
 import uvicorn
 from transformers import GPT2Tokenizer
 
@@ -17,14 +19,19 @@ tokenizer: GPT2Tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 
 feature_activation_cache = {}
 
-def get_feature_activation(analysis_name: str):
-    if analysis_name not in feature_activation_cache:
-        feature_activation_cache[analysis_name] = Dataset.load_from_disk(f"analysis/{analysis_name}")
-    return feature_activation_cache[analysis_name]
+def get_feature_activation(dictionary_name: str):
+    if dictionary_name not in feature_activation_cache:
+        feature_activation_cache[dictionary_name] = Dataset.load_from_disk(f"analysis/{dictionary_name}")
+    return feature_activation_cache[dictionary_name]
 
-@app.get("/features/{feature_index}")
-def feature_info(feature_index: int):
-    feature_activation = get_feature_activation("test")[feature_index]
+@app.get("/dictionaries")
+def list_dictionaries():
+    dictionaries = os.listdir("analysis")
+    return [d for d in dictionaries if os.path.isdir(f"analysis/{d}")]
+
+@app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
+def feature_info(dictionary_name: str, feature_index: int):
+    feature_activation = get_feature_activation(dictionary_name)[feature_index]
     n_samples = len(feature_activation["feature_acts"])
     samples = [
         {
