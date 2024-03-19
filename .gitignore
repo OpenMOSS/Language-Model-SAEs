@@ -175,6 +175,9 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 
+# UI
+!ui/**/*
+
 # Custom
 sync.sh
 connect.sh
@@ -186,3 +189,4 @@ checkpoints
 wandb
 exp
 analysis-results
+analysis
