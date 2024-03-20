@@ -1,4 +1,5 @@
 from typing import Any, cast
+import os
 
 import wandb
 
@@ -26,7 +27,10 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     activation_store = ActivationStore.from_config(model=model, cfg=cfg)
         
     if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
-        wandb.init(project=cfg.wandb_project, config=cast(Any, cfg), name=cfg.run_name, entity=cfg.wandb_entity)
+        wandb_run = wandb.init(project=cfg.wandb_project, config=cast(Any, cfg), name=cfg.run_name, entity=cfg.wandb_entity)
+        with open(os.path.join(cfg.exp_result_dir, cfg.exp_name, "train_wandb_id.txt"), "w") as f:
+            f.write(wandb_run.id)
+        wandb.watch(sae, log="all")
 
     # train SAE
     sae = train_sae(
@@ -51,7 +55,9 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAEConfig):
     activation_store = ActivationStore.from_config(model=model, cfg=cfg)
         
     if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
-        wandb.init(project=cfg.wandb_project, config=cast(Any, cfg), name=cfg.run_name, entity=cfg.wandb_entity)
+        wandb_run = wandb.init(project=cfg.wandb_project, config=cast(Any, cfg), name=cfg.run_name, entity=cfg.wandb_entity)
+        with open(os.path.join(cfg.exp_result_dir, cfg.exp_name, "eval_wandb_id.txt"), "w") as f:
+            f.write(wandb_run.id)
 
     result = run_evals(
         model,
