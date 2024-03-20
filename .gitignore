@@ -179,14 +179,15 @@ pyrightconfig.json
 !ui/**/*
 
 # Custom
-sync.sh
-connect.sh
-activations
-data
-legacy
-run.py
-checkpoints
-wandb
-exp
-analysis-results
-analysis
+/sync.sh
+/connect.sh
+/activations
+/data
+/legacy
+/run.py
+/checkpoints
+/wandb
+/exp
+/analysis-results
+/analysis
+/results
