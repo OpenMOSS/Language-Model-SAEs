@@ -1,4 +1,4 @@
-from typing import Any, cast
+import os
 
 import torch
 from torch.optim import Adam
@@ -224,7 +224,9 @@ def train_sae(
                 not cfg.use_ddp or cfg.rank == 0
             ):
                 # Save the model and optimizer state
-                path = f"{cfg.checkpoint_path}/{n_training_tokens}.pt"
+                path = os.path.join(
+                    cfg.exp_result_dir, cfg.exp_name, "checkpoints", f"{n_training_steps}.pt"
+                )
                 sae_module.set_decoder_norm_to_unit_norm()
                 torch.save(
                     {
@@ -253,7 +255,9 @@ def train_sae(
 
     # Save the final model
     if not cfg.use_ddp or cfg.rank == 0:
-        path = f"{cfg.checkpoint_path}/final.pt"
+        path = os.path.join(
+            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.pt"
+        )
         sae_module.set_decoder_norm_to_unit_norm()
         torch.save(
             {
