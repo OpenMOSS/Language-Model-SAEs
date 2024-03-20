@@ -44,8 +44,7 @@ The project is organized as follows:
 - **server:** A simple FastAPI server for serving the dictionaries to the frontend.
 - **tests:** Unit tests for the core codebase.
 - **notebooks:** Jupyter notebooks for analyzing the learned dictionaries.
-- **checkpoints:** By default, checkpoints of the trained dictionaries will be saved in this directory.
-- **analysis:** By default, the analysis results will be saved in this directory as HuggingFace datasets.
+- **results:** By default, results of training and analysis will be saved in this directory.
 
 ## Training a Dictionary
 
@@ -80,7 +79,7 @@ Modify the configuration file to fit your needs (especially the checkpoint path)
 python exp/my_analyze_exp.py
 ```
 
-The analysis results will be saved in the `analysis` directory by default. `notebooks/observe_feature_activation.ipynb` demonstrates how to use the analysis results to observe the feature activation of the learned dictionary. 
+The analysis results will be saved in the `results/<exp_name>/analysis/<analysis_name>` directory. `notebooks/observe_feature_activation.ipynb` demonstrates how to use the analysis results to observe the feature activation of the learned dictionary. 
 
 Furthermore, you can use the provided visualization tools to visualize the learned dictionary. First, start the FastAPI server by running the following command:
 

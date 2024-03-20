@@ -48,7 +48,7 @@ cfg = LanguageModelSAETrainingConfig(
     use_ghost_grads = True,                         # Whether to use the ghost gradients for saving dead features.
 
     # LanguageModelSAETrainingConfig
-    total_training_tokens = 1_000_000_000,          # The total number of tokens to train the dictionary.
+    total_training_tokens = 2_000_000,          # The total number of tokens to train the dictionary.
     lr = 5e-4,                                      # The learning rate for the dictionary training.
     betas = (0, 0.9999),                            # The betas for the Adam optimizer.
     lr_scheduler_name = "constantwithwarmup",       # The learning rate scheduler name. Can be "constant", "constantwithwarmup", "linearwarmupdecay", "cosineannealing", "cosineannealingwarmup" or "exponentialwarmup".
@@ -61,12 +61,10 @@ cfg = LanguageModelSAETrainingConfig(
     eval_frequency = 1000,                          # The step frequency for evaluating the dictionary.
     log_frequency = 100,                            # The step frequency for logging the training information (to wandb).
     n_checkpoints = 10,                             # The number of checkpoints to save during the training.
-    checkpoint_path = "checkpoints",                # The path to save the checkpoints.
 
     # WandbConfig
     log_to_wandb = True,                            # Whether to log the training information to wandb.
     wandb_project= "gpt2-sae",                      # The wandb project name.
-    run_name = "L9M-l1-1.2e-4-lr-5e-4-32x",         # The name of the wandb run.
     wandb_entity = "fnlp-mechinterp",               # The wandb entity name.
     
     # RunnerConfig
@@ -74,6 +72,8 @@ cfg = LanguageModelSAETrainingConfig(
     device = "cuda",                                # The device to place all torch tensors.
     seed = 42,                                      # The random seed.
     dtype = torch.float32,                          # The torch data type of non-integer tensors.
+
+    exp_name = "test"                               # The experiment name. Would be used for creating exp folder (which may contain checkpoints and analysis results) and setting wandb run name. 
 )
 
 sparse_autoencoder = language_model_sae_runner(cfg)

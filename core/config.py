@@ -1,4 +1,4 @@
-from abc import ABC
+import json
 from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple, cast
 
@@ -15,11 +15,13 @@ from transformer_lens.loading_from_pretrained import get_official_model_name
 
 @dataclass
 class RunnerConfig:
-    # Misc
     use_ddp: bool = False
     device: str = "cpu"
     seed: int = 42
     dtype: torch.dtype = torch.float32
+
+    exp_name: str = "test"
+    exp_result_dir: str = "results"
 
     def __post_init__(self):
         # Set rank, world_size, and device if using DDP
@@ -27,6 +29,14 @@ class RunnerConfig:
             self.rank = dist.get_rank()
             self.world_size = dist.get_world_size()
             self.device = f"cuda:{self.rank}"
+
+        if not self.use_ddp or self.rank == 0:
+            os.makedirs(self.exp_result_dir, exist_ok=True)
+            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name), exist_ok=True)
+            
+        print_once(
+            f"Exp name: {self.exp_name}"
+        )
 
 @dataclass
 class LanguageModelConfig(RunnerConfig):
@@ -73,6 +83,11 @@ class WandbConfig(RunnerConfig):
     run_name: Optional[str] = None
     wandb_entity: Optional[str] = None
 
+    def __post_init__(self):
+        super().__post_init__()
+        if self.run_name is None:
+            self.run_name = self.exp_name
+
 @dataclass
 class SAEConfig(RunnerConfig):
     """
@@ -102,6 +117,29 @@ class SAEConfig(RunnerConfig):
 
         print_once(f"Sparse Autoencoder dimension: {self.d_sae}")
 
+        if not self.use_ddp or self.rank == 0:
+            if not self.from_pretrained_path:
+                if os.path.exists(os.path.join(self.exp_result_dir, self.exp_name, "hyperparams.json")):
+                    raise ValueError(f"Experiment {self.exp_name} already exists. Consider changing the experiment name.")
+                # Save hyperparameters (only configs from SAEConfig, excluding derived classes)
+                with open(os.path.join(self.exp_result_dir, self.exp_name, "hyperparams.json"), "w") as f:
+                    json.dump(
+                        {
+                            k: v
+                            for k, v in self.__dict__.items()
+                            if k in SAEConfig.__dataclass_fields__.keys() and k not in RunnerConfig.__dataclass_fields__.keys()
+                        },
+                        f,
+                        indent=4,
+                    )
+
+    @staticmethod
+    def get_hyperparameters(exp_name: str, exp_result_dir: str, ckpt_name: str) -> dict[str, Any]:
+        with open(os.path.join(exp_result_dir, exp_name, "hyperparams.json"), "r") as f:
+            hyperparams = json.load(f)
+        hyperparams["from_pretrained_path"] = os.path.join(exp_result_dir, exp_name, "checkpoints", ckpt_name)
+        return hyperparams
+                    
 @dataclass
 class LanguageModelSAEConfig(SAEConfig, WandbConfig, ActivationStoreConfig):
     pass
@@ -137,17 +175,13 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
     log_frequency: int = 10
 
     n_checkpoints: int = 10
-    checkpoint_path: str = "checkpoints"
-
     def __post_init__(self):
         super().__post_init__()
 
-        if self.run_name is None:
-            self.run_name = f"{self.d_sae}-L1-{self.l1_coefficient}-LR-{self.lr}-Tokens-{self.total_training_tokens:3.3e}"
-
-        print_once(
-            f"Run name: {self.run_name}"
-        )
+        if not self.use_ddp or self.rank == 0:
+            if os.path.exists(os.path.join(self.exp_result_dir, self.exp_name, "checkpoints")):
+                raise ValueError(f"Ckeckpoints for experiment {self.exp_name} already exist. Consider changing the experiment name.")
+            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "checkpoints"))
 
         if self.decoder_bias_init_method not in ["geometric_median", "mean", "zeros"]:
             raise ValueError(
@@ -158,41 +192,14 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
                 "Warning: We are initializing b_dec to zeros. This is probably not what you want."
             )
 
-        unique_id = cast(
-            Any, wandb
-        ).util.generate_id()  # not sure why this type is erroring
-
-        os.makedirs(self.checkpoint_path, exist_ok=True)
-        self.checkpoint_path = f"{self.checkpoint_path}/{unique_id}"
-        if not self.use_ddp or self.rank == 0:
-            os.makedirs(self.checkpoint_path)
-
         self.effective_batch_size = self.train_batch_size * self.world_size if self.use_ddp else self.train_batch_size
         print_once(f"Effective batch size: {self.effective_batch_size}")
 
         total_training_steps = self.total_training_tokens // self.effective_batch_size
         print_once(f"Total training steps: {total_training_steps}")
 
-        # how many times will we sample dead neurons?
-        # assert self.dead_feature_window <= self.feature_sampling_window, "dead_feature_window must be smaller than feature_sampling_window"
-        n_feature_window_samples = total_training_steps // self.feature_sampling_window
-        print_once(
-            f"n_tokens_per_feature_sampling_window (millions): {(self.feature_sampling_window * self.context_size * self.effective_batch_size) / 10 **6}"
-        )
-        print_once(
-            f"n_tokens_per_dead_feature_window (millions): {(self.dead_feature_window * self.context_size * self.effective_batch_size) / 10 **6}"
-        )
-
         if self.use_ghost_grads:
             print_once("Using Ghost Grads.")
-
-        print_once(
-            f"We will reset the sparsity calculation {n_feature_window_samples} times."
-        )
-        print_once(
-            f"Number tokens in sparsity calculation window: {self.feature_sampling_window * self.effective_batch_size:.2e}"
-        )
-
 @dataclass
 class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
     hook_points: list[str] = field(default_factory=list)
@@ -221,7 +228,13 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
     n_samples: int = 1000
     bin_width: float = 0.1
     n_bins: int = 160
-    analysis_save_path: str = "analysis/test"
+    analysis_name: str = "top_activations"
 
     def __post_init__(self):
         super().__post_init__()
+        
+        if not self.use_ddp or self.rank == 0:
+            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "analysis"), exist_ok=True)
+            if os.path.exists(os.path.join(self.exp_result_dir, self.exp_name, "analysis", self.analysis_name)):
+                raise ValueError(f"Analysis {self.analysis_name} for experiment {self.exp_name} already exists. Consider changing the experiment name or the analysis name.")
+            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "analysis", self.analysis_name))

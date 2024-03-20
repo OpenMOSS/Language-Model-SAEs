@@ -1,8 +1,8 @@
+import os
+
 from tqdm import tqdm
 
 import torch
-from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed as dist
 
 from einops import repeat, rearrange
 
@@ -114,4 +114,6 @@ def sample_feature_activations(
         **sample_result,
     }
 
-    Dataset.from_dict(result).save_to_disk(cfg.analysis_save_path, num_shards=1024)
+    path = os.path.join(cfg.exp_result_dir, cfg.exp_name, "analysis", cfg.analysis_name)
+
+    Dataset.from_dict(result).save_to_disk(path, num_shards=1024)
