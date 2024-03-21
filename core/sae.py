@@ -53,7 +53,9 @@ class SparseAutoEncoder(torch.nn.Module):
         if self.cfg.use_decoder_bias:
             base_parameters.append(self.decoder_bias)
         for p in self.parameters():
-           p.requires_grad_(p in base_parameters)
+            p.requires_grad_(False)
+        for p in base_parameters:
+            p.requires_grad_(True)
 
     def train_finetune_for_suppresion_parameters(self):
         finetune_for_suppression_parameters = [
@@ -63,7 +65,9 @@ class SparseAutoEncoder(torch.nn.Module):
         if self.cfg.use_decoder_bias:
             finetune_for_suppression_parameters.append(self.decoder_bias)
         for p in self.parameters():
-            p.requires_grad_(p in finetune_for_suppression_parameters)
+            p.requires_grad_(False)
+        for p in finetune_for_suppression_parameters:
+            p.requires_grad_(True)
         
 
     def compute_norm_factor(self, x: torch.Tensor) -> torch.Tensor:
