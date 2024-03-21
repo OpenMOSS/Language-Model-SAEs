@@ -94,6 +94,7 @@ class SAEConfig(RunnerConfig):
     Configuration for training or running a sparse autoencoder.
     """
     from_pretrained_path: Optional[str] = None
+    strict_loading: bool = True
 
     use_decoder_bias: bool = True
     decoder_bias_init_method: str = "geometric_median"
@@ -134,10 +135,11 @@ class SAEConfig(RunnerConfig):
                     )
 
     @staticmethod
-    def get_hyperparameters(exp_name: str, exp_result_dir: str, ckpt_name: str) -> dict[str, Any]:
+    def get_hyperparameters(exp_name: str, exp_result_dir: str, ckpt_name: str, strict_loading: bool = True) -> dict[str, Any]:
         with open(os.path.join(exp_result_dir, exp_name, "hyperparams.json"), "r") as f:
             hyperparams = json.load(f)
         hyperparams["from_pretrained_path"] = os.path.join(exp_result_dir, exp_name, "checkpoints", ckpt_name)
+        hyperparams["strict_loading"] = strict_loading
         return hyperparams
                     
 @dataclass
