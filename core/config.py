@@ -200,6 +200,21 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
 
         if self.use_ghost_grads:
             print_once("Using Ghost Grads.")
+
+@dataclass
+class LanguageModelSAEPruningConfig(LanguageModelSAEConfig):
+    """
+    Configuration for pruning a sparse autoencoder on a language model.
+    """
+
+    total_training_tokens: int = 10_000_000
+    train_batch_size: int = 4096
+
+    dead_feature_threshold: float = 1e-6
+    dead_feature_max_act_threshold: float = 1.0
+    decoder_norm_threshold: float = 0.99
+
+
 @dataclass
 class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
     hook_points: list[str] = field(default_factory=list)
