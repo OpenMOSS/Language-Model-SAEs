@@ -26,6 +26,9 @@ class SparseAutoEncoder(torch.nn.Module):
             self.encoder_bias_glu = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
             torch.nn.init.zeros_(self.encoder_bias_glu)
 
+        self.feature_act_mask = torch.nn.Parameter(torch.ones((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
+        self.feature_act_scale = torch.nn.Parameter(torch.ones((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
+
         self.decoder = torch.nn.Parameter(torch.empty((cfg.d_sae, cfg.d_model), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.kaiming_uniform_(self.decoder)
         self.set_decoder_norm_to_unit_norm()
@@ -36,6 +39,32 @@ class SparseAutoEncoder(torch.nn.Module):
 
         self.encoder_bias = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.zeros_(self.encoder_bias)
+
+        self.train_base_parameters()
+
+    def train_base_parameters(self):
+        base_parameters = [
+            self.encoder,
+            self.decoder,
+            self.encoder_bias,
+        ]
+        if self.cfg.use_glu_encoder:
+            base_parameters.extend([self.encoder_glu, self.encoder_bias_glu])
+        if self.cfg.use_decoder_bias:
+            base_parameters.append(self.decoder_bias)
+        for p in self.parameters():
+           p.requires_grad_(p in base_parameters)
+
+    def train_finetune_for_suppresion_parameters(self):
+        finetune_for_suppression_parameters = [
+            self.feature_act_scale,
+            self.decoder,
+        ]
+        if self.cfg.use_decoder_bias:
+            finetune_for_suppression_parameters.append(self.decoder_bias)
+        for p in self.parameters():
+            p.requires_grad_(p in finetune_for_suppression_parameters)
+        
 
     def compute_norm_factor(self, x: torch.Tensor) -> torch.Tensor:
         # Normalize the activation vectors to have L2 norm equal to sqrt(d_model)
