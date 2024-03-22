@@ -320,7 +320,7 @@ def prune_sae(
         dist.reduce(max_acts, dst=0, op=dist.ReduceOp.MAX)
 
     if not cfg.use_ddp or cfg.rank == 0:
-        sae_module.feature_act_mask = ((
+        sae_module.feature_act_mask.data = ((
             act_times > cfg.dead_feature_threshold * cfg.total_training_tokens
         ) & (max_acts > cfg.dead_feature_max_act_threshold) & (sae_module.decoder.norm(p=2, dim=1) >= cfg.decoder_norm_threshold)).float()
         sae_module.feature_act_mask.requires_grad_(False)
