@@ -37,7 +37,6 @@ cfg = LanguageModelSAEAnalysisConfig(
     # LanguageModelSAEAnalysisConfig
     total_analyzing_tokens = 10_000_000,
     n_samples = 150,
-    n_bins = 640,
     analysis_name = "test",
 
     # RunnerConfig
