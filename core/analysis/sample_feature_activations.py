@@ -40,7 +40,6 @@ def sample_feature_activations(
     pbar = tqdm(total=total_analyzing_tokens, desc="Sampling activations", smoothing=0.01)
 
     sample_result = {
-        "weights": torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device),
         "elt": torch.empty((0, cfg.d_sae), dtype=cfg.dtype, device=cfg.device),
         "feature_acts": torch.empty((0, cfg.d_sae, cfg.context_size), dtype=cfg.dtype, device=cfg.device),
         "contexts": torch.empty((0, cfg.d_sae, cfg.context_size), dtype=torch.long, device=cfg.device),
@@ -70,9 +69,9 @@ def sample_feature_activations(
             elt = torch.rand(batch.size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).log() / weights
             elt[weights == 0.0] = -torch.inf
         else:
-            elt = aux_data["feature_acts"]
+            elt = aux_data["feature_acts"].clamp(min=0.0).max(dim=1).values
         if cfg.subsample is not None:
-            elt[aux_data["feature_acts"] >= max_feature_acts.unsqueeze(0) * cfg.subsample] = -torch.inf
+            elt[aux_data["feature_acts"].max(dim=1).values >= max_feature_acts.unsqueeze(0) * cfg.subsample] = -torch.inf
             
         sample_result = concat_dict_of_tensor(
             sample_result,
