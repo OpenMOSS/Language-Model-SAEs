@@ -106,7 +106,7 @@ class SparseAutoEncoder(torch.nn.Module):
             hidden_pre = hidden_pre * hidden_pre_glu
 
         # feature_acts: (batch_size, d_sae)
-        feature_acts = torch.clamp(hidden_pre, min=0.0)
+        feature_acts = self.feature_act_mask * self.feature_act_scale * torch.clamp(hidden_pre, min=0.0)
 
         # x_hat: (batch_size, d_model)
         x_hat = einsum(
