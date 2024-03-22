@@ -10,7 +10,7 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-analysis_dir = os.environ.get("ANALYSIS_DIR", "analysis")
+result_dir = os.environ.get("RESULT_DIR", "results")
 
 app = FastAPI()
 
@@ -22,13 +22,13 @@ feature_activation_cache = {}
 
 def get_feature_activation(dictionary_name: str):
     if dictionary_name not in feature_activation_cache:
-        feature_activation_cache[dictionary_name] = Dataset.load_from_disk(f"{analysis_dir}/{dictionary_name}")
+        feature_activation_cache[dictionary_name] = Dataset.load_from_disk(os.path.join(result_dir, dictionary_name, "analysis", "top_activations"))
     return feature_activation_cache[dictionary_name]
 
 @app.get("/dictionaries")
 def list_dictionaries():
-    dictionaries = os.listdir("analysis")
-    return [d for d in dictionaries if os.path.isdir(f"analysis/{d}")]
+    dictionaries = os.listdir(result_dir)
+    return [d for d in dictionaries if os.path.isdir(os.path.join(result_dir, d)) and os.path.exists(os.path.join(result_dir, d, "analysis"))]
 
 @app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
 def feature_info(dictionary_name: str, feature_index: int):
