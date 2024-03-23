@@ -1,5 +1,7 @@
 import os
 
+import torch
+
 from transformers import GPT2Tokenizer
 
 from datasets import Dataset
@@ -11,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 result_dir = os.environ.get("RESULT_DIR", "results")
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 app = FastAPI()
 
@@ -31,8 +34,25 @@ def list_dictionaries():
     return [d for d in dictionaries if os.path.isdir(os.path.join(result_dir, d)) and os.path.exists(os.path.join(result_dir, d, "analysis"))]
 
 @app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
-def feature_info(dictionary_name: str, feature_index: int):
-    feature_activation = get_feature_activation(dictionary_name)[feature_index]
+def feature_info(dictionary_name: str, feature_index: str):
+    feature_activations = get_feature_activation(dictionary_name)
+    if isinstance(feature_index, str):
+        if feature_index == "random":
+            print("Random feature")
+            nonzero_feature_indices = torch.tensor(feature_activations["max_feature_acts"]).nonzero(as_tuple=True)[0]
+            print(nonzero_feature_indices)
+            feature_index = nonzero_feature_indices[torch.randint(len(nonzero_feature_indices), (1,))].item()
+            print(feature_index)
+        else:
+            try:
+                feature_index = int(feature_index)
+            except ValueError:
+                return Response(content=f"Feature index {feature_index} is not a valid integer", status_code=400)
+        
+    if feature_index < 0 or feature_index >= len(feature_activations):
+        return Response(content=f"Feature index {feature_index} is out of range", status_code=400)
+    
+    feature_activation = feature_activations[feature_index]
     n_samples = len(feature_activation["feature_acts"])
     samples = [
         {
