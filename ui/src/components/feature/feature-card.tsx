@@ -8,6 +8,15 @@ import { Textarea } from "../ui/textarea";
 import { useAsyncFn } from "react-use";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationPrevious,
+  PaginationLink,
+  PaginationEllipsis,
+  PaginationNext,
+} from "../ui/pagination";
 
 export const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
   const [customInput, setCustomInput] = useState<string>("");
@@ -54,14 +63,7 @@ export const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
       <Textarea
         placeholder="Type your custom input here."
         value={customInput}
-        onChange={(e) =>
-          setCustomInput(
-            e.target.value
-              .replace("⏎", "\n")
-              .replace("⇥", "\t")
-              .replace("↵", "\r")
-          )
-        }
+        onChange={(e) => setCustomInput(e.target.value)}
       />
       <Button onClick={submit} disabled={state.loading}>
         Submit
@@ -80,6 +82,88 @@ export const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
           </p>
         </>
       )}
+    </div>
+  );
+};
+
+export const FeatureSampleGroup = ({
+  feature,
+  sampleGroup,
+}: {
+  feature: Feature;
+  sampleGroup: Feature["sampleGroups"][0];
+}) => {
+  const [page, setPage] = useState<number>(1);
+  const maxPage = Math.ceil(sampleGroup.samples.length / 5);
+
+  return (
+    <div className="flex flex-col gap-4 mt-4">
+      <p className="font-bold">
+        Max Activation:{" "}
+        {Math.max(...sampleGroup.samples[0].featureActs).toFixed(3)}
+      </p>
+      {sampleGroup.samples.slice((page - 1) * 5, page * 5).map((sample, i) => (
+        <FeatureActivationSample
+          key={i}
+          sample={sample}
+          sampleName={`Sample ${(page - 1) * 5 + i + 1}`}
+          maxFeatureAct={feature.maxFeatureAct}
+        />
+      ))}
+      <Pagination>
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            />
+          </PaginationItem>
+          {page > 3 && (
+            <PaginationItem>
+              <PaginationLink isActive={page === 1} onClick={() => setPage(1)}>
+                1
+              </PaginationLink>
+            </PaginationItem>
+          )}
+          {page > 4 && (
+            <PaginationItem>
+              <PaginationEllipsis />
+            </PaginationItem>
+          )}
+          {Array.from({ length: maxPage })
+            .map((_, i) => i + 1)
+            .filter((i) => i >= page - 2 && i <= page + 2)
+            .map((i) => (
+              <PaginationItem key={i}>
+                <PaginationLink
+                  isActive={page === i}
+                  onClick={() => setPage(i)}
+                >
+                  {i}
+                </PaginationLink>
+              </PaginationItem>
+            ))}
+          {page < maxPage - 3 && (
+            <PaginationItem>
+              <PaginationEllipsis />
+            </PaginationItem>
+          )}
+          {page < maxPage - 2 && (
+            <PaginationItem>
+              <PaginationLink
+                isActive={page === maxPage}
+                onClick={() => setPage(maxPage)}
+              >
+                {maxPage}
+              </PaginationLink>
+            </PaginationItem>
+          )}
+          <PaginationItem>
+            <PaginationNext
+              onClick={() => setPage((prev) => Math.min(maxPage, prev + 1))}
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
     </div>
   );
 };
@@ -134,22 +218,10 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                   value={sampleGroup.analysisName}
                   className="mt-0"
                 >
-                  <div className="flex flex-col gap-4 mt-4">
-                    <p className="font-bold">
-                      Max Activation:{" "}
-                      {Math.max(...sampleGroup.samples[0].featureActs).toFixed(
-                        3
-                      )}
-                    </p>
-                    {sampleGroup.samples.slice(0, 5).map((sample, i) => (
-                      <FeatureActivationSample
-                        key={i}
-                        sample={sample}
-                        sampleName={`Sample ${i + 1}`}
-                        maxFeatureAct={feature.maxFeatureAct}
-                      />
-                    ))}
-                  </div>
+                  <FeatureSampleGroup
+                    feature={feature}
+                    sampleGroup={sampleGroup}
+                  />
                 </TabsContent>
               ))}
             </Tabs>
