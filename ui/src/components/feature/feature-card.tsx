@@ -8,6 +8,7 @@ import { Textarea } from "../ui/textarea";
 import { useAsyncFn } from "react-use";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
+import Plot from "react-plotly.js";
 import {
   Pagination,
   PaginationContent,
@@ -200,6 +201,19 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
       <CardContent>
         <div className="flex flex-col gap-4">
           {showCustomInput && <FeatureCustomInputArea feature={feature} />}
+          <div className="flex flex-col w-full gap-4">
+            <p className="font-bold">Activation Histogram</p>
+            <Plot
+              data={feature.featureActivationHistogram}
+              layout={{
+                xaxis: { title: "Activation" },
+                yaxis: { title: "Count" },
+                margin: { t: 0, b: 40 },
+                showlegend: false,
+              }}
+            />
+          </div>
+
           <div className="flex flex-col w-full gap-4">
             <Tabs defaultValue="top_activations">
               <TabsList className="font-bold">
