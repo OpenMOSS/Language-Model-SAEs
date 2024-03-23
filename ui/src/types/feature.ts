@@ -10,6 +10,7 @@ export type Sample = z.infer<typeof SampleSchema>;
 export const FeatureSchema = z.object({
   featureIndex: z.number(),
   dictionaryName: z.string(),
+  featureActivationHistogram: z.any(),
   actTimes: z.number(),
   maxFeatureAct: z.number(),
   sampleGroups: z.array(

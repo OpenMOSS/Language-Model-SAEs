@@ -3,6 +3,7 @@ from typing import Dict
 
 from functools import cmp_to_key
 
+import numpy as np
 import torch
 
 from transformers import GPT2Tokenizer, AutoModelForCausalLM
@@ -19,6 +20,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from core.config import SAEConfig
 from core.sae import SparseAutoEncoder
+import plotly.express as px
 
 result_dir = os.environ.get("RESULT_DIR", "results")
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -65,6 +67,17 @@ def get_sae(dictionary_name: str) -> SparseAutoEncoder:
         sae_cache[dictionary_name] = sae
     return sae_cache[dictionary_name]
 
+def make_serializable(obj):
+    if isinstance(obj, torch.Tensor):
+        return obj.cpu().numpy().tolist()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, dict):
+        return {k: make_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [make_serializable(v) for v in obj]
+    return obj
+
 @app.get("/dictionaries")
 def list_dictionaries():
     dictionaries = os.listdir(result_dir)
@@ -110,10 +123,16 @@ def feature_info(dictionary_name: str, feature_index: str):
     
     # Sort results so that top activations are first
     sample_groups.sort(key=cmp_to_key(lambda a, b: -1 if a["analysis_name"] == "top_activations" else 1 if b["analysis_name"] == "top_activations" else 0))
+
+    fig = px.histogram(feature_activation["feature_acts_all"], width=600, nbins=50)
+    # fig.update_xaxes(title_text="Feature Activation Level")
+    # fig.update_yaxes(title_text="Count")
+    # fig.update_layout(showlegend=False)
     
     return Response(content=msgpack.packb({
         "feature_index": feature_index,
         "dictionary_name": dictionary_name,
+        "feature_activation_histogram": make_serializable(fig.to_dict()['data']),
         "act_times": feature_activations["top_activations"]["act_times"][feature_index],
         "max_feature_act": feature_activations["top_activations"]["max_feature_acts"][feature_index],
         "sample_groups": sample_groups,
