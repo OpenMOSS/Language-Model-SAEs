@@ -27,27 +27,33 @@ export const FeaturesPage = () => {
     null
   );
 
-  const [featureIndex, setFeatureIndex] = useState<number>(
-    Math.floor(Math.random() * 24576)
-  );
+  const [featureIndex, setFeatureIndex] = useState<number>(0);
+  const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
 
   const [featureState, fetchFeature] = useAsyncFn(
-    async (dictionary: string | null, featureIndex: number) => {
+    async (dictionary: string | null, featureIndex: number | string = "random") => {
       if (!dictionary) {
         alert("Please select a dictionary first");
         return;
       }
-      return await fetch(
+      setLoadingRandomFeature(featureIndex === "random");
+      const feature = await fetch(
         `${
           import.meta.env.VITE_BACKEND_URL
         }/dictionaries/${dictionary}/features/${featureIndex}`,
         {
           method: "GET",
           headers: {
-            "Content-Type": "application/x-msgpack",
+            "Accept": "application/x-msgpack",
           },
         }
       )
+        .then(async (res) => {
+          if (!res.ok) {
+            throw new Error(await res.text());
+          }
+          return res;
+        })
         .then(async (res) => await res.arrayBuffer())
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .then((res) => decode(new Uint8Array(res)) as any)
@@ -55,6 +61,8 @@ export const FeaturesPage = () => {
           camelcaseKeys(res, { deep: true, stopPaths: ["samples.context"] })
         )
         .then((res) => FeatureSchema.parse(res));
+      setFeatureIndex(feature.featureIndex);
+      return feature;
     }
   );
 
@@ -65,7 +73,7 @@ export const FeaturesPage = () => {
   useEffect(() => {
     if (dictionariesState.value && selectedDictionary === null) {
       setSelectedDictionary(dictionariesState.value[0]);
-      fetchFeature(dictionariesState.value[0], featureIndex);
+      fetchFeature(dictionariesState.value[0]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dictionariesState.value]);
@@ -73,7 +81,7 @@ export const FeaturesPage = () => {
   return (
     <div className="p-20 flex flex-col items-center gap-12">
       <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
-        <span className="font-bold justify-self-end">Select dictionary: </span>
+        <span className="font-bold justify-self-end">Select dictionary:</span>
         <Select
           value={selectedDictionary || undefined}
           onValueChange={setSelectedDictionary}
@@ -91,16 +99,14 @@ export const FeaturesPage = () => {
         </Select>
         <Button
           onClick={async () => {
-            const featureIndex = Math.floor(Math.random() * 24576);
-            setFeatureIndex(featureIndex);
-            await fetchFeature(selectedDictionary, featureIndex);
+            await fetchFeature(selectedDictionary);
           }}
         >
           Go
         </Button>
         <span className="font-bold"></span>
         <span className="font-bold justify-self-end">
-          Choose a specific feature:{" "}
+          Choose a specific feature:
         </span>
         <Input
           id="feature-input"
@@ -118,17 +124,20 @@ export const FeaturesPage = () => {
         </Button>
         <Button
           onClick={async () => {
-            const featureIndex = Math.floor(Math.random() * 24576);
-            setFeatureIndex(featureIndex);
-            await fetchFeature(selectedDictionary, featureIndex);
+            await fetchFeature(selectedDictionary);
           }}
         >
           Show Random Feature
         </Button>
       </div>
-      {featureState.loading && (
+      {featureState.loading && !loadingRandomFeature && (
         <div>
           Loading Feature <span className="font-bold">#{featureIndex}</span>...
+        </div>
+      )}
+      {featureState.loading && loadingRandomFeature && (
+        <div>
+          Loading Random Living Feature...
         </div>
       )}
       {featureState.error && <div>Error: {featureState.error.message}</div>}
