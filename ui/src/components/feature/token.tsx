@@ -86,7 +86,9 @@ export const SuperToken = ({
           "underline decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]",
           superTokenMaxFeatureAct > 0 &&
             "hover:shadow-lg hover:text-gray-600 cursor-pointer",
-          superTokenMaxFeatureAct == sampleMaxFeatureAct && "font-bold",
+          sampleMaxFeatureAct > 0 &&
+            superTokenMaxFeatureAct == sampleMaxFeatureAct &&
+            "font-bold",
           getAccentClassname(superTokenMaxFeatureAct, maxFeatureAct, "bg")
         )}
       >
