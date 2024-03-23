@@ -12,10 +12,13 @@ import { FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAsyncFn, useMount } from "react-use";
 import { z } from "zod";
 
 export const FeaturesPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
     return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries`)
       .then(async (res) => await res.json())
@@ -68,12 +71,26 @@ export const FeaturesPage = () => {
         )
         .then((res) => FeatureSchema.parse(res));
       setFeatureIndex(feature.featureIndex);
+      setSearchParams({
+        dictionary,
+        featureIndex: feature.featureIndex.toString(),
+      });
       return feature;
     }
   );
 
   useMount(async () => {
     await fetchDictionaries();
+    if (searchParams.get("dictionary")) {
+      setSelectedDictionary(searchParams.get("dictionary"));
+    }
+    if (searchParams.get("featureIndex")) {
+      setFeatureIndex(parseInt(searchParams.get("featureIndex")!));
+    }
+    fetchFeature(
+      searchParams.get("dictionary"),
+      searchParams.get("featureIndex")!
+    );
   });
 
   useEffect(() => {
