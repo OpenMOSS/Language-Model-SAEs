@@ -68,13 +68,17 @@ export const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
       </Button>
       {state.error && <p className="text-red-500">{state.error.message}</p>}
       {state.value && (
-        <div className="flex flex-col gap-4">
+        <>
           <FeatureActivationSample
             sample={state.value}
-            sampleIndex={0}
+            sampleName="Custom Input"
             maxFeatureAct={feature.maxFeatureAct}
           />
-        </div>
+          <p className="font-bold">
+            Custom Input Max Activation:{" "}
+            {Math.max(...state.value.featureActs).toFixed(3)}
+          </p>
+        </>
       )}
     </div>
   );
@@ -141,7 +145,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                       <FeatureActivationSample
                         key={i}
                         sample={sample}
-                        sampleIndex={i}
+                        sampleName={`Sample ${i + 1}`}
                         maxFeatureAct={feature.maxFeatureAct}
                       />
                     ))}
