@@ -1,18 +1,21 @@
 import { z } from "zod";
 
+export const SampleSchema = z.object({
+  context: z.array(z.instanceof(Uint8Array)),
+  featureActs: z.array(z.number()),
+});
+
+export type Sample = z.infer<typeof SampleSchema>;
+
 export const FeatureSchema = z.object({
   featureIndex: z.number(),
+  dictionaryName: z.string(),
   actTimes: z.number(),
   maxFeatureAct: z.number(),
   sampleGroups: z.array(
     z.object({
       analysisName: z.string(),
-      samples: z.array(
-        z.object({
-          context: z.array(z.instanceof(Uint8Array)),
-          featureActs: z.array(z.number()),
-        })
-      ),
+      samples: z.array(SampleSchema),
     })
   ),
 });
