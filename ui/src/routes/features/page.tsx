@@ -60,9 +60,20 @@ export const FeaturesPage = () => {
         .then(async (res) => await res.arrayBuffer())
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .then((res) => decode(new Uint8Array(res)) as any)
+        .then((res) => {
+          console.log(res);
+          return res;
+        })
         .then((res) =>
-          camelcaseKeys(res, { deep: true, stopPaths: ["samples.context"] })
+          camelcaseKeys(res, {
+            deep: true,
+            stopPaths: ["sample_groups.samples.context"],
+          })
         )
+        .then((res) => {
+          console.log(res);
+          return res;
+        })
         .then((res) => FeatureSchema.parse(res));
       setFeatureIndex(feature.featureIndex);
       return feature;

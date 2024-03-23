@@ -4,10 +4,15 @@ export const FeatureSchema = z.object({
   featureIndex: z.number(),
   actTimes: z.number(),
   maxFeatureAct: z.number(),
-  samples: z.array(
+  sampleGroups: z.array(
     z.object({
-      context: z.array(z.instanceof(Uint8Array)),
-      featureActs: z.array(z.number()),
+      analysisName: z.string(),
+      samples: z.array(
+        z.object({
+          context: z.array(z.instanceof(Uint8Array)),
+          featureActs: z.array(z.number()),
+        })
+      ),
     })
   ),
 });

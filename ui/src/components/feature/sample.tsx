@@ -3,7 +3,7 @@ import { SuperToken } from "./token";
 import { mergeUint8Arrays } from "@/utils/array";
 
 export type FeatureActivationSampleProps = {
-  sample: Feature["samples"][0];
+  sample: Feature["sampleGroups"][0]["samples"][0];
   sampleIndex: number;
   maxFeatureAct: number;
 };
