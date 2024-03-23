@@ -1,6 +1,5 @@
-import { FeatureActivationSample } from "@/components/feature/sample";
+import { FeatureCard } from "@/components/feature/feature-card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -28,10 +27,14 @@ export const FeaturesPage = () => {
   );
 
   const [featureIndex, setFeatureIndex] = useState<number>(0);
-  const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
+  const [loadingRandomFeature, setLoadingRandomFeature] =
+    useState<boolean>(false);
 
   const [featureState, fetchFeature] = useAsyncFn(
-    async (dictionary: string | null, featureIndex: number | string = "random") => {
+    async (
+      dictionary: string | null,
+      featureIndex: number | string = "random"
+    ) => {
       if (!dictionary) {
         alert("Please select a dictionary first");
         return;
@@ -44,7 +47,7 @@ export const FeaturesPage = () => {
         {
           method: "GET",
           headers: {
-            "Accept": "application/x-msgpack",
+            Accept: "application/x-msgpack",
           },
         }
       )
@@ -136,35 +139,15 @@ export const FeaturesPage = () => {
         </div>
       )}
       {featureState.loading && loadingRandomFeature && (
-        <div>
-          Loading Random Living Feature...
+        <div>Loading Random Living Feature...</div>
+      )}
+      {featureState.error && (
+        <div className="text-red-500 font-bold">
+          Error: {featureState.error.message}
         </div>
       )}
-      {featureState.error && <div>Error: {featureState.error.message}</div>}
       {!featureState.loading && featureState.value && (
-        <Card className="container">
-          <CardHeader>
-            <CardTitle>#{featureState.value!.featureIndex}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col w-full gap-4">
-                <h2 className="text-xl font-bold py-1">
-                  Top Activations (Max ={" "}
-                  {featureState.value!.maxFeatureAct.toFixed(3)})
-                </h2>
-                {featureState.value!.samples.slice(0, 20).map((sample, i) => (
-                  <FeatureActivationSample
-                    key={i}
-                    sample={sample}
-                    sampleIndex={i}
-                    maxFeatureAct={featureState.value!.maxFeatureAct}
-                  />
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <FeatureCard feature={featureState.value} />
       )}
     </div>
   );
