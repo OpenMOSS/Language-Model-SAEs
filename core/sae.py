@@ -115,9 +115,6 @@ class SparseAutoEncoder(torch.nn.Module):
             "... d_sae, d_sae d_model -> ... d_model",
         )
 
-        if self.cfg.use_decoder_bias:
-            x_hat = x_hat + self.decoder_bias
-
         # Take the sum of the dense dimension in MSE loss
         # l_rec: (batch_size, d_model)
         l_rec = (x_hat - x).pow(2) / (x - x.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
@@ -126,7 +123,7 @@ class SparseAutoEncoder(torch.nn.Module):
         l_l1 = torch.norm(feature_acts, p=self.cfg.lp, dim=-1)
 
         l_ghost_resid = torch.tensor(0.0, dtype=self.cfg.dtype, device=self.cfg.device)
-
+        
         # gate on config and training so evals is not slowed down.
         if (
             self.cfg.use_ghost_grads
@@ -155,6 +152,9 @@ class SparseAutoEncoder(torch.nn.Module):
             )
             mse_rescaling_factor = (l_rec / (l_ghost_resid + 1e-6)).detach()
             l_ghost_resid = mse_rescaling_factor * l_ghost_resid
+
+        if self.cfg.use_decoder_bias:
+            x_hat = x_hat + self.decoder_bias
 
         # Recover the original scale of the activation vectors
         # x_hat: (batch_size, activation_size)
