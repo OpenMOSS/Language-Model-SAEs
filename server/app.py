@@ -83,6 +83,16 @@ def list_dictionaries():
     dictionaries = os.listdir(result_dir)
     return [d for d in dictionaries if os.path.isdir(os.path.join(result_dir, d)) and os.path.exists(os.path.join(result_dir, d, "analysis"))]
 
+@app.post("/dictionaries/{dictionary_name}/features/load")
+def load_feature_activations(dictionary_name: str):
+    try:
+        feature_activations = get_feature_activation(dictionary_name)
+    except FileNotFoundError:
+        return Response(content=f"Dictionary {dictionary_name} not found", status_code=404)
+    
+    if "top_activations" not in feature_activations:
+        return Response(content=f"Dictionary {dictionary_name} does not have top feature activations", status_code=404)
+
 @app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
 def feature_info(dictionary_name: str, feature_index: str):
     try:

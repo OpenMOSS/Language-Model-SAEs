@@ -33,6 +33,8 @@ export const FeaturesPage = () => {
   const [loadingRandomFeature, setLoadingRandomFeature] =
     useState<boolean>(false);
 
+  const [loadingDictionary, setLoadingDictionary] = useState<boolean>(false);
+
   const [featureState, fetchFeature] = useAsyncFn(
     async (
       dictionary: string | null,
@@ -42,7 +44,26 @@ export const FeaturesPage = () => {
         alert("Please select a dictionary first");
         return;
       }
+
       setLoadingRandomFeature(featureIndex === "random");
+
+      setLoadingDictionary(true);
+      await fetch(
+        `${
+          import.meta.env.VITE_BACKEND_URL
+        }/dictionaries/${dictionary}/features/load`,
+        {
+          method: "POST",
+        }
+      )
+        .then(async (res) => {
+          if (!res.ok) {
+            throw new Error(await res.text());
+          }
+          return res;
+        })
+        .finally(() => setLoadingDictionary(false));
+
       const feature = await fetch(
         `${
           import.meta.env.VITE_BACKEND_URL
@@ -106,6 +127,7 @@ export const FeaturesPage = () => {
       <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
         <span className="font-bold justify-self-end">Select dictionary:</span>
         <Select
+          disabled={dictionariesState.loading || featureState.loading}
           value={selectedDictionary || undefined}
           onValueChange={setSelectedDictionary}
         >
@@ -121,6 +143,7 @@ export const FeaturesPage = () => {
           </SelectContent>
         </Select>
         <Button
+          disabled={dictionariesState.loading || featureState.loading}
           onClick={async () => {
             await fetchFeature(selectedDictionary);
           }}
@@ -132,6 +155,11 @@ export const FeaturesPage = () => {
           Choose a specific feature:
         </span>
         <Input
+          disabled={
+            dictionariesState.loading ||
+            selectedDictionary === null ||
+            featureState.loading
+          }
           id="feature-input"
           className="bg-white"
           type="number"
@@ -139,6 +167,11 @@ export const FeaturesPage = () => {
           onChange={(e) => setFeatureIndex(parseInt(e.target.value))}
         />
         <Button
+          disabled={
+            dictionariesState.loading ||
+            selectedDictionary === null ||
+            featureState.loading
+          }
           onClick={async () =>
             await fetchFeature(selectedDictionary, featureIndex)
           }
@@ -146,6 +179,11 @@ export const FeaturesPage = () => {
           Go
         </Button>
         <Button
+          disabled={
+            dictionariesState.loading ||
+            selectedDictionary === null ||
+            featureState.loading
+          }
           onClick={async () => {
             await fetchFeature(selectedDictionary);
           }}
@@ -153,12 +191,18 @@ export const FeaturesPage = () => {
           Show Random Feature
         </Button>
       </div>
-      {featureState.loading && !loadingRandomFeature && (
+      {featureState.loading && loadingDictionary && (
+        <div>
+          Loading Dictionary {selectedDictionary}... First time loading may take
+          several minutes.
+        </div>
+      )}
+      {featureState.loading && !loadingDictionary && !loadingRandomFeature && (
         <div>
           Loading Feature <span className="font-bold">#{featureIndex}</span>...
         </div>
       )}
-      {featureState.loading && loadingRandomFeature && (
+      {featureState.loading && !loadingDictionary && loadingRandomFeature && (
         <div>Loading Random Living Feature...</div>
       )}
       {featureState.error && (
