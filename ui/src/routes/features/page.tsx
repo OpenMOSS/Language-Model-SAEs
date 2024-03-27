@@ -1,6 +1,5 @@
-import { FeatureActivationSample } from "@/components/feature/sample";
+import { FeatureCard } from "@/components/feature/feature-card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -13,10 +12,13 @@ import { FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAsyncFn, useMount } from "react-use";
 import { z } from "zod";
 
 export const FeaturesPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
     return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries`)
       .then(async (res) => await res.json())
@@ -27,45 +29,95 @@ export const FeaturesPage = () => {
     null
   );
 
-  const [featureIndex, setFeatureIndex] = useState<number>(
-    Math.floor(Math.random() * 24576)
-  );
+  const [featureIndex, setFeatureIndex] = useState<number>(0);
+  const [loadingRandomFeature, setLoadingRandomFeature] =
+    useState<boolean>(false);
+
+  const [loadingDictionary, setLoadingDictionary] = useState<boolean>(false);
 
   const [featureState, fetchFeature] = useAsyncFn(
-    async (dictionary: string | null, featureIndex: number) => {
+    async (
+      dictionary: string | null,
+      featureIndex: number | string = "random"
+    ) => {
       if (!dictionary) {
         alert("Please select a dictionary first");
         return;
       }
-      return await fetch(
+
+      setLoadingRandomFeature(featureIndex === "random");
+
+      setLoadingDictionary(true);
+      await fetch(
+        `${
+          import.meta.env.VITE_BACKEND_URL
+        }/dictionaries/${dictionary}/features/load`,
+        {
+          method: "POST",
+        }
+      )
+        .then(async (res) => {
+          if (!res.ok) {
+            throw new Error(await res.text());
+          }
+          return res;
+        })
+        .finally(() => setLoadingDictionary(false));
+
+      const feature = await fetch(
         `${
           import.meta.env.VITE_BACKEND_URL
         }/dictionaries/${dictionary}/features/${featureIndex}`,
         {
           method: "GET",
           headers: {
-            "Content-Type": "application/x-msgpack",
+            Accept: "application/x-msgpack",
           },
         }
       )
+        .then(async (res) => {
+          if (!res.ok) {
+            throw new Error(await res.text());
+          }
+          return res;
+        })
         .then(async (res) => await res.arrayBuffer())
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .then((res) => decode(new Uint8Array(res)) as any)
         .then((res) =>
-          camelcaseKeys(res, { deep: true, stopPaths: ["samples.context"] })
+          camelcaseKeys(res, {
+            deep: true,
+            stopPaths: ["sample_groups.samples.context"],
+          })
         )
         .then((res) => FeatureSchema.parse(res));
+      setFeatureIndex(feature.featureIndex);
+      setSearchParams({
+        dictionary,
+        featureIndex: feature.featureIndex.toString(),
+      });
+      return feature;
     }
   );
 
   useMount(async () => {
     await fetchDictionaries();
+    if (searchParams.get("dictionary")) {
+      setSelectedDictionary(searchParams.get("dictionary"));
+    }
+    if (searchParams.get("featureIndex")) {
+      setFeatureIndex(parseInt(searchParams.get("featureIndex")!));
+    }
+    fetchFeature(
+      searchParams.get("dictionary"),
+      searchParams.get("featureIndex")!
+    );
   });
 
   useEffect(() => {
     if (dictionariesState.value && selectedDictionary === null) {
       setSelectedDictionary(dictionariesState.value[0]);
-      fetchFeature(dictionariesState.value[0], featureIndex);
+      fetchFeature(dictionariesState.value[0]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dictionariesState.value]);
@@ -73,8 +125,9 @@ export const FeaturesPage = () => {
   return (
     <div className="p-20 flex flex-col items-center gap-12">
       <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
-        <span className="font-bold justify-self-end">Select dictionary: </span>
+        <span className="font-bold justify-self-end">Select dictionary:</span>
         <Select
+          disabled={dictionariesState.loading || featureState.loading}
           value={selectedDictionary || undefined}
           onValueChange={setSelectedDictionary}
         >
@@ -90,19 +143,23 @@ export const FeaturesPage = () => {
           </SelectContent>
         </Select>
         <Button
+          disabled={dictionariesState.loading || featureState.loading}
           onClick={async () => {
-            const featureIndex = Math.floor(Math.random() * 24576);
-            setFeatureIndex(featureIndex);
-            await fetchFeature(selectedDictionary, featureIndex);
+            await fetchFeature(selectedDictionary);
           }}
         >
           Go
         </Button>
         <span className="font-bold"></span>
         <span className="font-bold justify-self-end">
-          Choose a specific feature:{" "}
+          Choose a specific feature:
         </span>
         <Input
+          disabled={
+            dictionariesState.loading ||
+            selectedDictionary === null ||
+            featureState.loading
+          }
           id="feature-input"
           className="bg-white"
           type="number"
@@ -110,6 +167,11 @@ export const FeaturesPage = () => {
           onChange={(e) => setFeatureIndex(parseInt(e.target.value))}
         />
         <Button
+          disabled={
+            dictionariesState.loading ||
+            selectedDictionary === null ||
+            featureState.loading
+          }
           onClick={async () =>
             await fetchFeature(selectedDictionary, featureIndex)
           }
@@ -117,45 +179,39 @@ export const FeaturesPage = () => {
           Go
         </Button>
         <Button
+          disabled={
+            dictionariesState.loading ||
+            selectedDictionary === null ||
+            featureState.loading
+          }
           onClick={async () => {
-            const featureIndex = Math.floor(Math.random() * 24576);
-            setFeatureIndex(featureIndex);
-            await fetchFeature(selectedDictionary, featureIndex);
+            await fetchFeature(selectedDictionary);
           }}
         >
           Show Random Feature
         </Button>
       </div>
-      {featureState.loading && (
+      {featureState.loading && loadingDictionary && (
+        <div>
+          Loading Dictionary {selectedDictionary}... First time loading may take
+          several minutes.
+        </div>
+      )}
+      {featureState.loading && !loadingDictionary && !loadingRandomFeature && (
         <div>
           Loading Feature <span className="font-bold">#{featureIndex}</span>...
         </div>
       )}
-      {featureState.error && <div>Error: {featureState.error.message}</div>}
+      {featureState.loading && !loadingDictionary && loadingRandomFeature && (
+        <div>Loading Random Living Feature...</div>
+      )}
+      {featureState.error && (
+        <div className="text-red-500 font-bold">
+          Error: {featureState.error.message}
+        </div>
+      )}
       {!featureState.loading && featureState.value && (
-        <Card className="container">
-          <CardHeader>
-            <CardTitle>#{featureState.value!.featureIndex}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col w-full gap-4">
-                <h2 className="text-xl font-bold py-1">
-                  Top Activations (Max ={" "}
-                  {featureState.value!.maxFeatureAct.toFixed(3)})
-                </h2>
-                {featureState.value!.samples.slice(0, 20).map((sample, i) => (
-                  <FeatureActivationSample
-                    key={i}
-                    sample={sample}
-                    sampleIndex={i}
-                    maxFeatureAct={featureState.value!.maxFeatureAct}
-                  />
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <FeatureCard feature={featureState.value} />
       )}
     </div>
   );
