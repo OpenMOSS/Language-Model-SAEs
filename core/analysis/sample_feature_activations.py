@@ -45,7 +45,7 @@ def sample_feature_activations(
         "contexts": torch.empty((0, cfg.d_sae, cfg.context_size), dtype=torch.long, device=cfg.device),
     }
     act_times = torch.zeros((cfg.d_sae,), dtype=torch.long, device=cfg.device)
-    feature_acts_all = [torch.empty((0,), dtype=cfg.dtype, device=cfg.device) for _ in range(cfg.d_sae)] if cfg.subsample is not None else None
+    feature_acts_all = [torch.empty((0,), dtype=cfg.dtype, device=cfg.device) for _ in range(cfg.d_sae)] if cfg.subsample is None else None
     max_feature_acts = torch.zeros((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device)
 
     while n_training_tokens < total_analyzing_tokens:
@@ -89,7 +89,7 @@ def sample_feature_activations(
         
 
         # Update feature activation histogram every 10 steps
-        if cfg.subsample is not None and n_training_steps % 10 == 0:
+        if cfg.subsample is None and n_training_steps % 10 == 0:
             feature_acts_cur = rearrange(aux_data["feature_acts"], 'batch_size context_size d_sae -> d_sae (batch_size context_size)')
             for i in range(cfg.d_sae):
                 feature_acts_all[i] = torch.cat([feature_acts_all[i], feature_acts_cur[i][feature_acts_cur[i] > 0.0]], dim=0)
