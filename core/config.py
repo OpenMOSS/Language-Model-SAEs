@@ -291,9 +291,8 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
     )
     sample_weight_exponent: float = 2.0
     n_samples: int = 1000
-    bin_width: float = 0.1
-    n_bins: int = 160
     analysis_name: str = "top_activations"
+    subsample: Optional[float] = None
 
     def __post_init__(self):
         super().__post_init__()
