@@ -165,9 +165,13 @@ class SAEConfig(RunnerConfig):
         hyperparams["strict_loading"] = strict_loading
         return hyperparams
 
+@dataclass
+class OpenAIConfig:
+    openai_api_key: str
+    openai_base_url: str
 
 @dataclass
-class AutoInterpConfig(SAEConfig, LanguageModelConfig):
+class AutoInterpConfig(SAEConfig, LanguageModelConfig, OpenAIConfig):
     num_sample: int = 10
     p: float = 0.7
     num_left_token: int = 10
