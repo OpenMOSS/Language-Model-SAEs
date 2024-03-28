@@ -254,3 +254,10 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
             if os.path.exists(os.path.join(self.exp_result_dir, self.exp_name, "analysis", self.analysis_name)):
                 raise ValueError(f"Analysis {self.analysis_name} for experiment {self.exp_name} already exists. Consider changing the experiment name or the analysis name.")
             os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "analysis", self.analysis_name))
+
+
+@dataclass
+class FeaturesDecoderConfig(SAEConfig, LanguageModelConfig):
+    file_path: str = None
+    
+
