@@ -33,8 +33,6 @@ export const FeaturesPage = () => {
   const [loadingRandomFeature, setLoadingRandomFeature] =
     useState<boolean>(false);
 
-  const [loadingDictionary, setLoadingDictionary] = useState<boolean>(false);
-
   const [featureState, fetchFeature] = useAsyncFn(
     async (
       dictionary: string | null,
@@ -46,23 +44,6 @@ export const FeaturesPage = () => {
       }
 
       setLoadingRandomFeature(featureIndex === "random");
-
-      setLoadingDictionary(true);
-      await fetch(
-        `${
-          import.meta.env.VITE_BACKEND_URL
-        }/dictionaries/${dictionary}/features/load`,
-        {
-          method: "POST",
-        }
-      )
-        .then(async (res) => {
-          if (!res.ok) {
-            throw new Error(await res.text());
-          }
-          return res;
-        })
-        .finally(() => setLoadingDictionary(false));
 
       const feature = await fetch(
         `${
@@ -191,18 +172,12 @@ export const FeaturesPage = () => {
           Show Random Feature
         </Button>
       </div>
-      {featureState.loading && loadingDictionary && (
-        <div>
-          Loading Dictionary {selectedDictionary}... First time loading may take
-          several minutes.
-        </div>
-      )}
-      {featureState.loading && !loadingDictionary && !loadingRandomFeature && (
+      {featureState.loading && !loadingRandomFeature && (
         <div>
           Loading Feature <span className="font-bold">#{featureIndex}</span>...
         </div>
       )}
-      {featureState.loading && !loadingDictionary && loadingRandomFeature && (
+      {featureState.loading && loadingRandomFeature && (
         <div>Loading Random Living Feature...</div>
       )}
       {featureState.error && (
