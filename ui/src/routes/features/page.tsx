@@ -88,11 +88,11 @@ export const FeaturesPage = () => {
     }
     if (searchParams.get("featureIndex")) {
       setFeatureIndex(parseInt(searchParams.get("featureIndex")!));
+      fetchFeature(
+        searchParams.get("dictionary"),
+        searchParams.get("featureIndex")!
+      );
     }
-    fetchFeature(
-      searchParams.get("dictionary"),
-      searchParams.get("featureIndex")!
-    );
   });
 
   useEffect(() => {
