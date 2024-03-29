@@ -343,3 +343,7 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
                     self.exp_result_dir, self.exp_name, "analysis", self.analysis_name
                 )
             )
+
+@dataclass
+class FeaturesDecoderConfig(SAEConfig, LanguageModelConfig):
+    file_path: str = None

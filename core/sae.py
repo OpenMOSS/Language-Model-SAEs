@@ -261,3 +261,11 @@ class SparseAutoEncoder(torch.nn.Module):
         mean_thomson_potential = (1 / dist).mean()
         return mean_thomson_potential
     
+    @torch.no_grad()
+    def features_decoder(self, feature_acts):
+        x_hat = einsum(
+            feature_acts,
+            self.decoder,
+            "... d_sae, d_sae d_model -> ... d_model",
+        )
+        return x_hat
