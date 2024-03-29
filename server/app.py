@@ -1,7 +1,4 @@
 import os
-from typing import Dict
-
-from functools import cmp_to_key
 
 import numpy as np
 import torch
@@ -20,7 +17,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 import plotly.express as px
 
-from core.config import SAEConfig
+from core.analysis.auto_interp import check_description, generate_description
+from core.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
 from core.sae import SparseAutoEncoder
 import server.database as db
 
@@ -39,11 +37,12 @@ model = HookedTransformer.from_pretrained('gpt2', device=device, hf_model=hf_mod
 model.eval()
 
 sae_cache = {}
+lm_cache = {}
 
 def get_sae(dictionary_name: str) -> SparseAutoEncoder:
     if dictionary_name not in sae_cache:
         cfg = SAEConfig(
-            **SAEConfig.get_hyperparameters(dictionary_name, "results", "pruned.pt", True),
+            **SAEConfig.get_hyperparameters(dictionary_name, result_dir, "pruned.pt", True),
             
             # RunnerConfig
             use_ddp = False,
@@ -75,7 +74,7 @@ def list_dictionaries():
     return db.list_dictionaries()
 
 @app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
-def feature_info(dictionary_name: str, feature_index: str):
+def get_feature(dictionary_name: str, feature_index: str):
     if isinstance(feature_index, str):
         if feature_index == "random":
             feature = db.get_random_alive_feature(dictionary_name)
@@ -112,6 +111,7 @@ def feature_info(dictionary_name: str, feature_index: str):
         "act_times": feature["act_times"],
         "max_feature_act": feature["max_feature_acts"],
         "sample_groups": sample_groups,
+        "interpretation": feature["interpretation"],
     })), media_type="application/x-msgpack")
 
 @app.post("/dictionaries/{dictionary_name}/features/{feature_index}/custom")
@@ -138,6 +138,70 @@ def feature_activation_custom_input(dictionary_name: str, feature_index: int, in
         }
 
     return Response(content=msgpack.packb(sample), media_type="application/x-msgpack")
+
+@app.post("/dictionaries/{dictionary_name}/features/{feature_index}/interpret")
+def feature_interpretation(dictionary_name: str, feature_index: int, type: str, custom_interpretation: str | None = None):
+    if type == "custom":
+        interpretation = {
+            "text": custom_interpretation,
+            "validation": [
+                {
+                    "method": "manual",
+                    "passed": True,
+                }
+            ]
+        }
+    elif type == "auto":
+        cfg = AutoInterpConfig(**{
+            **SAEConfig.get_hyperparameters(dictionary_name, result_dir, "pruned.pt", True),
+            **LanguageModelConfig.get_lm_config(dictionary_name, result_dir),
+            "openai_api_key": os.environ.get("OPENAI_API_KEY"),
+            "openai_base_url": os.environ.get("OPENAI_BASE_URL"),
+        })
+        feature = db.get_feature(dictionary_name, feature_index)
+        result = generate_description(model, feature["analysis"][0], cfg)
+        interpretation = {
+            "text": result["response"],
+            "validation": [
+            ],
+            "detail": result,
+        }
+    elif type == "validate":
+        cfg = AutoInterpConfig(**{
+            **SAEConfig.get_hyperparameters(dictionary_name, result_dir, "pruned.pt", True),
+            **LanguageModelConfig.get_lm_config(dictionary_name, result_dir),
+            "openai_api_key": os.environ.get("OPENAI_API_KEY"),
+            "openai_base_url": os.environ.get("OPENAI_BASE_URL"),
+        })
+        feature = db.get_feature(dictionary_name, feature_index)
+        interpretation = feature["interpretation"]
+        if interpretation is None:
+            return Response(content="Feature interpretation not found", status_code=404)
+        validation = interpretation["validation"]
+        if not any(v["method"] == "activation" for v in validation):
+            validation_result = check_description(model, cfg, feature_index, interpretation["text"], False, feature_activation=feature["analysis"][0])
+            validation.append(
+                {
+                    "method": "activation",
+                    "passed": validation_result["passed"],
+                    "detail": validation_result,
+                }
+            )
+        if not any(v["method"] == "generative" for v in validation):
+            validation_result = check_description(model, cfg, feature_index, interpretation["text"], True, sae=get_sae(dictionary_name))
+            validation.append(
+                {
+                    "method": "generative",
+                    "passed": validation_result["passed"],
+                    "detail": validation_result,
+                }
+            )                
+
+    try:
+        db.update_feature_interpretation(dictionary_name, feature_index, interpretation)
+    except ValueError as e:
+        return Response(content=str(e), status_code=400)
+    return interpretation
 
 
 app.add_middleware(

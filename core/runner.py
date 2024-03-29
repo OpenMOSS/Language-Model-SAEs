@@ -19,6 +19,8 @@ from core.analysis.sample_feature_activations import sample_feature_activations
 from core.feature.features_to_logits import features_to_logits
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
+    cfg.save_hyperparameters()
+    cfg.save_lm_config()
     sae = SparseAutoEncoder(cfg=cfg)
     if cfg.from_pretrained_path is not None:
         sae.load_state_dict(torch.load(cfg.from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
