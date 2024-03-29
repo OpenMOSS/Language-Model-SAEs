@@ -35,8 +35,6 @@ class RunnerConfig:
             os.makedirs(self.exp_result_dir, exist_ok=True)
             os.makedirs(os.path.join(self.exp_result_dir, self.exp_name), exist_ok=True)
 
-        print_once(f"Exp name: {self.exp_name}")
-
 
 @dataclass
 class LanguageModelConfig(RunnerConfig):
@@ -49,6 +47,34 @@ class LanguageModelConfig(RunnerConfig):
     def __post_init__(self):
         super().__post_init__()
         self.model_name = get_official_model_name(self.model_name)
+
+    def save_lm_config(self):
+        if os.path.exists(
+            os.path.join(self.exp_result_dir, self.exp_name, "lm_config.json")
+        ):
+            raise ValueError(
+                f"Language Model Config for {self.exp_name} already exists."
+            )
+        json.dump(
+            {
+                k: v
+                for k, v in self.__dict__.items()
+                if k in LanguageModelConfig.__dataclass_fields__.keys()
+                and k not in RunnerConfig.__dataclass_fields__.keys()
+            },
+            open(
+                os.path.join(self.exp_result_dir, self.exp_name, "lm_config.json"),
+                "w",
+            ),
+            indent=4,
+        )
+
+    @staticmethod
+    def get_lm_config(exp_name: str, exp_result_dir: str) -> dict[str, Any]:
+        with open(os.path.join(exp_result_dir, exp_name, "lm_config.json"), "r") as f:
+            return json.load(f)
+
+        
 
 
 @dataclass
@@ -125,33 +151,31 @@ class SAEConfig(RunnerConfig):
         if self.d_sae is None:
             self.d_sae = self.d_model * self.expansion_factor
 
-        print_once(f"Sparse Autoencoder dimension: {self.d_sae}")
-
-        if not self.use_ddp or self.rank == 0:
-            if not self.from_pretrained_path:
-                if os.path.exists(
-                    os.path.join(self.exp_result_dir, self.exp_name, "hyperparams.json")
-                ):
-                    raise ValueError(
-                        f"Experiment {self.exp_name} already exists. Consider changing the experiment name."
-                    )
-                # Save hyperparameters (only configs from SAEConfig, excluding derived classes)
-                with open(
-                    os.path.join(
-                        self.exp_result_dir, self.exp_name, "hyperparams.json"
-                    ),
-                    "w",
-                ) as f:
-                    json.dump(
-                        {
-                            k: v
-                            for k, v in self.__dict__.items()
-                            if k in SAEConfig.__dataclass_fields__.keys()
-                            and k not in RunnerConfig.__dataclass_fields__.keys()
-                        },
-                        f,
-                        indent=4,
-                    )
+    def save_hyperparameters(self):
+        if os.path.exists(
+            os.path.join(self.exp_result_dir, self.exp_name, "hyperparams.json")
+        ):
+            raise ValueError(
+                f"Hyperparams for {self.exp_name} already exists."
+            )
+        
+        # Save hyperparameters (only configs from SAEConfig, excluding derived classes)
+        with open(
+            os.path.join(
+                self.exp_result_dir, self.exp_name, "hyperparams.json"
+            ),
+            "w",
+        ) as f:
+            json.dump(
+                {
+                    k: v
+                    for k, v in self.__dict__.items()
+                    if k in SAEConfig.__dataclass_fields__.keys()
+                    and k not in RunnerConfig.__dataclass_fields__.keys()
+                },
+                f,
+                indent=4,
+            )
 
     @staticmethod
     def get_hyperparameters(
