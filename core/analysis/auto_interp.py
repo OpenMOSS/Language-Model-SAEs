@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict, Optional
 import torch
 import os
 from datasets import Dataset
@@ -6,7 +6,6 @@ from transformers import AutoTokenizer
 from tqdm import tqdm
 import tiktoken
 import random
-import jsonlines
 import traceback
 from openai import OpenAI
 from core.config import AutoInterpConfig, SAEConfig
@@ -74,26 +73,26 @@ Consider the following activations for a feature in the neural network. Activati
     return task_description
 
 
-def _sample_sentences(tokenizer, feature, num_sentences, p):
+def _sample_sentences(cfg: AutoInterpConfig, tokenizer, feature_activation):
     """
     Samples sentences from a feature where the maximum activation value of tokens within a sentence
     is greater than a certain percentage (p) of the highest activation value across all tokens.
     """
     context_list = []
-    max_acts = max(feature["feature_acts"][0])
+    max_acts = max(feature_activation["feature_acts"][0])
     filtered_sentences_id = [
         i
-        for i in range(len(feature["feature_acts"]))
-        if max(feature["feature_acts"][i]) > p * max_acts
+        for i in range(len(feature_activation["feature_acts"]))
+        if max(feature_activation["feature_acts"][i]) > cfg.p * max_acts
     ]
-    if len(filtered_sentences_id) < num_sentences:
-        sentences_id = list(range(min(len(feature["feature_acts"]), num_sentences)))
+    if len(filtered_sentences_id) < cfg.num_sample:
+        sentences_id = list(range(min(len(feature_activation["feature_acts"]), cfg.num_sample)))
     else:
-        sentences_id = random.sample(filtered_sentences_id, num_sentences)
+        sentences_id = random.sample(filtered_sentences_id, cfg.num_sample)
     for i in sentences_id:
-        contexts = torch.tensor(feature["contexts"][i])
-        feature_acts = torch.tensor(feature["feature_acts"][i])
-        context_list.append(_extract_context(tokenizer, contexts, feature_acts))
+        contexts = torch.tensor(feature_activation["contexts"][i])
+        feature_acts = torch.tensor(feature_activation["feature_acts"][i])
+        context_list.append(_extract_context(cfg, tokenizer, contexts, feature_acts))
     prompt = _construct_prompt(context_list)
     return prompt
 
@@ -115,23 +114,19 @@ def _chat_completion(client, prompt, max_retry=3):
 
 def generate_description(
     model: HookedTransformer,
-    feature_activations: Dataset,
-    config: AutoInterpConfig,
-    index: int,
+    feature_activation: Dict,
+    cfg: AutoInterpConfig,
 ):
     tokenizer = model.tokenizer
-    client = OpenAI(api_key=config.openai_api_key, base_url=config.openai_base_url)
-    feature = feature_activations[index]
+    client = OpenAI(api_key=cfg.openai_api_key, base_url=cfg.openai_base_url)
     prompt = _sample_sentences(
-        tokenizer, feature, num_sentences=config.num_sample, p=config.p
+        cfg, tokenizer, feature_activation
     )
     input_tokens = _num_tokens_from_string(prompt)
     response = _chat_completion(client, prompt)
     output_tokens = _num_tokens_from_string(response)
     cost = _calculate_cost(input_tokens, output_tokens)
-    total_cost += cost
     result = {
-        "index": index,
         "prompt": prompt,
         "response": response,
         "input_tokens": input_tokens,
@@ -144,11 +139,11 @@ def generate_description(
 
 def check_description(
     model: HookedTransformer,
-    config: AutoInterpConfig,
+    cfg: AutoInterpConfig,
     index: int,
     description: str,
     using_sae: bool = False,
-    feature_activations: Optional[Dataset] = None,
+    feature_activation: Optional[Dict] = None,
     sae: Optional[SparseAutoEncoder] = None,
 ):
     """
@@ -156,7 +151,7 @@ def check_description(
     Otherwise, a `feature_activations` dataset is required for further processing.
     """
     tokenizer = model.tokenizer
-    client = OpenAI(api_key=config.openai_api_key, base_url=config.openai_base_url)
+    client = OpenAI(api_key=cfg.openai_api_key, base_url=cfg.openai_base_url)
     if using_sae:
         assert sae is not None, "Sparse Auto Encoder is not provided."
         prompt_prefix = "We are analyzing the activation levels of features in a neural network, where each feature activates certain tokens in a text. Each token's activation value indicates its relevance to the feature, with higher values showing stronger association. We  will describe a feature's meaning and traits. Your output must be multiple sentences that activates the feature."
@@ -167,17 +162,17 @@ def check_description(
         cost = _calculate_cost(input_tokens, output_tokens)
         input_index, input_text = index, response
         input_token = model.to_tokens(input_text)
-        _, cache = model.run_with_cache(input_token, names_filter=[config.hook_point])
-        activation = cache[config.hook_point][0]
+        _, cache = model.run_with_cache(input_token, names_filter=[cfg.hook_point])
+        activation = cache[cfg.hook_point][0]
         _, (_, aux) = sae(activation)
         feature_acts = aux["feature_acts"][:, input_index]
         max_value, max_pos = torch.max(feature_acts, dim=0)
-        passed = "PASS" if torch.max(feature_acts) > 1 else "FAIL"
+        passed = torch.max(feature_acts) > 1
         result = {
             "index": input_index,
             "prompt": prompt,
             "response": input_text,
-            "passed": passed,
+            "passed": passed.item(),
             "cost": cost,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
@@ -187,13 +182,14 @@ def check_description(
         return result
 
     else:
-        assert feature_activations is not None, "Feature activations are not provided."
+        assert feature_activation is not None, "Feature activations are not provided."
         prompt_prefix = "We are analyzing the activation levels of features in a neural network, where each feature activates certain tokens in a text. Each token's activation value indicates its relevance to the feature, with higher values showing stronger association. We  will describe a feature's meaning and traits. Identify the token that most activates the feature in the given sentence and provide your answer with a single token. The sentence will use a <tab> to separate each token.\n\nSentence:\n"
-        feature = feature_activations[index]
+        
         context = _extract_context(
+            cfg=cfg,
             tokenizer=tokenizer,
-            context_id=torch.tensor(feature["contexts"][0]),
-            feature_acts=torch.tensor(feature["feature_acts"][0]),
+            context_id=torch.tensor(feature_activation["contexts"][0]),
+            feature_acts=torch.tensor(feature_activation["feature_acts"][0]),
         )
         target_token = sorted(context, key=lambda x: x[1])[-1]
         prompt = prompt_prefix + "\t".join([token for token, _ in context])
@@ -202,11 +198,7 @@ def check_description(
         response = _chat_completion(client, prompt)
         output_tokens = _num_tokens_from_string(response)
         cost = _calculate_cost(input_tokens, output_tokens)
-        passed = (
-            "PASS"
-            if response.replace(" ", "") == target_token[0].replace(" ", "")
-            else "FAIL"
-        )
+        passed = response.replace(" ", "") == target_token[0].replace(" ", "")
         result = {
             "index": index,
             "prompt": prompt,

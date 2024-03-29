@@ -1,4 +1,5 @@
 import os
+from typing import Dict
 
 import pymongo
 import gridfs
@@ -39,7 +40,8 @@ def get_feature(dictionary_name: str, feature_index: int):
                 'contexts': bytes_to_np(fs.get(analysis['contexts']).read())
             }
             for analysis in feature['analysis']
-        ]
+        ],
+        'interpretation': feature['interpretation']
     }
 
 def get_random_alive_feature(dictionary_name: str):
@@ -64,7 +66,8 @@ def get_random_alive_feature(dictionary_name: str):
                 'contexts': bytes_to_np(fs.get(analysis['contexts']).read())
             }
             for analysis in feature['analysis']
-        ]
+        ],
+        'interpretation': feature['interpretation']
     }
 
 def get_alive_feature_count(dictionary_name: str):
@@ -72,4 +75,11 @@ def get_alive_feature_count(dictionary_name: str):
     if dictionary is None:
         return None
     return feature_collection.count_documents({'dictionary_id': dictionary['_id'], 'max_feature_acts': {'$gt': 0}})
+
+def update_feature_interpretation(dictionary_name: str, feature_index: int, interpretation: Dict):
+    dictionary = dictionary_collection.find_one({'name': dictionary_name})
+    assert dictionary is not None, f'Dictionary {dictionary_name} not found'
+    feature = feature_collection.find_one({'dictionary_id': dictionary['_id'], 'index': feature_index})
+    assert feature is not None, f'Feature {feature_index} not found in dictionary {dictionary_name}'
+    feature_collection.update_one({'_id': feature['_id']}, {'$set': {'interpretation': interpretation}})
 
