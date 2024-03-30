@@ -11,3 +11,8 @@ def print_once(
             print(*values, sep=sep, end=end)
     else:
         print(*values, sep=sep, end=end)
+
+def norm_ratio(a, b):
+    a_norm = torch.norm(a, 2, dim=0).mean()
+    b_norm = torch.norm(b, 2, dim=0).mean()
+    return a_norm/b_norm

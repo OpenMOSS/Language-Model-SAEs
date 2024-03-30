@@ -15,7 +15,40 @@ from core.sae import SparseAutoEncoder
 from core.activation.activation_dataset import make_activation_dataset
 from core.activation.activation_store import ActivationStore
 from core.sae_training import prune_sae, train_sae
+from core.sae_finetuning import finetune_sae
 from core.analysis.sample_feature_activations import sample_feature_activations
+
+
+def finetune_runner(cfg: LanguageModelSAETrainingConfig):
+    sae = SparseAutoEncoder(cfg=cfg)
+    if cfg.from_pretrained_path is not None:
+        sae.load_state_dict(torch.load(cfg.from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
+    # Fine-tune SAE with frozen encoder weights and bias
+    sae.train_finetune_for_suppresion_parameters()
+
+    hf_model = AutoModelForCausalLM.from_pretrained('gpt2', cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
+    model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
+    model.eval()
+    activation_store = ActivationStore.from_config(model=model, cfg=cfg)
+        
+    if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+        wandb_run = wandb.init(project=cfg.wandb_project, config=cast(Any, cfg), name=cfg.run_name, entity=cfg.wandb_entity)
+        with open(os.path.join(cfg.exp_result_dir, cfg.exp_name, "train_wandb_id.txt"), "w") as f:
+            f.write(wandb_run.id)
+        wandb.watch(sae, log="all")
+
+    # train SAE
+    sae = finetune_sae(
+        model,
+        sae,
+        activation_store,
+        cfg,
+    )
+
+    if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+        wandb.finish()
+
+    return sae
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     sae = SparseAutoEncoder(cfg=cfg)
