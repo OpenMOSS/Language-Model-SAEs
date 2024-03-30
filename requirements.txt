@@ -13,3 +13,5 @@ uvicorn>=0.28.0
 wandb>=0.16.3
 msgpack>=1.0.8
 plotly>=5.20.0
+openai>=1.14.3
+tiktoken>=0.6.0
