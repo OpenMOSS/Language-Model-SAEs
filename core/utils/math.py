@@ -25,3 +25,8 @@ def compute_geometric_median(x: torch.Tensor, max_iter=1000) -> torch.Tensor:
         y = (w.unsqueeze(-1) * x).sum(dim=0) / w.sum()
 
     return y
+
+def norm_ratio(a, b):
+    a_norm = torch.norm(a, 2, dim=0).mean()
+    b_norm = torch.norm(b, 2, dim=0).mean()
+    return a_norm/b_norm
