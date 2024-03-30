@@ -7,11 +7,12 @@ import torch.distributed as dist
 
 import wandb
 
-import os 
+import os
 
 from core.utils.misc import print_once
 
 from transformer_lens.loading_from_pretrained import get_official_model_name
+
 
 @dataclass
 class RunnerConfig:
@@ -33,14 +34,12 @@ class RunnerConfig:
         if not self.use_ddp or self.rank == 0:
             os.makedirs(self.exp_result_dir, exist_ok=True)
             os.makedirs(os.path.join(self.exp_result_dir, self.exp_name), exist_ok=True)
-            
-        print_once(
-            f"Exp name: {self.exp_name}"
-        )
+
 
 @dataclass
 class LanguageModelConfig(RunnerConfig):
     model_name: str = "gpt2"
+    hook_point: str = "blocks.0.hook_mlp_out"
     cache_dir: Optional[str] = None
     d_model: int = 768
     local_files_only: bool = False
@@ -48,6 +47,35 @@ class LanguageModelConfig(RunnerConfig):
     def __post_init__(self):
         super().__post_init__()
         self.model_name = get_official_model_name(self.model_name)
+
+    def save_lm_config(self):
+        if os.path.exists(
+            os.path.join(self.exp_result_dir, self.exp_name, "lm_config.json")
+        ):
+            raise ValueError(
+                f"Language Model Config for {self.exp_name} already exists."
+            )
+        json.dump(
+            {
+                k: v
+                for k, v in self.__dict__.items()
+                if k in LanguageModelConfig.__dataclass_fields__.keys()
+                and k not in RunnerConfig.__dataclass_fields__.keys()
+            },
+            open(
+                os.path.join(self.exp_result_dir, self.exp_name, "lm_config.json"),
+                "w",
+            ),
+            indent=4,
+        )
+
+    @staticmethod
+    def get_lm_config(exp_name: str, exp_result_dir: str) -> dict[str, Any]:
+        with open(os.path.join(exp_result_dir, exp_name, "lm_config.json"), "r") as f:
+            return json.load(f)
+
+        
+
 
 @dataclass
 class TextDatasetConfig(RunnerConfig):
@@ -59,9 +87,9 @@ class TextDatasetConfig(RunnerConfig):
     context_size: int = 128
     store_batch_size: int = 64
 
+
 @dataclass
 class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
-    hook_point: str = "blocks.0.hook_mlp_out"
     use_cached_activations: bool = False
     cached_activations_path: Optional[str] = (
         None  # Defaults to "activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
@@ -76,6 +104,7 @@ class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
         if self.cached_activations_path is None:
             self.cached_activations_path = f"activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
 
+
 @dataclass
 class WandbConfig(RunnerConfig):
     log_to_wandb: bool = True
@@ -88,21 +117,27 @@ class WandbConfig(RunnerConfig):
         if self.run_name is None:
             self.run_name = self.exp_name
 
+
 @dataclass
 class SAEConfig(RunnerConfig):
     """
     Configuration for training or running a sparse autoencoder.
     """
+
     from_pretrained_path: Optional[str] = None
     strict_loading: bool = True
 
     use_decoder_bias: bool = True
     decoder_bias_init_method: str = "geometric_median"
-    geometric_median_max_iter: Optional[int] = 1000 # The maximum number of iterations for the geometric median algorithm. Required if decoder_bias_init_method is geometric_median
+    geometric_median_max_iter: Optional[int] = (
+        1000  # The maximum number of iterations for the geometric median algorithm. Required if decoder_bias_init_method is geometric_median
+    )
     expansion_factor: int = 32
     d_model: int = 768
-    d_sae: Optional[int] = None # The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor
-    norm_activation: str = "token-wise" # none, token-wise, batch-wise
+    d_sae: Optional[int] = (
+        None  # The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor
+    )
+    norm_activation: str = "token-wise"  # none, token-wise, batch-wise
     decoder_exactly_unit_norm: bool = True
     use_glu_encoder: bool = False
 
@@ -116,35 +151,61 @@ class SAEConfig(RunnerConfig):
         if self.d_sae is None:
             self.d_sae = self.d_model * self.expansion_factor
 
-        print_once(f"Sparse Autoencoder dimension: {self.d_sae}")
-
-        if not self.use_ddp or self.rank == 0:
-            if not self.from_pretrained_path:
-                if os.path.exists(os.path.join(self.exp_result_dir, self.exp_name, "hyperparams.json")):
-                    raise ValueError(f"Experiment {self.exp_name} already exists. Consider changing the experiment name.")
-                # Save hyperparameters (only configs from SAEConfig, excluding derived classes)
-                with open(os.path.join(self.exp_result_dir, self.exp_name, "hyperparams.json"), "w") as f:
-                    json.dump(
-                        {
-                            k: v
-                            for k, v in self.__dict__.items()
-                            if k in SAEConfig.__dataclass_fields__.keys() and k not in RunnerConfig.__dataclass_fields__.keys()
-                        },
-                        f,
-                        indent=4,
-                    )
+    def save_hyperparameters(self):
+        if os.path.exists(
+            os.path.join(self.exp_result_dir, self.exp_name, "hyperparams.json")
+        ):
+            raise ValueError(
+                f"Hyperparams for {self.exp_name} already exists."
+            )
+        
+        # Save hyperparameters (only configs from SAEConfig, excluding derived classes)
+        with open(
+            os.path.join(
+                self.exp_result_dir, self.exp_name, "hyperparams.json"
+            ),
+            "w",
+        ) as f:
+            json.dump(
+                {
+                    k: v
+                    for k, v in self.__dict__.items()
+                    if k in SAEConfig.__dataclass_fields__.keys()
+                    and k not in RunnerConfig.__dataclass_fields__.keys()
+                },
+                f,
+                indent=4,
+            )
 
     @staticmethod
-    def get_hyperparameters(exp_name: str, exp_result_dir: str, ckpt_name: str, strict_loading: bool = True) -> dict[str, Any]:
+    def get_hyperparameters(
+        exp_name: str, exp_result_dir: str, ckpt_name: str, strict_loading: bool = True
+    ) -> dict[str, Any]:
         with open(os.path.join(exp_result_dir, exp_name, "hyperparams.json"), "r") as f:
             hyperparams = json.load(f)
-        hyperparams["from_pretrained_path"] = os.path.join(exp_result_dir, exp_name, "checkpoints", ckpt_name)
+        hyperparams["from_pretrained_path"] = os.path.join(
+            exp_result_dir, exp_name, "checkpoints", ckpt_name
+        )
         hyperparams["strict_loading"] = strict_loading
         return hyperparams
-                    
+
+@dataclass
+class OpenAIConfig:
+    openai_api_key: str
+    openai_base_url: str
+
+@dataclass
+class AutoInterpConfig(SAEConfig, LanguageModelConfig, OpenAIConfig):
+    num_sample: int = 10
+    p: float = 0.7
+    num_left_token: int = 10
+    num_right_token: int = 5
+
+
 @dataclass
 class LanguageModelSAEConfig(SAEConfig, WandbConfig, ActivationStoreConfig):
     pass
+
 
 @dataclass
 class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
@@ -168,7 +229,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
     feature_sampling_window: int = 1000
     dead_feature_window: int = 5000  # unless this window is larger feature sampling,
 
-    dead_feature_threshold: float = 1e-6    
+    dead_feature_threshold: float = 1e-6
 
     # Evaluation
     eval_frequency: int = 1000
@@ -177,12 +238,17 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
     log_frequency: int = 10
 
     n_checkpoints: int = 10
+
     def __post_init__(self):
         super().__post_init__()
 
         if not self.use_ddp or self.rank == 0:
-            if os.path.exists(os.path.join(self.exp_result_dir, self.exp_name, "checkpoints")):
-                raise ValueError(f"Ckeckpoints for experiment {self.exp_name} already exist. Consider changing the experiment name.")
+            if os.path.exists(
+                os.path.join(self.exp_result_dir, self.exp_name, "checkpoints")
+            ):
+                raise ValueError(
+                    f"Ckeckpoints for experiment {self.exp_name} already exist. Consider changing the experiment name."
+                )
             os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "checkpoints"))
 
         if self.decoder_bias_init_method not in ["geometric_median", "mean", "zeros"]:
@@ -194,7 +260,11 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
                 "Warning: We are initializing b_dec to zeros. This is probably not what you want."
             )
 
-        self.effective_batch_size = self.train_batch_size * self.world_size if self.use_ddp else self.train_batch_size
+        self.effective_batch_size = (
+            self.train_batch_size * self.world_size
+            if self.use_ddp
+            else self.train_batch_size
+        )
         print_once(f"Effective batch size: {self.effective_batch_size}")
 
         total_training_steps = self.total_training_tokens // self.effective_batch_size
@@ -202,6 +272,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
 
         if self.use_ghost_grads:
             print_once("Using Ghost Grads.")
+
 
 @dataclass
 class LanguageModelSAEPruningConfig(LanguageModelSAEConfig):
@@ -221,10 +292,12 @@ class LanguageModelSAEPruningConfig(LanguageModelSAEConfig):
 class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
     hook_points: list[str] = field(default_factory=list)
 
-    activation_save_path: Optional[str] = None # Defaults to "activations/{dataset}/{model}_{context_size}"
+    activation_save_path: Optional[str] = (
+        None  # Defaults to "activations/{dataset}/{model}_{context_size}"
+    )
 
     total_generating_tokens: int = 300_000_000
-    chunk_size: int = int(0.5 * 2 ** 30) # 0.5 GB
+    chunk_size: int = int(0.5 * 2**30)  # 0.5 GB
 
     def __post_init__(self):
         super().__post_init__()
@@ -233,6 +306,7 @@ class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
             self.activation_save_path = f"activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
         os.makedirs(self.activation_save_path, exist_ok=True)
 
+
 @dataclass
 class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
     """
@@ -240,7 +314,9 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
     """
 
     total_analyzing_tokens: int = 300_000_000
-    enable_sampling: bool = False # If True, we will sample the activations based on weights. Otherwise, top n_samples activations will be used.
+    enable_sampling: bool = (
+        False  # If True, we will sample the activations based on weights. Otherwise, top n_samples activations will be used.
+    )
     sample_weight_exponent: float = 2.0
     n_samples: int = 1000
     analysis_name: str = "top_activations"
@@ -248,12 +324,29 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
 
     def __post_init__(self):
         super().__post_init__()
-        
+
         if not self.use_ddp or self.rank == 0:
-            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "analysis"), exist_ok=True)
-            if os.path.exists(os.path.join(self.exp_result_dir, self.exp_name, "analysis", self.analysis_name)):
-                raise ValueError(f"Analysis {self.analysis_name} for experiment {self.exp_name} already exists. Consider changing the experiment name or the analysis name.")
-            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "analysis", self.analysis_name))
+            os.makedirs(
+                os.path.join(self.exp_result_dir, self.exp_name, "analysis"),
+                exist_ok=True,
+            )
+            if os.path.exists(
+                os.path.join(
+                    self.exp_result_dir, self.exp_name, "analysis", self.analysis_name
+                )
+            ):
+                raise ValueError(
+                    f"Analysis {self.analysis_name} for experiment {self.exp_name} already exists. Consider changing the experiment name or the analysis name."
+                )
+            os.makedirs(
+                os.path.join(
+                    self.exp_result_dir, self.exp_name, "analysis", self.analysis_name
+                )
+            )
+
+@dataclass
+class FeaturesDecoderConfig(SAEConfig, LanguageModelConfig):
+    file_path: str = None
 
 @dataclass
 class LanguageModelSAEFinetuningConfig(LanguageModelSAEConfig):

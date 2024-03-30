@@ -7,6 +7,30 @@ export const SampleSchema = z.object({
 
 export type Sample = z.infer<typeof SampleSchema>;
 
+export const InterpretationSchema = z.object({
+  text: z.string(),
+  validation: z.array(
+    z.object({
+      method: z.string(),
+      passed: z.boolean(),
+      detail: z
+        .object({
+          prompt: z.string(),
+          response: z.string(),
+        })
+        .optional(),
+    })
+  ),
+  detail: z
+    .object({
+      prompt: z.string(),
+      response: z.string(),
+    })
+    .optional(),
+});
+
+export type Interpretation = z.infer<typeof InterpretationSchema>;
+
 export const FeatureSchema = z.object({
   featureIndex: z.number(),
   dictionaryName: z.string(),
@@ -19,6 +43,7 @@ export const FeatureSchema = z.object({
       samples: z.array(SampleSchema),
     })
   ),
+  interpretation: InterpretationSchema.nullable(),
 });
 
 export type Feature = z.infer<typeof FeatureSchema>;
