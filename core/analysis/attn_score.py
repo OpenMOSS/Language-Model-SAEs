@@ -34,7 +34,10 @@ def compute_attention_score(
     QK = model.blocks[layer].attn.QK
     assert QK is not None, f"Attention weights of layer {layer} not found."
 
-    # Compute the attention score
-    attn_score = (sae1.decoder - sae1.decoder.mean(-1, keepdim=True)) @ QK @ (sae2.decoder - sae2.decoder.mean(-1, keepdim=True)).T
+    alive_feature_indices1 = sae1.feature_act_mask.nonzero(as_tuple=True)[0]
+    alive_feature_indices2 = sae2.feature_act_mask.nonzero(as_tuple=True)[0]
 
-    return attn_score
+    # Compute the attention score
+    attn_score = (sae1.decoder - sae1.decoder.mean(-1, keepdim=True))[alive_feature_indices1] @ QK @ (sae2.decoder - sae2.decoder.mean(-1, keepdim=True))[alive_feature_indices2].transpose(-2, -1)
+
+    return attn_score, alive_feature_indices1, alive_feature_indices2
