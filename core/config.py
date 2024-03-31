@@ -347,3 +347,7 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig):
 @dataclass
 class FeaturesDecoderConfig(SAEConfig, LanguageModelConfig):
     file_path: str = None
+    top: int = 10
+    dict_name: str = None
+    db_url: str = None
+    db_name: str = None

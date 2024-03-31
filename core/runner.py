@@ -17,6 +17,7 @@ from core.activation.activation_store import ActivationStore
 from core.sae_training import prune_sae, train_sae
 from core.analysis.sample_feature_activations import sample_feature_activations
 from core.feature.features_to_logits import features_to_logits
+from scripts.results_to_database import connect_to_db, find_one, update_one
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     cfg.save_hyperparameters()
@@ -146,4 +147,69 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
     model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
     model.eval()
     
-    features_to_logits(sae, model, cfg)
+    result_dict = features_to_logits(sae, model, cfg)
+    
+    db = connect_to_db(cfg.db_url, cfg.db_name)
+    
+    dict_id = find_one(db['dictionaries'], {'name': cfg.dict_name})['_id']
+    # print(model.tokenizer)
+    # print(model.tokenizer.get_vocab())
+    
+    for feature_index, logits in result_dict.items():
+        sorted_indeces = torch.argsort(logits)
+        top_negative_logits = logits[sorted_indeces[:cfg.top]]
+        top_positive_logits = logits[sorted_indeces[-cfg.top:]]
+        top_negative_ids = sorted_indeces[:cfg.top].tolist()
+        top_positive_ids = sorted_indeces[-cfg.top:].tolist()
+        top_negative_tokens = model.tokenizer.convert_ids_to_tokens(top_negative_ids)
+        top_positive_tokens = model.tokenizer.convert_ids_to_tokens(top_positive_ids)
+        set = {}
+        set['top_negative_ids'] = top_negative_ids
+        set['top_positive_ids'] = top_positive_ids
+        set['top_negative_logits'] = top_negative_logits.cpu().tolist()
+        set['top_negative_tokens'] = top_negative_tokens
+        set['top_positive_logits'] = top_positive_logits.cpu().tolist()
+        set['top_positive_tokens'] = top_positive_tokens
+        set['histogram_nums'], set['histogram_edges'] = torch.histogram(logits.cpu(), bins=60, range=(-60.0, 60.0)) # Why logits.cpu():Could not run 'aten::histogram.bin_ct' with arguments from the 'CUDA' backend
+        set['histogram_nums'] = set['histogram_nums'].cpu().tolist()
+        set['histogram_edges'] = set['histogram_edges'].cpu().tolist()
+        # print({'dictionary_id': dict_id, 'index': feature_index})
+        update_one(db['features'], {'dictionary_id': dict_id, 'index': int(feature_index)}, set)
+        
+        exit()
+        
+        # print(top_negative_logits)
+        # print(top_positive_logits)
+        # print(top_negative_ids)
+        # print(top_positive_ids)
+        # print(top_negative_tokens)
+        # print(top_positive_tokens)
+        # numpy_logits = logits.cpu().numpy()
+        # fig = go.Figure(data=[go.Histogram(x=numpy_logits)])
+        # fig.update_layout(title='histogram', xaxis_title="Value", yaxis_title="Frequency")
+        # fig.show()
+        
+    # check_file_path_unused(cfg.file_path)
+    
+    # Dataset.from_dict(saved_dict).save_to_disk(cfg.file_path)
+    # Dataset.from_dict(result_dict).save_to_disk(cfg.file_path, num_shards=1024, progress_callback=progress_callback)
+    # Key.Type: <class 'int'> Value.Type: <class 'numpy.ndarray'>
+
+    # print(model.cfg.normalization_type)
+    # LNPre
+    # print(model.cfg.final_rms)
+    # False
+    
+    # print(mid.shape)
+    # torch.Size([768])
+
+    # print(state_dict['unembed.W_U'].shape)
+    # torch.Size([768, 50257])
+    # print(state_dict['unembed.b_U'].shape)
+    # torch.Size([50257])
+    # print(hf_model.state_dict()['transformer.ln_f.weight'].shape)
+    # torch.Size([768])
+    # print(hf_model.state_dict()['transformer.ln_f.bias'].shape)
+    # torch.Size([768])
+    # print(hf_model.state_dict()['lm_head.weight'].shape)
+    # torch.Size([50257, 768])
