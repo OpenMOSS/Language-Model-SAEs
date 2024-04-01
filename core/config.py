@@ -309,8 +309,8 @@ class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
 
 @dataclass
 class MongoConfig:
-    mongo_uri: str
-    mongo_db: str
+    mongo_uri: str = "mongodb://localhost:27017"
+    mongo_db: str = "mechinterp"
 
 @dataclass
 class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConfig):
@@ -323,7 +323,7 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConf
         False  # If True, we will sample the activations based on weights. Otherwise, top n_samples activations will be used.
     )
     sample_weight_exponent: float = 2.0
-    subsample: Dict[Dict[str, Any]] = field(default_factory=lambda: { "top_activations": {"proportion": 1.0, "n_samples": 10} })
+    subsample: Dict[str, Dict[str, Any]] = field(default_factory=lambda: { "top_activations": {"proportion": 1.0, "n_samples": 10} })
 
 
 @dataclass

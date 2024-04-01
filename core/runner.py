@@ -18,7 +18,6 @@ from core.activation.activation_store import ActivationStore
 from core.sae_training import prune_sae, train_sae
 from core.analysis.sample_feature_activations import sample_feature_activations
 from core.feature.features_to_logits import features_to_logits
-from scripts.results_to_database import connect_to_db, find_one, update_one
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     cfg.save_hyperparameters()
@@ -156,11 +155,8 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
 @torch.no_grad()
 def features_to_logits_runner(cfg: FeaturesDecoderConfig):
     sae = SparseAutoEncoder(cfg=cfg)
-    # print(sae.d_sae)
     if cfg.from_pretrained_path is not None:
         sae.load_state_dict(torch.load(cfg.from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
-    # print(sae.feature_act_mask.shape)
-    # print(sae.feature_act_mask)
     
     hf_model = AutoModelForCausalLM.from_pretrained('gpt2', cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
     model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
@@ -168,32 +164,39 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
     
     result_dict = features_to_logits(sae, model, cfg)
     
-    db = connect_to_db(cfg.db_url, cfg.db_name)
-    
-    dict_id = find_one(db['dictionaries'], {'name': cfg.dict_name})['_id']
-    # print(model.tokenizer)
-    # print(model.tokenizer.get_vocab())
-    
+    client = MongoClient(cfg.mongo_uri, cfg.mongo_db)
+
     for feature_index, logits in result_dict.items():
         sorted_indeces = torch.argsort(logits)
-        top_negative_logits = logits[sorted_indeces[:cfg.top]]
-        top_positive_logits = logits[sorted_indeces[-cfg.top:]]
+        top_negative_logits = logits[sorted_indeces[:cfg.top]].cpu().tolist()
+        top_positive_logits = logits[sorted_indeces[-cfg.top:]].cpu().tolist()
         top_negative_ids = sorted_indeces[:cfg.top].tolist()
         top_positive_ids = sorted_indeces[-cfg.top:].tolist()
-        top_negative_tokens = model.tokenizer.convert_ids_to_tokens(top_negative_ids)
-        top_positive_tokens = model.tokenizer.convert_ids_to_tokens(top_positive_ids)
-        set = {}
-        set['top_negative_ids'] = top_negative_ids
-        set['top_positive_ids'] = top_positive_ids
-        set['top_negative_logits'] = top_negative_logits.cpu().tolist()
-        set['top_negative_tokens'] = top_negative_tokens
-        set['top_positive_logits'] = top_positive_logits.cpu().tolist()
-        set['top_positive_tokens'] = top_positive_tokens
-        set['histogram_nums'], set['histogram_edges'] = torch.histogram(logits.cpu(), bins=60, range=(-60.0, 60.0)) # Why logits.cpu():Could not run 'aten::histogram.bin_ct' with arguments from the 'CUDA' backend
-        set['histogram_nums'] = set['histogram_nums'].cpu().tolist()
-        set['histogram_edges'] = set['histogram_edges'].cpu().tolist()
-        # print({'dictionary_id': dict_id, 'index': feature_index})
-        update_one(db['features'], {'dictionary_id': dict_id, 'index': int(feature_index)}, set)
+        top_negative_tokens = model.to_str_tokens(top_negative_ids, prepend_bos=False)
+        top_positive_tokens = model.to_str_tokens(top_positive_ids, prepend_bos=False)
+        counts, edges = torch.histogram(logits.cpu(), bins=60, range=(-60.0, 60.0)) # Why logits.cpu():Could not run 'aten::histogram.bin_ct' with arguments from the 'CUDA' backend
+        client.update_feature(cfg.exp_name, int(feature_index), {
+            "logits": {
+                "top_negative": [
+                    {
+                        "token_id": id,
+                        "logit": logit,
+                        "token": token
+                    } for id, logit, token in zip(top_negative_ids, top_negative_logits, top_negative_tokens)
+                ],
+                "top_positive": [
+                    {
+                        "token_id": id,
+                        "logit": logit,
+                        "token": token
+                    } for id, logit, token in zip(top_positive_ids, top_positive_logits, top_positive_tokens)
+                ],
+                "histogram": {
+                    "counts": counts.cpu().tolist(),
+                    "edges": edges.cpu().tolist()
+                }
+            }
+        }, dictionary_series=cfg.exp_series)
         
         exit()
         
