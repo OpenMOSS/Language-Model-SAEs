@@ -9,18 +9,6 @@ import pymongo.database
 
 from core.utils.bytes import bytes_to_np, np_to_bytes
 
-mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-mongo_db = os.getenv("MONGO_DB", "mechinterp")
-result_dir = os.getenv("RESULT_DIR", "results")
-
-client = pymongo.MongoClient(mongo_uri)
-db = client[mongo_db]
-fs = gridfs.GridFS(db)
-feature_collection = db['features']
-dictionary_collection = db['dictionaries']
-dictionary_collection.create_index('name', unique=True)
-feature_collection.create_index([('dictionary_id', pymongo.ASCENDING), ('index', pymongo.ASCENDING)], unique=True)
-
 class MongoClient:
     def __init__(self, mongo_uri: str, mongo_db: str):
         self.client = pymongo.MongoClient(mongo_uri)
@@ -40,7 +28,7 @@ class MongoClient:
         if isinstance(data, list):
             return [self._to_gridfs(v) for v in data]
         if isinstance(data, np.ndarray):
-            return fs.put(np_to_bytes(data))
+            return self.fs.put(np_to_bytes(data))
         return data
     
     def _from_gridfs(self, data):
@@ -51,8 +39,8 @@ class MongoClient:
             return {k: self._from_gridfs(v) for k, v in data.items()}
         if isinstance(data, list):
             return [self._from_gridfs(v) for v in data]
-        if isinstance(data, ObjectId) and fs.exists(data):
-            return bytes_to_np(fs.get(data).read())
+        if isinstance(data, ObjectId) and self.fs.exists(data):
+            return bytes_to_np(self.fs.get(data).read())
         return data
 
     def create_dictionary(self, dictionary_name: str, n_features: int, dictionary_series: str | None = None):
@@ -72,8 +60,8 @@ class MongoClient:
         assert feature is not None, f'Feature {feature_index} not found in dictionary {dictionary_name}'
         self.feature_collection.update_one({'_id': feature['_id']}, {'$set': self._to_gridfs(feature_data)})
 
-    def list_dictionaries(dictionary_series: str | None = None):
-        return [d['name'] for d in dictionary_collection.find({'series': dictionary_series} if dictionary_series is not None else {})]
+    def list_dictionaries(self, dictionary_series: str | None = None):
+        return [d['name'] for d in self.dictionary_collection.find({'series': dictionary_series} if dictionary_series is not None else {})]
     
     def get_feature(self, dictionary_name: str, feature_index: int, dictionary_series: str | None = None):
         dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
@@ -100,4 +88,4 @@ class MongoClient:
         dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
         if dictionary is None:
             return None
-        return feature_collection.count_documents({'dictionary_id': dictionary['_id'], 'max_feature_acts': {'$gt': 0}})
+        return self.feature_collection.count_documents({'dictionary_id': dictionary['_id'], 'max_feature_acts': {'$gt': 0}})

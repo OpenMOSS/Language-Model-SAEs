@@ -64,31 +64,31 @@ def sample_feature_activations(
 
         act_times += aux_data["feature_acts"].gt(0.0).sum(dim=[0, 1])
 
-        if cfg.enable_sampling:
-            weights = aux_data["feature_acts"].clamp(min=0.0).pow(cfg.sample_weight_exponent).max(dim=1).values
-            elt = torch.rand(batch.size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).log() / weights
-            elt[weights == 0.0] = -torch.inf
-        else:
-            elt = aux_data["feature_acts"].clamp(min=0.0).max(dim=1).values
-        if cfg.subsample is not None:
-            elt[aux_data["feature_acts"].max(dim=1).values >= max_feature_acts.unsqueeze(0) * cfg.subsample] = -torch.inf
-            
-        sample_result = {k: concat_dict_of_tensor(
-            sample_result,
-            {
-                "elt": elt,
-                "feature_acts": rearrange(aux_data["feature_acts"], 'batch_size context_size d_sae -> batch_size d_sae context_size'),
-                "contexts": repeat(batch, 'batch_size context_size -> batch_size d_sae context_size', d_sae=cfg.d_sae),
-            },
-            dim=0,
-        ) for k in cfg.subsample.keys()}
+        for name in cfg.subsample.keys():
 
-        # Sort elt, and extract the top n_samples
-        sample_result = {k: sort_dict_of_tensor(sample_result, sort_dim=0, sort_key="elt", descending=True) for k in cfg.subsample.keys()}
-        sample_result = {k1: {
-            k2: v2[:cfg.subsample[k1]["n_samples"]] for k2, v2 in v1.items()
-        } for k1, v1 in sample_result.items()}
-        
+            if cfg.enable_sampling:
+                weights = aux_data["feature_acts"].clamp(min=0.0).pow(cfg.sample_weight_exponent).max(dim=1).values
+                elt = torch.rand(batch.size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).log() / weights
+                elt[weights == 0.0] = -torch.inf
+            else:
+                elt = aux_data["feature_acts"].clamp(min=0.0).max(dim=1).values
+
+            elt[aux_data["feature_acts"].max(dim=1).values > max_feature_acts.unsqueeze(0) * cfg.subsample[name]["proportion"]] = -torch.inf
+            
+            sample_result[name] = concat_dict_of_tensor(
+                sample_result[name],
+                {
+                    "elt": elt,
+                    "feature_acts": rearrange(aux_data["feature_acts"], 'batch_size context_size d_sae -> batch_size d_sae context_size'),
+                    "contexts": repeat(batch, 'batch_size context_size -> batch_size d_sae context_size', d_sae=cfg.d_sae),
+                },
+                dim=0,
+            )
+
+            sample_result[name] = sort_dict_of_tensor(sample_result[name], sort_dim=0, sort_key="elt", descending=True)
+            sample_result[name] = {
+                k: v[:cfg.subsample[name]["n_samples"]] for k, v in sample_result[name].items()
+            }        
 
         # Update feature activation histogram every 10 steps
         if n_training_steps % 10 == 0:
