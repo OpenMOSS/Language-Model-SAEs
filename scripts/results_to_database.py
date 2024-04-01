@@ -18,19 +18,6 @@ from pymongo import MongoClient
 
 from core.utils.bytes import np_to_bytes
 
-def connect_to_db(url, db_name):
-    client = MongoClient(url)
-
-    db = client[db_name]
-
-    return db
-
-def find_one(collection, condition):
-    return collection.find_one(condition)
-
-def update_one(collection, condition, set):
-    collection.update_one(condition, {"$set": set})
-
 def main():
     parser = argparse.ArgumentParser(description='Insert results into MongoDB')
     parser.add_argument('--uri', type=str, default='mongodb://localhost:27017', help='MongoDB URI')
