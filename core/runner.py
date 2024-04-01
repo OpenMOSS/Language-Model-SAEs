@@ -10,6 +10,7 @@ from transformers import AutoModelForCausalLM
 from transformer_lens import HookedTransformer
 
 from core.config import ActivationGenerationConfig, LanguageModelSAEAnalysisConfig, LanguageModelSAETrainingConfig, LanguageModelSAEConfig, LanguageModelSAEPruningConfig, FeaturesDecoderConfig
+from core.database import MongoClient
 from core.evals import run_evals
 from core.sae import SparseAutoEncoder
 from core.activation.activation_dataset import make_activation_dataset
@@ -132,7 +133,25 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     model.eval()
 
     activation_store = ActivationStore.from_config(model=model, cfg=cfg)
-    sample_feature_activations(sae, model, activation_store, cfg)
+    result = sample_feature_activations(sae, model, activation_store, cfg)
+
+    client = MongoClient(cfg.mongo_uri, cfg.mongo_db)
+    client.create_dictionary(cfg.exp_name, cfg.d_sae, cfg.exp_series)
+    for i in range(len(result["index"])):
+        client.update_feature(cfg.exp_name, result["index"][i].item(), {
+            "act_times": result["act_times"][i].item(),
+            "max_feature_acts": result["max_feature_acts"][i].item(),
+            "feature_acts_all": result["feature_acts_all"][i].cpu().numpy(),
+            "analysis": [
+                {
+                    "name": cfg.exp_name,
+                    "feature_acts": v[i].cpu().numpy(),
+                    "contexts": v[i].cpu().numpy(),
+                } for v in result["analysis"]
+            ]
+        }, dictionary_series=cfg.exp_series)
+
+    return result
 
 @torch.no_grad()
 def features_to_logits_runner(cfg: FeaturesDecoderConfig):
