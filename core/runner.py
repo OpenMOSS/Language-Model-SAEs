@@ -144,8 +144,8 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
             "analysis": [
                 {
                     "name": cfg.exp_name,
-                    "feature_acts": v[i].cpu().numpy(),
-                    "contexts": v[i].cpu().numpy(),
+                    "feature_acts": v["feature_acts"][i].cpu().numpy(),
+                    "contexts": v["contexts"][i].cpu().numpy(),
                 } for v in result["analysis"]
             ]
         }, dictionary_series=cfg.exp_series)
