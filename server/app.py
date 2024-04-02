@@ -19,8 +19,8 @@ import plotly.express as px
 
 from core.analysis.auto_interp import check_description, generate_description
 from core.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
+from core.database import MongoClient
 from core.sae import SparseAutoEncoder
-import server.database as db
 
 
 result_dir = os.environ.get("RESULT_DIR", "results")
@@ -30,6 +30,9 @@ app = FastAPI()
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017"), os.environ.get("MONGO_DB", "mechinterp"))
+dictionary_series = os.environ.get("DICTIONARY_SERIES", None)
+
 tokenizer: GPT2Tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
 hf_model = AutoModelForCausalLM.from_pretrained("gpt2")
@@ -38,7 +41,6 @@ model.eval()
 
 sae_cache = {}
 lm_cache = {}
-
 
 def get_sae(dictionary_name: str) -> SparseAutoEncoder:
     if dictionary_name not in sae_cache:
@@ -76,14 +78,14 @@ def make_serializable(obj):
 
 @app.get("/dictionaries")
 def list_dictionaries():
-    return db.list_dictionaries()
+    return client.list_dictionaries(dictionary_series=dictionary_series)
 
 
 @app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
 def get_feature(dictionary_name: str, feature_index: str):
     if isinstance(feature_index, str):
         if feature_index == "random":
-            feature = db.get_random_alive_feature(dictionary_name)
+            feature = client.get_random_alive_feature(dictionary_name, dictionary_series=dictionary_series)
         else:
             try:
                 feature_index = int(feature_index)
@@ -92,7 +94,7 @@ def get_feature(dictionary_name: str, feature_index: str):
                     content=f"Feature index {feature_index} is not a valid integer",
                     status_code=400,
                 )
-            feature = db.get_feature(dictionary_name, feature_index)
+            feature = client.get_feature(dictionary_name, feature_index, dictionary_series=dictionary_series)
 
     if feature is None:
         return Response(
@@ -131,7 +133,7 @@ def get_feature(dictionary_name: str, feature_index: str):
                     "act_times": feature["act_times"],
                     "max_feature_act": feature["max_feature_acts"],
                     "sample_groups": sample_groups,
-                    "interpretation": feature["interpretation"],
+                    "interpretation": feature["interpretation"] if "interpretation" in feature else None,
                 }
             )
         ),
@@ -206,7 +208,7 @@ def feature_interpretation(
                 "openai_base_url": os.environ.get("OPENAI_BASE_URL"),
             }
         )
-        feature = db.get_feature(dictionary_name, feature_index)
+        feature = client.get_feature(dictionary_name, feature_index, dictionary_series=dictionary_series)
         result = generate_description(model, feature["analysis"][0], cfg)
         interpretation = {
             "text": result["response"],
@@ -224,8 +226,8 @@ def feature_interpretation(
                 "openai_base_url": os.environ.get("OPENAI_BASE_URL"),
             }
         )
-        feature = db.get_feature(dictionary_name, feature_index)
-        interpretation = feature["interpretation"]
+        feature = client.get_feature(dictionary_name, feature_index, dictionary_series=dictionary_series)
+        interpretation = feature["interpretation"] if "interpretation" in feature else None
         if interpretation is None:
             return Response(content="Feature interpretation not found", status_code=404)
         validation = interpretation["validation"]
@@ -263,7 +265,8 @@ def feature_interpretation(
             )
 
     try:
-        db.update_feature_interpretation(dictionary_name, feature_index, interpretation)
+        client.update_feature(dictionary_name, feature_index, 
+            {"interpretation": interpretation}, dictionary_series=dictionary_series)
     except ValueError as e:
         return Response(content=str(e), status_code=400)
     return interpretation
@@ -271,7 +274,7 @@ def feature_interpretation(
 
 @app.get("/attn_heads/{layer}/{head}")
 def get_attn_head(layer: int, head: int):
-    attn_head = db.get_attn_head(layer, head)
+    attn_head = client.get_attn_head(layer, head, dictionary_series=dictionary_series)
     if attn_head is None:
         return Response(
             content=f"Attention head {layer}/{head} not found", status_code=404
