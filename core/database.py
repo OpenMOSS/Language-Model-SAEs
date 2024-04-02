@@ -16,8 +16,10 @@ class MongoClient:
         self.fs = gridfs.GridFS(self.db)
         self.feature_collection = self.db['features']
         self.dictionary_collection = self.db['dictionaries']
+        self.attn_head_collection = self.db['attn_heads']
         self.dictionary_collection.create_index([('name', pymongo.ASCENDING), ('series', pymongo.ASCENDING)], unique=True)
         self.feature_collection.create_index([('dictionary_id', pymongo.ASCENDING), ('index', pymongo.ASCENDING)], unique=True)
+        self.attn_head_collection.create_index([('dictionary_id', pymongo.ASCENDING), ('index', pymongo.ASCENDING)], unique=True)
 
     def _to_gridfs(self, data):
         """
@@ -89,3 +91,69 @@ class MongoClient:
         if dictionary is None:
             return None
         return self.feature_collection.count_documents({'dictionary_id': dictionary['_id'], 'max_feature_acts': {'$gt': 0}})
+    
+    def get_attn_head(self, dictionary_name: str, head_index: int, dictionary_series: str | None = None):
+        pipeline = [
+            {
+                "$lookup": {
+                    "localField": "dictionary_id",
+                    "from": "dictionaries",
+                    "foreignField": "_id",
+                    "as": "dictionary",
+                }
+            },
+            {"$unwind": "$dictionary"},
+            {
+                "$match": {
+                    "dictionary.name": dictionary_name,
+                    "index": head_index,
+                    "dictionary.series": dictionary_series,
+                }
+            },
+            {
+                "$project": {
+                    "dictionary_id": 0,
+                }
+            }
+        ]
+        attn_head = self.attn_head_collection.aggregate(pipeline).next()
+        if len(attn_head["attn_score"]) == 0:
+            return attn_head
+        pipeline = [
+            *pipeline,
+            {"$unwind": "$attn_scores"},
+            {
+                "$lookup": {
+                    "localField": "attn_scores.dictionary1_id",
+                    "from": "dictionaries",
+                    "foreignField": "_id",
+                    "as": "attn_scores.dictionary1",
+                }
+            },
+            {"$unwind": "$attn_scores.dictionary1"},
+            {
+                "$lookup": {
+                    "localField": "attn_scores.dictionary2_id",
+                    "from": "dictionaries",
+                    "foreignField": "_id",
+                    "as": "attn_scores.dictionary2",
+                }
+            },
+            {"$unwind": "$attn_scores.dictionary2"},
+            {
+                "$project": {
+                    "attn_scores.dictionary1_id": 0,
+                    "attn_scores.dictionary2_id": 0,
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$_id",
+                    "attn_scores": {"$push": "$attn_scores"},
+                    "dictionary": {"$first": "$dictionary"},
+                    "index": {"$first": "$index"},
+                }
+            },
+        ]
+        return self.attn_head_collection.aggregate(pipeline).next()
+        
