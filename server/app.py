@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 import plotly.express as px
+import plotly.graph_objects as go
 
 from core.analysis.auto_interp import check_description, generate_description
 from core.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
@@ -121,7 +122,15 @@ def get_feature(dictionary_name: str, feature_index: str):
             }
         )
 
-    fig = px.histogram(feature["feature_acts_all"], width=600, nbins=50)
+    feature_activation_histogram = px.histogram(feature["feature_acts_all"], width=600, nbins=50)
+
+    if "logits" in feature:
+        logits_bin_edges = np.array(feature["logits"]["histogram"]["edges"])
+        logits_histogram = go.Figure().add_trace(go.Bar(
+            x=(logits_bin_edges[:-1] + logits_bin_edges[1:]) / 2,
+            y=np.array(feature["logits"]["histogram"]["counts"]),
+            marker=dict(line=dict(width=1)),
+        ))
 
     return Response(
         content=msgpack.packb(
@@ -129,10 +138,15 @@ def get_feature(dictionary_name: str, feature_index: str):
                 {
                     "feature_index": feature["index"],
                     "dictionary_name": dictionary_name,
-                    "feature_activation_histogram": fig.to_dict()["data"],
+                    "feature_activation_histogram": feature_activation_histogram.to_dict()["data"],
                     "act_times": feature["act_times"],
                     "max_feature_act": feature["max_feature_acts"],
                     "sample_groups": sample_groups,
+                    "logits": {
+                        "top_positive": list(reversed(feature["logits"]["top_positive"])),
+                        "top_negative": feature["logits"]["top_negative"],
+                        "histogram": logits_histogram.to_dict()["data"],
+                    } if "logits" in feature else None,
                     "interpretation": feature["interpretation"] if "interpretation" in feature else None,
                 }
             )
