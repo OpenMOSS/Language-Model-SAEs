@@ -124,13 +124,24 @@ def get_feature(dictionary_name: str, feature_index: str):
 
     feature_activation_histogram = px.histogram(feature["feature_acts_all"], width=600, nbins=50)
 
+    feature_activation_histogram = go.Histogram(
+        x=feature["feature_acts_all"],
+        nbinsx=50,
+        hovertemplate="Count: %{y}<br>Range: %{x}<extra></extra>",
+        marker_color="#636EFA",
+        showlegend=False,
+    ).to_plotly_json()
+
     if "logits" in feature:
         logits_bin_edges = np.array(feature["logits"]["histogram"]["edges"])
-        logits_histogram = go.Figure().add_trace(go.Bar(
+        logits_histogram = go.Bar(
             x=(logits_bin_edges[:-1] + logits_bin_edges[1:]) / 2,
+            customdata=np.dstack([logits_bin_edges[:-1], logits_bin_edges[1:]]).squeeze(),
             y=np.array(feature["logits"]["histogram"]["counts"]),
-            marker=dict(line=dict(width=1)),
-        ))
+            hovertemplate="Count: %{y}<br>Range: %{customdata[0]} - %{customdata[1]}<extra></extra>",
+            marker_color=["#EF553B" for _ in range((len(logits_bin_edges) - 1) // 2)] + ["#636EFA" for _ in range((len(logits_bin_edges) - 1) // 2)],
+            showlegend=False,
+        ).to_plotly_json()
 
     return Response(
         content=msgpack.packb(
@@ -138,14 +149,14 @@ def get_feature(dictionary_name: str, feature_index: str):
                 {
                     "feature_index": feature["index"],
                     "dictionary_name": dictionary_name,
-                    "feature_activation_histogram": feature_activation_histogram.to_dict()["data"],
+                    "feature_activation_histogram": [feature_activation_histogram],
                     "act_times": feature["act_times"],
                     "max_feature_act": feature["max_feature_acts"],
                     "sample_groups": sample_groups,
                     "logits": {
                         "top_positive": list(reversed(feature["logits"]["top_positive"])),
                         "top_negative": feature["logits"]["top_negative"],
-                        "histogram": logits_histogram.to_dict()["data"],
+                        "histogram": [logits_histogram],
                     } if "logits" in feature else None,
                     "interpretation": feature["interpretation"] if "interpretation" in feature else None,
                 }
@@ -211,7 +222,7 @@ def feature_interpretation(
         cfg = AutoInterpConfig(
             **{
                 **SAEConfig.get_hyperparameters(
-                    dictionary_name, result_dir, "pruned.pt", True
+                    dictionary_name, result_dir, "final.pt", True
                 ),
                 **LanguageModelConfig.get_lm_config(dictionary_name, result_dir),
                 "openai_api_key": os.environ.get("OPENAI_API_KEY"),
