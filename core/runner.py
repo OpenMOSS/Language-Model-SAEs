@@ -234,41 +234,5 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
                 }
             }
         }, dictionary_series=cfg.exp_series)
-        
-        # print(top_negative_logits)
-        # print(top_positive_logits)
-        # print(top_negative_ids)
-        # print(top_positive_ids)
-        # print(top_negative_tokens)
-        # print(top_positive_tokens)
-        # numpy_logits = logits.cpu().numpy()
-        # fig = go.Figure(data=[go.Histogram(x=numpy_logits)])
-        # fig.update_layout(title='histogram', xaxis_title="Value", yaxis_title="Frequency")
-        # fig.show()
     
     print(cfg.exp_name + ' done')
-        
-    # check_file_path_unused(cfg.file_path)
-    
-    # Dataset.from_dict(saved_dict).save_to_disk(cfg.file_path)
-    # Dataset.from_dict(result_dict).save_to_disk(cfg.file_path, num_shards=1024, progress_callback=progress_callback)
-    # Key.Type: <class 'int'> Value.Type: <class 'numpy.ndarray'>
-
-    # print(model.cfg.normalization_type)
-    # LNPre
-    # print(model.cfg.final_rms)
-    # False
-    
-    # print(mid.shape)
-    # torch.Size([768])
-
-    # print(state_dict['unembed.W_U'].shape)
-    # torch.Size([768, 50257])
-    # print(state_dict['unembed.b_U'].shape)
-    # torch.Size([50257])
-    # print(hf_model.state_dict()['transformer.ln_f.weight'].shape)
-    # torch.Size([768])
-    # print(hf_model.state_dict()['transformer.ln_f.bias'].shape)
-    # torch.Size([768])
-    # print(hf_model.state_dict()['lm_head.weight'].shape)
-    # torch.Size([50257, 768])
