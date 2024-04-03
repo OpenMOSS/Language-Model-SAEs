@@ -329,10 +329,6 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConf
 @dataclass
 class FeaturesDecoderConfig(SAEConfig, LanguageModelConfig, MongoConfig):
     top: int = 10
-    exp_name: str = None
-    exp_series: str = None
-    mongo_uri: str = None,
-    mongo_db: str = None
 
 @dataclass
 class LanguageModelSAEFinetuningConfig(LanguageModelSAEConfig):
