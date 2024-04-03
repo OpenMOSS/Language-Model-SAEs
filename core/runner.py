@@ -190,6 +190,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
 
 @torch.no_grad()
 def features_to_logits_runner(cfg: FeaturesDecoderConfig):
+    print(cfg.exp_name + ' is running')
     sae = SparseAutoEncoder(cfg=cfg)
     if cfg.from_pretrained_path is not None:
         sae.load_state_dict(torch.load(cfg.from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
@@ -208,8 +209,8 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
         top_positive_logits = logits[sorted_indeces[-cfg.top:]].cpu().tolist()
         top_negative_ids = sorted_indeces[:cfg.top].tolist()
         top_positive_ids = sorted_indeces[-cfg.top:].tolist()
-        top_negative_tokens = model.to_str_tokens(top_negative_ids, prepend_bos=False)
-        top_positive_tokens = model.to_str_tokens(top_positive_ids, prepend_bos=False)
+        top_negative_tokens = model.to_str_tokens(torch.tensor(top_negative_ids), prepend_bos=False)
+        top_positive_tokens = model.to_str_tokens(torch.tensor(top_positive_ids), prepend_bos=False)
         counts, edges = torch.histogram(logits.cpu(), bins=60, range=(-60.0, 60.0)) # Why logits.cpu():Could not run 'aten::histogram.bin_ct' with arguments from the 'CUDA' backend
         client.update_feature(cfg.exp_name, int(feature_index), {
             "logits": {
@@ -234,8 +235,6 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
             }
         }, dictionary_series=cfg.exp_series)
         
-        exit()
-        
         # print(top_negative_logits)
         # print(top_positive_logits)
         # print(top_negative_ids)
@@ -246,6 +245,8 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
         # fig = go.Figure(data=[go.Histogram(x=numpy_logits)])
         # fig.update_layout(title='histogram', xaxis_title="Value", yaxis_title="Frequency")
         # fig.show()
+    
+    print(cfg.exp_name + ' done')
         
     # check_file_path_unused(cfg.file_path)
     
