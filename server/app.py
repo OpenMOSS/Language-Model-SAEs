@@ -23,7 +23,6 @@ from core.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
 from core.database import MongoClient
 from core.sae import SparseAutoEncoder
 
-
 result_dir = os.environ.get("RESULT_DIR", "results")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -33,6 +32,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017"), os.environ.get("MONGO_DB", "mechinterp"))
 dictionary_series = os.environ.get("DICTIONARY_SERIES", None)
+ckpt_name = os.environ.get("DICTIONARY_CKPT_NAME", "final.pt")
 
 tokenizer: GPT2Tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
@@ -47,7 +47,7 @@ def get_sae(dictionary_name: str) -> SparseAutoEncoder:
     if dictionary_name not in sae_cache:
         cfg = SAEConfig(
             **SAEConfig.get_hyperparameters(
-                dictionary_name, result_dir, "pruned.pt", True
+                dictionary_name, result_dir, ckpt_name, True
             ),
             # RunnerConfig
             use_ddp=False,
@@ -222,7 +222,7 @@ def feature_interpretation(
         cfg = AutoInterpConfig(
             **{
                 **SAEConfig.get_hyperparameters(
-                    dictionary_name, result_dir, "final.pt", True
+                    dictionary_name, result_dir, ckpt_name, True
                 ),
                 **LanguageModelConfig.get_lm_config(dictionary_name, result_dir),
                 "openai_api_key": os.environ.get("OPENAI_API_KEY"),
@@ -240,7 +240,7 @@ def feature_interpretation(
         cfg = AutoInterpConfig(
             **{
                 **SAEConfig.get_hyperparameters(
-                    dictionary_name, result_dir, "pruned.pt", True
+                    dictionary_name, result_dir, ckpt_name, True
                 ),
                 **LanguageModelConfig.get_lm_config(dictionary_name, result_dir),
                 "openai_api_key": os.environ.get("OPENAI_API_KEY"),

@@ -128,6 +128,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
               layout={{
                 xaxis: { title: "Activation" },
                 yaxis: { title: "Count" },
+                bargap: 0.2,
                 margin: { t: 0, b: 40 },
                 showlegend: false,
               }}
@@ -183,6 +184,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
             <Plot
               data={feature.logits.histogram}
               layout={{
+                bargap: 0.2,
                 margin: { t: 0, b: 40 },
                 showlegend: false,
               }}
