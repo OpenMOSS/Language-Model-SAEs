@@ -93,7 +93,7 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
                 ""
               )}
             </HoverCardTrigger>
-            <HoverCardContent>
+            <HoverCardContent className="w-auto max-w-[800px]">
               <SimpleSampleArea
                 sample={samples[0]}
                 sampleName={`Sample ${s + 1}`}
@@ -159,7 +159,7 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
   return (
     <div className="flex flex-col gap-4">
       {samples.map((sample, sampleIndex) => (
-        <div className="flex gap-4 justify-between" key={sampleIndex}>
+        <div className="w-full overflow-x-visible relative" key={sampleIndex}>
           <SimpleSampleArea
             sample={sample}
             sampleName={`Sample ${sampleIndex + 1}`}
@@ -173,13 +173,15 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
               onClick: () => toggleSelectedTokenGroupIndex(sampleIndex, i),
             })}
           />
-          <Trash2
-            className="cursor-pointer hover:text-red-500"
-            size={20}
-            onClick={() => {
-              onSamplesChange?.(samples.filter((_, i) => i !== sampleIndex));
-            }}
-          />
+          <div className="absolute top-0 -left-8 h-full opacity-20 hover:opacity-100 transition-opacity">
+            <Trash2
+              className="cursor-pointer hover:text-red-500 shrink-0 m-0.5"
+              size={20}
+              onClick={() => {
+                onSamplesChange?.(samples.filter((_, i) => i !== sampleIndex));
+              }}
+            />
+          </div>
         </div>
       ))}
 
