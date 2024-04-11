@@ -1,12 +1,6 @@
 import { AttentionHeadCard } from "@/components/attn-head/attn-head-card";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AttentionHead, AttentionHeadSchema } from "@/types/attn-head";
 import camelcaseKeys from "camelcase-keys";
 import { useState } from "react";
@@ -26,12 +20,9 @@ export const AttentionHeadPage = () => {
     });
     setAttnHeads([]);
     for (let i = 0; i < 12; i++) {
-      const attnHead = await fetch(
-        `${import.meta.env.VITE_BACKEND_URL}/attn_heads/${layer}/${i}`,
-        {
-          method: "GET",
-        }
-      )
+      const attnHead = await fetch(`${import.meta.env.VITE_BACKEND_URL}/attn_heads/${layer}/${i}`, {
+        method: "GET",
+      })
         .then(async (res) => {
           if (!res.ok) {
             throw new Error(await res.text());
@@ -94,19 +85,11 @@ export const AttentionHeadPage = () => {
       </div>
       {attnHeadState.loading && (
         <div>
-          Loading Attention Head of Layer{" "}
-          <span className="font-bold">{selectedLayer}</span>...
+          Loading Attention Head of Layer <span className="font-bold">{selectedLayer}</span>...
         </div>
       )}
-      {attnHeadState.error && (
-        <div className="text-red-500 font-bold">
-          Error: {attnHeadState.error.message}
-        </div>
-      )}
-      {!attnHeadState.loading &&
-        attnHeads.map((attnHead, idx) => (
-          <AttentionHeadCard key={idx} attnHead={attnHead} />
-        ))}
+      {attnHeadState.error && <div className="text-red-500 font-bold">Error: {attnHeadState.error.message}</div>}
+      {!attnHeadState.loading && attnHeads.map((attnHead, idx) => <AttentionHeadCard key={idx} attnHead={attnHead} />)}
     </div>
   );
 };

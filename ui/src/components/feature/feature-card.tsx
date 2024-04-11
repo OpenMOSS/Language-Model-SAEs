@@ -6,14 +6,7 @@ import Plot from "react-plotly.js";
 import { useAsyncFn } from "react-use";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
 import { FeatureInterpretation } from "./interpret";
@@ -27,11 +20,9 @@ const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
       return;
     }
     return await fetch(
-      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${
-        feature.dictionaryName
-      }/features/${feature.featureIndex}/custom?input_text=${encodeURIComponent(
-        customInput
-      )}`,
+      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${feature.dictionaryName}/features/${
+        feature.featureIndex
+      }/custom?input_text=${encodeURIComponent(customInput)}`,
       {
         method: "POST",
         headers: {
@@ -76,10 +67,7 @@ const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
             sampleName="Custom Input"
             maxFeatureAct={feature.maxFeatureAct}
           />
-          <p className="font-bold">
-            Custom Input Max Activation:{" "}
-            {Math.max(...state.value.featureActs).toFixed(3)}
-          </p>
+          <p className="font-bold">Custom Input Max Activation: {Math.max(...state.value.featureActs).toFixed(3)}</p>
         </>
       )}
     </div>
@@ -106,8 +94,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
           <span>
             #{feature.featureIndex}{" "}
             <span className="font-medium">
-              (Activation Times ={" "}
-              <span className="font-bold">{feature.actTimes}</span>)
+              (Activation Times = <span className="font-bold">{feature.actTimes}</span>)
             </span>
           </span>
           <Button onClick={() => setShowCustomInput((prev) => !prev)}>
@@ -135,70 +122,69 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
             />
           </div>
 
-          <div className="flex flex-col w-full gap-4">
-            <p className="font-bold">Logits</p>
-            <div className="flex gap-4">
-              <div className="flex flex-col w-1/2 gap-4">
-                <p className="font-bold">Top Positive</p>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Token</TableHead>
-                      <TableHead>Logit</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {feature.logits.topPositive.map((token) => (
-                      <TableRow key={token.token}>
-                        <TableCell className="underline decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
-                          {token.token}
-                        </TableCell>
-                        <TableCell>{token.logit.toFixed(3)}</TableCell>
+          {feature.logits && (
+            <div className="flex flex-col w-full gap-4">
+              <p className="font-bold">Logits</p>
+              <div className="flex gap-4">
+                <div className="flex flex-col w-1/2 gap-4">
+                  <p className="font-bold">Top Positive</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Token</TableHead>
+                        <TableHead>Logit</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className="flex flex-col w-1/2 gap-4">
-                <p className="font-bold">Top Negative</p>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Token</TableHead>
-                      <TableHead>Logit</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {feature.logits.topNegative.map((token) => (
-                      <TableRow key={token.token}>
-                        <TableCell className="underline decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
-                          {token.token}
-                        </TableCell>
-                        <TableCell>{token.logit.toFixed(3)}</TableCell>
+                    </TableHeader>
+                    <TableBody>
+                      {feature.logits.topPositive.map((token) => (
+                        <TableRow key={token.token}>
+                          <TableCell className="underline decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
+                            {token.token}
+                          </TableCell>
+                          <TableCell>{token.logit.toFixed(3)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="flex flex-col w-1/2 gap-4">
+                  <p className="font-bold">Top Negative</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Token</TableHead>
+                        <TableHead>Logit</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {feature.logits.topNegative.map((token) => (
+                        <TableRow key={token.token}>
+                          <TableCell className="underline decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
+                            {token.token}
+                          </TableCell>
+                          <TableCell>{token.logit.toFixed(3)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
+              <Plot
+                data={feature.logits.histogram}
+                layout={{
+                  bargap: 0.2,
+                  margin: { t: 0, b: 40 },
+                  showlegend: false,
+                }}
+              />
             </div>
-            <Plot
-              data={feature.logits.histogram}
-              layout={{
-                bargap: 0.2,
-                margin: { t: 0, b: 40 },
-                showlegend: false,
-              }}
-            />
-          </div>
+          )}
 
           <div className="flex flex-col w-full gap-4">
             <Tabs defaultValue="top_activations">
               <TabsList className="font-bold">
                 {feature.sampleGroups.map((sampleGroup) => (
-                  <TabsTrigger
-                    key={`tab-trigger-${sampleGroup.analysisName}`}
-                    value={sampleGroup.analysisName}
-                  >
+                  <TabsTrigger key={`tab-trigger-${sampleGroup.analysisName}`} value={sampleGroup.analysisName}>
                     {analysisNameMap(sampleGroup.analysisName)}
                   </TabsTrigger>
                 ))}
@@ -209,10 +195,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                   value={sampleGroup.analysisName}
                   className="mt-0"
                 >
-                  <FeatureSampleGroup
-                    feature={feature}
-                    sampleGroup={sampleGroup}
-                  />
+                  <FeatureSampleGroup feature={feature} sampleGroup={sampleGroup} />
                 </TabsContent>
               ))}
             </Tabs>
