@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
-import { Dictionary, DictionarySampleSchema } from "@/types/dictionary";
+import { Dictionary, DictionarySample, DictionarySampleSchema } from "@/types/dictionary";
 import Plot from "react-plotly.js";
 import { useAsyncFn } from "react-use";
 import { decode } from "@msgpack/msgpack";
@@ -11,12 +11,13 @@ import { DictionarySampleArea } from "./sample";
 
 const DictionaryCustomInputArea = ({ dictionary }: { dictionary: Dictionary }) => {
   const [customInput, setCustomInput] = useState<string>("");
+  const [samples, setSamples] = useState<DictionarySample[]>([]);
   const [state, submit] = useAsyncFn(async () => {
     if (!customInput) {
       alert("Please enter your input.");
       return;
     }
-    return await fetch(
+    const sample = await fetch(
       `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${
         dictionary.dictionaryName
       }/custom?input_text=${encodeURIComponent(customInput)}`,
@@ -43,6 +44,7 @@ const DictionaryCustomInputArea = ({ dictionary }: { dictionary: Dictionary }) =
         })
       )
       .then((res) => DictionarySampleSchema.parse(res));
+    setSamples((prev) => [...prev, sample]);
   }, [customInput]);
 
   return (
@@ -57,14 +59,12 @@ const DictionaryCustomInputArea = ({ dictionary }: { dictionary: Dictionary }) =
         Submit
       </Button>
       {state.error && <p className="text-red-500">{state.error.message}</p>}
-      {state.value && (
-        <>
-          <DictionarySampleArea
-            sample={state.value}
-            sampleName="Custom Input"
-            dictionaryName={dictionary.dictionaryName}
-          />
-        </>
+      {samples.length > 0 && (
+        <DictionarySampleArea
+          samples={samples}
+          dictionaryName={dictionary.dictionaryName}
+          onSamplesChange={setSamples}
+        />
       )}
     </div>
   );

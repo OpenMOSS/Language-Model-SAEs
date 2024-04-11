@@ -9,49 +9,59 @@ import { SimpleSampleArea } from "../app/sample";
 import { HoverCard, HoverCardContent } from "../ui/hover-card";
 import { HoverCardTrigger } from "@radix-ui/react-hover-card";
 import { FeatureLinkWithPreview } from "../app/feature-preview";
+import { Trash2 } from "lucide-react";
 
 export type DictionarySampleAreaProps = {
-  sample: DictionarySample;
-  sampleName: string;
+  samples: DictionarySample[];
+  onSamplesChange?: (samples: DictionarySample[]) => void;
   dictionaryName: string;
 };
 
-export const DictionarySampleArea = ({ sample, sampleName, dictionaryName }: DictionarySampleAreaProps) => {
-  // const [selectedTokenGroupIndex, setSelectedTokenGroupIndex] = useState<number | null>(null);
-  const [selectedTokenGroupIndices, setSelectedTokenGroupIndices] = useState<number[]>([]);
-  const toggleSelectedTokenGroupIndex = (index: number) => {
+export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName }: DictionarySampleAreaProps) => {
+  const [selectedTokenGroupIndices, setSelectedTokenGroupIndices] = useState<[number, number][]>([]);
+  const toggleSelectedTokenGroupIndex = (sampleIndex: number, tokenGroupIndex: number) => {
     setSelectedTokenGroupIndices((prev) =>
-      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index].sort()
+      prev.some(([s, t]) => s === sampleIndex && t === tokenGroupIndex)
+        ? prev.filter(([s, t]) => s !== sampleIndex || t !== tokenGroupIndex)
+        : ([...prev, [sampleIndex, tokenGroupIndex]] as [number, number][]).sort(
+            ([s1, t1], [s2, t2]) => s1 - s2 || t1 - t2
+          )
     );
   };
 
   const decoder = new TextDecoder("utf-8", { fatal: true });
 
-  const tokens = sample.context.map((token, i) => ({
-    token,
-    featureActs: zip(sample.featureActsIndices[i], sample.featureActs[i], sample.maxFeatureActs[i]).map(
-      ([featureActIndex, featureAct, maxFeatureAct]) => ({
-        featureActIndex,
-        featureAct,
-        maxFeatureAct,
-      })
-    ),
-  }));
-
-  const [tokenGroups, _] = tokens.reduce<[DictionaryToken[][], DictionaryToken[]]>(
-    ([groups, currentGroup], token) => {
-      const newGroup = [...currentGroup, token];
-      try {
-        decoder.decode(mergeUint8Arrays(newGroup.map((t) => t.token)));
-        return [[...groups, newGroup], []];
-      } catch {
-        return [groups, newGroup];
-      }
-    },
-    [[], []]
+  const tokens = samples.map((sample) =>
+    sample.context.map((token, i) => ({
+      token,
+      featureActs: zip(sample.featureActsIndices[i], sample.featureActs[i], sample.maxFeatureActs[i]).map(
+        ([featureActIndex, featureAct, maxFeatureAct]) => ({
+          featureActIndex,
+          featureAct,
+          maxFeatureAct,
+        })
+      ),
+    }))
   );
 
-  const selectedTokenGroups = selectedTokenGroupIndices.map((i) => tokenGroups[i]);
+  const tokenGroups = tokens
+    .map((t) =>
+      t.reduce<[DictionaryToken[][], DictionaryToken[]]>(
+        ([groups, currentGroup], token) => {
+          const newGroup = [...currentGroup, token];
+          try {
+            decoder.decode(mergeUint8Arrays(newGroup.map((t) => t.token)));
+            return [[...groups, newGroup], []];
+          } catch {
+            return [groups, newGroup];
+          }
+        },
+        [[], []]
+      )
+    )
+    .map((v) => v[0]);
+
+  const selectedTokenGroups = selectedTokenGroupIndices.map(([s, t]) => tokenGroups[s][t]);
   const selectedTokens = selectedTokenGroups.flatMap((tokens) => tokens);
   const columns: ColumnDef<{ featureIndex: number; [key: `token${number}`]: string }, string>[] = [
     {
@@ -70,9 +80,9 @@ export const DictionarySampleArea = ({ sample, sampleName, dictionaryName }: Dic
       ),
     },
     ...(selectedTokenGroupIndices
-      .map((i) => [tokenGroups[i], i] as const)
+      .map(([s, t]) => [tokenGroups[s][t], [s, t]] as const)
       .flatMap(([tokens, i]) => tokens.map((token) => [token, i] as const))
-      .map(([token, tokenGroupIndex], i) => ({
+      .map(([token, [s, t]], i) => ({
         accessorKey: `token${i}`,
         header: () => (
           <HoverCard>
@@ -85,9 +95,9 @@ export const DictionarySampleArea = ({ sample, sampleName, dictionaryName }: Dic
             </HoverCardTrigger>
             <HoverCardContent>
               <SimpleSampleArea
-                sample={sample}
-                sampleName={sampleName}
-                tokenGroupClassName={(_, j) => (j === tokenGroupIndex ? "bg-orange-500" : "")}
+                sample={samples[0]}
+                sampleName={`Sample ${s + 1}`}
+                tokenGroupClassName={(_, j) => (j === t ? "bg-orange-500" : "")}
               />
             </HoverCardContent>
           </HoverCard>
@@ -148,19 +158,30 @@ export const DictionarySampleArea = ({ sample, sampleName, dictionaryName }: Dic
 
   return (
     <div className="flex flex-col gap-4">
-      <SimpleSampleArea
-        sample={sample}
-        sampleName={sampleName}
-        tokenGroupClassName={(_, i) =>
-          cn(
-            "hover:shadow-lg hover:text-gray-600 cursor-pointer",
-            selectedTokenGroupIndices.includes(i) && "bg-orange-500"
-          )
-        }
-        tokenGroupProps={(_, i) => ({
-          onClick: () => toggleSelectedTokenGroupIndex(i),
-        })}
-      />
+      {samples.map((sample, sampleIndex) => (
+        <div className="flex gap-4 justify-between" key={sampleIndex}>
+          <SimpleSampleArea
+            sample={sample}
+            sampleName={`Sample ${sampleIndex + 1}`}
+            tokenGroupClassName={(_, tokenIndex) =>
+              cn(
+                "hover:shadow-lg hover:text-gray-600 cursor-pointer",
+                selectedTokenGroupIndices.some(([s, t]) => s === sampleIndex && t === tokenIndex) && "bg-orange-500"
+              )
+            }
+            tokenGroupProps={(_, i) => ({
+              onClick: () => toggleSelectedTokenGroupIndex(sampleIndex, i),
+            })}
+          />
+          <Trash2
+            className="cursor-pointer hover:text-red-500"
+            size={20}
+            onClick={() => {
+              onSamplesChange?.(samples.filter((_, i) => i !== sampleIndex));
+            }}
+          />
+        </div>
+      ))}
 
       {selectedTokens.length > 0 && <DataTable columns={columns} data={data} />}
     </div>
