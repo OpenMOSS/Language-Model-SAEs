@@ -1,3 +1,4 @@
+import { AppNavbar } from "@/components/app/navbar";
 import { FeatureCard } from "@/components/feature/feature-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,66 +88,69 @@ export const FeaturesPage = () => {
   }, [dictionariesState.value]);
 
   return (
-    <div className="p-20 flex flex-col items-center gap-12">
-      <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
-        <span className="font-bold justify-self-end">Select dictionary:</span>
-        <Select
-          disabled={dictionariesState.loading || featureState.loading}
-          value={selectedDictionary || undefined}
-          onValueChange={setSelectedDictionary}
-        >
-          <SelectTrigger className="bg-white">
-            <SelectValue placeholder="Select a dictionary" />
-          </SelectTrigger>
-          <SelectContent>
-            {dictionariesState.value?.map((dictionary, i) => (
-              <SelectItem key={i} value={dictionary}>
-                {dictionary}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          disabled={dictionariesState.loading || featureState.loading}
-          onClick={async () => {
-            await fetchFeature(selectedDictionary);
-          }}
-        >
-          Go
-        </Button>
-        <span className="font-bold"></span>
-        <span className="font-bold justify-self-end">Choose a specific feature:</span>
-        <Input
-          disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
-          id="feature-input"
-          className="bg-white"
-          type="number"
-          value={featureIndex.toString()}
-          onChange={(e) => setFeatureIndex(parseInt(e.target.value))}
-        />
-        <Button
-          disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
-          onClick={async () => await fetchFeature(selectedDictionary, featureIndex)}
-        >
-          Go
-        </Button>
-        <Button
-          disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
-          onClick={async () => {
-            await fetchFeature(selectedDictionary);
-          }}
-        >
-          Show Random Feature
-        </Button>
-      </div>
-      {featureState.loading && !loadingRandomFeature && (
-        <div>
-          Loading Feature <span className="font-bold">#{featureIndex}</span>...
+    <div>
+      <AppNavbar />
+      <div className="pt-4 pb-20 px-20 flex flex-col items-center gap-12">
+        <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
+          <span className="font-bold justify-self-end">Select dictionary:</span>
+          <Select
+            disabled={dictionariesState.loading || featureState.loading}
+            value={selectedDictionary || undefined}
+            onValueChange={setSelectedDictionary}
+          >
+            <SelectTrigger className="bg-white">
+              <SelectValue placeholder="Select a dictionary" />
+            </SelectTrigger>
+            <SelectContent>
+              {dictionariesState.value?.map((dictionary, i) => (
+                <SelectItem key={i} value={dictionary}>
+                  {dictionary}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            disabled={dictionariesState.loading || featureState.loading}
+            onClick={async () => {
+              await fetchFeature(selectedDictionary);
+            }}
+          >
+            Go
+          </Button>
+          <span className="font-bold"></span>
+          <span className="font-bold justify-self-end">Choose a specific feature:</span>
+          <Input
+            disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
+            id="feature-input"
+            className="bg-white"
+            type="number"
+            value={featureIndex.toString()}
+            onChange={(e) => setFeatureIndex(parseInt(e.target.value))}
+          />
+          <Button
+            disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
+            onClick={async () => await fetchFeature(selectedDictionary, featureIndex)}
+          >
+            Go
+          </Button>
+          <Button
+            disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
+            onClick={async () => {
+              await fetchFeature(selectedDictionary);
+            }}
+          >
+            Show Random Feature
+          </Button>
         </div>
-      )}
-      {featureState.loading && loadingRandomFeature && <div>Loading Random Living Feature...</div>}
-      {featureState.error && <div className="text-red-500 font-bold">Error: {featureState.error.message}</div>}
-      {!featureState.loading && featureState.value && <FeatureCard feature={featureState.value} />}
+        {featureState.loading && !loadingRandomFeature && (
+          <div>
+            Loading Feature <span className="font-bold">#{featureIndex}</span>...
+          </div>
+        )}
+        {featureState.loading && loadingRandomFeature && <div>Loading Random Living Feature...</div>}
+        {featureState.error && <div className="text-red-500 font-bold">Error: {featureState.error.message}</div>}
+        {!featureState.loading && featureState.value && <FeatureCard feature={featureState.value} />}
+      </div>
     </div>
   );
 };
