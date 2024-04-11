@@ -1,3 +1,4 @@
+import { AppNavbar } from "@/components/app/navbar";
 import { DictionaryCard } from "@/components/dictionary/dictionary-card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -63,41 +64,44 @@ export const DictionaryPage = () => {
   });
 
   return (
-    <div className="p-20 flex flex-col items-center gap-12">
-      <div className="container grid grid-cols-[auto_600px_auto] justify-center items-center gap-4">
-        <span className="font-bold justify-self-end">Select dictionary:</span>
-        <Select
-          disabled={dictionariesState.loading && dictionaryState.loading}
-          value={selectedDictionary || undefined}
-          onValueChange={setSelectedDictionary}
-        >
-          <SelectTrigger className="bg-white">
-            <SelectValue placeholder="Select a dictionary" />
-          </SelectTrigger>
-          <SelectContent>
-            {dictionariesState.value?.map((dictionary, i) => (
-              <SelectItem key={i} value={dictionary}>
-                {dictionary}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          disabled={dictionariesState.loading && dictionaryState.loading}
-          onClick={async () => {
-            await fetchDictionary(selectedDictionary);
-          }}
-        >
-          Go
-        </Button>
-      </div>
-      {dictionaryState.loading && (
-        <div>
-          Loading Dictionary <span className="font-bold">{selectedDictionary}</span>...
+    <div>
+      <AppNavbar />
+      <div className="pt-4 pb-20 px-20 flex flex-col items-center gap-12">
+        <div className="container grid grid-cols-[auto_600px_auto] justify-center items-center gap-4">
+          <span className="font-bold justify-self-end">Select dictionary:</span>
+          <Select
+            disabled={dictionariesState.loading && dictionaryState.loading}
+            value={selectedDictionary || undefined}
+            onValueChange={setSelectedDictionary}
+          >
+            <SelectTrigger className="bg-white">
+              <SelectValue placeholder="Select a dictionary" />
+            </SelectTrigger>
+            <SelectContent>
+              {dictionariesState.value?.map((dictionary, i) => (
+                <SelectItem key={i} value={dictionary}>
+                  {dictionary}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            disabled={dictionariesState.loading && dictionaryState.loading}
+            onClick={async () => {
+              await fetchDictionary(selectedDictionary);
+            }}
+          >
+            Go
+          </Button>
         </div>
-      )}
-      {dictionaryState.error && <div className="text-red-500 font-bold">Error: {dictionaryState.error.message}</div>}
-      {!dictionaryState.loading && dictionaryState.value && <DictionaryCard dictionary={dictionaryState.value} />}
+        {dictionaryState.loading && (
+          <div>
+            Loading Dictionary <span className="font-bold">{selectedDictionary}</span>...
+          </div>
+        )}
+        {dictionaryState.error && <div className="text-red-500 font-bold">Error: {dictionaryState.error.message}</div>}
+        {!dictionaryState.loading && dictionaryState.value && <DictionaryCard dictionary={dictionaryState.value} />}
+      </div>
     </div>
   );
 };
