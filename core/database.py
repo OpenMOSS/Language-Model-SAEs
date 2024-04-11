@@ -92,6 +92,16 @@ class MongoClient:
             return None
         return self.feature_collection.count_documents({'dictionary_id': dictionary['_id'], 'max_feature_acts': {'$gt': 0}})
     
+    def get_max_feature_acts(self, dictionary_name: str, dictionary_series: str | None = None):
+        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
+        if dictionary is None:
+            return None
+        pipeline = [
+            {'$match': {'dictionary_id': dictionary['_id'], 'max_feature_acts': {'$gt': 0}}},
+            {'$project': {'_id': 0, 'index': 1, 'max_feature_acts': 1}}
+        ]
+        return {f['index']: f['max_feature_acts'] for f in self.feature_collection.aggregate(pipeline)}
+    
     def get_feature_act_times(self, dictionary_name: str, dictionary_series: str | None = None):
         dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
         if dictionary is None:

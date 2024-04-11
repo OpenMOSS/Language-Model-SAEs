@@ -165,6 +165,42 @@ def get_feature(dictionary_name: str, feature_index: str):
         media_type="application/x-msgpack",
     )
 
+@app.get("/dictionaries/{dictionary_name}")
+def get_dictionary(dictionary_name: str):
+    feature_activation_times = client.get_feature_act_times(dictionary_name, dictionary_series=dictionary_series)
+    if feature_activation_times is None:
+        return Response(
+            content=f"Dictionary {dictionary_name} not found", status_code=404
+        )
+    log_act_times = np.log10(np.array(list(feature_activation_times.values())))
+    feature_activation_times_histogram = go.Histogram(
+        x=log_act_times,
+        nbinsx=100,
+        hovertemplate="Count: %{y}<br>Range: %{x}<extra></extra>",
+        marker_color="#636EFA",
+        showlegend=False,
+    ).to_plotly_json()
+
+    alive_feature_count = client.get_alive_feature_count(dictionary_name, dictionary_series=dictionary_series)
+    if alive_feature_count is None:
+        return Response(
+            content=f"Dictionary {dictionary_name} not found", status_code=404
+        )
+
+    return Response(
+        content=msgpack.packb(
+            make_serializable(
+                {
+                    "dictionary_name": dictionary_name,
+                    "feature_activation_times_histogram": [feature_activation_times_histogram],
+                    "alive_feature_count": alive_feature_count,
+                }
+            )
+        ),
+        media_type="application/x-msgpack",
+    )
+
+
 
 @app.post("/dictionaries/{dictionary_name}/features/{feature_index}/custom")
 def feature_activation_custom_input(
@@ -196,6 +232,46 @@ def feature_activation_custom_input(
                 for t in tokenizer.convert_ids_to_tokens(input[0])
             ],
             "feature_acts": feature_acts[:, feature_index].cpu().numpy().tolist(),
+        }
+
+    return Response(content=msgpack.packb(sample), media_type="application/x-msgpack")
+
+@app.post("/dictionaries/{dictionary_name}/custom")
+def dictionary_custom_input(dictionary_name: str, input_text: str):
+    try:
+        sae = get_sae(dictionary_name)
+        hook_point = LanguageModelConfig.get_lm_config(dictionary_name, result_dir)["hook_point"]
+    except FileNotFoundError:
+        return Response(
+            content=f"Dictionary {dictionary_name} not found", status_code=404
+        )
+    
+    max_feature_acts = client.get_max_feature_acts(dictionary_name, dictionary_series=dictionary_series)
+
+    with torch.no_grad():
+        input = model.to_tokens(input_text, prepend_bos=False)
+        _, cache = model.run_with_cache(input, names_filter=[hook_point])
+        activation = cache[hook_point][0]
+
+        _, (_, aux) = sae(activation)
+        feature_acts = aux["feature_acts"]
+        sample = {
+            "context": [
+                bytearray([tokenizer.byte_decoder[c] for c in t])
+                for t in tokenizer.convert_ids_to_tokens(input[0])
+            ],
+            "feature_acts_indices": [
+                feature_acts[i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()
+                for i in range(feature_acts.shape[0])
+            ],
+            "feature_acts": [
+                feature_acts[i][feature_acts[i].nonzero(as_tuple=True)[0]].cpu().numpy().tolist()
+                for i in range(feature_acts.shape[0])
+            ],
+            "max_feature_acts": [
+                [max_feature_acts[j] for j in feature_acts[i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()]
+                for i in range(feature_acts.shape[0])
+            ]
         }
 
     return Response(content=msgpack.packb(sample), media_type="application/x-msgpack")
