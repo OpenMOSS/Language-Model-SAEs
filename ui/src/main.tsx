@@ -5,6 +5,7 @@ import { RouterProvider, createBrowserRouter } from "react-router-dom";
 import { FeaturesPage } from "@/routes/features/page";
 import { RootPage } from "./routes/page";
 import { AttentionHeadPage } from "./routes/attn-heads/page";
+import { DictionaryPage } from "./routes/dictionaries/page";
 
 const router = createBrowserRouter([
   {
@@ -12,7 +13,11 @@ const router = createBrowserRouter([
     element: <FeaturesPage />,
   },
   {
-    path: "/attn-head",
+    path: "/dictionaries",
+    element: <DictionaryPage />,
+  },
+  {
+    path: "/attn-heads",
     element: <AttentionHeadPage />,
   },
   {

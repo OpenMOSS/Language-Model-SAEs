@@ -1,13 +1,7 @@
 import { FeatureCard } from "@/components/feature/feature-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
@@ -25,19 +19,13 @@ export const FeaturesPage = () => {
       .then((res) => z.array(z.string()).parse(res));
   });
 
-  const [selectedDictionary, setSelectedDictionary] = useState<string | null>(
-    null
-  );
+  const [selectedDictionary, setSelectedDictionary] = useState<string | null>(null);
 
   const [featureIndex, setFeatureIndex] = useState<number>(0);
-  const [loadingRandomFeature, setLoadingRandomFeature] =
-    useState<boolean>(false);
+  const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
 
   const [featureState, fetchFeature] = useAsyncFn(
-    async (
-      dictionary: string | null,
-      featureIndex: number | string = "random"
-    ) => {
+    async (dictionary: string | null, featureIndex: number | string = "random") => {
       if (!dictionary) {
         alert("Please select a dictionary first");
         return;
@@ -46,9 +34,7 @@ export const FeaturesPage = () => {
       setLoadingRandomFeature(featureIndex === "random");
 
       const feature = await fetch(
-        `${
-          import.meta.env.VITE_BACKEND_URL
-        }/dictionaries/${dictionary}/features/${featureIndex}`,
+        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}`,
         {
           method: "GET",
           headers: {
@@ -88,10 +74,7 @@ export const FeaturesPage = () => {
     }
     if (searchParams.get("featureIndex")) {
       setFeatureIndex(parseInt(searchParams.get("featureIndex")!));
-      fetchFeature(
-        searchParams.get("dictionary"),
-        searchParams.get("featureIndex")!
-      );
+      fetchFeature(searchParams.get("dictionary"), searchParams.get("featureIndex")!);
     }
   });
 
@@ -132,15 +115,9 @@ export const FeaturesPage = () => {
           Go
         </Button>
         <span className="font-bold"></span>
-        <span className="font-bold justify-self-end">
-          Choose a specific feature:
-        </span>
+        <span className="font-bold justify-self-end">Choose a specific feature:</span>
         <Input
-          disabled={
-            dictionariesState.loading ||
-            selectedDictionary === null ||
-            featureState.loading
-          }
+          disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
           id="feature-input"
           className="bg-white"
           type="number"
@@ -148,23 +125,13 @@ export const FeaturesPage = () => {
           onChange={(e) => setFeatureIndex(parseInt(e.target.value))}
         />
         <Button
-          disabled={
-            dictionariesState.loading ||
-            selectedDictionary === null ||
-            featureState.loading
-          }
-          onClick={async () =>
-            await fetchFeature(selectedDictionary, featureIndex)
-          }
+          disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
+          onClick={async () => await fetchFeature(selectedDictionary, featureIndex)}
         >
           Go
         </Button>
         <Button
-          disabled={
-            dictionariesState.loading ||
-            selectedDictionary === null ||
-            featureState.loading
-          }
+          disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
           onClick={async () => {
             await fetchFeature(selectedDictionary);
           }}
@@ -177,17 +144,9 @@ export const FeaturesPage = () => {
           Loading Feature <span className="font-bold">#{featureIndex}</span>...
         </div>
       )}
-      {featureState.loading && loadingRandomFeature && (
-        <div>Loading Random Living Feature...</div>
-      )}
-      {featureState.error && (
-        <div className="text-red-500 font-bold">
-          Error: {featureState.error.message}
-        </div>
-      )}
-      {!featureState.loading && featureState.value && (
-        <FeatureCard feature={featureState.value} />
-      )}
+      {featureState.loading && loadingRandomFeature && <div>Loading Random Living Feature...</div>}
+      {featureState.error && <div className="text-red-500 font-bold">Error: {featureState.error.message}</div>}
+      {!featureState.loading && featureState.value && <FeatureCard feature={featureState.value} />}
     </div>
   );
 };
