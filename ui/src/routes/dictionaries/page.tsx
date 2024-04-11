@@ -60,6 +60,7 @@ export const DictionaryPage = () => {
     await fetchDictionaries();
     if (searchParams.get("dictionary")) {
       setSelectedDictionary(searchParams.get("dictionary"));
+      fetchDictionary(searchParams.get("dictionary"));
     }
   });
 
