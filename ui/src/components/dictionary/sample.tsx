@@ -95,7 +95,7 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
             </HoverCardTrigger>
             <HoverCardContent className="w-auto max-w-[800px]">
               <SimpleSampleArea
-                sample={samples[0]}
+                sample={samples[s]}
                 sampleName={`Sample ${s + 1}`}
                 tokenGroupClassName={(_, j) => (j === t ? "bg-orange-500" : "")}
               />
@@ -178,6 +178,9 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
               className="cursor-pointer hover:text-red-500 shrink-0 m-0.5"
               size={20}
               onClick={() => {
+                setSelectedTokenGroupIndices((prev) =>
+                  prev.filter(([s, _]) => s !== sampleIndex).map(([s, t]) => (s > sampleIndex ? [s - 1, t] : [s, t]))
+                );
                 onSamplesChange?.(samples.filter((_, i) => i !== sampleIndex));
               }}
             />
