@@ -17,7 +17,7 @@ from core.activation.activation_dataset import make_activation_dataset
 from core.activation.activation_store import ActivationStore
 from core.sae_training import prune_sae, train_sae
 from core.analysis.sample_feature_activations import sample_feature_activations
-from core.feature.features_to_logits import features_to_logits
+from core.analysis.features_to_logits import features_to_logits
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     cfg.save_hyperparameters()
