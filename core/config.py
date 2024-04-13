@@ -226,6 +226,8 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
     lr_cool_down_steps: int = 10000
     train_batch_size: int = 4096
 
+    finetuning: bool = False
+
     # Resampling protocol args
     feature_sampling_window: int = 1000
     dead_feature_window: int = 5000  # unless this window is larger feature sampling,
