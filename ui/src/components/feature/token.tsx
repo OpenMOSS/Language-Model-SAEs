@@ -20,7 +20,7 @@ export const TokenInfo = ({ token, maxFeatureAct }: TokenInfoProps) => {
   return (
     <div className="grid grid-cols-2 gap-2">
       <div className="text-sm font-bold">Token:</div>
-      <div className="text-sm underline">{hex}</div>
+      <div className="text-sm underline whitespace-pre-wrap">{hex}</div>
       <div className="text-sm font-bold">Activation:</div>
       <div className={cn("text-sm", getAccentClassname(token.featureAct, maxFeatureAct, "text"))}>
         {token.featureAct.toFixed(3)}
