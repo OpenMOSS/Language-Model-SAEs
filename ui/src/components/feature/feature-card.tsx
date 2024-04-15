@@ -138,7 +138,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                     <TableBody>
                       {feature.logits.topPositive.map((token) => (
                         <TableRow key={token.token}>
-                          <TableCell className="underline decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
+                          <TableCell className="underline whitespace-pre-wrap decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
                             {token.token}
                           </TableCell>
                           <TableCell>{token.logit.toFixed(3)}</TableCell>
@@ -159,7 +159,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                     <TableBody>
                       {feature.logits.topNegative.map((token) => (
                         <TableRow key={token.token}>
-                          <TableCell className="underline decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
+                          <TableCell className="underline whitespace-pre-wrap decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
                             {token.token}
                           </TableCell>
                           <TableCell>{token.logit.toFixed(3)}</TableCell>
