@@ -208,7 +208,7 @@ def feature_activation_custom_input(
 ):
     try:
         sae = get_sae(dictionary_name)
-        hook_point = LanguageModelConfig.get_lm_config(dictionary_name, result_dir)["hook_point"]
+        hook_point = sae.cfg.hook_point_in
     except FileNotFoundError:
         return Response(
             content=f"Dictionary {dictionary_name} not found", status_code=404
@@ -240,7 +240,7 @@ def feature_activation_custom_input(
 def dictionary_custom_input(dictionary_name: str, input_text: str):
     try:
         sae = get_sae(dictionary_name)
-        hook_point = LanguageModelConfig.get_lm_config(dictionary_name, result_dir)["hook_point"]
+        hook_point = sae.cfg.hook_point_in
     except FileNotFoundError:
         return Response(
             content=f"Dictionary {dictionary_name} not found", status_code=404
