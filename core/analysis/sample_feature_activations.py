@@ -54,13 +54,13 @@ def sample_feature_activations(
         if batch is None:
             raise ValueError("Not enough tokens to sample")
         
-        _, cache = model.run_with_cache(batch, names_filter=[cfg.hook_point])
-        activations = cache[cfg.hook_point].to(dtype=cfg.dtype, device=cfg.device)
+        _, cache = model.run_with_cache(batch, names_filter=[cfg.hook_point_in, cfg.hook_point_out])
+        activation_in, activation_out = cache[cfg.hook_point_in][0], cache[cfg.hook_point_out][0]
 
         (
             _,
             (_, aux_data),
-        ) = sae.forward(activations)
+        ) = sae.forward(activation_in, label=activation_out)
 
         act_times += aux_data["feature_acts"].gt(0.0).sum(dim=[0, 1])
 

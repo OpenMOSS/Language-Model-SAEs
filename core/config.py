@@ -40,7 +40,6 @@ class RunnerConfig:
 @dataclass
 class LanguageModelConfig(RunnerConfig):
     model_name: str = "gpt2"
-    hook_point: str = "blocks.0.hook_mlp_out"
     cache_dir: Optional[str] = None
     d_model: int = 768
     local_files_only: bool = False
@@ -91,6 +90,8 @@ class TextDatasetConfig(RunnerConfig):
 
 @dataclass
 class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
+    hook_points: List[str] = field(default_factory=lambda: ["blocks.0.hook_resid_pre"])
+
     use_cached_activations: bool = False
     cached_activations_path: Optional[str] = (
         None  # Defaults to "activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
@@ -128,6 +129,9 @@ class SAEConfig(RunnerConfig):
     from_pretrained_path: Optional[str] = None
     strict_loading: bool = True
 
+    hook_point_in: str = "blocks.0.hook_resid_pre"
+    hook_point_out: str = None # If None, it will be set to hook_point_in
+
     use_decoder_bias: bool = True
     decoder_bias_init_method: str = "geometric_median"
     geometric_median_max_iter: Optional[int] = (
@@ -149,6 +153,8 @@ class SAEConfig(RunnerConfig):
 
     def __post_init__(self):
         super().__post_init__()
+        if self.hook_point_out is None:
+            self.hook_point_out = self.hook_point_in
         if self.d_sae is None:
             self.d_sae = self.d_model * self.expansion_factor
 
@@ -250,7 +256,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
                 os.path.join(self.exp_result_dir, self.exp_name, "checkpoints")
             ):
                 raise ValueError(
-                    f"Ckeckpoints for experiment {self.exp_name} already exist. Consider changing the experiment name."
+                    f"Checkpoints for experiment {self.exp_name} already exist. Consider changing the experiment name."
                 )
             os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "checkpoints"))
 
