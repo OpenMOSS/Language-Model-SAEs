@@ -104,6 +104,15 @@ We highly welcome contributions to this project. If you have any questions or su
 
 TODO: Add development guidelines
 
-## References
+## Citation
 
-TODO: Add references
+Please cite this library as:
+
+```
+@misc{Ge2024OpenMossSAEs,
+    title  = {OpenMoss Language Model Sparse Autoencoders},
+    author = {Xuyang Ge, Fukang Zhu, Junxuan Wang, Wentao Shu, Zhengfu He},
+    url    = {https://github.com/OpenMOSS/gpt2-dictionary},
+    year   = {2024}
+}
+```
