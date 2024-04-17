@@ -168,7 +168,7 @@ class SparseAutoEncoder(torch.nn.Module):
         }
 
         aux_data = {
-            "feature_acts": feature_acts,
+            "feature_acts": feature_acts / self.compute_norm_factor(label),
             "x_hat": x_hat,
         }
 
