@@ -55,7 +55,7 @@ def sample_feature_activations(
             raise ValueError("Not enough tokens to sample")
         
         _, cache = model.run_with_cache(batch, names_filter=[cfg.hook_point_in, cfg.hook_point_out])
-        activation_in, activation_out = cache[cfg.hook_point_in][0], cache[cfg.hook_point_out][0]
+        activation_in, activation_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
 
         (
             _,
