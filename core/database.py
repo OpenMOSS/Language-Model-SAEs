@@ -44,6 +44,19 @@ class MongoClient:
         if isinstance(data, ObjectId) and self.fs.exists(data):
             return bytes_to_np(self.fs.get(data).read())
         return data
+    
+    def _remove_gridfs_objs(self, data):
+        """
+        Recursively remove GridFS objects in data object
+        """
+        if isinstance(data, dict):
+            for v in data.values():
+                self._remove_gridfs_objs(v)
+        if isinstance(data, list):
+            for v in data:
+                self._remove_gridfs_objs(v)
+        if isinstance(data, ObjectId) and self.fs.exists(data):
+            self.fs.delete(data)
 
     def create_dictionary(self, dictionary_name: str, n_features: int, dictionary_series: str | None = None):
         dict_id = self.dictionary_collection.insert_one({'name': dictionary_name, 'n_features': n_features, 'series': dictionary_series}).inserted_id
@@ -54,6 +67,15 @@ class MongoClient:
             }
             for i in range(n_features)
         ])
+
+    def remove_dictionary(self, dictionary_name: str, dictionary_series: str | None = None):
+        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
+        if dictionary is None:
+            return
+        for feature in self.feature_collection.find({'dictionary_id': dictionary['_id']}):
+            self._remove_gridfs_objs(feature)
+        self.feature_collection.delete_many({'dictionary_id': dictionary['_id']})
+        self.dictionary_collection.delete_one({'_id': dictionary['_id']})
 
     def update_feature(self, dictionary_name: str, feature_index: int, feature_data: Dict, dictionary_series: str | None = None):
         dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
