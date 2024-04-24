@@ -186,7 +186,6 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
 
 @torch.no_grad()
 def features_to_logits_runner(cfg: FeaturesDecoderConfig):
-    print(cfg.exp_name + ' is running')
     sae = SparseAutoEncoder(cfg=cfg)
     if cfg.sae_from_pretrained_path is not None:
         sae.load_state_dict(torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
@@ -230,5 +229,3 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
                 }
             }
         }, dictionary_series=cfg.exp_series)
-    
-    print(cfg.exp_name + ' done')
