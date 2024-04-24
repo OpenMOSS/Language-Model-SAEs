@@ -9,9 +9,10 @@ import { getAccentClassname } from "@/utils/style";
 export type TokenInfoProps = {
   token: Token;
   maxFeatureAct: number;
+  position: number;
 };
 
-export const TokenInfo = ({ token, maxFeatureAct }: TokenInfoProps) => {
+export const TokenInfo = ({ token, maxFeatureAct, position }: TokenInfoProps) => {
   const hex = token.token.reduce(
     (acc, b) => (b < 32 || b > 126 ? `${acc}\\x${b.toString(16).padStart(2, "0")}` : `${acc}${String.fromCharCode(b)}`),
     ""
@@ -20,7 +21,9 @@ export const TokenInfo = ({ token, maxFeatureAct }: TokenInfoProps) => {
   return (
     <div className="grid grid-cols-2 gap-2">
       <div className="text-sm font-bold">Token:</div>
-      <div className="text-sm underline">{hex}</div>
+      <div className="text-sm underline whitespace-pre-wrap">{hex}</div>
+      <div className="text-sm font-bold">Position:</div>
+      <div className="text-sm">{position}</div>
       <div className="text-sm font-bold">Activation:</div>
       <div className={cn("text-sm", getAccentClassname(token.featureAct, maxFeatureAct, "text"))}>
         {token.featureAct.toFixed(3)}
@@ -31,11 +34,12 @@ export const TokenInfo = ({ token, maxFeatureAct }: TokenInfoProps) => {
 
 export type SuperTokenProps = {
   tokens: Token[];
+  position: number;
   maxFeatureAct: number;
   sampleMaxFeatureAct: number;
 };
 
-export const SuperToken = ({ tokens, maxFeatureAct, sampleMaxFeatureAct }: SuperTokenProps) => {
+export const SuperToken = ({ tokens, position, maxFeatureAct, sampleMaxFeatureAct }: SuperTokenProps) => {
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const displayText = decoder
     .decode(mergeUint8Arrays(tokens.map((t) => t.token)))
@@ -75,7 +79,7 @@ export const SuperToken = ({ tokens, maxFeatureAct, sampleMaxFeatureAct }: Super
         )}
         {tokens.map((token, i) => (
           <Fragment key={i}>
-            <TokenInfo token={token} maxFeatureAct={maxFeatureAct} />
+            <TokenInfo token={token} maxFeatureAct={maxFeatureAct} position={position + i} />
             {i < tokens.length - 1 && <Separator />}
           </Fragment>
         ))}
