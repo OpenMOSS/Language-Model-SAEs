@@ -60,6 +60,15 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
     },
     [[], []]
   );
+
+  const tokenGroupPositions = tokenGroups.reduce<number[]>(
+    (acc, tokenGroup) => {
+      const tokenCount = tokenGroup.length;
+      return [...acc, acc[acc.length - 1] + tokenCount];
+    },
+    [0]
+  );
+
   return (
     <div>
       {sampleName && <span className="text-gray-700 font-bold">{sampleName}: </span>}
@@ -67,6 +76,7 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
         <SuperToken
           key={`group-${i}`}
           tokens={tokens}
+          position={tokenGroupPositions[i]}
           maxFeatureAct={maxFeatureAct}
           sampleMaxFeatureAct={sampleMaxFeatureAct}
         />

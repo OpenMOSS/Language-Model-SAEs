@@ -61,6 +61,16 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
     )
     .map((v) => v[0]);
 
+  const tokenGroupPositions = tokenGroups.map((tokenGroupRow) =>
+    tokenGroupRow.reduce<number[]>(
+      (acc, tokenGroup) => {
+        const tokenCount = tokenGroup.length;
+        return [...acc, acc[acc.length - 1] + tokenCount];
+      },
+      [0]
+    )
+  );
+
   const selectedTokenGroups = selectedTokenGroupIndices.map(([s, t]) => tokenGroups[s][t]);
   const selectedTokens = selectedTokenGroups.flatMap((tokens) => tokens);
   const columns: ColumnDef<{ featureIndex: number; [key: `token${number}`]: string }, string>[] = [
@@ -81,8 +91,8 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
     },
     ...(selectedTokenGroupIndices
       .map(([s, t]) => [tokenGroups[s][t], [s, t]] as const)
-      .flatMap(([tokens, i]) => tokens.map((token) => [token, i] as const))
-      .map(([token, [s, t]], i) => ({
+      .flatMap(([tokens, [s, t]]) => tokens.map((token, inGroupIndex) => [token, [s, t, inGroupIndex]] as const))
+      .map(([token, [s, t, inGroupIndex]], i) => ({
         accessorKey: `token${i}`,
         header: () => (
           <HoverCard>
@@ -93,7 +103,10 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
                 ""
               )}
             </HoverCardTrigger>
-            <HoverCardContent className="w-auto max-w-[800px]">
+            <HoverCardContent className="w-auto max-w-[800px] gap-4">
+              <div>
+                <b>Position:</b> {tokenGroupPositions[s][t] + inGroupIndex}
+              </div>
               <SimpleSampleArea
                 sample={samples[s]}
                 sampleName={`Sample ${s + 1}`}
