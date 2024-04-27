@@ -58,7 +58,7 @@ def get_sae(dictionary_name: str) -> SparseAutoEncoder:
         )
         sae = SparseAutoEncoder(cfg=cfg)
         sae.load_state_dict(
-            torch.load(cfg.from_pretrained_path, map_location=cfg.device)["sae"]
+            torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"]
         )
         sae.eval()
         sae_cache[dictionary_name] = sae
