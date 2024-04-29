@@ -191,6 +191,13 @@ class SAEConfig(RunnerConfig):
         hyperparams["strict_loading"] = strict_loading
         return hyperparams
 
+    @staticmethod
+    def get_lm_config(exp_name: str, exp_result_dir: str) -> str:
+        lm_config_path = os.path.join(exp_result_dir, exp_name, "lm_config.json")
+        with open(lm_config_path, "r") as f:
+            lm_config = json.load(f)
+        return lm_config
+
 @dataclass
 class OpenAIConfig:
     openai_api_key: str

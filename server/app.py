@@ -36,12 +36,42 @@ ckpt_name = os.environ.get("DICTIONARY_CKPT_NAME", "final.pt")
 
 tokenizer: GPT2Tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
-hf_model = AutoModelForCausalLM.from_pretrained("gpt2")
-model = HookedTransformer.from_pretrained("gpt2", device=device, hf_model=hf_model)
-model.eval()
-
 sae_cache = {}
 lm_cache = {}
+
+def get_model(dictionary_name: str) -> HookedTransformer:
+    if dictionary_name not in lm_cache:
+        cfg = get_lm_config(dictionary_name, result_dir)
+        if cfg.get("model_from_pretrained_path", None) is not None:
+            hf_model = AutoModelForCausalLM.from_pretrained(cfg.get("model_from_pretrained_path", None))
+            hf_config = hf_model.config
+            if cfg.model_name == 'gpt2':
+                tl_cfg = HookedTransformerConfig.from_dict({
+                    "d_model": hf_config.n_embd,
+                    "d_head": hf_config.n_embd // hf_config.n_head,
+                    "n_heads": hf_config.n_head,
+                    "d_mlp": hf_config.n_embd * 4,
+                    "n_layers": hf_config.n_layer,
+                    "n_ctx": hf_config.n_positions,
+                    "eps": hf_config.layer_norm_epsilon,
+                    "d_vocab": hf_config.vocab_size,
+                    "act_fn": hf_config.activation_function,
+                    "use_attn_scale": True,
+                    "use_local_attn": False,
+                    "scale_attn_by_inverse_layer_idx": hf_config.scale_attn_by_inverse_layer_idx,
+                    "normalization_type": "LN",
+                })
+                model = HookedTransformer(tl_cfg, tokenizer=AutoTokenizer.from_pretrained(cfg.get("model_from_pretrained_path", None)))
+                state_dict = convert_gpt2_weights(hf_model, tl_cfg)
+                model.load_state_dict(state_dict, strict=False)
+            else:
+                raise ValueError(f"Unsupported model name: {model_name}")
+        else:
+            hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_name)
+            model = HookedTransformer.from_pretrained(cfg.model_name, hf_model=hf_model)
+        model.eval()
+        lm_cache[dictionary_name] = model
+    return lm_cache[dictionary_name]
 
 def get_sae(dictionary_name: str) -> SparseAutoEncoder:
     if dictionary_name not in sae_cache:
@@ -219,6 +249,7 @@ def feature_activation_custom_input(
             content=f"Feature index {feature_index} is out of range", status_code=400
         )
 
+    model = get_model(dictionary_name)
     with torch.no_grad():
         input = model.to_tokens(input_text, prepend_bos=False)
         _, cache = model.run_with_cache(input, names_filter=[hook_point])
@@ -247,6 +278,8 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
         )
     
     max_feature_acts = client.get_max_feature_acts(dictionary_name, dictionary_series=dictionary_series)
+
+    model = get_model(dictionary_name)
 
     with torch.no_grad():
         input = model.to_tokens(input_text, prepend_bos=False)
@@ -284,6 +317,7 @@ def feature_interpretation(
     type: str,
     custom_interpretation: str | None = None,
 ):
+    model = get_model(dictionary_name)
     if type == "custom":
         interpretation = {
             "text": custom_interpretation,
