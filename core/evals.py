@@ -21,8 +21,6 @@ def run_evals(
     cfg: LanguageModelSAEConfig,
     n_training_steps: int,
 ):
-    hook_point = cfg.hook_point
-
     ### Evals
     eval_tokens = activation_store.next_tokens(cfg.store_batch_size)
 
@@ -44,19 +42,19 @@ def run_evals(
     _, cache = model.run_with_cache(
         eval_tokens,
         prepend_bos=False,
-        names_filter=[hook_point],
+        names_filter=[cfg.hook_point_in, cfg.hook_point_out],
     )
 
     # get act
-    original_act = cache[cfg.hook_point]
+    original_act_in, original_act_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
 
-    _, (_, aux) = sae.forward(original_act)
+    _, (_, aux) = sae.forward(original_act_in, label=original_act_out)
     del cache
 
     if "cuda" in str(model.cfg.device):
         torch.cuda.empty_cache()
 
-    l2_norm_in = torch.norm(original_act, dim=-1)
+    l2_norm_in = torch.norm(original_act_out, dim=-1)
     l2_norm_out = torch.norm(aux["x_hat"], dim=-1)
     if cfg.use_ddp:
         dist.reduce(l2_norm_in, dst=0, op=dist.ReduceOp.AVG)
@@ -64,7 +62,7 @@ def run_evals(
     l2_norm_ratio = l2_norm_out / l2_norm_in
 
     pseudo_x_hat = aux["x_hat"] / l2_norm_out.unsqueeze(-1) * l2_norm_in.unsqueeze(-1)
-    explained_variance = 1 - (pseudo_x_hat - original_act).pow(2).sum(dim=-1) / (original_act - original_act.mean(dim=0, keepdim=True).mean(dim=1, keepdim=True)).pow(2).sum(dim=-1)
+    explained_variance = 1 - (pseudo_x_hat - original_act_out).pow(2).sum(dim=-1) / (original_act_out - original_act_out.mean(dim=0, keepdim=True).mean(dim=1, keepdim=True)).pow(2).sum(dim=-1)
     l0 = (aux["feature_acts"] > 0).float().sum(-1)
 
     # TODO: DDP
@@ -141,22 +139,28 @@ def get_recons_loss(
     batch_tokens: torch.Tensor,
 ):
     batch_tokens = batch_tokens.to(torch.int64)
-    hook_point = cfg.hook_point
     loss = model.forward(batch_tokens, return_type="loss")
 
+    _, cache = model.run_with_cache(
+        batch_tokens,
+        prepend_bos=False,
+        names_filter=[cfg.hook_point_in, cfg.hook_point_out],
+    )
+    activations_in, activations_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
+    _, (_, aux) = sae.forward(activations_in, label=activations_out)
+    replacements = aux["x_hat"].to(activations_out.dtype)
+
     def replacement_hook(activations: torch.Tensor, hook: Any):
-        _, (_, aux) = sae.forward(activations)
-        activations = aux["x_hat"].to(activations.dtype)
-        return activations
+        return replacements
     
     recons_loss: torch.Tensor = model.run_with_hooks(
         batch_tokens,
         return_type="loss",
-        fwd_hooks=[(hook_point, partial(replacement_hook))],
+        fwd_hooks=[(cfg.hook_point_out, replacement_hook)],
     )
 
     zero_abl_loss: torch.Tensor = model.run_with_hooks(
-        batch_tokens, return_type="loss", fwd_hooks=[(hook_point, zero_ablate_hook)]
+        batch_tokens, return_type="loss", fwd_hooks=[(cfg.hook_point_out, zero_ablate_hook)]
     )
 
     score = (zero_abl_loss - recons_loss) / (zero_abl_loss - loss)

@@ -43,7 +43,7 @@ def train_sae(
 
     # Initialize the SAE decoder bias if necessary
     if cfg.use_decoder_bias and (not cfg.use_ddp or cfg.rank == 0):
-        sae.initialize_decoder_bias(activation_store._store["activation"])
+        sae.initialize_decoder_bias(activation_store._store[cfg.hook_point_in])
 
     sae_module = sae
     if cfg.use_ddp:
@@ -77,7 +77,8 @@ def train_sae(
     while n_training_tokens < total_training_tokens:
         sae.train()
         # Get the next batch of activations
-        batch = activation_store.next(batch_size=cfg.train_batch_size)["activation"]
+        batch = activation_store.next(batch_size=cfg.train_batch_size)
+        activation_in, activation_out = batch[cfg.hook_point_in], batch[cfg.hook_point_out]
 
         scheduler.step()
         optimizer.zero_grad()
@@ -95,8 +96,9 @@ def train_sae(
                 aux_data,
             )
         ) = sae.forward(
-            batch,
+            activation_in,
             ghost_grad_neuron_mask,
+            label=activation_out,
         )
         
         did_fire = (aux_data["feature_acts"] > 0).float().sum(0) > 0
@@ -114,9 +116,9 @@ def train_sae(
         sae_module.set_decoder_norm_to_unit_norm()
         with torch.no_grad():
             act_freq_scores += (aux_data["feature_acts"].abs() > 0).float().sum(0)
-            n_frac_active_tokens += batch.size(0)
+            n_frac_active_tokens += activation_in.size(0)
 
-            n_tokens_current = torch.tensor(batch.size(0), device=cfg.device, dtype=torch.int)
+            n_tokens_current = torch.tensor(activation_in.size(0), device=cfg.device, dtype=torch.int)
             if cfg.use_ddp:
                 dist.reduce(n_tokens_current, dst=0)
             n_training_tokens += n_tokens_current.item()
@@ -157,11 +159,11 @@ def train_sae(
                     dist.reduce(l_l1, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l_ghost_resid, dst=0, op=dist.ReduceOp.AVG)
 
-                per_token_l2_loss = (aux_data["x_hat"] - batch).pow(2).sum(dim=-1)
-                total_variance = (batch - batch.mean(0)).pow(2).sum(dim=-1)
+                per_token_l2_loss = (aux_data["x_hat"] - activation_out).pow(2).sum(dim=-1)
+                total_variance = (activation_out - activation_out.mean(0)).pow(2).sum(dim=-1)
 
                 l2_norm_error = per_token_l2_loss.sqrt().mean()
-                l2_norm_error_ratio = l2_norm_error / batch.norm(p=2, dim=-1).mean()
+                l2_norm_error_ratio = l2_norm_error / activation_out.norm(p=2, dim=-1).mean()
 
 
                 if cfg.use_ddp:
@@ -293,7 +295,8 @@ def prune_sae(
         pbar = tqdm(total=cfg.total_training_tokens, desc="Pruning SAE", smoothing=0.01)
     while n_training_tokens < cfg.total_training_tokens:
         # Get the next batch of activations
-        batch = activation_store.next(batch_size=cfg.train_batch_size)["activation"]
+        batch = activation_store.next(batch_size=cfg.train_batch_size)
+        activation_in, activation_out = batch[cfg.hook_point_in], batch[cfg.hook_point_out]
 
         # Forward pass
         (
@@ -302,12 +305,15 @@ def prune_sae(
                 _,
                 aux_data,
             )
-        ) = sae.forward(batch)
+        ) = sae.forward(
+            activation_in,
+            label=activation_out,
+        )
 
         act_times += (aux_data["feature_acts"] > 0).int().sum(0)
         max_acts = torch.max(max_acts, aux_data["feature_acts"].max(0).values)
 
-        n_tokens_current = batch.size(0)
+        n_tokens_current = activation_in.size(0)
         if cfg.use_ddp:
             dist.reduce(n_tokens_current, dst=0)
         n_training_tokens += n_tokens_current

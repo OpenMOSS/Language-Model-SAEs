@@ -79,11 +79,12 @@ class SparseAutoEncoder(torch.nn.Module):
         else:
             return torch.tensor(1.0, dtype=self.cfg.dtype, device=self.cfg.device)
 
-    def forward(self, x: torch.Tensor, dead_neuron_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]:
-        # norm_factor: (batch_size,)
-        norm_factor = self.compute_norm_factor(x)
+    def forward(self, x: torch.Tensor, dead_neuron_mask: torch.Tensor | None = None, label: torch.Tensor | None = None) -> tuple[torch.Tensor, tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]:
+        if label is None:
+            label = x
 
-        x = x * norm_factor
+        x = x * self.compute_norm_factor(x)
+        label_normed = label * self.compute_norm_factor(label)
 
         if self.cfg.use_decoder_bias:
             x = x - self.decoder_bias
@@ -117,7 +118,7 @@ class SparseAutoEncoder(torch.nn.Module):
 
         # Take the sum of the dense dimension in MSE loss
         # l_rec: (batch_size, d_model)
-        l_rec = (x_hat - x).pow(2) / (x - x.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+        l_rec = (x_hat - label_normed).pow(2) / (label_normed - label_normed.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
 
         # l_l1: (batch_size,)
         l_l1 = torch.norm(feature_acts, p=self.cfg.lp, dim=-1)
@@ -134,7 +135,7 @@ class SparseAutoEncoder(torch.nn.Module):
             # ghost protocol
 
             # 1.
-            residual = x - x_hat
+            residual = label_normed - x_hat
             residual_centred = residual - residual.mean(dim=0, keepdim=True)
             l2_norm_residual = torch.norm(residual, dim=-1)
 
@@ -158,7 +159,7 @@ class SparseAutoEncoder(torch.nn.Module):
 
         # Recover the original scale of the activation vectors
         # x_hat: (batch_size, activation_size)
-        x_hat = x_hat / norm_factor
+        x_hat = x_hat / self.compute_norm_factor(label)
 
         loss_data = {
             "l_rec": l_rec,
@@ -167,7 +168,7 @@ class SparseAutoEncoder(torch.nn.Module):
         }
 
         aux_data = {
-            "feature_acts": feature_acts,
+            "feature_acts": feature_acts / self.compute_norm_factor(label),
             "x_hat": x_hat,
         }
 

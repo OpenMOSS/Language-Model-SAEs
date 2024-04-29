@@ -162,9 +162,9 @@ def check_description(
         cost = _calculate_cost(input_tokens, output_tokens)
         input_index, input_text = index, response
         input_token = model.to_tokens(input_text)
-        _, cache = model.run_with_cache(input_token, names_filter=[cfg.hook_point])
-        activation = cache[cfg.hook_point][0]
-        _, (_, aux) = sae(activation)
+        _, cache = model.run_with_cache(input_token, names_filter=[cfg.hook_point_in, cfg.hook_point_out])
+        activation_in, activation_out = cache[cfg.hook_point_in][0], cache[cfg.hook_point_out][0]
+        _, (_, aux) = sae(activation_in, label=activation_out)
         feature_acts = aux["feature_acts"][:, input_index]
         max_value, max_pos = torch.max(feature_acts, dim=0)
         passed = torch.max(feature_acts) > 1

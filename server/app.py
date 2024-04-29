@@ -88,7 +88,7 @@ def get_sae(dictionary_name: str) -> SparseAutoEncoder:
         )
         sae = SparseAutoEncoder(cfg=cfg)
         sae.load_state_dict(
-            torch.load(cfg.from_pretrained_path, map_location=cfg.device)["sae"]
+            torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"]
         )
         sae.eval()
         sae_cache[dictionary_name] = sae
@@ -238,7 +238,6 @@ def feature_activation_custom_input(
 ):
     try:
         sae = get_sae(dictionary_name)
-        hook_point = LanguageModelConfig.get_lm_config(dictionary_name, result_dir)["hook_point"]
     except FileNotFoundError:
         return Response(
             content=f"Dictionary {dictionary_name} not found", status_code=404
@@ -252,10 +251,9 @@ def feature_activation_custom_input(
     model = get_model(dictionary_name)
     with torch.no_grad():
         input = model.to_tokens(input_text, prepend_bos=False)
-        _, cache = model.run_with_cache(input, names_filter=[hook_point])
-        activation = cache[hook_point][0]
+        _, cache = model.run_with_cache(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out])
 
-        _, (_, aux) = sae(activation)
+        _, (_, aux) = sae(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
         feature_acts = aux["feature_acts"]
         sample = {
             "context": [
@@ -271,7 +269,6 @@ def feature_activation_custom_input(
 def dictionary_custom_input(dictionary_name: str, input_text: str):
     try:
         sae = get_sae(dictionary_name)
-        hook_point = LanguageModelConfig.get_lm_config(dictionary_name, result_dir)["hook_point"]
     except FileNotFoundError:
         return Response(
             content=f"Dictionary {dictionary_name} not found", status_code=404
@@ -283,10 +280,9 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
 
     with torch.no_grad():
         input = model.to_tokens(input_text, prepend_bos=False)
-        _, cache = model.run_with_cache(input, names_filter=[hook_point])
-        activation = cache[hook_point][0]
+        _, cache = model.run_with_cache(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out])
 
-        _, (_, aux) = sae(activation)
+        _, (_, aux) = sae(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
         feature_acts = aux["feature_acts"]
         sample = {
             "context": [
