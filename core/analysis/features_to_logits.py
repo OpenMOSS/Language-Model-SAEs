@@ -8,7 +8,7 @@ from core.config import FeaturesDecoderConfig
 def features_to_logits(sae: SparseAutoEncoder, model: HookedTransformer, cfg: FeaturesDecoderConfig):
     num_ones = int(torch.sum(sae.feature_act_mask).item())
 
-    feature_acts = torch.zeros(num_ones, 24576).to(cfg.device)
+    feature_acts = torch.zeros(num_ones, cfg.d_sae).to(cfg.device)
 
     index = 0
     for i in range(len(sae.feature_act_mask)):

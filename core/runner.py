@@ -162,7 +162,6 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     if cfg.model_from_pretrained_path is not None:
         hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_pretrained_path, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
         hf_config = hf_model.config
-        print(hf_config)
         if cfg.model_name == 'gpt2':
             tl_cfg = HookedTransformerConfig.from_dict({
                 "d_model": hf_config.n_embd,
@@ -215,9 +214,39 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
     sae = SparseAutoEncoder(cfg=cfg)
     if cfg.sae_from_pretrained_path is not None:
         sae.load_state_dict(torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
-    
-    hf_model = AutoModelForCausalLM.from_pretrained('gpt2', cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
-    model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
+
+    if cfg.model_from_pretrained_path is not None:
+        hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_pretrained_path, cache_dir=cfg.cache_dir,
+                                                        local_files_only=cfg.local_files_only)
+        hf_config = hf_model.config
+        if cfg.model_name == 'gpt2':
+            tl_cfg = HookedTransformerConfig.from_dict({
+                "d_model": hf_config.n_embd,
+                "d_head": hf_config.n_embd // hf_config.n_head,
+                "n_heads": hf_config.n_head,
+                "d_mlp": hf_config.n_embd * 4,
+                "n_layers": hf_config.n_layer,
+                "n_ctx": hf_config.n_positions,
+                "eps": hf_config.layer_norm_epsilon,
+                "d_vocab": hf_config.vocab_size,
+                "act_fn": hf_config.activation_function,
+                "use_attn_scale": True,
+                "use_local_attn": False,
+                "scale_attn_by_inverse_layer_idx": hf_config.scale_attn_by_inverse_layer_idx,
+                "normalization_type": "LN",
+            })
+            model = HookedTransformer(tl_cfg,
+                                      tokenizer=AutoTokenizer.from_pretrained(cfg.model_from_pretrained_path)).to(
+                cfg.device)
+            state_dict = convert_gpt2_weights(hf_model, tl_cfg)
+            model.load_state_dict(state_dict, strict=False)
+        else:
+            raise ValueError(f"Unsupported model name: {model_name}")
+    else:
+        hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_name, cache_dir=cfg.cache_dir,
+                                                        local_files_only=cfg.local_files_only)
+        model = HookedTransformer.from_pretrained(cfg.model_name, device=cfg.device, cache_dir=cfg.cache_dir,
+                                                  hf_model=hf_model)
     model.eval()
     
     result_dict = features_to_logits(sae, model, cfg)

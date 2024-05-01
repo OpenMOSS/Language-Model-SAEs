@@ -3,9 +3,10 @@ import os
 import numpy as np
 import torch
 
-from transformers import GPT2Tokenizer, AutoModelForCausalLM
+from transformers import GPT2Tokenizer, AutoModelForCausalLM, AutoTokenizer
 
-from transformer_lens import HookedTransformer
+from transformer_lens import HookedTransformer, HookedTransformerConfig
+from transformer_lens.loading_from_pretrained import convert_gpt2_weights
 
 from datasets import Dataset
 
@@ -41,11 +42,11 @@ lm_cache = {}
 
 def get_model(dictionary_name: str) -> HookedTransformer:
     if dictionary_name not in lm_cache:
-        cfg = get_lm_config(dictionary_name, result_dir)
+        cfg = LanguageModelConfig.get_lm_config(dictionary_name, result_dir)
         if cfg.get("model_from_pretrained_path", None) is not None:
             hf_model = AutoModelForCausalLM.from_pretrained(cfg.get("model_from_pretrained_path", None))
             hf_config = hf_model.config
-            if cfg.model_name == 'gpt2':
+            if cfg.get("model_name", None) == 'gpt2':
                 tl_cfg = HookedTransformerConfig.from_dict({
                     "d_model": hf_config.n_embd,
                     "d_head": hf_config.n_embd // hf_config.n_head,
