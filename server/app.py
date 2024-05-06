@@ -41,10 +41,12 @@ sae_cache = {}
 lm_cache = {}
 
 def get_model(dictionary_name: str) -> HookedTransformer:
-    if dictionary_name not in lm_cache:
-        cfg = LanguageModelConfig.get_lm_config(dictionary_name, result_dir)
-        if cfg.get("model_from_pretrained_path", None) is not None:
-            hf_model = AutoModelForCausalLM.from_pretrained(cfg.get("model_from_pretrained_path", None))
+    cfg = LanguageModelConfig.get_lm_config(dictionary_name, result_dir)
+    model_name = cfg["model_name"]
+    model_from_pretrained_path = cfg.get("model_from_pretrained_path", None)
+    if (model_name, model_from_pretrained_path) not in lm_cache:
+        if model_from_pretrained_path is not None:
+            hf_model = AutoModelForCausalLM.from_pretrained(model_from_pretrained_path)
             hf_config = hf_model.config
             if cfg.get("model_name", None) == 'gpt2':
                 tl_cfg = HookedTransformerConfig.from_dict({
@@ -62,17 +64,17 @@ def get_model(dictionary_name: str) -> HookedTransformer:
                     "scale_attn_by_inverse_layer_idx": hf_config.scale_attn_by_inverse_layer_idx,
                     "normalization_type": "LN",
                 })
-                model = HookedTransformer(tl_cfg, tokenizer=AutoTokenizer.from_pretrained(cfg.get("model_from_pretrained_path", None)))
+                model = HookedTransformer(tl_cfg, tokenizer=AutoTokenizer.from_pretrained(model_from_pretrained_path))
                 state_dict = convert_gpt2_weights(hf_model, tl_cfg)
                 model.load_state_dict(state_dict, strict=False)
             else:
                 raise ValueError(f"Unsupported model name: {model_name}")
         else:
-            hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_name)
-            model = HookedTransformer.from_pretrained(cfg.model_name, hf_model=hf_model)
+            hf_model = AutoModelForCausalLM.from_pretrained(model_name)
+            model = HookedTransformer.from_pretrained(model_name, hf_model=hf_model)
         model.eval()
-        lm_cache[dictionary_name] = model
-    return lm_cache[dictionary_name]
+        lm_cache[(model_name, model_from_pretrained_path)] = model
+    return lm_cache[(model_name, model_from_pretrained_path)]
 
 def get_sae(dictionary_name: str) -> SparseAutoEncoder:
     if dictionary_name not in sae_cache:
