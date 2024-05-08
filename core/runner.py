@@ -31,33 +31,36 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         # Fine-tune SAE with frozen encoder weights and bias
         sae.train_finetune_for_suppresion_parameters()
 
-    if cfg.model_from_pretrained_path is not None:
+   
+    if cfg.model_from_pretrained_path is not None: 
         hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_pretrained_path, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
         hf_config = hf_model.config
         print(hf_config)
-        if cfg.model_name == 'gpt2':
+        if cfg.model_name == 'qwen1.5-1.8b':
             tl_cfg = HookedTransformerConfig.from_dict({
-                "d_model": hf_config.n_embd,
-                "d_head": hf_config.n_embd // hf_config.n_head,
-                "n_heads": hf_config.n_head,
-                "d_mlp": hf_config.n_embd * 4,
-                "n_layers": hf_config.n_layer,
-                "n_ctx": hf_config.n_positions,
-                "eps": hf_config.layer_norm_epsilon,
+                "d_model": hf_config.hidden_size,
+                "d_head": hf_config.hidden_size // hf_config.num_attention_heads,
+                "n_heads": hf_config.num_attention_heads,
+                "d_mlp": hf_config.intermediate_size,
+                "n_layers": hf_config.num_hidden_layers,
+                "n_ctx": hf_config.max_position_embeddings,
+                "eps": hf_config.rms_norm_eps,
                 "d_vocab": hf_config.vocab_size,
-                "act_fn": hf_config.activation_function,
+                "act_fn": hf_config.hidden_act,
                 "use_attn_scale": True,
                 "use_local_attn": False,
-                "scale_attn_by_inverse_layer_idx": hf_config.scale_attn_by_inverse_layer_idx,
+                # "scale_attn_by_inverse_layer_idx": hf_config.scale_attn_by_inverse_layer_idx,
                 "normalization_type": "LN",
             })
+            # First construct the model's structure from the config
             model = HookedTransformer(tl_cfg, tokenizer=AutoTokenizer.from_pretrained(cfg.model_from_pretrained_path)).to(cfg.device)
+            # Then extract the weights from original model and load them into the TL model
             state_dict = convert_gpt2_weights(hf_model, tl_cfg)
             model.load_state_dict(state_dict, strict=False)
         else:
-            raise ValueError(f"Unsupported model name: {model_name}")
+            raise ValueError(f"Unsupported model name: {cfg.model_name}")
     else:
-        hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_name, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
+        hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_local_pretrained_path, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
         model = HookedTransformer.from_pretrained(cfg.model_name, device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg)
@@ -182,7 +185,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
             state_dict = convert_gpt2_weights(hf_model, tl_cfg)
             model.load_state_dict(state_dict, strict=False)
         else:
-            raise ValueError(f"Unsupported model name: {model_name}")
+            raise ValueError(f"Unsupported model name: {cfg.model_name}")
     else:
         hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_name, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
         model = HookedTransformer.from_pretrained(cfg.model_name, device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
@@ -241,7 +244,7 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
             state_dict = convert_gpt2_weights(hf_model, tl_cfg)
             model.load_state_dict(state_dict, strict=False)
         else:
-            raise ValueError(f"Unsupported model name: {model_name}")
+            raise ValueError(f"Unsupported model name: {cfg.model_name}")
     else:
         hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_name, cache_dir=cfg.cache_dir,
                                                         local_files_only=cfg.local_files_only)
