@@ -65,15 +65,18 @@ class TokenSource:
     @staticmethod
     def from_config(model: HookedTransformer, cfg: TextDatasetConfig):
         if not cfg.is_dataset_on_disk:
-            if not cfg.dataset_paths:
-                datasets_list = [load_dataset(path,split="train", cache_dir=cfg.cache_dir) for path in cfg.dataset_paths]
-                combined_dataset = concatenate_datasets(datasets_list)
-                dataset = combined_dataset.shuffle(cfg.seed)
-            else:    
-                dataset = load_dataset(cfg.dataset_path, split="train", cache_dir=cfg.cache_dir)
-            
+            dataset = load_dataset(cfg.dataset_path, split="train", cache_dir=cfg.cache_dir)
+             
         else:
-            dataset = load_from_disk(cfg.dataset_path)
+            if cfg.dataset_paths:
+                datasets_list = [load_from_disk(path) for path in cfg.dataset_paths]
+                combined_dataset = concatenate_datasets(datasets_list)
+                # dataset = combined_dataset.shuffle(cfg.seed)
+                torch.manual_seed(cfg.seed)
+                perm = torch.randperm(len(combined_dataset))
+                dataset = combined_dataset.select(perm)
+            else:    
+                dataset = load_from_disk(cfg.dataset_path)
         if cfg.use_ddp:
             shard_id = cfg.rank
             shard = dataset.shard(num_shards=cfg.world_size, index=shard_id)
