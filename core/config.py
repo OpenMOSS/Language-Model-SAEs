@@ -88,7 +88,7 @@ class TextDatasetConfig(RunnerConfig):
     concat_tokens: bool = True
     context_size: int = 128
     store_batch_size: int = 64
-
+  
 
 @dataclass
 class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):

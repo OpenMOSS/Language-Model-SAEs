@@ -186,7 +186,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         else:
             raise ValueError(f"Unsupported model name: {cfg.model_name}")
     else:
-        hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_name, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
+        hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_local_pretrained_path, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
         model = HookedTransformer.from_pretrained(cfg.model_name, device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
     model.eval()
 
