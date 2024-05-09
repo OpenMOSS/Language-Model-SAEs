@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 
-from datasets import load_dataset, load_from_disk
+from datasets import load_dataset, load_from_disk, concatenate_datasets
 
 from transformer_lens import HookedTransformer
 
@@ -65,7 +65,13 @@ class TokenSource:
     @staticmethod
     def from_config(model: HookedTransformer, cfg: TextDatasetConfig):
         if not cfg.is_dataset_on_disk:
-            dataset = load_dataset(cfg.dataset_path, split="train", cache_dir=cfg.cache_dir)
+            if not cfg.dataset_paths:
+                datasets_list = [load_dataset(path,split="train", cache_dir=cfg.cache_dir) for path in cfg.dataset_paths]
+                combined_dataset = concatenate_datasets(datasets_list)
+                dataset = combined_dataset.shuffle(cfg.seed)
+            else:    
+                dataset = load_dataset(cfg.dataset_path, split="train", cache_dir=cfg.cache_dir)
+            
         else:
             dataset = load_from_disk(cfg.dataset_path)
         if cfg.use_ddp:

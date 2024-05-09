@@ -82,6 +82,7 @@ class LanguageModelConfig(RunnerConfig):
 @dataclass
 class TextDatasetConfig(RunnerConfig):
     dataset_path: str = "openwebtext"
+    dataset_paths: list=[]
     cache_dir: Optional[str] = None
     is_dataset_tokenized: bool = False
     is_dataset_on_disk: bool = False
