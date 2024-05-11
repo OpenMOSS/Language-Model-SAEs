@@ -26,8 +26,15 @@ class NodeInfo:
 @dataclass
 class PathInfo:
     head: Optional[int] = None
+
+    def __hash__(self) -> int:
+        return hash((self.head))
+
     def __repr__(self) -> str:
         return f"head={self.head}"
+    
+    def __eq__(self, other: "PathInfo") -> bool:
+        return self.head == other.head
     
 padding = (NodeInfo("padding"), None)
 
