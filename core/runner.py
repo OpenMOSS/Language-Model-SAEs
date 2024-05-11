@@ -245,7 +245,7 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
         else:
             raise ValueError(f"Unsupported model name: {cfg.odel_name}")
     else:
-        hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_name, cache_dir=cfg.cache_dir,
+        hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_local_pretrained_path, cache_dir=cfg.cache_dir,
                                                         local_files_only=cfg.local_files_only)
         model = HookedTransformer.from_pretrained(cfg.model_name, device=cfg.device, cache_dir=cfg.cache_dir,
                                                   hf_model=hf_model)
