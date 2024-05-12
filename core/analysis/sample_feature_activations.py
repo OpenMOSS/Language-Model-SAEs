@@ -56,7 +56,7 @@ def sample_feature_activations(
         
         _, cache = model.run_with_cache(batch, names_filter=[cfg.hook_point_in, cfg.hook_point_out])
         activation_in, activation_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
-
+        
         (
             _,
             (_, aux_data),

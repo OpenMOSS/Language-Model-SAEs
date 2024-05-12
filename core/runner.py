@@ -1,9 +1,12 @@
 from typing import Any, cast
 import os
-
+import seaborn as sns
 import wandb
 
 import torch
+import torch.nn.functional as F
+
+import matplotlib.pyplot as plt
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -18,6 +21,7 @@ from core.activation.activation_dataset import make_activation_dataset
 from core.activation.activation_store import ActivationStore
 from core.sae_training import prune_sae, train_sae
 from core.analysis.sample_feature_activations import sample_feature_activations
+from core.analysis.input_feature_activations import  input_feature_activations
 from core.analysis.features_to_logits import features_to_logits
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
@@ -286,3 +290,98 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
                 }
             }
         }, dictionary_series=cfg.exp_series)
+
+@torch.no_grad()
+def internal_activation_extraction(cfg_zh: FeaturesDecoderConfig, cfg_en: FeaturesDecoderConfig, input:str=None):
+    print(f"{cfg_zh.exp_name=}")
+    sae_zh = SparseAutoEncoder(cfg=cfg_zh)
+    sae_en = SparseAutoEncoder(cfg=cfg_en)
+    if cfg_zh.sae_from_pretrained_path is not None:
+        sae_zh.load_state_dict(torch.load(cfg_zh.sae_from_pretrained_path, map_location=cfg_zh.device)["sae"], strict=cfg_zh.strict_loading)
+    if cfg_en.sae_from_pretrained_path is not None:
+        sae_en.load_state_dict(torch.load(cfg_en.sae_from_pretrained_path, map_location=cfg_en.device)["sae"], strict=cfg_en.strict_loading)
+
+    zh_decoder = sae_zh.decoder
+    en_decoder = sae_en.decoder
+    # print(f"{type(zh_decoder)=}")
+    # print(f"{zh_decoder.shape=}")
+    # print(f"{cfg_zh.sae_from_pretrained_path=}")
+
+    # ground_truth_decoder = torch.load(cfg_zh.sae_from_pretrained_path, map_location=cfg_zh.device)["sae"]['decoder']
+    # print(f"{ground_truth_decoder.shape=}")
+    # print(zh_decoder == ground_truth_decoder)
+    # print(torch.allclose(ground_truth_decoder, zh_decoder,  rtol=0.0001))
+    # print(f"{ground_truth_decoder.norm(dim=1)=}")
+    
+    print(f"{zh_decoder.norm(dim=1)=}")
+    print(f"{en_decoder.norm(dim=1)=}")
+
+    zh_decoder_norm = zh_decoder / zh_decoder.norm(dim=1)[:,None]
+    en_decoder_norm = en_decoder / en_decoder.norm(dim=1)[:,None]
+
+    similarity_matrix = torch.mm(zh_decoder_norm, en_decoder_norm.T)
+    # print(f"{similarity_matrix.shape=}")
+
+    similarity_matrix = similarity_matrix.cpu().numpy()
+    # sns.heatmap(similarity_matrix, cmap="YlGnBu")
+    plt.imshow(similarity_matrix, cmap='hot', interpolation='nearest')
+    plt.colorbar()  # Add a colorbar to a plot
+    plt.title('Heatmap of Matrix')
+    plt.xlabel('X-axis Label')
+    plt.ylabel('Y-axis Label')
+
+    print("Saving heatmap...")
+    plt.savefig(f"./heatmap_{cfg_zh.exp_name}.png")
+    # num_ones = int(torch.sum(sae.feature_act_mask).item())
+
+    # feature_acts = torch.zeros(num_ones, cfg.d_sae).to(cfg.device)
+
+    # index = 0
+    # for i in range(len(sae.feature_act_mask)):
+    #     if sae.feature_act_mask[i] == 1:
+    #         feature_acts[index, i] = 1
+    #         index += 1
+    # print(f"{index=}")
+    # feature_acts = torch.unsqueeze(feature_acts, dim=1)
+    # print(f"Feature acts shape:{feature_acts.shape}")
+    # print(f"SAE's decoder's shape:{sae.decoder.shape}")
+    # residual = sae.features_decoder(feature_acts)
+    # print(f"Residual shape:{residual.shape}")
+
+
+    
+def input_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
+    sae_zh = SparseAutoEncoder(cfg=cfg)
+    sae_en = SparseAutoEncoder(cfg=cfg)
+
+    if cfg.zh_sae_from_pretrained_path is not None:
+        sae_zh.load_state_dict(torch.load(cfg.zh_sae_from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
+    if cfg.en_sae_from_pretrained_path is not None:
+        sae_en.load_state_dict(torch.load(cfg.en_sae_from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
+
+
+    hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_local_pretrained_path, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
+    model = HookedTransformer.from_pretrained(cfg.model_name, device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
+    model.eval()
+
+    activation_store = ActivationStore.from_config(model=model, cfg=cfg)
+    zh_activation_result = input_feature_activations(sae_zh, model, activation_store, cfg)
+    en_activation_result = input_feature_activations(sae_en, model, activation_store, cfg)
+
+    print(f"activation_in: {zh_activation_result.shape}")
+    print(f"activation_out: {en_activation_result.shape}")
+    # for i in range(len(result["index"])):
+    #     client.update_feature(cfg.exp_name, result["index"][i].item(), {
+    #         "act_times": result["act_times"][i].item(),
+    #         "max_feature_acts": result["max_feature_acts"][i].item(),
+    #         "feature_acts_all": result["feature_acts_all"][i].cpu().numpy(),
+    #         "analysis": [
+    #             {
+    #                 "name": v["name"],
+    #                 "feature_acts": v["feature_acts"][i].cpu().numpy(),
+    #                 "contexts": v["contexts"][i].cpu().numpy(),
+    #             } for v in result["analysis"]
+    #         ]
+    #     }, dictionary_series=cfg.exp_series)
+
+    return None

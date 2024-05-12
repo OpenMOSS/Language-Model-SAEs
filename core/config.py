@@ -343,6 +343,12 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConf
     sample_weight_exponent: float = 2.0
     subsample: Dict[str, Dict[str, Any]] = field(default_factory=lambda: { "top_activations": {"proportion": 1.0, "n_samples": 10} })
 
+@dataclass
+class MultilingualLanguageModelSAEAnalysisConfig(LanguageModelSAEAnalysisConfig):
+    zh_sae_from_pretrained_path: Optional[str] = None
+    en_sae_from_pretrained_path: Optional[str] = None
+
+
 
 @dataclass
 class FeaturesDecoderConfig(SAEConfig, LanguageModelConfig, MongoConfig):

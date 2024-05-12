@@ -46,7 +46,7 @@ class TokenActivationSource(ActivationSource):
             return None
         
         _, cache = self.model.run_with_cache(tokens, names_filter=self.cfg.hook_points)
-
+        
         batch_size = tokens.size(0)
         seq_len = tokens.size(1)
 
