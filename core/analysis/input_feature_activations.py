@@ -57,14 +57,12 @@ def input_feature_activations(
         
         _, cache = model.run_with_cache(batch, names_filter=[cfg.hook_point_in, cfg.hook_point_out])
         activation_in, activation_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
-        activation_result.append(activation_in)
-
         (
         _,
         (_, aux_data),
         ) = sae.forward(activation_in, label=activation_out)
-        print(f"{aux_data["feature_acts"].shape=}")
-        break
+        activation_result.append(aux_data["feature_acts"])
+        # break
         n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.device, dtype=torch.int)
         n_training_tokens += n_tokens_current.item()
         n_training_steps += 1

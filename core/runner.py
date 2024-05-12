@@ -1,8 +1,8 @@
 from typing import Any, cast
 import os
-import seaborn as sns
 import wandb
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -367,9 +367,9 @@ def input_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     activation_store = ActivationStore.from_config(model=model, cfg=cfg)
     zh_activation_result = input_feature_activations(sae_zh, model, activation_store, cfg)
     en_activation_result = input_feature_activations(sae_en, model, activation_store, cfg)
+    # print(f"activation_in: {zh_activation_result.shape}")
+    # print(f"activation_out: {en_activation_result.shape}")
 
-    print(f"activation_in: {zh_activation_result.shape}")
-    print(f"activation_out: {en_activation_result.shape}")
     # for i in range(len(result["index"])):
     #     client.update_feature(cfg.exp_name, result["index"][i].item(), {
     #         "act_times": result["act_times"][i].item(),
@@ -383,5 +383,46 @@ def input_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     #             } for v in result["analysis"]
     #         ]
     #     }, dictionary_series=cfg.exp_series)
+    print("Start Calculating Pearson Correlation...")
+    zh_activation_result = zh_activation_result.view(-1, zh_activation_result.shape[-1])
+    en_activation_result = en_activation_result.view(-1, en_activation_result.shape[-1])
 
+    # Calculate the means
+    zh_mean = torch.mean(zh_activation_result, dim=1, keepdim=True)
+    en_mean = torch.mean(en_activation_result, dim=1, keepdim=True)
+
+    # Subtract the mean from each tensor to get the deviations
+    zh_deviation = zh_activation_result - zh_mean
+    en_deviation = en_activation_result - en_mean
+
+    # Calculate the standard deviations
+    zh_std = torch.sqrt(torch.sum(zh_deviation ** 2, dim=1, keepdim=True))
+    en_std = torch.sqrt(torch.sum(en_deviation ** 2, dim=1, keepdim=True))
+
+    # Calculate the covariance matrix
+    covariance_matrix = torch.mm(zh_deviation, en_deviation.t()) / (zh_activation_result.size(1) - 1)
+
+    # Calculate the Pearson correlation matrix
+    pearson_correlation = covariance_matrix / (zh_std * en_std.t())
+    
+    print(f"pearson_correlation: {pearson_correlation.shape}")
+
+
+# import numpy as np
+
+# # Assuming A and B are your matrices with the same dimensions
+# A = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+# B = np.array([[9, 8, 7], [6, 5, 4], [3, 2, 1]])
+
+# # Initialize an empty list to store the correlation coefficients
+# correlations = []
+
+# # Iterate over the columns
+# for i in range(A.shape[1]):
+#     # Calculate the Pearson correlation coefficient for the i-th column in A and B
+#     correlation = np.corrcoef(A[:, i], B[:, i])[0, 1]
+#     correlations.append(correlation)
+
+# # correlations now contains the Pearson correlation coefficients for each pair of corresponding columns
+# print(correlations)
     return None
