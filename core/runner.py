@@ -417,6 +417,11 @@ def input_feature_activations_runner(cfg_zh: LanguageModelSAEAnalysisConfig, cfg
     print(f"Max value is {torch.max(pearson_correlation)}")
     print(f"pearson_correlation: {pearson_correlation.shape}")
 
+    directory = f'/remote-home/miintern1/Language-Model-SAEs/correlation_analysis/diff_lan_diff_sae/pruned/'
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    torch.save(pearson_correlation, f'/remote-home/miintern1/Language-Model-SAEs/correlation_analysis/diff_lan_diff_sae/pruned/{cfg_zh.exp_name}_pruned_pearson_corr.pt')
+
 
 # import numpy as np
 
