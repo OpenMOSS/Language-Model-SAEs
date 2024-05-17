@@ -350,23 +350,31 @@ def internal_activation_extraction(cfg_zh: FeaturesDecoderConfig, cfg_en: Featur
 
 
     
-def input_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
-    sae_zh = SparseAutoEncoder(cfg=cfg)
-    sae_en = SparseAutoEncoder(cfg=cfg)
+def input_feature_activations_runner(cfg_zh: LanguageModelSAEAnalysisConfig, cfg_en: LanguageModelSAEAnalysisConfig):
+    sae_zh = SparseAutoEncoder(cfg=cfg_zh)
+    sae_en = SparseAutoEncoder(cfg=cfg_en)
 
-    if cfg.zh_sae_from_pretrained_path is not None:
-        sae_zh.load_state_dict(torch.load(cfg.zh_sae_from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
-    if cfg.en_sae_from_pretrained_path is not None:
-        sae_en.load_state_dict(torch.load(cfg.en_sae_from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
+    if cfg_zh.sae_from_pretrained_path is not None:
+        sae_zh.load_state_dict(torch.load(cfg_zh.sae_from_pretrained_path, map_location=cfg_zh.device)["sae"], strict=cfg_zh.strict_loading)
+    if cfg_en.sae_from_pretrained_path is not None:
+        print(f"Loading EN SAE from {cfg_en.sae_from_pretrained_path}")
+        sae_en.load_state_dict(torch.load(cfg_en.sae_from_pretrained_path, map_location=cfg_en.device)["sae"], strict=cfg_en.strict_loading)
 
+    hf_model_zh = AutoModelForCausalLM.from_pretrained(cfg_zh.model_from_local_pretrained_path, cache_dir=cfg_zh.cache_dir, local_files_only=cfg_zh.local_files_only)
+    model_zh = HookedTransformer.from_pretrained(cfg_zh.model_name, device=cfg_zh.device, cache_dir=cfg_zh.cache_dir, hf_model=hf_model_zh)
+    model_zh.eval()
 
-    hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_local_pretrained_path, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
-    model = HookedTransformer.from_pretrained(cfg.model_name, device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
-    model.eval()
+    hf_model_en = AutoModelForCausalLM.from_pretrained(cfg_en.model_from_local_pretrained_path, cache_dir=cfg_en.cache_dir, local_files_only=cfg_en.local_files_only)
+    model_en = HookedTransformer.from_pretrained(cfg_en.model_name, device=cfg_en.device, cache_dir=cfg_en.cache_dir, hf_model=hf_model_en)
+    model_en.eval()
 
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg)
-    zh_activation_result = input_feature_activations(sae_zh, model, activation_store, cfg)
-    en_activation_result = input_feature_activations(sae_en, model, activation_store, cfg)
+    print(f"Loading ZH dataset for f{cfg_zh.dataset_path}")
+    activation_store_zh = ActivationStore.from_config(model=model_zh, cfg=cfg_zh)
+    zh_activation_result = input_feature_activations(sae_zh, model_zh, activation_store_zh, cfg_zh)
+
+    print(f"Loading EN dataset for f{cfg_en.dataset_path}")
+    activation_store_en = ActivationStore.from_config(model=model_en, cfg=cfg_en)
+    en_activation_result = input_feature_activations(sae_en, model_en, activation_store_en, cfg_en)
     # print(f"activation_in: {zh_activation_result.shape}")
     # print(f"activation_out: {en_activation_result.shape}")
 
@@ -387,24 +395,26 @@ def input_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     zh_activation_result = zh_activation_result.view(-1, zh_activation_result.shape[-1])
     en_activation_result = en_activation_result.view(-1, en_activation_result.shape[-1])
 
-    # Calculate the means
-    zh_mean = torch.mean(zh_activation_result, dim=1, keepdim=True)
-    en_mean = torch.mean(en_activation_result, dim=1, keepdim=True)
-
-    # Subtract the mean from each tensor to get the deviations
+    zh_mean = zh_activation_result.mean(dim=1, keepdim=True)
+    en_mean = en_activation_result.mean(dim=1, keepdim=True)
     zh_deviation = zh_activation_result - zh_mean
     en_deviation = en_activation_result - en_mean
 
-    # Calculate the standard deviations
-    zh_std = torch.sqrt(torch.sum(zh_deviation ** 2, dim=1, keepdim=True))
-    en_std = torch.sqrt(torch.sum(en_deviation ** 2, dim=1, keepdim=True))
+    # Step 2: Compute the covariance matrix
+    # Note: We multiply and sum across the features (N), so we transpose the second matrix
+    covariance_matrix =torch.matmul(zh_deviation, en_deviation.t()) / (zh_deviation.shape[1] - 1)
 
-    # Calculate the covariance matrix
-    covariance_matrix = torch.mm(zh_deviation, en_deviation.t()) / (zh_activation_result.size(1) - 1)
+    # Step 3: Calculate the standard deviation for each row
+    zh_std = torch.sqrt(torch.sum(zh_deviation ** 2, dim=1) / (zh_deviation.shape[1] - 1))
+    en_std = torch.sqrt(torch.sum(en_deviation ** 2, dim=1) / (en_deviation.shape[1] - 1))
 
-    # Calculate the Pearson correlation matrix
-    pearson_correlation = covariance_matrix / (zh_std * en_std.t())
-    
+    # Step 4: Divide the covariance matrix by the product of the standard deviations
+    # We need to perform an outer product of the standard deviations, so we use 'view' to make them column vectors
+    pearson_correlation = covariance_matrix / torch.ger(zh_std, en_std)
+
+    pearson_correlation, max_indice = torch.max(pearson_correlation, dim=1)
+
+    print(f"Max value is {torch.max(pearson_correlation)}")
     print(f"pearson_correlation: {pearson_correlation.shape}")
 
 
