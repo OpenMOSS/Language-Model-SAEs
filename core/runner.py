@@ -91,8 +91,8 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
     sae = SparseAutoEncoder(cfg=cfg)
     if cfg.sae_from_pretrained_path is not None:
         sae.load_state_dict(torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
-    hf_model = AutoModelForCausalLM.from_pretrained('gpt2', cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
-    model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
+    hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_local_pretrained_path, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
+    model = HookedTransformer.from_pretrained('qwen1.5-1.8b', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg)
     if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
@@ -126,8 +126,8 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAEConfig):
     sae = SparseAutoEncoder(cfg=cfg)
     if cfg.sae_from_pretrained_path is not None:
         sae.load_state_dict(torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
-    hf_model = AutoModelForCausalLM.from_pretrained('gpt2', cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
-    model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
+    hf_model = AutoModelForCausalLM.from_pretrained('qwen1.5-1.8b', cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
+    model = HookedTransformer.from_pretrained('qwen1.5-1.8b', device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg)
         
@@ -155,7 +155,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAEConfig):
     return sae
 
 def activation_generation_runner(cfg: ActivationGenerationConfig):
-    model = HookedTransformer.from_pretrained('gpt2', device=cfg.device, cache_dir=cfg.cache_dir)
+    model = HookedTransformer.from_pretrained('qwen1.5-1.8b', device=cfg.device, cache_dir=cfg.cache_dir)
     model.eval()
     
     make_activation_dataset(model, cfg)
@@ -168,20 +168,20 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     if cfg.model_from_pretrained_path is not None:
         hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_pretrained_path, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
         hf_config = hf_model.config
-        if cfg.model_name == 'gpt2':
+        if cfg.model_name == 'qwen1.5-1.8b':
             tl_cfg = HookedTransformerConfig.from_dict({
-                "d_model": hf_config.n_embd,
-                "d_head": hf_config.n_embd // hf_config.n_head,
-                "n_heads": hf_config.n_head,
-                "d_mlp": hf_config.n_embd * 4,
-                "n_layers": hf_config.n_layer,
-                "n_ctx": hf_config.n_positions,
-                "eps": hf_config.layer_norm_epsilon,
+                "d_model": hf_config.hidden_size,
+                "d_head": hf_config.hidden_size // hf_config.num_attention_heads,
+                "n_heads": hf_config.num_attention_heads,
+                "d_mlp": hf_config.intermediate_size,
+                "n_layers": hf_config.num_hidden_layers,
+                "n_ctx": hf_config.max_position_embeddings,
+                "eps": hf_config.rms_norm_eps,
                 "d_vocab": hf_config.vocab_size,
-                "act_fn": hf_config.activation_function,
+                "act_fn": hf_config.hidden_act,
                 "use_attn_scale": True,
                 "use_local_attn": False,
-                "scale_attn_by_inverse_layer_idx": hf_config.scale_attn_by_inverse_layer_idx,
+                # "scale_attn_by_inverse_layer_idx": hf_config.scale_attn_by_inverse_layer_idx,
                 "normalization_type": "LN",
             })
             model = HookedTransformer(tl_cfg, tokenizer=AutoTokenizer.from_pretrained(cfg.model_from_pretrained_path)).to(cfg.device)
@@ -360,37 +360,26 @@ def input_feature_activations_runner(cfg_zh: LanguageModelSAEAnalysisConfig, cfg
         print(f"Loading EN SAE from {cfg_en.sae_from_pretrained_path}")
         sae_en.load_state_dict(torch.load(cfg_en.sae_from_pretrained_path, map_location=cfg_en.device)["sae"], strict=cfg_en.strict_loading)
 
-    hf_model_zh = AutoModelForCausalLM.from_pretrained(cfg_zh.model_from_local_pretrained_path, cache_dir=cfg_zh.cache_dir, local_files_only=cfg_zh.local_files_only)
-    model_zh = HookedTransformer.from_pretrained(cfg_zh.model_name, device=cfg_zh.device, cache_dir=cfg_zh.cache_dir, hf_model=hf_model_zh)
-    model_zh.eval()
 
-    hf_model_en = AutoModelForCausalLM.from_pretrained(cfg_en.model_from_local_pretrained_path, cache_dir=cfg_en.cache_dir, local_files_only=cfg_en.local_files_only)
-    model_en = HookedTransformer.from_pretrained(cfg_en.model_name, device=cfg_en.device, cache_dir=cfg_en.cache_dir, hf_model=hf_model_en)
-    model_en.eval()
+    hf_model = AutoModelForCausalLM.from_pretrained(cfg_en.model_from_local_pretrained_path, cache_dir=cfg_en.cache_dir, local_files_only=cfg_en.local_files_only)
+    model = HookedTransformer.from_pretrained(cfg_en.model_name, device=cfg_en.device, cache_dir=cfg_en.cache_dir, hf_model=hf_model)
+    model.eval()
 
     print(f"Loading ZH dataset for f{cfg_zh.dataset_path}")
-    activation_store_zh = ActivationStore.from_config(model=model_zh, cfg=cfg_zh)
-    zh_activation_result = input_feature_activations(sae_zh, model_zh, activation_store_zh, cfg_zh)
+    activation_store_zh = ActivationStore.from_config(model, cfg=cfg_zh)
+    zh_activation_result = input_feature_activations(sae_zh, model, activation_store_zh, cfg_zh)
+    # del model_zh
+    # del hf_model_zh
+    # torch.cuda.empty_cache()
+
 
     print(f"Loading EN dataset for f{cfg_en.dataset_path}")
-    activation_store_en = ActivationStore.from_config(model=model_en, cfg=cfg_en)
-    en_activation_result = input_feature_activations(sae_en, model_en, activation_store_en, cfg_en)
-    # print(f"activation_in: {zh_activation_result.shape}")
-    # print(f"activation_out: {en_activation_result.shape}")
+    activation_store_en = ActivationStore.from_config(model=model, cfg=cfg_en)
+    en_activation_result = input_feature_activations(sae_en, model, activation_store_en, cfg_en)
+    del model
+    del hf_model
+    torch.cuda.empty_cache()
 
-    # for i in range(len(result["index"])):
-    #     client.update_feature(cfg.exp_name, result["index"][i].item(), {
-    #         "act_times": result["act_times"][i].item(),
-    #         "max_feature_acts": result["max_feature_acts"][i].item(),
-    #         "feature_acts_all": result["feature_acts_all"][i].cpu().numpy(),
-    #         "analysis": [
-    #             {
-    #                 "name": v["name"],
-    #                 "feature_acts": v["feature_acts"][i].cpu().numpy(),
-    #                 "contexts": v["contexts"][i].cpu().numpy(),
-    #             } for v in result["analysis"]
-    #         ]
-    #     }, dictionary_series=cfg.exp_series)
     print("Start Calculating Pearson Correlation...")
     zh_activation_result = zh_activation_result.view(-1, zh_activation_result.shape[-1])
     en_activation_result = en_activation_result.view(-1, en_activation_result.shape[-1])
@@ -420,24 +409,175 @@ def input_feature_activations_runner(cfg_zh: LanguageModelSAEAnalysisConfig, cfg
     directory = f'/remote-home/miintern1/Language-Model-SAEs/correlation_analysis/diff_lan_diff_sae/pruned/'
     if not os.path.exists(directory):
         os.makedirs(directory)
-    torch.save(pearson_correlation, f'/remote-home/miintern1/Language-Model-SAEs/correlation_analysis/diff_lan_diff_sae/pruned/{cfg_zh.exp_name}_pruned_pearson_corr.pt')
+    torch.save(pearson_correlation, f'{directory}{cfg_zh.exp_name}_pruned_pearson_corr.pt')
+    print(f"Saved pearson_correlation to {directory}{cfg_zh.exp_name}_pruned_pearson_corr.pt")
 
 
-# import numpy as np
-
-# # Assuming A and B are your matrices with the same dimensions
-# A = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
-# B = np.array([[9, 8, 7], [6, 5, 4], [3, 2, 1]])
-
-# # Initialize an empty list to store the correlation coefficients
-# correlations = []
-
-# # Iterate over the columns
-# for i in range(A.shape[1]):
-#     # Calculate the Pearson correlation coefficient for the i-th column in A and B
-#     correlation = np.corrcoef(A[:, i], B[:, i])[0, 1]
-#     correlations.append(correlation)
-
-# # correlations now contains the Pearson correlation coefficients for each pair of corresponding columns
-# print(correlations)
     return None
+
+
+
+def translative_content_activations_runner(cfg_zh: LanguageModelSAEAnalysisConfig, cfg_en: LanguageModelSAEAnalysisConfig):
+    sae_zh = SparseAutoEncoder(cfg=cfg_zh)
+    sae_en = SparseAutoEncoder(cfg=cfg_en)
+
+    if cfg_zh.sae_from_pretrained_path is not None:
+        sae_zh.load_state_dict(torch.load(cfg_zh.sae_from_pretrained_path, map_location=cfg_zh.device)["sae"], strict=cfg_zh.strict_loading)
+    if cfg_en.sae_from_pretrained_path is not None:
+        print(f"Loading EN SAE from {cfg_en.sae_from_pretrained_path}")
+        sae_en.load_state_dict(torch.load(cfg_en.sae_from_pretrained_path, map_location=cfg_en.device)["sae"], strict=cfg_en.strict_loading)
+
+
+    hf_model = AutoModelForCausalLM.from_pretrained(cfg_en.model_from_local_pretrained_path, cache_dir=cfg_en.cache_dir, local_files_only=cfg_en.local_files_only)
+    model = HookedTransformer.from_pretrained(cfg_en.model_name, device=cfg_en.device, cache_dir=cfg_en.cache_dir, hf_model=hf_model)
+    model.eval()
+
+    print(f"Loading ZH dataset for f{cfg_zh.dataset_path}")
+    activation_store_zh = ActivationStore.from_config(model, cfg=cfg_zh)
+    zh_activation_result = input_feature_activations(sae_zh, model, activation_store_zh, cfg_zh)
+    # del model_zh
+    # del hf_model_zh
+    # torch.cuda.empty_cache()
+
+
+    print(f"Loading EN dataset for f{cfg_en.dataset_path}")
+    activation_store_en = ActivationStore.from_config(model=model, cfg=cfg_en)
+    en_activation_result = input_feature_activations(sae_en, model, activation_store_en, cfg_en)
+    del model
+    del hf_model
+    torch.cuda.empty_cache()
+
+    print("Start Calculating Pearson Correlation...")
+    zh_activation_result = zh_activation_result.view(-1, zh_activation_result.shape[-1])
+    en_activation_result = en_activation_result.view(-1, en_activation_result.shape[-1])
+    K,N = zh_activation_result.shape
+    zh_mask = sae_zh.feature_act_mask
+    zh_mask = zh_mask.expand(K,N)
+    zh_activation_result = zh_activation_result[zh_mask.bool()].view(K,-1)
+    assert zh_activation_result.shape[1] == sum(zh_mask[0]), f"{zh_activation_result.shape[1]=} != {sum(zh_mask[0])=}"
+    en_mask = sae_en.feature_act_mask
+    en_mask = en_mask.expand(K,N)
+    en_activation_result = en_activation_result[en_mask.bool()].view(K,-1)
+    assert zh_activation_result.shape[1] == sum(en_mask[0]), f"{zh_activation_result.shape[1]=} != {sum(en_mask[0])=}"
+    print(f"zh_activation_result: {zh_activation_result.shape}")
+    print(f"en_activation_result: {en_activation_result.shape}")
+
+    zh_mean = zh_activation_result.mean(dim=1, keepdim=True)
+    en_mean = en_activation_result.mean(dim=1, keepdim=True)
+    zh_deviation = zh_activation_result - zh_mean
+    en_deviation = en_activation_result - en_mean
+
+    # Step 2: Compute the covariance matrix
+    # Note: We multiply and sum across the features (N), so we transpose the second matrix
+    covariance_matrix =torch.matmul(zh_deviation, en_deviation.t()) / (zh_deviation.shape[1] - 1)
+
+    # Step 3: Calculate the standard deviation for each row
+    zh_std = torch.sqrt(torch.sum(zh_deviation ** 2, dim=1) / (zh_deviation.shape[1] - 1))
+    en_std = torch.sqrt(torch.sum(en_deviation ** 2, dim=1) / (en_deviation.shape[1] - 1))
+
+    # Step 4: Divide the covariance matrix by the product of the standard deviations
+    # We need to perform an outer product of the standard deviations, so we use 'view' to make them column vectors
+    pearson_correlation = covariance_matrix / torch.ger(zh_std, en_std)
+
+    pearson_correlation, max_indice = torch.max(pearson_correlation, dim=1)
+
+    print(f"Max value is {torch.max(pearson_correlation)}")
+    print(f"pearson_correlation: {pearson_correlation.shape}")
+
+    k = 30  # Number of top elements to extract
+    topk_values, topk_indices = torch.topk(pearson_correlation.squeeze(), k)
+
+    # Print the top k Pearson correlation values and their indices
+    print("Top k Pearson correlation values:", topk_values)
+    print("Indices of top k values:", topk_indices)
+
+    # directory = f'/remote-home/miintern1/Language-Model-SAEs/correlation_analysis/diff_lan_diff_sae/pruned/'
+    # if not os.path.exists(directory):
+    #     os.makedirs(directory)
+    # torch.save(pearson_correlation, f'{directory}{cfg_zh.exp_name}_pruned_pearson_corr.pt')
+    # print(f"Saved pearson_correlation to {directory}{cfg_zh.exp_name}_pruned_pearson_corr.pt")
+
+
+    return None
+
+
+
+
+
+
+def translative_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig, cfg_zh: LanguageModelSAEAnalysisConfig, cfg_en: LanguageModelSAEAnalysisConfig):
+    sae = SparseAutoEncoder(cfg=cfg)
+
+    if cfg.sae_from_pretrained_path is not None:
+        sae.load_state_dict(torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"], strict=cfg.strict_loading)
+
+    hf_model = AutoModelForCausalLM.from_pretrained(cfg.model_from_local_pretrained_path, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only)
+    model = HookedTransformer.from_pretrained(cfg.model_name, device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model)
+    model.eval()
+    
+
+    print(f"Loading ZH dataset for f{cfg_zh.dataset_path}")
+    activation_store_zh = ActivationStore.from_config(model = model, cfg=cfg_zh)
+    zh_activation_result = input_feature_activations(sae, model, activation_store_zh, cfg)
+    # del model_zh
+    # del hf_model_zh
+    # torch.cuda.empty_cache()
+
+    print(f"Loading EN dataset for f{cfg_en.dataset_path}")
+    activation_store_en = ActivationStore.from_config(model=model, cfg=cfg_en)
+    en_activation_result = input_feature_activations(sae, model, activation_store_en, cfg)
+
+    del model
+    del hf_model
+    torch.cuda.empty_cache()
+
+    print("Start Calculating Pearson Correlation...")
+    K, N = zh_activation_result.shape
+    zh_activation_result = zh_activation_result.view(-1, zh_activation_result.shape[-1])
+    en_activation_result = en_activation_result.view(-1, en_activation_result.shape[-1])
+    mask = sae.feature_act_mask
+    mask = mask.expand(K,N)
+    zh_activation_result = zh_activation_result[mask.bool()].view(K,-1)
+    en_activation_result = en_activation_result[mask.bool()].view(K,-1)
+    assert zh_activation_result.shape[1] == sum(mask[0]), f"{zh_activation_result.shape[1]=} != {sum(mask[0])=}"
+    print(f"zh_activation_result: {zh_activation_result.shape}")
+    print(f"en_activation_result: {en_activation_result.shape}")
+
+    # Step 1: Compute the mean of each row
+    zh_mean = torch.mean(zh_activation_result, dim=1, keepdim=True)
+    en_mean = torch.mean(en_activation_result, dim=1, keepdim=True)
+
+    # Step 2: Compute the deviation from the mean for each element
+    zh_deviation = zh_activation_result - zh_mean
+    en_deviation = en_activation_result - en_mean
+
+    # Step 3: Compute the covariance between corresponding rows
+    covariance = torch.sum(zh_deviation * en_deviation, dim=1) / (zh_activation_result.shape[1] - 1)
+
+    # Step 4: Compute the standard deviation of each row
+    zh_std = torch.sqrt(torch.sum(zh_deviation ** 2, dim=1) / (zh_activation_result.shape[1] - 1))
+    en_std = torch.sqrt(torch.sum(en_deviation ** 2, dim=1) / (en_activation_result.shape[1] - 1))
+
+    # Step 5: Compute the Pearson correlation coefficient for each pair of rows
+    pearson_correlation = covariance / (zh_std * en_std)
+
+    # Reshape the result to (K, 1)
+    pearson_correlation = pearson_correlation.view(-1, 1)
+
+    # Extract the top k elements along with their indices
+    k = 100  # Number of top elements to extract
+    topk_values, topk_indices = torch.topk(pearson_correlation.squeeze(), k)
+
+    # Print the top k Pearson correlation values and their indices
+    print("Top k Pearson correlation values:", topk_values)
+    print("Indices of top k values:", topk_indices)
+
+    directory = f'/remote-home/miintern1/Language-Model-SAEs/correlation_analysis/translative_feature_same_sae/pruned/'
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    torch.save(pearson_correlation, f'{directory}{cfg.exp_name}_pruned_pearson_corr.pt')
+    print(f"Saved pearson_correlation to {directory}{cfg.exp_name}_pruned_pearson_corr.pt")
+
+
+    return None
+

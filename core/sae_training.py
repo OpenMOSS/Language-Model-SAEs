@@ -352,6 +352,7 @@ def prune_sae(
         path = os.path.join(
             cfg.exp_result_dir, cfg.exp_name, "checkpoints", "pruned.pt"
         )
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         torch.save(
             {
                 "sae": sae_module.state_dict(),
