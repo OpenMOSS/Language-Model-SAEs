@@ -432,7 +432,7 @@ def translative_content_activations_runner(cfg_zh: LanguageModelSAEAnalysisConfi
     model = HookedTransformer.from_pretrained(cfg_en.model_name, device=cfg_en.device, cache_dir=cfg_en.cache_dir, hf_model=hf_model)
     model.eval()
 
-    print(f"Loading ZH dataset for f{cfg_zh.dataset_path}")
+    print(f"Loading ZH dataset for {cfg_zh.dataset_path}")
     activation_store_zh = ActivationStore.from_config(model, cfg=cfg_zh)
     zh_activation_result = input_feature_activations(sae_zh, model, activation_store_zh, cfg_zh)
     # del model_zh
@@ -440,7 +440,7 @@ def translative_content_activations_runner(cfg_zh: LanguageModelSAEAnalysisConfi
     # torch.cuda.empty_cache()
 
 
-    print(f"Loading EN dataset for f{cfg_en.dataset_path}")
+    print(f"Loading EN dataset for {cfg_en.dataset_path}")
     activation_store_en = ActivationStore.from_config(model=model, cfg=cfg_en)
     en_activation_result = input_feature_activations(sae_en, model, activation_store_en, cfg_en)
     del model
@@ -450,9 +450,10 @@ def translative_content_activations_runner(cfg_zh: LanguageModelSAEAnalysisConfi
     print("Start Calculating Pearson Correlation...")
     zh_activation_result = zh_activation_result.view(-1, zh_activation_result.shape[-1])
     en_activation_result = en_activation_result.view(-1, en_activation_result.shape[-1])
-    K,N = zh_activation_result.shape
+    print("zh_activation_result: ", zh_activation_result.shape)
+    N = zh_activation_result.shape
     zh_mask = sae_zh.feature_act_mask
-    zh_mask = zh_mask.expand(K,N)
+    zh_mask = zh_mask
     zh_activation_result = zh_activation_result[zh_mask.bool()].view(K,-1)
     assert zh_activation_result.shape[1] == sum(zh_mask[0]), f"{zh_activation_result.shape[1]=} != {sum(zh_mask[0])=}"
     en_mask = sae_en.feature_act_mask
@@ -532,9 +533,10 @@ def translative_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig, 
     torch.cuda.empty_cache()
 
     print("Start Calculating Pearson Correlation...")
-    K, N = zh_activation_result.shape
     zh_activation_result = zh_activation_result.view(-1, zh_activation_result.shape[-1])
     en_activation_result = en_activation_result.view(-1, en_activation_result.shape[-1])
+    print(f"{zh_activation_result.shape}")
+    K, N = zh_activation_result.shape
     mask = sae.feature_act_mask
     mask = mask.expand(K,N)
     zh_activation_result = zh_activation_result[mask.bool()].view(K,-1)

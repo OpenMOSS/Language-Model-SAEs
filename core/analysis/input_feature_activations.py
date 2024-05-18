@@ -47,15 +47,16 @@ def input_feature_activations(
     act_times = torch.zeros((cfg.d_sae,), dtype=torch.long, device=cfg.device)
     feature_acts_all = [torch.empty((0,), dtype=cfg.dtype, device=cfg.device) for _ in range(cfg.d_sae)]
     max_feature_acts = torch.zeros((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device)
-
+    
     activation_result = []
     while n_training_tokens < total_analyzing_tokens:
         batch = activation_store.next_tokens(cfg.store_batch_size)
-
+        print("Batch loaded")
         if batch is None:
             raise ValueError("Not enough tokens to sample")
         
         _, cache = model.run_with_cache(batch, names_filter=[cfg.hook_point_in, cfg.hook_point_out])
+        print("Cache loaded")
         activation_in, activation_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
         (
         _,
