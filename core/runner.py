@@ -545,41 +545,104 @@ def translative_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig, 
     print(f"zh_activation_result: {zh_activation_result.shape}")
     print(f"en_activation_result: {en_activation_result.shape}")
 
-    # Step 1: Compute the mean of each row
-    zh_mean = torch.mean(zh_activation_result, dim=1, keepdim=True)
-    en_mean = torch.mean(en_activation_result, dim=1, keepdim=True)
-
-    # Step 2: Compute the deviation from the mean for each element
+    zh_mean = zh_activation_result.mean(dim=1, keepdim=True)
+    en_mean = en_activation_result.mean(dim=1, keepdim=True)
     zh_deviation = zh_activation_result - zh_mean
     en_deviation = en_activation_result - en_mean
 
-    # Step 3: Compute the covariance between corresponding rows
-    covariance = torch.sum(zh_deviation * en_deviation, dim=1) / (zh_activation_result.shape[1] - 1)
+    # Step 2: Compute the covariance matrix
+    # Note: We multiply and sum across the features (N), so we transpose the second matrix
+    covariance_matrix =torch.matmul(zh_deviation, en_deviation.t()) / (zh_deviation.shape[1] - 1)
 
-    # Step 4: Compute the standard deviation of each row
-    zh_std = torch.sqrt(torch.sum(zh_deviation ** 2, dim=1) / (zh_activation_result.shape[1] - 1))
-    en_std = torch.sqrt(torch.sum(en_deviation ** 2, dim=1) / (en_activation_result.shape[1] - 1))
+    # Step 3: Calculate the standard deviation for each row
+    zh_std = torch.sqrt(torch.sum(zh_deviation ** 2, dim=1) / (zh_deviation.shape[1] - 1))
+    en_std = torch.sqrt(torch.sum(en_deviation ** 2, dim=1) / (en_deviation.shape[1] - 1))
 
-    # Step 5: Compute the Pearson correlation coefficient for each pair of rows
-    pearson_correlation = covariance / (zh_std * en_std)
+    # Step 4: Divide the covariance matrix by the product of the standard deviations
+    # We need to perform an outer product of the standard deviations, so we use 'view' to make them column vectors
+    pearson_correlation = covariance_matrix / torch.ger(zh_std, en_std)
 
-    # Reshape the result to (K, 1)
-    pearson_correlation = pearson_correlation.view(-1, 1)
+    pearson_correlation, max_indice = torch.max(pearson_correlation, dim=1)
 
-    # Extract the top k elements along with their indices
-    k = 100  # Number of top elements to extract
+    print(f"Max value is {torch.max(pearson_correlation)}")
+    print(f"pearson_correlation: {pearson_correlation.shape}")
+
+    k = 30  # Number of top elements to extract
     topk_values, topk_indices = torch.topk(pearson_correlation.squeeze(), k)
 
     # Print the top k Pearson correlation values and their indices
     print("Top k Pearson correlation values:", topk_values)
     print("Indices of top k values:", topk_indices)
 
-    directory = f'/remote-home/miintern1/Language-Model-SAEs/correlation_analysis/translative_feature_same_sae/pruned/'
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-    torch.save(pearson_correlation, f'{directory}{cfg.exp_name}_pruned_pearson_corr.pt')
-    print(f"Saved pearson_correlation to {directory}{cfg.exp_name}_pruned_pearson_corr.pt")
+    # directory = f'/remote-home/miintern1/Language-Model-SAEs/correlation_analysis/diff_lan_diff_sae/pruned/'
+    # if not os.path.exists(directory):
+    #     os.makedirs(directory)
+    # torch.save(pearson_correlation, f'{directory}{cfg_zh.exp_name}_pruned_pearson_corr.pt')
+    # print(f"Saved pearson_correlation to {directory}{cfg_zh.exp_name}_pruned_pearson_corr.pt")
 
 
     return None
 
+
+
+@torch.no_grad()
+def macro_analysis(cfg:dict[str:LanguageModelSAEConfig])-> dict:
+    from tqdm import tqdm
+    sae = {}
+    for lan, sae_cfg in cfg.items():
+        sae[lan] = SparseAutoEncoder(cfg=sae_cfg)
+        if sae_cfg.sae_from_pretrained_path is not None:
+            sae[lan].load_state_dict(torch.load(sae_cfg.sae_from_pretrained_path, map_location=sae_cfg.device)["sae"],strict=sae_cfg.strict_loading)
+    if cfg[lan].model_from_pretrained_path is not None:
+        hf_model = AutoModelForCausalLM.from_pretrained(cfg[lan].model_from_pretrained_path, cache_dir=cfg[lan].cache_dir,
+                                                        local_files_only=cfg[lan].local_files_only)
+        hf_config = hf_model.config
+        if cfg[lan].model_name == 'gpt2':
+            tl_cfg = HookedTransformerConfig.from_dict({
+                "d_model": hf_config.n_embd,
+                "d_head": hf_config.n_embd // hf_config.n_head,
+                "n_heads": hf_config.n_head,
+                "d_mlp": hf_config.n_embd * 4,
+                "n_layers": hf_config.n_layer,
+                "n_ctx": hf_config.n_positions,
+                "eps": hf_config.layer_norm_epsilon,
+                "d_vocab": hf_config.vocab_size,
+                "act_fn": hf_config.activation_function,
+                "use_attn_scale": True,
+                "use_local_attn": False,
+                "scale_attn_by_inverse_layer_idx": hf_config.scale_attn_by_inverse_layer_idx,
+                "normalization_type": "LN",
+            })
+            model = HookedTransformer(tl_cfg,
+                                      tokenizer=AutoTokenizer.from_pretrained(cfg[lan].model_from_pretrained_path)).to(
+                cfg[lan].device)
+            state_dict = convert_gpt2_weights(hf_model, tl_cfg)
+            model.load_state_dict(state_dict, strict=False)
+        else:
+            raise ValueError(f"Unsupported model name: {cfg[lan].model_name}")
+    else:
+        hf_model = AutoModelForCausalLM.from_pretrained(cfg[lan].model_name, cache_dir=cfg[lan].cache_dir,
+                                                        local_files_only=cfg[lan].local_files_only)
+        model = HookedTransformer.from_pretrained(cfg[lan].model_name, device=cfg[lan].device, cache_dir=cfg[lan].cache_dir,
+                                                  hf_model=hf_model)
+    model.eval()
+    activation_store = ActivationStore.from_config(model=model, cfg=cfg[lan])
+        
+    result = {} 
+    for lan, sae_cfg in cfg.items():
+        score_list = []
+        n_training_tokens = 0
+        total_analysis_tokens = sae_cfg.total_analysis_tokens
+        pbar = tqdm(total=total_analysis_tokens, desc="Training SAE", smoothing=0.01)
+        while n_training_tokens < total_analysis_tokens:
+            n_training_tokens += sae_cfg.store_batch_size
+            pbar.update(sae_cfg.store_batch_size)
+            score_list.append((run_evals(
+                model,
+                sae[lan],
+                activation_store,
+                sae_cfg,
+                0))["metrics/ce_loss_score"])
+        result[lan] = sum(score_list)/len(score_list)
+
+    return result
