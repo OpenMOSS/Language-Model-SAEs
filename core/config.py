@@ -225,6 +225,11 @@ class LanguageModelSAEConfig(SAEConfig, WandbConfig, ActivationStoreConfig):
 
 
 @dataclass
+class LanguageModelAnalysisConfig(LanguageModelSAEConfig):
+    total_analysis_tokens: int = 300_000
+
+
+@dataclass
 class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
     """
     Configuration for training a sparse autoencoder on a language model.

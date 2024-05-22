@@ -593,6 +593,9 @@ def macro_analysis(cfg:dict[str:LanguageModelSAEConfig])-> dict:
         sae[lan] = SparseAutoEncoder(cfg=sae_cfg)
         if sae_cfg.sae_from_pretrained_path is not None:
             sae[lan].load_state_dict(torch.load(sae_cfg.sae_from_pretrained_path, map_location=sae_cfg.device)["sae"],strict=sae_cfg.strict_loading)
+        else:
+            print(f"SAE for {lan} is not loaded from pretrained path")
+            return None
     if cfg[lan].model_from_pretrained_path is not None:
         hf_model = AutoModelForCausalLM.from_pretrained(cfg[lan].model_from_pretrained_path, cache_dir=cfg[lan].cache_dir,
                                                         local_files_only=cfg[lan].local_files_only)
