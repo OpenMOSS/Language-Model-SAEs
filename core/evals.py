@@ -48,22 +48,22 @@ def run_evals(
     # get act
     original_act_in, original_act_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
 
-    _, (_, aux) = sae.forward(original_act_in, label=original_act_out)
+    feature_acts = sae.encode(original_act_in, label=original_act_out)
+    reconstructed = sae.decode(feature_acts)
+
     del cache
 
     if "cuda" in str(model.cfg.device):
         torch.cuda.empty_cache()
 
     l2_norm_in = torch.norm(original_act_out, dim=-1)
-    l2_norm_out = torch.norm(aux["x_hat"], dim=-1)
+    l2_norm_out = torch.norm(reconstructed, dim=-1)
     if cfg.use_ddp:
         dist.reduce(l2_norm_in, dst=0, op=dist.ReduceOp.AVG)
         dist.reduce(l2_norm_out, dst=0, op=dist.ReduceOp.AVG)
     l2_norm_ratio = l2_norm_out / l2_norm_in
 
-    pseudo_x_hat = aux["x_hat"] / l2_norm_out.unsqueeze(-1) * l2_norm_in.unsqueeze(-1)
-    explained_variance = 1 - (pseudo_x_hat - original_act_out).pow(2).sum(dim=-1) / (original_act_out - original_act_out.mean(dim=0, keepdim=True).mean(dim=1, keepdim=True)).pow(2).sum(dim=-1)
-    l0 = (aux["feature_acts"] > 0).float().sum(-1)
+    l0 = (feature_acts > 0).float().sum(-1)
 
     # TODO: DDP
 
@@ -72,8 +72,6 @@ def run_evals(
         "metrics/l2_norm": l2_norm_out.mean().item(),
         "metrics/l2_ratio": l2_norm_ratio.mean().item(),
         # variance explained
-        "metrics/explained_variance": explained_variance.mean().item(),
-        "metrics/explained_variance_std": explained_variance.std().item(),
         "metrics/l0": l0.mean().item(),
         # CE Loss
         "metrics/ce_loss_score": recons_score,
@@ -147,8 +145,7 @@ def get_recons_loss(
         names_filter=[cfg.hook_point_in, cfg.hook_point_out],
     )
     activations_in, activations_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
-    _, (_, aux) = sae.forward(activations_in, label=activations_out)
-    replacements = aux["x_hat"].to(activations_out.dtype)
+    replacements = sae.forward(activations_in, label=activations_out).to(activations_out.dtype)
 
     def replacement_hook(activations: torch.Tensor, hook: Any):
         return replacements

@@ -95,9 +95,9 @@ def train_sae(
                 loss_data,
                 aux_data,
             )
-        ) = sae.forward(
+        ) = sae.compute_loss(
             activation_in,
-            ghost_grad_neuron_mask,
+            dead_feature_mask=ghost_grad_neuron_mask,
             label=activation_out,
         )
         
@@ -298,20 +298,10 @@ def prune_sae(
         batch = activation_store.next(batch_size=cfg.train_batch_size)
         activation_in, activation_out = batch[cfg.hook_point_in], batch[cfg.hook_point_out]
 
-        # Forward pass
-        (
-            _,
-            (
-                _,
-                aux_data,
-            )
-        ) = sae.forward(
-            activation_in,
-            label=activation_out,
-        )
+        feature_acts = sae.encode(activation_in, label=activation_out)
 
-        act_times += (aux_data["feature_acts"] > 0).int().sum(0)
-        max_acts = torch.max(max_acts, aux_data["feature_acts"].max(0).values)
+        act_times += (feature_acts > 0).int().sum(0)
+        max_acts = torch.max(max_acts, feature_acts.max(0).values)
 
         n_tokens_current = activation_in.size(0)
         if cfg.use_ddp:

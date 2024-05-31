@@ -133,11 +133,6 @@ class SAEConfig(RunnerConfig):
     hook_point_in: str = "blocks.0.hook_resid_pre"
     hook_point_out: str = None # If None, it will be set to hook_point_in
 
-    use_decoder_bias: bool = True
-    decoder_bias_init_method: str = "geometric_median"
-    geometric_median_max_iter: Optional[int] = (
-        1000  # The maximum number of iterations for the geometric median algorithm. Required if decoder_bias_init_method is geometric_median
-    )
     expansion_factor: int = 32
     d_model: int = 768
     d_sae: Optional[int] = (
@@ -195,15 +190,15 @@ class SAEConfig(RunnerConfig):
             exp_result_dir, exp_name, "checkpoints", ckpt_name
         )
         hyperparams["strict_loading"] = strict_loading
+        
+        # Remove non-hyperparameters from the dict
+        hyperparams = {
+            k: v
+            for k, v in hyperparams.items()
+            if k in SAEConfig.__dataclass_fields__.keys()
+        }
         return hyperparams
-
-    @staticmethod
-    def get_lm_config(exp_name: str, exp_result_dir: str) -> str:
-        lm_config_path = os.path.join(exp_result_dir, exp_name, "lm_config.json")
-        with open(lm_config_path, "r") as f:
-            lm_config = json.load(f)
-        return lm_config
-
+    
 @dataclass
 class OpenAIConfig:
     openai_api_key: str

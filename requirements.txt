@@ -17,3 +17,4 @@ plotly>=5.20.0
 openai>=1.14.3
 tiktoken>=0.6.0
 python-dotenv>=1.0.1
+jaxtyping>=0.2.25

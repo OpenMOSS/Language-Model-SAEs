@@ -256,8 +256,7 @@ def feature_activation_custom_input(
         input = model.to_tokens(input_text, prepend_bos=False)
         _, cache = model.run_with_cache(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out])
 
-        _, (_, aux) = sae(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
-        feature_acts = aux["feature_acts"]
+        feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
         sample = {
             "context": [
                 bytearray([tokenizer.byte_decoder[c] for c in t])
@@ -285,8 +284,7 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
         input = model.to_tokens(input_text, prepend_bos=False)
         _, cache = model.run_with_cache(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out])
 
-        _, (_, aux) = sae(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
-        feature_acts = aux["feature_acts"]
+        feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
         sample = {
             "context": [
                 bytearray([tokenizer.byte_decoder[c] for c in t])
