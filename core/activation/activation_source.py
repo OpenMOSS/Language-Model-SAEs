@@ -44,19 +44,19 @@ class TokenActivationSource(ActivationSource):
 
         if tokens is None:
             return None
-        
-        _, cache = self.model.run_with_cache(tokens, names_filter=self.cfg.hook_points)
+        with torch.no_grad():
+            _, cache = self.model.run_with_cache(tokens, names_filter=self.cfg.hook_points)
 
-        batch_size = tokens.size(0)
-        seq_len = tokens.size(1)
+            batch_size = tokens.size(0)
+            seq_len = tokens.size(1)
 
-        ret = {
-            "position": repeat(torch.arange(seq_len, device=self.cfg.device, dtype=torch.long), 'l -> (b l)', b=batch_size),
-            "context": repeat(tokens.to(dtype=torch.long), 'b l -> (b repeat) l', repeat=seq_len),
-            **{k: rearrange(cache[k].to(dtype=self.cfg.dtype, device=self.cfg.device), "b l d -> (b l) d") for k in self.cfg.hook_points},
-        }
+            ret = {
+                "position": repeat(torch.arange(seq_len, device=self.cfg.device, dtype=torch.long), 'l -> (b l)', b=batch_size),
+                "context": repeat(tokens.to(dtype=torch.long), 'b l -> (b repeat) l', repeat=seq_len),
+                **{k: rearrange(cache[k].to(dtype=self.cfg.dtype, device=self.cfg.device), "b l d -> (b l) d") for k in self.cfg.hook_points},
+            }
 
-        return ret
+            return ret
     
     def next_tokens(self, batch_size: int) -> torch.Tensor | None:
         return self.token_source.next(batch_size)
