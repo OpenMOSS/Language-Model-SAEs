@@ -164,8 +164,7 @@ def partition_activation(dict_name: str, sae: SparseAutoEncoder, cache: Dict[str
         features[pos, :(feature_acts[pos] > 0).sum(-1).item()] = sae.decoder[feature_acts[pos] > 0] * feature_acts[pos][feature_acts[pos] > 0].unsqueeze(-1)
         meta[pos] = [(NodeInfo(str(feature_idx.item()), module=dict_name, pos=pos, activation=feature_acts[pos][feature_idx].item()), None) for feature_idx in feature_acts[pos].nonzero(as_tuple=True)[0]]
         meta[pos] += [padding for _ in range(max_feature_count - len(meta[pos]))]
-    # print(dict_name, (aux["x_hat"] - features.sum(1)).detach().reshape(-1).sort(descending=True).values)
-    # assert torch.allclose(aux["x_hat"], features.sum(1), atol=1e-4, rtol=1e-3)
+        s
     sae_error = activation_out - features.sum(1)
     features, meta = concat(features, meta, sae_error.unsqueeze(1), [[(NodeInfo("sae_error", module=dict_name, pos=i), None)] for i in range(features.size(0))])
     # assert torch.allclose(activation_out, features.sum(1), atol=1e-4, rtol=1e-3)

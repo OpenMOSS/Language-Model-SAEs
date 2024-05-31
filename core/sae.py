@@ -80,8 +80,6 @@ class SparseAutoEncoder(HookedRootModule):
             self.feature_act_scale,
             self.decoder,
         ]
-        if self.cfg.use_decoder_bias:
-            finetune_for_suppression_parameters.append(self.decoder_bias)
         for p in self.parameters():
             p.requires_grad_(False)
         for p in finetune_for_suppression_parameters:
@@ -316,11 +314,3 @@ class SparseAutoEncoder(HookedRootModule):
         mean_thomson_potential = (1 / dist).mean()
         return mean_thomson_potential
     
-    @torch.no_grad()
-    def features_decoder(self, feature_acts):
-        x_hat = einsum(
-            feature_acts,
-            self.decoder,
-            "... d_sae, d_sae d_model -> ... d_model",
-        )
-        return x_hat

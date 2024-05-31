@@ -18,7 +18,7 @@ def features_to_logits(sae: SparseAutoEncoder, model: HookedTransformer, cfg: Fe
 
     feature_acts = torch.unsqueeze(feature_acts, dim=1)
     
-    residual = sae.features_decoder(feature_acts)
+    residual = sae.decode(feature_acts)
     
     if model.cfg.normalization_type is not None:
         residual = model.ln_final(residual)  # [batch, pos, d_model]

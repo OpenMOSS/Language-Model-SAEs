@@ -37,8 +37,6 @@ cfg = LanguageModelSAETrainingConfig(
     n_tokens_in_buffer = 500_000,                   # The number of tokens to store in the activation buffer. The buffer is used to shuffle the activations before training the dictionary.
     
     # SAEConfig
-    use_decoder_bias = False,                       # Whether to use the decoder bias for the decoder.
-    decoder_bias_init_method = "geometric_median",  # The method to initialize the decoder bias. Can be "geometric_median", "mean" or "zero".
     expansion_factor = 32,                          # The expansion factor of the dictionary. d_sae = expansion_factor * d_model.
     norm_activation = "token-wise",                 # The normalization method for the activations. Can be "token-wise", "batch-wise" or "none".
     decoder_exactly_unit_norm = False,              # Whether to enforce the decoder to have exactly unit norm. If False, the decoder will have less than or equal to unit norm.

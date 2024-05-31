@@ -263,14 +263,6 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
                 )
             os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "checkpoints"))
 
-        if self.decoder_bias_init_method not in ["geometric_median", "mean", "zeros"]:
-            raise ValueError(
-                f"b_dec_init_method must be geometric_median, mean, or zeros. Got {self.decoder_bias_init_method}"
-            )
-        if self.decoder_bias_init_method == "zeros":
-            print_once(
-                "Warning: We are initializing b_dec to zeros. This is probably not what you want."
-            )
 
         self.effective_batch_size = (
             self.train_batch_size * self.world_size
