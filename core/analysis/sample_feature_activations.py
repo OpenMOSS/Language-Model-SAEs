@@ -57,29 +57,26 @@ def sample_feature_activations(
         _, cache = model.run_with_cache(batch, names_filter=[cfg.hook_point_in, cfg.hook_point_out])
         activation_in, activation_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
 
-        (
-            _,
-            (_, aux_data),
-        ) = sae.forward(activation_in, label=activation_out)
+        feature_acts = sae.encode(activation_in, label=activation_out)
 
-        act_times += aux_data["feature_acts"].gt(0.0).sum(dim=[0, 1])
+        act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
 
         for name in cfg.subsample.keys():
 
             if cfg.enable_sampling:
-                weights = aux_data["feature_acts"].clamp(min=0.0).pow(cfg.sample_weight_exponent).max(dim=1).values
+                weights = feature_acts.clamp(min=0.0).pow(cfg.sample_weight_exponent).max(dim=1).values
                 elt = torch.rand(batch.size(0), cfg.d_sae, device=cfg.device, dtype=cfg.dtype).log() / weights
                 elt[weights == 0.0] = -torch.inf
             else:
-                elt = aux_data["feature_acts"].clamp(min=0.0).max(dim=1).values
+                elt = feature_acts.clamp(min=0.0).max(dim=1).values
 
-            elt[aux_data["feature_acts"].max(dim=1).values > max_feature_acts.unsqueeze(0) * cfg.subsample[name]["proportion"]] = -torch.inf
+            elt[feature_acts.max(dim=1).values > max_feature_acts.unsqueeze(0) * cfg.subsample[name]["proportion"]] = -torch.inf
             
             sample_result[name] = concat_dict_of_tensor(
                 sample_result[name],
                 {
                     "elt": elt,
-                    "feature_acts": rearrange(aux_data["feature_acts"], 'batch_size context_size d_sae -> batch_size d_sae context_size'),
+                    "feature_acts": rearrange(feature_acts, 'batch_size context_size d_sae -> batch_size d_sae context_size'),
                     "contexts": repeat(batch, 'batch_size context_size -> batch_size d_sae context_size', d_sae=cfg.d_sae),
                 },
                 dim=0,
@@ -92,11 +89,11 @@ def sample_feature_activations(
 
         # Update feature activation histogram every 10 steps
         if n_training_steps % 10 == 0:
-            feature_acts_cur = rearrange(aux_data["feature_acts"], 'batch_size context_size d_sae -> d_sae (batch_size context_size)')
+            feature_acts_cur = rearrange(feature_acts, 'batch_size context_size d_sae -> d_sae (batch_size context_size)')
             for i in range(cfg.d_sae):
                 feature_acts_all[i] = torch.cat([feature_acts_all[i], feature_acts_cur[i][feature_acts_cur[i] > 0.0]], dim=0)
 
-        max_feature_acts = torch.max(max_feature_acts, aux_data["feature_acts"].max(dim=0).values.max(dim=0).values)
+        max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
 
         n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.device, dtype=torch.int)
         n_training_tokens += n_tokens_current.item()

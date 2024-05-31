@@ -150,15 +150,13 @@ def sae_direct_contribution(x: torch.Tensor, meta: list[list[Meta]], dict_name: 
     hidden_pre, meta = concat_bias(hidden_pre, meta, sae.encoder_bias, (NodeInfo("encoder_bias", module=dict_name), None))
     feature_acts = sae.feature_act_mask * sae.feature_act_scale * hidden_pre / sae.compute_norm_factor(activation_out).unsqueeze(1)
 
-    _, (_, aux) = sae(activation_in, label=activation_out)
     return feature_acts, meta
 
 
 
 def partition_activation(dict_name: str, sae: SparseAutoEncoder, cache: Dict[str, torch.Tensor]):
     activation_in, activation_out = cache[sae.cfg.hook_point_in][0], cache[sae.cfg.hook_point_out][0]
-    _, (_, aux) = sae.forward(activation_in, label=activation_out)
-    feature_acts = aux["feature_acts"]
+    feature_acts = sae.encode(activation_in, label=activation_out)
     max_feature_count = (feature_acts > 0).sum(-1).max()
     features = torch.zeros(activation_in.size(0), max_feature_count, activation_in.size(-1), dtype=activation_in.dtype, device=activation_in.device)
     meta = [[] for _ in range(activation_in.size(0))]

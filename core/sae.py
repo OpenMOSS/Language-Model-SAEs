@@ -1,16 +1,31 @@
-from typing import Dict
+from typing import Dict, Literal, Union, overload
 import torch
 import math
 from einops import einsum
+from jaxtyping import Float
+from transformer_lens.hook_points import HookPoint
 
 from core.config import SAEConfig
-from core.utils.math import compute_geometric_median
+from core.hooks.hooked_module import HookedRootModule
 
-class SparseAutoEncoder(torch.nn.Module):
+class SparseAutoEncoder(HookedRootModule):
+    """Sparse AutoEncoder model.
+
+    An autoencoder model that learns to compress the input activation tensor into a high-dimensional but sparse feature activation tensor.
+    
+    Can also act as a transcoder model, which learns to compress the input activation tensor into a feature activation tensor, and then reconstruct a label activation tensor from the feature activation tensor.
+    """
+
     def __init__(
             self,
             cfg: SAEConfig
     ):
+        """Initialize the SparseAutoEncoder model.
+
+        Args:
+            cfg (SAEConfig): The configuration of the model.
+        """
+
         super(SparseAutoEncoder, self).__init__()
 
         self.cfg = cfg
@@ -19,7 +34,6 @@ class SparseAutoEncoder(torch.nn.Module):
         torch.nn.init.kaiming_uniform_(self.encoder)
 
         if cfg.use_glu_encoder:
-            # GAU Encoder
             self.encoder_glu = torch.nn.Parameter(torch.empty((cfg.d_model, cfg.d_sae), dtype=cfg.dtype, device=cfg.device))
             torch.nn.init.kaiming_uniform_(self.encoder_glu)
 
@@ -33,16 +47,19 @@ class SparseAutoEncoder(torch.nn.Module):
         torch.nn.init.kaiming_uniform_(self.decoder)
         self.set_decoder_norm_to_unit_norm()
 
-        if cfg.use_decoder_bias:
-            self.decoder_bias = torch.nn.Parameter(torch.empty((cfg.d_model,), dtype=cfg.dtype, device=cfg.device))
-            torch.nn.init.zeros_(self.decoder_bias)
-
         self.encoder_bias = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.zeros_(self.encoder_bias)
 
         self.train_base_parameters()
 
+        self.hook_hidden_pre = HookPoint()
+        self.hook_feature_acts = HookPoint()
+        self.hook_reconstructed = HookPoint()
+
     def train_base_parameters(self):
+        """Set the base parameters to be trained.
+        """
+
         base_parameters = [
             self.encoder,
             self.decoder,
@@ -50,14 +67,15 @@ class SparseAutoEncoder(torch.nn.Module):
         ]
         if self.cfg.use_glu_encoder:
             base_parameters.extend([self.encoder_glu, self.encoder_bias_glu])
-        if self.cfg.use_decoder_bias:
-            base_parameters.append(self.decoder_bias)
         for p in self.parameters():
             p.requires_grad_(False)
         for p in base_parameters:
             p.requires_grad_(True)
 
-    def train_finetune_for_suppresion_parameters(self):
+    def train_finetune_for_suppression_parameters(self):
+        """Set the parameters to be trained for feature suppression.
+        """
+
         finetune_for_suppression_parameters = [
             self.feature_act_scale,
             self.decoder,
@@ -71,6 +89,9 @@ class SparseAutoEncoder(torch.nn.Module):
         
 
     def compute_norm_factor(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute the normalization factor for the activation vectors.
+        """
+
         # Normalize the activation vectors to have L2 norm equal to sqrt(d_model)
         if self.cfg.norm_activation == "token-wise":
             return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True)
@@ -78,18 +99,46 @@ class SparseAutoEncoder(torch.nn.Module):
             return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True).mean(dim=-2, keepdim=True)
         else:
             return torch.tensor(1.0, dtype=self.cfg.dtype, device=self.cfg.device)
+        
+    @overload
+    def encode(
+        self,
+        x: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]],
+        label: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]] | None = None,
+        return_hidden_pre: Literal[False] = False
+    ) -> Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]: ...
 
-    def forward(self, x: torch.Tensor, dead_neuron_mask: torch.Tensor | None = None, label: torch.Tensor | None = None) -> tuple[torch.Tensor, tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]:
+    @overload
+    def encode(
+        self,
+        x: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]],
+        label: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]] | None = None,
+        return_hidden_pre: Literal[True] = False
+    ) -> tuple[Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]], Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]]: ...
+
+    def encode(
+        self, 
+        x: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]],
+        label: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]] | None = None,
+        return_hidden_pre: bool = False
+    ) -> Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"], tuple[Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]], Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]]]:
+        """Encode the model activation x into feature activations.
+
+        Args:
+            x (torch.Tensor): The input activation tensor.
+            label (torch.Tensor, optional): The label activation tensor in transcoder training. Used for normalizing the feature activations. Defaults to None, which means using x as the label.
+            return_hidden_pre (bool, optional): Whether to return the hidden pre-activation. Defaults to False.
+
+        Returns:
+            torch.Tensor: The feature activations.
+
+        """
+
         if label is None:
             label = x
 
         x = x * self.compute_norm_factor(x)
-        label_normed = label * self.compute_norm_factor(label)
 
-        if self.cfg.use_decoder_bias:
-            x = x - self.decoder_bias
-        
-        # hidden_pre: (batch_size, d_sae)
         hidden_pre = einsum(
             x,
             self.encoder,
@@ -97,7 +146,6 @@ class SparseAutoEncoder(torch.nn.Module):
         ) + self.encoder_bias
 
         if self.cfg.use_glu_encoder:
-            # hidden_pre_glu: (batch_size, d_sae)
             hidden_pre_glu = einsum(
                 x,
                 self.encoder_glu,
@@ -106,42 +154,94 @@ class SparseAutoEncoder(torch.nn.Module):
             hidden_pre_glu = torch.sigmoid(hidden_pre_glu)
             hidden_pre = hidden_pre * hidden_pre_glu
 
-        # feature_acts: (batch_size, d_sae)
-        feature_acts = self.feature_act_mask * self.feature_act_scale * torch.clamp(hidden_pre, min=0.0)
+        hidden_pre = hidden_pre / self.compute_norm_factor(label)
+        hidden_pre = self.hook_hidden_pre(hidden_pre)
 
-        # x_hat: (batch_size, d_model)
-        x_hat = einsum(
+        feature_acts = self.feature_act_mask * self.feature_act_scale * torch.clamp(hidden_pre, min=0.0)
+        feature_acts = self.hook_feature_acts(feature_acts)
+
+        if return_hidden_pre:
+            return feature_acts, hidden_pre
+        return feature_acts
+    
+    def decode(
+        self,
+        feature_acts: Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]],
+    ) -> Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]]:
+        """Decode the feature activations into the reconstructed model activation in the label space.
+
+        Args:
+            feature_acts (torch.Tensor): The feature activations. Should not be normalized.
+
+        Returns:
+            torch.Tensor: The reconstructed model activation. Not normalized.
+        """
+
+        reconstructed = einsum(
             feature_acts,
             self.decoder,
             "... d_sae, d_sae d_model -> ... d_model",
         )
+        reconstructed = self.hook_reconstructed(reconstructed)
 
-        # Take the sum of the dense dimension in MSE loss
-        # l_rec: (batch_size, d_model)
-        l_rec = (x_hat - label_normed).pow(2) / (label_normed - label_normed.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+        return reconstructed
+    
+    def compute_loss(
+        self,
+        x: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]],
+        dead_feature_mask: Float[torch.Tensor, "d_sae"] | None = None,
+        label: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]] | None = None,
+        return_aux_data: bool = True
+    ) -> Union[Float[torch.Tensor, "batch"], tuple[Float[torch.Tensor, "batch"], tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]]:
+        """Compute the loss of the model.
 
-        # l_l1: (batch_size,)
-        l_l1 = torch.norm(feature_acts, p=self.cfg.lp, dim=-1)
+        Args:
+            x (torch.Tensor): The input activation tensor.
+            label (torch.Tensor, optional): The label activation tensor in transcoder training. Defaults to None, which means using x as the label.
+            return_aux_data (bool, optional): Whether to return the auxiliary data. Defaults to False.
+
+        Returns:
+            torch.Tensor: The loss value.
+        """
+
+        if label is None:
+            label = x
+
+        label_norm_factor = self.compute_norm_factor(label)
+
+        feature_acts, hidden_pre = self.encode(x, label, return_hidden_pre=True)
+        feature_acts_normed = feature_acts * label_norm_factor
+        hidden_pre_normed = hidden_pre * label_norm_factor
+
+        reconstructed = self.decode(feature_acts)
+        reconstructed_normed = reconstructed * label_norm_factor
+
+        label_normed = label * label_norm_factor
+
+        # l_rec: (batch, d_model)
+        l_rec = (reconstructed_normed - label_normed).pow(2) / (label_normed - label_normed.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+
+        # l_l1: (batch,)
+        l_l1 = torch.norm(feature_acts_normed, p=self.cfg.lp, dim=-1)
 
         l_ghost_resid = torch.tensor(0.0, dtype=self.cfg.dtype, device=self.cfg.device)
-        
-        # gate on config and training so evals is not slowed down.
+
         if (
             self.cfg.use_ghost_grads
             and self.training
-            and dead_neuron_mask is not None
-            and dead_neuron_mask.sum() > 0
+            and dead_feature_mask is not None
+            and dead_feature_mask.sum() > 0
         ):
             # ghost protocol
 
             # 1.
-            residual = label_normed - x_hat
+            residual = label_normed - reconstructed_normed
             residual_centred = residual - residual.mean(dim=0, keepdim=True)
             l2_norm_residual = torch.norm(residual, dim=-1)
 
             # 2.
-            feature_acts_dead_neurons_only = torch.exp(hidden_pre[:, dead_neuron_mask])
-            ghost_out = feature_acts_dead_neurons_only @ self.decoder[dead_neuron_mask, :]
+            feature_acts_dead_neurons_only = torch.exp(hidden_pre[:, dead_feature_mask])
+            ghost_out = feature_acts_dead_neurons_only @ self.decoder[dead_feature_mask, :]
             l2_norm_ghost_out = torch.norm(ghost_out, dim=-1)
             norm_scaling_factor = l2_norm_residual / (1e-6 + l2_norm_ghost_out * 2)
             ghost_out = ghost_out * norm_scaling_factor[:, None].detach()
@@ -154,78 +254,32 @@ class SparseAutoEncoder(torch.nn.Module):
             mse_rescaling_factor = (l_rec / (l_ghost_resid + 1e-6)).detach()
             l_ghost_resid = mse_rescaling_factor * l_ghost_resid
 
-        if self.cfg.use_decoder_bias:
-            x_hat = x_hat + self.decoder_bias
+        loss = l_rec.mean() + self.cfg.l1_coefficient * l_l1.mean() + l_ghost_resid.mean()
 
-        # Recover the original scale of the activation vectors
-        # x_hat: (batch_size, activation_size)
-        x_hat = x_hat / self.compute_norm_factor(label)
+        if return_aux_data:
+            aux_data = {
+                "feature_acts": feature_acts_normed,
+                "reconstructed": reconstructed_normed,
+                "hidden_pre": hidden_pre_normed,
+            }
+            return loss, ({"l_rec": l_rec, "l_l1": l_l1, "l_ghost_resid": l_ghost_resid}, aux_data)
 
-        loss_data = {
-            "l_rec": l_rec,
-            "l_l1": l_l1,
-            "l_ghost_resid": l_ghost_resid,
-        }
 
-        aux_data = {
-            "feature_acts": feature_acts / self.compute_norm_factor(label),
-            "x_hat": x_hat,
-        }
+    def forward(
+        self,
+        x: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]],
+        label: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]] | None = None,
+    ) -> Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]]:
+        """Encode and then decode the input activation tensor, outputting the reconstructed activation tensor.
+        """
 
-        return l_rec.mean() + self.cfg.l1_coefficient * l_l1.mean() + l_ghost_resid.mean(), (loss_data, aux_data)
-    
-    @torch.no_grad()
-    def initialize_decoder_bias(self, all_activations: torch.Tensor):
-        if not self.cfg.use_decoder_bias:
-            raise ValueError("Decoder bias is not used!")
-        norm_factor = self.compute_norm_factor(all_activations)
-        all_activations = all_activations * norm_factor
-        if self.cfg.decoder_bias_init_method == "geometric_median":
-            self.initialize_decoder_bias_with_geometric_median(all_activations)
-        elif self.cfg.decoder_bias_init_method == "mean":
-            self.initialize_decoder_bias_with_mean(all_activations)
-        elif self.cfg.decoder_bias_init_method == "zeros":
-            pass
-        else:
-            raise ValueError(
-                f"Unexpected b_dec_init_method: {self.cfg.decoder_bias_init_method}"
-            )
+        if label is None:
+            label = x
 
-    @torch.no_grad()
-    def initialize_decoder_bias_with_geometric_median(self, all_activations: torch.Tensor):
-        assert self.cfg.geometric_median_max_iter is not None
+        feature_acts = self.encode(x, label)
+        reconstructed = self.decode(feature_acts)
 
-        previous_decoder_bias = self.decoder_bias.clone()
-        out = compute_geometric_median(
-            all_activations, max_iter=self.cfg.geometric_median_max_iter
-        )
-
-        previous_distances = torch.norm(all_activations - previous_decoder_bias, dim=-1)
-        distances = torch.norm(all_activations - out, dim=-1)
-
-        print("Reinitializing b_dec with geometric median of activations")
-        print(
-            f"Previous distances: {previous_distances.median(0).values.mean().item()}"
-        )
-        print(f"New distances: {distances.median(0).values.mean().item()}")
-
-        self.decoder_bias.data = out
-
-    @torch.no_grad()
-    def initialize_decoder_bias_with_mean(self, all_activations: torch.Tensor):
-        previous_decoder_bias = self.decoder_bias.clone()
-        out = all_activations.mean(dim=0)
-
-        previous_distances = torch.norm(all_activations - previous_decoder_bias, dim=-1)
-        distances = torch.norm(all_activations - out, dim=-1)
-
-        print("Reinitializing decoder with mean of activations")
-        print(
-            f"Previous distances: {previous_distances.median(0).values.mean().item()}"
-        )
-        print(f"New distances: {distances.median(0).values.mean().item()}")
-
-        self.decoder_bias.data = out
+        return reconstructed
     
     @torch.no_grad()
     def set_decoder_norm_to_unit_norm(self):
@@ -241,7 +295,7 @@ class SparseAutoEncoder(torch.nn.Module):
     def remove_gradient_parallel_to_decoder_directions(self):
         """
         Update grads so that they remove the parallel component
-            (d_sae, d_model) shape
+        to the decoder directions.
         """
 
         parallel_component = einsum(
