@@ -100,7 +100,7 @@ def get_sae(dictionary_name: str) -> SparseAutoEncoder:
 
 def make_serializable(obj):
     if isinstance(obj, torch.Tensor):
-        return obj.cpu().numpy().tolist()
+        return obj.cpu().float().numpy().tolist()
     if isinstance(obj, np.ndarray):
         return obj.tolist()
     if isinstance(obj, dict):
@@ -262,7 +262,7 @@ def feature_activation_custom_input(
                 bytearray([tokenizer.byte_decoder[c] for c in t])
                 for t in tokenizer.convert_ids_to_tokens(input[0])
             ],
-            "feature_acts": feature_acts[:, feature_index].cpu().numpy().tolist(),
+            "feature_acts": feature_acts[:, feature_index].cpu().float().numpy().tolist(),
         }
 
     return Response(content=msgpack.packb(sample), media_type="application/x-msgpack")
@@ -291,15 +291,15 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
                 for t in tokenizer.convert_ids_to_tokens(input[0])
             ],
             "feature_acts_indices": [
-                feature_acts[i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()
+                feature_acts[i].nonzero(as_tuple=True)[0].cpu().float().numpy().tolist()
                 for i in range(feature_acts.shape[0])
             ],
             "feature_acts": [
-                feature_acts[i][feature_acts[i].nonzero(as_tuple=True)[0]].cpu().numpy().tolist()
+                feature_acts[i][feature_acts[i].nonzero(as_tuple=True)[0]].cpu().float().numpy().tolist()
                 for i in range(feature_acts.shape[0])
             ],
             "max_feature_acts": [
-                [max_feature_acts[j] for j in feature_acts[i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()]
+                [max_feature_acts[j] for j in feature_acts[i].nonzero(as_tuple=True)[0].cpu().float().numpy().tolist()]
                 for i in range(feature_acts.shape[0])
             ]
         }

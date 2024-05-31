@@ -22,5 +22,5 @@ def draw_feature_density(act_times: torch.Tensor, save_path: str):
     plt.xlabel("Activation Times")
     plt.ylabel("Feature Count")
     plt.xscale('log')
-    plt.hist(act_times.cpu().numpy(), bins=bins)
+    plt.hist(act_times.cpu().float().numpy(), bins=bins)
     plt.savefig(save_path)

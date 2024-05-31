@@ -29,7 +29,7 @@ def test_token_source(dataloader, model):
         device="cuda",
     )
     tokens = token_source.next(4)
-    print(tokens.detach().cpu().numpy())
+    print(tokens.detach().cpu().float().numpy())
 
 def test_token_activation_source(dataloader, model):
     token_source = TokenSource(
@@ -48,5 +48,5 @@ def test_token_activation_source(dataloader, model):
         dtype=torch.float32,
     )
     act = act_source.next(4)
-    print(act["activation"].detach().cpu().numpy())
+    print(act["activation"].detach().cpu().float().numpy())
 
