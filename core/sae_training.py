@@ -131,7 +131,7 @@ def train_sae(
                 if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
                     feature_sparsity = act_freq_scores / n_frac_active_tokens
                     log_feature_sparsity = torch.log10(feature_sparsity + 1e-10)
-                    wandb_histogram = wandb.Histogram(log_feature_sparsity.detach().cpu().numpy())
+                    wandb_histogram = wandb.Histogram(log_feature_sparsity.detach().cpu().float().numpy())
                     wandb.log(
                         {
                             "metrics/mean_log10_feature_sparsity": log_feature_sparsity.mean().item(),

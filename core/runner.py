@@ -50,6 +50,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         ),
         cache_dir=cfg.cache_dir,
         local_files_only=cfg.local_files_only,
+        torch_dtype=cfg.dtype,
     )
     hf_tokenizer = AutoTokenizer.from_pretrained(
         (
@@ -107,7 +108,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
             strict=cfg.strict_loading,
         )
     hf_model = AutoModelForCausalLM.from_pretrained(
-        "gpt2", cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only
+        "gpt2", cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only, torch_dtype=cfg.dtype,
     )
     model = HookedTransformer.from_pretrained(
         "gpt2", device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model
@@ -230,12 +231,12 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
             {
                 "act_times": result["act_times"][i].item(),
                 "max_feature_acts": result["max_feature_acts"][i].item(),
-                "feature_acts_all": result["feature_acts_all"][i].cpu().numpy(),
+                "feature_acts_all": result["feature_acts_all"][i].cpu().float().numpy(), # use .float() to convert bfloat16 to float32
                 "analysis": [
                     {
                         "name": v["name"],
-                        "feature_acts": v["feature_acts"][i].cpu().numpy(),
-                        "contexts": v["contexts"][i].cpu().numpy(),
+                        "feature_acts": v["feature_acts"][i].cpu().float().numpy(),
+                        "contexts": v["contexts"][i].cpu().float().numpy(),
                     }
                     for v in result["analysis"]
                 ],
