@@ -41,9 +41,6 @@ def train_sae(
 
     activation_store.initialize()
 
-    # Initialize the SAE decoder bias if necessary
-    if cfg.use_decoder_bias and (not cfg.use_ddp or cfg.rank == 0):
-        sae.initialize_decoder_bias(activation_store._store[cfg.hook_point_in])
 
     sae_module = sae
     if cfg.use_ddp:
@@ -159,7 +156,7 @@ def train_sae(
                     dist.reduce(l_l1, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l_ghost_resid, dst=0, op=dist.ReduceOp.AVG)
 
-                per_token_l2_loss = (aux_data["x_hat"] - activation_out).pow(2).sum(dim=-1)
+                per_token_l2_loss = (aux_data["reconstructed"] - activation_out).pow(2).sum(dim=-1)
                 total_variance = (activation_out - activation_out.mean(0)).pow(2).sum(dim=-1)
 
                 l2_norm_error = per_token_l2_loss.sqrt().mean()
