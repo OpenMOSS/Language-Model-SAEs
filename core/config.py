@@ -133,7 +133,7 @@ class SAEConfig(RunnerConfig):
     hook_point_in: str = "blocks.0.hook_resid_pre"
     hook_point_out: str = None # If None, it will be set to hook_point_in
 
-    use_decoder_bias: bool = True
+    use_decoder_bias: bool = False
     apply_decoder_bias_to_pre_encoder: bool = True  # set to False when training transcoders
     decoder_bias_init_method: str = "geometric_median"
     expansion_factor: int = 32
