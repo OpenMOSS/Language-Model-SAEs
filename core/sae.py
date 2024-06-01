@@ -3,10 +3,9 @@ import torch
 import math
 from einops import einsum
 from jaxtyping import Float
-from transformer_lens.hook_points import HookPoint
+from transformer_lens.hook_points import HookPoint, HookedRootModule
 
 from core.config import SAEConfig
-from core.hooks.hooked_module import HookedRootModule
 
 class SparseAutoEncoder(HookedRootModule):
     """Sparse AutoEncoder model.
@@ -256,9 +255,9 @@ class SparseAutoEncoder(HookedRootModule):
 
         if return_aux_data:
             aux_data = {
-                "feature_acts": feature_acts_normed,
-                "reconstructed": reconstructed_normed,
-                "hidden_pre": hidden_pre_normed,
+                "feature_acts": feature_acts,
+                "reconstructed": reconstructed,
+                "hidden_pre": hidden_pre,
             }
             return loss, ({"l_rec": l_rec, "l_l1": l_l1, "l_ghost_resid": l_ghost_resid}, aux_data)
 
