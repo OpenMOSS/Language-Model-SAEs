@@ -1,5 +1,5 @@
 [project]
-name = "Language-Model-SAEs"
+name = "lm-saes"
 version = "0.1.0"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 authors = [
@@ -35,10 +35,6 @@ dependencies = [
 requires-python = "==3.10.*"
 readme = "README.md"
 license = {text = "MIT"}
-
-
-[tool.pdm]
-distribution = false
 
 [tool.pdm.dev-dependencies]
 dev = [
