@@ -5,9 +5,9 @@ import torch.utils.data
 
 from transformer_lens import HookedTransformer
 
-from core.config import ActivationStoreConfig
-from core.activation.activation_source import ActivationSource, CachedActivationSource, TokenActivationSource
-from core.activation.token_source import TokenSource
+from lm_saes.config import ActivationStoreConfig
+from lm_saes.activation.activation_source import ActivationSource, CachedActivationSource, TokenActivationSource
+from lm_saes.activation.token_source import TokenSource
 
 class ActivationStore:
     def __init__(self, 

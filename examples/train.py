@@ -2,19 +2,13 @@ import os
 import sys
 import torch
 import torch.distributed as dist
-
-sys.path.insert(0, os.getcwd())
-
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["WANDB__SERVICE_WAIT"] = "300"
-os.environ["WANDB_API_KEY"] = "YOUR_WANDB_API_KEY"
-
-from core.config import LanguageModelSAETrainingConfig
-from core.runner import language_model_sae_runner
+from lm_saes.config import LanguageModelSAETrainingConfig
+from lm_saes.runner import language_model_sae_runner
 
 use_ddp = False
 
 if use_ddp:
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
     dist.init_process_group(backend='nccl')
     torch.cuda.set_device(dist.get_rank())
 
@@ -32,11 +26,13 @@ cfg = LanguageModelSAETrainingConfig(
     store_batch_size = 32,                          # The batch size for loading the corpus.
 
     # ActivationStoreConfig
-    hook_point = f"blocks.9.hook_mlp_out",          # The hook point to extract the activations, i.e. the layer output of which is used for training/evaluating the dictionary.
+    hook_points = ["blocks.3.hook_mlp_out"],         # The hook point to extract the activations, i.e. the layer output of which is used for training/evaluating the dictionary.
     use_cached_activations = False,                 # Whether to use cached activations. Caching activation is now not recommended, as it may consume extremely large disk space. (May be tens of TBs for corpus like `openwebtext`)
     n_tokens_in_buffer = 500_000,                   # The number of tokens to store in the activation buffer. The buffer is used to shuffle the activations before training the dictionary.
     
     # SAEConfig
+    hook_point_in = "blocks.3.hook_mlp_out",
+    hook_point_out = "blocks.3.hook_mlp_out",
     expansion_factor = 32,                          # The expansion factor of the dictionary. d_sae = expansion_factor * d_model.
     norm_activation = "token-wise",                 # The normalization method for the activations. Can be "token-wise", "batch-wise" or "none".
     decoder_exactly_unit_norm = False,              # Whether to enforce the decoder to have exactly unit norm. If False, the decoder will have less than or equal to unit norm.
@@ -46,8 +42,8 @@ cfg = LanguageModelSAETrainingConfig(
     use_ghost_grads = True,                         # Whether to use the ghost gradients for saving dead features.
 
     # LanguageModelSAETrainingConfig
-    total_training_tokens = 2_000_000,          # The total number of tokens to train the dictionary.
-    lr = 5e-4,                                      # The learning rate for the dictionary training.
+    total_training_tokens = 1_600_000_000,          # The total number of tokens to train the dictionary.
+    lr = 4e-4,                                      # The learning rate for the dictionary training.
     betas = (0, 0.9999),                            # The betas for the Adam optimizer.
     lr_scheduler_name = "constantwithwarmup",       # The learning rate scheduler name. Can be "constant", "constantwithwarmup", "linearwarmupdecay", "cosineannealing", "cosineannealingwarmup" or "exponentialwarmup".
     lr_warm_up_steps = 5000,                        # The number of warm-up steps for the learning rate.
@@ -63,7 +59,6 @@ cfg = LanguageModelSAETrainingConfig(
     # WandbConfig
     log_to_wandb = True,                            # Whether to log the training information to wandb.
     wandb_project= "gpt2-sae",                      # The wandb project name.
-    wandb_entity = "fnlp-mechinterp",               # The wandb entity name.
     
     # RunnerConfig
     use_ddp = use_ddp,                              # Whether to use the DistributedDataParallel.
@@ -71,7 +66,9 @@ cfg = LanguageModelSAETrainingConfig(
     seed = 42,                                      # The random seed.
     dtype = torch.float32,                          # The torch data type of non-integer tensors.
 
-    exp_name = "test"                               # The experiment name. Would be used for creating exp folder (which may contain checkpoints and analysis results) and setting wandb run name. 
+    exp_name = "L3M",                              # The experiment name. Would be used for creating exp folder (which may contain checkpoints and analysis results) and setting wandb run name. 
+    exp_series = "default",
+    exp_result_dir = "results"
 )
 
 sparse_autoencoder = language_model_sae_runner(cfg)

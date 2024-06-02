@@ -5,7 +5,7 @@ from einops import einsum
 from jaxtyping import Float
 from transformer_lens.hook_points import HookPoint, HookedRootModule
 
-from core.config import SAEConfig
+from lm_saes.config import SAEConfig
 
 class SparseAutoEncoder(HookedRootModule):
     """Sparse AutoEncoder model.

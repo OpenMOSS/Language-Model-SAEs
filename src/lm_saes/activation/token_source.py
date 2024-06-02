@@ -5,7 +5,7 @@ from datasets import load_dataset, load_from_disk
 
 from transformer_lens import HookedTransformer
 
-from core.config import TextDatasetConfig
+from lm_saes.config import TextDatasetConfig
 
 class TokenSource:
     def __init__(

@@ -7,7 +7,7 @@ import pymongo
 import gridfs
 import pymongo.database
 
-from core.utils.bytes import bytes_to_np, np_to_bytes
+from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
 
 class MongoClient:
     def __init__(self, mongo_uri: str, mongo_db: str):

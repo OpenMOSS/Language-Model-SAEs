@@ -8,10 +8,10 @@ import wandb
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
-from core.sae import SparseAutoEncoder
-from core.activation.activation_store import ActivationStore
-# from core.activation_store_theirs import ActivationStoreTheirs
-from core.config import LanguageModelSAEConfig
+from lm_saes.sae import SparseAutoEncoder
+from lm_saes.activation.activation_store import ActivationStore
+# from lm_saes.activation_store_theirs import ActivationStoreTheirs
+from lm_saes.config import LanguageModelSAEConfig
 
 @torch.no_grad()
 def run_evals(

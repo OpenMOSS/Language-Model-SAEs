@@ -5,9 +5,9 @@ from transformer_lens import HookedTransformer
 import functools
 import torch.nn.functional as F
 
-from core.circuit.computation_graph import Meta, NodeInfo, PathInfo, padding
-from core.circuit.utils import concat, concat_bias, equal_shape, compact
-from core.sae import SparseAutoEncoder
+from lm_saes.circuit.computation_graph import Meta, NodeInfo, PathInfo, padding
+from lm_saes.circuit.utils import concat, concat_bias, equal_shape, compact
+from lm_saes.sae import SparseAutoEncoder
 
 
 def mlp_direct_contribution(x: torch.Tensor, meta: list[list[Meta]], layer: int, model: HookedTransformer, cache: Dict[str, torch.Tensor]):
