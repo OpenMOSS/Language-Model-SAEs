@@ -20,11 +20,13 @@ Furthermore, to dive deeper into the inner activations of LMs, it's recommended 
 
 ## Installation
 
-Currently, the codebase use [pip](https://pip.pypa.io/en/stable/) to manage the dependencies. To install the required packages, run the following command:
+Currently, the codebase use [pdm](https://pdm-project.org/) to manage the dependencies, which is an alternative to [poetry](https://python-poetry.org/). To install the required packages, just install `pdm`, and run the following command:
 
 ```bash
-pip install -r requirements.txt
+pdm install
 ```
+
+This will install all the required packages for the core codebase. Note that if you're in a conda environment, `pdm` will directly take the current environment as the virtual environment for current project, and remove all the packages that are not in the `pyproject.toml` file. So make sure to create a new conda environment (or just deactivate conda, this will use virtualenv by default) before running the above command. A forked version of `TransformerLens` is also included in the dependencies to provide the necessary tools for analyzing features.
 
 If you want to use the visualization tools, you also need to install the required packages for the frontend, which uses [bun](https://bun.sh/) for dependency management. Follow the instructions on the website to install it, and then run the following command:
 
@@ -35,53 +37,13 @@ bun install
 
 It's worth noting that `bun` is not well-supported on Windows, so you may need to use WSL or other Linux-based solutions to run the frontend, or consider using a different package manager, such as `pnpm` or `yarn`.
 
-## Project Structure Overview
+## Training/Analyzing a Dictionary
 
-The project is organized as follows:
+We give some basic examples to show how to train a dictionary and analyze the learned dictionary in the [examples](https://github.com/OpenMOSS/Language-Model-SAEs/exapmles). You can copy the example scripts to the `exp` directory and modify them to fit your needs. More examples will be added in the future.
 
-- **core:** The core codebase for training and evaluating dictionaries.
-- **ui:** React-based frontend for visualizing the learned dictionaries and their features.
-- **server:** A simple FastAPI server for serving the dictionaries to the frontend.
-- **tests:** Unit tests for the core codebase.
-- **notebooks:** Jupyter notebooks for analyzing the learned dictionaries.
-- **results:** By default, results of training and analysis will be saved in this directory.
+## Visualizing the Learned Dictionary
 
-## Training a Dictionary
-
-We use configurations powered by dataclasses to manage the training process. It's recommended to start by copying the training example to a `exp` folder:
-
-```bash
-mkdir exp
-cp run_train_example.py exp/my_train_exp.py
-```
-
-Then, modify the configuration file to fit your needs. The configurations specify the dataset, the model, the training hyperparameters, the logging and checkpointing settings, etc. The example configuration file is well-documented, so you can refer to it for more details.
-
-After that, start the training process by running the following command:
-
-```bash
-python exp/my_exp.py
-```
-
-Make sure the experiment script is launched from the root directory of the project, so that the module can be correctly resolved by Python.
-
-## Analyzing and Visualizing the Learned Dictionary
-
-After training the dictionary, you can use the provided tools to analyze and visualize the learned dictionary. First, you can analyze the feature activations using the provided analyzing example:
-
-```bash
-cp run_analyze_example.py exp/my_analyze_exp.py
-```
-
-Modify the configuration file to fit your needs (especially the checkpoint path), and then run the following command:
-
-```bash
-python exp/my_analyze_exp.py
-```
-
-The analysis results will be saved in the `results/<exp_name>/analysis/<analysis_name>` directory. `notebooks/observe_feature_activation.ipynb` demonstrates how to use the analysis results to observe the feature activation of the learned dictionary.
-
-Furthermore, you can use the provided visualization tools to visualize the learned dictionary. First, start the FastAPI server by running the following command:
+The analysis results will be saved using MongoDB, and you can use the provided visualization tools to visualize the learned dictionary. First, start the FastAPI server by running the following command:
 
 ```bash
 uvicorn server.app:app --port 24577
@@ -111,8 +73,8 @@ Please cite this library as:
 ```
 @misc{Ge2024OpenMossSAEs,
     title  = {OpenMoss Language Model Sparse Autoencoders},
-    author = {Xuyang Ge, Fukang Zhu, Junxuan Wang, Wentao Shu, Zhengfu He},
-    url    = {https://github.com/OpenMOSS/gpt2-dictionary},
+    author = {Xuyang Ge, Fukang Zhu, Junxuan Wang, Wentao Shu, Lingjie Chen, Zhengfu He},
+    url    = {https://github.com/OpenMOSS/Language-Model-SAEs},
     year   = {2024}
 }
 ```
