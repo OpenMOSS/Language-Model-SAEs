@@ -1,8 +1,8 @@
 import torch
 from transformer_lens import HookedTransformer
 
-from core.sae import SparseAutoEncoder
-from core.config import FeaturesDecoderConfig
+from lm_saes.sae import SparseAutoEncoder
+from lm_saes.config import FeaturesDecoderConfig
 
 @torch.no_grad()
 def features_to_logits(sae: SparseAutoEncoder, model: HookedTransformer, cfg: FeaturesDecoderConfig):

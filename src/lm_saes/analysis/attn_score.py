@@ -11,8 +11,8 @@ from datasets import Dataset
 
 from transformer_lens import HookedTransformer
 
-from core.sae import SparseAutoEncoder
-from core.config import LanguageModelConfig
+from lm_saes.sae import SparseAutoEncoder
+from lm_saes.config import LanguageModelConfig
 
 @torch.no_grad()
 def compute_attention_score(

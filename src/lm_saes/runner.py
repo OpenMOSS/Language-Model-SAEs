@@ -10,7 +10,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 from transformer_lens.loading_from_pretrained import convert_gpt2_weights
 
-from core.config import (
+from lm_saes.config import (
     ActivationGenerationConfig,
     LanguageModelSAEAnalysisConfig,
     LanguageModelSAETrainingConfig,
@@ -18,14 +18,14 @@ from core.config import (
     LanguageModelSAEPruningConfig,
     FeaturesDecoderConfig,
 )
-from core.database import MongoClient
-from core.evals import run_evals
-from core.sae import SparseAutoEncoder
-from core.activation.activation_dataset import make_activation_dataset
-from core.activation.activation_store import ActivationStore
-from core.sae_training import prune_sae, train_sae
-from core.analysis.sample_feature_activations import sample_feature_activations
-from core.analysis.features_to_logits import features_to_logits
+from lm_saes.database import MongoClient
+from lm_saes.evals import run_evals
+from lm_saes.sae import SparseAutoEncoder
+from lm_saes.activation.activation_dataset import make_activation_dataset
+from lm_saes.activation.activation_store import ActivationStore
+from lm_saes.sae_training import prune_sae, train_sae
+from lm_saes.analysis.sample_feature_activations import sample_feature_activations
+from lm_saes.analysis.features_to_logits import features_to_logits
 
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
@@ -40,7 +40,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
 
     if cfg.finetuning:
         # Fine-tune SAE with frozen encoder weights and bias
-        sae.train_finetune_for_suppresion_parameters()
+        sae.train_finetune_for_suppression_parameters()
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         (

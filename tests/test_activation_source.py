@@ -1,5 +1,5 @@
-from core.activation.activation_source import TokenActivationSource
-from core.activation.token_source import TokenSource
+from lm_saes.activation.activation_source import TokenActivationSource
+from lm_saes.activation.token_source import TokenSource
 
 from datasets import load_dataset
 from transformer_lens import HookedTransformer

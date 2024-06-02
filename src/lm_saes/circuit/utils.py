@@ -4,7 +4,7 @@ from typing import Callable
 from einops import repeat
 import torch
 
-from core.circuit.computation_graph import Meta, NodeInfo, padding
+from lm_saes.circuit.computation_graph import Meta, NodeInfo, padding
 
 
 def concat(x: torch.Tensor, x_meta: list[list[Meta]], y: torch.Tensor, y_meta: list[list[Meta]]):

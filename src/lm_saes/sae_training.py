@@ -10,12 +10,12 @@ from transformer_lens import HookedTransformer
 from tqdm import tqdm
 import wandb
 
-from core.activation.activation_store import ActivationStore
-from core.sae import SparseAutoEncoder
-from core.config import LanguageModelSAEPruningConfig, LanguageModelSAETrainingConfig
-from core.optim import get_scheduler
-from core.evals import run_evals
-from core.utils.misc import print_once
+from lm_saes.activation.activation_store import ActivationStore
+from lm_saes.sae import SparseAutoEncoder
+from lm_saes.config import LanguageModelSAEPruningConfig, LanguageModelSAETrainingConfig
+from lm_saes.optim import get_scheduler
+from lm_saes.evals import run_evals
+from lm_saes.utils.misc import print_once
 
 def train_sae(
     model: HookedTransformer,

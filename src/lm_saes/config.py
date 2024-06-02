@@ -9,7 +9,7 @@ import wandb
 
 import os
 
-from core.utils.misc import print_once
+from lm_saes.utils.misc import print_once
 
 from transformer_lens.loading_from_pretrained import get_official_model_name
 

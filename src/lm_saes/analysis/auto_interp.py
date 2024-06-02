@@ -8,9 +8,9 @@ import tiktoken
 import random
 import traceback
 from openai import OpenAI
-from core.config import AutoInterpConfig, SAEConfig
+from lm_saes.config import AutoInterpConfig, SAEConfig
 from transformer_lens import HookedTransformer
-from core.sae import SparseAutoEncoder
+from lm_saes.sae import SparseAutoEncoder
 
 
 def _num_tokens_from_string(string: str, encoding_name: str = "cl100k_base") -> int:
