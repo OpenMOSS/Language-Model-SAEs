@@ -133,6 +133,9 @@ class SAEConfig(RunnerConfig):
     hook_point_in: str = "blocks.0.hook_resid_pre"
     hook_point_out: str = None # If None, it will be set to hook_point_in
 
+    use_decoder_bias: bool = False
+    apply_decoder_bias_to_pre_encoder: bool = True  # set to False when training transcoders
+    decoder_bias_init_method: str = "geometric_median"
     expansion_factor: int = 32
     d_model: int = 768
     d_sae: Optional[int] = (
@@ -149,6 +152,7 @@ class SAEConfig(RunnerConfig):
 
     def __post_init__(self):
         super().__post_init__()
+
         if self.hook_point_out is None:
             self.hook_point_out = self.hook_point_in
         if self.d_sae is None:

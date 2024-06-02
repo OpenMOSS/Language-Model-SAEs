@@ -3,10 +3,9 @@ import torch
 import math
 from einops import einsum
 from jaxtyping import Float
-from transformer_lens.hook_points import HookPoint
+from transformer_lens.hook_points import HookPoint, HookedRootModule
 
 from core.config import SAEConfig
-from core.hooks.hooked_module import HookedRootModule
 
 class SparseAutoEncoder(HookedRootModule):
     """Sparse AutoEncoder model.
@@ -46,6 +45,7 @@ class SparseAutoEncoder(HookedRootModule):
         self.decoder = torch.nn.Parameter(torch.empty((cfg.d_sae, cfg.d_model), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.kaiming_uniform_(self.decoder)
         self.set_decoder_norm_to_unit_norm()
+        self.decoder_bias = torch.nn.Parameter(torch.empty((cfg.d_model,), dtype=cfg.dtype, device=cfg.device))
 
         self.encoder_bias = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.zeros_(self.encoder_bias)
@@ -67,6 +67,8 @@ class SparseAutoEncoder(HookedRootModule):
         ]
         if self.cfg.use_glu_encoder:
             base_parameters.extend([self.encoder_glu, self.encoder_bias_glu])
+        if self.cfg.use_decoder_bias:
+            base_parameters.append(self.decoder_bias)
         for p in self.parameters():
             p.requires_grad_(False)
         for p in base_parameters:
@@ -80,6 +82,8 @@ class SparseAutoEncoder(HookedRootModule):
             self.feature_act_scale,
             self.decoder,
         ]
+        if self.cfg.use_decoder_bias:
+            finetune_for_suppression_parameters.append(self.decoder_bias)
         for p in self.parameters():
             p.requires_grad_(False)
         for p in finetune_for_suppression_parameters:
@@ -135,6 +139,9 @@ class SparseAutoEncoder(HookedRootModule):
         if label is None:
             label = x
 
+        if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
+            x = x - self.decoder_bias
+
         x = x * self.compute_norm_factor(x)
 
         hidden_pre = einsum(
@@ -180,6 +187,9 @@ class SparseAutoEncoder(HookedRootModule):
             self.decoder,
             "... d_sae, d_sae d_model -> ... d_model",
         )
+        if self.cfg.use_decoder_bias:
+            reconstructed = reconstructed + self.decoder_bias
+
         reconstructed = self.hook_reconstructed(reconstructed)
 
         return reconstructed
@@ -256,9 +266,9 @@ class SparseAutoEncoder(HookedRootModule):
 
         if return_aux_data:
             aux_data = {
-                "feature_acts": feature_acts_normed,
-                "reconstructed": reconstructed_normed,
-                "hidden_pre": hidden_pre_normed,
+                "feature_acts": feature_acts,
+                "reconstructed": reconstructed,
+                "hidden_pre": hidden_pre,
             }
             return loss, ({"l_rec": l_rec, "l_l1": l_l1, "l_ghost_resid": l_ghost_resid}, aux_data)
 
