@@ -235,16 +235,15 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     )
     model.eval()
 
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg)
-    result = sample_feature_activations(sae, model, activation_store, cfg)
-
     client = MongoClient(cfg.mongo_uri, cfg.mongo_db)
     client.create_dictionary(cfg.exp_name, cfg.d_sae, cfg.exp_series)
-    for i in range(len(result["index"])):
-        client.update_feature(
-            cfg.exp_name,
-            result["index"][i].item(),
-            {
+
+    for chunk_id in range(cfg.n_sae_chunks):
+        activation_store = ActivationStore.from_config(model=model, cfg=cfg)
+        result = sample_feature_activations(sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks)
+
+        for i in range(len(result["index"].cpu().numpy().tolist())):
+            client.update_feature(cfg.exp_name, result["index"][i].item(), {
                 "act_times": result["act_times"][i].item(),
                 "max_feature_acts": result["max_feature_acts"][i].item(),
                 "feature_acts_all": result["feature_acts_all"][i]
@@ -255,15 +254,14 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
                     {
                         "name": v["name"],
                         "feature_acts": v["feature_acts"][i].cpu().float().numpy(),
-                        "contexts": v["contexts"][i].cpu().float().numpy(),
-                    }
-                    for v in result["analysis"]
-                ],
-            },
-            dictionary_series=cfg.exp_series,
-        )
+                        "contexts": v["contexts"][i].cpu().numpy(),
+                    } for v in result["analysis"]
+                ]
+            }, dictionary_series=cfg.exp_series)
 
-    return result
+        del result
+        del activation_store
+        torch.cuda.empty_cache()
 
 
 @torch.no_grad()
