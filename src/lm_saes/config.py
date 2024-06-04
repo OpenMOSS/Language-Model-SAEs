@@ -332,6 +332,13 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConf
     sample_weight_exponent: float = 2.0
     subsample: Dict[str, Dict[str, Any]] = field(default_factory=lambda: { "top_activations": {"proportion": 1.0, "n_samples": 10} })
 
+    n_sae_chunks: int = 1  # Number of chunks to split the SAE into for analysis. For large models and SAEs, this can be useful to avoid memory issues.
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        assert self.d_sae % self.n_sae_chunks == 0, f"d_sae ({self.d_sae}) must be divisible by n_sae_chunks ({self.n_sae_chunks})"
+
 
 @dataclass
 class FeaturesDecoderConfig(SAEConfig, LanguageModelConfig, MongoConfig):
