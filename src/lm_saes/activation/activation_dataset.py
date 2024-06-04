@@ -37,7 +37,7 @@ def make_activation_dataset(
     pbar = tqdm(total=total_generating_tokens, desc=f"Activation dataset Rank {cfg.rank}" if cfg.use_ddp else "Activation dataset")
 
     while n_tokens < total_generating_tokens:
-        act_dict = {hook_point: torch.empty((0, cfg.context_size, cfg.d_model), dtype=torch.float32, device=cfg.device) for hook_point in cfg.hook_points}
+        act_dict = {hook_point: torch.empty((0, cfg.context_size, cfg.d_model), dtype=cfg.dtype, device=cfg.device) for hook_point in cfg.hook_points}
         context = torch.empty((0, cfg.context_size), dtype=torch.long, device=cfg.device)
 
         n_tokens_in_chunk = 0
