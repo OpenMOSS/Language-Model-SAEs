@@ -109,10 +109,17 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
             strict=cfg.strict_loading,
         )
     hf_model = AutoModelForCausalLM.from_pretrained(
-        "gpt2", cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only, torch_dtype=cfg.dtype,
+        cfg.model_name,
+        cache_dir=cfg.cache_dir,
+        local_files_only=cfg.local_files_only,
+        torch_dtype=cfg.dtype,
     )
     model = HookedTransformer.from_pretrained(
-        "gpt2", device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model
+        cfg.model_name,
+        device=cfg.device,
+        cache_dir=cfg.cache_dir,
+        hf_model=hf_model,
+        dtype=cfg.dtype,
     )
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg)
@@ -153,10 +160,14 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAEConfig):
             strict=cfg.strict_loading,
         )
     hf_model = AutoModelForCausalLM.from_pretrained(
-        "gpt2", cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only
+        cfg.model_name, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only
     )
     model = HookedTransformer.from_pretrained(
-        "gpt2", device=cfg.device, cache_dir=cfg.cache_dir, hf_model=hf_model
+        cfg.model_name,
+        device=cfg.device,
+        cache_dir=cfg.cache_dir,
+        hf_model=hf_model,
+        dtype=cfg.dtype,
     )
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg)
@@ -188,7 +199,10 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAEConfig):
 
 def activation_generation_runner(cfg: ActivationGenerationConfig):
     model = HookedTransformer.from_pretrained(
-        "gpt2", device=cfg.device, cache_dir=cfg.cache_dir
+        cfg.model_name,
+        device=cfg.device,
+        cache_dir=cfg.cache_dir,
+        dtype=cfg.dtype,
     )
     model.eval()
 
@@ -217,6 +231,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         device=cfg.device,
         cache_dir=cfg.cache_dir,
         hf_model=hf_model,
+        dtype=cfg.dtype,
     )
     model.eval()
 
@@ -231,7 +246,10 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
             client.update_feature(cfg.exp_name, result["index"][i].item(), {
                 "act_times": result["act_times"][i].item(),
                 "max_feature_acts": result["max_feature_acts"][i].item(),
-                "feature_acts_all": result["feature_acts_all"][i].cpu().float().numpy(),
+                "feature_acts_all": result["feature_acts_all"][i]
+                .cpu()
+                .float()
+                .numpy(),  # use .float() to convert bfloat16 to float32
                 "analysis": [
                     {
                         "name": v["name"],
@@ -269,6 +287,7 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
         device=cfg.device,
         cache_dir=cfg.cache_dir,
         hf_model=hf_model,
+        dtype=cfg.dtype,
     )
     model.eval()
 
