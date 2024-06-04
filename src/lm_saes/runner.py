@@ -68,6 +68,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         cache_dir=cfg.cache_dir,
         hf_model=hf_model,
         tokenizer=hf_tokenizer,
+        dtype=cfg.dtype,
     )
 
     model.eval()
