@@ -226,7 +226,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         activation_store = ActivationStore.from_config(model=model, cfg=cfg)
         result = sample_feature_activations(sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks)
 
-        for i in result["index"].cpu().numpy().list():
+        for i in result["index"].cpu().numpy().tolist():
             client.update_feature(cfg.exp_name, result["index"][i].item(), {
                 "act_times": result["act_times"][i].item(),
                 "max_feature_acts": result["max_feature_acts"][i].item(),
