@@ -19,10 +19,10 @@ from fastapi.middleware.gzip import GZipMiddleware
 import plotly.express as px
 import plotly.graph_objects as go
 
-from core.analysis.auto_interp import check_description, generate_description
-from core.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
-from core.database import MongoClient
-from core.sae import SparseAutoEncoder
+from lm_saes.analysis.auto_interp import check_description, generate_description
+from lm_saes.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
+from lm_saes.database import MongoClient
+from lm_saes.sae import SparseAutoEncoder
 
 result_dir = os.environ.get("RESULT_DIR", "results")
 device = "cuda" if torch.cuda.is_available() else "cpu"
