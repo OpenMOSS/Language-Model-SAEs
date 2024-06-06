@@ -40,7 +40,7 @@ lm_cache = {}
 
 
 def get_model(dictionary_name: str) -> HookedTransformer:
-	cfg = LanguageModelConfig.from_pretrained_sae_path(f"{result_dir}/{dictionary_name}")
+	cfg = LanguageModelConfig.from_pretrained_sae(f"{result_dir}/{dictionary_name}")
 	if (cfg.model_name, cfg.model_from_pretrained_path) not in lm_cache:
 		hf_model = AutoModelForCausalLM.from_pretrained(
 			(
@@ -316,7 +316,7 @@ def feature_interpretation(
 		cfg = AutoInterpConfig(
 			**{
 				**SAEConfig.from_pretrained(f"{result_dir}/{dictionary_name}").to_dict(),
-				**LanguageModelConfig.from_pretrained_sae_path(f"{result_dir}/{dictionary_name}").to_dict(),
+				**LanguageModelConfig.from_pretrained_sae(f"{result_dir}/{dictionary_name}").to_dict(),
 				"openai_api_key": os.environ.get("OPENAI_API_KEY"),
 				"openai_base_url": os.environ.get("OPENAI_BASE_URL"),
 			}
@@ -332,7 +332,7 @@ def feature_interpretation(
 		cfg = AutoInterpConfig(
 			**{
 				**SAEConfig.from_pretrained(f"{result_dir}/{dictionary_name}").to_dict(),
-				**LanguageModelConfig.from_pretrained_sae_path(f"{result_dir}/{dictionary_name}").to_dict(),
+				**LanguageModelConfig.from_pretrained_sae(f"{result_dir}/{dictionary_name}").to_dict(),
 				"openai_api_key": os.environ.get("OPENAI_API_KEY"),
 				"openai_base_url": os.environ.get("OPENAI_BASE_URL"),
 			}
