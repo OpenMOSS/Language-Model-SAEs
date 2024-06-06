@@ -27,7 +27,7 @@ cfg = LanguageModelSAEAnalysisConfig(
     hook_points = ["blocks.3.hook_mlp_out"],
     
     # SAEConfig
-    **SAEConfig.get_hyperparameters("L3M", "results", "final.pt"),  # Load the hyperparameters from the trained model.
+    **SAEConfig.from_pretrained("result/L3M").to_dict(),  # Load the hyperparameters from the trained model.
 
     # LanguageModelSAEAnalysisConfig
     total_analyzing_tokens = 20_000_000,

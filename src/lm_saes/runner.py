@@ -14,7 +14,7 @@ from lm_saes.config import (
     ActivationGenerationConfig,
     LanguageModelSAEAnalysisConfig,
     LanguageModelSAETrainingConfig,
-    LanguageModelSAEConfig,
+    LanguageModelSAERunnerConfig,
     LanguageModelSAEPruningConfig,
     FeaturesDecoderConfig,
 )
@@ -31,12 +31,7 @@ from lm_saes.analysis.features_to_logits import features_to_logits
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     cfg.save_hyperparameters()
     cfg.save_lm_config()
-    sae = SparseAutoEncoder(cfg=cfg)
-    if cfg.sae_from_pretrained_path is not None:
-        sae.load_state_dict(
-            torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"],
-            strict=cfg.strict_loading,
-        )
+    sae = SparseAutoEncoder.from_config(cfg=cfg)
 
     if cfg.finetuning:
         # Fine-tune SAE with frozen encoder weights and bias
@@ -102,12 +97,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
 
 
 def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
-    sae = SparseAutoEncoder(cfg=cfg)
-    if cfg.sae_from_pretrained_path is not None:
-        sae.load_state_dict(
-            torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"],
-            strict=cfg.strict_loading,
-        )
+    sae = SparseAutoEncoder.from_config(cfg=cfg)
     hf_model = AutoModelForCausalLM.from_pretrained(
         cfg.model_name,
         cache_dir=cfg.cache_dir,
@@ -152,13 +142,8 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
         wandb.finish()
 
 
-def language_model_sae_eval_runner(cfg: LanguageModelSAEConfig):
-    sae = SparseAutoEncoder(cfg=cfg)
-    if cfg.sae_from_pretrained_path is not None:
-        sae.load_state_dict(
-            torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"],
-            strict=cfg.strict_loading,
-        )
+def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
+    sae = SparseAutoEncoder.from_config(cfg=cfg)
     hf_model = AutoModelForCausalLM.from_pretrained(
         cfg.model_name, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only
     )
@@ -210,12 +195,7 @@ def activation_generation_runner(cfg: ActivationGenerationConfig):
 
 
 def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
-    sae = SparseAutoEncoder(cfg=cfg)
-    if cfg.sae_from_pretrained_path is not None:
-        sae.load_state_dict(
-            torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"],
-            strict=cfg.strict_loading,
-        )
+    sae = SparseAutoEncoder.from_config(cfg=cfg)
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
@@ -266,12 +246,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
 
 @torch.no_grad()
 def features_to_logits_runner(cfg: FeaturesDecoderConfig):
-    sae = SparseAutoEncoder(cfg=cfg)
-    if cfg.sae_from_pretrained_path is not None:
-        sae.load_state_dict(
-            torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"],
-            strict=cfg.strict_loading,
-        )
+    sae = SparseAutoEncoder.from_config(cfg=cfg)
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
