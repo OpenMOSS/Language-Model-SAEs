@@ -1,3 +1,4 @@
+from importlib.metadata import version
 import os
 from typing import Dict, Literal, Union, overload
 import torch
@@ -9,6 +10,7 @@ from transformer_lens.hook_points import HookPoint, HookedRootModule
 import safetensors.torch as safe
 
 from lm_saes.config import SAEConfig
+from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 
 class SparseAutoEncoder(HookedRootModule):
     """Sparse AutoEncoder model.
@@ -343,17 +345,19 @@ class SparseAutoEncoder(HookedRootModule):
         pretrained_name_or_path = cfg.sae_pretrained_name_or_path
         if pretrained_name_or_path is None:
             return SparseAutoEncoder(cfg)
+        
+        path = parse_pretrained_name_or_path(pretrained_name_or_path)
 
-        if pretrained_name_or_path.endswith(".pt") or pretrained_name_or_path.endswith(".safetensor"):
-            ckpt_path = pretrained_name_or_path
+        if path.endswith(".pt") or path.endswith(".safetensors"):
+            ckpt_path = path
         else:
             ckpt_prioritized_paths = [
-                f"{pretrained_name_or_path}/sae_weights.safetensor",
-                f"{pretrained_name_or_path}/sae_weights.pt",
-                f"{pretrained_name_or_path}/checkpoints/pruned.safetensor",
-                f"{pretrained_name_or_path}/checkpoints/pruned.pt",
-                f"{pretrained_name_or_path}/checkpoints/final.safetensor",
-                f"{pretrained_name_or_path}/checkpoints/final.pt",
+                f"{path}/sae_weights.safetensors",
+                f"{path}/sae_weights.pt",
+                f"{path}/checkpoints/pruned.safetensors",
+                f"{path}/checkpoints/pruned.pt",
+                f"{path}/checkpoints/final.safetensors",
+                f"{path}/checkpoints/final.pt",
             ]
             for ckpt_path in ckpt_prioritized_paths:
                 if os.path.exists(ckpt_path):
@@ -361,7 +365,7 @@ class SparseAutoEncoder(HookedRootModule):
             else:
                 raise FileNotFoundError(f"Pretrained model not found at {pretrained_name_or_path}")
         
-        if ckpt_path.endswith(".safetensor"):
+        if ckpt_path.endswith(".safetensors"):
             state_dict = safe.load_file(ckpt_path, device=cfg.device)
         else:
             state_dict = torch.load(ckpt_path, map_location=cfg.device)["sae"]
@@ -390,3 +394,22 @@ class SparseAutoEncoder(HookedRootModule):
         cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
 
         return SparseAutoEncoder.from_config(cfg)
+    
+    def save_pretrained(
+        self,
+        ckpt_path: str
+    ) -> None:
+        """Save the model to the checkpoint path.
+
+        Args:
+            ckpt_path (str): The path to save the model. If a directory, the model will be saved to the directory with the default filename `sae_weights.safetensors`.
+        """
+
+        if os.path.isdir(ckpt_path):
+            ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
+        if ckpt_path.endswith(".safetensors"):
+            safe.save_file(self.state_dict(), ckpt_path, {"version": version("lm-saes")})
+        elif ckpt_path.endswith(".pt"):
+            torch.save({"sae": self.state_dict(), "version": version("lm-saes")}, ckpt_path)
+        else:
+            raise ValueError(f"Invalid checkpoint path {ckpt_path}. Currently only supports .safetensors and .pt formats.")

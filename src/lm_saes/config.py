@@ -8,6 +8,7 @@ import torch.distributed as dist
 
 import os
 
+from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.misc import print_once
 
 from transformer_lens.loading_from_pretrained import get_official_model_name
@@ -64,14 +65,15 @@ class LanguageModelConfig(BaseModelConfig):
         self.model_name = get_official_model_name(self.model_name)
 
     @staticmethod
-    def from_pretrained_sae_path(sae_path: str, **kwargs):
-        """Load the LanguageModelConfig from a pretrained SAE path. Config is read from <sae_path>/lm_config.json.
+    def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
+        """Load the LanguageModelConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/lm_config.json.
 
         Args:
             sae_path (str): The path to the pretrained SAE.
             **kwargs: Additional keyword arguments to pass to the LanguageModelConfig constructor.
         """
-        with open(os.path.join(sae_path, "lm_config.json"), "r") as f:
+        path = parse_pretrained_name_or_path(pretrained_name_or_path)
+        with open(os.path.join(path, "lm_config.json"), "r") as f:
             lm_config = json.load(f)
         return LanguageModelConfig.from_dict(lm_config, **kwargs)
 
@@ -164,16 +166,17 @@ class SAEConfig(BaseModelConfig):
             self.d_sae = self.d_model * self.expansion_factor
 
     @staticmethod
-    def from_pretrained(sae_path: str, strict_loading: bool = True, **kwargs):
-        """Load the SAEConfig from a pretrained SAE path. Config is read from <sae_path>/hyperparams.json.
-
+    def from_pretrained(pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+        """Load the SAEConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/hyperparams.json.
+        
         Args:
             sae_path (str): The path to the pretrained SAE.
             **kwargs: Additional keyword arguments to pass to the SAEConfig constructor.
         """
-        with open(os.path.join(sae_path, "hyperparams.json"), "r") as f:
+        path = parse_pretrained_name_or_path(pretrained_name_or_path)
+        with open(os.path.join(path, "hyperparams.json"), "r") as f:
             sae_config = json.load(f)
-        sae_config["sae_pretrained_name_or_path"] = sae_path
+        sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
         sae_config["strict_loading"] = strict_loading
         return SAEConfig.from_dict(sae_config, **kwargs)
     
@@ -196,15 +199,19 @@ class SAEConfig(BaseModelConfig):
         }
         return hyperparams
     
-    def save_hyperparameters(self, sae_path: Optional[str] = None):
+    def save_hyperparameters(self, sae_path: Optional[str] = None, remove_loading_info: bool = True):
         if sae_path is None:
             if isinstance(self, RunnerConfig):
                 sae_path = os.path.join(self.exp_result_dir, self.exp_name)
             else:
                 raise ValueError("sae_path must be specified if not called from a RunnerConfig.")
         assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
+        d = self.to_dict()
+        if remove_loading_info:
+            d.pop("sae_pretrained_name_or_path", None)
+            d.pop("strict_loading", None)
         with open(os.path.join(sae_path, "hyperparams.json"), "w") as f:
-            json.dump(self.to_dict(), f, indent=4)
+            json.dump(d, f, indent=4)
     
 @dataclass
 class OpenAIConfig:
