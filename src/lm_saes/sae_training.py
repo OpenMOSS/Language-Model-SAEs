@@ -229,10 +229,10 @@ def train_sae(
             ):
                 # Save the model and optimizer state
                 path = os.path.join(
-                    cfg.exp_result_dir, cfg.exp_name, "checkpoints", f"{n_training_steps}.safetensor"
+                    cfg.exp_result_dir, cfg.exp_name, "checkpoints", f"{n_training_steps}.safetensors"
                 )
                 sae_module.set_decoder_norm_to_unit_norm()
-                safe.save_file(sae_module.state_dict(), path, {"version": version("lm-saes")})
+                sae_module.save_pretrained(path)
 
                 checkpoint_thresholds.pop(0)
 
@@ -252,10 +252,10 @@ def train_sae(
     # Save the final model
     if not cfg.use_ddp or cfg.rank == 0:
         path = os.path.join(
-            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.safetensor"
+            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.safetensors"
         )
         sae_module.set_decoder_norm_to_unit_norm()
-        safe.save_file(sae_module.state_dict(), path, {"version": version("lm-saes")})
+        sae_module.save_pretrained(path)
 
 @torch.no_grad()
 def prune_sae(
@@ -323,8 +323,8 @@ def prune_sae(
         print("Total pruned features:", (sae_module.feature_act_mask == 0).sum().item())
 
         path = os.path.join(
-            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "pruned.safetensor"
+            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "pruned.safetensors"
         )
-        safe.save_file(sae_module.state_dict(), path, {"version": version("lm-saes")})
+        sae_module.save_pretrained(path)
         
     return sae_module
