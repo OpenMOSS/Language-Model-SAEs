@@ -40,7 +40,7 @@ lm_cache = {}
 
 
 def get_model(dictionary_name: str) -> HookedTransformer:
-	cfg = LanguageModelConfig.from_dict(dictionary_name, result_dir)
+	cfg = LanguageModelConfig.from_pretrained_sae_path(f"{result_dir}/{dictionary_name}")
 	if (cfg.model_name, cfg.model_from_pretrained_path) not in lm_cache:
 		hf_model = AutoModelForCausalLM.from_pretrained(
 			(
@@ -76,21 +76,7 @@ def get_model(dictionary_name: str) -> HookedTransformer:
 
 def get_sae(dictionary_name: str) -> SparseAutoEncoder:
 	if dictionary_name not in sae_cache:
-		cfg = SAEConfig(
-			**SAEConfig.get_hyperparameters(
-				dictionary_name, result_dir, ckpt_name, True
-			),
-			# RunnerConfig
-			use_ddp=False,
-			device=device,
-			seed=42,
-			dtype=torch.float32,
-			exp_name=dictionary_name,
-		)
-		sae = SparseAutoEncoder(cfg=cfg)
-		sae.load_state_dict(
-			torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"]
-		)
+		sae = SparseAutoEncoder.from_pretrained(f"{result_dir}/{dictionary_name}", device=device)
 		sae.eval()
 		sae_cache[dictionary_name] = sae
 	return sae_cache[dictionary_name]
@@ -237,7 +223,7 @@ def get_dictionary(dictionary_name: str):
 
 @app.post("/dictionaries/{dictionary_name}/features/{feature_index}/custom")
 def feature_activation_custom_input(
-		dictionary_name: str, feature_index: int, input_text: str
+	dictionary_name: str, feature_index: int, input_text: str
 ):
 	try:
 		sae = get_sae(dictionary_name)
@@ -256,8 +242,7 @@ def feature_activation_custom_input(
 		input = model.to_tokens(input_text, prepend_bos=False)
 		_, cache = model.run_with_cache(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out])
 
-		_, (_, aux) = sae(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
-		feature_acts = aux["feature_acts"]
+		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
 		sample = {
 			"context": [
 				bytearray([model.tokenizer.byte_decoder[c] for c in t])
@@ -286,8 +271,7 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
 		input = model.to_tokens(input_text, prepend_bos=False)
 		_, cache = model.run_with_cache(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out])
 
-		_, (_, aux) = sae(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
-		feature_acts = aux["feature_acts"]
+		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
 		sample = {
 			"context": [
 				bytearray([model.tokenizer.byte_decoder[c] for c in t])
@@ -331,10 +315,8 @@ def feature_interpretation(
 	elif type == "auto":
 		cfg = AutoInterpConfig(
 			**{
-				**SAEConfig.get_hyperparameters(
-					dictionary_name, result_dir, ckpt_name, True
-				),
-				**LanguageModelConfig.get_lm_config(dictionary_name, result_dir),
+				**SAEConfig.from_pretrained(f"{result_dir}/{dictionary_name}").to_dict(),
+				**LanguageModelConfig.from_pretrained_sae_path(f"{result_dir}/{dictionary_name}").to_dict(),
 				"openai_api_key": os.environ.get("OPENAI_API_KEY"),
 				"openai_base_url": os.environ.get("OPENAI_BASE_URL"),
 			}
@@ -349,10 +331,8 @@ def feature_interpretation(
 	elif type == "validate":
 		cfg = AutoInterpConfig(
 			**{
-				**SAEConfig.get_hyperparameters(
-					dictionary_name, result_dir, ckpt_name, True
-				),
-				**LanguageModelConfig.get_lm_config(dictionary_name, result_dir),
+				**SAEConfig.from_pretrained(f"{result_dir}/{dictionary_name}").to_dict(),
+				**LanguageModelConfig.from_pretrained_sae_path(f"{result_dir}/{dictionary_name}").to_dict(),
 				"openai_api_key": os.environ.get("OPENAI_API_KEY"),
 				"openai_base_url": os.environ.get("OPENAI_BASE_URL"),
 			}

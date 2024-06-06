@@ -1,9 +1,12 @@
+import os
 from typing import Dict, Literal, Union, overload
 import torch
 import math
 from einops import einsum
 from jaxtyping import Float
 from transformer_lens.hook_points import HookPoint, HookedRootModule
+
+import safetensors.torch as safe
 
 from lm_saes.config import SAEConfig
 
@@ -45,7 +48,8 @@ class SparseAutoEncoder(HookedRootModule):
         self.decoder = torch.nn.Parameter(torch.empty((cfg.d_sae, cfg.d_model), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.kaiming_uniform_(self.decoder)
         self.set_decoder_norm_to_unit_norm()
-        self.decoder_bias = torch.nn.Parameter(torch.empty((cfg.d_model,), dtype=cfg.dtype, device=cfg.device))
+        if cfg.use_decoder_bias:
+            self.decoder_bias = torch.nn.Parameter(torch.empty((cfg.d_model,), dtype=cfg.dtype, device=cfg.device))
 
         self.encoder_bias = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.zeros_(self.encoder_bias)
@@ -324,3 +328,65 @@ class SparseAutoEncoder(HookedRootModule):
         mean_thomson_potential = (1 / dist).mean()
         return mean_thomson_potential
     
+    @staticmethod
+    def from_config(
+        cfg: SAEConfig
+    ) -> "SparseAutoEncoder":
+        """Load the SparseAutoEncoder model from the pretrained configuration.
+
+        Args:
+            cfg (SAEConfig): The configuration of the model, containing the sae_pretrained_name_or_path.
+        
+        Returns:
+            SparseAutoEncoder: The pretrained SparseAutoEncoder model.
+        """
+        pretrained_name_or_path = cfg.sae_pretrained_name_or_path
+        if pretrained_name_or_path is None:
+            return SparseAutoEncoder(cfg)
+
+        if pretrained_name_or_path.endswith(".pt") or pretrained_name_or_path.endswith(".safetensor"):
+            ckpt_path = pretrained_name_or_path
+        else:
+            ckpt_prioritized_paths = [
+                f"{pretrained_name_or_path}/sae_weights.safetensor",
+                f"{pretrained_name_or_path}/sae_weights.pt",
+                f"{pretrained_name_or_path}/checkpoints/pruned.safetensor",
+                f"{pretrained_name_or_path}/checkpoints/pruned.pt",
+                f"{pretrained_name_or_path}/checkpoints/final.safetensor",
+                f"{pretrained_name_or_path}/checkpoints/final.pt",
+            ]
+            for ckpt_path in ckpt_prioritized_paths:
+                if os.path.exists(ckpt_path):
+                    break
+            else:
+                raise FileNotFoundError(f"Pretrained model not found at {pretrained_name_or_path}")
+        
+        if ckpt_path.endswith(".safetensor"):
+            state_dict = safe.load_file(ckpt_path, device=cfg.device)
+        else:
+            state_dict = torch.load(ckpt_path, map_location=cfg.device)["sae"]
+            
+        model = SparseAutoEncoder(cfg)
+        model.load_state_dict(state_dict, strict=cfg.strict_loading)
+
+        return model
+
+    @staticmethod
+    def from_pretrained(
+        pretrained_name_or_path: str,
+        strict_loading: bool = True,
+        **kwargs
+    ) -> "SparseAutoEncoder":
+        """Load the SparseAutoEncoder model from the pretrained configuration.
+
+        Args:
+            pretrained_name_or_path (str): The name or path of the pretrained model.
+            strict_loading (bool, optional): Whether to load the model strictly. Defaults to True.
+            **kwargs: Additional keyword arguments as BaseModelConfig.
+        
+        Returns:
+            SparseAutoEncoder: The pretrained SparseAutoEncoder model.
+        """
+        cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
+
+        return SparseAutoEncoder.from_config(cfg)
