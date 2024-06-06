@@ -89,14 +89,28 @@ class LanguageModelConfig(BaseModelConfig):
 
 
 @dataclass
-class TextDatasetConfig:
-    dataset_path: str = "openwebtext"
+class TextDatasetConfig(RunnerConfig):
+    dataset_path: str | List[str] = 'openwebtext'
     cache_dir: Optional[str] = None
     is_dataset_tokenized: bool = False
     is_dataset_on_disk: bool = False
-    concat_tokens: bool = True
+    concat_tokens: bool | List[bool] = False
     context_size: int = 128
     store_batch_size: int = 64
+    sample_probs: List[float] = field(default_factory=lambda: [1.0])
+
+    def __post_init__(self):
+        super().__post_init__()
+        if isinstance(self.dataset_path, str):
+            self.dataset_path = [self.dataset_path]
+
+        if isinstance(self.concat_tokens, bool):
+            self.concat_tokens = [self.concat_tokens]
+
+        self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
+
+        assert len(self.sample_probs) == len(self.dataset_path), "Number of sample_probs must match number of dataset paths"
+        assert len(self.concat_tokens) == len(self.dataset_path), "Number of concat_tokens must match number of dataset paths"
 
 
 @dataclass
@@ -104,7 +118,7 @@ class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
     hook_points: List[str] = field(default_factory=lambda: ["blocks.0.hook_resid_pre"])
 
     use_cached_activations: bool = False
-    cached_activations_path: Optional[str] = (
+    cached_activations_path: Optional[List[str]] = (
         None  # Defaults to "activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
     )
 
@@ -115,7 +129,10 @@ class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
         super().__post_init__()
         # Autofill cached_activations_path unless the user overrode it
         if self.cached_activations_path is None:
-            self.cached_activations_path = f"activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
+            self.cached_activations_path = [
+                f"activations/{path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
+                for path in self.dataset_path
+            ]
 
 
 @dataclass
