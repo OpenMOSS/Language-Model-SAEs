@@ -1,11 +1,10 @@
 import json
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, cast
+from dataclasses import dataclass, field, fields
+from typing import Any, Dict, List, Optional, Tuple
+from typing_extensions import deprecated
 
 import torch
 import torch.distributed as dist
-
-import wandb
 
 import os
 
@@ -15,11 +14,26 @@ from transformer_lens.loading_from_pretrained import get_official_model_name
 
 
 @dataclass
-class RunnerConfig:
-    use_ddp: bool = False
+class BaseModelConfig:
     device: str = "cpu"
     seed: int = 42
     dtype: torch.dtype = torch.float32
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            field.name: getattr(self, field.name)
+            for field in fields(self)
+            if field.name not in [base_field.name for base_field in fields(BaseModelConfig)]
+        }
+    
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any], **kwargs):
+        d = {k: v for k, v in d.items() if k in [field.name for field in fields(cls)]}
+        return cls(**d, **kwargs)
+    
+@dataclass
+class RunnerConfig:
+    use_ddp: bool = False
 
     exp_name: str = "test"
     exp_series: Optional[str] = None
@@ -30,7 +44,8 @@ class RunnerConfig:
         if self.use_ddp:
             self.rank = dist.get_rank()
             self.world_size = dist.get_world_size()
-            self.device = f"cuda:{self.rank}"
+            if isinstance(self, BaseModelConfig):
+                self.device = f"cuda:{self.rank}"
 
         if not self.use_ddp or self.rank == 0:
             os.makedirs(self.exp_result_dir, exist_ok=True)
@@ -38,7 +53,7 @@ class RunnerConfig:
 
 
 @dataclass
-class LanguageModelConfig(RunnerConfig):
+class LanguageModelConfig(BaseModelConfig):
     model_name: str = "gpt2"
     model_from_pretrained_path: Optional[str] = None
     cache_dir: Optional[str] = None
@@ -46,40 +61,33 @@ class LanguageModelConfig(RunnerConfig):
     local_files_only: bool = False
 
     def __post_init__(self):
-        super().__post_init__()
         self.model_name = get_official_model_name(self.model_name)
 
-    def save_lm_config(self):
-        if os.path.exists(
-            os.path.join(self.exp_result_dir, self.exp_name, "lm_config.json")
-        ):
-            raise ValueError(
-                f"Language Model Config for {self.exp_name} already exists."
-            )
-        json.dump(
-            {
-                k: v
-                for k, v in self.__dict__.items()
-                if k in LanguageModelConfig.__dataclass_fields__.keys()
-                and k not in RunnerConfig.__dataclass_fields__.keys()
-            },
-            open(
-                os.path.join(self.exp_result_dir, self.exp_name, "lm_config.json"),
-                "w",
-            ),
-            indent=4,
-        )
-
     @staticmethod
-    def get_lm_config(exp_name: str, exp_result_dir: str) -> dict[str, Any]:
-        with open(os.path.join(exp_result_dir, exp_name, "lm_config.json"), "r") as f:
-            return json.load(f)
+    def from_pretrained_sae_path(sae_path: str, **kwargs):
+        """Load the LanguageModelConfig from a pretrained SAE path. Config is read from <sae_path>/lm_config.json.
 
-        
+        Args:
+            sae_path (str): The path to the pretrained SAE.
+            **kwargs: Additional keyword arguments to pass to the LanguageModelConfig constructor.
+        """
+        with open(os.path.join(sae_path, "lm_config.json"), "r") as f:
+            lm_config = json.load(f)
+        return LanguageModelConfig.from_dict(lm_config, **kwargs)
+
+    def save_lm_config(self, sae_path: Optional[str] = None):
+        if sae_path is None:
+            if isinstance(self, RunnerConfig):
+                sae_path = os.path.join(self.exp_result_dir, self.exp_name)
+            else:
+                raise ValueError("sae_path must be specified if not called from a RunnerConfig.")
+        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save LanguageModelConfig."
+        with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
+            json.dump(self.to_dict(), f, indent=4)        
 
 
 @dataclass
-class TextDatasetConfig(RunnerConfig):
+class TextDatasetConfig:
     dataset_path: str = "openwebtext"
     cache_dir: Optional[str] = None
     is_dataset_tokenized: bool = False
@@ -109,7 +117,7 @@ class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
 
 
 @dataclass
-class WandbConfig(RunnerConfig):
+class WandbConfig:
     log_to_wandb: bool = True
     wandb_project: str = "gpt2-sae-training"
     run_name: Optional[str] = None
@@ -117,21 +125,20 @@ class WandbConfig(RunnerConfig):
 
     def __post_init__(self):
         super().__post_init__()
-        if self.run_name is None:
+        if self.run_name is None and isinstance(self, RunnerConfig):
             self.run_name = self.exp_name
 
 
 @dataclass
-class SAEConfig(RunnerConfig):
+class SAEConfig(BaseModelConfig):
     """
     Configuration for training or running a sparse autoencoder.
     """
-
-    sae_from_pretrained_path: Optional[str] = None
-    strict_loading: bool = True
-
     hook_point_in: str = "blocks.0.hook_resid_pre"
     hook_point_out: str = None # If None, it will be set to hook_point_in
+
+    sae_pretrained_name_or_path: Optional[str] = None
+    strict_loading: bool = True
 
     use_decoder_bias: bool = False
     apply_decoder_bias_to_pre_encoder: bool = True  # set to False when training transcoders
@@ -151,50 +158,36 @@ class SAEConfig(RunnerConfig):
     use_ghost_grads: bool = True
 
     def __post_init__(self):
-        super().__post_init__()
-
         if self.hook_point_out is None:
             self.hook_point_out = self.hook_point_in
         if self.d_sae is None:
             self.d_sae = self.d_model * self.expansion_factor
 
-    def save_hyperparameters(self):
-        if os.path.exists(
-            os.path.join(self.exp_result_dir, self.exp_name, "hyperparams.json")
-        ):
-            raise ValueError(
-                f"Hyperparams for {self.exp_name} already exists."
-            )
-        
-        # Save hyperparameters (only configs from SAEConfig, excluding derived classes)
-        with open(
-            os.path.join(
-                self.exp_result_dir, self.exp_name, "hyperparams.json"
-            ),
-            "w",
-        ) as f:
-            json.dump(
-                {
-                    k: v
-                    for k, v in self.__dict__.items()
-                    if k in SAEConfig.__dataclass_fields__.keys()
-                    and k not in RunnerConfig.__dataclass_fields__.keys()
-                },
-                f,
-                indent=4,
-            )
+    @staticmethod
+    def from_pretrained(sae_path: str, strict_loading: bool = True, **kwargs):
+        """Load the SAEConfig from a pretrained SAE path. Config is read from <sae_path>/hyperparams.json.
 
+        Args:
+            sae_path (str): The path to the pretrained SAE.
+            **kwargs: Additional keyword arguments to pass to the SAEConfig constructor.
+        """
+        with open(os.path.join(sae_path, "hyperparams.json"), "r") as f:
+            sae_config = json.load(f)
+        sae_config["sae_pretrained_name_or_path"] = sae_path
+        sae_config["strict_loading"] = strict_loading
+        return SAEConfig.from_dict(sae_config, **kwargs)
+    
+    @deprecated("Use from_pretrained and to_dict instead.")
     @staticmethod
     def get_hyperparameters(
         exp_name: str, exp_result_dir: str, ckpt_name: str, strict_loading: bool = True
     ) -> dict[str, Any]:
         with open(os.path.join(exp_result_dir, exp_name, "hyperparams.json"), "r") as f:
             hyperparams = json.load(f)
-        hyperparams["sae_from_pretrained_path"] = os.path.join(
+        hyperparams["sae_pretrained_name_or_path"] = os.path.join(
             exp_result_dir, exp_name, "checkpoints", ckpt_name
         )
         hyperparams["strict_loading"] = strict_loading
-        
         # Remove non-hyperparameters from the dict
         hyperparams = {
             k: v
@@ -202,6 +195,16 @@ class SAEConfig(RunnerConfig):
             if k in SAEConfig.__dataclass_fields__.keys()
         }
         return hyperparams
+    
+    def save_hyperparameters(self, sae_path: Optional[str] = None):
+        if sae_path is None:
+            if isinstance(self, RunnerConfig):
+                sae_path = os.path.join(self.exp_result_dir, self.exp_name)
+            else:
+                raise ValueError("sae_path must be specified if not called from a RunnerConfig.")
+        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
+        with open(os.path.join(sae_path, "hyperparams.json"), "w") as f:
+            json.dump(self.to_dict(), f, indent=4)
     
 @dataclass
 class OpenAIConfig:
@@ -217,12 +220,12 @@ class AutoInterpConfig(SAEConfig, LanguageModelConfig, OpenAIConfig):
 
 
 @dataclass
-class LanguageModelSAEConfig(SAEConfig, WandbConfig, ActivationStoreConfig):
+class LanguageModelSAERunnerConfig(SAEConfig, WandbConfig, ActivationStoreConfig, RunnerConfig):
     pass
 
 
 @dataclass
-class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
+class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     """
     Configuration for training a sparse autoencoder on a language model.
     """
@@ -283,7 +286,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAEConfig):
 
 
 @dataclass
-class LanguageModelSAEPruningConfig(LanguageModelSAEConfig):
+class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
     """
     Configuration for pruning a sparse autoencoder on a language model.
     """
@@ -320,7 +323,7 @@ class MongoConfig:
     mongo_db: str = "mechinterp"
 
 @dataclass
-class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConfig):
+class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConfig, RunnerConfig):
     """
     Configuration for analyzing a sparse autoencoder on a language model.
     """
@@ -341,61 +344,5 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConf
 
 
 @dataclass
-class FeaturesDecoderConfig(SAEConfig, LanguageModelConfig, MongoConfig):
+class FeaturesDecoderConfig(SAEConfig, LanguageModelConfig, MongoConfig, RunnerConfig):
     top: int = 10
-
-@dataclass
-class LanguageModelSAEFinetuningConfig(LanguageModelSAEConfig):
-    """
-    Configuration for training a sparse autoencoder on a language model.
-    """
-
-    # Training Parameters
-    total_training_tokens: int = 300_000_000
-    lr: float = 1e-5
-    use_ghost_grads = False
-
-    betas: Tuple[float, float] = (0.9, 0.999)
-    lr_scheduler_name: str = (
-        "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup, exponentialwarmup
-    )
-    lr_end: Optional[float] = 1 / 32
-    lr_warm_up_steps: int = 5000
-    num_cycles: int = 5
-    lr_cool_down_steps: int = 10000
-    train_batch_size: int = 4096
-
-    # Resampling protocol args
-    feature_sampling_window: int = 1000
-    # dead_feature_window: int = 5000  # unless this window is larger feature sampling,
-
-    dead_feature_threshold: float = 1e-6    
-
-    # Evaluation
-    eval_frequency: int = 1000
-
-    # Misc
-    log_frequency: int = 10
-
-    n_checkpoints: int = 10
-    def __post_init__(self):
-        super().__post_init__()
-
-        if not self.use_ddp or self.rank == 0:
-            os.makedirs(
-                os.path.join(self.exp_result_dir, self.exp_name, "analysis"),
-                exist_ok=True,
-            )
-            if os.path.exists(
-                os.path.join(
-                    self.exp_result_dir, self.exp_name, "analysis", self.analysis_name
-                )
-            ):
-                raise ValueError(
-                    f"Analysis {self.analysis_name} for experiment {self.exp_name} already exists. Consider changing the experiment name or the analysis name."
-                )
-            os.makedirs(
-                os.path.join(
-                    self.exp_result_dir, self.exp_name, "analysis", self.analysis_name
-                )
-            )
