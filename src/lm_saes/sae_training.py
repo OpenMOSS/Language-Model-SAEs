@@ -1,9 +1,12 @@
 import os
+from importlib.metadata import version
 
 import torch
 from torch.optim import Adam
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
+
+import safetensors.torch as safe
 
 from transformer_lens import HookedTransformer
 
@@ -42,8 +45,8 @@ def train_sae(
     activation_store.initialize()
 
     # Initialize the SAE decoder bias if necessary
-    if cfg.use_decoder_bias and (not cfg.use_ddp or cfg.rank == 0):
-        sae.initialize_decoder_bias(activation_store._store[cfg.hook_point_in])
+    # if cfg.use_decoder_bias and (not cfg.use_ddp or cfg.rank == 0):
+    #     sae.initialize_decoder_bias(activation_store._store[cfg.hook_point_in])
 
     sae_module = sae
     if cfg.use_ddp:
@@ -56,10 +59,6 @@ def train_sae(
     n_frac_active_tokens = torch.tensor([0], device=cfg.device, dtype=torch.int)
 
     optimizer = Adam(sae.parameters(), lr=cfg.lr, betas=cfg.betas)
-    if cfg.sae_from_pretrained_path is not None:
-        checkpoint = torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)
-        if "optimizer" in checkpoint:
-            optimizer.load_state_dict(checkpoint["optimizer"])
 
     scheduler = get_scheduler(
         cfg.lr_scheduler_name,
@@ -230,18 +229,10 @@ def train_sae(
             ):
                 # Save the model and optimizer state
                 path = os.path.join(
-                    cfg.exp_result_dir, cfg.exp_name, "checkpoints", f"{n_training_steps}.pt"
+                    cfg.exp_result_dir, cfg.exp_name, "checkpoints", f"{n_training_steps}.safetensor"
                 )
                 sae_module.set_decoder_norm_to_unit_norm()
-                torch.save(
-                    {
-                        "sae": sae_module.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "n_training_steps": n_training_steps,
-                        "n_training_tokens": n_training_tokens,
-                    },
-                    path,
-                )
+                safe.save_file(sae_module.state_dict(), path, {"version": version("lm-saes")})
 
                 checkpoint_thresholds.pop(0)
 
@@ -261,18 +252,10 @@ def train_sae(
     # Save the final model
     if not cfg.use_ddp or cfg.rank == 0:
         path = os.path.join(
-            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.pt"
+            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.safetensor"
         )
         sae_module.set_decoder_norm_to_unit_norm()
-        torch.save(
-            {
-                "sae": sae_module.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "n_training_steps": n_training_steps,
-                "n_training_tokens": n_training_tokens,
-            },
-            path,
-        )
+        safe.save_file(sae_module.state_dict(), path, {"version": version("lm-saes")})
 
 @torch.no_grad()
 def prune_sae(
@@ -340,14 +323,8 @@ def prune_sae(
         print("Total pruned features:", (sae_module.feature_act_mask == 0).sum().item())
 
         path = os.path.join(
-            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "pruned.pt"
+            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "pruned.safetensor"
         )
-        torch.save(
-            {
-                "sae": sae_module.state_dict(),
-                "n_training_tokens": n_training_tokens,
-            },
-            path,
-        )
+        safe.save_file(sae_module.state_dict(), path, {"version": version("lm-saes")})
         
     return sae_module
