@@ -778,34 +778,40 @@ class HookedRootModule(nn.Module):
 
         return model_out, cache_dict
 
-    def convert_params_to_fake_tensors(self, last_hook: str, input: Any, **kwargs):
-        pass_list = []
-        fake_mode = FakeTensorMode()
+    def fake_params_after(self, last_hook: str, input: Any, **kwargs):
+        pass_module_list: List[nn.Module] = []
+        fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
+        hook_handles: List[hooks.RemovableHandle] = []
 
-        def pass_hook(module: torch.nn.Module, module_input: Any, module_output: Any):
-            pass_list.append(module)
+        def pass_hook(module: nn.Module, module_input: Any, module_output: Any):
+            pass_module_list.append(module)
 
+        def convert_hook(tensor: torch.Tensor, hook: HookPoint):
+            pass_param_set = set()
+            hook_ancestors = [module for module in self.modules() if module == self or hook.name.startswith(module.name)]
+            for module in pass_module_list + hook_ancestors:
+                for param_name, parameters in module.named_parameters():
+                    if "." not in param_name:
+                        name = f"{module.name}.{param_name}" if module != self else param_name
+                        pass_param_set.add(name)
 
-        def convert_hook():
-            name_set = set()
-            for module_name, module in self.named_modules():
-                if module not in pass_list:
-                    for param_name, parameters in module.named_parameters():
-                        name = f"{module_name}.{param_name}"
-                        if name not in name_set:
-                            name_set.add(name)
-            for name in name_set:
+            fake_param_set = set([name for name, _ in self.named_parameters()]).difference(pass_param_set)
+                            
+            for name in fake_param_set:
                 set_nested_attr(self, name, fake_mode.from_tensor(get_nested_attr(self, name)))
 
 
         for _, module in self.named_modules():
-            module.register_forward_hook(pass_hook)
+            hook_handles.append(module.register_forward_hook(pass_hook))
         if isinstance(input, torch.Tensor):
             input = fake_mode.from_tensor(input)
 
         with fake_mode:
             with self.hooks(fwd_hooks=[(last_hook, convert_hook)]):
                 self(input, **kwargs)
+
+        for handle in hook_handles:
+            handle.remove()
 
 
 # %%
