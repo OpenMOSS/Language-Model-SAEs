@@ -47,7 +47,12 @@ class TokenActivationSource(ActivationSource):
         with torch.no_grad():
             _, cache = self.model.run_with_cache(tokens, names_filter=self.cfg.hook_points)
 
-            ret = {k: rearrange(cache[k].to(dtype=self.cfg.dtype, device=self.cfg.device), "b l d -> (b l) d") for k in self.cfg.hook_points}
+            filter_mask = torch.logical_and(tokens.ne(self.model.tokenizer.eos_token_id), tokens.ne(self.model.tokenizer.pad_token_id))
+            filter_mask = torch.logical_and(filter_mask, tokens.ne(self.model.tokenizer.bos_token_id))
+
+            filter_mask = rearrange(filter_mask, "b l -> (b l)")
+
+            ret = {k: rearrange(cache[k].to(dtype=self.cfg.dtype, device=self.cfg.device), "b l d -> (b l) d")[filter_mask] for k in self.cfg.hook_points}
 
             return ret
     

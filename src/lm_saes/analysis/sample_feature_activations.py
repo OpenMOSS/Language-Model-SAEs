@@ -10,11 +10,11 @@ from datasets import Dataset
 
 from transformer_lens import HookedTransformer
 
-from core.sae import SparseAutoEncoder
-from core.config import LanguageModelSAEAnalysisConfig
-from core.activation.activation_store import ActivationStore
-from core.utils.misc import print_once
-from core.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
+from lm_saes.sae import SparseAutoEncoder
+from lm_saes.config import LanguageModelSAEAnalysisConfig
+from lm_saes.activation.activation_store import ActivationStore
+from lm_saes.utils.misc import print_once
+from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
 @torch.no_grad()
 def sample_feature_activations(
