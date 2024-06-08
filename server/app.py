@@ -58,7 +58,7 @@ def get_model(dictionary_name: str) -> HookedTransformer:
 				else cfg.model_from_pretrained_path
 			),
 			trust_remote_code=True,
-			use_fast=True,
+			use_fast=False,
 			add_bos_token=True,
 		)
 		model = HookedTransformer.from_pretrained(
@@ -240,7 +240,7 @@ def feature_activation_custom_input(
 	model = get_model(dictionary_name)
 	with torch.no_grad():
 		input = model.to_tokens(input_text, prepend_bos=False)
-		_, cache = model.run_with_cache(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out])
+		_, cache = model.run_with_cache_until(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out], until=sae.cfg.hook_point_out)
 
 		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
 		sample = {
@@ -269,7 +269,7 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
 
 	with torch.no_grad():
 		input = model.to_tokens(input_text, prepend_bos=False)
-		_, cache = model.run_with_cache(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out])
+		_, cache = model.run_with_cache_until(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out], until=sae.cfg.hook_point_out)
 
 		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
 		sample = {
