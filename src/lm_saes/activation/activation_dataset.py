@@ -44,7 +44,7 @@ def make_activation_dataset(
 
         while n_tokens_in_chunk < max_tokens_per_chunk:
             tokens = token_source.next(cfg.store_batch_size)
-            _, cache = model.run_with_cache(tokens, names_filter=cfg.hook_points)
+            _, cache = model.run_with_cache_until(tokens, names_filter=cfg.hook_points, until=cfg.hook_points[-1])
             for hook_point in cfg.hook_points:
                 act = cache[hook_point]
                 act_dict[hook_point] = torch.cat([act_dict[hook_point], act], dim=0)
