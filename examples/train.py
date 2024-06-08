@@ -26,7 +26,7 @@ cfg = LanguageModelSAETrainingConfig(
     store_batch_size = 32,                          # The batch size for loading the corpus.
 
     # ActivationStoreConfig
-    hook_points = ["blocks.3.hook_mlp_out"],         # The hook point to extract the activations, i.e. the layer output of which is used for training/evaluating the dictionary.
+    hook_points = ["blocks.3.hook_mlp_out"],        # Hook points to store activations from, i.e. the layer output of which is used for training/evaluating the dictionary. Will run until the last hook point in the list, so make sure to order them correctly.
     use_cached_activations = False,                 # Whether to use cached activations. Caching activation is now not recommended, as it may consume extremely large disk space. (May be tens of TBs for corpus like `openwebtext`)
     n_tokens_in_buffer = 500_000,                   # The number of tokens to store in the activation buffer. The buffer is used to shuffle the activations before training the dictionary.
     
