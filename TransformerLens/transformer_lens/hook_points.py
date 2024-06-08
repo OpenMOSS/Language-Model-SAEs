@@ -26,10 +26,7 @@ import torch
 import torch.nn as nn
 import torch.utils.hooks as hooks
 
-from transformer_lens.utils import Slice, SliceInput, set_nested_attr, get_nested_attr
-
-import torch.nn.modules.module as Module
-from torch._subclasses.fake_tensor import FakeTensorMode
+from transformer_lens.utils import Slice, SliceInput, set_nested_attr
 
 
 @dataclass
@@ -778,7 +775,18 @@ class HookedRootModule(nn.Module):
 
         return model_out, cache_dict
 
-    def fake_params_after(self, last_hook: str, input: Any, **kwargs):
+    def offload_params_after(self, last_hook: str, *model_args, **model_kwargs):
+        """
+        Set parameters that are not used after a certain hook to None.
+        This does not guarantee that all parameters are offloaded, but it should offload most of them.
+        Specifically, the direct parameters of the ancestor modules of the last hook are not offloaded,
+        since there are no way to know whether they are used before or after the last hook.
+
+        Args:
+            last_hook (str): The name of the last hook.
+            *model_args: Positional arguments for the model.
+            **model_kwargs: Keyword arguments for the model.
+        """
         pass_module_list: List[nn.Module] = []
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
         hook_handles: List[hooks.RemovableHandle] = []
@@ -798,20 +806,95 @@ class HookedRootModule(nn.Module):
             fake_param_set = set([name for name, _ in self.named_parameters()]).difference(pass_param_set)
                             
             for name in fake_param_set:
-                set_nested_attr(self, name, fake_mode.from_tensor(get_nested_attr(self, name)))
+                set_nested_attr(self, name, None)
+            raise StopIteration
 
 
         for _, module in self.named_modules():
             hook_handles.append(module.register_forward_hook(pass_hook))
-        if isinstance(input, torch.Tensor):
-            input = fake_mode.from_tensor(input)
 
         with fake_mode:
             with self.hooks(fwd_hooks=[(last_hook, convert_hook)]):
-                self(input, **kwargs)
+                try:
+                    self(*model_args, **model_kwargs)
+                except StopIteration:
+                    pass
 
         for handle in hook_handles:
             handle.remove()
+
+    def run_with_cache_until(
+        self,
+        *model_args: Any,
+        names_filter: NamesFilter = None,
+        until: str = None,
+        device: DeviceType = None,
+        remove_batch_dim: bool = False,
+        reset_hooks_end: bool = True,
+        clear_contexts: bool = False,
+        pos_slice: Optional[Union[Slice, SliceInput]] = None,
+        **model_kwargs: Any,
+    ):
+        """
+        Runs the model and returns the model output and a Cache object.
+
+        Args:
+            *model_args: Positional arguments for the model.
+            names_filter (NamesFilter, optional): A filter for which activations to cache. Accepts None, str,
+                list of str, or a function that takes a string and returns a bool. Defaults to None, which
+                means cache everything.
+            until (str, optional): The name of the hook to stop caching at. Defaults to None, which means
+                stop caching at the last hook.
+            device (str or torch.Device, optional): The device to cache activations on. Defaults to the
+                model device. WARNING: Setting a different device than the one used by the model leads to
+                significant performance degradation.
+            remove_batch_dim (bool, optional): If True, removes the batch dimension when caching. Only
+                makes sense with batch_size=1 inputs. Defaults to False.
+            reset_hooks_end (bool, optional): If True, removes all hooks added by this function at the
+                end of the run. Defaults to True.
+            clear_contexts (bool, optional): If True, clears hook contexts whenever hooks are reset.
+                Defaults to False.
+            pos_slice:
+                The slice to apply to the cache output. Defaults to None, do nothing.
+            **model_kwargs: Keyword arguments for the model.
+
+        Returns:
+            tuple: A tuple containing the model output and a Cache object.
+
+        """
+
+        pos_slice = Slice.unwrap(pos_slice)
+
+        cache_dict, fwd, _ = self.get_caching_hooks(
+            names_filter,
+            False,
+            device,
+            remove_batch_dim=remove_batch_dim,
+            pos_slice=pos_slice,
+        )
+
+        if until is None:
+            until = fwd[-1][0]
+
+        class ModuleStop(Exception):
+            def __init__(self, tensor: torch.Tensor):
+                self.tensor = tensor
+
+        def stop_hook(tensor: torch.Tensor, hook: HookPoint):
+            if hook.name == until:
+                raise ModuleStop(tensor)
+
+        with self.hooks(
+            fwd_hooks=fwd + [(until, stop_hook)],
+            reset_hooks_end=reset_hooks_end,
+            clear_contexts=clear_contexts,
+        ):
+            try:
+                model_out = self(*model_args, **model_kwargs)
+            except ModuleStop as e:
+                model_out = e.tensor
+
+        return model_out, cache_dict
 
 
 # %%
