@@ -1,7 +1,6 @@
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 import torch
 import torch.nn as nn
-from torch._subclasses.fake_tensor import FakeTensor
 
 class Block(nn.Module):
     def __init__(self):
@@ -15,6 +14,7 @@ class Block(nn.Module):
         return self.subblock2(self.hook_mid(self.activation(self.subblock1(x))))
 
 class TestModule(HookedRootModule):
+    __test__ = False
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.blocks = nn.ModuleList([Block() for _ in range(3)])
@@ -27,20 +27,26 @@ class TestModule(HookedRootModule):
         for block in self.blocks:
             x = block(x)
         return self.unembed(x)
-
-
-def test_fake_params_after():
+    
+def test_run_with_cache_until():
     model = TestModule()
-    _, cache_before = model.run_with_cache(torch.tensor([0.]))
+    _, cache_before = model.run_with_cache(torch.tensor([1.]), names_filter=["blocks.0.hook_mid", "blocks.1.hook_mid"])
+    out, cache_after = model.run_with_cache_until(torch.tensor([1.]), names_filter=["blocks.0.hook_mid", "blocks.1.hook_mid"])
 
-    model.fake_params_after("blocks.1.hook_mid", torch.tensor([0.]))
-    assert not isinstance(model.blocks[0].subblock1.weight, FakeTensor)
-    assert not isinstance(model.blocks[1].subblock1.weight, FakeTensor)
-    assert isinstance(model.blocks[2].subblock1.weight, FakeTensor)
-    assert isinstance(model.unembed.weight, FakeTensor)
-
-    out, cache_after = model.run_with_cache(torch.tensor([0.]))
     assert torch.allclose(cache_before["blocks.0.hook_mid"], cache_after["blocks.0.hook_mid"])
     assert torch.allclose(cache_before["blocks.1.hook_mid"], cache_after["blocks.1.hook_mid"])
-    assert isinstance(cache_after["blocks.2.hook_mid"], FakeTensor)
-    assert len(out.shape) == 1 and out.shape[0] == 1
+    assert torch.allclose(cache_before["blocks.1.hook_mid"], out)
+
+def test_offload_params_after():
+    model = TestModule()
+    _, cache_before = model.run_with_cache(torch.tensor([1.]))
+
+    model.offload_params_after("blocks.1.hook_mid", torch.tensor([1.]))
+    assert model.blocks[0].subblock1.weight is not None
+    assert model.blocks[1].subblock1.weight is not None
+    assert model.blocks[2].subblock1.weight is None
+    assert model.unembed.weight is None
+
+    _, cache_after = model.run_with_cache_until(torch.tensor([1.]), names_filter=["blocks.0.hook_mid", "blocks.1.hook_mid"])
+    assert torch.allclose(cache_before["blocks.0.hook_mid"], cache_after["blocks.0.hook_mid"])
+    assert torch.allclose(cache_before["blocks.1.hook_mid"], cache_after["blocks.1.hook_mid"])
