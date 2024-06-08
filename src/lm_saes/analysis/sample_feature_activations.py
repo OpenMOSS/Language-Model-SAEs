@@ -45,9 +45,6 @@ def sample_feature_activations(
     start_index = sae_chunk_id * d_sae
     end_index = (sae_chunk_id + 1) * d_sae
 
-    hook_point_out = cfg.hook_point_out
-    stop_at_layer = int(hook_point_out.split(".")[1]) + 1 # fuck this hard code
-
     sample_result = {k: {
         "elt": torch.empty((0, d_sae), dtype=cfg.dtype, device=cfg.device),
         "feature_acts": torch.empty((0, d_sae, cfg.context_size), dtype=cfg.dtype, device=cfg.device),
@@ -63,14 +60,10 @@ def sample_feature_activations(
         if batch is None:
             raise ValueError("Not enough tokens to sample")
 
-        _, cache = model.run_with_cache(batch, names_filter=[cfg.hook_point_in, cfg.hook_point_out], stop_at_layer=stop_at_layer)
+        _, cache = model.run_with_cache_until(batch, names_filter=[cfg.hook_point_in, cfg.hook_point_out], until=cfg.hook_point_out)
         activation_in, activation_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
 
-        (
-            _,
-            (_, aux_data),
-        ) = sae.forward(activation_in, label=activation_out)
-        feature_acts = aux_data["feature_acts"][..., start_index: end_index]
+        feature_acts = sae.encode(activation_in, label=activation_out)[..., start_index: end_index]
 
         act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
 
