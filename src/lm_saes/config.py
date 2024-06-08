@@ -15,7 +15,12 @@ from transformer_lens.loading_from_pretrained import get_official_model_name
 
 
 @dataclass
-class BaseModelConfig:
+class BaseConfig:
+    def __post_init__(self):
+        pass
+
+@dataclass
+class BaseModelConfig(BaseConfig):
     device: str = "cpu"
     seed: int = 42
     dtype: torch.dtype = torch.float32
@@ -33,7 +38,7 @@ class BaseModelConfig:
         return cls(**d, **kwargs)
     
 @dataclass
-class RunnerConfig:
+class RunnerConfig(BaseConfig):
     use_ddp: bool = False
 
     exp_name: str = "test"
@@ -41,6 +46,7 @@ class RunnerConfig:
     exp_result_dir: str = "results"
 
     def __post_init__(self):
+        super().__post_init__()
         # Set rank, world_size, and device if using DDP
         if self.use_ddp:
             self.rank = dist.get_rank()
@@ -62,6 +68,7 @@ class LanguageModelConfig(BaseModelConfig):
     local_files_only: bool = False
 
     def __post_init__(self):
+        super().__post_init__()
         self.model_name = get_official_model_name(self.model_name)
 
     @staticmethod
@@ -103,6 +110,7 @@ class TextDatasetConfig(RunnerConfig):
         super().__post_init__()
         if isinstance(self.dataset_path, str):
             self.dataset_path = [self.dataset_path]
+        print(self.dataset_path)
 
         if isinstance(self.concat_tokens, bool):
             self.concat_tokens = [self.concat_tokens]
@@ -116,13 +124,13 @@ class TextDatasetConfig(RunnerConfig):
 @dataclass
 class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
     hook_points: List[str] = field(default_factory=lambda: ["blocks.0.hook_resid_pre"])
+    """ Hook points to store activations from, i.e. the layer output of which is used for training/evaluating the dictionary. Will run until the last hook point in the list, so make sure to order them correctly. """
 
     use_cached_activations: bool = False
     cached_activations_path: Optional[List[str]] = (
         None  # Defaults to "activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
     )
 
-    # Activation Store Parameters
     n_tokens_in_buffer: int = 500_000
 
     def __post_init__(self):
@@ -136,7 +144,7 @@ class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
 
 
 @dataclass
-class WandbConfig:
+class WandbConfig(BaseConfig):
     log_to_wandb: bool = True
     wandb_project: str = "gpt2-sae-training"
     run_name: Optional[str] = None
@@ -177,6 +185,7 @@ class SAEConfig(BaseModelConfig):
     use_ghost_grads: bool = True
 
     def __post_init__(self):
+        super().__post_init__()
         if self.hook_point_out is None:
             self.hook_point_out = self.hook_point_in
         if self.d_sae is None:
@@ -231,7 +240,7 @@ class SAEConfig(BaseModelConfig):
             json.dump(d, f, indent=4)
     
 @dataclass
-class OpenAIConfig:
+class OpenAIConfig(BaseConfig):
     openai_api_key: str
     openai_base_url: str
 
@@ -342,7 +351,7 @@ class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
         os.makedirs(self.activation_save_path, exist_ok=True)
 
 @dataclass
-class MongoConfig:
+class MongoConfig(BaseConfig):
     mongo_uri: str = "mongodb://localhost:27017"
     mongo_db: str = "mechinterp"
 

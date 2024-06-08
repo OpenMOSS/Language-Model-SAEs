@@ -45,7 +45,7 @@ class TokenActivationSource(ActivationSource):
         if tokens is None:
             return None
         with torch.no_grad():
-            _, cache = self.model.run_with_cache(tokens, names_filter=self.cfg.hook_points)
+            _, cache = self.model.run_with_cache_until(tokens, names_filter=self.cfg.hook_points, until=self.cfg.hook_points[-1])
 
             filter_mask = torch.logical_and(tokens.ne(self.model.tokenizer.eos_token_id), tokens.ne(self.model.tokenizer.pad_token_id))
             filter_mask = torch.logical_and(filter_mask, tokens.ne(self.model.tokenizer.bos_token_id))

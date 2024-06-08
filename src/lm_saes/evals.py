@@ -39,10 +39,11 @@ def run_evals(
     zero_abl_loss = losses_df["zero_abl_loss"].mean()
 
     # get cache
-    _, cache = model.run_with_cache(
+    _, cache = model.run_with_cache_until(
         eval_tokens,
         prepend_bos=False,
         names_filter=[cfg.hook_point_in, cfg.hook_point_out],
+        until=cfg.hook_point_out,
     )
 
     # get act
@@ -139,10 +140,11 @@ def get_recons_loss(
     batch_tokens = batch_tokens.to(torch.int64)
     loss = model.forward(batch_tokens, return_type="loss")
 
-    _, cache = model.run_with_cache(
+    _, cache = model.run_with_cache_until(
         batch_tokens,
         prepend_bos=False,
         names_filter=[cfg.hook_point_in, cfg.hook_point_out],
+        until=cfg.hook_point_out,
     )
     activations_in, activations_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
     replacements = sae.forward(activations_in, label=activations_out).to(activations_out.dtype)
