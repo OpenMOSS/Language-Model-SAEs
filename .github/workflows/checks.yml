@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - dev*
+      - dev
     paths:
       - "**" # Include all files by default
       - "!.devcontainer/**"
@@ -16,7 +16,7 @@ on:
   pull_request:
     branches:
       - main
-      - dev*
+      - dev
     paths:
       - "**"
       - "!.devcontainer/**"
@@ -49,4 +49,4 @@ jobs:
       - name: Install dependencies
         run: pdm install
       - name: Type check
-        run: poetry run mypy .
+        run: pdm run mypy .
