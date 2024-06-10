@@ -1,4 +1,5 @@
 import os
+from typing import cast
 
 from tqdm import tqdm
 
@@ -27,6 +28,7 @@ def sample_feature_activations(
 ):
     if cfg.use_ddp:
         raise ValueError("Sampling feature activations does not support DDP yet")
+    assert cfg.d_sae is not None # Make mypy happy
 
     total_analyzing_tokens = cfg.total_analyzing_tokens
     total_analyzing_steps = total_analyzing_tokens // cfg.store_batch_size // cfg.context_size
@@ -106,7 +108,7 @@ def sample_feature_activations(
         max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
 
         n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.device, dtype=torch.int)
-        n_training_tokens += n_tokens_current.item()
+        n_training_tokens += cast(int, n_tokens_current.item())
         n_training_steps += 1
 
         pbar.update(n_tokens_current.item())
