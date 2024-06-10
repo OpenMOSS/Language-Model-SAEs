@@ -1,0 +1,52 @@
+name: Checks
+
+on:
+  push:
+    branches:
+      - main
+      - dev*
+    paths:
+      - "**" # Include all files by default
+      - "!.devcontainer/**"
+      - "!.vscode/**"
+      - "!.git*"
+      - "!*.md"
+      - "!.github/**"
+      - ".github/workflows/checks.yml" # Still include current workflow
+  pull_request:
+    branches:
+      - main
+      - dev*
+    paths:
+      - "**"
+      - "!.devcontainer/**"
+      - "!.vscode/**"
+      - "!.git*"
+      - "!*.md"
+      - "!.github/**"
+      - ".github/workflows/checks.yml"
+  # Allow this workflow to be called from other workflows
+  workflow_call:
+    inputs:
+      #  Requires at least one input to be valid, but in practice we don't need any
+      dummy:
+        type: string
+        required: false
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  code-checks:
+    name: Code Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup PDM
+        uses: pdm-project/setup-pdm@v4
+        # You are now able to use PDM in your workflow
+      - name: Install dependencies
+        run: pdm install
+      - name: Type check
+        run: poetry run mypy .
