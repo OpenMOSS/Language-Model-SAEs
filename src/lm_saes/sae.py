@@ -120,8 +120,8 @@ class SparseAutoEncoder(HookedRootModule):
     def encode(
         self,
         x: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]],
-        label: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]] | None = None,
-        return_hidden_pre: Literal[True] = False
+        label: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]] | None,
+        return_hidden_pre: Literal[True]
     ) -> tuple[Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]], Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]]: ...
 
     def encode(
@@ -277,6 +277,8 @@ class SparseAutoEncoder(HookedRootModule):
                 "hidden_pre": hidden_pre,
             }
             return loss, ({"l_rec": l_rec, "l_l1": l_l1, "l_ghost_resid": l_ghost_resid}, aux_data)
+        
+        return loss
 
 
     def forward(
@@ -317,6 +319,8 @@ class SparseAutoEncoder(HookedRootModule):
             self.decoder.data,
             "d_sae d_model, d_sae d_model -> d_sae",
         )
+
+        assert self.decoder.grad is not None, "No gradient to remove parallel component from"
 
         self.decoder.grad -= einsum(
             parallel_component,
