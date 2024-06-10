@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, cast
 import torch
 import os
 from datasets import Dataset
@@ -33,7 +33,7 @@ def _extract_context(cfg: AutoInterpConfig, tokenizer, context_id, feature_acts)
     the presence of "�" in the decoded token), they are concatenated and their activation values are averaged
     before adding to the result list.
     """
-    max_pos = torch.argmax(feature_acts, dim=0)
+    max_pos = cast(int, torch.argmax(feature_acts, dim=0).item())
     left = max(max_pos - cfg.num_left_token, 0)
     right = min(max_pos + cfg.num_right_token, len(context_id))
     res = []
