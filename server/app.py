@@ -1,4 +1,5 @@
 import os
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -100,7 +101,7 @@ def list_dictionaries():
 
 
 @app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
-def get_feature(dictionary_name: str, feature_index: str):
+def get_feature(dictionary_name: str, feature_index: str | int):
 	tokenizer = get_model(dictionary_name).tokenizer
 	if isinstance(feature_index, str):
 		if feature_index == "random":
@@ -113,7 +114,8 @@ def get_feature(dictionary_name: str, feature_index: str):
 					content=f"Feature index {feature_index} is not a valid integer",
 					status_code=400,
 				)
-			feature = client.get_feature(dictionary_name, feature_index, dictionary_series=dictionary_series)
+	if isinstance(feature_index, int):
+		feature = client.get_feature(dictionary_name, feature_index, dictionary_series=dictionary_series)
 
 	if feature is None:
 		return Response(
@@ -341,13 +343,13 @@ def feature_interpretation(
 		interpretation = feature["interpretation"] if "interpretation" in feature else None
 		if interpretation is None:
 			return Response(content="Feature interpretation not found", status_code=404)
-		validation = interpretation["validation"]
+		validation = cast(Any, interpretation["validation"])
 		if not any(v["method"] == "activation" for v in validation):
 			validation_result = check_description(
 				model,
 				cfg,
 				feature_index,
-				interpretation["text"],
+				cast(str, interpretation["text"]),
 				False,
 				feature_activation=feature["analysis"][0],
 			)
@@ -363,7 +365,7 @@ def feature_interpretation(
 				model,
 				cfg,
 				feature_index,
-				interpretation["text"],
+				cast(str, interpretation["text"]),
 				True,
 				sae=get_sae(dictionary_name),
 			)
@@ -381,26 +383,6 @@ def feature_interpretation(
 	except ValueError as e:
 		return Response(content=str(e), status_code=400)
 	return interpretation
-
-
-@app.get("/attn_heads/{layer}/{head}")
-def get_attn_head(layer: int, head: int):
-	attn_head = client.get_attn_head(layer, head, dictionary_series=dictionary_series)
-	if attn_head is None:
-		return Response(
-			content=f"Attention head {layer}/{head} not found", status_code=404
-		)
-	attn_scores = [{
-		"dictionary1_name": v["dictionary1"]["name"],
-		"dictionary2_name": v["dictionary2"]["name"],
-		"top_attn_scores": v["top_attn_scores"],
-	} for v in attn_head["attn_scores"]]
-
-	return {
-		"layer": layer,
-		"head": head,
-		"attn_scores": attn_scores,
-	}
 
 
 app.add_middleware(
