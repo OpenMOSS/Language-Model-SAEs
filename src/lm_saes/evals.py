@@ -101,6 +101,7 @@ def recons_loss_batched(
         pbar = tqdm(total=n_batches, desc="Evaluation", smoothing=0.01)
     for _ in range(n_batches):
         batch_tokens = activation_store.next_tokens(cfg.store_batch_size)
+        assert batch_tokens is not None, "Not enough tokens in the store"
         score, loss, recons_loss, zero_abl_loss = get_recons_loss(
             model, sae, cfg, batch_tokens
         )

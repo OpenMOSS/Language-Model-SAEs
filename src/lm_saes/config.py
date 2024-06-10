@@ -51,8 +51,8 @@ class RunnerConfig(BaseConfig):
         if self.use_ddp:
             self.rank = dist.get_rank()
             self.world_size = dist.get_world_size()
-            if isinstance(self, BaseModelConfig):
-                self.device = f"cuda:{self.rank}"
+            # if isinstance(self, BaseModelConfig):
+            #     self.device = f"cuda:{self.rank}"
 
         if not self.use_ddp or self.rank == 0:
             os.makedirs(self.exp_result_dir, exist_ok=True)
@@ -96,12 +96,12 @@ class LanguageModelConfig(BaseModelConfig):
 
 
 @dataclass
-class TextDatasetConfig(RunnerConfig):
-    dataset_path: str | List[str] = 'openwebtext'
+class TextDatasetConfig(BaseModelConfig, RunnerConfig):
+    dataset_path: List[str] = 'openwebtext' # type: ignore
     cache_dir: Optional[str] = None
     is_dataset_tokenized: bool = False
     is_dataset_on_disk: bool = False
-    concat_tokens: bool | List[bool] = False
+    concat_tokens: List[bool] = False # type: ignore
     context_size: int = 128
     store_batch_size: int = 64
     sample_probs: List[float] = field(default_factory=lambda: [1.0])
@@ -110,7 +110,6 @@ class TextDatasetConfig(RunnerConfig):
         super().__post_init__()
         if isinstance(self.dataset_path, str):
             self.dataset_path = [self.dataset_path]
-        print(self.dataset_path)
 
         if isinstance(self.concat_tokens, bool):
             self.concat_tokens = [self.concat_tokens]
@@ -127,9 +126,7 @@ class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
     """ Hook points to store activations from, i.e. the layer output of which is used for training/evaluating the dictionary. Will run until the last hook point in the list, so make sure to order them correctly. """
 
     use_cached_activations: bool = False
-    cached_activations_path: Optional[List[str]] = (
-        None  # Defaults to "activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
-    )
+    cached_activations_path: List[str] = None # type: ignore
 
     n_tokens_in_buffer: int = 500_000
 
@@ -162,7 +159,9 @@ class SAEConfig(BaseModelConfig):
     Configuration for training or running a sparse autoencoder.
     """
     hook_point_in: str = "blocks.0.hook_resid_pre"
-    hook_point_out: str = None # If None, it will be set to hook_point_in
+    """ The hook point to use as input to the SAE. """
+    hook_point_out: str = None # type: ignore
+    """ The hook point to use as label of the SAE. If None, it will be set to hook_point_in. """
 
     sae_pretrained_name_or_path: Optional[str] = None
     strict_loading: bool = True
@@ -172,9 +171,8 @@ class SAEConfig(BaseModelConfig):
     decoder_bias_init_method: str = "geometric_median"
     expansion_factor: int = 32
     d_model: int = 768
-    d_sae: Optional[int] = (
-        None  # The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor
-    )
+    d_sae: int = None  # type: ignore
+    """ The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor """
     norm_activation: str = "token-wise"  # none, token-wise, batch-wise
     decoder_exactly_unit_norm: bool = True
     use_glu_encoder: bool = False
@@ -336,9 +334,7 @@ class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
 class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
     hook_points: list[str] = field(default_factory=list)
 
-    activation_save_path: Optional[str] = (
-        None  # Defaults to "activations/{dataset}/{model}_{context_size}"
-    )
+    activation_save_path: str = None # type: ignore
 
     total_generating_tokens: int = 300_000_000
     chunk_size: int = int(0.5 * 2**30)  # 0.5 GB
@@ -347,7 +343,8 @@ class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
         super().__post_init__()
 
         if self.activation_save_path is None:
-            self.activation_save_path = f"activations/{self.dataset_path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
+            assert isinstance(self.dataset_path, list) and len(self.dataset_path) == 1, "Only one dataset path is supported for activation generation."
+            self.activation_save_path = f"activations/{self.dataset_path[0].split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
         os.makedirs(self.activation_save_path, exist_ok=True)
 
 @dataclass
@@ -372,7 +369,6 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConf
 
     def __post_init__(self):
         super().__post_init__()
-
         assert self.d_sae % self.n_sae_chunks == 0, f"d_sae ({self.d_sae}) must be divisible by n_sae_chunks ({self.n_sae_chunks})"
 
 
