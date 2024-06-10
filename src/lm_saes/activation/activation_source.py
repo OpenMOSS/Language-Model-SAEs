@@ -62,10 +62,10 @@ class TokenActivationSource(ActivationSource):
 class CachedActivationSource(ActivationSource):
     def __init__(self, cfg: ActivationStoreConfig):
         self.cfg = cfg
-        assert cfg.use_cached_activations and cfg.cached_activations_path is not None
+        assert cfg.use_cached_activations and len(cfg.cached_activations_path) == 1
         assert len(cfg.hook_points) == 1, "CachedActivationSource only supports one hook point"
         self.hook_point = cfg.hook_points[0]
-        self.chunk_paths = list_activation_chunks(cfg.cached_activations_path, self.hook_point)
+        self.chunk_paths = list_activation_chunks(cfg.cached_activations_path[0], self.hook_point)
         if cfg.use_ddp:
             self.chunk_paths = [p for i, p in enumerate(self.chunk_paths) if i % cfg.world_size == cfg.rank]
         random.shuffle(self.chunk_paths)

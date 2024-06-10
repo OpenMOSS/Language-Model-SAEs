@@ -3,7 +3,7 @@ Took the LR scheduler from: https://github.com/jbloomAus/DecisionTransformerInte
 """
 
 import math
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
@@ -26,7 +26,7 @@ def get_scheduler(
         **kwargs: Additional arguments to pass to the scheduler including warm_up_steps,
             training_steps, num_cycles, lr_end.
     """
-    def get_smoothing_lambda(training_steps, gamma:int, cool_down_steps:int, lr_end:float):
+    def get_smoothing_lambda(training_steps, gamma: float, cool_down_steps: int, lr_end: float):
 
         smooth_steps = gamma * warm_up_steps
         def lr_lambda(steps):
@@ -83,14 +83,15 @@ def get_scheduler(
             optimizer,
             lr_lambda=lambda steps: min(
                 (steps + 1) / warm_up_steps, 
-                (training_steps - steps) / cool_down_steps, 
+                (training_steps - steps) / cool_down_steps, # type: ignore
                 1.0
             ),
         )
     elif scheduler_name.lower() == "constantwithwarmupsmooth":
         warm_up_steps = kwargs.get("warm_up_steps", 0)
         training_steps = kwargs.get("training_steps")
-        cool_down_steps = training_steps - int(1.5 * warm_up_steps)
+        assert training_steps is not None, "training_steps must be provided"
+        cool_down_steps = training_steps - int(1.5 * warm_up_steps) 
         assert training_steps is not None, "training_steps must be provided"
         lr_lambda = get_smoothing_lambda(training_steps, 0.5, cool_down_steps, 0.)
         return lr_scheduler.LambdaLR(optimizer, lr_lambda)

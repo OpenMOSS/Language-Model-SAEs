@@ -75,6 +75,7 @@ class ActivationStore:
     
     @staticmethod
     def from_config(model: HookedTransformer, cfg: ActivationStoreConfig):
+        act_source: ActivationSource
         if cfg.use_cached_activations:
             act_source=CachedActivationSource(cfg=cfg)
         else:
