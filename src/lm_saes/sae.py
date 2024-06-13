@@ -1,3 +1,5 @@
+from importlib.metadata import version
+import os
 from typing import Dict, Literal, Union, overload
 import torch
 import math
@@ -5,7 +7,10 @@ from einops import einsum
 from jaxtyping import Float
 from transformer_lens.hook_points import HookPoint, HookedRootModule
 
+import safetensors.torch as safe
+
 from lm_saes.config import SAEConfig
+from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 
 class SparseAutoEncoder(HookedRootModule):
     """Sparse AutoEncoder model.
@@ -45,7 +50,8 @@ class SparseAutoEncoder(HookedRootModule):
         self.decoder = torch.nn.Parameter(torch.empty((cfg.d_sae, cfg.d_model), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.kaiming_uniform_(self.decoder)
         self.set_decoder_norm_to_unit_norm()
-        self.decoder_bias = torch.nn.Parameter(torch.empty((cfg.d_model,), dtype=cfg.dtype, device=cfg.device))
+        if cfg.use_decoder_bias:
+            self.decoder_bias = torch.nn.Parameter(torch.empty((cfg.d_model,), dtype=cfg.dtype, device=cfg.device))
 
         self.encoder_bias = torch.nn.Parameter(torch.empty((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device))
         torch.nn.init.zeros_(self.encoder_bias)
@@ -114,8 +120,8 @@ class SparseAutoEncoder(HookedRootModule):
     def encode(
         self,
         x: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]],
-        label: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]] | None = None,
-        return_hidden_pre: Literal[True] = False
+        label: Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]] | None,
+        return_hidden_pre: Literal[True]
     ) -> tuple[Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]], Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]]: ...
 
     def encode(
@@ -271,6 +277,8 @@ class SparseAutoEncoder(HookedRootModule):
                 "hidden_pre": hidden_pre,
             }
             return loss, ({"l_rec": l_rec, "l_l1": l_l1, "l_ghost_resid": l_ghost_resid}, aux_data)
+        
+        return loss
 
 
     def forward(
@@ -312,6 +320,8 @@ class SparseAutoEncoder(HookedRootModule):
             "d_sae d_model, d_sae d_model -> d_sae",
         )
 
+        assert self.decoder.grad is not None, "No gradient to remove parallel component from"
+
         self.decoder.grad -= einsum(
             parallel_component,
             self.decoder.data,
@@ -324,3 +334,86 @@ class SparseAutoEncoder(HookedRootModule):
         mean_thomson_potential = (1 / dist).mean()
         return mean_thomson_potential
     
+    @staticmethod
+    def from_config(
+        cfg: SAEConfig
+    ) -> "SparseAutoEncoder":
+        """Load the SparseAutoEncoder model from the pretrained configuration.
+
+        Args:
+            cfg (SAEConfig): The configuration of the model, containing the sae_pretrained_name_or_path.
+        
+        Returns:
+            SparseAutoEncoder: The pretrained SparseAutoEncoder model.
+        """
+        pretrained_name_or_path = cfg.sae_pretrained_name_or_path
+        if pretrained_name_or_path is None:
+            return SparseAutoEncoder(cfg)
+        
+        path = parse_pretrained_name_or_path(pretrained_name_or_path)
+
+        if path.endswith(".pt") or path.endswith(".safetensors"):
+            ckpt_path = path
+        else:
+            ckpt_prioritized_paths = [
+                f"{path}/sae_weights.safetensors",
+                f"{path}/sae_weights.pt",
+                f"{path}/checkpoints/pruned.safetensors",
+                f"{path}/checkpoints/pruned.pt",
+                f"{path}/checkpoints/final.safetensors",
+                f"{path}/checkpoints/final.pt",
+            ]
+            for ckpt_path in ckpt_prioritized_paths:
+                if os.path.exists(ckpt_path):
+                    break
+            else:
+                raise FileNotFoundError(f"Pretrained model not found at {pretrained_name_or_path}")
+        
+        if ckpt_path.endswith(".safetensors"):
+            state_dict = safe.load_file(ckpt_path, device=cfg.device)
+        else:
+            state_dict = torch.load(ckpt_path, map_location=cfg.device)["sae"]
+            
+        model = SparseAutoEncoder(cfg)
+        model.load_state_dict(state_dict, strict=cfg.strict_loading)
+
+        return model
+
+    @staticmethod
+    def from_pretrained(
+        pretrained_name_or_path: str,
+        strict_loading: bool = True,
+        **kwargs
+    ) -> "SparseAutoEncoder":
+        """Load the SparseAutoEncoder model from the pretrained configuration.
+
+        Args:
+            pretrained_name_or_path (str): The name or path of the pretrained model.
+            strict_loading (bool, optional): Whether to load the model strictly. Defaults to True.
+            **kwargs: Additional keyword arguments as BaseModelConfig.
+        
+        Returns:
+            SparseAutoEncoder: The pretrained SparseAutoEncoder model.
+        """
+        cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
+
+        return SparseAutoEncoder.from_config(cfg)
+    
+    def save_pretrained(
+        self,
+        ckpt_path: str
+    ) -> None:
+        """Save the model to the checkpoint path.
+
+        Args:
+            ckpt_path (str): The path to save the model. If a directory, the model will be saved to the directory with the default filename `sae_weights.safetensors`.
+        """
+
+        if os.path.isdir(ckpt_path):
+            ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
+        if ckpt_path.endswith(".safetensors"):
+            safe.save_file(self.state_dict(), ckpt_path, {"version": version("lm-saes")})
+        elif ckpt_path.endswith(".pt"):
+            torch.save({"sae": self.state_dict(), "version": version("lm-saes")}, ckpt_path)
+        else:
+            raise ValueError(f"Invalid checkpoint path {ckpt_path}. Currently only supports .safetensors and .pt formats.")

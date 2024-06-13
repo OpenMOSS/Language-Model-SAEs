@@ -11,14 +11,14 @@ from transformer_lens import HookedTransformer
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.activation.activation_store import ActivationStore
 # from lm_saes.activation_store_theirs import ActivationStoreTheirs
-from lm_saes.config import LanguageModelSAEConfig
+from lm_saes.config import LanguageModelSAERunnerConfig
 
 @torch.no_grad()
 def run_evals(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
     activation_store: ActivationStore,
-    cfg: LanguageModelSAEConfig,
+    cfg: LanguageModelSAERunnerConfig,
     n_training_steps: int,
 ):
     ### Evals
@@ -39,10 +39,11 @@ def run_evals(
     zero_abl_loss = losses_df["zero_abl_loss"].mean()
 
     # get cache
-    _, cache = model.run_with_cache(
+    _, cache = model.run_with_cache_until(
         eval_tokens,
         prepend_bos=False,
         names_filter=[cfg.hook_point_in, cfg.hook_point_out],
+        until=cfg.hook_point_out,
     )
 
     # get act
@@ -92,7 +93,7 @@ def recons_loss_batched(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
     activation_store: ActivationStore,
-    cfg: LanguageModelSAEConfig,
+    cfg: LanguageModelSAERunnerConfig,
     n_batches: int = 100,
 ):
     losses = []
@@ -100,6 +101,7 @@ def recons_loss_batched(
         pbar = tqdm(total=n_batches, desc="Evaluation", smoothing=0.01)
     for _ in range(n_batches):
         batch_tokens = activation_store.next_tokens(cfg.store_batch_size)
+        assert batch_tokens is not None, "Not enough tokens in the store"
         score, loss, recons_loss, zero_abl_loss = get_recons_loss(
             model, sae, cfg, batch_tokens
         )
@@ -133,16 +135,17 @@ def recons_loss_batched(
 def get_recons_loss(
     model: HookedTransformer,
     sae: SparseAutoEncoder,
-    cfg: LanguageModelSAEConfig,
+    cfg: LanguageModelSAERunnerConfig,
     batch_tokens: torch.Tensor,
 ):
     batch_tokens = batch_tokens.to(torch.int64)
     loss = model.forward(batch_tokens, return_type="loss")
 
-    _, cache = model.run_with_cache(
+    _, cache = model.run_with_cache_until(
         batch_tokens,
         prepend_bos=False,
         names_filter=[cfg.hook_point_in, cfg.hook_point_out],
+        until=cfg.hook_point_out,
     )
     activations_in, activations_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
     replacements = sae.forward(activations_in, label=activations_out).to(activations_out.dtype)
