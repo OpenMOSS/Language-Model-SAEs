@@ -1,4 +1,5 @@
 import os
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -43,7 +44,7 @@ lm_cache = {}
 
 
 def get_model(dictionary_name: str) -> HookedTransformer:
-	cfg = LanguageModelConfig.from_dict(dictionary_name, result_dir)
+	cfg = LanguageModelConfig.from_pretrained_sae(f"{result_dir}/{dictionary_name}")
 	if (cfg.model_name, cfg.model_from_pretrained_path) not in lm_cache:
 		hf_model = AutoModelForCausalLM.from_pretrained(
 			(
@@ -61,7 +62,7 @@ def get_model(dictionary_name: str) -> HookedTransformer:
 				else cfg.model_from_pretrained_path
 			),
 			trust_remote_code=True,
-			use_fast=True,
+			use_fast=False,
 			add_bos_token=True,
 		)
 		model = HookedTransformer.from_pretrained(
@@ -79,21 +80,7 @@ def get_model(dictionary_name: str) -> HookedTransformer:
 
 def get_sae(dictionary_name: str) -> SparseAutoEncoder:
 	if dictionary_name not in sae_cache:
-		cfg = SAEConfig(
-			**SAEConfig.get_hyperparameters(
-				dictionary_name, result_dir, ckpt_name, True
-			),
-			# RunnerConfig
-			use_ddp=False,
-			device=device,
-			seed=42,
-			dtype=torch.float32,
-			exp_name=dictionary_name,
-		)
-		sae = SparseAutoEncoder(cfg=cfg)
-		sae.load_state_dict(
-			torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)["sae"]
-		)
+		sae = SparseAutoEncoder.from_pretrained(f"{result_dir}/{dictionary_name}", device=device)
 		sae.eval()
 		sae_cache[dictionary_name] = sae
 	return sae_cache[dictionary_name]
@@ -117,7 +104,7 @@ def list_dictionaries():
 
 
 @app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
-def get_feature(dictionary_name: str, feature_index: str):
+def get_feature(dictionary_name: str, feature_index: str | int):
 	tokenizer = get_model(dictionary_name).tokenizer
 	if isinstance(feature_index, str):
 		if feature_index == "random":
@@ -130,7 +117,8 @@ def get_feature(dictionary_name: str, feature_index: str):
 					content=f"Feature index {feature_index} is not a valid integer",
 					status_code=400,
 				)
-			feature = client.get_feature(dictionary_name, feature_index, dictionary_series=dictionary_series)
+	if isinstance(feature_index, int):
+		feature = client.get_feature(dictionary_name, feature_index, dictionary_series=dictionary_series)
 
 	if feature is None:
 		return Response(
@@ -240,7 +228,7 @@ def get_dictionary(dictionary_name: str):
 
 @app.post("/dictionaries/{dictionary_name}/features/{feature_index}/custom")
 def feature_activation_custom_input(
-		dictionary_name: str, feature_index: int, input_text: str
+	dictionary_name: str, feature_index: int, input_text: str
 ):
 	try:
 		sae = get_sae(dictionary_name)
@@ -257,10 +245,9 @@ def feature_activation_custom_input(
 	model = get_model(dictionary_name)
 	with torch.no_grad():
 		input = model.to_tokens(input_text, prepend_bos=False)
-		_, cache = model.run_with_cache(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out])
+		_, cache = model.run_with_cache_until(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out], until=sae.cfg.hook_point_out)
 
-		_, (_, aux) = sae(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
-		feature_acts = aux["feature_acts"]
+		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
 		sample = {
 			"context": [
 				bytearray([byte_decoder[c] for c in t])
@@ -287,10 +274,9 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
 
 	with torch.no_grad():
 		input = model.to_tokens(input_text, prepend_bos=False)
-		_, cache = model.run_with_cache(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out])
+		_, cache = model.run_with_cache_until(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out], until=sae.cfg.hook_point_out)
 
-		_, (_, aux) = sae(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
-		feature_acts = aux["feature_acts"]
+		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
 		sample = {
 			"context": [
 				bytearray([byte_decoder[c] for c in t])
@@ -334,10 +320,8 @@ def feature_interpretation(
 	elif type == "auto":
 		cfg = AutoInterpConfig(
 			**{
-				**SAEConfig.get_hyperparameters(
-					dictionary_name, result_dir, ckpt_name, True
-				),
-				**LanguageModelConfig.get_lm_config(dictionary_name, result_dir),
+				**SAEConfig.from_pretrained(f"{result_dir}/{dictionary_name}").to_dict(),
+				**LanguageModelConfig.from_pretrained_sae(f"{result_dir}/{dictionary_name}").to_dict(),
 				"openai_api_key": os.environ.get("OPENAI_API_KEY"),
 				"openai_base_url": os.environ.get("OPENAI_BASE_URL"),
 			}
@@ -352,10 +336,8 @@ def feature_interpretation(
 	elif type == "validate":
 		cfg = AutoInterpConfig(
 			**{
-				**SAEConfig.get_hyperparameters(
-					dictionary_name, result_dir, ckpt_name, True
-				),
-				**LanguageModelConfig.get_lm_config(dictionary_name, result_dir),
+				**SAEConfig.from_pretrained(f"{result_dir}/{dictionary_name}").to_dict(),
+				**LanguageModelConfig.from_pretrained_sae(f"{result_dir}/{dictionary_name}").to_dict(),
 				"openai_api_key": os.environ.get("OPENAI_API_KEY"),
 				"openai_base_url": os.environ.get("OPENAI_BASE_URL"),
 			}
@@ -364,13 +346,13 @@ def feature_interpretation(
 		interpretation = feature["interpretation"] if "interpretation" in feature else None
 		if interpretation is None:
 			return Response(content="Feature interpretation not found", status_code=404)
-		validation = interpretation["validation"]
+		validation = cast(Any, interpretation["validation"])
 		if not any(v["method"] == "activation" for v in validation):
 			validation_result = check_description(
 				model,
 				cfg,
 				feature_index,
-				interpretation["text"],
+				cast(str, interpretation["text"]),
 				False,
 				feature_activation=feature["analysis"][0],
 			)
@@ -386,7 +368,7 @@ def feature_interpretation(
 				model,
 				cfg,
 				feature_index,
-				interpretation["text"],
+				cast(str, interpretation["text"]),
 				True,
 				sae=get_sae(dictionary_name),
 			)
@@ -404,26 +386,6 @@ def feature_interpretation(
 	except ValueError as e:
 		return Response(content=str(e), status_code=400)
 	return interpretation
-
-
-@app.get("/attn_heads/{layer}/{head}")
-def get_attn_head(layer: int, head: int):
-	attn_head = client.get_attn_head(layer, head, dictionary_series=dictionary_series)
-	if attn_head is None:
-		return Response(
-			content=f"Attention head {layer}/{head} not found", status_code=404
-		)
-	attn_scores = [{
-		"dictionary1_name": v["dictionary1"]["name"],
-		"dictionary2_name": v["dictionary2"]["name"],
-		"top_attn_scores": v["top_attn_scores"],
-	} for v in attn_head["attn_scores"]]
-
-	return {
-		"layer": layer,
-		"head": head,
-		"attn_scores": attn_scores,
-	}
 
 
 app.add_middleware(

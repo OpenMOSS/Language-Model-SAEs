@@ -3,7 +3,7 @@
 This repo aims to provide a general codebase for conducting dictionary-learning-based mechanistic interpretability research on Language Models (LMs). It powers a configurable pipeline for training and evaluating GPT-2 dictionaries, and provides a set of tools (mainly a React-based webpage) for analyzing and visualizing the learned dictionaries.
 
 The design of the pipeline (including the configuration and some training detail) is highly inspired by the [mats_sae_training
-](https://github.com/jbloomAus/mats_sae_training) project. We thank the authors for their great work.
+](https://github.com/jbloomAus/mats_sae_training) project and heavily relies on the [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) library. We thank the authors for their great work.
 
 ## Getting Started with Mechanistic Interpretability and Dictionary Learning
 
@@ -16,7 +16,7 @@ If you are new to the concept of mechanistic interpretability and dictionary lea
 - [Towards Monosemanticity: Decomposing Language Models With Dictionary Learning](https://transformer-circuits.pub/2023/monosemantic-features/index.html)
 - [Sparse Autoencoders Find Highly Interpretable Features in Language Models](https://arxiv.org/abs/2309.08600)
 
-Furthermore, to dive deeper into the inner activations of LMs, it's recommended to get familiar with the [TransformerLens](https://github.com/neelnanda-io/TransformerLens/tree/main) library.
+Furthermore, to dive deeper into the inner activations of LMs, it's recommended to get familiar with the [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) library.
 
 ## Installation
 
