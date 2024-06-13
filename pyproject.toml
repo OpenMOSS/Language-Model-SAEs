@@ -31,6 +31,7 @@ dependencies = [
     "tiktoken>=0.6.0",
     "python-dotenv>=1.0.1",
     "jaxtyping>=0.2.25",
+    "safetensors>=0.4.3",
 ]
 requires-python = "==3.10.*"
 readme = "README.md"
@@ -39,4 +40,12 @@ license = {text = "MIT"}
 [tool.pdm.dev-dependencies]
 dev = [
     "-e file:///${PROJECT_ROOT}/TransformerLens#egg=transformer-lens",
+    "mypy>=1.10.0",
 ]
+
+[tool.mypy]
+check_untyped_defs=true
+exclude=[".venv/", "examples", "TransformerLens", "tests", "exp"]
+ignore_missing_imports=true
+allow_redefinition=true
+implicit_optional=true

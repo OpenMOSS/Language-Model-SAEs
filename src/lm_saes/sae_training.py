@@ -1,9 +1,13 @@
 import os
+from importlib.metadata import version
+from typing import cast
 
 import torch
 from torch.optim import Adam
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
+
+import safetensors.torch as safe
 
 from transformer_lens import HookedTransformer
 
@@ -42,13 +46,11 @@ def train_sae(
     activation_store.initialize()
 
     # Initialize the SAE decoder bias if necessary
-    if cfg.use_decoder_bias and (not cfg.use_ddp or cfg.rank == 0):
-        sae.initialize_decoder_bias(activation_store._store[cfg.hook_point_in])
+    # if cfg.use_decoder_bias and (not cfg.use_ddp or cfg.rank == 0):
+    #     sae.initialize_decoder_bias(activation_store._store[cfg.hook_point_in])
 
-    sae_module = sae
     if cfg.use_ddp:
-        sae = DDP(sae, device_ids=[cfg.rank], output_device=cfg.device)
-        sae_module: SparseAutoEncoder = sae.module
+        ddp = DDP(sae, device_ids=[cfg.rank], output_device=cfg.device)
 
     assert cfg.d_sae is not None
     act_freq_scores = torch.zeros(cfg.d_sae, device=cfg.device, dtype=cfg.dtype)
@@ -56,10 +58,6 @@ def train_sae(
     n_frac_active_tokens = torch.tensor([0], device=cfg.device, dtype=torch.int)
 
     optimizer = Adam(sae.parameters(), lr=cfg.lr, betas=cfg.betas)
-    if cfg.sae_from_pretrained_path is not None:
-        checkpoint = torch.load(cfg.sae_from_pretrained_path, map_location=cfg.device)
-        if "optimizer" in checkpoint:
-            optimizer.load_state_dict(checkpoint["optimizer"])
 
     scheduler = get_scheduler(
         cfg.lr_scheduler_name,
@@ -78,6 +76,7 @@ def train_sae(
         sae.train()
         # Get the next batch of activations
         batch = activation_store.next(batch_size=cfg.train_batch_size)
+        assert batch is not None, "Activation store is empty"
         activation_in, activation_out = batch[cfg.hook_point_in], batch[cfg.hook_point_out]
 
         scheduler.step()
@@ -110,10 +109,10 @@ def train_sae(
         if cfg.finetuning:
             loss = loss_data['l_rec'].mean()
         loss.backward()
-        sae_module.remove_gradient_parallel_to_decoder_directions()
+        sae.remove_gradient_parallel_to_decoder_directions()
         optimizer.step()
 
-        sae_module.set_decoder_norm_to_unit_norm()
+        sae.set_decoder_norm_to_unit_norm()
         with torch.no_grad():
             act_freq_scores += (aux_data["feature_acts"].abs() > 0).float().sum(0)
             n_frac_active_tokens += activation_in.size(0)
@@ -121,7 +120,7 @@ def train_sae(
             n_tokens_current = torch.tensor(activation_in.size(0), device=cfg.device, dtype=torch.int)
             if cfg.use_ddp:
                 dist.reduce(n_tokens_current, dst=0)
-            n_training_tokens += n_tokens_current.item()
+            n_training_tokens += cast(int, n_tokens_current.item())
 
             # log and then reset the feature sparsity every feature_sampling_window steps
             if (n_training_steps + 1) % cfg.feature_sampling_window == 0:
@@ -203,7 +202,7 @@ def train_sae(
                             # sparsity
                             "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
                             "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
-                            "sparsity/useful_features": sae_module.decoder.norm(p=2, dim=1).gt(0.99).sum().item(),
+                            "sparsity/useful_features": sae.decoder.norm(p=2, dim=1).gt(0.99).sum().item(),
                             "details/current_learning_rate": current_learning_rate,
                             "details/n_training_tokens": n_training_tokens,
                         },
@@ -230,18 +229,10 @@ def train_sae(
             ):
                 # Save the model and optimizer state
                 path = os.path.join(
-                    cfg.exp_result_dir, cfg.exp_name, "checkpoints", f"{n_training_steps}.pt"
+                    cfg.exp_result_dir, cfg.exp_name, "checkpoints", f"{n_training_steps}.safetensors"
                 )
-                sae_module.set_decoder_norm_to_unit_norm()
-                torch.save(
-                    {
-                        "sae": sae_module.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "n_training_steps": n_training_steps,
-                        "n_training_tokens": n_training_tokens,
-                    },
-                    path,
-                )
+                sae.set_decoder_norm_to_unit_norm()
+                sae.save_pretrained(path)
 
                 checkpoint_thresholds.pop(0)
 
@@ -261,18 +252,10 @@ def train_sae(
     # Save the final model
     if not cfg.use_ddp or cfg.rank == 0:
         path = os.path.join(
-            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.pt"
+            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.safetensors"
         )
-        sae_module.set_decoder_norm_to_unit_norm()
-        torch.save(
-            {
-                "sae": sae_module.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "n_training_steps": n_training_steps,
-                "n_training_tokens": n_training_tokens,
-            },
-            path,
-        )
+        sae.set_decoder_norm_to_unit_norm()
+        sae.save_pretrained(path)
 
 @torch.no_grad()
 def prune_sae(
@@ -282,20 +265,20 @@ def prune_sae(
 ):
     sae.eval()
     n_training_tokens = 0
+    assert cfg.d_sae is not None # Make mypy happy
     act_times = torch.zeros(cfg.d_sae, device=cfg.device, dtype=torch.int)
     max_acts = torch.zeros(cfg.d_sae, device=cfg.device, dtype=cfg.dtype)
     activation_store.initialize()
 
-    sae_module = sae
     if cfg.use_ddp:
-        sae = DDP(sae, device_ids=[cfg.rank], output_device=cfg.device)
-        sae_module: SparseAutoEncoder = sae.module
+        ddp = DDP(sae, device_ids=[cfg.rank], output_device=cfg.device)
 
     if not cfg.use_ddp or cfg.rank == 0:
         pbar = tqdm(total=cfg.total_training_tokens, desc="Pruning SAE", smoothing=0.01)
     while n_training_tokens < cfg.total_training_tokens:
         # Get the next batch of activations
         batch = activation_store.next(batch_size=cfg.train_batch_size)
+        assert batch is not None, "Activation store is empty"
         activation_in, activation_out = batch[cfg.hook_point_in], batch[cfg.hook_point_out]
 
         feature_acts = sae.encode(activation_in, label=activation_out)
@@ -319,35 +302,29 @@ def prune_sae(
         dist.reduce(max_acts, dst=0, op=dist.ReduceOp.MAX)
 
     if not cfg.use_ddp or cfg.rank == 0:
-        sae_module.feature_act_mask.data = ((
+        sae.feature_act_mask.data = ((
             act_times > cfg.dead_feature_threshold * cfg.total_training_tokens
-        ) & (max_acts > cfg.dead_feature_max_act_threshold) & (sae_module.decoder.norm(p=2, dim=1) >= cfg.decoder_norm_threshold)).float()
-        sae_module.feature_act_mask.requires_grad_(False)
+        ) & (max_acts > cfg.dead_feature_max_act_threshold) & (sae.decoder.norm(p=2, dim=1) >= cfg.decoder_norm_threshold)).float()
+        sae.feature_act_mask.requires_grad_(False)
 
         if cfg.log_to_wandb:
             wandb.log(
                 {
                     "sparsity/dead_features": (act_times < cfg.dead_feature_threshold * cfg.total_training_tokens).sum().item(),
                     "sparsity/max_acts_below_threshold": (max_acts < cfg.dead_feature_max_act_threshold).sum().item(),
-                    "sparsity/decoder_norm_below_threshold": (sae_module.decoder.norm(p=2, dim=1) < cfg.decoder_norm_threshold).sum().item(),
-                    "sparsity/total_pruned_features": (sae_module.feature_act_mask == 0).sum().item(),
+                    "sparsity/decoder_norm_below_threshold": (sae.decoder.norm(p=2, dim=1) < cfg.decoder_norm_threshold).sum().item(),
+                    "sparsity/total_pruned_features": (sae.feature_act_mask == 0).sum().item(),
                 },
             )
 
         print("Dead features:", (act_times < cfg.dead_feature_threshold * cfg.total_training_tokens).sum().item())
         print("Max acts below threshold:", (max_acts < cfg.dead_feature_max_act_threshold).sum().item())
-        print("Decoder norm below threshold:", (sae_module.decoder.norm(p=2, dim=1) < cfg.decoder_norm_threshold).sum().item())
-        print("Total pruned features:", (sae_module.feature_act_mask == 0).sum().item())
+        print("Decoder norm below threshold:", (sae.decoder.norm(p=2, dim=1) < cfg.decoder_norm_threshold).sum().item())
+        print("Total pruned features:", (sae.feature_act_mask == 0).sum().item())
 
         path = os.path.join(
-            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "pruned.pt"
+            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "pruned.safetensors"
         )
-        torch.save(
-            {
-                "sae": sae_module.state_dict(),
-                "n_training_tokens": n_training_tokens,
-            },
-            path,
-        )
+        sae.save_pretrained(path)
         
-    return sae_module
+    return sae

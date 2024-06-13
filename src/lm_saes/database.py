@@ -1,5 +1,5 @@
 import os
-from typing import Dict
+from typing import Any, Dict, Mapping
 
 from bson import ObjectId
 import numpy as np
@@ -11,7 +11,7 @@ from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
 
 class MongoClient:
     def __init__(self, mongo_uri: str, mongo_db: str):
-        self.client = pymongo.MongoClient(mongo_uri)
+        self.client: pymongo.MongoClient = pymongo.MongoClient(mongo_uri)
         self.db = self.client[mongo_db]
         self.fs = gridfs.GridFS(self.db)
         self.feature_collection = self.db['features']
@@ -136,7 +136,7 @@ class MongoClient:
 
     
     def get_attn_head(self, dictionary_name: str, head_index: int, dictionary_series: str | None = None):
-        pipeline = [
+        pipeline: list[Mapping[str, Any]] = [
             {
                 "$lookup": {
                     "localField": "dictionary_id",
@@ -162,7 +162,7 @@ class MongoClient:
         attn_head = self.attn_head_collection.aggregate(pipeline).next()
         if len(attn_head["attn_score"]) == 0:
             return attn_head
-        pipeline = [
+        pipeline: list[Mapping[str, Any]] = [
             *pipeline,
             {"$unwind": "$attn_scores"},
             {
