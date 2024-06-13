@@ -50,12 +50,11 @@ def train_sae(
     #     sae.initialize_decoder_bias(activation_store._store[cfg.hook_point_in])
 
     if cfg.use_ddp:
-        ddp = DDP(sae, device_ids=[cfg.rank], output_device=cfg.device)
+        ddp = DDP(sae, device_ids=[cfg.rank], output_device=cfg.sae.device)
 
-    assert cfg.d_sae is not None
-    act_freq_scores = torch.zeros(cfg.d_sae, device=cfg.device, dtype=cfg.dtype)
-    n_forward_passes_since_fired = torch.zeros(cfg.d_sae, device=cfg.device, dtype=cfg.dtype)
-    n_frac_active_tokens = torch.tensor([0], device=cfg.device, dtype=torch.int)
+    act_freq_scores = torch.zeros(cfg.sae.d_sae, device=cfg.sae.device, dtype=cfg.sae.dtype)
+    n_forward_passes_since_fired = torch.zeros(cfg.sae.d_sae, device=cfg.sae.device, dtype=cfg.sae.dtype)
+    n_frac_active_tokens = torch.tensor([0], device=cfg.sae.device, dtype=torch.int)
 
     optimizer = Adam(sae.parameters(), lr=cfg.lr, betas=cfg.betas)
 
@@ -77,7 +76,7 @@ def train_sae(
         # Get the next batch of activations
         batch = activation_store.next(batch_size=cfg.train_batch_size)
         assert batch is not None, "Activation store is empty"
-        activation_in, activation_out = batch[cfg.hook_point_in], batch[cfg.hook_point_out]
+        activation_in, activation_out = batch[cfg.sae.hook_point_in], batch[cfg.sae.hook_point_out]
 
         scheduler.step()
         optimizer.zero_grad()
@@ -117,7 +116,7 @@ def train_sae(
             act_freq_scores += (aux_data["feature_acts"].abs() > 0).float().sum(0)
             n_frac_active_tokens += activation_in.size(0)
 
-            n_tokens_current = torch.tensor(activation_in.size(0), device=cfg.device, dtype=torch.int)
+            n_tokens_current = torch.tensor(activation_in.size(0), device=cfg.sae.device, dtype=torch.int)
             if cfg.use_ddp:
                 dist.reduce(n_tokens_current, dst=0)
             n_training_tokens += cast(int, n_tokens_current.item())
@@ -127,7 +126,7 @@ def train_sae(
                 if cfg.use_ddp:
                     dist.reduce(act_freq_scores, dst=0)
                     dist.reduce(n_frac_active_tokens, dst=0)
-                if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+                if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
                     feature_sparsity = act_freq_scores / n_frac_active_tokens
                     log_feature_sparsity = torch.log10(feature_sparsity + 1e-10)
                     wandb_histogram = wandb.Histogram(log_feature_sparsity.detach().cpu().float().numpy())
@@ -141,8 +140,8 @@ def train_sae(
                         step=n_training_steps + 1,
                     )
 
-                act_freq_scores = torch.zeros(cfg.d_sae, device=cfg.device)
-                n_frac_active_tokens = torch.tensor([0], device=cfg.device, dtype=torch.int)
+                act_freq_scores = torch.zeros(cfg.sae.d_sae, device=cfg.sae.device)
+                n_frac_active_tokens = torch.tensor([0], device=cfg.sae.device, dtype=torch.int)
 
             if ((n_training_steps + 1) % cfg.log_frequency == 0):
                 # metrics for currents acts
@@ -184,7 +183,7 @@ def train_sae(
 
                 current_learning_rate = optimizer.param_groups[0]["lr"]
 
-                if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+                if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
                     wandb.log(
                         {
                             # losses
@@ -265,13 +264,12 @@ def prune_sae(
 ):
     sae.eval()
     n_training_tokens = 0
-    assert cfg.d_sae is not None # Make mypy happy
-    act_times = torch.zeros(cfg.d_sae, device=cfg.device, dtype=torch.int)
-    max_acts = torch.zeros(cfg.d_sae, device=cfg.device, dtype=cfg.dtype)
+    act_times = torch.zeros(cfg.sae.d_sae, device=cfg.sae.device, dtype=torch.int)
+    max_acts = torch.zeros(cfg.sae.d_sae, device=cfg.sae.device, dtype=cfg.sae.dtype)
     activation_store.initialize()
 
     if cfg.use_ddp:
-        ddp = DDP(sae, device_ids=[cfg.rank], output_device=cfg.device)
+        ddp = DDP(sae, device_ids=[cfg.rank], output_device=cfg.sae.device)
 
     if not cfg.use_ddp or cfg.rank == 0:
         pbar = tqdm(total=cfg.total_training_tokens, desc="Pruning SAE", smoothing=0.01)
@@ -279,7 +277,7 @@ def prune_sae(
         # Get the next batch of activations
         batch = activation_store.next(batch_size=cfg.train_batch_size)
         assert batch is not None, "Activation store is empty"
-        activation_in, activation_out = batch[cfg.hook_point_in], batch[cfg.hook_point_out]
+        activation_in, activation_out = batch[cfg.sae.hook_point_in], batch[cfg.sae.hook_point_out]
 
         feature_acts = sae.encode(activation_in, label=activation_out)
 
@@ -307,7 +305,7 @@ def prune_sae(
         ) & (max_acts > cfg.dead_feature_max_act_threshold) & (sae.decoder.norm(p=2, dim=1) >= cfg.decoder_norm_threshold)).float()
         sae.feature_act_mask.requires_grad_(False)
 
-        if cfg.log_to_wandb:
+        if cfg.wandb.log_to_wandb:
             wandb.log(
                 {
                     "sparsity/dead_features": (act_times < cfg.dead_feature_threshold * cfg.total_training_tokens).sum().item(),
