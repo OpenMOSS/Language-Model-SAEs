@@ -24,6 +24,7 @@ from lm_saes.analysis.auto_interp import check_description, generate_description
 from lm_saes.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.utils.bytes import bytes_to_unicode
 
 result_dir = os.environ.get("RESULT_DIR", "results")
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -31,6 +32,8 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 app = FastAPI()
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+byte_decoder = {v: k for k, v in bytes_to_unicode().items()}
 
 client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017"), os.environ.get("MONGO_DB", "mechinterp"))
 dictionary_series = os.environ.get("DICTIONARY_SERIES", None)
@@ -128,7 +131,7 @@ def get_feature(dictionary_name: str, feature_index: str | int):
 		samples = [
 			{
 				"context": [
-					bytearray([tokenizer.byte_decoder[c] for c in t])
+					bytearray([byte_decoder[c] for c in t])
 					for t in tokenizer.convert_ids_to_tokens(analysis["contexts"][i])
 				],
 				"feature_acts": analysis["feature_acts"][i],
@@ -247,7 +250,7 @@ def feature_activation_custom_input(
 		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
 		sample = {
 			"context": [
-				bytearray([model.tokenizer.byte_decoder[c] for c in t])
+				bytearray([byte_decoder[c] for c in t])
 				for t in model.tokenizer.convert_ids_to_tokens(input[0])
 			],
 			"feature_acts": feature_acts[:, feature_index].cpu().numpy().tolist(),
@@ -276,7 +279,7 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
 		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
 		sample = {
 			"context": [
-				bytearray([model.tokenizer.byte_decoder[c] for c in t])
+				bytearray([byte_decoder[c] for c in t])
 				for t in model.tokenizer.convert_ids_to_tokens(input[0])
 			],
 			"feature_acts_indices": [
