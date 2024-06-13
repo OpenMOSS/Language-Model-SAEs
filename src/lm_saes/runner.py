@@ -147,11 +147,23 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
     hf_model = AutoModelForCausalLM.from_pretrained(
         cfg.model_name, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only
     )
+
+    hf_tokenizer = AutoTokenizer.from_pretrained(
+        (
+            cfg.model_name
+            if cfg.model_from_pretrained_path is None
+            else cfg.model_from_pretrained_path
+        ),
+        trust_remote_code=True,
+        use_fast=True,
+        add_bos_token=True,
+    )
     model = HookedTransformer.from_pretrained(
         cfg.model_name,
         device=cfg.device,
         cache_dir=cfg.cache_dir,
         hf_model=hf_model,
+        tokenizer=hf_tokenizer,
         dtype=cfg.dtype,
     )
     model.eval()
@@ -206,38 +218,58 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         cache_dir=cfg.cache_dir,
         local_files_only=cfg.local_files_only,
     )
+    hf_tokenizer = AutoTokenizer.from_pretrained(
+        (
+            cfg.model_name
+            if cfg.model_from_pretrained_path is None
+            else cfg.model_from_pretrained_path
+        ),
+        trust_remote_code=True,
+        use_fast=True,
+        add_bos_token=True,
+    )
     model = HookedTransformer.from_pretrained(
         cfg.model_name,
         device=cfg.device,
         cache_dir=cfg.cache_dir,
         hf_model=hf_model,
+        tokenizer=hf_tokenizer,
         dtype=cfg.dtype,
     )
     model.eval()
 
     client = MongoClient(cfg.mongo_uri, cfg.mongo_db)
+    client.remove_dictionary(cfg.exp_name, cfg.exp_series)
     client.create_dictionary(cfg.exp_name, cfg.d_sae, cfg.exp_series)
 
     for chunk_id in range(cfg.n_sae_chunks):
         activation_store = ActivationStore.from_config(model=model, cfg=cfg)
-        result = sample_feature_activations(sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks)
+        result = sample_feature_activations(
+            sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks
+        )
 
         for i in range(len(result["index"].cpu().numpy().tolist())):
-            client.update_feature(cfg.exp_name, result["index"][i].item(), {
-                "act_times": result["act_times"][i].item(),
-                "max_feature_acts": result["max_feature_acts"][i].item(),
-                "feature_acts_all": result["feature_acts_all"][i]
-                .cpu()
-                .float()
-                .numpy(),  # use .float() to convert bfloat16 to float32
-                "analysis": [
-                    {
-                        "name": v["name"],
-                        "feature_acts": v["feature_acts"][i].cpu().float().numpy(),
-                        "contexts": v["contexts"][i].cpu().numpy(),
-                    } for v in result["analysis"]
-                ]
-            }, dictionary_series=cfg.exp_series)
+            client.update_feature(
+                cfg.exp_name,
+                result["index"][i].item(),
+                {
+                    "act_times": result["act_times"][i].item(),
+                    "max_feature_acts": result["max_feature_acts"][i].item(),
+                    "feature_acts_all": result["feature_acts_all"][i]
+                    .cpu()
+                    .float()
+                    .numpy(),  # use .float() to convert bfloat16 to float32
+                    "analysis": [
+                        {
+                            "name": v["name"],
+                            "feature_acts": v["feature_acts"][i].cpu().float().numpy(),
+                            "contexts": v["contexts"][i].cpu().numpy(),
+                        }
+                        for v in result["analysis"]
+                    ],
+                },
+                dictionary_series=cfg.exp_series,
+            )
 
         del result
         del activation_store
@@ -257,11 +289,22 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
         cache_dir=cfg.cache_dir,
         local_files_only=cfg.local_files_only,
     )
+    hf_tokenizer = AutoTokenizer.from_pretrained(
+        (
+            cfg.model_name
+            if cfg.model_from_pretrained_path is None
+            else cfg.model_from_pretrained_path
+        ),
+        trust_remote_code=True,
+        use_fast=True,
+        add_bos_token=True,
+    )
     model = HookedTransformer.from_pretrained(
         cfg.model_name,
         device=cfg.device,
         cache_dir=cfg.cache_dir,
         hf_model=hf_model,
+        tokenizer=hf_tokenizer,
         dtype=cfg.dtype,
     )
     model.eval()
