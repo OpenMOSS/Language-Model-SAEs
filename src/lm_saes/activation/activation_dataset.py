@@ -15,12 +15,12 @@ def make_activation_dataset(
     model: HookedTransformer,
     cfg: ActivationGenerationConfig
 ):
-    element_size = torch.finfo(cfg.dtype).bits / 8
-    token_act_size = element_size * cfg.d_model
+    element_size = torch.finfo(cfg.lm.dtype).bits / 8
+    token_act_size = element_size * cfg.lm.d_model
     max_tokens_per_chunk = cfg.chunk_size // token_act_size
     print_once(f"Making activation dataset with approximately {max_tokens_per_chunk} tokens per chunk")
 
-    token_source = TokenSource.from_config(model=model, cfg=cfg)
+    token_source = TokenSource.from_config(model=model, cfg=cfg.dataset)
 
     if not cfg.use_ddp or cfg.rank == 0:
         for hook_point in cfg.hook_points:
@@ -37,13 +37,13 @@ def make_activation_dataset(
     pbar = tqdm(total=total_generating_tokens, desc=f"Activation dataset Rank {cfg.rank}" if cfg.use_ddp else "Activation dataset")
 
     while n_tokens < total_generating_tokens:
-        act_dict = {hook_point: torch.empty((0, cfg.context_size, cfg.d_model), dtype=cfg.dtype, device=cfg.device) for hook_point in cfg.hook_points}
-        context = torch.empty((0, cfg.context_size), dtype=torch.long, device=cfg.device)
+        act_dict = {hook_point: torch.empty((0, cfg.dataset.context_size, cfg.lm.d_model), dtype=cfg.lm.dtype, device=cfg.lm.device) for hook_point in cfg.hook_points}
+        context = torch.empty((0, cfg.dataset.context_size), dtype=torch.long, device=cfg.lm.device)
 
         n_tokens_in_chunk = 0
 
         while n_tokens_in_chunk < max_tokens_per_chunk:
-            tokens = token_source.next(cfg.store_batch_size)
+            tokens = token_source.next(cfg.dataset.store_batch_size)
             _, cache = model.run_with_cache_until(tokens, names_filter=cfg.hook_points, until=cfg.hook_points[-1])
             for hook_point in cfg.hook_points:
                 act = cache[hook_point]
@@ -54,7 +54,7 @@ def make_activation_dataset(
 
             pbar.update(tokens.size(0) * tokens.size(1))
 
-        position = torch.arange(cfg.context_size, device=cfg.device, dtype=torch.long).unsqueeze(0).expand(context.size(0), -1)
+        position = torch.arange(cfg.dataset.context_size, device=cfg.lm.device, dtype=torch.long).unsqueeze(0).expand(context.size(0), -1)
         
         for hook_point in cfg.hook_points:
             torch.save(
