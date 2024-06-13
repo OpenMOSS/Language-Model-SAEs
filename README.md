@@ -37,9 +37,27 @@ bun install
 
 It's worth noting that `bun` is not well-supported on Windows, so you may need to use WSL or other Linux-based solutions to run the frontend, or consider using a different package manager, such as `pnpm` or `yarn`.
 
-## Training/Analyzing a Dictionary
+## Launch an Experiment
 
-We give some basic examples to show how to train a dictionary and analyze the learned dictionary in the [examples](https://github.com/OpenMOSS/Language-Model-SAEs/exapmles). You can copy the example scripts to the `exp` directory and modify them to fit your needs. More examples will be added in the future.
+We provide both a programmatic and a configuration-based way to launch an experiment. The configuration-based way is more flexible and recommended for most users. You can find the configuration files in the [examples/configuration](https://github.com/OpenMOSS/Language-Model-SAEs/examples/configuration) directory, and modify them to fit your needs. The programmatic way is more suitable for advanced users who want to customize the training process, and you can find the example scripts in the [examples/programmatic](https://github.com/OpenMOSS/Language-Model-SAEs/examples/programmatic) directory.
+
+To simply begin a training process, you can run the following command:
+
+```bash
+lm-saes train examples/configuration/train.toml
+```
+
+which will start the training process using the configuration file [examples/configuration/train.toml](https://github.com/OpenMOSS/Language-Model-SAEs/examples/configuration/train.toml).
+
+To analyze a trained dictionary, you can run the following command:
+
+```bash
+lm-saes analyze examples/configuration/analyze.toml --sae <path_to_sae_model>
+```
+
+which will start the analysis process using the configuration file [examples/configuration/analyze.toml](https://github.com/OpenMOSS/Language-Model-SAEs/examples/configuration/analyze.toml). The analysis process requires a trained SAE model, which can be obtained from the training process. You may need launch a MongoDB server to store the analysis results, and you can modify the MongoDB settings in the configuration file.
+
+Generally, our configuration-based pipeline uses outer layer settings as default of the inner layer settings. This is beneficial for easily building deeply nested configurations, where sub-configurations can be reused (such as device and dtype settings). More detail will be provided in the configuration files.
 
 ## Visualizing the Learned Dictionary
 
