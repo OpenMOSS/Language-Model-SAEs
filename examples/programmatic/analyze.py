@@ -1,10 +1,8 @@
 import torch
-import os
-import torch.distributed as dist
 from lm_saes.config import LanguageModelSAEAnalysisConfig, SAEConfig
 from lm_saes.runner import sample_feature_activations_runner
 
-cfg = LanguageModelSAEAnalysisConfig(
+cfg = LanguageModelSAEAnalysisConfig.from_flattened(dict(
     # LanguageModelConfig
     model_name = "gpt2",
 
@@ -44,6 +42,6 @@ cfg = LanguageModelSAEAnalysisConfig(
     exp_name = "L3M",
     exp_series = "default",
     exp_result_dir = "results",
-)
+))
 
 sample_feature_activations_runner(cfg)
