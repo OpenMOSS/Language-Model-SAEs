@@ -1,0 +1,41 @@
+total_analyzing_tokens = 20_000_000
+
+use_ddp = false
+device = "cuda"
+seed = 42
+dtype = "torch.float32"
+
+exp_name = "L3M"
+exp_series = "default"
+exp_result_dir = "results"
+
+[subsample]
+"top_activations" = { "proportion" = 1.0, "n_samples" = 80 }
+"subsample-0.9" = { "proportion" = 0.9, "n_samples" = 20}
+"subsample-0.8" = { "proportion" = 0.8, "n_samples" = 20}
+"subsample-0.7" = { "proportion" = 0.7, "n_samples" = 20}
+"subsample-0.5" = { "proportion" = 0.5, "n_samples" = 20}
+
+[lm]
+model_name = "gpt2"
+d_model = 768
+
+[dataset]
+dataset_path = "openwebtext"
+is_dataset_tokenized = false
+is_dataset_on_disk = true
+concat_tokens = false
+context_size = 256
+store_batch_size = 32
+
+[act_store]
+device = "cuda"
+seed = 42
+dtype = "torch.float32"
+hook_points = [ "blocks.3.hook_mlp_out",]
+use_cached_activations = false
+n_tokens_in_buffer = 500000
+
+[mongo]
+mongo_db = "mechinterp"
+mongo_uri = "mongodb://localhost:27017"
