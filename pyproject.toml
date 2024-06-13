@@ -18,7 +18,6 @@ dependencies = [
     "numpy>=1.26.4",
     "pandas>=2.2.1",
     "pymongo>=4.6.3",
-    "pytest>=8.0.1",
     "tensorboardX>=2.6.2.2",
     "torch>=2.2.0",
     "tqdm>=4.66.2",
@@ -41,6 +40,7 @@ license = {text = "MIT"}
 dev = [
     "-e file:///${PROJECT_ROOT}/TransformerLens#egg=transformer-lens",
     "mypy>=1.10.0",
+    "pytest>=8.0.1",
 ]
 
 [tool.mypy]
