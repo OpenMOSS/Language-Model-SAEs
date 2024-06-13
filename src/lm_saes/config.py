@@ -10,7 +10,7 @@ import os
 
 from lm_saes.utils.config import FlattenableModel
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-from lm_saes.utils.misc import print_once
+from lm_saes.utils.misc import convert_str_to_torch_dtype, print_once
 
 from transformer_lens.loading_from_pretrained import get_official_model_name
 
@@ -37,6 +37,11 @@ class BaseModelConfig(BaseConfig):
     def from_dict(cls, d: Dict[str, Any], **kwargs):
         d = {k: v for k, v in d.items() if k in [field.name for field in fields(cls)]}
         return cls(**d, **kwargs)
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if isinstance(self.dtype, str):
+            self.dtype = convert_str_to_torch_dtype(self.dtype)
     
 @dataclass(kw_only=True)
 class RunnerConfig(BaseConfig):
