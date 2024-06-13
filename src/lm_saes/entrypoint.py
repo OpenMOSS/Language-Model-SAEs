@@ -33,7 +33,6 @@ def entrypoint():
         import tomlkit
         with open(config_file, 'r') as f:
             config = tomlkit.load(f).unwrap()
-            print(config)
     elif config_file.endswith('.py'):
         import importlib.util
         spec = importlib.util.spec_from_file_location("__lm_sae_config__", config_file)
@@ -47,6 +46,7 @@ def entrypoint():
     if args.sae is not None:
         from lm_saes.config import SAEConfig
         config['sae'] = SAEConfig.from_pretrained(args.sae).to_dict()
+    print(config)
     
     use_ddp = "use_ddp" in config and config["use_ddp"]
     if use_ddp:
