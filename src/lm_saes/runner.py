@@ -3,6 +3,8 @@ import os
 
 import wandb
 
+from dataclasses import asdict
+
 import torch
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -29,9 +31,9 @@ from lm_saes.analysis.features_to_logits import features_to_logits
 
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
-    cfg.save_hyperparameters()
-    cfg.save_lm_config()
-    sae = SparseAutoEncoder.from_config(cfg=cfg)
+    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
 
     if cfg.finetuning:
         # Fine-tune SAE with frozen encoder weights and bias
@@ -39,42 +41,50 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
-            cfg.model_name
-            if cfg.model_from_pretrained_path is None
-            else cfg.model_from_pretrained_path
+            cfg.lm.model_name
+            if cfg.lm.model_from_pretrained_path is None
+            else cfg.lm.model_from_pretrained_path
         ),
-        cache_dir=cfg.cache_dir,
-        local_files_only=cfg.local_files_only,
-        torch_dtype=cfg.dtype,
+        cache_dir=cfg.lm.cache_dir,
+        local_files_only=cfg.lm.local_files_only,
+        torch_dtype=cfg.lm.dtype,
     )
     hf_tokenizer = AutoTokenizer.from_pretrained(
         (
-            cfg.model_name
-            if cfg.model_from_pretrained_path is None
-            else cfg.model_from_pretrained_path
+            cfg.lm.model_name
+            if cfg.lm.model_from_pretrained_path is None
+            else cfg.lm.model_from_pretrained_path
         ),
         trust_remote_code=True,
         use_fast=True,
         add_bos_token=True,
     )
+    
     model = HookedTransformer.from_pretrained(
-        cfg.model_name,
-        device=cfg.device,
-        cache_dir=cfg.cache_dir,
+        cfg.lm.model_name,
+        device=cfg.lm.device,
+        cache_dir=cfg.lm.cache_dir,
         hf_model=hf_model,
         tokenizer=hf_tokenizer,
-        dtype=cfg.dtype,
+        dtype=cfg.lm.dtype,
     )
 
     model.eval()
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg)
+    activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
-    if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+        wandb_config: dict = {
+            **asdict(cfg),
+            **asdict(cfg.sae),
+            **asdict(cfg.lm),
+        }
+        del wandb_config["sae"]
+        del wandb_config["lm"]
         wandb_run = wandb.init(
-            project=cfg.wandb_project,
-            config=cast(Any, cfg),
-            name=cfg.run_name,
-            entity=cfg.wandb_entity,
+            project=cfg.wandb.wandb_project,
+            config=wandb_config,
+            name=cfg.wandb.exp_name,
+            entity=cfg.wandb.wandb_entity,
         )
         with open(
             os.path.join(cfg.exp_result_dir, cfg.exp_name, "train_wandb_id.txt"), "w"
@@ -90,35 +100,45 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         cfg,
     )
 
-    if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
         wandb.finish()
 
     return sae
 
 
 def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg)
+    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
     hf_model = AutoModelForCausalLM.from_pretrained(
-        cfg.model_name,
-        cache_dir=cfg.cache_dir,
-        local_files_only=cfg.local_files_only,
-        torch_dtype=cfg.dtype,
+        (
+            cfg.lm.model_name
+            if cfg.lm.model_from_pretrained_path is None
+            else cfg.lm.model_from_pretrained_path
+        ),
+        cache_dir=cfg.lm.cache_dir,
+        local_files_only=cfg.lm.local_files_only,
     )
     model = HookedTransformer.from_pretrained(
-        cfg.model_name,
-        device=cfg.device,
-        cache_dir=cfg.cache_dir,
+        cfg.lm.model_name,
+        device=cfg.lm.device,
+        cache_dir=cfg.lm.cache_dir,
         hf_model=hf_model,
-        dtype=cfg.dtype,
+        dtype=cfg.lm.dtype,
     )
     model.eval()
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg)
-    if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
+    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+        wandb_config: dict = {
+            **asdict(cfg),
+            **asdict(cfg.sae),
+            **asdict(cfg.lm),
+        }
+        del wandb_config["sae"]
+        del wandb_config["lm"]
         wandb_run = wandb.init(
-            project=cfg.wandb_project,
-            config=cast(Any, cfg),
-            name=cfg.run_name,
-            entity=cfg.wandb_entity,
+            project=cfg.wandb.wandb_project,
+            config=wandb_config,
+            name=cfg.wandb.exp_name,
+            entity=cfg.wandb.wandb_entity,
         )
         with open(
             os.path.join(cfg.exp_result_dir, cfg.exp_name, "prune_wandb_id.txt"), "w"
@@ -138,31 +158,44 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
         for key, value in result.items():
             print(f"{key}: {value}")
 
-    if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
         wandb.finish()
 
 
 def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg)
+    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
     hf_model = AutoModelForCausalLM.from_pretrained(
-        cfg.model_name, cache_dir=cfg.cache_dir, local_files_only=cfg.local_files_only
+        (
+            cfg.lm.model_name
+            if cfg.lm.model_from_pretrained_path is None
+            else cfg.lm.model_from_pretrained_path
+        ),
+        cache_dir=cfg.lm.cache_dir,
+        local_files_only=cfg.lm.local_files_only,
     )
     model = HookedTransformer.from_pretrained(
-        cfg.model_name,
-        device=cfg.device,
-        cache_dir=cfg.cache_dir,
+        cfg.lm.model_name,
+        device=cfg.lm.device,
+        cache_dir=cfg.lm.cache_dir,
         hf_model=hf_model,
-        dtype=cfg.dtype,
+        dtype=cfg.lm.dtype,
     )
     model.eval()
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg)
+    activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
-    if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+        wandb_config: dict = {
+            **asdict(cfg),
+            **asdict(cfg.sae),
+            **asdict(cfg.lm),
+        }
+        del wandb_config["sae"]
+        del wandb_config["lm"]
         wandb_run = wandb.init(
-            project=cfg.wandb_project,
-            config=cast(Any, cfg),
-            name=cfg.run_name,
-            entity=cfg.wandb_entity,
+            project=cfg.wandb.wandb_project,
+            config=wandb_config,
+            name=cfg.wandb.exp_name,
+            entity=cfg.wandb.wandb_entity,
         )
         with open(
             os.path.join(cfg.exp_result_dir, cfg.exp_name, "eval_wandb_id.txt"), "w"
@@ -176,18 +209,28 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
         for key, value in result.items():
             print(f"{key}: {value}")
 
-    if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
         wandb.finish()
 
     return sae
 
 
 def activation_generation_runner(cfg: ActivationGenerationConfig):
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        (
+            cfg.lm.model_name
+            if cfg.lm.model_from_pretrained_path is None
+            else cfg.lm.model_from_pretrained_path
+        ),
+        cache_dir=cfg.lm.cache_dir,
+        local_files_only=cfg.lm.local_files_only,
+    )
     model = HookedTransformer.from_pretrained(
-        cfg.model_name,
-        device=cfg.device,
-        cache_dir=cfg.cache_dir,
-        dtype=cfg.dtype,
+        cfg.lm.model_name,
+        device=cfg.lm.device,
+        cache_dir=cfg.lm.cache_dir,
+        hf_model=hf_model,
+        dtype=cfg.lm.dtype,
     )
     model.eval()
 
@@ -195,31 +238,31 @@ def activation_generation_runner(cfg: ActivationGenerationConfig):
 
 
 def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg)
+    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
-            cfg.model_name
-            if cfg.model_from_pretrained_path is None
-            else cfg.model_from_pretrained_path
+            cfg.lm.model_name
+            if cfg.lm.model_from_pretrained_path is None
+            else cfg.lm.model_from_pretrained_path
         ),
-        cache_dir=cfg.cache_dir,
-        local_files_only=cfg.local_files_only,
+        cache_dir=cfg.lm.cache_dir,
+        local_files_only=cfg.lm.local_files_only,
     )
     model = HookedTransformer.from_pretrained(
-        cfg.model_name,
-        device=cfg.device,
-        cache_dir=cfg.cache_dir,
+        cfg.lm.model_name,
+        device=cfg.lm.device,
+        cache_dir=cfg.lm.cache_dir,
         hf_model=hf_model,
-        dtype=cfg.dtype,
+        dtype=cfg.lm.dtype,
     )
     model.eval()
 
-    client = MongoClient(cfg.mongo_uri, cfg.mongo_db)
-    client.create_dictionary(cfg.exp_name, cfg.d_sae, cfg.exp_series)
+    client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
+    client.create_dictionary(cfg.exp_name, cfg.sae.d_sae, cfg.exp_series)
 
     for chunk_id in range(cfg.n_sae_chunks):
-        activation_store = ActivationStore.from_config(model=model, cfg=cfg)
+        activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
         result = sample_feature_activations(sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks)
 
         for i in range(len(result["index"].cpu().numpy().tolist())):
@@ -246,29 +289,29 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
 
 @torch.no_grad()
 def features_to_logits_runner(cfg: FeaturesDecoderConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg)
+    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
-            cfg.model_name
-            if cfg.model_from_pretrained_path is None
-            else cfg.model_from_pretrained_path
+            cfg.lm.model_name
+            if cfg.lm.model_from_pretrained_path is None
+            else cfg.lm.model_from_pretrained_path
         ),
-        cache_dir=cfg.cache_dir,
-        local_files_only=cfg.local_files_only,
+        cache_dir=cfg.lm.cache_dir,
+        local_files_only=cfg.lm.local_files_only,
     )
     model = HookedTransformer.from_pretrained(
-        cfg.model_name,
-        device=cfg.device,
-        cache_dir=cfg.cache_dir,
+        cfg.lm.model_name,
+        device=cfg.lm.device,
+        cache_dir=cfg.lm.cache_dir,
         hf_model=hf_model,
-        dtype=cfg.dtype,
+        dtype=cfg.lm.dtype,
     )
     model.eval()
 
     result_dict = features_to_logits(sae, model, cfg)
 
-    client = MongoClient(cfg.mongo_uri, cfg.mongo_db)
+    client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
 
     for feature_index, logits in result_dict.items():
         sorted_indeces = torch.argsort(logits)

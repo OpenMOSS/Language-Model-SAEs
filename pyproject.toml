@@ -32,6 +32,7 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "jaxtyping>=0.2.25",
     "safetensors>=0.4.3",
+    "pydantic>=2.7.3",
 ]
 requires-python = "==3.10.*"
 readme = "README.md"
@@ -41,6 +42,9 @@ license = {text = "MIT"}
 dev = [
     "-e file:///${PROJECT_ROOT}/TransformerLens#egg=transformer-lens",
     "mypy>=1.10.0",
+    "ipykernel>=6.29.4",
+    "nbformat>=5.10.4",
+    "kaleido==0.2.1",
 ]
 
 [tool.mypy]

@@ -8,18 +8,19 @@ import torch.distributed as dist
 
 import os
 
+from lm_saes.utils.config import FlattenableModel
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.misc import print_once
 
 from transformer_lens.loading_from_pretrained import get_official_model_name
 
 
-@dataclass
-class BaseConfig:
+@dataclass(kw_only=True)
+class BaseConfig(FlattenableModel):
     def __post_init__(self):
         pass
 
-@dataclass
+@dataclass(kw_only=True)
 class BaseModelConfig(BaseConfig):
     device: str = "cpu"
     seed: int = 42
@@ -37,7 +38,7 @@ class BaseModelConfig(BaseConfig):
         d = {k: v for k, v in d.items() if k in [field.name for field in fields(cls)]}
         return cls(**d, **kwargs)
     
-@dataclass
+@dataclass(kw_only=True)
 class RunnerConfig(BaseConfig):
     use_ddp: bool = False
 
@@ -59,7 +60,7 @@ class RunnerConfig(BaseConfig):
             os.makedirs(os.path.join(self.exp_result_dir, self.exp_name), exist_ok=True)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class LanguageModelConfig(BaseModelConfig):
     model_name: str = "gpt2"
     model_from_pretrained_path: Optional[str] = None
@@ -84,19 +85,14 @@ class LanguageModelConfig(BaseModelConfig):
             lm_config = json.load(f)
         return LanguageModelConfig.from_dict(lm_config, **kwargs)
 
-    def save_lm_config(self, sae_path: Optional[str] = None):
-        if sae_path is None:
-            if isinstance(self, RunnerConfig):
-                sae_path = os.path.join(self.exp_result_dir, self.exp_name)
-            else:
-                raise ValueError("sae_path must be specified if not called from a RunnerConfig.")
+    def save_lm_config(self, sae_path: str):
         assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save LanguageModelConfig."
         with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
             json.dump(self.to_dict(), f, indent=4)        
 
 
-@dataclass
-class TextDatasetConfig(BaseModelConfig, RunnerConfig):
+@dataclass(kw_only=True)
+class TextDatasetConfig(RunnerConfig):
     dataset_path: List[str] = 'openwebtext' # type: ignore
     cache_dir: Optional[str] = None
     is_dataset_tokenized: bool = False
@@ -120,8 +116,10 @@ class TextDatasetConfig(BaseModelConfig, RunnerConfig):
         assert len(self.concat_tokens) == len(self.dataset_path), "Number of concat_tokens must match number of dataset paths"
 
 
-@dataclass
-class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
+@dataclass(kw_only=True)
+class ActivationStoreConfig(BaseModelConfig, RunnerConfig):
+    lm: LanguageModelConfig
+    dataset: TextDatasetConfig
     hook_points: List[str] = field(default_factory=lambda: ["blocks.0.hook_resid_pre"])
     """ Hook points to store activations from, i.e. the layer output of which is used for training/evaluating the dictionary. Will run until the last hook point in the list, so make sure to order them correctly. """
 
@@ -135,25 +133,19 @@ class ActivationStoreConfig(LanguageModelConfig, TextDatasetConfig):
         # Autofill cached_activations_path unless the user overrode it
         if self.cached_activations_path is None:
             self.cached_activations_path = [
-                f"activations/{path.split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
-                for path in self.dataset_path
+                f"activations/{path.split('/')[-1]}/{self.lm.model_name.replace('/', '_')}_{self.dataset.context_size}"
+                for path in self.dataset.dataset_path
             ]
 
 
-@dataclass
+@dataclass(kw_only=True)
 class WandbConfig(BaseConfig):
     log_to_wandb: bool = True
     wandb_project: str = "gpt2-sae-training"
-    run_name: Optional[str] = None
+    exp_name: Optional[str] = None
     wandb_entity: Optional[str] = None
 
-    def __post_init__(self):
-        super().__post_init__()
-        if self.run_name is None and isinstance(self, RunnerConfig):
-            self.run_name = self.exp_name
-
-
-@dataclass
+@dataclass(kw_only=True)
 class SAEConfig(BaseModelConfig):
     """
     Configuration for training or running a sparse autoencoder.
@@ -223,12 +215,7 @@ class SAEConfig(BaseModelConfig):
         }
         return hyperparams
     
-    def save_hyperparameters(self, sae_path: Optional[str] = None, remove_loading_info: bool = True):
-        if sae_path is None:
-            if isinstance(self, RunnerConfig):
-                sae_path = os.path.join(self.exp_result_dir, self.exp_name)
-            else:
-                raise ValueError("sae_path must be specified if not called from a RunnerConfig.")
+    def save_hyperparameters(self, sae_path: str, remove_loading_info: bool = True):
         assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
         d = self.to_dict()
         if remove_loading_info:
@@ -237,25 +224,30 @@ class SAEConfig(BaseModelConfig):
         with open(os.path.join(sae_path, "hyperparams.json"), "w") as f:
             json.dump(d, f, indent=4)
     
-@dataclass
+@dataclass(kw_only=True)
 class OpenAIConfig(BaseConfig):
     openai_api_key: str
     openai_base_url: str
 
-@dataclass
-class AutoInterpConfig(SAEConfig, LanguageModelConfig, OpenAIConfig):
+@dataclass(kw_only=True)
+class AutoInterpConfig(BaseConfig):
+    sae: SAEConfig
+    lm: LanguageModelConfig
+    openai: OpenAIConfig
     num_sample: int = 10
     p: float = 0.7
     num_left_token: int = 10
     num_right_token: int = 5
 
 
-@dataclass
-class LanguageModelSAERunnerConfig(SAEConfig, WandbConfig, ActivationStoreConfig, RunnerConfig):
-    pass
+@dataclass(kw_only=True)
+class LanguageModelSAERunnerConfig(RunnerConfig):
+    sae: SAEConfig
+    lm: LanguageModelConfig
+    act_store: ActivationStoreConfig
+    wandb: WandbConfig
 
-
-@dataclass
+@dataclass(kw_only=True)
 class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     """
     Configuration for training a sparse autoencoder on a language model.
@@ -312,11 +304,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
         total_training_steps = self.total_training_tokens // self.effective_batch_size
         print_once(f"Total training steps: {total_training_steps}")
 
-        if self.use_ghost_grads:
-            print_once("Using Ghost Grads.")
-
-
-@dataclass
+@dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
     """
     Configuration for pruning a sparse autoencoder on a language model.
@@ -330,8 +318,11 @@ class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
     decoder_norm_threshold: float = 0.99
 
 
-@dataclass
-class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
+@dataclass(kw_only=True)
+class ActivationGenerationConfig(RunnerConfig):
+    lm: LanguageModelConfig
+    dataset: TextDatasetConfig
+
     hook_points: list[str] = field(default_factory=list)
 
     activation_save_path: str = None # type: ignore
@@ -347,16 +338,21 @@ class ActivationGenerationConfig(LanguageModelConfig, TextDatasetConfig):
             self.activation_save_path = f"activations/{self.dataset_path[0].split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
         os.makedirs(self.activation_save_path, exist_ok=True)
 
-@dataclass
+@dataclass(kw_only=True)
 class MongoConfig(BaseConfig):
     mongo_uri: str = "mongodb://localhost:27017"
     mongo_db: str = "mechinterp"
 
-@dataclass
-class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConfig, RunnerConfig):
+@dataclass(kw_only=True)
+class LanguageModelSAEAnalysisConfig(RunnerConfig):
     """
     Configuration for analyzing a sparse autoencoder on a language model.
     """
+
+    sae: SAEConfig
+    lm: LanguageModelConfig
+    act_store: ActivationStoreConfig
+    mongo: MongoConfig
 
     total_analyzing_tokens: int = 300_000_000
     enable_sampling: bool = (
@@ -369,9 +365,12 @@ class LanguageModelSAEAnalysisConfig(SAEConfig, ActivationStoreConfig, MongoConf
 
     def __post_init__(self):
         super().__post_init__()
-        assert self.d_sae % self.n_sae_chunks == 0, f"d_sae ({self.d_sae}) must be divisible by n_sae_chunks ({self.n_sae_chunks})"
+        assert self.sae.d_sae % self.n_sae_chunks == 0, f"d_sae ({self.sae.d_sae}) must be divisible by n_sae_chunks ({self.n_sae_chunks})"
 
 
-@dataclass
-class FeaturesDecoderConfig(SAEConfig, LanguageModelConfig, MongoConfig, RunnerConfig):
+@dataclass(kw_only=True)
+class FeaturesDecoderConfig(RunnerConfig):
+    sae: SAEConfig
+    lm: LanguageModelConfig
+    mongo: MongoConfig
     top: int = 10
