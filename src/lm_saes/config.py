@@ -322,6 +322,12 @@ class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
     dead_feature_max_act_threshold: float = 1.0
     decoder_norm_threshold: float = 0.99
 
+    def __post_init__(self):
+        super().__post_init__()
+
+        if not self.use_ddp or self.rank == 0:
+            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "checkpoints"), exist_ok=True)
+
 
 @dataclass(kw_only=True)
 class ActivationGenerationConfig(RunnerConfig):
