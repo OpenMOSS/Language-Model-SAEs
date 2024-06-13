@@ -107,6 +107,8 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
 
 
 def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
+    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
