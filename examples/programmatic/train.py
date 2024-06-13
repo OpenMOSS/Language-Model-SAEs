@@ -2,7 +2,7 @@ import torch
 from lm_saes.config import LanguageModelSAETrainingConfig
 from lm_saes.runner import language_model_sae_runner
 
-cfg = LanguageModelSAETrainingConfig(
+cfg = LanguageModelSAETrainingConfig.from_flattened(dict(
     # LanguageModelConfig
     model_name = "gpt2",                            # The model name or path for the pre-trained model.
     d_model = 768,                                  # The hidden size of the model.
@@ -58,6 +58,6 @@ cfg = LanguageModelSAETrainingConfig(
     exp_name = "L3M",                              # The experiment name. Would be used for creating exp folder (which may contain checkpoints and analysis results) and setting wandb run name. 
     exp_series = "default",
     exp_result_dir = "results"
-)
+))
 
 sparse_autoencoder = language_model_sae_runner(cfg)
