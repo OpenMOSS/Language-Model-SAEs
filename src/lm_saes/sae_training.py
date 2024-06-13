@@ -302,7 +302,7 @@ def prune_sae(
     if not cfg.use_ddp or cfg.rank == 0:
         sae.feature_act_mask.data = ((
             act_times > cfg.dead_feature_threshold * cfg.total_training_tokens
-        ) & (max_acts > cfg.dead_feature_max_act_threshold) & (sae.decoder.norm(p=2, dim=1) >= cfg.decoder_norm_threshold)).float()
+        ) & (max_acts > cfg.dead_feature_max_act_threshold) & (sae.decoder.norm(p=2, dim=1) >= cfg.decoder_norm_threshold)).to(cfg.sae.dtype)
         sae.feature_act_mask.requires_grad_(False)
 
         if cfg.wandb.log_to_wandb:
