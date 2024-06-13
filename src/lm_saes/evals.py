@@ -22,7 +22,7 @@ def run_evals(
     n_training_steps: int,
 ):
     ### Evals
-    eval_tokens = activation_store.next_tokens(cfg.store_batch_size)
+    eval_tokens = activation_store.next_tokens(cfg.act_store.dataset.store_batch_size)
 
     # Get Reconstruction Score
     losses_df = recons_loss_batched(
@@ -42,12 +42,12 @@ def run_evals(
     _, cache = model.run_with_cache_until(
         eval_tokens,
         prepend_bos=False,
-        names_filter=[cfg.hook_point_in, cfg.hook_point_out],
-        until=cfg.hook_point_out,
+        names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
+        until=cfg.sae.hook_point_out,
     )
 
     # get act
-    original_act_in, original_act_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
+    original_act_in, original_act_out = cache[cfg.sae.hook_point_in], cache[cfg.sae.hook_point_out]
 
     feature_acts = sae.encode(original_act_in, label=original_act_out)
     reconstructed = sae.decode(feature_acts)
@@ -81,7 +81,7 @@ def run_evals(
         "metrics/ce_loss_with_ablation": zero_abl_loss,
     }
 
-    if cfg.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
         wandb.log(
             metrics,
             step=n_training_steps + 1,
@@ -100,7 +100,7 @@ def recons_loss_batched(
     if (not cfg.use_ddp or cfg.rank == 0):
         pbar = tqdm(total=n_batches, desc="Evaluation", smoothing=0.01)
     for _ in range(n_batches):
-        batch_tokens = activation_store.next_tokens(cfg.store_batch_size)
+        batch_tokens = activation_store.next_tokens(cfg.act_store.dataset.store_batch_size)
         assert batch_tokens is not None, "Not enough tokens in the store"
         score, loss, recons_loss, zero_abl_loss = get_recons_loss(
             model, sae, cfg, batch_tokens
@@ -144,10 +144,10 @@ def get_recons_loss(
     _, cache = model.run_with_cache_until(
         batch_tokens,
         prepend_bos=False,
-        names_filter=[cfg.hook_point_in, cfg.hook_point_out],
-        until=cfg.hook_point_out,
+        names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
+        until=cfg.sae.hook_point_out,
     )
-    activations_in, activations_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
+    activations_in, activations_out = cache[cfg.sae.hook_point_in], cache[cfg.sae.hook_point_out]
     replacements = sae.forward(activations_in, label=activations_out).to(activations_out.dtype)
 
     def replacement_hook(activations: torch.Tensor, hook: Any):
@@ -156,11 +156,11 @@ def get_recons_loss(
     recons_loss: torch.Tensor = model.run_with_hooks(
         batch_tokens,
         return_type="loss",
-        fwd_hooks=[(cfg.hook_point_out, replacement_hook)],
+        fwd_hooks=[(cfg.sae.hook_point_out, replacement_hook)],
     )
 
     zero_abl_loss: torch.Tensor = model.run_with_hooks(
-        batch_tokens, return_type="loss", fwd_hooks=[(cfg.hook_point_out, zero_ablate_hook)]
+        batch_tokens, return_type="loss", fwd_hooks=[(cfg.sae.hook_point_out, zero_ablate_hook)]
     )
 
     score = (zero_abl_loss - recons_loss) / (zero_abl_loss - loss)

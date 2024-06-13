@@ -85,7 +85,7 @@ class ActivationStore:
             )
         return ActivationStore(
             act_source=act_source,
-            d_model=cfg.d_model,
+            d_model=cfg.lm.d_model,
             n_tokens_in_buffer=cfg.n_tokens_in_buffer,
             device=cfg.device,
             use_ddp=cfg.use_ddp,

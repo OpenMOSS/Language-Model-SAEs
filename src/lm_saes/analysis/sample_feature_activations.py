@@ -28,10 +28,10 @@ def sample_feature_activations(
 ):
     if cfg.use_ddp:
         raise ValueError("Sampling feature activations does not support DDP yet")
-    assert cfg.d_sae is not None # Make mypy happy
+    assert cfg.sae.d_sae is not None # Make mypy happy
 
     total_analyzing_tokens = cfg.total_analyzing_tokens
-    total_analyzing_steps = total_analyzing_tokens // cfg.store_batch_size // cfg.context_size
+    total_analyzing_steps = total_analyzing_tokens // cfg.act_store.dataset.store_batch_size // cfg.act_store.dataset.context_size
 
     print_once(f"Total Analyzing Tokens: {total_analyzing_tokens}")
     print_once(f"Total Analyzing Steps: {total_analyzing_steps}")
@@ -43,27 +43,27 @@ def sample_feature_activations(
 
     pbar = tqdm(total=total_analyzing_tokens, desc=f"Sampling activations of chunk {sae_chunk_id} of {n_sae_chunks}", smoothing=0.01)
 
-    d_sae = cfg.d_sae // n_sae_chunks
+    d_sae = cfg.sae.d_sae // n_sae_chunks
     start_index = sae_chunk_id * d_sae
     end_index = (sae_chunk_id + 1) * d_sae
 
     sample_result = {k: {
-        "elt": torch.empty((0, d_sae), dtype=cfg.dtype, device=cfg.device),
-        "feature_acts": torch.empty((0, d_sae, cfg.context_size), dtype=cfg.dtype, device=cfg.device),
-        "contexts": torch.empty((0, d_sae, cfg.context_size), dtype=torch.int32, device=cfg.device),
+        "elt": torch.empty((0, d_sae), dtype=cfg.sae.dtype, device=cfg.sae.device),
+        "feature_acts": torch.empty((0, d_sae, cfg.act_store.dataset.context_size), dtype=cfg.sae.dtype, device=cfg.sae.device),
+        "contexts": torch.empty((0, d_sae, cfg.act_store.dataset.context_size), dtype=torch.int32, device=cfg.sae.device),
     } for k in cfg.subsample.keys()}
-    act_times = torch.zeros((d_sae,), dtype=torch.long, device=cfg.device)
-    feature_acts_all = [torch.empty((0,), dtype=cfg.dtype, device=cfg.device) for _ in range(d_sae)]
-    max_feature_acts = torch.zeros((d_sae,), dtype=cfg.dtype, device=cfg.device)
+    act_times = torch.zeros((d_sae,), dtype=torch.long, device=cfg.sae.device)
+    feature_acts_all = [torch.empty((0,), dtype=cfg.sae.dtype, device=cfg.sae.device) for _ in range(d_sae)]
+    max_feature_acts = torch.zeros((d_sae,), dtype=cfg.sae.dtype, device=cfg.sae.device)
 
     while n_training_tokens < total_analyzing_tokens:
-        batch = activation_store.next_tokens(cfg.store_batch_size)
+        batch = activation_store.next_tokens(cfg.act_store.dataset.store_batch_size)
 
         if batch is None:
             raise ValueError("Not enough tokens to sample")
 
-        _, cache = model.run_with_cache_until(batch, names_filter=[cfg.hook_point_in, cfg.hook_point_out], until=cfg.hook_point_out)
-        activation_in, activation_out = cache[cfg.hook_point_in], cache[cfg.hook_point_out]
+        _, cache = model.run_with_cache_until(batch, names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out], until=cfg.sae.hook_point_out)
+        activation_in, activation_out = cache[cfg.sae.hook_point_in], cache[cfg.sae.hook_point_out]
 
         feature_acts = sae.encode(activation_in, label=activation_out)[..., start_index: end_index]
 
@@ -73,7 +73,7 @@ def sample_feature_activations(
 
             if cfg.enable_sampling:
                 weights = feature_acts.clamp(min=0.0).pow(cfg.sample_weight_exponent).max(dim=1).values
-                elt = torch.rand(batch.size(0), d_sae, device=cfg.device, dtype=cfg.dtype).log() / weights
+                elt = torch.rand(batch.size(0), d_sae, device=cfg.sae.device, dtype=cfg.sae.dtype).log() / weights
                 elt[weights == 0.0] = -torch.inf
             else:
                 elt = feature_acts.clamp(min=0.0).max(dim=1).values
@@ -107,7 +107,7 @@ def sample_feature_activations(
 
         max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
 
-        n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.device, dtype=torch.int)
+        n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.sae.device, dtype=torch.int)
         n_training_tokens += cast(int, n_tokens_current.item())
         n_training_steps += 1
 
@@ -120,7 +120,7 @@ def sample_feature_activations(
     } for k1, v1 in sample_result.items()}
 
     result = {
-        "index": torch.arange(start_index, end_index, device=cfg.device, dtype=torch.int32),
+        "index": torch.arange(start_index, end_index, device=cfg.sae.device, dtype=torch.int32),
         "act_times": act_times,
         "feature_acts_all": feature_acts_all,
         "max_feature_acts": max_feature_acts,
