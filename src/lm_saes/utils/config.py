@@ -212,3 +212,4 @@ class FlattenableModel:
                 C(b=B(a=A(a1=1, a2='2'), b1=3), c=4)
         """
         return from_flattened(cls, data)
+    
