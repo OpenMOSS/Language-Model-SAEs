@@ -35,12 +35,12 @@ class TokenActivationSource(ActivationSource):
     An activation source that generates activations from a token source.
     """
     def __init__(self, model: HookedTransformer, cfg: ActivationStoreConfig):
-        self.token_source = TokenSource.from_config(model=model, cfg=cfg)
+        self.token_source = TokenSource.from_config(model=model, cfg=cfg.dataset)
         self.model = model
         self.cfg = cfg
     
     def next(self) -> Dict[str, torch.Tensor] | None:
-        tokens = self.token_source.next(self.cfg.store_batch_size)
+        tokens = self.token_source.next(self.cfg.dataset.store_batch_size)
 
         if tokens is None:
             return None
@@ -70,7 +70,7 @@ class CachedActivationSource(ActivationSource):
             self.chunk_paths = [p for i, p in enumerate(self.chunk_paths) if i % cfg.world_size == cfg.rank]
         random.shuffle(self.chunk_paths)
 
-        self.token_buffer = torch.empty((0, cfg.context_size), dtype=torch.long, device=cfg.device)
+        self.token_buffer = torch.empty((0, cfg.dataset.context_size), dtype=torch.long, device=cfg.device)
     
     def _load_next_chunk(self):
         if len(self.chunk_paths) == 0:

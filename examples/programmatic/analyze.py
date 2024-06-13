@@ -1,17 +1,8 @@
 import torch
-import os
-import torch.distributed as dist
 from lm_saes.config import LanguageModelSAEAnalysisConfig, SAEConfig
 from lm_saes.runner import sample_feature_activations_runner
 
-use_ddp = False
-
-if use_ddp:
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    dist.init_process_group(backend='nccl')
-    torch.cuda.set_device(dist.get_rank())
-
-cfg = LanguageModelSAEAnalysisConfig(
+cfg = LanguageModelSAEAnalysisConfig.from_flattened(dict(
     # LanguageModelConfig
     model_name = "gpt2",
 
@@ -44,7 +35,6 @@ cfg = LanguageModelSAEAnalysisConfig(
     mongo_uri="mongodb://localhost:27017",  # MongoDB URI.
 
     # RunnerConfig
-    use_ddp = use_ddp,
     device = "cuda",
     seed = 42,
     dtype = torch.float32,
@@ -52,10 +42,6 @@ cfg = LanguageModelSAEAnalysisConfig(
     exp_name = "L3M",
     exp_series = "default",
     exp_result_dir = "results",
-)
+))
 
 sample_feature_activations_runner(cfg)
-
-if use_ddp:
-    dist.destroy_process_group()
-    torch.cuda.empty_cache()

@@ -1,0 +1,60 @@
+use_ddp = false
+exp_name = "L3M"
+exp_result_dir = "results"
+device = "cuda"
+seed = 42
+dtype = "torch.float32"
+total_training_tokens = 1_600_000_000
+lr = 4e-4
+betas = [ 0.0, 0.9999,]
+lr_scheduler_name = "constantwithwarmup"
+lr_warm_up_steps = 5000
+lr_cool_down_steps = 10000
+train_batch_size = 4096
+finetuning = false
+feature_sampling_window = 1000
+dead_feature_window = 5000
+dead_feature_threshold = 1e-6
+eval_frequency = 1000
+log_frequency = 100
+n_checkpoints = 10
+
+
+[sae]
+hook_point_in = "blocks.3.hook_mlp_out"
+hook_point_out = "blocks.3.hook_mlp_out"
+strict_loading = true
+use_decoder_bias = false
+apply_decoder_bias_to_pre_encoder = true
+decoder_bias_init_method = "geometric_median"
+expansion_factor = 32
+d_model = 768
+norm_activation = "token-wise"
+decoder_exactly_unit_norm = false
+use_glu_encoder = false
+l1_coefficient = 1.2e-4
+lp = 1
+use_ghost_grads = true
+
+[lm]
+model_name = "gpt2"
+d_model = 768
+
+[dataset]
+dataset_path = "openwebtext"
+is_dataset_on_disk = false
+concat_tokens = false
+context_size = 256
+store_batch_size = 32
+
+[act_store]
+device = "cuda"
+seed = 42
+dtype = "torch.float32"
+hook_points = [ "blocks.3.hook_mlp_out",]
+use_cached_activations = false
+n_tokens_in_buffer = 500000
+
+[wandb]
+log_to_wandb = true
+wandb_project = "gpt2-sae"

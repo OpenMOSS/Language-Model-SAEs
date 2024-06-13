@@ -1,24 +1,14 @@
-import os
-import sys
 import torch
-import torch.distributed as dist
 from lm_saes.config import LanguageModelSAETrainingConfig
 from lm_saes.runner import language_model_sae_runner
 
-use_ddp = False
-
-if use_ddp:
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    dist.init_process_group(backend='nccl')
-    torch.cuda.set_device(dist.get_rank())
-
-cfg = LanguageModelSAETrainingConfig(
+cfg = LanguageModelSAETrainingConfig.from_flattened(dict(
     # LanguageModelConfig
     model_name = "gpt2",                            # The model name or path for the pre-trained model.
     d_model = 768,                                  # The hidden size of the model.
 
     # TextDatasetConfig
-    dataset_path = "data/openwebtext",              # The corpus name or path. Each of a data record should contain (and may only contain) a "text" field.
+    dataset_path = "openwebtext",                   # The corpus name or path. Each of a data record should contain (and may only contain) a "text" field.
     is_dataset_tokenized = False,                   # Whether the dataset is tokenized.
     is_dataset_on_disk = True,                      # Whether the dataset is on disk. If not on disk, `datasets.load_dataset`` will be used to load the dataset, and the train split will be used for training.
     concat_tokens = False,                          # Whether to concatenate tokens into a single sequence. If False, only data record with length of non-padding tokens larger than `context_size` will be used.
@@ -61,7 +51,6 @@ cfg = LanguageModelSAETrainingConfig(
     wandb_project= "gpt2-sae",                      # The wandb project name.
     
     # RunnerConfig
-    use_ddp = use_ddp,                              # Whether to use the DistributedDataParallel.
     device = "cuda",                                # The device to place all torch tensors.
     seed = 42,                                      # The random seed.
     dtype = torch.float32,                          # The torch data type of non-integer tensors.
@@ -69,9 +58,6 @@ cfg = LanguageModelSAETrainingConfig(
     exp_name = "L3M",                              # The experiment name. Would be used for creating exp folder (which may contain checkpoints and analysis results) and setting wandb run name. 
     exp_series = "default",
     exp_result_dir = "results"
-)
+))
 
 sparse_autoencoder = language_model_sae_runner(cfg)
-
-if use_ddp:
-    dist.destroy_process_group()

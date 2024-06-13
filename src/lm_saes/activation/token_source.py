@@ -16,7 +16,6 @@ class TokenSource:
         is_dataset_tokenized: bool,
         concat_tokens: list[bool],
         seq_len: int,
-        device: str,
         sample_probs: list[float],
     ):
         self.dataloader = dataloader
@@ -24,7 +23,7 @@ class TokenSource:
         self.is_dataset_tokenized = is_dataset_tokenized
         self.concat_tokens = concat_tokens
         self.seq_len = seq_len
-        self.device = device
+        self.device = model.cfg.device
 
         self.data_iter = [iter(dataloader) for dataloader in self.dataloader]
 
@@ -121,37 +120,5 @@ class TokenSource:
             is_dataset_tokenized=cfg.is_dataset_tokenized,
             concat_tokens=cfg.concat_tokens,
             seq_len=cfg.context_size,
-            device=cfg.device,
             sample_probs=cfg.sample_probs,
         )
-
-
-if __name__ == "__main__":
-    from lm_saes.config import LanguageModelSAETrainingConfig
-    from transformer_lens import HookedTransformer
-    import os
-
-
-    if os.path.exists("./results/test"):
-        import shutil
-
-        shutil.rmtree("./results/test")
-
-
-    cfg = LanguageModelSAETrainingConfig(
-        dataset_path=[],
-        concat_tokens=[True, False],
-        sample_probs=[0.5, 0.5],
-        is_dataset_on_disk=True,
-        is_dataset_tokenized=False,
-        store_batch_size=1,
-        context_size=16,
-        device="cuda",
-        use_ddp=False,
-    )
-
-    model = HookedTransformer.from_pretrained("gpt2", cfg.device)
-    token_source = TokenSource.from_config(model, cfg)
-
-    for i in range(5):
-        print(model.tokenizer.batch_decode(token_source.next(2).cpu().numpy()))
