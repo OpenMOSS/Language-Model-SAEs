@@ -696,7 +696,7 @@ class HookedRootModule(nn.Module):
         names_filter: NamesFilter = None,
         retain_grad: bool = False,
         cache: Optional[dict] = None,
-    ) -> Tuple[dict, list, list]:
+    ) -> Tuple[dict, list]:
         """Creates hooks to keep references to activations. Note: It does not add the hooks to the model.
 
         Args:
@@ -788,13 +788,13 @@ class HookedRootModule(nn.Module):
             **model_kwargs: Keyword arguments for the model.
         """
         pass_module_list: List[nn.Module] = []
-        fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
         hook_handles: List[hooks.RemovableHandle] = []
 
         def pass_hook(module: nn.Module, module_input: Any, module_output: Any):
             pass_module_list.append(module)
 
         def convert_hook(tensor: torch.Tensor, hook: HookPoint):
+            assert hook.name is not None # Make mypy happy
             pass_param_set = set()
             hook_ancestors = [module for module in self.modules() if module == self or hook.name.startswith(module.name)]
             for module in pass_module_list + hook_ancestors:
@@ -813,12 +813,11 @@ class HookedRootModule(nn.Module):
         for _, module in self.named_modules():
             hook_handles.append(module.register_forward_hook(pass_hook))
 
-        with fake_mode:
-            with self.hooks(fwd_hooks=[(last_hook, convert_hook)]):
-                try:
-                    self(*model_args, **model_kwargs)
-                except StopIteration:
-                    pass
+        with self.hooks(fwd_hooks=[(last_hook, convert_hook)]):
+            try:
+                self(*model_args, **model_kwargs)
+            except StopIteration:
+                pass
 
         for handle in hook_handles:
             handle.remove()
@@ -895,6 +894,47 @@ class HookedRootModule(nn.Module):
                 model_out = e.tensor
 
         return model_out, cache_dict
+    
+    @contextmanager
+    def mount_hooked_modules(
+        self,
+        hooked_modules: List[Tuple[str, str, "HookedRootModule"]],
+    ):
+        """
+        A context manager for adding child hooked modules at specified hook points.
+
+        Args:
+            hooked_modules: List[Tuple[name, module_name, module]], where name is the name of a
+                hook point, module_name is the name of the module to add (which will be used to 
+                mount the module inside the hook point), and module is the module instance to add.
+                A filter function as name is not allowed, since unexpected behavior may occur when
+                the same module is mounted at multiple hook points.
+        """
+
+        for name, module_name, module in hooked_modules:
+            hook_point = self.mod_dict[name]
+            assert isinstance(
+                hook_point, HookPoint
+            )
+            hook_point.add_module(module_name, module)
+
+        self.setup()
+
+        try:
+            yield self
+        finally:
+            for name, module_name, module in hooked_modules:
+                if isinstance(name, str):
+                    hook_point = self.mod_dict[name]
+                    delattr(hook_point, module_name)
+                else:
+                    for hook_point_name, hp in self.hook_dict.items():
+                        if name(hook_point_name):
+                            delattr(hp, module_name)
+                module.setup()
+            self.setup()
+        
+
 
 
 # %%
