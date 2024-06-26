@@ -96,13 +96,14 @@ class AbstractAttention(ABC, nn.Module):
         if self.cfg.scale_attn_by_inverse_layer_idx:
             assert self.layer_id is not None  # keep mypy happy
             self.attn_scale *= self.layer_id + 1
-
+        
         self.hook_k = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_q = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_v = HookPoint()  # [batch, pos, head_index, d_head]
-        self.hook_z = HookPoint()  # [batch, pos, head_index, d_head]
-        self.hook_attn_scores = HookPoint()  # [batch, head_index, query_pos, key_pos]
-        self.hook_pattern = HookPoint()  # [batch, head_index, query_pos, key_pos]
+        if not self.cfg.use_flash_attn:
+            self.hook_z = HookPoint()  # [batch, pos, head_index, d_head]
+            self.hook_attn_scores = HookPoint()  # [batch, head_index, query_pos, key_pos]
+            self.hook_pattern = HookPoint()  # [batch, head_index, query_pos, key_pos]
         self.hook_result = HookPoint()  # [batch, pos, head_index, d_model]
 
         # See HookedTransformerConfig for more details.
@@ -199,41 +200,44 @@ class AbstractAttention(ABC, nn.Module):
             # If using 16 bits, increase the precision to avoid numerical instabilities
             q = q.to(torch.float32)
             k = k.to(torch.float32)
-
-        attn_scores = self.calculate_attention_scores(
-            q, k
-        )  # [batch, head_index, query_pos, key_pos]
-
-        if self.cfg.positional_embedding_type == "alibi":
-            query_ctx = attn_scores.size(-2)
-            # The key context length is the number of positions in the past - this includes all positions in the cache
-            key_ctx = attn_scores.size(-1)
-
-            # only recompute when necessary to increase efficiency.
-            if self.alibi is None or key_ctx > self.alibi.size(-1):
-                self.alibi = AbstractAttention.create_alibi_bias(
-                    self.cfg.n_heads, key_ctx, self.cfg.device
-                )
-
-            attn_scores += self.alibi[
-                :, :query_ctx, :key_ctx
-            ]  # [batch, head_index, query_pos, key_pos]
-
-        if self.cfg.attention_dir == "causal":
-            # If causal attention, we mask it to only attend backwards. If bidirectional, we don't mask.
-            attn_scores = self.apply_causal_mask(
-                attn_scores, kv_cache_pos_offset, attention_mask
+        if self.cfg.use_flash_attn:
+            z = F.scaled_dot_product_attention(q.transpose(1,2), k.transpose(1,2), v.transpose(1,2), attn_mask=attention_mask, is_causal=True 
+                                               if self.cfg.attention_dir == "causal" else False).transpose(1,2)
+        else:
+            attn_scores = self.calculate_attention_scores(
+                q, k
             )  # [batch, head_index, query_pos, key_pos]
-        if additive_attention_mask is not None:
-            attn_scores += additive_attention_mask
 
-        attn_scores = self.hook_attn_scores(attn_scores)
-        pattern = F.softmax(attn_scores, dim=-1)
-        pattern = torch.where(torch.isnan(pattern), torch.zeros_like(pattern), pattern)
-        pattern = self.hook_pattern(pattern)  # [batch, head_index, query_pos, key_pos]
-        pattern = pattern.to(self.cfg.dtype)
-        pattern = pattern.to(v.device)
-        z = self.calculate_z_scores(v, pattern)  # [batch, pos, head_index, d_head]
+            if self.cfg.positional_embedding_type == "alibi":
+                query_ctx = attn_scores.size(-2)
+                # The key context length is the number of positions in the past - this includes all positions in the cache
+                key_ctx = attn_scores.size(-1)
+
+                # only recompute when necessary to increase efficiency.
+                if self.alibi is None or key_ctx > self.alibi.size(-1):
+                    self.alibi = AbstractAttention.create_alibi_bias(
+                        self.cfg.n_heads, key_ctx, self.cfg.device
+                    )
+
+                attn_scores += self.alibi[
+                    :, :query_ctx, :key_ctx
+                ]  # [batch, head_index, query_pos, key_pos]
+
+            if self.cfg.attention_dir == "causal":
+                # If causal attention, we mask it to only attend backwards. If bidirectional, we don't mask.
+                attn_scores = self.apply_causal_mask(
+                    attn_scores, kv_cache_pos_offset, attention_mask
+                )  # [batch, head_index, query_pos, key_pos]
+            if additive_attention_mask is not None:
+                attn_scores += additive_attention_mask
+
+            attn_scores = self.hook_attn_scores(attn_scores)
+            pattern = F.softmax(attn_scores, dim=-1)
+            pattern = torch.where(torch.isnan(pattern), torch.zeros_like(pattern), pattern)
+            pattern = self.hook_pattern(pattern)  # [batch, head_index, query_pos, key_pos]
+            pattern = pattern.to(self.cfg.dtype)
+            pattern = pattern.to(v.device)
+            z = self.calculate_z_scores(v, pattern)  # [batch, pos, head_index, d_head]
         if not self.cfg.use_attn_result:
             if self.cfg.load_in_4bit:
                 # call bitsandbytes method to dequantize and multiply
