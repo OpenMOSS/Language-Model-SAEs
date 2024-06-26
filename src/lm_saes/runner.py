@@ -28,11 +28,12 @@ from lm_saes.activation.activation_store import ActivationStore
 from lm_saes.sae_training import prune_sae, train_sae
 from lm_saes.analysis.sample_feature_activations import sample_feature_activations
 from lm_saes.analysis.features_to_logits import features_to_logits
-
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
-    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
-    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+    if (not cfg.use_ddp) or cfg.rank == 0:
+        cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+        cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
 
     if cfg.finetuning:
@@ -68,7 +69,9 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
-
+    if cfg.use_ddp:
+        _ = DDP(model, device_ids=[cfg.rank])
+        _ = DDP(sae, device_ids=[cfg.rank])
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
