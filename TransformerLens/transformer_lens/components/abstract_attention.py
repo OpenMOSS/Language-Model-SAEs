@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from better_abc import abstract_attribute
 from fancy_einsum import einsum
 from jaxtyping import Float, Int
+from flash_attn import flash_attn_func
 from transformers.utils import is_bitsandbytes_available
 
 from transformer_lens.FactoredMatrix import FactoredMatrix
@@ -196,13 +197,14 @@ class AbstractAttention(ABC, nn.Module):
                 self.apply_rotary(k, 0, attention_mask)
             )  # keys are cached so no offset
 
-        if self.cfg.dtype not in [torch.float32, torch.float64]:
+        if self.cfg.dtype not in [torch.float32, torch.float64] and self.cfg.dtype != torch.bfloat16:
             # If using 16 bits, increase the precision to avoid numerical instabilities
             q = q.to(torch.float32)
             k = k.to(torch.float32)
         if self.cfg.use_flash_attn:
-            z = F.scaled_dot_product_attention(q.transpose(1,2), k.transpose(1,2), v.transpose(1,2), attn_mask=attention_mask, is_causal=True 
-                                               if self.cfg.attention_dir == "causal" else False).transpose(1,2)
+            # z = F.scaled_dot_product_attention(q.transpose(1,2), k.transpose(1,2), v.transpose(1,2), attn_mask=attention_mask, is_causal=True 
+            #                                    if self.cfg.attention_dir == "causal" else False).transpose(1,2)
+            z = flash_attn_func(q, k, v, causal=True if self.cfg.attention_dir == "causal" else False)
         else:
             attn_scores = self.calculate_attention_scores(
                 q, k
