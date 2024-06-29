@@ -9,7 +9,8 @@ import torch.nn.functional as F
 from better_abc import abstract_attribute
 from fancy_einsum import einsum
 from jaxtyping import Float, Int
-from flash_attn import flash_attn_func
+from flash_attn import flash_attn_func, flash_attn_varlen_func
+from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
 from transformers.utils import is_bitsandbytes_available
 
 from transformer_lens.FactoredMatrix import FactoredMatrix
@@ -22,6 +23,17 @@ if is_bitsandbytes_available():
     import bitsandbytes as bnb
     from bitsandbytes.nn.modules import Params4bit
 
+# From transformers/models/llama/modeling_llama.py
+def _get_unpad_data(attention_mask):
+    seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
+    indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
+    max_seqlen_in_batch = seqlens_in_batch.max().item()
+    cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
+    return (
+        indices,
+        cu_seqlens,
+        max_seqlen_in_batch,
+    )
 
 class AbstractAttention(ABC, nn.Module):
     alibi: Union[torch.Tensor, None]
@@ -101,6 +113,8 @@ class AbstractAttention(ABC, nn.Module):
         self.hook_k = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_q = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_v = HookPoint()  # [batch, pos, head_index, d_head]
+
+        # Because of FlashAttention's characteristic, intermediate results (attention scores, pattern, z) are not supported to be hooked.
         if not self.cfg.use_flash_attn:
             self.hook_z = HookPoint()  # [batch, pos, head_index, d_head]
             self.hook_attn_scores = HookPoint()  # [batch, head_index, query_pos, key_pos]
@@ -202,9 +216,32 @@ class AbstractAttention(ABC, nn.Module):
             q = q.to(torch.float32)
             k = k.to(torch.float32)
         if self.cfg.use_flash_attn:
-            # z = F.scaled_dot_product_attention(q.transpose(1,2), k.transpose(1,2), v.transpose(1,2), attn_mask=attention_mask, is_causal=True 
-            #                                    if self.cfg.attention_dir == "causal" else False).transpose(1,2)
-            z = flash_attn_func(q, k, v, causal=True if self.cfg.attention_dir == "causal" else False)
+            # use FlashAttentionV2 to accelerate inference. self.hook_attn_scores, self.hook_pattern, self.hook_z are not supported in this case.
+            # Contains at least one padding token in the sequence
+            causal = True if self.cfg.attention_dir == "causal" else False
+            if attention_mask is not None:
+                batch_size, query_length, _ = q.shape
+                query_states, key_states, value_states, indices_q, cu_seq_lens, max_seq_lens = self._upad_input(
+                    q, k, v, attention_mask, q.shape[1]
+                )
+
+                cu_seqlens_q, cu_seqlens_k = cu_seq_lens
+                max_seqlen_in_batch_q, max_seqlen_in_batch_k = max_seq_lens
+
+                attn_output_unpad = flash_attn_varlen_func(
+                    query_states,
+                    key_states,
+                    value_states,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k=cu_seqlens_k,
+                    max_seqlen_q=max_seqlen_in_batch_q,
+                    max_seqlen_k=max_seqlen_in_batch_k,
+                    causal=causal,
+                )
+
+                z = pad_input(attn_output_unpad, indices_q, batch_size, query_length)
+            else:
+                z = flash_attn_func(q, k, v, causal=causal)
         else:
             attn_scores = self.calculate_attention_scores(
                 q, k
@@ -662,3 +699,41 @@ class AbstractAttention(ABC, nn.Module):
         alibi_bias = torch.einsum("ij,k->kij", slope, multipliers)
 
         return alibi_bias
+
+    def _upad_input(self, query_layer, key_layer, value_layer, attention_mask, query_length):
+        indices_k, cu_seqlens_k, max_seqlen_in_batch_k = _get_unpad_data(attention_mask)
+        batch_size, kv_seq_len, num_key_value_heads, head_dim = key_layer.shape
+
+        key_layer = index_first_axis(
+            key_layer.reshape(batch_size * kv_seq_len, num_key_value_heads, head_dim), indices_k
+        )
+        value_layer = index_first_axis(
+            value_layer.reshape(batch_size * kv_seq_len, num_key_value_heads, head_dim), indices_k
+        )
+        if query_length == kv_seq_len:
+            query_layer = index_first_axis(
+                query_layer.reshape(batch_size * kv_seq_len, self.num_heads, head_dim), indices_k
+            )
+            cu_seqlens_q = cu_seqlens_k
+            max_seqlen_in_batch_q = max_seqlen_in_batch_k
+            indices_q = indices_k
+        elif query_length == 1:
+            max_seqlen_in_batch_q = 1
+            cu_seqlens_q = torch.arange(
+                batch_size + 1, dtype=torch.int32, device=query_layer.device
+            )  # There is a memcpy here, that is very bad.
+            indices_q = cu_seqlens_q[:-1]
+            query_layer = query_layer.squeeze(1)
+        else:
+            # The -q_len: slice assumes left padding.
+            attention_mask = attention_mask[:, -query_length:]
+            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(query_layer, attention_mask)
+
+        return (
+            query_layer,
+            key_layer,
+            value_layer,
+            indices_q,
+            (cu_seqlens_q, cu_seqlens_k),
+            (max_seqlen_in_batch_q, max_seqlen_in_batch_k),
+        )
