@@ -8,7 +8,7 @@ def pytest_addoption(parser):
     parser.addoption("--layer", nargs="*", type=int, required=False, help='Layer number')
     parser.addoption("--batch_size", type=int, required=False, default=4096, help='Batchsize, default 4096')
     parser.addoption("--lr", type=float, required=False, default=8e-5, help='Learning rate, default 8e-5')
-    parser.addoption("--expdir", type=str, required=False, default="/remote-home/fkzhu/zfk/engineering/Language-Model-SAEs/results", help='Export directory, default zfk/ftresults_KL')
+    parser.addoption("--expdir", type=str, required=False, default="/remote-home/fkzhu/zfk/engineering/test/Language-Model-SAEs/results", help='Export directory, default zfk/ftresults_KL')
     parser.addoption("--useddp", type=bool, required=False, default=False, help='If using distributed method, default False')
     parser.addoption('--attn_type', type=str, required=False, choices=['flash', 'normal'], default="flash", help='Use or not use log of wandb, default True')
     parser.addoption('--dtype', type=str, required=False, choices=['fp32', 'bfp16'], default="fp32", help='Dtype, default fp32')
