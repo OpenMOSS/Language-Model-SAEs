@@ -25,20 +25,13 @@ from lm_saes.evals import run_evals
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.activation.activation_dataset import make_activation_dataset
 from lm_saes.activation.activation_store import ActivationStore
-from lm_saes.sae_training import prune_sae, train_sae
+from lm_saes.sae_training import prune_sae, train_sae, init_sae_on_dataset
 from lm_saes.analysis.sample_feature_activations import sample_feature_activations
 from lm_saes.analysis.features_to_logits import features_to_logits
 
 
+
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
-    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
-    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-
-    if cfg.finetuning:
-        # Fine-tune SAE with frozen encoder weights and bias
-        sae.train_finetune_for_suppression_parameters()
-
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
             cfg.lm.model_name
@@ -71,6 +64,26 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
 
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
+
+    if (
+            cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None
+            or cfg.sae.init_decoder_norm == 'auto'
+    ):
+        assert not cfg.finetuning
+        sae = init_sae_on_dataset(
+            model,
+            activation_store,
+            cfg
+        )
+    else:
+        sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+
+        if cfg.finetuning:
+            # Fine-tune SAE with frozen encoder weights and bias
+            sae.train_finetune_for_suppression_parameters()
+
+    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
 
     if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
         wandb_config: dict = {
