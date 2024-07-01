@@ -174,8 +174,8 @@ class SAEConfig(BaseModelConfig):
     decoder_exactly_fixed_norm: bool = False
     sparsity_include_decoder_norm: bool = True  # set to True: sparsity loss = sum(act * corresponding_decoder_norm), otherwise loss = sum(act). Incompatible with decoder_exactly_fixed_norm
     use_glu_encoder: bool = False
-    init_decoder_norm: float | str = 'auto'
-    init_encoder_norm: float | str | None = 'auto'
+    init_decoder_norm: float | None = None
+    init_encoder_norm: float | None = None
     init_encoder_with_decoder_transpose: bool = True
 
     l1_coefficient: float = 0.00008
@@ -196,10 +196,6 @@ class SAEConfig(BaseModelConfig):
             raise ValueError("sparsity_include_decoder_norm and decoder_exactly_fixed_norm are incompatible.")
         if self.sparsity_include_decoder_norm and self.use_ghost_grads:
             raise ValueError("sparsity_include_decoder_norm and use_ghost_grads are incompatible.")
-        if isinstance(self.init_decoder_norm, str) and self.init_decoder_norm != 'auto':
-            raise ValueError("init_decoder_norm must be a float or 'auto'.")
-        if isinstance(self.init_encoder_norm, str) and self.init_encoder_norm != 'auto':
-            raise ValueError("init_encoder_norm must be None, a float or 'auto'.")
         if self.init_encoder_with_decoder_transpose and isinstance(self.init_encoder_norm, float):
             raise ValueError("init_encoder_with_decoder_transpose and init_encoder_norm with float are incompatible.")
 
