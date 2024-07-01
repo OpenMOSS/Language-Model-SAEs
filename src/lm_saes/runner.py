@@ -25,7 +25,7 @@ from lm_saes.evals import run_evals
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.activation.activation_dataset import make_activation_dataset
 from lm_saes.activation.activation_store import ActivationStore
-from lm_saes.sae_training import prune_sae, train_sae, init_sae_on_dataset
+from lm_saes.sae_training import prune_sae, train_sae
 from lm_saes.analysis.sample_feature_activations import sample_feature_activations
 from lm_saes.analysis.features_to_logits import features_to_logits
 
@@ -67,13 +67,12 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
 
     if (
             cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None
-            or cfg.sae.init_decoder_norm == 'auto'
+            or cfg.sae.init_decoder_norm is None
     ):
         assert not cfg.finetuning
-        sae = init_sae_on_dataset(
-            model,
-            activation_store,
-            cfg
+        sae = SparseAutoEncoder.from_initialization_searching(
+            activation_store=activation_store,
+            cfg=cfg,
         )
     else:
         sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
