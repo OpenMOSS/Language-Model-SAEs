@@ -174,8 +174,8 @@ class SAEConfig(BaseModelConfig):
     decoder_exactly_fixed_norm: bool = False
     sparsity_include_decoder_norm: bool = True  # set to True: sparsity loss = sum(act * corresponding_decoder_norm), otherwise loss = sum(act). Incompatible with decoder_exactly_fixed_norm
     use_glu_encoder: bool = False
-    init_decoder_norm: float | None = None
-    init_encoder_norm: float | None = None
+    init_decoder_norm: float | None = None  # type: ignore
+    init_encoder_norm: float | None = None  # type: ignore
     init_encoder_with_decoder_transpose: bool = True
 
     l1_coefficient: float = 0.00008
