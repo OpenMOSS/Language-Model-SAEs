@@ -73,6 +73,7 @@ def train_sae(
         pbar = tqdm(total=total_training_tokens, desc="Training SAE", smoothing=0.01)
     while n_training_tokens < total_training_tokens:
         sae.train()
+        sae.update_l1_coefficient(n_training_steps)
         # Get the next batch of activations
         batch = activation_store.next(batch_size=cfg.train_batch_size)
         assert batch is not None, "Activation store is empty"
@@ -108,10 +109,15 @@ def train_sae(
         if cfg.finetuning:
             loss = loss_data['l_rec'].mean()
         loss.backward()
-        sae.remove_gradient_parallel_to_decoder_directions()
+
+        if cfg.clip_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(sae.parameters(), cfg.clip_grad_norm)
+        if cfg.remove_gradient_parallel_to_decoder_directions:
+            sae.remove_gradient_parallel_to_decoder_directions()
         optimizer.step()
 
-        sae.set_decoder_norm_to_unit_norm()
+        if not cfg.sae.sparsity_include_decoder_norm:
+            sae.set_decoder_norm_to_fixed_norm(1)
         with torch.no_grad():
             act_freq_scores += (aux_data["feature_acts"].abs() > 0).float().sum(0)
             n_frac_active_tokens += activation_in.size(0)
@@ -143,7 +149,7 @@ def train_sae(
                 act_freq_scores = torch.zeros(cfg.sae.d_sae, device=cfg.sae.device)
                 n_frac_active_tokens = torch.tensor([0], device=cfg.sae.device, dtype=torch.int)
 
-            if ((n_training_steps + 1) % cfg.log_frequency == 0):
+            if (n_training_steps + 1) % cfg.log_frequency == 0:
                 # metrics for currents acts
                 l0 = (aux_data["feature_acts"] > 0).float().sum(-1).mean()
                 l_rec = loss_data["l_rec"].mean()
@@ -198,7 +204,13 @@ def train_sae(
                             # "metrics/mean_thomson_potential": mean_thomson_potential.item(),
                             "metrics/l2_norm_error": l2_norm_error.item(),
                             "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
+                            # norm
+                            "metrics/decoder_norm": sae.decoder_norm.item(),
+                            "metrics/encoder_norm": sae.encoder_norm.item(),
+                            "metrics/decoder_bias_mean": sae.decoder_bias.mean().item() if sae.cfg.use_decoder_bias else 0,
+                            "metrics/enocder_bias_mean": sae.encoder_bias.mean().item(),
                             # sparsity
+                            "sparsity/l1_coefficient": sae.current_l1_coefficient,
                             "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
                             "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
                             "sparsity/useful_features": sae.decoder.norm(p=2, dim=1).gt(0.99).sum().item(),
@@ -230,7 +242,8 @@ def train_sae(
                 path = os.path.join(
                     cfg.exp_result_dir, cfg.exp_name, "checkpoints", f"{n_training_steps}.safetensors"
                 )
-                sae.set_decoder_norm_to_unit_norm()
+                if not cfg.sae.sparsity_include_decoder_norm:
+                    sae.set_decoder_norm_to_fixed_norm(1)
                 sae.save_pretrained(path)
 
                 checkpoint_thresholds.pop(0)
@@ -253,7 +266,10 @@ def train_sae(
         path = os.path.join(
             cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.safetensors"
         )
-        sae.set_decoder_norm_to_unit_norm()
+        if cfg.sae.sparsity_include_decoder_norm:
+            sae.transform_to_unit_decoder_norm()
+        else:
+            sae.set_decoder_norm_to_fixed_norm(1)
         sae.save_pretrained(path)
 
 @torch.no_grad()
@@ -326,3 +342,75 @@ def prune_sae(
         sae.save_pretrained(path)
         
     return sae
+
+@torch.no_grad()
+def init_sae_on_dataset(
+    model: HookedTransformer,
+    activation_store: ActivationStore,
+    cfg: LanguageModelSAETrainingConfig,
+):
+    test_batch = activation_store.next(batch_size=cfg.train_batch_size * 8)  # just random hard code xd
+    activation_in, activation_out = test_batch[cfg.sae.hook_point_in], test_batch[
+        cfg.sae.hook_point_out]  # [batch, d_model]
+
+    if cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None:
+        print(f'SAE: Computing average activation norm on the first {cfg.train_batch_size * 8} samples.')
+
+        average_in_norm, average_out_norm = activation_in.norm(p=2, dim=1).mean().item(), activation_out.norm(p=2,
+                                                                                                              dim=1).mean().item()
+
+        print(f'Average input activation norm: {average_in_norm}\nAverage output activation norm: {average_out_norm}')
+        cfg.sae.dataset_average_activation_norm = {'in': average_in_norm, 'out': average_out_norm}
+
+
+    if cfg.sae.init_decoder_norm == 'auto':
+        initializing_transcoder = False
+        assert cfg.sae.sparsity_include_decoder_norm, 'Decoder norm must be included in sparsity loss'
+        print('SAE: Starting grid search for initial decoder norm.')
+        if not cfg.sae.init_encoder_with_decoder_transpose:
+            assert cfg.sae.hook_point_in != cfg.sae.hook_point_out, 'If not training transcoder, it is recommended to init encoder with decoder transpose'
+            print('We are operating in 2-d grid search for encoder and decoder respectively.')
+            initializing_transcoder = True
+
+        if not initializing_transcoder:
+            losses = {}
+            for norm in torch.linspace(0.1, 1, 10).numpy().tolist():
+                cfg.sae.init_decoder_norm = norm
+                sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+                mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
+                losses[cfg.sae.init_decoder_norm] = mse
+            best_norm = min(losses, key=losses.get)
+            losses = {}
+            for norm in torch.linspace(-0.09, 0.1, 20).numpy().tolist():
+                cfg.sae.init_decoder_norm = best_norm + norm
+                sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+                mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
+                losses[cfg.sae.init_decoder_norm] = mse
+            best_norm = min(losses, key=losses.get)
+            print(f'The best (i.e. lowest MSE) initialized norm is {best_norm}')
+            cfg.sae.init_decoder_norm = best_norm
+        else:
+            losses = {}
+            for dec_norm in torch.linspace(0.1, 1, 10).numpy().tolist():
+                for enc_norm in torch.linspace(0.1, 1, 10).numpy().tolist():
+                    cfg.sae.init_decoder_norm = dec_norm
+                    cfg.sae.init_encoder_norm = enc_norm
+                    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+                    mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
+                    losses[(cfg.sae.init_decoder_norm, cfg.sae.init_encoder_norm)] = mse
+            best_norms = min(losses, key=losses.get)
+            losses = {}
+            for dec_norm in torch.linspace(-0.09, 0.1, 20).numpy().tolist():
+                for enc_norm in torch.linspace(-0.09, 0.1, 20).numpy().tolist():
+                    cfg.sae.init_decoder_norm = best_norms[0] + dec_norm
+                    cfg.sae.init_encoder_norm = best_norms[1] + enc_norm
+                    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+                    mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
+                    losses[(cfg.sae.init_decoder_norm, cfg.sae.init_encoder_norm)] = mse
+            best_norms = min(losses, key=losses.get)
+            print(f'The best (i.e. lowest MSE) initialized norms are (decoder, encoder): {best_norms}')
+            cfg.sae.init_decoder_norm = best_norms[0]
+            cfg.sae.init_encoder_norm = best_norms[1]
+
+    return SparseAutoEncoder.from_config(cfg=cfg.sae)
+
