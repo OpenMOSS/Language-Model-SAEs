@@ -65,5 +65,3 @@ implicit_optional=true
 requires = ["pdm-pep517"]
 build-backend = "pdm.pep517.api"
 
-[tool.pdm.scripts]
-post_install = ["./install_flash_attn.sh"]

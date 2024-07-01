@@ -9,8 +9,6 @@ import torch.nn.functional as F
 from better_abc import abstract_attribute
 from fancy_einsum import einsum
 from jaxtyping import Float, Int
-from flash_attn import flash_attn_func, flash_attn_varlen_func
-from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
 from transformers.utils import is_bitsandbytes_available
 
 from transformer_lens.FactoredMatrix import FactoredMatrix
@@ -115,10 +113,20 @@ class AbstractAttention(ABC, nn.Module):
         self.hook_v = HookPoint()  # [batch, pos, head_index, d_head]
 
         # Because of FlashAttention's characteristic, intermediate results (attention scores, pattern, z) are not supported to be hooked.
-        if not self.cfg.use_flash_attn:
+        if self.cfg.use_flash_attn:
+            from flash_attn import flash_attn_func, flash_attn_varlen_func
+            from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
+            self.flash_attn_func = flash_attn_func
+            self.flash_attn_varlen_func = flash_attn_varlen_func
+            self.fa_index_first_axis = index_first_axis
+            self.fa_pad_input = pad_input
+            self.fa_unpad_input = unpad_input
+        else:
             self.hook_z = HookPoint()  # [batch, pos, head_index, d_head]
             self.hook_attn_scores = HookPoint()  # [batch, head_index, query_pos, key_pos]
             self.hook_pattern = HookPoint()  # [batch, head_index, query_pos, key_pos]
+
+
         self.hook_result = HookPoint()  # [batch, pos, head_index, d_model]
 
         # See HookedTransformerConfig for more details.
@@ -228,7 +236,7 @@ class AbstractAttention(ABC, nn.Module):
                 cu_seqlens_q, cu_seqlens_k = cu_seq_lens
                 max_seqlen_in_batch_q, max_seqlen_in_batch_k = max_seq_lens
 
-                attn_output_unpad = flash_attn_varlen_func(
+                attn_output_unpad = self.flash_attn_varlen_func(
                     query_states,
                     key_states,
                     value_states,
@@ -239,9 +247,9 @@ class AbstractAttention(ABC, nn.Module):
                     causal=causal,
                 )
 
-                z = pad_input(attn_output_unpad, indices_q, batch_size, query_length)
+                z = self.fa_pad_input(attn_output_unpad, indices_q, batch_size, query_length)
             else:
-                z = flash_attn_func(q, k, v, causal=causal)
+                z = self.flash_attn_func(q, k, v, causal=causal)
         else:
             attn_scores = self.calculate_attention_scores(
                 q, k
@@ -704,14 +712,14 @@ class AbstractAttention(ABC, nn.Module):
         indices_k, cu_seqlens_k, max_seqlen_in_batch_k = _get_unpad_data(attention_mask)
         batch_size, kv_seq_len, num_key_value_heads, head_dim = key_layer.shape
 
-        key_layer = index_first_axis(
+        key_layer = self.fa_index_first_axis(
             key_layer.reshape(batch_size * kv_seq_len, num_key_value_heads, head_dim), indices_k
         )
-        value_layer = index_first_axis(
+        value_layer = self.fa_index_first_axis(
             value_layer.reshape(batch_size * kv_seq_len, num_key_value_heads, head_dim), indices_k
         )
         if query_length == kv_seq_len:
-            query_layer = index_first_axis(
+            query_layer = self.fa_index_first_axis(
                 query_layer.reshape(batch_size * kv_seq_len, self.num_heads, head_dim), indices_k
             )
             cu_seqlens_q = cu_seqlens_k
@@ -727,7 +735,7 @@ class AbstractAttention(ABC, nn.Module):
         else:
             # The -q_len: slice assumes left padding.
             attention_mask = attention_mask[:, -query_length:]
-            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(query_layer, attention_mask)
+            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = self.fa_unpad_input(query_layer, attention_mask)
 
         return (
             query_layer,
