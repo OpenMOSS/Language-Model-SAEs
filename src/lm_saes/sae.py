@@ -333,7 +333,7 @@ class SparseAutoEncoder(HookedRootModule):
         self.current_l1_coefficient = min(1., training_step / self.cfg.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
     
     @torch.no_grad()
-    def set_decoder_norm_to_fixed_norm(self, value: float = 1.0, force_exact: bool | None = None):
+    def set_decoder_norm_to_fixed_norm(self, value: float | None = 1.0, force_exact: bool | None = None):
         if value is None:
             return
         decoder_norm = torch.norm(self.decoder, dim=1, keepdim=True)
@@ -346,7 +346,7 @@ class SparseAutoEncoder(HookedRootModule):
             self.decoder.data = self.decoder.data * value / torch.clamp(decoder_norm, min=value)
 
     @torch.no_grad()
-    def set_encoder_norm_to_fixed_norm(self, value: float = 1.0):
+    def set_encoder_norm_to_fixed_norm(self, value: float | None = 1.0):
         if self.cfg.use_glu_encoder:
             raise NotImplementedError("GLU encoder not supported")
         if value is None:
