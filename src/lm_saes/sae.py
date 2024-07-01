@@ -9,7 +9,8 @@ from transformer_lens.hook_points import HookPoint, HookedRootModule
 
 import safetensors.torch as safe
 
-from lm_saes.config import SAEConfig
+from lm_saes.config import SAEConfig, LanguageModelSAETrainingConfig
+from lm_saes.activation.activation_store import ActivationStore
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 
 class SparseAutoEncoder(HookedRootModule):
@@ -333,6 +334,8 @@ class SparseAutoEncoder(HookedRootModule):
     
     @torch.no_grad()
     def set_decoder_norm_to_fixed_norm(self, value: float = 1.0, force_exact: bool | None = None):
+        if value is None:
+            return
         decoder_norm = torch.norm(self.decoder, dim=1, keepdim=True)
         if force_exact is None:
             force_exact = self.cfg.decoder_exactly_fixed_norm
@@ -462,6 +465,77 @@ class SparseAutoEncoder(HookedRootModule):
         cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
 
         return SparseAutoEncoder.from_config(cfg)
+
+    @torch.no_grad()
+    @staticmethod
+    def from_initialization_searching(
+        activation_store: ActivationStore,
+        cfg: LanguageModelSAETrainingConfig,
+    ):
+        test_batch = activation_store.next(batch_size=cfg.train_batch_size * 8)  # just random hard code xd
+        activation_in, activation_out = test_batch[cfg.sae.hook_point_in], test_batch[
+            cfg.sae.hook_point_out]  # [batch, d_model]
+
+        if cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None:
+            print(f'SAE: Computing average activation norm on the first {cfg.train_batch_size * 8} samples.')
+
+            average_in_norm, average_out_norm = activation_in.norm(p=2, dim=1).mean().item(), activation_out.norm(p=2,
+                                                                                                                  dim=1).mean().item()
+
+            print(
+                f'Average input activation norm: {average_in_norm}\nAverage output activation norm: {average_out_norm}')
+            cfg.sae.dataset_average_activation_norm = {'in': average_in_norm, 'out': average_out_norm}
+
+        if cfg.sae.init_decoder_norm is None:
+            initializing_transcoder = False
+            assert cfg.sae.sparsity_include_decoder_norm, 'Decoder norm must be included in sparsity loss'
+            print('SAE: Starting grid search for initial decoder norm.')
+            if not cfg.sae.init_encoder_with_decoder_transpose:
+                assert cfg.sae.hook_point_in != cfg.sae.hook_point_out, 'If not training transcoder, it is recommended to init encoder with decoder transpose'
+                print('We are operating in 2-d grid search for encoder and decoder respectively.')
+                initializing_transcoder = True
+
+            if not initializing_transcoder:
+                losses = {}
+                for norm in torch.linspace(0.1, 1, 10).numpy().tolist():
+                    cfg.sae.init_decoder_norm = norm
+                    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+                    mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
+                    losses[cfg.sae.init_decoder_norm] = mse
+                best_norm = min(losses, key=losses.get)
+                losses = {}
+                for norm in torch.linspace(-0.09, 0.1, 20).numpy().tolist():
+                    cfg.sae.init_decoder_norm = best_norm + norm
+                    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+                    mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
+                    losses[cfg.sae.init_decoder_norm] = mse
+                best_norm = min(losses, key=losses.get)
+                print(f'The best (i.e. lowest MSE) initialized norm is {best_norm}')
+                cfg.sae.init_decoder_norm = best_norm
+            else:
+                losses = {}
+                for dec_norm in torch.linspace(0.1, 1, 10).numpy().tolist():
+                    for enc_norm in torch.linspace(0.1, 1, 10).numpy().tolist():
+                        cfg.sae.init_decoder_norm = dec_norm
+                        cfg.sae.init_encoder_norm = enc_norm
+                        sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+                        mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
+                        losses[(cfg.sae.init_decoder_norm, cfg.sae.init_encoder_norm)] = mse
+                best_norms = min(losses, key=losses.get)
+                losses = {}
+                for dec_norm in torch.linspace(-0.09, 0.1, 20).numpy().tolist():
+                    for enc_norm in torch.linspace(-0.09, 0.1, 20).numpy().tolist():
+                        cfg.sae.init_decoder_norm = best_norms[0] + dec_norm
+                        cfg.sae.init_encoder_norm = best_norms[1] + enc_norm
+                        sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+                        mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
+                        losses[(cfg.sae.init_decoder_norm, cfg.sae.init_encoder_norm)] = mse
+                best_norms = min(losses, key=losses.get)
+                print(f'The best (i.e. lowest MSE) initialized norms are (decoder, encoder): {best_norms}')
+                cfg.sae.init_decoder_norm = best_norms[0]
+                cfg.sae.init_encoder_norm = best_norms[1]
+
+        return SparseAutoEncoder.from_config(cfg=cfg.sae)
     
     def save_pretrained(
         self,
@@ -489,3 +563,4 @@ class SparseAutoEncoder(HookedRootModule):
     @property
     def encoder_norm(self):
         return torch.norm(self.encoder, p=2, dim=0).mean()
+

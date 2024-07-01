@@ -2,66 +2,30 @@ import torch
 from lm_saes.config import LanguageModelSAETrainingConfig
 from lm_saes.runner import language_model_sae_runner
 
-# import argparse
-
-
-# parser = argparse.ArgumentParser()
-# parser.add_argument("--lr", type=float, default=4e-4)
-# parser.add_argument("--l1_coef", type=float, default=8e-5)
-# parser.add_argument("--sparsity_include_decoder_norm", action="store_true")
-# parser.add_argument("--remove_gradient_parallel_to_decoder_directions", action="store_true")
-# parser.add_argument("--use_decoder_bias", action="store_true")
-# parser.add_argument("--init_encoder_with_decoder_transpose", action="store_true")
-# args = parser.parse_args()
-
-# lr = args.lr
-# l1_coefficient = args.l1_coef
-# sparsity_include_decoder_norm = args.sparsity_include_decoder_norm
-# remove_gradient_parallel_to_decoder_directions = args.remove_gradient_parallel_to_decoder_directions
-# use_decoder_bias = args.use_decoder_bias
-# init_encoder_with_decoder_transpose = args.init_encoder_with_decoder_transpose
 
 cfg = LanguageModelSAETrainingConfig.from_flattened(dict(
     # LanguageModelConfig
-    model_name = "meta-llama/Meta-Llama-3-8B-Instruct",                            # The model name or path for the pre-trained model.
-    model_from_pretrained_path="/remote-home/share/models/llama3_hf/Meta-Llama-3-8B-Instruct",  # The path to load the pre-trained model.
-    d_model = 4096,                                  # The hidden size of the model.
+    model_name = "gpt2",                            # The model name or path for the pre-trained model.
+    d_model = 768,                                  # The hidden size of the model.
 
     # TextDatasetConfig
-    dataset_path = [
-        "/remote-home/share/personal/zfhe/projects/SAE_data_at_scale/data/Pretrain_RedPajama_arxiv_500k",
-        "/remote-home/share/personal/zfhe/projects/SAE_data_at_scale/data/Pretrain_RedPajama_c4_500k",
-        "/remote-home/share/personal/zfhe/projects/SAE_data_at_scale/data/Pretrain_RedPajama_stack_500k",
-        "/remote-home/share/personal/zfhe/projects/SAE_data_at_scale/data/Pretrain_RedPajama_book_500k",
-        "/remote-home/share/personal/zfhe/projects/SAE_data_at_scale/data/Pretrain_RedPajama_pile_500k",
-        "/remote-home/share/personal/zfhe/projects/SAE_data_at_scale/data/Pretrain_RedPajama_wiki_500k",
-        "/remote-home/share/personal/zfhe/projects/SAE_data_at_scale/data/SFT_WildChatClean",
-    ],                   # The corpus name or path. Each of a data record should contain (and may only contain) a "text" field.
-    sample_probs = [1, 8, 1, 2, 4, 4, 1],
+    dataset_path = 'Skylion007/OpenWebText',                   # The corpus name or path. Each of a data record should contain (and may only contain) a "text" field.
     is_dataset_tokenized = False,                   # Whether the dataset is tokenized.
     is_dataset_on_disk = True,                      # Whether the dataset is on disk. If not on disk, `datasets.load_dataset`` will be used to load the dataset, and the train split will be used for training.
-    concat_tokens = [
-                True,
-                True,
-                True,
-                True,
-                True,
-                True,
-                False,
-            ],                     # Whether to concatenate tokens into a single sequence. If False, only data record with length of non-padding tokens larger than `context_size` will be used.
+    concat_tokens = True,                     # Whether to concatenate tokens into a single sequence. If False, only data record with length of non-padding tokens larger than `context_size` will be used.
     context_size = 1024,                             # The sequence length of the text dataset.
     store_batch_size = 20,                          # The batch size for loading the corpus.
 
     # ActivationStoreConfig
-    hook_points = ['blocks.16.hook_resid_pre'],        # Hook points to store activations from, i.e. the layer output of which is used for training/evaluating the dictionary. Will run until the last hook point in the list, so make sure to order them correctly.
+    hook_points = ['blocks.8.hook_resid_pre'],        # Hook points to store activations from, i.e. the layer output of which is used for training/evaluating the dictionary. Will run until the last hook point in the list, so make sure to order them correctly.
     use_cached_activations = False,                 # Whether to use cached activations. Caching activation is now not recommended, as it may consume extremely large disk space. (May be tens of TBs for corpus like `openwebtext`)
     n_tokens_in_buffer = 500_000,                   # The number of tokens to store in the activation buffer. The buffer is used to shuffle the activations before training the dictionary.
     
     # SAEConfig
-    hook_point_in = 'blocks.16.hook_resid_pre',
-    hook_point_out = 'blocks.16.hook_resid_pre',
+    hook_point_in = 'blocks.8.hook_resid_pre',
+    hook_point_out = 'blocks.8.hook_resid_pre',
     use_decoder_bias = True,                        # Whether to use decoder bias.
-    expansion_factor = 32,                          # The expansion factor of the dictionary. d_sae = expansion_factor * d_model.
+    expansion_factor = 128,                          # The expansion factor of the dictionary. d_sae = expansion_factor * d_model.
     norm_activation = "token-wise",                 # The normalization method for the activations. Can be "token-wise", "batch-wise" or "none".
     decoder_exactly_fixed_norm = False,              # Whether to enforce the decoder to have exactly unit norm. If False, the decoder will have less than or equal to unit norm.
     use_glu_encoder = False,                        # Whether to use the Gated Linear Unit (GLU) for the encoder.
@@ -69,13 +33,13 @@ cfg = LanguageModelSAETrainingConfig.from_flattened(dict(
     l1_coefficient_warmup_steps = 10000,               # The number of warm-up steps for the L1 regularization coefficient.
     lp = 1,                                         # The p-norm to use for the L1 regularization.
     use_ghost_grads = False,                         # Whether to use the ghost gradients for saving dead features.
-    init_decoder_norm = 'auto',
+    init_decoder_norm = None,                       # The initial norm of the decoder. If None, the decoder will be initialized automatically with the lowest MSE.
     init_encoder_with_decoder_transpose = True,
     apply_decoder_bias_to_pre_encoder = True,
     sparsity_include_decoder_norm = True,
 
     # LanguageModelSAETrainingConfig
-    total_training_tokens = 300_000_000,          # The total number of tokens to train the dictionary.
+    total_training_tokens = 100_000_000,          # The total number of tokens to train the dictionary.
     lr = 1e-4,                                      # The learning rate for the dictionary training.
     betas = (0.9, 0.9999),                            # The betas for the Adam optimizer.
 
@@ -95,15 +59,15 @@ cfg = LanguageModelSAETrainingConfig.from_flattened(dict(
 
     # WandbConfig
     log_to_wandb = True,                            # Whether to log the training information to wandb.
-    wandb_project= "llama3-sae",                      # The wandb project name.
+    wandb_project= "test",                      # The wandb project name.
 
     # RunnerConfig
     device = "cuda",                                # The device to place all torch tensors.
     seed = 42,                                      # The random seed.
-    dtype = torch.bfloat16,                          # The torch data type of non-integer tensors.
+    dtype = torch.float32,                          # The torch data type of non-integer tensors.
 
-    exp_name = f"llama-L16RPr",                              # The experiment name. Would be used for creating exp folder (which may contain checkpoints and analysis results) and setting wandb run name.
-    exp_series = "llama3-sae",
+    exp_name = f"test",                              # The experiment name. Would be used for creating exp folder (which may contain checkpoints and analysis results) and setting wandb run name.
+    exp_series = "test",
     exp_result_dir = "results"
 ))
 
