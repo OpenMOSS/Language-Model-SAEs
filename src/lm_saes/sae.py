@@ -118,7 +118,7 @@ class SparseAutoEncoder(HookedRootModule):
             p.requires_grad_(True)
         
 
-    def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> torch.Tensor:
+    def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> float | torch.Tensor:
         """Compute the normalization factor for the activation vectors.
         """
 
