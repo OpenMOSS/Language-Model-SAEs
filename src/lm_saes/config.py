@@ -106,6 +106,7 @@ class TextDatasetConfig(RunnerConfig):
     context_size: int = 128
     store_batch_size: int = 64
     sample_probs: List[float] = field(default_factory=lambda: [1.0])
+    prepend_bos: List[bool] = field(default_factory=lambda: [False])
 
     def __post_init__(self):
         super().__post_init__()
@@ -115,10 +116,14 @@ class TextDatasetConfig(RunnerConfig):
         if isinstance(self.concat_tokens, bool):
             self.concat_tokens = [self.concat_tokens]
 
+        if isinstance(self.prepend_bos, bool):
+            self.prepend_bos = [self.prepend_bos]
+
         self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
 
         assert len(self.sample_probs) == len(self.dataset_path), "Number of sample_probs must match number of dataset paths"
         assert len(self.concat_tokens) == len(self.dataset_path), "Number of concat_tokens must match number of dataset paths"
+        assert len(self.prepend_bos) == len(self.dataset_path), "Number of prepend_bos must match number of dataset paths"
 
 
 @dataclass(kw_only=True)
