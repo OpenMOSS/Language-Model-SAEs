@@ -1,6 +1,6 @@
 from importlib.metadata import version
 import os
-from typing import Dict, Literal, Union, overload
+from typing import Dict, Literal, Union, overload, List
 import torch
 import math
 from einops import einsum
@@ -473,8 +473,7 @@ class SparseAutoEncoder(HookedRootModule):
         cfg: LanguageModelSAETrainingConfig,
     ):
         test_batch = activation_store.next(batch_size=cfg.train_batch_size * 8)  # just random hard code xd
-        activation_in, activation_out = test_batch[cfg.sae.hook_point_in], test_batch[
-            cfg.sae.hook_point_out]  # [batch, d_model]
+        activation_in, activation_out = test_batch[cfg.sae.hook_point_in], test_batch[cfg.sae.hook_point_out]  # type: ignore
 
         if cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None:
             print(f'SAE: Computing average activation norm on the first {cfg.train_batch_size * 8} samples.')
@@ -487,55 +486,31 @@ class SparseAutoEncoder(HookedRootModule):
             cfg.sae.dataset_average_activation_norm = {'in': average_in_norm, 'out': average_out_norm}
 
         if cfg.sae.init_decoder_norm is None:
-            initializing_transcoder = False
             assert cfg.sae.sparsity_include_decoder_norm, 'Decoder norm must be included in sparsity loss'
-            print('SAE: Starting grid search for initial decoder norm.')
-            if not cfg.sae.init_encoder_with_decoder_transpose:
-                assert cfg.sae.hook_point_in != cfg.sae.hook_point_out, 'If not training transcoder, it is recommended to init encoder with decoder transpose'
-                print('We are operating in 2-d grid search for encoder and decoder respectively.')
-                initializing_transcoder = True
+            if not cfg.sae.init_encoder_with_decoder_transpose or cfg.sae.hook_point_in != cfg.sae.hook_point_out:
+                raise NotImplementedError('Transcoders cannot be initialized automatically.')
+        print('SAE: Starting grid search for initial decoder norm.')
 
-            if not initializing_transcoder:
-                losses = {}
-                for norm in torch.linspace(0.1, 1, 10).numpy().tolist():
-                    cfg.sae.init_decoder_norm = norm
-                    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-                    mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
-                    losses[cfg.sae.init_decoder_norm] = mse
-                best_norm = min(losses, key=losses.get)
-                losses = {}
-                for norm in torch.linspace(-0.09, 0.1, 20).numpy().tolist():
-                    cfg.sae.init_decoder_norm = best_norm + norm
-                    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-                    mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
-                    losses[cfg.sae.init_decoder_norm] = mse
-                best_norm = min(losses, key=losses.get)
-                print(f'The best (i.e. lowest MSE) initialized norm is {best_norm}')
-                cfg.sae.init_decoder_norm = best_norm
-            else:
-                losses = {}
-                for dec_norm in torch.linspace(0.1, 1, 10).numpy().tolist():
-                    for enc_norm in torch.linspace(0.1, 1, 10).numpy().tolist():
-                        cfg.sae.init_decoder_norm = dec_norm
-                        cfg.sae.init_encoder_norm = enc_norm
-                        sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-                        mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
-                        losses[(cfg.sae.init_decoder_norm, cfg.sae.init_encoder_norm)] = mse
-                best_norms = min(losses, key=losses.get)
-                losses = {}
-                for dec_norm in torch.linspace(-0.09, 0.1, 20).numpy().tolist():
-                    for enc_norm in torch.linspace(-0.09, 0.1, 20).numpy().tolist():
-                        cfg.sae.init_decoder_norm = best_norms[0] + dec_norm
-                        cfg.sae.init_encoder_norm = best_norms[1] + enc_norm
-                        sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-                        mse = sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()
-                        losses[(cfg.sae.init_decoder_norm, cfg.sae.init_encoder_norm)] = mse
-                best_norms = min(losses, key=losses.get)
-                print(f'The best (i.e. lowest MSE) initialized norms are (decoder, encoder): {best_norms}')
-                cfg.sae.init_decoder_norm = best_norms[0]
-                cfg.sae.init_encoder_norm = best_norms[1]
+        test_sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
 
-        return SparseAutoEncoder.from_config(cfg=cfg.sae)
+        def grid_search_best_init_norm(search_range: List[float]) -> float:
+            losses: Dict[float, float] = {}
+            for norm in search_range:
+                test_sae.set_decoder_norm_to_fixed_norm(norm, force_exact=True)
+                test_sae.encoder.data = test_sae.decoder.data.T.clone().contiguous()
+                mse = test_sae.compute_loss(x=activation_in, label=activation_out)[1][0]['l_rec'].mean().item()  # type: ignore
+                losses[norm] = mse
+            best_norm = min(losses, key=losses.get)  # type: ignore
+            return best_norm
+
+        best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())
+        best_norm_fine_grained = grid_search_best_init_norm(torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist())
+        print(f'The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}')
+
+        test_sae.set_decoder_norm_to_fixed_norm(best_norm_fine_grained, force_exact=True)
+        test_sae.encoder.data = test_sae.decoder.data.T.clone().contiguous()
+
+        return test_sae
     
     def save_pretrained(
         self,
