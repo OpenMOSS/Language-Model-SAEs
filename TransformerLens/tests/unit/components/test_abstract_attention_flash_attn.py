@@ -1,7 +1,5 @@
-import pytest
-
 from transformer_lens import HookedTransformer
-from transformers import AutoModelForCausalLM, AutoTokenizer, GPT2Model
+from transformers import AutoModelForCausalLM, AutoTokenizer 
 import torch
 
 MODEL_NAMES = {
@@ -10,9 +8,9 @@ MODEL_NAMES = {
     'llama3-instruct':'meta-llama/Meta-Llama-3-8B-Instruct',
 }
 MODEL_PATHS = {
-    'gpt2':'/remote-home/fkzhu/models/gpt2',
-    'llama3':'/remote-home/share/models/llama3_hf/Meta-Llama-3-8B',
-    'llama3-instruct':'/remote-home/share/models/llama3_hf/Meta-Llama-3-8B-Instruct',
+    'gpt2':'path/to/gpt2',
+    'llama3':'path/to/llama3-base',
+    'llama3-instruct':'path/to/llama3-instruct',
 }
 
 
@@ -41,3 +39,5 @@ def test_hooked_transformer():
         tokenizer=hf_tokenizer,
         dtype=dtype,
     )
+
+    assert not hasattr(model.blocks[0].attn, 'flash_attn_func'), "AbstractAttention should not have 'flash_attn_func' if set `use_flash_attn=False`"
