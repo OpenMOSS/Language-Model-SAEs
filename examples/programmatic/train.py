@@ -7,6 +7,7 @@ cfg = LanguageModelSAETrainingConfig.from_flattened(dict(
     # LanguageModelConfig
     model_name = "gpt2",                            # The model name or path for the pre-trained model.
     d_model = 768,                                  # The hidden size of the model.
+    use_flash_attn = False,                         # Whether to use FlashAttentionV2
 
     # TextDatasetConfig
     dataset_path = 'Skylion007/OpenWebText',                   # The corpus name or path. Each of a data record should contain (and may only contain) a "text" field.
