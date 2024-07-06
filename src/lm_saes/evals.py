@@ -41,13 +41,15 @@ def run_evals(
     # get cache
     _, cache = model.run_with_cache_until(
         eval_tokens,
-        prepend_bos=False,
         names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
         until=cfg.sae.hook_point_out,
     )
 
+    filter_mask = torch.logical_and(eval_tokens.ne(model.tokenizer.eos_token_id), eval_tokens.ne(model.tokenizer.pad_token_id))
+    filter_mask = torch.logical_and(filter_mask, eval_tokens.ne(model.tokenizer.bos_token_id))
+
     # get act
-    original_act_in, original_act_out = cache[cfg.sae.hook_point_in], cache[cfg.sae.hook_point_out]
+    original_act_in, original_act_out = cache[cfg.sae.hook_point_in][filter_mask], cache[cfg.sae.hook_point_out][filter_mask]
 
     feature_acts = sae.encode(original_act_in, label=original_act_out)
     reconstructed = sae.decode(feature_acts)
@@ -144,7 +146,6 @@ def get_recons_loss(
 
     _, cache = model.run_with_cache_until(
         batch_tokens,
-        prepend_bos=False,
         names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
         until=cfg.sae.hook_point_out,
     )
