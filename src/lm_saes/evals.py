@@ -23,6 +23,8 @@ def run_evals(
 ):
     ### Evals
     eval_tokens = activation_store.next_tokens(cfg.act_store.dataset.store_batch_size)
+    
+    assert eval_tokens is not None, "Activation store is empty"
 
     # Get Reconstruction Score
     losses_df = recons_loss_batched(
