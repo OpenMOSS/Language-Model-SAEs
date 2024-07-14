@@ -17,6 +17,7 @@ decoder_norm_threshold = 0.99
 [lm]
 model_name = "gpt2"
 d_model = 768
+use_flash_attn = false
 
 [dataset]
 dataset_path = "openwebtext"
