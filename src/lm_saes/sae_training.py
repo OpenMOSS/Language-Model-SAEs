@@ -146,12 +146,7 @@ def train_sae(
 
         if cfg.finetuning:
             loss = loss_data["l_rec"].mean()
-        if cfg.sae.tp_size > 1:
-            with loss_parallel():
-                loss.backward()
-        else:
-            loss.backward()
-
+        loss.backward()
         if cfg.clip_grad_norm > 0:
             torch.nn.utils.clip_grad_norm_(sae.parameters(), cfg.clip_grad_norm)
         if cfg.remove_gradient_parallel_to_decoder_directions:
@@ -271,39 +266,38 @@ def train_sae(
 
                 current_learning_rate = optimizer.param_groups[0]["lr"]
 
-                if cfg.wandb.log_to_wandb and is_master():
-                    wandb.log(
-                        {
-                            # losses
-                            "losses/mse_loss": l_rec.item(),
-                            "losses/l1_loss": l_l1.item(),
-                            "losses/ghost_grad_loss": l_ghost_resid.item(),
-                            "losses/overall_loss": loss.item(),
-                            # variance explained
-                            "metrics/explained_variance": explained_variance.mean().item(),
-                            "metrics/explained_variance_std": explained_variance.std().item(),
-                            "metrics/l0": l0.item(),
-                            # "metrics/mean_thomson_potential": mean_thomson_potential.item(),
-                            "metrics/l2_norm_error": l2_norm_error.item(),
-                            "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
-                            # norm
-                            "metrics/decoder_norm": sae.decoder_norm.item(),
-                            "metrics/encoder_norm": sae.encoder_norm.item(),
-                            "metrics/decoder_bias_mean": sae.decoder_bias.mean().item() if sae.cfg.use_decoder_bias else 0,
-                            "metrics/enocder_bias_mean": sae.encoder_bias.mean().item(),
-                            # sparsity
-                            "sparsity/l1_coefficient": sae.current_l1_coefficient,
-                            "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
-                            "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
-                            # "sparsity/useful_features": sae.decoder.weight.norm(p=2, dim=1)
-                            # .gt(0.99)
-                            # .sum()
-                            # .item(),
-                            "details/current_learning_rate": current_learning_rate,
-                            "details/n_training_tokens": n_training_tokens,
-                        },
-                        step=n_training_steps + 1,
-                    )
+                if cfg.wandb.log_to_wandb:
+                    decoder_norm = sae.decoder_norm().mean()
+                    encoder_norm = sae.encoder_norm().mean()
+                    if is_master():
+                        wandb.log(
+                            {
+                                # losses
+                                "losses/mse_loss": l_rec.item(),
+                                "losses/l1_loss": l_l1.item(),
+                                "losses/ghost_grad_loss": l_ghost_resid.item(),
+                                "losses/overall_loss": loss.item(),
+                                # variance explained
+                                "metrics/explained_variance": explained_variance.mean().item(),
+                                "metrics/explained_variance_std": explained_variance.std().item(),
+                                "metrics/l0": l0.item(),
+                                # "metrics/mean_thomson_potential": mean_thomson_potential.item(),
+                                "metrics/l2_norm_error": l2_norm_error.item(),
+                                "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
+                                # norm
+                                "metrics/decoder_norm": decoder_norm.item(),
+                                "metrics/encoder_norm": encoder_norm.item(),
+                                "metrics/decoder_bias_mean": sae.decoder.bias.mean().item() if sae.cfg.use_decoder_bias else 0,
+                                "metrics/enocder_bias_mean": sae.encoder.bias.mean().item(),
+                                # sparsity
+                                "sparsity/l1_coefficient": sae.current_l1_coefficient,
+                                "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
+                                "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
+                                "details/current_learning_rate": current_learning_rate,
+                                "details/n_training_tokens": n_training_tokens,
+                            },
+                            step=n_training_steps + 1,
+                        )
 
             # record loss frequently, but not all the time.
             if (n_training_steps + 1) % (cfg.eval_frequency) == 0:
@@ -407,11 +401,12 @@ def prune_sae(
         dist.reduce(act_times, dst=0, op=dist.ReduceOp.SUM)
         dist.reduce(max_acts, dst=0, op=dist.ReduceOp.MAX)
 
+    decoder_norm = sae.decoder_norm()
     if is_master():
         sae.feature_act_mask.data = (
             (act_times > cfg.dead_feature_threshold * cfg.total_training_tokens)
             & (max_acts > cfg.dead_feature_max_act_threshold)
-            & (sae.decoder.norm(p=2, dim=1) >= cfg.decoder_norm_threshold)
+            & (decoder_norm >= cfg.decoder_norm_threshold)
         ).to(cfg.sae.dtype)
         sae.feature_act_mask.requires_grad_(False)
 
@@ -430,7 +425,7 @@ def prune_sae(
                     .sum()
                     .item(),
                     "sparsity/decoder_norm_below_threshold": (
-                        sae.decoder.norm(p=2, dim=1) < cfg.decoder_norm_threshold
+                        decoder_norm < cfg.decoder_norm_threshold
                     )
                     .sum()
                     .item(),
@@ -452,7 +447,7 @@ def prune_sae(
         )
         print(
             "Decoder norm below threshold:",
-            (sae.decoder.norm(p=2, dim=1) < cfg.decoder_norm_threshold).sum().item(),
+            (decoder_norm < cfg.decoder_norm_threshold).sum().item(),
         )
         print("Total pruned features:", (sae.feature_act_mask == 0).sum().item())
 
