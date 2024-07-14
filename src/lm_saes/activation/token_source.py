@@ -17,6 +17,7 @@ class TokenSource:
         concat_tokens: list[bool],
         seq_len: int,
         sample_probs: list[float],
+        prepend_bos: list[bool]
     ):
         self.dataloader = dataloader
         self.model = model
@@ -33,13 +34,14 @@ class TokenSource:
         self.resid = torch.tensor([], dtype=torch.long, device=self.device)
 
         self.sample_probs = sample_probs
+        self.prepend_bos = prepend_bos
 
 
-    def fill_with_one_batch(self, batch, pack) -> None:
+    def fill_with_one_batch(self, batch, pack: bool, prepend_bos: bool) -> None:
         if self.is_dataset_tokenized:
             tokens: torch.Tensor = batch["tokens"].to(self.device)
         else:
-            tokens = self.model.to_tokens(batch["text"], prepend_bos=not pack).to(self.device)
+            tokens = self.model.to_tokens(batch["text"], prepend_bos=prepend_bos).to(self.device)
         if pack:
             while tokens.size(0) > 0:
                 cur_tokens = tokens[0]
@@ -59,7 +61,6 @@ class TokenSource:
             if tokens.size(1) < self.seq_len:
                 pad_len = self.seq_len - tokens.size(1)
                 tokens = torch.cat([tokens, torch.full((tokens.size(0), pad_len), self.model.tokenizer.pad_token_id, dtype=torch.long, device=self.device)], dim=1)
-
             self.token_buffer = torch.cat([self.token_buffer, tokens], dim=0)
 
 
@@ -82,7 +83,7 @@ class TokenSource:
                 else:
                     return None
 
-            self.fill_with_one_batch(batch, self.concat_tokens[dataset_idx_to_fetch])
+            self.fill_with_one_batch(batch, self.concat_tokens[dataset_idx_to_fetch], prepend_bos=self.prepend_bos[dataset_idx_to_fetch])
 
         ret = self.token_buffer[:batch_size]
         self.token_buffer = self.token_buffer[batch_size:]
@@ -121,4 +122,5 @@ class TokenSource:
             concat_tokens=cfg.concat_tokens,
             seq_len=cfg.context_size,
             sample_probs=cfg.sample_probs,
+            prepend_bos=cfg.prepend_bos
         )
