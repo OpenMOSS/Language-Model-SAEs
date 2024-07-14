@@ -3,16 +3,15 @@ import os
 import torch
 import torch.distributed as dist
 
+def is_master() -> bool:
+    return not dist.is_initialized() or dist.get_rank() == 0
 
 def print_once(
     *values: object,
     sep: str | None = " ",
     end: str | None = "\n",
 ) -> None:
-    if dist.is_initialized():
-        if dist.get_rank() == 0:
-            print(*values, sep=sep, end=end)
-    else:
+    if is_master():
         print(*values, sep=sep, end=end)
         
 def check_file_path_unused(file_path):
