@@ -19,7 +19,21 @@ from lm_saes.sae import SparseAutoEncoder
 from lm_saes.config import LanguageModelSAEPruningConfig, LanguageModelSAETrainingConfig
 from lm_saes.optim import get_scheduler
 from lm_saes.evals import run_evals
-from lm_saes.utils.misc import print_once
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed.tensor.parallel import (
+    ColwiseParallel,
+    RowwiseParallel,
+    parallelize_module,
+    loss_parallel,
+)
+from torch.distributed._tensor import (
+    DTensor,
+    Shard,
+    Replicate,
+    distribute_module,
+    distribute_tensor,
+)
+from lm_saes.utils.misc import is_master, print_once
 
 
 def train_sae(
@@ -44,7 +58,7 @@ def train_sae(
             range(0, total_training_tokens, total_training_tokens // cfg.n_checkpoints)
         )[1:]
     activation_store.initialize()
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         print(f"Activation Store Initialized.")
     # Initialize the SAE decoder bias if necessary
     # if cfg.use_decoder_bias and (not cfg.use_ddp or cfg.rank == 0):
@@ -57,6 +71,23 @@ def train_sae(
         cfg.sae.d_sae, device=cfg.sae.device, dtype=cfg.sae.dtype
     )
     n_frac_active_tokens = torch.tensor([0], device=cfg.sae.device, dtype=torch.int)
+
+    if cfg.sae.tp_size > 1:
+        plan = {
+            "encoder": ColwiseParallel(output_layouts=Replicate()),
+            "decoder": RowwiseParallel(input_layouts=Replicate()),
+        }
+        if cfg.sae.use_glu_encoder:
+            plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
+        sae = parallelize_module(
+            sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan
+        )
+
+    elif cfg.sae.ddp_size > 1:
+        _ = DDP(sae, device_mesh=sae.device_mesh["ddp"])
+        # sae = parallelize_module(
+        #     sae, device_mesh=sae.device_mesh["ddp"], parallelize_plan={}
+        # )
 
     optimizer = Adam(sae.parameters(), lr=cfg.lr, betas=cfg.betas)
 
@@ -71,12 +102,13 @@ def train_sae(
 
     scheduler.step()
 
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         pbar = tqdm(total=total_training_tokens, desc="Training SAE", smoothing=0.01)
     while n_training_tokens < total_training_tokens:
         sae.train()
         sae.update_l1_coefficient(n_training_steps)
         # Get the next batch of activations
+
         batch = activation_store.next(batch_size=cfg.train_batch_size)
         assert batch is not None, "Activation store is empty"
         activation_in, activation_out = (
@@ -90,7 +122,6 @@ def train_sae(
         ghost_grad_neuron_mask = (
             n_forward_passes_since_fired > cfg.dead_feature_window
         ).bool()
-
         # Forward pass
         (
             loss,
@@ -107,19 +138,25 @@ def train_sae(
         did_fire = (aux_data["feature_acts"] > 0).float().sum(0) > 0
         n_forward_passes_since_fired += 1
         n_forward_passes_since_fired[did_fire] = 0
-        if cfg.use_ddp:
-            dist.all_reduce(n_forward_passes_since_fired, op=dist.ReduceOp.MIN)
+        if cfg.sae.ddp_size > 1:
+            dist.all_reduce(
+                n_forward_passes_since_fired,
+                op=dist.ReduceOp.MIN,
+            )
 
         if cfg.finetuning:
             loss = loss_data["l_rec"].mean()
-        loss.backward()
+        if cfg.sae.tp_size > 1:
+            with loss_parallel():
+                loss.backward()
+        else:
+            loss.backward()
 
         if cfg.clip_grad_norm > 0:
             torch.nn.utils.clip_grad_norm_(sae.parameters(), cfg.clip_grad_norm)
         if cfg.remove_gradient_parallel_to_decoder_directions:
             sae.remove_gradient_parallel_to_decoder_directions()
         optimizer.step()
-
         if not cfg.sae.sparsity_include_decoder_norm:
             sae.set_decoder_norm_to_fixed_norm(1)
         with torch.no_grad():
@@ -129,16 +166,16 @@ def train_sae(
             n_tokens_current = torch.tensor(
                 activation_in.size(0), device=cfg.sae.device, dtype=torch.int
             )
-            if cfg.use_ddp:
+            if cfg.sae.ddp_size > 1:
                 dist.reduce(n_tokens_current, dst=0)
             n_training_tokens += cast(int, n_tokens_current.item())
 
             # log and then reset the feature sparsity every feature_sampling_window steps
             if (n_training_steps + 1) % cfg.feature_sampling_window == 0:
-                if cfg.use_ddp:
+                if cfg.sae.ddp_size > 1:
                     dist.reduce(act_freq_scores, dst=0)
                     dist.reduce(n_frac_active_tokens, dst=0)
-                if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+                if cfg.wandb.log_to_wandb and (is_master()):
                     feature_sparsity = act_freq_scores / n_frac_active_tokens
                     log_feature_sparsity = torch.log10(feature_sparsity + 1e-10)
                     wandb_histogram = wandb.Histogram(
@@ -170,12 +207,16 @@ def train_sae(
                 l_l1 = loss_data["l_l1"].mean()
                 l_ghost_resid = loss_data["l_ghost_resid"].mean()
 
-                if cfg.use_ddp:
+                if cfg.sae.ddp_size > 1:
                     dist.reduce(loss, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l0, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l_rec, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l_l1, dst=0, op=dist.ReduceOp.AVG)
-                    dist.reduce(l_ghost_resid, dst=0, op=dist.ReduceOp.AVG)
+                    dist.reduce(
+                        l_ghost_resid,
+                        dst=0,
+                        op=dist.ReduceOp.AVG,
+                    )
 
                 per_token_l2_loss = (
                     (aux_data["reconstructed"] - activation_out).pow(2).sum(dim=-1)
@@ -189,11 +230,19 @@ def train_sae(
                     l2_norm_error / activation_out.norm(p=2, dim=-1).mean()
                 )
 
-                if cfg.use_ddp:
-                    dist.reduce(l2_norm_error, dst=0, op=dist.ReduceOp.AVG)
-                    dist.reduce(l2_norm_error_ratio, dst=0, op=dist.ReduceOp.AVG)
+                if cfg.sae.ddp_size > 1:
+                    dist.reduce(
+                        l2_norm_error,
+                        dst=0,
+                        op=dist.ReduceOp.AVG,
+                    )
+                    dist.reduce(
+                        l2_norm_error_ratio,
+                        dst=0,
+                        op=dist.ReduceOp.AVG,
+                    )
 
-                    if cfg.rank == 0:
+                    if dist.get_rank() == 0:
                         per_token_l2_loss_list = [
                             torch.zeros_like(per_token_l2_loss)
                             for _ in range(dist.get_world_size())
@@ -204,15 +253,15 @@ def train_sae(
                         ]
                     dist.gather(
                         per_token_l2_loss,
-                        per_token_l2_loss_list if cfg.rank == 0 else None,
+                        per_token_l2_loss_list if dist.get_rank() == 0 else None,
                         dst=0,
                     )
                     dist.gather(
                         total_variance,
-                        total_variance_list if cfg.rank == 0 else None,
+                        total_variance_list if dist.get_rank() == 0 else None,
                         dst=0,
                     )
-                    if cfg.rank == 0:
+                    if dist.get_rank() == 0:
                         per_token_l2_loss = torch.cat(per_token_l2_loss_list, dim=0)
                         total_variance = torch.cat(total_variance_list, dim=0)
 
@@ -222,7 +271,7 @@ def train_sae(
 
                 current_learning_rate = optimizer.param_groups[0]["lr"]
 
-                if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+                if cfg.wandb.log_to_wandb and is_master():
                     wandb.log(
                         {
                             # losses
@@ -246,10 +295,10 @@ def train_sae(
                             "sparsity/l1_coefficient": sae.current_l1_coefficient,
                             "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
                             "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
-                            "sparsity/useful_features": sae.decoder.norm(p=2, dim=1)
-                            .gt(0.99)
-                            .sum()
-                            .item(),
+                            # "sparsity/useful_features": sae.decoder.weight.norm(p=2, dim=1)
+                            # .gt(0.99)
+                            # .sum()
+                            # .item(),
                             "details/current_learning_rate": current_learning_rate,
                             "details/n_training_tokens": n_training_tokens,
                         },
@@ -272,7 +321,7 @@ def train_sae(
             if (
                 len(checkpoint_thresholds) > 0
                 and n_training_tokens >= checkpoint_thresholds[0]
-                and (not cfg.use_ddp or cfg.rank == 0)
+                and is_master()
             ):
                 # Save the model and optimizer state
                 path = os.path.join(
@@ -289,7 +338,7 @@ def train_sae(
 
             n_training_steps += 1
 
-            if not cfg.use_ddp or cfg.rank == 0:
+            if is_master():
                 l_rec = loss_data["l_rec"].mean().item()
                 l_l1 = loss_data["l_l1"].mean().item()
                 pbar.set_description(
@@ -297,11 +346,11 @@ def train_sae(
                 )
                 pbar.update(n_tokens_current.item())
 
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         pbar.close()
 
     # Save the final model
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         path = os.path.join(
             cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.safetensors"
         )
@@ -324,10 +373,10 @@ def prune_sae(
     max_acts = torch.zeros(cfg.sae.d_sae, device=cfg.sae.device, dtype=cfg.sae.dtype)
     activation_store.initialize()
 
-    if cfg.use_ddp:
-        ddp = DDP(sae, device_ids=[cfg.rank], output_device=cfg.sae.device)
+    if cfg.sae.ddp_size > 1:
+        _ = DDP(sae, device_mesh=sae.device_mesh["ddp"])
 
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         pbar = tqdm(total=cfg.total_training_tokens, desc="Pruning SAE", smoothing=0.01)
     while n_training_tokens < cfg.total_training_tokens:
         # Get the next batch of activations
@@ -344,21 +393,21 @@ def prune_sae(
         max_acts = torch.max(max_acts, feature_acts.max(0).values)
 
         n_tokens_current = activation_in.size(0)
-        if cfg.use_ddp:
+        if cfg.sae.ddp_size > 1:
             dist.reduce(n_tokens_current, dst=0)
         n_training_tokens += n_tokens_current
 
-        if not cfg.use_ddp or cfg.rank == 0:
+        if is_master():
             pbar.update(n_tokens_current)
 
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         pbar.close()
 
-    if cfg.use_ddp:
+    if cfg.sae.ddp_size > 1:
         dist.reduce(act_times, dst=0, op=dist.ReduceOp.SUM)
         dist.reduce(max_acts, dst=0, op=dist.ReduceOp.MAX)
 
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         sae.feature_act_mask.data = (
             (act_times > cfg.dead_feature_threshold * cfg.total_training_tokens)
             & (max_acts > cfg.dead_feature_max_act_threshold)
