@@ -40,7 +40,7 @@ class TokenActivationSource(ActivationSource):
         self.cfg = cfg
     
     def next(self) -> Dict[str, torch.Tensor] | None:
-        tokens = self.token_source.next(self.cfg.dataset.store_batch_size)
+        tokens = self.next_tokens(self.cfg.dataset.store_batch_size)
 
         if tokens is None:
             return None

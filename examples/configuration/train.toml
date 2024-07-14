@@ -38,6 +38,7 @@ use_ghost_grads = true
 
 [lm]
 model_name = "gpt2"
+use_flash_attn = false
 d_model = 768
 
 [dataset]

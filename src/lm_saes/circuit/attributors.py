@@ -41,7 +41,7 @@ class Attributor(ABC):
         target: Node,
         candidates: list[Node],
         **kwargs
-    ) -> nx.MultiDiGraph:
+    ) -> nx.DiGraph:
         """
         Attribute the target hook point of the model to given candidates in the model, w.r.t. the given input.
 
@@ -52,7 +52,7 @@ class Attributor(ABC):
             **kwargs: Additional keyword arguments.
 
         Returns:
-            nx.MultiDiGraph: The attributed graph, i.e. the circuit. Each node and edge should have an attribute "attribution",
+            nx.DiGraph: The attributed graph, i.e. the circuit. Each node and edge should have an attribute "attribution",
                 showing its "importance" w.r.t. the target.
         """
         raise NotImplementedError
@@ -80,7 +80,7 @@ class DirectAttributor(Attributor):
         target: Node,
         candidates: list[Node],
         **kwargs
-    ) -> nx.MultiDiGraph:
+    ) -> nx.DiGraph:
         """
         Attribute the target node of the model to given candidates in the model, w.r.t. the given input.
 
@@ -91,7 +91,7 @@ class DirectAttributor(Attributor):
             **kwargs: Additional keyword arguments.
 
         Returns:
-            nx.MultiDiGraph: The attributed graph, i.e. the circuit. Each node and edge should have an attribute "attribution",
+            nx.DiGraph: The attributed graph, i.e. the circuit. Each node and edge should have an attribute "attribution",
                 showing its "importance" w.r.t. the target.
         """
 
@@ -103,7 +103,7 @@ class DirectAttributor(Attributor):
             cache[target].backward()
             
             # Construct the circuit
-            circuit = nx.MultiDiGraph()
+            circuit = nx.DiGraph()
             circuit.add_node(target, attribution=cache[target].item(), activation=cache[target].item())
             for candidate in candidates:
                 if candidate.hook_point == target.hook_point:
@@ -131,7 +131,7 @@ class HierachicalAttributor(Attributor):
         target: Node,
         candidates: list[Node],
         **kwargs
-    ) -> nx.MultiDiGraph:
+    ) -> nx.DiGraph:
         """
         Attribute the target node of the model to given candidates in the model, w.r.t. the given input.
 
@@ -142,7 +142,7 @@ class HierachicalAttributor(Attributor):
             **kwargs: Additional keyword arguments.
 
         Returns:
-            nx.MultiDiGraph: The attributed graph, i.e. the circuit. Each node and edge should have an attribute "attribution",
+            nx.DiGraph: The attributed graph, i.e. the circuit. Each node and edge should have an attribute "attribution",
                 showing its "importance" w.r.t. the target.
         """
 
@@ -168,7 +168,7 @@ class HierachicalAttributor(Attributor):
             cache[target].backward()
 
             # Construct the circuit
-            circuit = nx.MultiDiGraph()
+            circuit = nx.DiGraph()
             circuit.add_node(target, attribution=cache[target].item(), activation=cache[target].item())
             for candidate in candidates:
                 grad = cache.grad(candidate)
@@ -182,7 +182,6 @@ class HierachicalAttributor(Attributor):
                     for index in (attributions > threshold).nonzero():
                         index = tuple(index.tolist())
                         circuit.add_node(candidate.append_reduction(*index), attribution=attributions[index].item(), activation=cache[candidate][index].item())
-                        circuit.add_edge(candidate.append_reduction(*index), target, attribution=attributions[index].item())
 
         return circuit
 
