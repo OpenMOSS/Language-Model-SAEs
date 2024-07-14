@@ -10,8 +10,10 @@ from transformer_lens import HookedTransformer
 
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.activation.activation_store import ActivationStore
+
 # from lm_saes.activation_store_theirs import ActivationStoreTheirs
 from lm_saes.config import LanguageModelSAERunnerConfig
+from lm_saes.utils.misc import is_master
 
 @torch.no_grad()
 def run_evals(
@@ -63,14 +65,15 @@ def run_evals(
 
     l2_norm_in = torch.norm(original_act_out, dim=-1)
     l2_norm_out = torch.norm(reconstructed, dim=-1)
-    if cfg.use_ddp:
-        dist.reduce(l2_norm_in, dst=0, op=dist.ReduceOp.AVG)
+    if cfg.sae.ddp_size > 1:
+        dist.reduce(
+            l2_norm_in, dst=0, op=dist.ReduceOp.AVG
+        )
         dist.reduce(l2_norm_out, dst=0, op=dist.ReduceOp.AVG)
     l2_norm_ratio = l2_norm_out / l2_norm_in
 
     l0 = (feature_acts > 0).float().sum(-1)
 
-    # TODO: DDP
 
     metrics = {
         # l2 norms
@@ -85,13 +88,14 @@ def run_evals(
         "metrics/ce_loss_with_ablation": zero_abl_loss,
     }
 
-    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and is_master():
         wandb.log(
             metrics,
             step=n_training_steps + 1,
         )
 
     return metrics
+
 
 def recons_loss_batched(
     model: HookedTransformer,
@@ -101,15 +105,17 @@ def recons_loss_batched(
     n_batches: int = 100,
 ):
     losses = []
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         pbar = tqdm(total=n_batches, desc="Evaluation", smoothing=0.01)
     for _ in range(n_batches):
-        batch_tokens = activation_store.next_tokens(cfg.act_store.dataset.store_batch_size)
+        batch_tokens = activation_store.next_tokens(
+            cfg.act_store.dataset.store_batch_size
+        )
         assert batch_tokens is not None, "Not enough tokens in the store"
         score, loss, recons_loss, zero_abl_loss = get_recons_loss(
             model, sae, cfg, batch_tokens
         )
-        if cfg.use_ddp:
+        if cfg.sae.ddp_size > 1:
             dist.reduce(score, dst=0, op=dist.ReduceOp.AVG)
             dist.reduce(loss, dst=0, op=dist.ReduceOp.AVG)
             dist.reduce(recons_loss, dst=0, op=dist.ReduceOp.AVG)
@@ -122,10 +128,10 @@ def recons_loss_batched(
                 zero_abl_loss.mean().item(),
             )
         )
-        if not cfg.use_ddp or cfg.rank == 0:
+        if is_master():
             pbar.update(1)
 
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         pbar.close()
 
     losses = pd.DataFrame(
@@ -151,12 +157,17 @@ def get_recons_loss(
         names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
         until=cfg.sae.hook_point_out,
     )
-    activations_in, activations_out = cache[cfg.sae.hook_point_in], cache[cfg.sae.hook_point_out]
-    replacements = sae.forward(activations_in, label=activations_out).to(activations_out.dtype)
+    activations_in, activations_out = (
+        cache[cfg.sae.hook_point_in],
+        cache[cfg.sae.hook_point_out],
+    )
+    replacements = sae.forward(activations_in, label=activations_out).to(
+        activations_out.dtype
+    )
 
     def replacement_hook(activations: torch.Tensor, hook: Any):
         return replacements
-    
+
     recons_loss: torch.Tensor = model.run_with_hooks(
         batch_tokens,
         return_type="loss",

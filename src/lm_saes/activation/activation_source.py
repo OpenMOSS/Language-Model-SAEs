@@ -66,8 +66,8 @@ class CachedActivationSource(ActivationSource):
         assert len(cfg.hook_points) == 1, "CachedActivationSource only supports one hook point"
         self.hook_point = cfg.hook_points[0]
         self.chunk_paths = list_activation_chunks(cfg.cached_activations_path[0], self.hook_point)
-        if cfg.use_ddp:
-            self.chunk_paths = [p for i, p in enumerate(self.chunk_paths) if i % cfg.world_size == cfg.rank]
+        if cfg.ddp_size > 1:
+            self.chunk_paths = [p for i, p in enumerate(self.chunk_paths) if i % dist.get_world_size() == dist.get_rank()]
         random.shuffle(self.chunk_paths)
 
         self.token_buffer = torch.empty((0, cfg.dataset.context_size), dtype=torch.long, device=cfg.device)

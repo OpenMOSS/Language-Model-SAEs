@@ -48,13 +48,15 @@ def entrypoint():
         from lm_saes.config import SAEConfig
         config['sae'] = SAEConfig.from_pretrained(args.sae).to_dict()
     
-    use_ddp = "use_ddp" in config and config["use_ddp"]
-    if use_ddp:
+    tp_size = config.get('tp_size', 1)
+    ddp_size = config.get('ddp_size', 1)
+    if tp_size > 1 or ddp_size > 1:
         import os
         import torch.distributed as dist
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         dist.init_process_group(backend='nccl')
         torch.cuda.set_device(dist.get_rank())
+    
 
     if args.runner == SupportedRunner.TRAIN:
         from lm_saes.runner import language_model_sae_runner
@@ -79,5 +81,6 @@ def entrypoint():
     else:
         raise ValueError(f'Unsupported runner: {args.runner}.')
     
-    if use_ddp:
+    if dist.is_initialized():
         dist.destroy_process_group()
+
