@@ -65,8 +65,19 @@ def sample_feature_activations(
         _, cache = model.run_with_cache_until(batch, names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out], until=cfg.sae.hook_point_out)
         activation_in, activation_out = cache[cfg.sae.hook_point_in], cache[cfg.sae.hook_point_out]
 
+        filter_mask = torch.logical_or(
+            batch.eq(model.tokenizer.eos_token_id),
+            batch.eq(model.tokenizer.pad_token_id)
+        )
+        filter_mask = torch.logical_or(
+            filter_mask,
+            batch.eq(model.tokenizer.bos_token_id)
+        )
+
         feature_acts = sae.encode(activation_in, label=activation_out)[..., start_index: end_index]
 
+        feature_acts[filter_mask] = 0
+        
         act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
 
         for name in cfg.subsample.keys():
