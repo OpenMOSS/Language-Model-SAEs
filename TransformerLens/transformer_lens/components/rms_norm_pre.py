@@ -26,7 +26,7 @@ class RMSNormPre(nn.Module):
     def forward(
         self, x: Float[torch.Tensor, "batch pos length"]
     ) -> Float[torch.Tensor, "batch pos length"]:
-        if self.cfg.dtype not in [torch.float32, torch.float64]:
+        if self.cfg.dtype not in [torch.float32, torch.float64, torch.bfloat16]:
             x = x.to(torch.float32)
 
         scale: Float[torch.Tensor, "batch pos 1"] = self.hook_scale(
