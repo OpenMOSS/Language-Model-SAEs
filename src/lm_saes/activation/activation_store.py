@@ -113,7 +113,8 @@ class ActivationStore:
         if self.tp_size > 1:
             # TODO
             next_tokens = self.act_source.next_tokens(batch_size)
-            funcol.broadcast(next_tokens, src=0, group=self.device_mesh["tp"])
+            # funcol.broadcast(next_tokens, src=0, group=self.device_mesh["tp"])
+            dist.broadcast(next_tokens, src=0)
             return next_tokens
         else:
             return self.act_source.next_tokens(batch_size)
