@@ -82,6 +82,7 @@ def train_sae(
         sae = parallelize_module(
             sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan
         )
+        sae.parallelize_plan = plan
 
     elif cfg.sae.ddp_size > 1:
         _ = DDP(sae, device_mesh=sae.device_mesh["ddp"])
@@ -315,7 +316,6 @@ def train_sae(
             if (
                 len(checkpoint_thresholds) > 0
                 and n_training_tokens >= checkpoint_thresholds[0]
-                and is_master()
             ):
                 # Save the model and optimizer state
                 path = os.path.join(
@@ -327,7 +327,6 @@ def train_sae(
                 if not cfg.sae.sparsity_include_decoder_norm:
                     sae.set_decoder_norm_to_fixed_norm(1)
                 sae.save_pretrained(path)
-
                 checkpoint_thresholds.pop(0)
 
             n_training_steps += 1
