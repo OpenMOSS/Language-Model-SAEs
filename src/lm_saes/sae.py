@@ -25,6 +25,14 @@ from torch.distributed._tensor import (
     distribute_module,
     distribute_tensor,
 )
+from torch.distributed.tensor.parallel import (
+    ColwiseParallel,
+    RowwiseParallel,
+    parallelize_module,
+    loss_parallel,
+)
+
+from lm_saes.utils.misc import is_master
 
 
 class SparseAutoEncoder(HookedRootModule):
@@ -253,7 +261,11 @@ class SparseAutoEncoder(HookedRootModule):
             label = x
 
         if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
-            x = x - self.decoder.bias.to_local() if self.cfg.tp_size > 1 else x - self.decoder.bias
+            x = (
+                x - self.decoder.bias.to_local()
+                if self.cfg.tp_size > 1
+                else x - self.decoder.bias
+            )
 
         x = x * self.compute_norm_factor(x, hook_point="in")
 
@@ -688,27 +700,37 @@ class SparseAutoEncoder(HookedRootModule):
 
         return test_sae
 
+    def get_full_state_dict(self) -> dict:
+        state_dict = self.state_dict()
+        if self.cfg.tp_size > 1:
+            state_dict = {
+                k: v.full_tensor() if isinstance(v, DTensor) else v
+                for k, v in state_dict.items()
+            }
+        return state_dict
+
     def save_pretrained(self, ckpt_path: str) -> None:
         """Save the model to the checkpoint path.
 
         Args:
             ckpt_path (str): The path to save the model. If a directory, the model will be saved to the directory with the default filename `sae_weights.safetensors`.
         """
-
         if os.path.isdir(ckpt_path):
             ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
-        if ckpt_path.endswith(".safetensors"):
-            safe.save_file(
-                self.state_dict(), ckpt_path, {"version": version("lm-saes")}
-            )
-        elif ckpt_path.endswith(".pt"):
-            torch.save(
-                {"sae": self.state_dict(), "version": version("lm-saes")}, ckpt_path
-            )
-        else:
-            raise ValueError(
-                f"Invalid checkpoint path {ckpt_path}. Currently only supports .safetensors and .pt formats."
-            )
+        state_dict = self.get_full_state_dict()
+        if is_master():
+            if ckpt_path.endswith(".safetensors"):
+                safe.save_file(
+                    state_dict, ckpt_path, {"version": version("lm-saes")}
+                )
+            elif ckpt_path.endswith(".pt"):
+                torch.save(
+                    {"sae": state_dict, "version": version("lm-saes")}, ckpt_path
+                )
+            else:
+                raise ValueError(
+                    f"Invalid checkpoint path {ckpt_path}. Currently only supports .safetensors and .pt formats."
+                )
 
     def decoder_norm(self, keepdim: bool = False, during_init: bool = False):
         # We suspect that using torch.norm on dtensor may lead to some bugs during the backward process that are difficult to pinpoint and resolve. Therefore, we first convert the decoder weight from dtensor to tensor for norm calculation, and then redistribute it to different nodes.
