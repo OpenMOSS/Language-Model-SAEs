@@ -73,6 +73,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
+    model.offload_params_after(cfg.act_store.hook_points[0], torch.tensor([[0]], device=cfg.lm.device))
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
