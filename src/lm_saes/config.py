@@ -121,9 +121,15 @@ class TextDatasetConfig(RunnerConfig):
 
         self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
 
-        assert len(self.sample_probs) == len(self.dataset_path), "Number of sample_probs must match number of dataset paths"
-        assert len(self.concat_tokens) == len(self.dataset_path), "Number of concat_tokens must match number of dataset paths"
-        assert len(self.prepend_bos) == len(self.dataset_path), "Number of prepend_bos must match number of dataset paths"
+        assert len(self.sample_probs) == len(
+            self.dataset_path
+        ), "Number of sample_probs must match number of dataset paths"
+        assert len(self.concat_tokens) == len(
+            self.dataset_path
+        ), "Number of concat_tokens must match number of dataset paths"
+        assert len(self.prepend_bos) == len(
+            self.dataset_path
+        ), "Number of prepend_bos must match number of dataset paths"
 
 
 @dataclass(kw_only=True)
@@ -173,7 +179,9 @@ class SAEConfig(BaseModelConfig):
     strict_loading: bool = True
 
     use_decoder_bias: bool = True
-    apply_decoder_bias_to_pre_encoder: bool = True  # set to False when training transcoders
+    apply_decoder_bias_to_pre_encoder: bool = (
+        True  # set to False when training transcoders
+    )
     expansion_factor: int = 128
     d_model: int = 768
     d_sae: int = None  # type: ignore
@@ -181,14 +189,16 @@ class SAEConfig(BaseModelConfig):
     norm_activation: str = "token-wise"  # none, token-wise, batch-wise, dataset-wise
     dataset_average_activation_norm: Dict[str, float] | None = None
     decoder_exactly_fixed_norm: bool = False
-    sparsity_include_decoder_norm: bool = True  # set to True: sparsity loss = sum(act * corresponding_decoder_norm), otherwise loss = sum(act). Incompatible with decoder_exactly_fixed_norm
+    sparsity_include_decoder_norm: bool = (
+        True  # set to True: sparsity loss = sum(act * corresponding_decoder_norm), otherwise loss = sum(act). Incompatible with decoder_exactly_fixed_norm
+    )
     use_glu_encoder: bool = False
     init_decoder_norm: float | None = None  # type: ignore
     init_encoder_norm: float | None = None  # type: ignore
     init_encoder_with_decoder_transpose: bool = True
 
     l1_coefficient: float = 0.00008
-    l1_coefficient_warmup_steps: int = 0
+    l1_coefficient_warmup_steps: int | float = 0.1
     lp: int = 1
 
     use_ghost_grads: bool = False
@@ -202,15 +212,27 @@ class SAEConfig(BaseModelConfig):
             self.hook_point_out = self.hook_point_in
         if self.d_sae is None:
             self.d_sae = self.d_model * self.expansion_factor
-        if self.norm_activation == "dataset-wise" and self.dataset_average_activation_norm is None:
-            print(f'dataset_average_activation_norm is None and norm_activation is "dataset-wise". Will be computed automatically from the dataset.')
+        if (
+            self.norm_activation == "dataset-wise"
+            and self.dataset_average_activation_norm is None
+        ):
+            print(
+                f'dataset_average_activation_norm is None and norm_activation is "dataset-wise". Will be computed automatically from the dataset.'
+            )
         if self.sparsity_include_decoder_norm and self.decoder_exactly_fixed_norm:
-            raise ValueError("sparsity_include_decoder_norm and decoder_exactly_fixed_norm are incompatible.")
+            raise ValueError(
+                "sparsity_include_decoder_norm and decoder_exactly_fixed_norm are incompatible."
+            )
         if self.sparsity_include_decoder_norm and self.use_ghost_grads:
-            raise ValueError("sparsity_include_decoder_norm and use_ghost_grads are incompatible.")
-        if self.init_encoder_with_decoder_transpose and isinstance(self.init_encoder_norm, float):
-            raise ValueError("init_encoder_with_decoder_transpose and init_encoder_norm with float are incompatible.")
-
+            raise ValueError(
+                "sparsity_include_decoder_norm and use_ghost_grads are incompatible."
+            )
+        if self.init_encoder_with_decoder_transpose and isinstance(
+            self.init_encoder_norm, float
+        ):
+            raise ValueError(
+                "init_encoder_with_decoder_transpose and init_encoder_norm with float are incompatible."
+            )
 
     @staticmethod
     def from_pretrained(
@@ -299,8 +321,8 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
         "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup, exponentialwarmup
     )
     lr_end: Optional[float] = 1 / 32
-    lr_warm_up_steps: int = 5000
-    lr_cool_down_steps: int = 10000
+    lr_warm_up_steps: int | float = 0.1
+    lr_cool_down_steps: int | float = 0.1
     train_batch_size: int = 4096
     clip_grad_norm: float = 0.0
     remove_gradient_parallel_to_decoder_directions: bool = False
@@ -338,6 +360,26 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
 
         total_training_steps = self.total_training_tokens // self.effective_batch_size
         print_once(f"Total training steps: {total_training_steps}")
+        if self.lr_scheduler_name == "constantwithwarmup" and isinstance(
+            self.lr_warm_up_steps, float
+        ):
+            assert 0 <= self.lr_warm_up_steps <= 1.0
+            self.lr_warm_up_steps = int(self.lr_warm_up_steps * total_training_steps)
+            print_once(f"Learning rate warm up steps: {self.lr_warm_up_steps}")
+        if isinstance(self.sae.l1_coefficient_warmup_steps, float):
+            assert 0 <= self.sae.l1_coefficient_warmup_steps <= 1.0
+            self.sae.l1_coefficient_warmup_steps = int(
+                self.sae.l1_coefficient_warmup_steps * total_training_steps
+            )
+            print_once(
+                f"L1 coefficient warm up steps: {self.sae.l1_coefficient_warmup_steps}"
+            )
+        if isinstance(self.lr_cool_down_steps, float):
+            assert 0 <= self.lr_cool_down_steps <= 1.0
+            self.lr_cool_down_steps = int(
+                self.lr_cool_down_steps * total_training_steps
+            )
+            print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
 
 
 @dataclass(kw_only=True)
