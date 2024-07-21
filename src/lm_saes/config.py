@@ -287,7 +287,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     )
     lr_end: Optional[float] = 1 / 32
     lr_warm_up_steps: int | float = 0.1
-    lr_cool_down_steps: int = 10000
+    lr_cool_down_steps: int | float = 0.1
     train_batch_size: int = 4096
     clip_grad_norm: float = 0.0
     remove_gradient_parallel_to_decoder_directions: bool = False
@@ -339,6 +339,10 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
             assert 0 <= self.sae.l1_coefficient_warmup_steps <= 1.0
             self.sae.l1_coefficient_warmup_steps = int(self.sae.l1_coefficient_warmup_steps * total_training_steps)
             print_once(f"L1 coefficient warm up steps: {self.sae.l1_coefficient_warmup_steps}")
+        if isinstance(self.lr_cool_down_steps, float):
+            assert 0 <= self.lr_cool_down_steps <= 1.0
+            self.lr_cool_down_steps = int(self.lr_cool_down_steps * total_training_steps)
+            print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
 
 @dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
