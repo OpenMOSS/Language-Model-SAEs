@@ -161,6 +161,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
         ),
         cache_dir=cfg.lm.cache_dir,
         local_files_only=cfg.lm.local_files_only,
+        torch_dtype=cfg.lm.dtype,
     )
     hf_tokenizer = AutoTokenizer.from_pretrained(
         (

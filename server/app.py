@@ -37,7 +37,6 @@ byte_decoder = {v: k for k, v in bytes_to_unicode().items()}
 
 client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017"), os.environ.get("MONGO_DB", "mechinterp"))
 dictionary_series = os.environ.get("DICTIONARY_SERIES", None)
-ckpt_name = os.environ.get("DICTIONARY_CKPT_NAME", "final.pt")
 
 sae_cache = {}
 lm_cache = {}
