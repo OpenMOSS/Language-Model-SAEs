@@ -85,10 +85,9 @@ def train_sae(
         sae.parallelize_plan = plan
 
     elif cfg.sae.ddp_size > 1:
+        # parallelize_module does not work with DDP
         _ = DDP(sae, device_mesh=sae.device_mesh["ddp"])
-        # sae = parallelize_module(
-        #     sae, device_mesh=sae.device_mesh["ddp"], parallelize_plan={}
-        # )
+        
 
     optimizer = Adam(sae.parameters(), lr=cfg.lr, betas=cfg.betas)
 
