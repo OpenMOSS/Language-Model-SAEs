@@ -24,7 +24,7 @@ class ActivationStore:
         self.act_source = act_source
         self.buffer_size = cfg.n_tokens_in_buffer
         self.device = cfg.device
-        self.ddp_size = cfg.ddp_size  # 1 8
+        self.ddp_size = cfg.ddp_size
         self.tp_size = cfg.tp_size
         self._store: Dict[str, torch.Tensor] = {}
         self._all_gather_buffer: Dict[str, torch.Tensor] = {}
@@ -111,9 +111,9 @@ class ActivationStore:
 
     def next_tokens(self, batch_size: int) -> torch.Tensor | None:
         if self.tp_size > 1:
-            # TODO
+            # TODO: only get next token from the root process
             next_tokens = self.act_source.next_tokens(batch_size)
-            # funcol.broadcast(next_tokens, src=0, group=self.device_mesh["tp"])
+            # funcol.broadcast does not work and we dont know why
             dist.broadcast(next_tokens, src=0)
             return next_tokens
         else:
