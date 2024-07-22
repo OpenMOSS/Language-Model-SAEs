@@ -26,7 +26,7 @@ def sample_feature_activations(
     sae_chunk_id: int = 0,
     n_sae_chunks: int = 1,  # By default, we do not chunk the SAE. When the model & SAE is large, we can chunk the SAE to save memory.
 ):
-    if cfg.use_ddp:
+    if sae.cfg.ddp_size > 1:
         raise ValueError("Sampling feature activations does not support DDP yet")
     assert cfg.sae.d_sae is not None # Make mypy happy
 

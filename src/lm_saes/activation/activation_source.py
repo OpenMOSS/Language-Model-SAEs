@@ -11,7 +11,7 @@ from einops import rearrange, repeat
 from lm_saes.activation.token_source import TokenSource
 from lm_saes.activation.activation_dataset import load_activation_chunk, list_activation_chunks
 from lm_saes.config import ActivationStoreConfig
-
+import torch.distributed as dist
 class ActivationSource(ABC):
     def next(self) -> Dict[str, torch.Tensor] | None:
         """
