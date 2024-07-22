@@ -514,8 +514,8 @@ class SparseAutoEncoder(HookedRootModule):
             raise NotImplementedError("GLU encoder not supported")
 
         decoder_norm = self.decoder_norm()  # (d_sae,)
-        self.encoder.data = self.encoder.weight.data * decoder_norm
-        self.decoder.data = self.decoder.weight.data / decoder_norm[:, None]
+        self.encoder.weight.data = self.encoder.weight.data * decoder_norm[:, None]
+        self.decoder.weight.data = self.decoder.weight.data.T / decoder_norm
 
         self.encoder.bias.data = self.encoder.bias.data * decoder_norm
 
