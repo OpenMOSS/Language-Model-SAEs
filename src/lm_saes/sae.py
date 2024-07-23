@@ -262,7 +262,7 @@ class SparseAutoEncoder(HookedRootModule):
 
         if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
             x = (
-                x - self.decoder.bias.to_local()
+                x - self.decoder.bias.to_local() # type: ignore
                 if self.cfg.tp_size > 1
                 else x - self.decoder.bias
             )
@@ -738,8 +738,8 @@ class SparseAutoEncoder(HookedRootModule):
             return torch.norm(self.decoder.weight, p=2, dim=0, keepdim=keepdim)
         else:
             decoder_norm = torch.norm(
-                self.decoder.weight.to_local(), p=2, dim=0, keepdim=keepdim
-            )
+                self.decoder.weight.to_local(), p=2, dim=0, keepdim=keepdim # type: ignore
+            ) 
             decoder_norm = DTensor.from_local(
                 decoder_norm,
                 device_mesh=self.device_mesh["tp"],
@@ -759,8 +759,8 @@ class SparseAutoEncoder(HookedRootModule):
             return torch.norm(self.encoder.weight, p=2, dim=1, keepdim=keepdim)
         else:
             encoder_norm = torch.norm(
-                self.encoder.weight.to_local(), p=2, dim=1, keepdim=keepdim
-            )
+                self.encoder.weight.to_local(), p=2, dim=1, keepdim=keepdim # type: ignore
+            ) 
             encoder_norm = DTensor.from_local(
                 encoder_norm, device_mesh=self.device_mesh["tp"], placements=[Shard(0)]
             )
