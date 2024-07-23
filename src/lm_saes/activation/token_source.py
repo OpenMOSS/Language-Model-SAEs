@@ -4,9 +4,10 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset, load_from_disk, Dataset
 
 from transformer_lens import HookedTransformer
-
+import torch.distributed as dist
 from lm_saes.config import TextDatasetConfig
 import random
+
 
 class TokenSource:
     def __init__(
@@ -28,9 +29,13 @@ class TokenSource:
 
         self.data_iter = [iter(dataloader) for dataloader in self.dataloader]
 
-        self.token_buffer = torch.empty((0, seq_len), dtype=torch.long, device=self.device)
+        self.token_buffer = torch.empty(
+            (0, seq_len), dtype=torch.long, device=self.device
+        )
 
-        self.bos_token_id_tensor = torch.tensor([self.model.tokenizer.bos_token_id], dtype=torch.long, device=self.device)
+        self.bos_token_id_tensor = torch.tensor(
+            [self.model.tokenizer.bos_token_id], dtype=torch.long, device=self.device
+        )
         self.resid = torch.tensor([], dtype=torch.long, device=self.device)
 
         self.sample_probs = sample_probs
@@ -49,31 +54,43 @@ class TokenSource:
                 cur_tokens = cur_tokens[cur_tokens != self.model.tokenizer.eos_token_id]
                 cur_tokens = cur_tokens[cur_tokens != self.model.tokenizer.pad_token_id]
 
-                self.resid = torch.cat([self.resid, self.bos_token_id_tensor.clone(), cur_tokens], dim=0)
+                self.resid = torch.cat(
+                    [self.resid, self.bos_token_id_tensor.clone(), cur_tokens], dim=0
+                )
                 while self.resid.size(0) >= self.seq_len:
-                    self.token_buffer = torch.cat([self.token_buffer, self.resid[:self.seq_len].unsqueeze(0)], dim=0)
-                    self.resid = self.resid[self.seq_len:]
-                    self.resid = torch.cat([self.bos_token_id_tensor.clone(), self.resid], dim=0)
+                    self.token_buffer = torch.cat(
+                        [self.token_buffer, self.resid[: self.seq_len].unsqueeze(0)],
+                        dim=0,
+                    )
+                    self.resid = self.resid[self.seq_len :]
+                    self.resid = torch.cat(
+                        [self.bos_token_id_tensor.clone(), self.resid], dim=0
+                    )
                 tokens = tokens[1:]
         else:
-            tokens = tokens[:, :self.seq_len]
+            tokens = tokens[:, : self.seq_len]
 
             if tokens.size(1) < self.seq_len:
                 pad_len = self.seq_len - tokens.size(1)
                 tokens = torch.cat([tokens, torch.full((tokens.size(0), pad_len), self.model.tokenizer.pad_token_id, dtype=torch.long, device=self.device)], dim=1)
             self.token_buffer = torch.cat([self.token_buffer, tokens], dim=0)
 
-
     def reset_iter(self, empty_idx: int):
-        self.data_iter = self.data_iter[:empty_idx] + self.data_iter[empty_idx + 1:]
+        self.data_iter = self.data_iter[:empty_idx] + self.data_iter[empty_idx + 1 :]
 
-        self.sample_probs = self.sample_probs[:empty_idx] + self.sample_probs[empty_idx + 1:]
+        self.sample_probs = (
+            self.sample_probs[:empty_idx] + self.sample_probs[empty_idx + 1 :]
+        )
 
-        self.sample_probs = [prob / sum(self.sample_probs) for prob in self.sample_probs]
+        self.sample_probs = [
+            prob / sum(self.sample_probs) for prob in self.sample_probs
+        ]
 
     def next(self, batch_size: int) -> torch.Tensor | None:
         while self.token_buffer.size(0) < batch_size:
-            dataset_idx_to_fetch = random.choices(range(len(self.dataloader)), weights=self.sample_probs)[0]
+            dataset_idx_to_fetch = random.choices(
+                range(len(self.dataloader)), weights=self.sample_probs
+            )[0]
             try:
                 batch = next(self.data_iter[dataset_idx_to_fetch])
             except StopIteration:
@@ -96,24 +113,24 @@ class TokenSource:
             dataset = load_dataset(dataset_path, split="train", cache_dir=cfg.cache_dir)
         else:
             dataset = load_from_disk(dataset_path)
-        if cfg.use_ddp:
-            shard_id = cfg.rank
-            shard = dataset.shard(num_shards=cfg.world_size, index=shard_id)
+        if dist.is_initialized():
+            shard_id = dist.get_rank()
+            shard = dataset.shard(
+                num_shards=dist.get_world_size(), index=shard_id
+            )
         else:
             shard = dataset
 
-        if cfg.use_ddp:
-            shard_id = cfg.rank
-            shard = dataset.shard(num_shards=cfg.world_size, index=shard_id)
-        else:
-            shard = dataset
 
         dataloader = DataLoader(shard, batch_size=cfg.store_batch_size)
         return dataloader
 
     @staticmethod
     def from_config(model: HookedTransformer, cfg: TextDatasetConfig):
-        dataloader = [TokenSource._process_dataset(dataset_path, cfg) for dataset_path in cfg.dataset_path]
+        dataloader = [
+            TokenSource._process_dataset(dataset_path, cfg)
+            for dataset_path in cfg.dataset_path
+        ]
 
         return TokenSource(
             dataloader=dataloader,

@@ -50,3 +50,5 @@ jobs:
         run: pdm install
       - name: Type check
         run: pdm run mypy .
+      - name: Unit tests
+        run: pdm run pytest ./tests

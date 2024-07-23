@@ -5,10 +5,9 @@ from tqdm.auto import tqdm
 import os
 import torch.distributed as dist
 
-from lm_saes.utils.misc import print_once
 from lm_saes.config import ActivationGenerationConfig
 from lm_saes.activation.token_source import TokenSource
-
+from lm_saes.utils.misc import is_master, print_once
 
 @torch.no_grad()
 def make_activation_dataset(
@@ -22,19 +21,19 @@ def make_activation_dataset(
 
     token_source = TokenSource.from_config(model=model, cfg=cfg.dataset)
 
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         for hook_point in cfg.hook_points:
             os.makedirs(os.path.join(cfg.activation_save_path, hook_point), exist_ok=False)
 
-    if cfg.use_ddp:
+    if cfg.ddp_size > 1:
         dist.barrier()
-        total_generating_tokens = cfg.total_generating_tokens // cfg.world_size
+        total_generating_tokens = cfg.total_generating_tokens // dist.get_world_size()
     else:
         total_generating_tokens = cfg.total_generating_tokens
 
     n_tokens = 0
     chunk_idx = 0
-    pbar = tqdm(total=total_generating_tokens, desc=f"Activation dataset Rank {cfg.rank}" if cfg.use_ddp else "Activation dataset")
+    pbar = tqdm(total=total_generating_tokens, desc=f"Activation dataset Rank {dist.get_rank()}" if dist.is_initialized() else "Activation dataset")
 
     while n_tokens < total_generating_tokens:
         act_dict = {hook_point: torch.empty((0, cfg.dataset.context_size, cfg.lm.d_model), dtype=cfg.lm.dtype, device=cfg.lm.device) for hook_point in cfg.hook_points}
@@ -63,7 +62,7 @@ def make_activation_dataset(
                     "context": context,
                     "position": position,
                 },
-                os.path.join(cfg.activation_save_path, hook_point, f"chunk-{str(chunk_idx).zfill(5)}.pt" if not cfg.use_ddp else f"shard-{cfg.rank}-chunk-{str(chunk_idx).zfill(5)}.pt")
+                os.path.join(cfg.activation_save_path, hook_point, f"chunk-{str(chunk_idx).zfill(5)}.pt" if not dist.is_initialized() else f"shard-{dist.get_rank()}-chunk-{str(chunk_idx).zfill(5)}.pt")
             )
         chunk_idx += 1
 

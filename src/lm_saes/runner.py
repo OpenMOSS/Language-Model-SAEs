@@ -1,12 +1,13 @@
 from typing import Any, cast
 import os
 
+from pandas.core.algorithms import rank
 import wandb
 
 from dataclasses import asdict
 
 import torch
-
+import torch.distributed as dist
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from transformer_lens import HookedTransformer, HookedTransformerConfig
@@ -28,10 +29,20 @@ from lm_saes.activation.activation_store import ActivationStore
 from lm_saes.sae_training import prune_sae, train_sae
 from lm_saes.analysis.sample_feature_activations import sample_feature_activations
 from lm_saes.analysis.features_to_logits import features_to_logits
-
+from torch.nn.parallel import DistributedDataParallel as DDP
+from lm_saes.utils.misc import is_master
 
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
+    if is_master():
+        cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+        cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+
+    if cfg.finetuning:
+        # Fine-tune SAE with frozen encoder weights and bias
+        sae.train_finetune_for_suppression_parameters()
+
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
             cfg.lm.model_name
@@ -52,7 +63,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    
+
     model = HookedTransformer.from_pretrained(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
@@ -62,7 +73,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
-
+    model.offload_params_after(cfg.act_store.hook_points[0], torch.tensor([[0]], device=cfg.lm.device))
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
@@ -85,7 +96,26 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
     cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
 
-    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if (
+            cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None
+            or cfg.sae.init_decoder_norm is None
+    ):
+        assert not cfg.finetuning
+        sae = SparseAutoEncoder.from_initialization_searching(
+            activation_store=activation_store,
+            cfg=cfg,
+        )
+    else:
+        sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+
+        if cfg.finetuning:
+            # Fine-tune SAE with frozen encoder weights and bias
+            sae.train_finetune_for_suppression_parameters()
+
+    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+
+    if cfg.wandb.log_to_wandb and is_master():
         wandb_config: dict = {
             **asdict(cfg),
             **asdict(cfg.sae),
@@ -113,7 +143,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         cfg,
     )
 
-    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and is_master():
         wandb.finish()
 
     return sae
@@ -131,6 +161,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
         ),
         cache_dir=cfg.lm.cache_dir,
         local_files_only=cfg.lm.local_files_only,
+        torch_dtype=cfg.lm.dtype,
     )
     hf_tokenizer = AutoTokenizer.from_pretrained(
         (
@@ -153,7 +184,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
     )
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
-    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and is_master():
         wandb_config: dict = {
             **asdict(cfg),
             **asdict(cfg.sae),
@@ -181,11 +212,11 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
     result = run_evals(model, sae, activation_store, cfg, 0)
 
     # Print results in tabular format
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         for key, value in result.items():
             print(f"{key}: {value}")
 
-    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and is_master():
         wandb.finish()
 
 
@@ -223,7 +254,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
-    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and is_master():
         wandb_config: dict = {
             **asdict(cfg),
             **asdict(cfg.sae),
@@ -245,11 +276,11 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
     result = run_evals(model, sae, activation_store, cfg, 0)
 
     # Print results in tabular format
-    if not cfg.use_ddp or cfg.rank == 0:
+    if is_master():
         for key, value in result.items():
             print(f"{key}: {value}")
 
-    if cfg.wandb.log_to_wandb and (not cfg.use_ddp or cfg.rank == 0):
+    if cfg.wandb.log_to_wandb and is_master():
         wandb.finish()
 
     return sae
@@ -327,7 +358,9 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
 
     for chunk_id in range(cfg.n_sae_chunks):
         activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
-        result = sample_feature_activations(sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks)
+        result = sample_feature_activations(
+            sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks
+        )
 
         for i in range(len(result["index"].cpu().numpy().tolist())):
             client.update_feature(
