@@ -12,6 +12,7 @@ authors = [
 ]
 dependencies = [
     "datasets>=2.17.0",
+    "transformers>=4.43.0",
     "einops>=0.7.0",
     "fastapi>=0.110.0",
     "matplotlib>=3.8.3",
