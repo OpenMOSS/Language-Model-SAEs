@@ -624,8 +624,8 @@ class SparseAutoEncoder(HookedRootModule):
         cfg: LanguageModelSAETrainingConfig,
     ):
         test_batch = activation_store.next(
-            batch_size=cfg.train_batch_size * 8
-        )  # just random hard code xd
+            batch_size=cfg.train_batch_size
+        )
         activation_in, activation_out = test_batch[cfg.sae.hook_point_in], test_batch[cfg.sae.hook_point_out]  # type: ignore
 
         if (
