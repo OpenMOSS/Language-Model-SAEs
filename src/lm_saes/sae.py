@@ -515,7 +515,7 @@ class SparseAutoEncoder(HookedRootModule):
 
         decoder_norm = self.decoder_norm()  # (d_sae,)
         self.encoder.weight.data = self.encoder.weight.data * decoder_norm[:, None]
-        self.decoder.weight.data = self.decoder.weight.data.T / decoder_norm
+        self.decoder.weight.data = self.decoder.weight.data / decoder_norm
 
         self.encoder.bias.data = self.encoder.bias.data * decoder_norm
 
