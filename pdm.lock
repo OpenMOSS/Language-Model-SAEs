@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["cross_platform", "inherit_metadata"]
 lock_version = "4.4.1"
-content_hash = "sha256:912a3ded5baf368f138e3f3b1ce24003ffffcf59a027a164404f5448a03733ea"
+content_hash = "sha256:5c71418ab629971629ad4f44f415d2e9f8dddf153f32c46bc11770d739427917"
 
 [[package]]
 name = "accelerate"
@@ -2509,13 +2509,13 @@ dependencies = [
 
 [[package]]
 name = "transformers"
-version = "4.41.2"
+version = "4.43.1"
 requires_python = ">=3.8.0"
 summary = "State-of-the-art Machine Learning for JAX, PyTorch and TensorFlow"
 groups = ["default", "dev"]
 dependencies = [
     "filelock",
-    "huggingface-hub<1.0,>=0.23.0",
+    "huggingface-hub<1.0,>=0.23.2",
     "numpy>=1.17",
     "packaging>=20.0",
     "pyyaml>=5.1",
@@ -2526,8 +2526,8 @@ dependencies = [
     "tqdm>=4.27",
 ]
 files = [
-    {file = "transformers-4.41.2-py3-none-any.whl", hash = "sha256:05555d20e43f808de1ef211ab64803cdb513170cef70d29a888b589caebefc67"},
-    {file = "transformers-4.41.2.tar.gz", hash = "sha256:80a4db216533d573e9cc7388646c31ed9480918feb7c55eb211249cb23567f87"},
+    {file = "transformers-4.43.1-py3-none-any.whl", hash = "sha256:eb44b731902e062acbaff196ae4896d7cb3494ddf38275aa00a5fcfb5b34f17d"},
+    {file = "transformers-4.43.1.tar.gz", hash = "sha256:662252c4d0e31b6684f68f68d5cc8206dd7f83da80eb3235be3dc5b3c9fdbdbd"},
 ]
 
 [[package]]
