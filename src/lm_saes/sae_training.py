@@ -145,8 +145,8 @@ def train_sae(
         if cfg.finetuning:
             loss = loss_data["l_rec"].mean()
         loss.backward()
-        if cfg.clip_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(sae.parameters(), cfg.clip_grad_norm)
+        if cfg.clip_grad_value > 0:
+            torch.nn.utils.clip_grad_value_(sae.parameters(), cfg.clip_grad_value)
         if cfg.remove_gradient_parallel_to_decoder_directions:
             sae.remove_gradient_parallel_to_decoder_directions()
         optimizer.step()
