@@ -591,6 +591,15 @@ class SparseAutoEncoder(HookedRootModule):
             state_dict = safe.load_file(ckpt_path, device=cfg.device)
         else:
             state_dict = torch.load(ckpt_path, map_location=cfg.device)["sae"]
+            
+        # for some old checkpoints
+        if 'encoder_bias' in state_dict:
+            state_dict['encoder.weight'] = state_dict.pop('encoder').T
+            state_dict['encoder.bias'] = state_dict.pop('encoder_bias')
+        
+        if 'decoder_bias' in state_dict:
+            state_dict['decoder.weight'] = state_dict.pop('decoder').T
+            state_dict['decoder.bias'] = state_dict.pop('decoder_bias')
 
         model = SparseAutoEncoder(cfg)
         model.load_state_dict(state_dict, strict=cfg.strict_loading)

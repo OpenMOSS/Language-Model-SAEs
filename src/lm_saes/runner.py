@@ -321,7 +321,9 @@ def activation_generation_runner(cfg: ActivationGenerationConfig):
 
 
 def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
+    cfg.sae.device = 'cpu'
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+    cfg.sae.device = cfg.lm.device
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
@@ -351,6 +353,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
+    model.offload_params_after(cfg.act_store.hook_points[0], torch.tensor([[0]], device=cfg.lm.device))
     model.eval()
 
     client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)

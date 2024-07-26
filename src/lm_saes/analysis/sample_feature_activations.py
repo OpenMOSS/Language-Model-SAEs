@@ -16,6 +16,7 @@ from lm_saes.config import LanguageModelSAEAnalysisConfig
 from lm_saes.activation.activation_store import ActivationStore
 from lm_saes.utils.misc import print_once
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
+from lm_saes.analysis.partial_encoder import PartialEncoder
 
 @torch.no_grad()
 def sample_feature_activations(
@@ -39,13 +40,14 @@ def sample_feature_activations(
     n_training_steps = 0
     n_training_tokens = 0
 
-    sae.eval()
-
     pbar = tqdm(total=total_analyzing_tokens, desc=f"Sampling activations of chunk {sae_chunk_id} of {n_sae_chunks}", smoothing=0.01)
 
-    d_sae = cfg.sae.d_sae // n_sae_chunks
+    d_sae = (cfg.sae.d_sae + n_sae_chunks - 1) // n_sae_chunks
     start_index = sae_chunk_id * d_sae
-    end_index = (sae_chunk_id + 1) * d_sae
+    end_index = min((sae_chunk_id + 1) * d_sae, cfg.sae.d_sae)
+    d_sae = end_index - start_index
+    
+    partial_encoder = PartialEncoder(sae, cfg.sae, start_index, end_index)
 
     sample_result = {k: {
         "elt": torch.empty((0, d_sae), dtype=cfg.sae.dtype, device=cfg.sae.device),
@@ -74,12 +76,12 @@ def sample_feature_activations(
             batch.eq(model.tokenizer.bos_token_id)
         )
 
-        feature_acts = sae.encode(activation_in, label=activation_out)[..., start_index: end_index]
-
+        feature_acts = partial_encoder.encode(activation_in, label=activation_out)
+        
         feature_acts[filter_mask] = 0
         
         act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
-
+        
         for name in cfg.subsample.keys():
 
             if cfg.enable_sampling:
@@ -103,12 +105,7 @@ def sample_feature_activations(
                 },
                 dim=0,
             )
-
-            sample_result[name] = sort_dict_of_tensor(sample_result[name], sort_dim=0, sort_key="elt", descending=True)
-            sample_result[name] = {
-                k: v[:cfg.subsample[name]["n_samples"]] for k, v in sample_result[name].items()
-            }
-
+            
 
         # Update feature activation histogram every 10 steps
         if n_training_steps % 50 == 49:
@@ -117,6 +114,13 @@ def sample_feature_activations(
                 feature_acts_all[i] = torch.cat([feature_acts_all[i], feature_acts_cur[i][feature_acts_cur[i] > 0.0]], dim=0)
 
         max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
+        
+        for name in cfg.subsample.keys():
+            sample_result[name] = sort_dict_of_tensor(sample_result[name], sort_dim=0, sort_key="elt", descending=True)
+            sample_result[name] = {
+                k: v[:cfg.subsample[name]["n_samples"]] for k, v in sample_result[name].items()
+            }
+
 
         n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.sae.device, dtype=torch.int)
         n_training_tokens += cast(int, n_tokens_current.item())
