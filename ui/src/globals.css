@@ -78,13 +78,3 @@
 html {
   scroll-behavior: smooth;
 }
-/* Side navigation styles */
-.side-nav {
-  position: fixed;
-  right: 0;
-  top: 0;
-  width: 80px;
-  height: 100%;
-  background-color: #f4f4f4;
-  box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
-}
