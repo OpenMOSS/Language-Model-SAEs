@@ -106,7 +106,7 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
           <AccordionTrigger>
             <div className="block text-left">
               {sampleName && <span className="text-gray-700 font-bold whitespace-pre">{sampleName}: </span>}
-              {startTrigger != 0 && <span>...</span>}
+              {startTrigger != 0 && <span className="text-sky-300">...</span>}
               {tokenGroupsTrigger.map((tokens, i) => (
                 <SuperToken
                   key={`trigger-group-${i}`}
@@ -116,7 +116,7 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
                   sampleMaxFeatureAct={sampleMaxFeatureAct}
                 />
               ))}
-              {endTrigger != 0 && <span> ...</span>}
+              {endTrigger != 0 && <span className="text-sky-300"> ...</span>}
             </div>
           </AccordionTrigger>
           <AccordionContent>
