@@ -13,16 +13,16 @@ export const FeatureSampleGroup = ({
   sampleGroup: Feature["sampleGroups"][0];
 }) => {
   const [page, setPage] = useState<number>(1);
-  const maxPage = Math.ceil(sampleGroup.samples.length / 5);
+  const maxPage = Math.ceil(sampleGroup.samples.length / 10);
 
   return (
     <div className="flex flex-col gap-4 mt-4">
       <p className="font-bold">Max Activation: {Math.max(...sampleGroup.samples[0].featureActs).toFixed(3)}</p>
-      {sampleGroup.samples.slice((page - 1) * 5, page * 5).map((sample, i) => (
+      {sampleGroup.samples.slice((page - 1) * 10, page * 10).map((sample, i) => (
         <FeatureActivationSample
           key={i}
           sample={sample}
-          sampleName={`Sample ${(page - 1) * 5 + i + 1}`}
+          sampleName={`Sample ${(page - 1) * 10 + i + 1}`}
           maxFeatureAct={feature.maxFeatureAct}
         />
       ))}
@@ -72,7 +72,7 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
 
   const tokensList = tokens.map((t) => t.featureAct);
   const startTrigger = Math.max(tokensList.indexOf(Math.max(...tokensList)) - 100, 0);
-  const endTrigger = Math.min(tokensList.indexOf(Math.max(...tokensList)) + 100, sample.context.length);
+  const endTrigger = Math.min(tokensList.indexOf(Math.max(...tokensList)) + 10, sample.context.length);
   const tokensTrigger = sample.context.slice(startTrigger, endTrigger).map((token, i) => ({
     token,
     featureAct: sample.featureActs[startTrigger + i],
@@ -102,7 +102,7 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
   return (
     <div>
       <Accordion type="single" collapsible>
-        <AccordionItem value="item-1">
+        <AccordionItem value={sampleMaxFeatureAct.toString()}>
           <AccordionTrigger>
             <div className="flex justify-start flex-wrap w-full">
               {sampleName && <span className="text-gray-700 font-bold whitespace-pre">{sampleName}: </span>}
