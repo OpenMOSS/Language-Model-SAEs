@@ -104,10 +104,10 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
     <div>
       <Accordion type="single" collapsible>
         <AccordionItem value="item-1">
-          <AccordionTrigger >
+          <AccordionTrigger>
             <div className='flex justify-start flex-wrap w-full'>
               {sampleName && <span className="text-gray-700 font-bold">{sampleName}: </span>}
-              <span>... </span>
+              <span>...</span>
                 {tokenGroupsTrigger.map((tokens, i) => (
                   <div key={i} className="inline-block whitespace-pre">
                   <SuperToken
