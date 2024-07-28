@@ -89,11 +89,11 @@ export const FeaturesPage = () => {
   }, [dictionariesState.value]);
 
   return (
-    <div>
+    <div id="Top">
       <AppNavbar />
       <SideNav logitsExist={(featureState.value && featureState.value.logits != null) ?? false}/>
       <div className="pt-4 pb-20 px-20 flex flex-col items-center gap-12">
-        <div id="Top" className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
+        <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
           <span className="font-bold justify-self-end">Select dictionary:</span>
           <Select
             disabled={dictionariesState.loading || featureState.loading}

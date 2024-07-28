@@ -38,14 +38,14 @@ export const SideNav = ({logitsExist}: {logitsExist:boolean}) => {
   }, );
 
   return (
-      <Card className="side-nav">
-        <CardHeader>
-          <CardTitle className="flex justify-between items-center text-base">
+      <Card className="side-nav py-4">
+        <CardHeader className="p-0">
+          <CardTitle className="flex justify-between items-center text-xs p-2">
             <span className="font-bold">CONTENTS</span>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col">
             <ul >
               {idList.map((item) => (
                 <li key={item} style={{ position: 'relative', marginBottom: '10px' }}>
