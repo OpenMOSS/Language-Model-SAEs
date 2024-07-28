@@ -88,7 +88,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
   const [showCustomInput, setShowCustomInput] = useState<boolean>(false);
 
   return (
-    <Card className="container">
+    <Card id="Interp." className="container">
       <CardHeader>
         <CardTitle className="flex justify-between items-center text-xl">
           <span>
@@ -108,7 +108,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
 
           <FeatureInterpretation feature={feature} />
 
-          <div className="flex flex-col w-full gap-4">
+          <div id="Hist." className="flex flex-col w-full gap-4">
             <p className="font-bold">Activation Histogram</p>
             <Plot
               data={feature.featureActivationHistogram}
@@ -123,7 +123,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
           </div>
 
           {feature.logits && (
-            <div className="flex flex-col w-full gap-4">
+            <div id="Logits" className="flex flex-col w-full gap-4">
               <p className="font-bold">Logits</p>
               <div className="flex gap-4">
                 <div className="flex flex-col w-1/2 gap-4">
@@ -180,10 +180,17 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
             </div>
           )}
 
-          <div className="flex flex-col w-full gap-4">
+          <div id="Act." className="flex flex-col w-full gap-4">
             <Tabs defaultValue="top_activations">
               <TabsList className="font-bold">
-                {feature.sampleGroups.map((sampleGroup) => (
+                {feature.sampleGroups.slice(0,feature.sampleGroups.length/2).map((sampleGroup) => (
+                  <TabsTrigger key={`tab-trigger-${sampleGroup.analysisName}`} value={sampleGroup.analysisName}>
+                    {analysisNameMap(sampleGroup.analysisName)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <TabsList className="font-bold">
+                {feature.sampleGroups.slice(feature.sampleGroups.length/2,feature.sampleGroups.length).map((sampleGroup) => (
                   <TabsTrigger key={`tab-trigger-${sampleGroup.analysisName}`} value={sampleGroup.analysisName}>
                     {analysisNameMap(sampleGroup.analysisName)}
                   </TabsTrigger>

@@ -74,3 +74,19 @@
     @apply bg-background text-foreground;
   }
 }
+
+
+html {
+  scroll-behavior: smooth;
+}
+/* Side navigation styles */
+.side-nav {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 125px;
+  height: 100%;
+  background-color: #f4f4f4;
+  /* padding: 10px; */
+  box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
+}

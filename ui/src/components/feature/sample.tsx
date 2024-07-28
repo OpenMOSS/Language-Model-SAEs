@@ -3,6 +3,7 @@ import { SuperToken } from "./token";
 import { mergeUint8Arrays } from "@/utils/array";
 import { useState } from "react";
 import { AppPagination } from "../ui/pagination";
+import { Accordion, AccordionTrigger, AccordionContent, AccordionItem } from "../ui/accordion";
 
 export const FeatureSampleGroup = ({
   feature,
@@ -69,18 +70,71 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
     [0]
   );
 
+  const tokensList = tokens.map((t) => t.featureAct)
+  const startTrigger = Math.max(tokensList.indexOf(Math.max(...tokensList)) - 100, 0);
+  const endTrigger = Math.min(tokensList.indexOf(Math.max(...tokensList)) + 100, sample.context.length);
+  const tokensTrigger = sample.context.slice(startTrigger, endTrigger).map((token, i) => ({
+    token,
+    featureAct: sample.featureActs[startTrigger + i],
+  }));
+
+  const [tokenGroupsTrigger, __] = tokensTrigger.reduce<[Token[][], Token[]]>(
+    ([groups, currentGroup], token) => {
+      const newGroup = [...currentGroup, token];
+      try {
+        decoder.decode(mergeUint8Arrays(newGroup.map((t) => t.token)));
+        return [[...groups, newGroup], []];
+      } catch {
+        return [groups, newGroup];
+      }
+    },
+    [[], []]
+  );
+
+  const tokenGroupPositionsTrigger = tokenGroupsTrigger.reduce<number[]>(
+    (acc, tokenGroup) => {
+      const tokenCount = tokenGroup.length;
+      return [...acc, acc[acc.length - 1] + tokenCount];
+    },
+    [0]
+  );
+
+
   return (
     <div>
-      {sampleName && <span className="text-gray-700 font-bold">{sampleName}: </span>}
-      {tokenGroups.map((tokens, i) => (
-        <SuperToken
-          key={`group-${i}`}
-          tokens={tokens}
-          position={tokenGroupPositions[i]}
-          maxFeatureAct={maxFeatureAct}
-          sampleMaxFeatureAct={sampleMaxFeatureAct}
-        />
-      ))}
+      <Accordion type="single" collapsible>
+        <AccordionItem value="item-1">
+          <AccordionTrigger >
+            <div className='flex justify-start flex-wrap w-full'>
+              {sampleName && <span className="text-gray-700 font-bold">{sampleName}: </span>}
+              <span>... </span>
+                {tokenGroupsTrigger.map((tokens, i) => (
+                  <div key={i} className="inline-block whitespace-pre">
+                  <SuperToken
+                    key={`group-${i}`}
+                    tokens={tokens}
+                    position={tokenGroupPositionsTrigger[i]}
+                    maxFeatureAct={maxFeatureAct}
+                    sampleMaxFeatureAct={sampleMaxFeatureAct}
+                  />
+                  </div>
+                ))}
+              <span>...</span>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent>
+            {tokenGroups.map((tokens, i) => (
+              <SuperToken
+                key={`group-${i}`}
+                tokens={tokens}
+                position={tokenGroupPositions[i]}
+                maxFeatureAct={maxFeatureAct}
+                sampleMaxFeatureAct={sampleMaxFeatureAct}
+              />
+            ))}
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </div>
   );
 };
