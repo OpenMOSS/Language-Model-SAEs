@@ -70,7 +70,7 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
     [0]
   );
 
-  const tokensList = tokens.map((t) => t.featureAct)
+  const tokensList = tokens.map((t) => t.featureAct);
   const startTrigger = Math.max(tokensList.indexOf(Math.max(...tokensList)) - 100, 0);
   const endTrigger = Math.min(tokensList.indexOf(Math.max(...tokensList)) + 100, sample.context.length);
   const tokensTrigger = sample.context.slice(startTrigger, endTrigger).map((token, i) => ({
@@ -99,26 +99,25 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
     [0]
   );
 
-
   return (
     <div>
       <Accordion type="single" collapsible>
         <AccordionItem value="item-1">
           <AccordionTrigger>
-            <div className='flex justify-start flex-wrap w-full'>
+            <div className="flex justify-start flex-wrap w-full">
               {sampleName && <span className="text-gray-700 font-bold whitespace-pre">{sampleName}: </span>}
               {startTrigger != 0 && <span>...</span>}
-                {tokenGroupsTrigger.map((tokens, i) => (
-                  <div key={i} className="inline-block whitespace-pre">
-                    <SuperToken
-                      key={`group-${i}`}
-                      tokens={tokens}
-                      position={tokenGroupPositionsTrigger[i]}
-                      maxFeatureAct={maxFeatureAct}
-                      sampleMaxFeatureAct={sampleMaxFeatureAct}
-                    />
-                  </div>
-                ))}
+              {tokenGroupsTrigger.map((tokens, i) => (
+                <div key={i} className="inline-block whitespace-pre">
+                  <SuperToken
+                    key={`group-${i}`}
+                    tokens={tokens}
+                    position={tokenGroupPositionsTrigger[i]}
+                    maxFeatureAct={maxFeatureAct}
+                    sampleMaxFeatureAct={sampleMaxFeatureAct}
+                  />
+                </div>
+              ))}
               {endTrigger != 0 && <span> ...</span>}
             </div>
           </AccordionTrigger>

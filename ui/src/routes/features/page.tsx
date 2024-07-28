@@ -1,6 +1,6 @@
 import { AppNavbar } from "@/components/app/navbar";
 import { FeatureCard } from "@/components/feature/feature-card";
-import { SideNav} from "@/components/app/sidenav";
+import { SideNav } from "@/components/app/sidenav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -91,7 +91,7 @@ export const FeaturesPage = () => {
   return (
     <div id="Top">
       <AppNavbar />
-      <SideNav logitsExist={(featureState.value && featureState.value.logits != null) ?? false}/>
+      <SideNav logitsExist={(featureState.value && featureState.value.logits != null) ?? false} />
       <div className="pt-4 pb-20 px-20 flex flex-col items-center gap-12">
         <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
           <span className="font-bold justify-self-end">Select dictionary:</span>
