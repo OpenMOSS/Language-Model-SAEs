@@ -1,6 +1,6 @@
 import { AppNavbar } from "@/components/app/navbar";
 import { FeatureCard } from "@/components/feature/feature-card";
-import { SectionNavigator } from "@/components/app/sidenav";
+import { SectionNavigator } from "@/components/app/section-navigator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
