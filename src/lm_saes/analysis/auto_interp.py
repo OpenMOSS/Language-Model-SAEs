@@ -1,6 +1,8 @@
 from typing import Dict, Optional, cast
 import torch
 import os
+import sys
+sys.path.append('/remote-home/miintern1/Language-Model-SAEs/src')
 from datasets import Dataset
 from transformers import AutoTokenizer
 from tqdm import tqdm
@@ -8,7 +10,7 @@ import tiktoken
 import random
 import traceback
 from openai import OpenAI
-from lm_saes.config import AutoInterpConfig, SAEConfig
+from lm_saes.config import OpenAIConfig, AutoInterpConfig, SAEConfig, LanguageModelConfig
 from transformer_lens import HookedTransformer
 from lm_saes.sae import SparseAutoEncoder
 
@@ -19,8 +21,9 @@ def _num_tokens_from_string(string: str, encoding_name: str = "cl100k_base") -> 
     return num_tokens
 
 
-def _calculate_cost(num_input_tokens: int, num_output_tokens: int):
-    return num_input_tokens * 0.01 / 1000 + num_output_tokens * 0.03 / 1000
+def _calculate_cost(num_input_tokens: int, num_output_tokens: int, price =(0.005, 0.015)):
+    input_price, output_price = price
+    return num_input_tokens * input_price / 1000 + num_output_tokens * output_price / 1000
 
 
 def _extract_context(cfg: AutoInterpConfig, tokenizer, context_id, feature_acts):
@@ -72,6 +75,16 @@ Consider the following activations for a feature in the neural network. Activati
 
     return task_description
 
+def _construct_few_shots(context_list, is_test, unknown_ratio = 0.2):
+    task_description = """"""
+    for id, context in enumerate(context_list):
+        if not is_test:
+            token_acts_str = "\n".join([f"{token}\t{'unknown' if random.random() < unknown_ratio else value}" for token, value in context])
+        else:
+            token_acts_str = "\n".join([f"{token}\tunknown" for token, value in context])
+        break
+    return token_acts_str
+
 
 def _sample_sentences(cfg: AutoInterpConfig, tokenizer, feature_activation):
     """
@@ -96,13 +109,68 @@ def _sample_sentences(cfg: AutoInterpConfig, tokenizer, feature_activation):
     prompt = _construct_prompt(context_list)
     return prompt
 
+def _sample_sentences_few_shot(cfg: AutoInterpConfig, tokenizer, example_feature_activation_list, example_description_list, feature_activation, description):
+    """
+    Samples sentences from a list of features where the maximum activation value of tokens within a sentence
+    is greater than a certain percentage (p) of the highest activation value across all tokens.
+    example_feature_activation_list is a list of feature activations that's used in few-shot learning.
+    descrition list is a list of strings that describe the features.
+    feature_activation is the feature activations to be tested.
+    And then construct the sentences into a prompt for simulation and scoring.
+    """
+    assert len(example_description_list) == len(example_feature_activation_list), f"Got {len(example_description_list)=} and {len(example_feature_activation_list)=}"
+    print(f"{len(example_description_list)=}")
+    print(f"{len(example_feature_activation_list)=}")
+    print(f"{len(description)=}")
+    print(f"{len(feature_activation)=}")
+    few_shot_number = min(10, len(example_feature_activation_list))
+    print(f"{few_shot_number=}")
+    task_description = """We're studying neurons in a neural network. Each neuron looks for some particular thing in a short document. Look at an explanation of what the neuron does, and try to predict how it will fire on each token.\n\nThe activation format is token<tab>activation, activations go from 0 to 10, "unknown" indicates an unknown activation. Most activations will be 0."""
+    for description_index, example_feature_activation in enumerate(example_feature_activation_list):    
+        few_shot_context_list = []
+        few_shot_max_acts = max(example_feature_activation["feature_acts"][0])
+        few_shot_filtered_sentences_id = [
+            i
+            for i in range(len(example_feature_activation["feature_acts"]))
+            if max(example_feature_activation["feature_acts"][i]) > cfg.p * few_shot_max_acts
+        ]
+        print(f"{len(few_shot_filtered_sentences_id)=}, {few_shot_filtered_sentences_id=}")
+        if len(few_shot_filtered_sentences_id)==0: # here 10 is few-shot number
+           print(f"Feature {description_index} doesn't have any qualified sentences.")
+        else:
+            sentences_id = random.sample(few_shot_filtered_sentences_id, 1)[0]
+        print(f"{sentences_id=}")
+    
+        few_shot_contexts = torch.tensor(example_feature_activation["contexts"][sentences_id])
+        few_shot_feature_acts = torch.tensor(example_feature_activation["feature_acts"][sentences_id])
+        few_shot_context_list.append(_extract_context(cfg, tokenizer, few_shot_contexts, few_shot_feature_acts))
+        few_shots_token_str = _construct_few_shots(few_shot_context_list, is_test=False)
+        few_shots_neuron_explanation_str = f"Explanation of neuron {description_index + 1}: {example_description_list[description_index]}\n"
+        few_shots_sentence_prompt = f"Neuron {description_index + 1}\n{few_shots_neuron_explanation_str}\nActivations:\n<START>\n{few_shots_token_str}\n<END>\n\n"
+        task_description += few_shots_sentence_prompt
+
+    test_context_list = []
+    for i in range(len(description)):
+        test_contexts = torch.tensor(feature_activation["contexts"][i])
+        test_feature_acts = torch.tensor(feature_activation["feature_acts"][i])
+        test_context_list.append(_extract_context(cfg, tokenizer, test_contexts, test_feature_acts))
+    test_token_str = _construct_few_shots(test_context_list, is_test=True)
+    test_neuron_explanation_str = f"Explanation of neuron {len(example_description_list) + 1}: {description}\n"
+    test_sentence_prompt = f"Neuron {len(example_description_list) + 1}\n{test_neuron_explanation_str}\nActivations:\n<START>\n{test_token_str}\n<END>\n\n"
+    task_description += test_sentence_prompt
+    return task_description
+
+
+
+
+
 
 def _chat_completion(client, prompt, max_retry=3):
     for i in range(max_retry):
         try:
             chat_completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                model="gpt-4",
+                model= 'gpt-4',
             )
             return chat_completion.choices[0].message.content
         except Exception as e:
@@ -116,6 +184,9 @@ def generate_description(
     model: HookedTransformer,
     feature_activation: Dict,
     cfg: AutoInterpConfig,
+    # client_model: str = "gpt-4",
+    price = (0.005, 0.015),
+    client_function = _chat_completion
 ):
     tokenizer = model.tokenizer
     client = OpenAI(api_key=cfg.openai.openai_api_key, base_url=cfg.openai.openai_base_url)
@@ -123,9 +194,10 @@ def generate_description(
         cfg, tokenizer, feature_activation
     )
     input_tokens = _num_tokens_from_string(prompt)
-    response = _chat_completion(client, prompt)
+    # response = client_function(client, prompt)
+    response = client_function(prompt)
     output_tokens = _num_tokens_from_string(response)
-    cost = _calculate_cost(input_tokens, output_tokens)
+    cost = _calculate_cost(input_tokens, output_tokens, price=price)
     result = {
         "prompt": prompt,
         "response": response,
@@ -142,7 +214,11 @@ def check_description(
     cfg: AutoInterpConfig,
     index: int,
     description: str,
+    activation_threshold:int = 1,
     using_sae: bool = False,
+    # client_model: str = "gpt-4",
+    client_function = _chat_completion,
+    price = (0.005, 0.015),
     feature_activation: Optional[Dict] = None,
     sae: Optional[SparseAutoEncoder] = None,
 ):
@@ -157,16 +233,17 @@ def check_description(
         prompt_prefix = "We are analyzing the activation levels of features in a neural network, where each feature activates certain tokens in a text. Each token's activation value indicates its relevance to the feature, with higher values showing stronger association. We  will describe a feature's meaning and traits. Your output must be multiple sentences that activates the feature."
         prompt = prompt_prefix + f"\nFeature:{description}\nSentence:"
         input_tokens = _num_tokens_from_string(prompt)
-        response = _chat_completion(client, prompt)
+        # response = client_function(client, prompt)
+        response = client_function(prompt)
         output_tokens = _num_tokens_from_string(response)
-        cost = _calculate_cost(input_tokens, output_tokens)
+        cost = _calculate_cost(input_tokens, output_tokens, price = price)
         input_index, input_text = index, response
         input_token = model.to_tokens(input_text)
         _, cache = model.run_with_cache_until(input_token, names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out], until=cfg.sae.hook_point_out)
         activation_in, activation_out = cache[cfg.sae.hook_point_in][0], cache[cfg.sae.hook_point_out][0]
         feature_acts = sae.encode(activation_in, label=activation_out)
         max_value, max_pos = torch.max(feature_acts, dim=0)
-        passed = torch.max(feature_acts) > 1
+        passed = torch.max(feature_acts) > activation_threshold
         result = {
             "index": input_index,
             "prompt": prompt,
@@ -194,9 +271,11 @@ def check_description(
         prompt = prompt_prefix + "\t".join([token for token, _ in context])
         prompt += f"\nFeature:\n{description}\nToken:\n"
         input_tokens = _num_tokens_from_string(prompt)
-        response = _chat_completion(client, prompt)
+        # print(f"Using {client_function.__name__}")
+        # response = client_function(client, prompt, model_name=client_model)
+        response = client_function(prompt)
         output_tokens = _num_tokens_from_string(response)
-        cost = _calculate_cost(input_tokens, output_tokens)
+        cost = _calculate_cost(input_tokens, output_tokens, price = price)
         passed = response.replace(" ", "") == target_token[0].replace(" ", "")
         result = {
             "index": index,
