@@ -145,8 +145,9 @@ def train_sae(
         if cfg.finetuning:
             loss = loss_data["l_rec"].mean()
         loss.backward()
+        grad_norm = torch.tensor([0.0], device=cfg.sae.device)
         if cfg.clip_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(sae.parameters(), cfg.clip_grad_norm)
+            grad_norm = torch.nn.utils.clip_grad_norm_(sae.parameters(), cfg.clip_grad_norm)
         if cfg.remove_gradient_parallel_to_decoder_directions:
             sae.remove_gradient_parallel_to_decoder_directions()
         optimizer.step()
@@ -285,8 +286,9 @@ def train_sae(
                                 # norm
                                 "metrics/decoder_norm": decoder_norm.item(),
                                 "metrics/encoder_norm": encoder_norm.item(),
-                                "metrics/decoder_bias_mean": sae.decoder.bias.mean().item() if sae.cfg.use_decoder_bias else 0,
-                                "metrics/enocder_bias_mean": sae.encoder.bias.mean().item(),
+                                "metrics/decoder_bias_norm": sae.decoder.bias.norm().item() if sae.cfg.use_decoder_bias else 0,
+                                "metrics/encoder_bias_norm": sae.encoder.bias.norm().item(),
+                                "metrics/gradients_norm": grad_norm.item(),
                                 # sparsity
                                 "sparsity/l1_coefficient": sae.current_l1_coefficient,
                                 "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
