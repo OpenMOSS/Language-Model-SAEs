@@ -90,6 +90,8 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
+
+
     if (
             cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None
             or cfg.sae.init_decoder_norm is None
