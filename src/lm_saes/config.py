@@ -324,7 +324,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     lr_warm_up_steps: int | float = 0.1
     lr_cool_down_steps: int | float = 0.1
     train_batch_size: int = 4096
-    clip_grad_value: float = 0.0
+    clip_grad_norm: float = 0.0
     remove_gradient_parallel_to_decoder_directions: bool = False
 
     finetuning: bool = False
