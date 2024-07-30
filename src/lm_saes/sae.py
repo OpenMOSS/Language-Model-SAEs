@@ -262,7 +262,7 @@ class SparseAutoEncoder(HookedRootModule):
 
         if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
             x = (
-                x - self.decoder.bias.to_local() # type: ignore
+                x - self.decoder.bias.data.to_local() # type: ignore
                 if self.cfg.tp_size > 1
                 else x - self.decoder.bias
             )
