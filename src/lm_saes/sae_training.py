@@ -145,8 +145,9 @@ def train_sae(
         if cfg.finetuning:
             loss = loss_data["l_rec"].mean()
         loss.backward()
-        if cfg.clip_grad_value > 0:
-            torch.nn.utils.clip_grad_value_(sae.parameters(), cfg.clip_grad_value)
+        grad_norm = torch.tensor([0.0], device=cfg.sae.device)
+        if cfg.clip_grad_norm > 0:
+            grad_norm = torch.nn.utils.clip_grad_norm_(sae.parameters(), cfg.clip_grad_norm)
         if cfg.remove_gradient_parallel_to_decoder_directions:
             sae.remove_gradient_parallel_to_decoder_directions()
         optimizer.step()
@@ -171,13 +172,13 @@ def train_sae(
                 if cfg.wandb.log_to_wandb and (is_master()):
                     feature_sparsity = act_freq_scores / n_frac_active_tokens
                     log_feature_sparsity = torch.log10(feature_sparsity + 1e-10)
-                    wandb_histogram = wandb.Histogram(
-                        log_feature_sparsity.detach().cpu().float().numpy()
-                    )
+                    # wandb_histogram = wandb.Histogram(
+                    #     log_feature_sparsity.detach().cpu().float().numpy()
+                    # )
                     wandb.log(
                         {
                             "metrics/mean_log10_feature_sparsity": log_feature_sparsity.mean().item(),
-                            "plots/feature_density_line_chart": wandb_histogram,
+                            # "plots/feature_density_line_chart": wandb_histogram,
                             "sparsity/below_1e-5": (feature_sparsity < 1e-5)
                             .sum()
                             .item(),
@@ -285,8 +286,9 @@ def train_sae(
                                 # norm
                                 "metrics/decoder_norm": decoder_norm.item(),
                                 "metrics/encoder_norm": encoder_norm.item(),
-                                "metrics/decoder_bias_mean": sae.decoder.bias.mean().item() if sae.cfg.use_decoder_bias else 0,
-                                "metrics/enocder_bias_mean": sae.encoder.bias.mean().item(),
+                                "metrics/decoder_bias_norm": sae.decoder.bias.norm().item() if sae.cfg.use_decoder_bias else 0,
+                                "metrics/encoder_bias_norm": sae.encoder.bias.norm().item(),
+                                "metrics/gradients_norm": grad_norm.item(),
                                 # sparsity
                                 "sparsity/l1_coefficient": sae.current_l1_coefficient,
                                 "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
