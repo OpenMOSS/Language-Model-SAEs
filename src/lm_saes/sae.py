@@ -1,3 +1,4 @@
+from builtins import print
 from importlib.metadata import version
 import os
 from typing import Dict, Literal, Union, overload, List
@@ -60,9 +61,10 @@ class SparseAutoEncoder(HookedRootModule):
         )
         torch.nn.init.kaiming_uniform_(self.encoder.weight)
         torch.nn.init.zeros_(self.encoder.bias)
-        self.device_mesh = init_device_mesh(
-            "cuda", (cfg.ddp_size, cfg.tp_size), mesh_dim_names=("ddp", "tp")
-        )
+        if cfg.tp_size > 1 or cfg.ddp_size > 1:
+            self.device_mesh = init_device_mesh(
+                "cuda", (cfg.ddp_size, cfg.tp_size), mesh_dim_names=("ddp", "tp")
+            )
 
         if cfg.use_glu_encoder:
 
@@ -116,7 +118,7 @@ class SparseAutoEncoder(HookedRootModule):
         if self.cfg.init_encoder_with_decoder_transpose:
             self.encoder.weight.data = self.decoder.weight.data.T.clone().contiguous()
         else:
-            self.set_encoder_norm_to_fixed_norm(self.cfg.init_encoder_norm)
+            self.set_encoder_norm_to_fixed_norm(self.cfg.init_encoder_norm, during_init=True)
 
     def train_base_parameters(self):
         """Set the base parameters to be trained."""
@@ -480,6 +482,13 @@ class SparseAutoEncoder(HookedRootModule):
         decoder_norm = self.decoder_norm(keepdim=True, during_init=during_init)
         if force_exact is None:
             force_exact = self.cfg.decoder_exactly_fixed_norm
+
+        
+        if self.cfg.tp_size > 1 and not during_init:
+            decoder_norm = distribute_tensor(
+                decoder_norm, device_mesh=self.device_mesh["tp"], placements=[Replicate()]
+            )
+
         if force_exact:
             self.decoder.weight.data = self.decoder.weight.data * value / decoder_norm
         else:
@@ -489,7 +498,7 @@ class SparseAutoEncoder(HookedRootModule):
             )
 
     @torch.no_grad()
-    def set_encoder_norm_to_fixed_norm(self, value: float | None = 1.0):
+    def set_encoder_norm_to_fixed_norm(self, value: float | None = 1.0, during_init: bool = False):
         if self.cfg.use_glu_encoder:
             raise NotImplementedError("GLU encoder not supported")
         if value is None:
@@ -497,7 +506,11 @@ class SparseAutoEncoder(HookedRootModule):
                 f"Encoder norm is not set to a fixed value, using random initialization."
             )
             return
-        encoder_norm = self.encoder_norm(keepdim=True)
+        encoder_norm = self.encoder_norm(keepdim=True, during_init=during_init)
+        if self.cfg.tp_size > 1 and not during_init:
+            encoder_norm = distribute_tensor(
+                encoder_norm, device_mesh=self.device_mesh["tp"], placements=[Replicate()]
+            )
         self.encoder.weight.data = self.encoder.weight.data * value / encoder_norm
 
     @torch.no_grad()
@@ -514,10 +527,25 @@ class SparseAutoEncoder(HookedRootModule):
             raise NotImplementedError("GLU encoder not supported")
 
         decoder_norm = self.decoder_norm()  # (d_sae,)
-        self.encoder.weight.data = self.encoder.weight.data * decoder_norm[:, None]
-        self.decoder.weight.data = self.decoder.weight.data / decoder_norm
+        if self.cfg.tp_size > 1:
+            decoder_norm_en = distribute_tensor(
+                decoder_norm[:, None], device_mesh=self.device_mesh["tp"], placements=[Replicate()]
+            )
+            decoder_norm_de = distribute_tensor(
+                decoder_norm, device_mesh=self.device_mesh["tp"], placements=[Replicate()]
+            )
+            dencoder_norm_bias = distribute_tensor(
+                decoder_norm, device_mesh=self.device_mesh["tp"], placements=[Replicate()]
+            )
+        else:
+            decoder_norm_en = decoder_norm[:, None]
+            decoder_norm_de = decoder_norm
+            dencoder_norm_bias = decoder_norm
+        
+        self.encoder.weight.data = self.encoder.weight.data * decoder_norm_en
+        self.decoder.weight.data = self.decoder.weight.data / decoder_norm_de
 
-        self.encoder.bias.data = self.encoder.bias.data * decoder_norm
+        self.encoder.bias.data = self.encoder.bias.data * dencoder_norm_bias
 
     @torch.no_grad()
     def remove_gradient_parallel_to_decoder_directions(self):
@@ -624,8 +652,8 @@ class SparseAutoEncoder(HookedRootModule):
         cfg: LanguageModelSAETrainingConfig,
     ):
         test_batch = activation_store.next(
-            batch_size=cfg.train_batch_size * 8
-        )  # just random hard code xd
+            batch_size=cfg.train_batch_size
+        )
         activation_in, activation_out = test_batch[cfg.sae.hook_point_in], test_batch[cfg.sae.hook_point_out]  # type: ignore
 
         if (
