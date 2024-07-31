@@ -209,7 +209,7 @@ class AbstractAttention(ABC, nn.Module):
                 self.apply_rotary(k, 0, attention_mask)
             )  # keys are cached so no offset
 
-        if self.cfg.dtype not in [torch.float32, torch.float64]:
+        if self.cfg.dtype not in [torch.float32, torch.float64, torch.bfloat16]:
             # If using 16 bits, increase the precision to avoid numerical instabilities
             q = q.to(torch.float32)
             k = k.to(torch.float32)

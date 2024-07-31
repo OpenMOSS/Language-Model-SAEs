@@ -116,13 +116,13 @@ class TokenSource:
         if dist.is_initialized():
             shard_id = dist.get_rank()
             shard = dataset.shard(
-                num_shards=dist.get_world_size(), index=shard_id
+                num_shards=dist.get_world_size(), index=shard_id, contiguous=True
             )
         else:
             shard = dataset
 
 
-        dataloader = DataLoader(shard, batch_size=cfg.store_batch_size)
+        dataloader = DataLoader(shard, batch_size=cfg.store_batch_size, num_workers=4, prefetch_factor=4, pin_memory=True)
         return dataloader
 
     @staticmethod

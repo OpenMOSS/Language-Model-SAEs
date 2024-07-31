@@ -382,6 +382,19 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
             print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
 
 
+        if self.lr_scheduler_name == "constantwithwarmup" and isinstance(self.lr_warm_up_steps, float):
+            assert 0 <= self.lr_warm_up_steps <= 1.0
+            self.lr_warm_up_steps = int(self.lr_warm_up_steps * total_training_steps)
+            print_once(f"Learning rate warm up steps: {self.lr_warm_up_steps}")
+        if isinstance(self.sae.l1_coefficient_warmup_steps, float):
+            assert 0 <= self.sae.l1_coefficient_warmup_steps <= 1.0
+            self.sae.l1_coefficient_warmup_steps = int(self.sae.l1_coefficient_warmup_steps * total_training_steps)
+            print_once(f"L1 coefficient warm up steps: {self.sae.l1_coefficient_warmup_steps}")
+        if isinstance(self.lr_cool_down_steps, float):
+            assert 0 <= self.lr_cool_down_steps <= 1.0
+            self.lr_cool_down_steps = int(self.lr_cool_down_steps * total_training_steps)
+            print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
+
 @dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
     """
