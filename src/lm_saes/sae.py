@@ -60,9 +60,10 @@ class SparseAutoEncoder(HookedRootModule):
         )
         torch.nn.init.kaiming_uniform_(self.encoder.weight)
         torch.nn.init.zeros_(self.encoder.bias)
-        self.device_mesh = init_device_mesh(
-            "cuda", (cfg.ddp_size, cfg.tp_size), mesh_dim_names=("ddp", "tp")
-        )
+        if cfg.tp_size > 1 or cfg.ddp_size > 1:
+            self.device_mesh = init_device_mesh(
+                "cuda", (cfg.ddp_size, cfg.tp_size), mesh_dim_names=("ddp", "tp")
+            )
 
         if cfg.use_glu_encoder:
 
