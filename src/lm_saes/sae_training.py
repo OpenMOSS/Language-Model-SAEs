@@ -342,9 +342,7 @@ def train_sae(
         pbar.close()
 
     # Save the final model
-    if cfg.sae.sparsity_include_decoder_norm:
-        sae.transform_to_unit_decoder_norm()
-    else:
+    if not cfg.sae.sparsity_include_decoder_norm:
         sae.set_decoder_norm_to_fixed_norm(1)
     path = os.path.join(
         cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.safetensors"
