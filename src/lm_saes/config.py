@@ -395,7 +395,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
             self.lr_cool_down_steps = int(self.lr_cool_down_steps * total_training_steps)
             print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
         if self.finetuning:
-            assert self.l1_coefficient == 0.0, "L1 coefficient must be 0.0 for finetuning."
+            assert self.sae.l1_coefficient == 0.0, "L1 coefficient must be 0.0 for finetuning."
 
 @dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
