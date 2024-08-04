@@ -297,6 +297,35 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
 
 	return Response(content=msgpack.packb(sample), media_type="application/x-msgpack")
 
+@app.post("/model/generate")
+def model_generate(input_text: str, max_length: int = 128, top_k: int = 50, top_p: float = 0.95):
+	dictionaries = client.list_dictionaries(dictionary_series=dictionary_series)
+	assert len(dictionaries) > 0, "No dictionaries found. Model name cannot be inferred."
+	model = get_model(dictionaries[0])
+	with torch.no_grad():
+		input = model.to_tokens(input_text, prepend_bos=False)
+		output = model.generate(input, max_length=max_length, top_k=top_k, top_p=top_p)
+		output = output.clone()
+		logits = model.forward(output)
+		logits_topk = [torch.topk(l, top_k) for l in logits[0]]
+		result = {
+			"context": [
+				bytearray([byte_decoder[c] for c in t])
+				for t in model.tokenizer.convert_ids_to_tokens(output[0])
+			],
+			"logits": [
+				[l.values.cpu().numpy().tolist() for l in logits_topk],
+			],
+			"logits_tokens": [
+				[
+					bytearray([byte_decoder[c] for c in t])
+					for t in model.tokenizer.convert_ids_to_tokens(l.indices)
+				]
+			],
+			"input_mask": [1 for _ in range(len(input[0]))] + [0 for _ in range(len(output[0]) - len(input[0]))],
+		}
+	return Response(content=msgpack.packb(result), media_type="application/x-msgpack")
+
 
 @app.post("/dictionaries/{dictionary_name}/features/{feature_index}/interpret")
 def feature_interpretation(
