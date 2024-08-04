@@ -32,6 +32,19 @@ from lm_saes.analysis.features_to_logits import features_to_logits
 from torch.nn.parallel import DistributedDataParallel as DDP
 from lm_saes.utils.misc import is_master
 
+from torch.distributed.tensor.parallel import (
+    ColwiseParallel,
+    parallelize_module,
+    loss_parallel,
+)
+from torch.distributed._tensor import (
+    DTensor,
+    Shard,
+    Replicate,
+    distribute_module,
+    distribute_tensor,
+)
+
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     if is_master():
@@ -303,6 +316,20 @@ def activation_generation_runner(cfg: ActivationGenerationConfig):
 
 def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+
+    if cfg.sae.tp_size > 1:
+        plan = {
+            "encoder": ColwiseParallel(output_layouts=Replicate()),
+        }
+        if cfg.sae.use_glu_encoder:
+            plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
+        sae = parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan) # type: ignore
+        sae.parallelize_plan = plan
+
+    sae.decoder.weight = None
+    torch.cuda.empty_cache()
+
+
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
