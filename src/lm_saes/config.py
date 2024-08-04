@@ -473,6 +473,16 @@ class LanguageModelSAEAnalysisConfig(RunnerConfig):
         }
     )
 
+    n_sae_chunks: int = (
+        1  # Number of chunks to split the SAE into for analysis. For large models and SAEs, this can be useful to avoid memory issues.
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        assert (
+            self.sae.d_sae % self.n_sae_chunks == 0
+        ), f"d_sae ({self.sae.d_sae}) must be divisible by n_sae_chunks ({self.n_sae_chunks})"
+
 
 @dataclass(kw_only=True)
 class FeaturesDecoderConfig(RunnerConfig):
