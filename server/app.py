@@ -313,14 +313,12 @@ def model_generate(input_text: str, max_length: int = 128, top_k: int = 50, top_
 				bytearray([byte_decoder[c] for c in t])
 				for t in model.tokenizer.convert_ids_to_tokens(output[0])
 			],
-			"logits": [
-				[l.values.cpu().numpy().tolist() for l in logits_topk],
-			],
+			"logits": [l.values.cpu().numpy().tolist() for l in logits_topk],
 			"logits_tokens": [
 				[
 					bytearray([byte_decoder[c] for c in t])
 					for t in model.tokenizer.convert_ids_to_tokens(l.indices)
-				]
+				] for l in logits_topk
 			],
 			"input_mask": [1 for _ in range(len(input[0]))] + [0 for _ in range(len(output[0]) - len(input[0]))],
 		}
