@@ -137,12 +137,10 @@ class SparseAutoEncoder(HookedRootModule):
             p.requires_grad_(True)
 
     def train_finetune_for_suppression_parameters(self):
-        """Set the parameters to be trained for feature suppression."""
+        """Set the parameters to be trained against feature suppression."""
 
-        finetune_for_suppression_parameters = [
-            self.feature_act_scale,
-            self.decoder.weight,
-        ]
+        finetune_for_suppression_parameters = [self.decoder.weight]
+
         if self.cfg.use_decoder_bias:
             finetune_for_suppression_parameters.append(self.decoder.bias)
         for p in self.parameters():
