@@ -1,5 +1,6 @@
 import { AppNavbar } from "@/components/app/navbar";
 import { FeatureCard } from "@/components/feature/feature-card";
+import { SectionNavigator } from "@/components/app/section-navigator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -87,8 +88,23 @@ export const FeaturesPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dictionariesState.value]);
 
+  const sections = [
+    {
+      title: "Histogram",
+      id: "Histogram",
+    },
+    {
+      title: "Logits",
+      id: "Logits",
+    },
+    {
+      title: "Top Activation",
+      id: "Activation",
+    },
+  ].filter((section) => (featureState.value && featureState.value.logits != null) || section.id !== "Logits");
+
   return (
-    <div>
+    <div id="Top">
       <AppNavbar />
       <div className="pt-4 pb-20 px-20 flex flex-col items-center gap-12">
         <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
@@ -142,6 +158,7 @@ export const FeaturesPage = () => {
             Show Random Feature
           </Button>
         </div>
+
         {featureState.loading && !loadingRandomFeature && (
           <div>
             Loading Feature <span className="font-bold">#{featureIndex}</span>...
@@ -149,7 +166,12 @@ export const FeaturesPage = () => {
         )}
         {featureState.loading && loadingRandomFeature && <div>Loading Random Living Feature...</div>}
         {featureState.error && <div className="text-red-500 font-bold">Error: {featureState.error.message}</div>}
-        {!featureState.loading && featureState.value && <FeatureCard feature={featureState.value} />}
+        {!featureState.loading && featureState.value && (
+          <div className="flex gap-12">
+            <FeatureCard feature={featureState.value} />
+            <SectionNavigator sections={sections} />
+          </div>
+        )}
       </div>
     </div>
   );
