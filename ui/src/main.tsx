@@ -6,6 +6,7 @@ import { FeaturesPage } from "@/routes/features/page";
 import { RootPage } from "./routes/page";
 import { AttentionHeadPage } from "./routes/attn-heads/page";
 import { DictionaryPage } from "./routes/dictionaries/page";
+import { ModelsPage } from "./routes/models/page";
 
 const router = createBrowserRouter([
   {
@@ -19,6 +20,10 @@ const router = createBrowserRouter([
   {
     path: "/attn-heads",
     element: <AttentionHeadPage />,
+  },
+  {
+    path: "/models",
+    element: <ModelsPage />,
   },
   {
     path: "/",
