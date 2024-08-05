@@ -34,6 +34,7 @@ from lm_saes.utils.misc import is_master
 
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
+    RowwiseParallel,
     parallelize_module,
     loss_parallel,
 )
@@ -228,6 +229,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
+    model.offload_params_after(cfg.act_store.hook_points[0], torch.tensor([[0]], device=cfg.lm.device))
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
@@ -303,6 +305,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     if cfg.sae.tp_size > 1:
         plan = {
             "encoder": ColwiseParallel(output_layouts=Replicate()),
+            "decoder": RowwiseParallel(output_layouts=Replicate()),
         }
         if cfg.sae.use_glu_encoder:
             plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
@@ -343,16 +346,15 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         dtype=cfg.lm.dtype,
     )
     model.eval()
-
     client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
-    client.create_dictionary(cfg.exp_name, cfg.sae.d_sae, cfg.exp_series)
+    if is_master():
+        client.create_dictionary(cfg.exp_name, cfg.sae.d_sae, cfg.exp_series)
 
     for chunk_id in range(cfg.n_sae_chunks):
         activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
         result = sample_feature_activations(
             sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks
         )
-
         for i in range(len(result["index"].cpu().numpy().tolist())):
             client.update_feature(
                 cfg.exp_name,
