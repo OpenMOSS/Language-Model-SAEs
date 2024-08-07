@@ -398,7 +398,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
             self.lr_cool_down_steps = int(self.lr_cool_down_steps * total_training_steps)
             print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
         if self.finetuning:
-            assert self.l1_coefficient == 0.0, "L1 coefficient must be 0.0 for finetuning."
+            assert self.sae.l1_coefficient == 0.0, "L1 coefficient must be 0.0 for finetuning."
 
 @dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
@@ -475,6 +475,16 @@ class LanguageModelSAEAnalysisConfig(RunnerConfig):
             "top_activations": {"proportion": 1.0, "n_samples": 10}
         }
     )
+
+    n_sae_chunks: int = (
+        1  # Number of chunks to split the SAE into for analysis. For large models and SAEs, this can be useful to avoid memory issues.
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        assert (
+            self.sae.d_sae % self.n_sae_chunks == 0
+        ), f"d_sae ({self.sae.d_sae}) must be divisible by n_sae_chunks ({self.n_sae_chunks})"
 
 
 @dataclass(kw_only=True)
