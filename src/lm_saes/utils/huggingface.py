@@ -4,6 +4,7 @@ from typing import Optional, Union
 import os
 import shutil
 from huggingface_hub import create_repo, upload_folder, snapshot_download
+from lm_saes.utils.misc import print_once
 
 
 def upload_pretrained_sae_to_hf(sae_path: str, repo_id: str, private: bool = False):
@@ -54,6 +55,7 @@ def parse_pretrained_name_or_path(pretrained_name_or_path: str):
     if os.path.exists(pretrained_name_or_path):
         return pretrained_name_or_path
     else:
+        print_once(f'Local path `{pretrained_name_or_path}` not found. Downloading from huggingface model hub.')
         repo_id = "/".join(pretrained_name_or_path.split("/")[:2])
         hook_point = "/".join(pretrained_name_or_path.split("/")[2:])
         return download_pretrained_sae_from_hf(repo_id, hook_point)

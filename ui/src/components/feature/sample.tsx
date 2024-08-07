@@ -3,6 +3,7 @@ import { SuperToken } from "./token";
 import { mergeUint8Arrays } from "@/utils/array";
 import { useState } from "react";
 import { AppPagination } from "../ui/pagination";
+import { Accordion, AccordionTrigger, AccordionContent, AccordionItem } from "../ui/accordion";
 
 export const FeatureSampleGroup = ({
   feature,
@@ -12,16 +13,16 @@ export const FeatureSampleGroup = ({
   sampleGroup: Feature["sampleGroups"][0];
 }) => {
   const [page, setPage] = useState<number>(1);
-  const maxPage = Math.ceil(sampleGroup.samples.length / 5);
+  const maxPage = Math.ceil(sampleGroup.samples.length / 10);
 
   return (
     <div className="flex flex-col gap-4 mt-4">
       <p className="font-bold">Max Activation: {Math.max(...sampleGroup.samples[0].featureActs).toFixed(3)}</p>
-      {sampleGroup.samples.slice((page - 1) * 5, page * 5).map((sample, i) => (
+      {sampleGroup.samples.slice((page - 1) * 10, page * 10).map((sample, i) => (
         <FeatureActivationSample
           key={i}
           sample={sample}
-          sampleName={`Sample ${(page - 1) * 5 + i + 1}`}
+          sampleName={`Sample ${(page - 1) * 10 + i + 1}`}
           maxFeatureAct={feature.maxFeatureAct}
         />
       ))}
@@ -69,18 +70,68 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
     [0]
   );
 
+  const tokensList = tokens.map((t) => t.featureAct);
+  const startTrigger = Math.max(tokensList.indexOf(Math.max(...tokensList)) - 100, 0);
+  const endTrigger = Math.min(tokensList.indexOf(Math.max(...tokensList)) + 10, sample.context.length);
+  const tokensTrigger = sample.context.slice(startTrigger, endTrigger).map((token, i) => ({
+    token,
+    featureAct: sample.featureActs[startTrigger + i],
+  }));
+
+  const [tokenGroupsTrigger, __] = tokensTrigger.reduce<[Token[][], Token[]]>(
+    ([groups, currentGroup], token) => {
+      const newGroup = [...currentGroup, token];
+      try {
+        decoder.decode(mergeUint8Arrays(newGroup.map((t) => t.token)));
+        return [[...groups, newGroup], []];
+      } catch {
+        return [groups, newGroup];
+      }
+    },
+    [[], []]
+  );
+
+  const tokenGroupPositionsTrigger = tokenGroupsTrigger.reduce<number[]>(
+    (acc, tokenGroup) => {
+      const tokenCount = tokenGroup.length;
+      return [...acc, acc[acc.length - 1] + tokenCount];
+    },
+    [0]
+  );
+
   return (
     <div>
-      {sampleName && <span className="text-gray-700 font-bold">{sampleName}: </span>}
-      {tokenGroups.map((tokens, i) => (
-        <SuperToken
-          key={`group-${i}`}
-          tokens={tokens}
-          position={tokenGroupPositions[i]}
-          maxFeatureAct={maxFeatureAct}
-          sampleMaxFeatureAct={sampleMaxFeatureAct}
-        />
-      ))}
+      <Accordion type="single" collapsible>
+        <AccordionItem value={sampleMaxFeatureAct.toString()}>
+          <AccordionTrigger>
+            <div className="block text-left">
+              {sampleName && <span className="text-gray-700 font-bold whitespace-pre">{sampleName}: </span>}
+              {startTrigger != 0 && <span className="text-sky-300">...</span>}
+              {tokenGroupsTrigger.map((tokens, i) => (
+                <SuperToken
+                  key={`trigger-group-${i}`}
+                  tokens={tokens}
+                  position={tokenGroupPositionsTrigger[i]}
+                  maxFeatureAct={maxFeatureAct}
+                  sampleMaxFeatureAct={sampleMaxFeatureAct}
+                />
+              ))}
+              {endTrigger != 0 && <span className="text-sky-300"> ...</span>}
+            </div>
+          </AccordionTrigger>
+          <AccordionContent>
+            {tokenGroups.map((tokens, i) => (
+              <SuperToken
+                key={`group-${i}`}
+                tokens={tokens}
+                position={tokenGroupPositions[i]}
+                maxFeatureAct={maxFeatureAct}
+                sampleMaxFeatureAct={sampleMaxFeatureAct}
+              />
+            ))}
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </div>
   );
 };
