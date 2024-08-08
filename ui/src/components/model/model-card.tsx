@@ -6,13 +6,14 @@ import { useAsyncFn } from "react-use";
 import camelcaseKeys from "camelcase-keys";
 import { decode } from "@msgpack/msgpack";
 import { ModelGeneration, ModelGenerationSchema } from "@/types/model";
-import { SimpleSampleArea } from "../app/sample";
+import { Sample } from "../app/sample";
 import { cn } from "@/lib/utils";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Label, LabelList, ResponsiveContainer } from "recharts";
-import { mergeUint8Arrays, zip } from "@/utils/array";
+import { zip } from "@/utils/array";
 import { Input } from "../ui/input";
+import { groupToken } from "@/utils/token";
 
-const ModelSampleArea = ({ sample }: { sample: ModelGeneration }) => {
+const ModelSample = ({ sample }: { sample: ModelGeneration }) => {
   const [selectedTokenGroupIndices, setSelectedTokenGroupIndices] = useState<number[]>([]);
   const toggleSelectedTokenGroupIndex = (tokenGroupIndex: number) => {
     setSelectedTokenGroupIndices((prev) =>
@@ -20,27 +21,17 @@ const ModelSampleArea = ({ sample }: { sample: ModelGeneration }) => {
     );
   };
 
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  const tokens = sample.context.map((token, i) => ({
-    token,
-    inputMask: sample.inputMask[i],
-    logits: zip(sample.logits[i], sample.logitsTokens[i]).map(([logits, logitsTokens]) => ({
-      logits,
-      logitsTokens,
-    })),
-  }));
-  const tokenGroups = tokens.reduce<[(typeof tokens)[], typeof tokens]>(
-    ([groups, currentGroup], token) => {
-      const newGroup = [...currentGroup, token];
-      try {
-        decoder.decode(mergeUint8Arrays(newGroup.map((t) => t.token)));
-        return [[...groups, newGroup], []];
-      } catch {
-        return [groups, newGroup];
-      }
-    },
-    [[], []]
-  )[0];
+  const tokens = zip(sample.context, sample.inputMask, sample.logits, sample.logitsTokens).map(
+    ([token, inputMask, logits, logitsTokens]) => ({
+      token,
+      inputMask,
+      logits: zip(logits, logitsTokens).map(([logits, logitsTokens]) => ({
+        logits,
+        logitsTokens,
+      })),
+    })
+  );
+  const tokenGroups = groupToken(tokens);
   const selectedTokenGroups = selectedTokenGroupIndices.map((i) => tokenGroups[i]);
   const selectedTokens = selectedTokenGroups.flatMap((t) => t);
 
@@ -69,9 +60,9 @@ const ModelSampleArea = ({ sample }: { sample: ModelGeneration }) => {
 
   return (
     <div className="flex flex-col gap-4">
-      <SimpleSampleArea
-        sample={sample}
+      <Sample
         sampleName={`Generation`}
+        tokenGroups={tokenGroups}
         tokenGroupClassName={(_, tokenIndex) =>
           cn(
             "hover:shadow-lg hover:text-gray-600 cursor-pointer",
@@ -193,7 +184,7 @@ const ModelCustomInputArea = () => {
         Submit
       </Button>
       {state.error && <p className="text-red-500">{state.error.message}</p>}
-      {sample && <ModelSampleArea sample={sample} />}
+      {sample && <ModelSample sample={sample} />}
     </div>
   );
 };

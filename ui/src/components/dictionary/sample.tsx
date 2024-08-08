@@ -1,23 +1,24 @@
 import { cn } from "@/lib/utils";
-import { DictionarySample, DictionaryToken } from "@/types/dictionary";
-import { mergeUint8Arrays, zip } from "@/utils/array";
+import { DictionarySampleCompact } from "@/types/dictionary";
+import { zip } from "@/utils/array";
 import { useState } from "react";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "../ui/data-table";
 import { getAccentClassname } from "@/utils/style";
-import { SimpleSampleArea } from "../app/sample";
+import { Sample } from "../app/sample";
 import { HoverCard, HoverCardContent } from "../ui/hover-card";
 import { HoverCardTrigger } from "@radix-ui/react-hover-card";
 import { FeatureLinkWithPreview } from "../app/feature-preview";
 import { Trash2 } from "lucide-react";
+import { countTokenGroupPositions, groupToken } from "@/utils/token";
 
-export type DictionarySampleAreaProps = {
-  samples: DictionarySample[];
-  onSamplesChange?: (samples: DictionarySample[]) => void;
+export type DictionarySampleProps = {
+  samples: DictionarySampleCompact[];
+  onSamplesChange?: (samples: DictionarySampleCompact[]) => void;
   dictionaryName: string;
 };
 
-export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName }: DictionarySampleAreaProps) => {
+export const DictionarySample = ({ samples, onSamplesChange, dictionaryName }: DictionarySampleProps) => {
   const [selectedTokenGroupIndices, setSelectedTokenGroupIndices] = useState<[number, number][]>([]);
   const toggleSelectedTokenGroupIndex = (sampleIndex: number, tokenGroupIndex: number) => {
     setSelectedTokenGroupIndices((prev) =>
@@ -29,47 +30,24 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
     );
   };
 
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-
   const tokens = samples.map((sample) =>
-    sample.context.map((token, i) => ({
-      token,
-      featureActs: zip(sample.featureActsIndices[i], sample.featureActs[i], sample.maxFeatureActs[i]).map(
-        ([featureActIndex, featureAct, maxFeatureAct]) => ({
-          featureActIndex,
-          featureAct,
-          maxFeatureAct,
-        })
-      ),
-    }))
-  );
-
-  const tokenGroups = tokens
-    .map((t) =>
-      t.reduce<[DictionaryToken[][], DictionaryToken[]]>(
-        ([groups, currentGroup], token) => {
-          const newGroup = [...currentGroup, token];
-          try {
-            decoder.decode(mergeUint8Arrays(newGroup.map((t) => t.token)));
-            return [[...groups, newGroup], []];
-          } catch {
-            return [groups, newGroup];
-          }
-        },
-        [[], []]
-      )
-    )
-    .map((v) => v[0]);
-
-  const tokenGroupPositions = tokenGroups.map((tokenGroupRow) =>
-    tokenGroupRow.reduce<number[]>(
-      (acc, tokenGroup) => {
-        const tokenCount = tokenGroup.length;
-        return [...acc, acc[acc.length - 1] + tokenCount];
-      },
-      [0]
+    zip(sample.context, sample.featureActsIndices, sample.featureActs, sample.maxFeatureActs).map(
+      ([token, featureActsIndices, featureActs, maxFeatureActs]) => ({
+        token,
+        featureActs: zip(featureActsIndices, featureActs, maxFeatureActs).map(
+          ([featureActIndex, featureAct, maxFeatureAct]) => ({
+            featureActIndex,
+            featureAct,
+            maxFeatureAct,
+          })
+        ),
+      })
     )
   );
+
+  const tokenGroups = tokens.map(groupToken);
+
+  const tokenGroupPositions = tokenGroups.map(countTokenGroupPositions);
 
   const selectedTokenGroups = selectedTokenGroupIndices.map(([s, t]) => tokenGroups[s][t]);
   const selectedTokens = selectedTokenGroups.flatMap((tokens) => tokens);
@@ -107,8 +85,8 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
               <div>
                 <b>Position:</b> {tokenGroupPositions[s][t] + inGroupIndex}
               </div>
-              <SimpleSampleArea
-                sample={samples[s]}
+              <Sample
+                tokenGroups={tokenGroups[s]}
                 sampleName={`Sample ${s + 1}`}
                 tokenGroupClassName={(_, j) => (j === t ? "bg-orange-500" : "")}
               />
@@ -136,19 +114,17 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
           ...featureAct,
         }))
       )
-      .reduce(
-        (acc, featureAct) => {
-          // Group by featureActIndex
-          const key = featureAct.featureActIndex.toString();
-          if (acc[key]) {
-            acc[key].push(featureAct);
-          } else {
-            acc[key] = [featureAct];
-          }
-          return acc;
-        },
-        {} as Record<string, { token: Uint8Array; tokenIndex: number; featureAct: number; maxFeatureAct: number }[]>
-      ) || {}
+      .reduce((acc, featureAct) => {
+        // Group by featureActIndex
+        const key = featureAct.featureActIndex.toString();
+        if (acc[key]) {
+          acc[key].push(featureAct);
+        } else {
+          acc[key] = [featureAct];
+        }
+        return acc;
+      }, {} as Record<string, { token: Uint8Array; tokenIndex: number; featureAct: number; maxFeatureAct: number }[]>) ||
+      {}
   )
     .sort(
       // Sort by sum of featureAct
@@ -173,10 +149,10 @@ export const DictionarySampleArea = ({ samples, onSamplesChange, dictionaryName 
 
   return (
     <div className="flex flex-col gap-4">
-      {samples.map((sample, sampleIndex) => (
+      {tokenGroups.map((tokenGroups, sampleIndex) => (
         <div className="w-full overflow-x-visible relative" key={sampleIndex}>
-          <SimpleSampleArea
-            sample={sample}
+          <Sample
+            tokenGroups={tokenGroups}
             sampleName={`Sample ${sampleIndex + 1}`}
             tokenGroupClassName={(_, tokenIndex) =>
               cn(

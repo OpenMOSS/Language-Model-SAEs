@@ -1,17 +1,17 @@
 import { useState } from "react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
-import { Dictionary, DictionarySample, DictionarySampleSchema } from "@/types/dictionary";
+import { Dictionary, DictionarySampleCompact, DictionarySampleCompactSchema } from "@/types/dictionary";
 import Plot from "react-plotly.js";
 import { useAsyncFn } from "react-use";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
 import { Textarea } from "../ui/textarea";
-import { DictionarySampleArea } from "./sample";
+import { DictionarySample } from "./sample";
 
 const DictionaryCustomInputArea = ({ dictionary }: { dictionary: Dictionary }) => {
   const [customInput, setCustomInput] = useState<string>("");
-  const [samples, setSamples] = useState<DictionarySample[]>([]);
+  const [samples, setSamples] = useState<DictionarySampleCompact[]>([]);
   const [state, submit] = useAsyncFn(async () => {
     if (!customInput) {
       alert("Please enter your input.");
@@ -43,7 +43,7 @@ const DictionaryCustomInputArea = ({ dictionary }: { dictionary: Dictionary }) =
           stopPaths: ["context"],
         })
       )
-      .then((res) => DictionarySampleSchema.parse(res));
+      .then((res) => DictionarySampleCompactSchema.parse(res));
     setSamples((prev) => [...prev, sample]);
   }, [customInput]);
 
@@ -60,11 +60,7 @@ const DictionaryCustomInputArea = ({ dictionary }: { dictionary: Dictionary }) =
       </Button>
       {state.error && <p className="text-red-500">{state.error.message}</p>}
       {samples.length > 0 && (
-        <DictionarySampleArea
-          samples={samples}
-          dictionaryName={dictionary.dictionaryName}
-          onSamplesChange={setSamples}
-        />
+        <DictionarySample samples={samples} dictionaryName={dictionary.dictionaryName} onSamplesChange={setSamples} />
       )}
     </div>
   );
