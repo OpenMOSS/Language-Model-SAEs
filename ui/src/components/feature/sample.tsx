@@ -1,9 +1,11 @@
-import { Feature, Sample, Token } from "@/types/feature";
-import { SuperToken } from "./token";
-import { mergeUint8Arrays } from "@/utils/array";
+import { Feature, FeatureSampleCompact } from "@/types/feature";
 import { useState } from "react";
 import { AppPagination } from "../ui/pagination";
-import { Accordion, AccordionTrigger, AccordionContent, AccordionItem } from "../ui/accordion";
+import { countTokenGroupPositions, groupToken } from "@/utils/token";
+import { zip } from "@/utils/array";
+import { getAccentClassname } from "@/utils/style";
+import { cn } from "@/lib/utils";
+import { Sample } from "../app/sample";
 
 export const FeatureSampleGroup = ({
   feature,
@@ -20,7 +22,7 @@ export const FeatureSampleGroup = ({
       <p className="font-bold">Max Activation: {Math.max(...sampleGroup.samples[0].featureActs).toFixed(3)}</p>
       {sampleGroup.samples.slice((page - 1) * 10, page * 10).map((sample, i) => (
         <FeatureActivationSample
-          key={i}
+          key={(page - 1) * 10 + i}
           sample={sample}
           sampleName={`Sample ${(page - 1) * 10 + i + 1}`}
           maxFeatureAct={feature.maxFeatureAct}
@@ -31,8 +33,34 @@ export const FeatureSampleGroup = ({
   );
 };
 
+export type TokenInfoProps = {
+  token: { token: Uint8Array; featureAct: number };
+  maxFeatureAct: number;
+  position: number;
+};
+
+export const TokenInfo = ({ token, maxFeatureAct, position }: TokenInfoProps) => {
+  const hex = token.token.reduce(
+    (acc, b) => (b < 32 || b > 126 ? `${acc}\\x${b.toString(16).padStart(2, "0")}` : `${acc}${String.fromCharCode(b)}`),
+    ""
+  );
+
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <div className="text-sm font-bold">Token:</div>
+      <div className="text-sm underline whitespace-pre-wrap">{hex}</div>
+      <div className="text-sm font-bold">Position:</div>
+      <div className="text-sm">{position}</div>
+      <div className="text-sm font-bold">Activation:</div>
+      <div className={cn("text-sm", getAccentClassname(token.featureAct, maxFeatureAct, "text"))}>
+        {token.featureAct.toFixed(3)}
+      </div>
+    </div>
+  );
+};
+
 export type FeatureActivationSampleProps = {
-  sample: Sample;
+  sample: FeatureSampleCompact;
   sampleName: string;
   maxFeatureAct: number;
 };
@@ -40,98 +68,32 @@ export type FeatureActivationSampleProps = {
 export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: FeatureActivationSampleProps) => {
   const sampleMaxFeatureAct = Math.max(...sample.featureActs);
 
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-
-  const start = Math.max(0);
-  const end = Math.min(sample.context.length);
-  const tokens = sample.context.slice(start, end).map((token, i) => ({
+  const tokens = zip(sample.context, sample.featureActs).map(([token, featureAct]) => ({
     token,
-    featureAct: sample.featureActs[start + i],
+    featureAct,
   }));
 
-  const [tokenGroups, _] = tokens.reduce<[Token[][], Token[]]>(
-    ([groups, currentGroup], token) => {
-      const newGroup = [...currentGroup, token];
-      try {
-        decoder.decode(mergeUint8Arrays(newGroup.map((t) => t.token)));
-        return [[...groups, newGroup], []];
-      } catch {
-        return [groups, newGroup];
-      }
-    },
-    [[], []]
-  );
+  const tokenGroups = groupToken(tokens);
+  const tokenGroupPositions = countTokenGroupPositions(tokenGroups);
 
-  const tokenGroupPositions = tokenGroups.reduce<number[]>(
-    (acc, tokenGroup) => {
-      const tokenCount = tokenGroup.length;
-      return [...acc, acc[acc.length - 1] + tokenCount];
-    },
-    [0]
-  );
-
-  const tokensList = tokens.map((t) => t.featureAct);
-  const startTrigger = Math.max(tokensList.indexOf(Math.max(...tokensList)) - 100, 0);
-  const endTrigger = Math.min(tokensList.indexOf(Math.max(...tokensList)) + 10, sample.context.length);
-  const tokensTrigger = sample.context.slice(startTrigger, endTrigger).map((token, i) => ({
-    token,
-    featureAct: sample.featureActs[startTrigger + i],
-  }));
-
-  const [tokenGroupsTrigger, __] = tokensTrigger.reduce<[Token[][], Token[]]>(
-    ([groups, currentGroup], token) => {
-      const newGroup = [...currentGroup, token];
-      try {
-        decoder.decode(mergeUint8Arrays(newGroup.map((t) => t.token)));
-        return [[...groups, newGroup], []];
-      } catch {
-        return [groups, newGroup];
-      }
-    },
-    [[], []]
-  );
-
-  const tokenGroupPositionsTrigger = tokenGroupsTrigger.reduce<number[]>(
-    (acc, tokenGroup) => {
-      const tokenCount = tokenGroup.length;
-      return [...acc, acc[acc.length - 1] + tokenCount];
-    },
-    [0]
-  );
+  const featureActs = tokenGroups.map((group) => Math.max(...group.map((token) => token.featureAct)));
+  const start = featureActs.findIndex((act) => act === sampleMaxFeatureAct) - 60;
 
   return (
-    <div>
-      <Accordion type="single" collapsible>
-        <AccordionItem value={sampleMaxFeatureAct.toString()}>
-          <AccordionTrigger>
-            <div className="block text-left">
-              {sampleName && <span className="text-gray-700 font-bold whitespace-pre">{sampleName}: </span>}
-              {startTrigger != 0 && <span className="text-sky-300">...</span>}
-              {tokenGroupsTrigger.map((tokens, i) => (
-                <SuperToken
-                  key={`trigger-group-${i}`}
-                  tokens={tokens}
-                  position={tokenGroupPositionsTrigger[i]}
-                  maxFeatureAct={maxFeatureAct}
-                  sampleMaxFeatureAct={sampleMaxFeatureAct}
-                />
-              ))}
-              {endTrigger != 0 && <span className="text-sky-300"> ...</span>}
-            </div>
-          </AccordionTrigger>
-          <AccordionContent>
-            {tokenGroups.map((tokens, i) => (
-              <SuperToken
-                key={`group-${i}`}
-                tokens={tokens}
-                position={tokenGroupPositions[i]}
-                maxFeatureAct={maxFeatureAct}
-                sampleMaxFeatureAct={sampleMaxFeatureAct}
-              />
-            ))}
-          </AccordionContent>
-        </AccordionItem>
-      </Accordion>
-    </div>
+    <Sample
+      tokenGroups={tokenGroups}
+      sampleName={sampleName}
+      tokenInfoContent={(_, i) => (token, j) =>
+        <TokenInfo token={token} maxFeatureAct={maxFeatureAct} position={tokenGroupPositions[i] + j} />}
+      tokenGroupClassName={(tokenGroup) => {
+        const tokenGroupMaxFeatureAct = Math.max(...tokenGroup.map((t) => t.featureAct));
+        return cn(
+          tokenGroupMaxFeatureAct > 0 && "hover:underline cursor-pointer",
+          sampleMaxFeatureAct > 0 && tokenGroupMaxFeatureAct == sampleMaxFeatureAct && "font-bold",
+          getAccentClassname(tokenGroupMaxFeatureAct, maxFeatureAct, "bg")
+        );
+      }}
+      foldedStart={start}
+    />
   );
 };
