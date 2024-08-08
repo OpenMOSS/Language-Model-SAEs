@@ -77,7 +77,7 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
   const tokenGroupPositions = countTokenGroupPositions(tokenGroups);
 
   const featureActs = tokenGroups.map((group) => Math.max(...group.map((token) => token.featureAct)));
-  const start = featureActs.findIndex((act) => act === sampleMaxFeatureAct) - 60;
+  const start = Math.max(featureActs.findIndex((act) => act === sampleMaxFeatureAct) - 60, 0);
 
   return (
     <Sample
