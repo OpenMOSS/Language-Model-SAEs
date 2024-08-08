@@ -1,7 +1,7 @@
 import { Feature, FeatureSampleCompact } from "@/types/feature";
 import { useState } from "react";
 import { AppPagination } from "../ui/pagination";
-import { countTokenGroupPositions, groupToken } from "@/utils/token";
+import { countTokenGroupPositions, groupToken, hex } from "@/utils/token";
 import { zip } from "@/utils/array";
 import { getAccentClassname } from "@/utils/style";
 import { cn } from "@/lib/utils";
@@ -40,15 +40,10 @@ export type TokenInfoProps = {
 };
 
 export const TokenInfo = ({ token, maxFeatureAct, position }: TokenInfoProps) => {
-  const hex = token.token.reduce(
-    (acc, b) => (b < 32 || b > 126 ? `${acc}\\x${b.toString(16).padStart(2, "0")}` : `${acc}${String.fromCharCode(b)}`),
-    ""
-  );
-
   return (
     <div className="grid grid-cols-2 gap-2">
       <div className="text-sm font-bold">Token:</div>
-      <div className="text-sm underline whitespace-pre-wrap">{hex}</div>
+      <div className="text-sm underline whitespace-pre-wrap">{hex(token)}</div>
       <div className="text-sm font-bold">Position:</div>
       <div className="text-sm">{position}</div>
       <div className="text-sm font-bold">Activation:</div>

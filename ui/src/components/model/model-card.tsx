@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Textarea } from "../ui/textarea";
@@ -11,7 +11,9 @@ import { cn } from "@/lib/utils";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Label, LabelList, ResponsiveContainer } from "recharts";
 import { zip } from "@/utils/array";
 import { Input } from "../ui/input";
-import { groupToken } from "@/utils/token";
+import { countTokenGroupPositions, groupToken, hex } from "@/utils/token";
+import { getAccentClassname } from "@/utils/style";
+import { Separator } from "../ui/separator";
 
 const ModelSample = ({ sample }: { sample: ModelGeneration }) => {
   const [selectedTokenGroupIndices, setSelectedTokenGroupIndices] = useState<number[]>([]);
@@ -21,37 +23,38 @@ const ModelSample = ({ sample }: { sample: ModelGeneration }) => {
     );
   };
 
+  useEffect(() => {
+    setSelectedTokenGroupIndices([]);
+  }, [sample]);
+
   const tokens = zip(sample.context, sample.inputMask, sample.logits, sample.logitsTokens).map(
     ([token, inputMask, logits, logitsTokens]) => ({
       token,
       inputMask,
-      logits: zip(logits, logitsTokens).map(([logits, logitsTokens]) => ({
+      logits: zip(logits, logitsTokens).map(([logits, token]) => ({
         logits,
-        logitsTokens,
+        token,
       })),
     })
   );
   const tokenGroups = groupToken(tokens);
+  const tokenGroupPositions = countTokenGroupPositions(tokenGroups);
   const selectedTokenGroups = selectedTokenGroupIndices.map((i) => tokenGroups[i]);
   const selectedTokens = selectedTokenGroups.flatMap((t) => t);
+  const selectedTokenGroupPositions = selectedTokenGroupIndices.map((i) => tokenGroupPositions[i]);
+  const selectedTokenPositions = selectedTokenGroups.flatMap((t, i) =>
+    t.map((_, j) => selectedTokenGroupPositions[i] + j)
+  );
 
   const data = selectedTokens.map((token) =>
     Object.assign(
       {},
       ...token.logits.map((logits, j) => ({
         [`logits-${j}`]: logits.logits,
-        [`logits-token-${j}`]: logits.logitsTokens.reduce(
-          (acc, b) =>
-            b < 32 || b > 126 ? `${acc}\\x${b.toString(16).padStart(2, "0")}` : `${acc}${String.fromCharCode(b)}`,
-          ""
-        ),
+        [`logits-token-${j}`]: hex(logits),
       })),
       {
-        name: token.token.reduce(
-          (acc, b) =>
-            b < 32 || b > 126 ? `${acc}\\x${b.toString(16).padStart(2, "0")}` : `${acc}${String.fromCharCode(b)}`,
-          ""
-        ),
+        name: hex(token),
       }
     )
   );
@@ -73,6 +76,37 @@ const ModelSample = ({ sample }: { sample: ModelGeneration }) => {
           onClick: () => toggleSelectedTokenGroupIndex(i),
         })}
       />
+
+      {selectedTokens.length > 0 && <p className="font-bold">Detail of Selected Tokens:</p>}
+
+      {selectedTokens.map((token, i) => (
+        <Fragment key={selectedTokenPositions[i]}>
+          <div key={i} className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="text-sm font-bold">Token:</div>
+                <div className="text-sm underline whitespace-pre-wrap">{hex(token)}</div>
+                <div className="text-sm font-bold">Position:</div>
+                <div className="text-sm">{selectedTokenPositions[i]}</div>
+              </div>
+            </div>
+            <div className="flex flex-col gap-4">
+              <p className="text-sm font-bold">Top Logits:</p>
+              <div className="grid grid-cols-2 gap-4 pl-8">
+                {token.logits.map((logit, j) => (
+                  <Fragment key={j}>
+                    <div className="text-sm underline whitespace-pre-wrap">{hex(logit)}</div>
+                    <div className={cn("text-sm", getAccentClassname(logit.logits, token.logits[0].logits, "text"))}>
+                      {logit.logits.toFixed(3)}
+                    </div>
+                  </Fragment>
+                ))}
+              </div>
+            </div>
+          </div>
+          {i < selectedTokens.length - 1 && <Separator />}
+        </Fragment>
+      ))}
 
       {selectedTokens.length > 0 && (
         <ResponsiveContainer height={300}>
