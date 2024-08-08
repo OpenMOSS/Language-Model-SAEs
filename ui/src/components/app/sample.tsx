@@ -32,7 +32,7 @@ export const Sample = <T extends { token: Uint8Array }>({
         onClick={foldedStart !== undefined && folded ? () => setFolded(!folded) : undefined}
       >
         {sampleName && <span className="text-gray-700 font-bold">{sampleName}: </span>}
-        {folded && foldedStart && <span className="text-gray-700">...</span>}
+        {folded && !!foldedStart && <span className="text-gray-700">...</span>}
         {tokenGroups
           .slice((folded && foldedStart) || 0)
           .map((tokens, i) =>
