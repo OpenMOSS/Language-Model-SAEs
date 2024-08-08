@@ -36,3 +36,9 @@ export const countTokenGroupPositions = <T extends Token>(tokenGroups: T[][]): n
     [0]
   );
 };
+
+export const hex = (token: Token): string =>
+  token.token.reduce(
+    (acc, b) => (b < 32 || b > 126 ? `${acc}\\x${b.toString(16).padStart(2, "0")}` : `${acc}${String.fromCharCode(b)}`),
+    ""
+  );

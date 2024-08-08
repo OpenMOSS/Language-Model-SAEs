@@ -10,7 +10,7 @@ import { HoverCard, HoverCardContent } from "../ui/hover-card";
 import { HoverCardTrigger } from "@radix-ui/react-hover-card";
 import { FeatureLinkWithPreview } from "../app/feature-preview";
 import { Trash2 } from "lucide-react";
-import { countTokenGroupPositions, groupToken } from "@/utils/token";
+import { countTokenGroupPositions, groupToken, hex } from "@/utils/token";
 
 export type DictionarySampleProps = {
   samples: DictionarySampleCompact[];
@@ -74,13 +74,7 @@ export const DictionarySample = ({ samples, onSamplesChange, dictionaryName }: D
         accessorKey: `token${i}`,
         header: () => (
           <HoverCard>
-            <HoverCardTrigger className="select-none cursor-pointer">
-              {token.token.reduce(
-                (acc, b) =>
-                  b < 32 || b > 126 ? `${acc}\\x${b.toString(16).padStart(2, "0")}` : `${acc}${String.fromCharCode(b)}`,
-                ""
-              )}
-            </HoverCardTrigger>
+            <HoverCardTrigger className="select-none cursor-pointer">{hex(token)}</HoverCardTrigger>
             <HoverCardContent className="w-auto max-w-[800px] gap-4">
               <div>
                 <b>Position:</b> {tokenGroupPositions[s][t] + inGroupIndex}
