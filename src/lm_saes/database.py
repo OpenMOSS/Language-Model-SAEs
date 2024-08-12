@@ -87,6 +87,17 @@ class MongoClient:
     def list_dictionaries(self, dictionary_series: str | None = None):
         return [d['name'] for d in self.dictionary_collection.find({'series': dictionary_series} if dictionary_series is not None else {})]
     
+    def get_dictionary(self, dictionary_name: str, dictionary_series: str | None = None):
+        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
+        if dictionary is None:
+            return None
+        return {
+            'name': dictionary['name'],
+            'n_features': dictionary['n_features'],
+            'series': dictionary['series'],
+            'path': dictionary['path'] if 'path' in dictionary else None
+        }
+    
     def get_feature(self, dictionary_name: str, feature_index: int, dictionary_series: str | None = None):
         dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
         if dictionary is None:
