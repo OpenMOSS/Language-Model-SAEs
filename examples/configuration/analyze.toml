@@ -7,7 +7,7 @@ dtype = "torch.float32"
 
 exp_name = "L3M"
 exp_series = "default"
-exp_result_dir = "results"
+exp_result_path = "results/L3M"
 
 [subsample]
 "top_activations" = { "proportion" = 1.0, "n_samples" = 80 }

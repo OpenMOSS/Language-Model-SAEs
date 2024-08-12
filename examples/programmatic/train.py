@@ -69,7 +69,7 @@ cfg = LanguageModelSAETrainingConfig.from_flattened(dict(
 
     exp_name = f"test",                              # The experiment name. Would be used for creating exp folder (which may contain checkpoints and analysis results) and setting wandb run name.
     exp_series = "test",
-    exp_result_dir = "results"
+    exp_result_path = "results/test"
 ))
 
 sparse_autoencoder = language_model_sae_runner(cfg)

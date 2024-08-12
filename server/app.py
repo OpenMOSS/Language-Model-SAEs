@@ -43,7 +43,10 @@ lm_cache = {}
 
 
 def get_model(dictionary_name: str) -> HookedTransformer:
-	cfg = LanguageModelConfig.from_pretrained_sae(f"{result_dir}/{dictionary_name}")
+	path = client.get_dictionary_path(dictionary_name, dictionary_series=dictionary_series)
+	if path is "":
+		path = f"{result_dir}/{dictionary_name}"
+	cfg = LanguageModelConfig.from_pretrained_sae(path)
 	if (cfg.model_name, cfg.model_from_pretrained_path) not in lm_cache:
 		hf_model = AutoModelForCausalLM.from_pretrained(
 			(

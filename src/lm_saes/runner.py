@@ -49,8 +49,8 @@ from torch.distributed._tensor import (
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     if is_master():
-        cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
-        cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+        cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_path))
+        cfg.lm.save_lm_config(os.path.join(cfg.exp_result_path))
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
 
     if cfg.finetuning:
@@ -87,11 +87,11 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
-    model.offload_params_after(cfg.act_store.hook_points[0], torch.tensor([[0]], device=cfg.lm.device))
+    model.offload_params_after(
+        cfg.act_store.hook_points[0], torch.tensor([[0]], device=cfg.lm.device)
+    )
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
-
-
 
     if cfg.wandb.log_to_wandb and is_master():
         wandb_config: dict = {
@@ -108,7 +108,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
             entity=cfg.wandb.wandb_entity,
         )
         with open(
-            os.path.join(cfg.exp_result_dir, cfg.exp_name, "train_wandb_id.txt"), "w"
+            os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w"
         ) as f:
             f.write(wandb_run.id)
         wandb.watch(sae, log="all")
@@ -128,8 +128,8 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
 
 
 def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
-    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
-    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_path))
+    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_path))
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
@@ -177,7 +177,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
             entity=cfg.wandb.wandb_entity,
         )
         with open(
-            os.path.join(cfg.exp_result_dir, cfg.exp_name, "prune_wandb_id.txt"), "w"
+            os.path.join(cfg.exp_result_path, "prune_wandb_id.txt"), "w"
         ) as f:
             f.write(wandb_run.id)
 
@@ -229,7 +229,9 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
-    model.offload_params_after(cfg.act_store.hook_points[0], torch.tensor([[0]], device=cfg.lm.device))
+    model.offload_params_after(
+        cfg.act_store.hook_points[0], torch.tensor([[0]], device=cfg.lm.device)
+    )
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
@@ -248,7 +250,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
             entity=cfg.wandb.wandb_entity,
         )
         with open(
-            os.path.join(cfg.exp_result_dir, cfg.exp_name, "eval_wandb_id.txt"), "w"
+            os.path.join(cfg.exp_result_path, "eval_wandb_id.txt"), "w"
         ) as f:
             f.write(wandb_run.id)
 
@@ -309,13 +311,11 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         }
         if cfg.sae.use_glu_encoder:
             plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
-        sae = parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan) # type: ignore
+        sae = parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan)  # type: ignore
         sae.parallelize_plan = plan
 
     sae.decoder.weight = None  # type: ignore[assignment]
     torch.cuda.empty_cache()
-
-
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
@@ -348,7 +348,9 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     model.eval()
     client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
     if is_master():
-        client.create_dictionary(cfg.exp_name, cfg.sae.d_sae, cfg.exp_series)
+        client.create_dictionary(
+            cfg.exp_name, cfg.exp_result_path, cfg.sae.d_sae, cfg.exp_series
+        )
 
     for chunk_id in range(cfg.n_sae_chunks):
         activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)

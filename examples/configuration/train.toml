@@ -1,6 +1,6 @@
 use_ddp = false
 exp_name = "L3M"
-exp_result_dir = "results"
+exp_result_path = "results/L3M"
 device = "cuda"
 seed = 42
 dtype = "torch.float32"
