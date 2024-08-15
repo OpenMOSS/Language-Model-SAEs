@@ -6,7 +6,7 @@ import { useAsyncFn, useMount } from "react-use";
 import camelcaseKeys from "camelcase-keys";
 import snakecaseKeys from "snakecase-keys";
 import { decode } from "@msgpack/msgpack";
-import { ModelGeneration, ModelGenerationSchema, TracingNode, TracingSchema } from "@/types/model";
+import { ModelGeneration, ModelGenerationSchema, Tracing, TracingAction, TracingOutputSchema } from "@/types/model";
 import { Sample } from "../app/sample";
 import { cn } from "@/lib/utils";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Label, LabelList, ResponsiveContainer } from "recharts";
@@ -35,8 +35,7 @@ import { useNavigate } from "react-router-dom";
 import { Switch } from "../ui/switch";
 import { Label as SLabel } from "../ui/label";
 import { Toggle } from "../ui/toggle";
-import { Edge, Node } from "@xyflow/react";
-import { CircuitViewer, NodeData } from "./circuit";
+import { CircuitViewer } from "./circuit";
 
 const SAEInfo = ({
   position,
@@ -57,7 +56,7 @@ const SAEInfo = ({
   };
   saeSettings: { sortedBySum: boolean };
   onSteerFeature?: (name: string, featureIndex: number) => void;
-  onTrace?: (node: TracingNode) => void;
+  onTrace?: (node: TracingAction) => void;
   setSAESettings: (settings: { sortedBySum: boolean }) => void;
 }) => {
   const navigate = useNavigate();
@@ -173,7 +172,7 @@ const LogitsInfo = ({
     token: Uint8Array;
     tokenId: number;
   }[];
-  onTrace?: (node: TracingNode) => void;
+  onTrace?: (node: TracingAction) => void;
 }) => {
   const maxLogits = Math.max(...logits.map((logit) => logit.logits));
   const columns: ColumnDef<{
@@ -300,7 +299,7 @@ const ModelSample = ({
 }: {
   sample: ModelGeneration;
   onSteerFeature?: (name: string, featureIndex: number) => void;
-  onTrace?: (node: TracingNode) => void;
+  onTrace?: (node: TracingAction) => void;
 }) => {
   const [selectedTokenGroupIndices, setSelectedTokenGroupIndices] = useState<number[]>([]);
   const toggleSelectedTokenGroupIndex = (tokenGroupIndex: number) => {
@@ -475,8 +474,7 @@ const ModelCustomInputArea = () => {
       }[]
     | null
   >(null);
-  const [nodes, setNodes] = useState<Node<NodeData>[]>([]);
-  const [edges, setEdges] = useState<Edge[]>([]);
+  const [tracings, setTracings] = useState<Tracing[]>([]);
 
   const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
     return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries`)
@@ -528,12 +526,11 @@ const ModelCustomInputArea = () => {
       .then((res) => ModelGenerationSchema.parse(res));
     setSample(sample);
     setSampleSteerings(steerings.filter((s) => s.sae !== null));
-    setNodes([]);
-    setEdges([]);
+    setTracings([]);
   }, [doGenerate, customInput, maxNewTokens, topK, topP, steerings, selectedDictionaries]);
 
   const [tracingState, trace] = useAsyncFn(
-    async (node: TracingNode) => {
+    async (node: TracingAction) => {
       if (!sample) return;
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/model/trace`, {
         method: "POST",
@@ -560,48 +557,12 @@ const ModelCustomInputArea = () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .then((res) => decode(new Uint8Array(res)) as any)
         .then((res) => camelcaseKeys(res, { deep: true, stopPaths: ["context"] }))
-        .then((res) => TracingSchema.parse(res));
+        .then((res) => TracingOutputSchema.parse(res));
 
-      const newNodes: Node<NodeData>[] = res.tracings.flatMap((t) => {
-        const node = ((t: TracingNode): Omit<Node<NodeData>, "position"> => {
-          if (t.type === "feature") {
-            return {
-              id: `feature-${t.sae}-${t.position}-${t.featureIndex}`,
-              data: { label: `${t.position}.${t.sae}.${t.featureIndex}`, tracingNode: t },
-            };
-          } else {
-            return {
-              id: `logits-${t.position}-${t.tokenId}`,
-              data: { label: `${t.position}.logits.${t.tokenId}`, tracingNode: t },
-            };
-          }
-        })(t.node);
-        return [
-          node,
-          ...t.contributors.map((c) => ({
-            id: `feature-${c.sae}-${c.position}-${c.featureIndex}`,
-            data: {
-              label: `${c.position}.${c.sae}.${c.featureIndex}`,
-              tracingNode: { type: "feature" as const, ...c },
-            },
-          })),
-        ].map<Node<NodeData>>((node) => ({
-          ...node,
-          position: { x: 0, y: 0 },
-          className: cn(
-            node.data.tracingNode.activation && getAccentClassname(node.data.tracingNode.activation, 20, "border")
-          ),
-        }));
-      });
-      const newEdges = newNodes.slice(1).map((node) => ({
-        id: `edge-${node.id}-${newNodes[0].id}`,
-        source: node.id,
-        target: newNodes[0].id,
-      }));
-      setNodes((prev) =>
-        [...newNodes, ...prev].filter((node, i, self) => self.findIndex((n) => n.id === node.id) === i)
-      );
-      setEdges((prev) => [...prev.filter((edge) => edge.target !== newNodes[0].id), ...newEdges]);
+      setTracings((prev) => [
+        ...prev.filter((t) => !res.tracings.some((r) => r.node.id === t.node.id)),
+        ...res.tracings,
+      ]);
     },
     [sample, selectedDictionaries, sampleSteerings]
   );
@@ -781,9 +742,7 @@ const ModelCustomInputArea = () => {
         Submit
       </Button>
       {state.error && <p className="text-red-500">{state.error.message}</p>}
-      {nodes.length > 0 && (
-        <CircuitViewer nodes={nodes} edges={edges} onNodesChange={setNodes} onEdgesChange={setEdges} onTrace={trace} />
-      )}
+      {tracings.length > 0 && <CircuitViewer tracings={tracings} onTrace={trace} />}
       {sample && (
         <ModelSample
           sample={sample}
