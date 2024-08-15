@@ -11,9 +11,9 @@ import {
   applyEdgeChanges,
   Position,
 } from "@xyflow/react";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import dagre from "dagre";
-import { TracingNode } from "@/types/model";
+import { Tracing, TracingAction, TracingNode } from "@/types/model";
 
 export type NodeData = {
   label: string;
@@ -23,30 +23,15 @@ export type NodeData = {
 export type CircuitViewerProps = {
   className?: string;
   flowClassName?: string;
-  nodes: Node<NodeData>[];
-  edges: Edge[];
-  onNodesChange: React.Dispatch<React.SetStateAction<Node<NodeData>[]>>;
-  onEdgesChange: React.Dispatch<React.SetStateAction<Edge[]>>;
-  onTrace?: (node: TracingNode) => void;
+  tracings: Tracing[];
+  onTrace?: (node: TracingAction) => void;
 };
 
-export const CircuitViewer = ({
-  className,
-  flowClassName,
-  nodes,
-  edges,
-  onNodesChange,
-  onEdgesChange,
-  onTrace,
-}: CircuitViewerProps) => {
-  const [nodeIds, setNodeIds] = useState<string[]>([]);
-  const [edgeIds, setEdgeIds] = useState<string[]>([]);
-  const nodesHasChanged =
-    !nodeIds.every((id) => nodes.some((node) => node.id === id)) || !nodes.every((node) => nodeIds.includes(node.id));
-  const edgesHasChanged =
-    !edgeIds.every((id) => edges.some((edge) => edge.id === id)) || !edges.every((edge) => edgeIds.includes(edge.id));
+export const CircuitViewer = ({ tracings, className, flowClassName, onTrace }: CircuitViewerProps) => {
+  const [nodes, setNodes] = useState<Node<NodeData>[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
 
-  const getLayoutedElements = (nodes: Node<NodeData>[], edges: Edge[]) => {
+  const getLayoutedElements = useCallback((nodes: Node<NodeData>[], edges: Edge[]) => {
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
     dagreGraph.setGraph({ rankdir: "TB" });
@@ -81,15 +66,59 @@ export const CircuitViewer = ({
     });
 
     return { nodes: newNodes, edges };
-  };
+  }, []);
 
-  if (nodesHasChanged || edgesHasChanged) {
-    const layoutedElements = getLayoutedElements(nodes, edges);
-    onNodesChange(layoutedElements.nodes);
-    onEdgesChange(layoutedElements.edges);
-    setNodeIds(layoutedElements.nodes.map((node) => node.id));
-    setEdgeIds(layoutedElements.edges.map((edge) => edge.id));
-  }
+  const getNodeLabel = useCallback((node: TracingNode) => {
+    if (node.type === "feature") {
+      return `${node.position}.${node.sae}.${node.featureIndex}`;
+    } else {
+      return `${node.position}.logits.${node.tokenId}`;
+    }
+  }, []);
+
+  useEffect(() => {
+    const nodes: Node<NodeData>[] = [];
+    const edges: Edge[] = [];
+
+    tracings.forEach((tracing) => {
+      const node: Node<NodeData> = {
+        id: tracing.node.id,
+        data: {
+          label: getNodeLabel(tracing.node),
+          tracingNode: tracing.node,
+        },
+        position: { x: 0, y: 0 },
+      };
+
+      nodes.push(node);
+
+      tracing.contributors.forEach((contributor) => {
+        const node: Node<NodeData> = {
+          id: contributor.node.id,
+          data: {
+            label: getNodeLabel(contributor.node),
+            tracingNode: contributor.node,
+          },
+          position: { x: 0, y: 0 },
+        };
+
+        nodes.push(node);
+
+        const edge: Edge = {
+          id: `${contributor.node.id}-${tracing.node.id}`,
+          source: contributor.node.id,
+          target: tracing.node.id,
+        };
+
+        edges.push(edge);
+      });
+    });
+
+    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges);
+
+    setNodes(layoutedNodes);
+    setEdges(layoutedEdges);
+  }, [tracings]);
 
   return (
     <div className={cn("w-full h-[500px]", className)}>
@@ -98,10 +127,10 @@ export const CircuitViewer = ({
         nodes={nodes}
         edges={edges}
         onNodesChange={(changes) => {
-          onNodesChange((nodes) => applyNodeChanges(changes, nodes));
+          setNodes((nodes) => applyNodeChanges(changes, nodes));
         }}
         onEdgesChange={(changes) => {
-          onEdgesChange((edges) => applyEdgeChanges(changes, edges));
+          setEdges((edges) => applyEdgeChanges(changes, edges));
         }}
         onNodeDoubleClick={(_, node) => {
           onTrace?.(node.data.tracingNode);
