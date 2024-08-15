@@ -511,9 +511,9 @@ def model_trace(request: ModelTraceRequest):
 						logits[:, tracing.position, tracing.token_id].backward(retain_graph=True)
 					else:
 						sae = get_sae(tracing.sae)
-						assert tracing.position < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[1], "Position out of range"
-						assert tracing.feature_index < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[2], "Feature index out of range"
-						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][:, tracing.position, tracing.feature_index].backward(retain_graph=True)
+						assert tracing.position < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[0], "Position out of range"
+						assert tracing.feature_index < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[1], "Feature index out of range"
+						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][tracing.position, tracing.feature_index].backward(retain_graph=True)
 					contributors = []
 					for sae, name in saes:
 						if cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad is None:
