@@ -28,7 +28,6 @@ from lm_saes.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.bytes import bytes_to_unicode
-from lm_saes.utils.hooks import detach_hook
 
 result_dir = os.environ.get("RESULT_DIR", "results")
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -334,8 +333,6 @@ class ModelGenerateRequest(BaseModel):
 	return_logits_top_k: int = 5
 	saes: list[str] = []
 	steerings: list[SteeringConfig] = []
-	tracings: list[Node] = []
-	tracing_threshold: float = 0.1
 
 @app.post("/model/generate")
 def model_generate(request: ModelGenerateRequest):
@@ -348,10 +345,7 @@ def model_generate(request: ModelGenerateRequest):
 		for _, name in saes
 	}
 	assert all(steering.sae in request.saes for steering in request.steerings), "Steering SAE not found"
-	assert all(tracing.sae in request.saes for tracing in request.tracings if isinstance(tracing, FeatureNode)), "Tracing SAE not found"
-	if len(request.tracings) > 0:
-		assert request.max_new_tokens == 0, "Tracing is only supported for max_new_tokens=0"
-	
+
 	def generate_steering_hook(steering: SteeringConfig):
 		def steering_hook(tensor: torch.Tensor, hook: HookPoint):
 			assert len(tensor.shape) == 3
@@ -373,48 +367,16 @@ def model_generate(request: ModelGenerateRequest):
 	
 	steerings_hooks = [generate_steering_hook(steering) for steering in request.steerings]
 
-	with apply_sae(model, [sae for sae, _ in saes]):
-		with model.hooks(steerings_hooks):
-			with detach_on(model, [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes]):
+	with torch.no_grad():
+		with apply_sae(model, [sae for sae, _ in saes]):
+			with model.hooks(steerings_hooks):
 				input = model.to_tokens(request.input_text, prepend_bos=False) if isinstance(request.input_text, str) else torch.tensor([request.input_text], device=device)
 				if request.max_new_tokens > 0:
-					with torch.no_grad():
-						output = model.generate(input, max_new_tokens=request.max_new_tokens, top_k=request.top_k, top_p=request.top_p)
-						input = output.clone()
+					output = model.generate(input, max_new_tokens=request.max_new_tokens, top_k=request.top_k, top_p=request.top_p)
+					input = output.clone()
 				name_filter = [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post" for sae, _ in saes]
 				logits, cache = model.run_with_ref_cache(input, names_filter=name_filter)
 				logits_topk = [torch.topk(l, request.return_logits_top_k) for l in logits[0]]
-
-				tracing_results = []
-				for tracing in request.tracings:
-					model.zero_grad()
-					if isinstance(tracing, LogitsNode):
-						assert tracing.position < logits.shape[1], "Position out of range"
-						assert tracing.token_id < logits.shape[2], "Token id out of range"
-						logits[:, tracing.position, tracing.token_id].backward(retain_graph=True)
-					else:
-						sae = get_sae(tracing.sae)
-						assert tracing.position < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[1], "Position out of range"
-						assert tracing.feature_index < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[2], "Feature index out of range"
-						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][:, tracing.position, tracing.feature_index].backward(retain_graph=True)
-					contributors = []
-					for sae, name in saes:
-						if cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad is None:
-							continue
-						attributions = cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad[0] * cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"][0]
-						for index in (attributions > request.tracing_threshold).nonzero():
-							index = tuple(index.tolist())
-							contributors.append(
-								{
-									"sae": name,
-									"position": index[0],
-									"feature_index": index[1],
-									"attribution": attributions[index].item(),
-									"activation": cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"][0][index].item(),
-								}
-							)
-						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad.zero_()
-					tracing_results.append({"node": tracing.model_dump(), "contributors": contributors})
 
 				result = {
 					"context": [
@@ -452,8 +414,7 @@ def model_generate(request: ModelGenerateRequest):
 								for i in range(cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0].shape[0])
 							]
 						} for sae, name in saes
-					],
-					"tracings": tracing_results,
+					]
 				}
 	return Response(content=msgpack.packb(result), media_type="application/x-msgpack")
 
@@ -470,6 +431,10 @@ def model_trace(request: ModelTraceRequest):
 	assert len(dictionaries) > 0, "No dictionaries found. Model name cannot be inferred."
 	model = get_model(dictionaries[0])
 	saes = [(get_sae(name), name) for name in request.saes]
+	max_feature_acts = {
+		name: client.get_max_feature_acts(name, dictionary_series=dictionary_series)
+		for _, name in saes
+	}
 	assert all(steering.sae in request.saes for steering in request.steerings), "Steering SAE not found"
 	assert all(tracing.sae in request.saes for tracing in request.tracings if isinstance(tracing, FeatureNode)), "Tracing SAE not found"
 	
@@ -507,11 +472,13 @@ def model_trace(request: ModelTraceRequest):
 						assert tracing.position < logits.shape[1], "Position out of range"
 						assert tracing.token_id < logits.shape[2], "Token id out of range"
 						logits[:, tracing.position, tracing.token_id].backward(retain_graph=True)
+						node = {**tracing.model_dump(), "activation": logits[0, tracing.position, tracing.token_id].item(), "id": f"logits-{tracing.position}-{tracing.token_id}"}
 					else:
 						sae = get_sae(tracing.sae)
 						assert tracing.position < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[0], "Position out of range"
 						assert tracing.feature_index < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[1], "Feature index out of range"
 						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][tracing.position, tracing.feature_index].backward(retain_graph=True)
+						node = {**tracing.model_dump(), "activation": cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][tracing.position, tracing.feature_index].item(), "max_activation": max_feature_acts[tracing.sae][tracing.feature_index], "id": f"feature-{tracing.sae}-{tracing.position}-{tracing.feature_index}"}
 					contributors = []
 					for sae, name in saes:
 						if cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad is None:
@@ -521,15 +488,20 @@ def model_trace(request: ModelTraceRequest):
 							index = tuple(index.tolist())
 							contributors.append(
 								{
-									"sae": name,
-									"position": index[0],
-									"feature_index": index[1],
+									"node": {
+										"type": "feature",
+										"sae": name,
+										"feature_index": index[1],
+										"position": index[0],
+										"activation": cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"][0][index].item(),
+										"max_activation": max_feature_acts[name][index[1]],
+										"id": f"feature-{name}-{index[0]}-{index[1]}"
+									},
 									"attribution": attributions[index].item(),
-									"activation": cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"][0][index].item(),
 								}
 							)
 						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad.zero_()
-					tracing_results.append({"node": tracing.model_dump(), "contributors": contributors})
+					tracing_results.append({"node": node, "contributors": contributors})
 
 				result = {
 					"context": [
