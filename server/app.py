@@ -1,8 +1,8 @@
 import os
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, Union, cast
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import torch
 
 from transformer_lens.hook_points import HookPoint
@@ -23,11 +23,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from lm_saes.analysis.auto_interp import check_description, generate_description
-from lm_saes.circuit.context import apply_sae
+from lm_saes.circuit.context import apply_sae, detach_on
 from lm_saes.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.bytes import bytes_to_unicode
+from lm_saes.utils.hooks import detach_hook
 
 result_dir = os.environ.get("RESULT_DIR", "results")
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -94,7 +95,7 @@ def get_sae(dictionary_name: str) -> SparseAutoEncoder:
 
 def make_serializable(obj):
 	if isinstance(obj, torch.Tensor):
-		return obj.cpu().numpy().tolist()
+		return obj.tolist()
 	if isinstance(obj, np.ndarray):
 		return obj.tolist()
 	if isinstance(obj, dict):
@@ -102,6 +103,10 @@ def make_serializable(obj):
 	if isinstance(obj, list):
 		return [make_serializable(v) for v in obj]
 	return obj
+
+@app.exception_handler(AssertionError)
+async def assertion_error_handler(request, exc):
+	return Response(content=str(exc), status_code=400)
 
 
 @app.get("/dictionaries")
@@ -259,7 +264,7 @@ def feature_activation_custom_input(
 				bytearray([byte_decoder[c] for c in t])
 				for t in model.tokenizer.convert_ids_to_tokens(input[0])
 			],
-			"feature_acts": feature_acts[:, feature_index].cpu().numpy().tolist(),
+			"feature_acts": feature_acts[:, feature_index].tolist(),
 		}
 
 	return Response(content=msgpack.packb(sample), media_type="application/x-msgpack")
@@ -289,15 +294,15 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
 				for t in model.tokenizer.convert_ids_to_tokens(input[0])
 			],
 			"feature_acts_indices": [
-				feature_acts[i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()
+				feature_acts[i].nonzero(as_tuple=True)[0].tolist()
 				for i in range(feature_acts.shape[0])
 			],
 			"feature_acts": [
-				feature_acts[i][feature_acts[i].nonzero(as_tuple=True)[0]].cpu().numpy().tolist()
+				feature_acts[i][feature_acts[i].nonzero(as_tuple=True)[0]].tolist()
 				for i in range(feature_acts.shape[0])
 			],
 			"max_feature_acts": [
-				[max_feature_acts[j] for j in feature_acts[i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()]
+				[max_feature_acts[j] for j in feature_acts[i].nonzero(as_tuple=True)[0].tolist()]
 				for i in range(feature_acts.shape[0])
 			]
 		}
@@ -310,14 +315,29 @@ class SteeringConfig(BaseModel):
 	steering_type: Literal["times", "add", "set", "ablate"]
 	steering_value: float | None = None
 
+class FeatureNode(BaseModel):
+	type: Literal["feature"]
+	sae: str
+	feature_index: int
+	position: int
+
+class LogitsNode(BaseModel):
+	type: Literal["logits"]
+	position: int
+	token_id: int
+
+Node = Annotated[Union[FeatureNode, LogitsNode], Field(discriminator="type")]
+
 class ModelGenerateRequest(BaseModel):
-	input_text: str
+	input_text: str | list[int]
 	max_new_tokens: int = 128
 	top_k: int = 50
 	top_p: float = 0.95
 	return_logits_top_k: int = 5
 	saes: list[str] = []
 	steerings: list[SteeringConfig] = []
+	tracings: list[Node] = []
+	tracing_threshold: float = 0.1
 
 @app.post("/model/generate")
 def model_generate(request: ModelGenerateRequest):
@@ -330,6 +350,9 @@ def model_generate(request: ModelGenerateRequest):
 		for _, name in saes
 	}
 	assert all(steering.sae in request.saes for steering in request.steerings), "Steering SAE not found"
+	assert all(tracing.sae in request.saes for tracing in request.tracings if isinstance(tracing, FeatureNode)), "Tracing SAE not found"
+	if len(request.tracings) > 0:
+		assert request.max_new_tokens == 0, "Tracing is only supported for max_new_tokens=0"
 	
 	def generate_steering_hook(steering: SteeringConfig):
 		def steering_hook(tensor: torch.Tensor, hook: HookPoint):
@@ -352,44 +375,171 @@ def model_generate(request: ModelGenerateRequest):
 	
 	steerings_hooks = [generate_steering_hook(steering) for steering in request.steerings]
 
-	with torch.no_grad():
-		with apply_sae(model, [sae for sae, _ in saes]):
-			with model.hooks(steerings_hooks):
-				input = model.to_tokens(request.input_text, prepend_bos=False)
-				output = model.generate(input, max_new_tokens=request.max_new_tokens, top_k=request.top_k, top_p=request.top_p)
-				output = output.clone()
-				logits, cache = model.run_with_cache(output, names_filter=[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes])
+	with apply_sae(model, [sae for sae, _ in saes]):
+		with model.hooks(steerings_hooks):
+			with detach_on(model, [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes]):
+				input = model.to_tokens(request.input_text, prepend_bos=False) if isinstance(request.input_text, str) else torch.tensor([request.input_text], device=device)
+				if request.max_new_tokens > 0:
+					with torch.no_grad():
+						output = model.generate(input, max_new_tokens=request.max_new_tokens, top_k=request.top_k, top_p=request.top_p)
+						input = output.clone()
+				name_filter = [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post" for sae, _ in saes]
+				logits, cache = model.run_with_ref_cache(input, names_filter=name_filter)
 				logits_topk = [torch.topk(l, request.return_logits_top_k) for l in logits[0]]
+
+				tracing_results = []
+				for tracing in request.tracings:
+					model.zero_grad()
+					if isinstance(tracing, LogitsNode):
+						assert tracing.position < logits.shape[1], "Position out of range"
+						assert tracing.token_id < logits.shape[2], "Token id out of range"
+						logits[:, tracing.position, tracing.token_id].backward(retain_graph=True)
+					else:
+						sae = get_sae(tracing.sae)
+						assert tracing.position < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[1], "Position out of range"
+						assert tracing.feature_index < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[2], "Feature index out of range"
+						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][:, tracing.position, tracing.feature_index].backward(retain_graph=True)
+					contributors = []
+					for sae, name in saes:
+						if cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad is None:
+							continue
+						attributions = cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad[0] * cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"][0]
+						for index in (attributions > request.tracing_threshold).nonzero():
+							index = tuple(index.tolist())
+							contributors.append(
+								{
+									"sae": name,
+									"position": index[0],
+									"feature_index": index[1],
+									"attribution": attributions[index].item(),
+									"activation": cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"][0][index].item(),
+								}
+							)
+						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad.zero_()
+					tracing_results.append({"node": tracing.model_dump(), "contributors": contributors})
+
 				result = {
 					"context": [
 						bytearray([byte_decoder[c] for c in t])
-						for t in model.tokenizer.convert_ids_to_tokens(output[0])
+						for t in model.tokenizer.convert_ids_to_tokens(input[0])
 					],
-					"logits": [l.values.cpu().numpy().tolist() for l in logits_topk],
-					"logits_tokens": [
-						[
-							bytearray([byte_decoder[c] for c in t])
-							for t in model.tokenizer.convert_ids_to_tokens(l.indices)
-						] for l in logits_topk
-					],
-					"input_mask": [1 for _ in range(len(input[0]))] + [0 for _ in range(len(output[0]) - len(input[0]))],
+					"token_ids": input[0].tolist(),
+					"logits": {
+						"logits": [l.values.tolist() for l in logits_topk],
+						"tokens": [
+							[
+								bytearray([byte_decoder[c] for c in t])
+								for t in model.tokenizer.convert_ids_to_tokens(l.indices)
+							] for l in logits_topk
+						],
+						"token_ids": [
+							l.indices.tolist()
+							for l in logits_topk
+						],
+					},
+					"input_mask": [1 for _ in range(len(input[0]))] + [0 for _ in range(len(input[0]) - len(input[0]))],
 					"sae_info": [
 						{
 							"name": name,
 							"feature_acts_indices": [
-								cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()
+								cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0].tolist()
 								for i in range(cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0].shape[0])
 							],
 							"feature_acts": [
-								cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i][cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0]].cpu().numpy().tolist()
+								cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i][cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0]].tolist()
 								for i in range(cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0].shape[0])
 							],
 							"max_feature_acts": [
-								[max_feature_acts[name][j] for j in cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()]
+								[max_feature_acts[name][j] for j in cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0].tolist()]
 								for i in range(cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0].shape[0])
 							]
 						} for sae, name in saes
 					],
+					"tracings": tracing_results,
+				}
+	return Response(content=msgpack.packb(result), media_type="application/x-msgpack")
+
+class ModelTraceRequest(BaseModel):
+	input_text: str | list[int]
+	saes: list[str] = []
+	steerings: list[SteeringConfig] = []
+	tracings: list[Node] = []
+	tracing_threshold: float = 0.1
+
+@app.post("/model/trace")
+def model_trace(request: ModelTraceRequest):
+	dictionaries = client.list_dictionaries(dictionary_series=dictionary_series)
+	assert len(dictionaries) > 0, "No dictionaries found. Model name cannot be inferred."
+	model = get_model(dictionaries[0])
+	saes = [(get_sae(name), name) for name in request.saes]
+	assert all(steering.sae in request.saes for steering in request.steerings), "Steering SAE not found"
+	assert all(tracing.sae in request.saes for tracing in request.tracings if isinstance(tracing, FeatureNode)), "Tracing SAE not found"
+	
+	def generate_steering_hook(steering: SteeringConfig):
+		def steering_hook(tensor: torch.Tensor, hook: HookPoint):
+			assert len(tensor.shape) == 3
+			tensor = tensor.clone()
+			if steering.steering_type == "times":
+				assert steering.steering_value is not None
+				tensor[:, :, steering.feature_index] *= steering.steering_value
+			elif steering.steering_type == "ablate":
+				tensor[:, :, steering.feature_index] = 0
+			elif steering.steering_type == "add":
+				assert steering.steering_value is not None
+				tensor[:, :, steering.feature_index] += steering.steering_value
+			elif steering.steering_type == "set":
+				assert steering.steering_value is not None
+				tensor[:, :, steering.feature_index] = steering.steering_value
+			return tensor
+		sae = get_sae(steering.sae)
+		return f"{sae.cfg.hook_point_out}.sae.hook_feature_acts", steering_hook
+	
+	steerings_hooks = [generate_steering_hook(steering) for steering in request.steerings]
+
+	with apply_sae(model, [sae for sae, _ in saes]):
+		with model.hooks(steerings_hooks):
+			with detach_on(model, [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes]):
+				input = model.to_tokens(request.input_text, prepend_bos=False) if isinstance(request.input_text, str) else torch.tensor([request.input_text], device=device)
+				name_filter = [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post" for sae, _ in saes]
+				logits, cache = model.run_with_ref_cache(input, names_filter=name_filter)
+				tracing_results = []
+				for tracing in request.tracings:
+					model.zero_grad()
+					if isinstance(tracing, LogitsNode):
+						assert tracing.position < logits.shape[1], "Position out of range"
+						assert tracing.token_id < logits.shape[2], "Token id out of range"
+						logits[:, tracing.position, tracing.token_id].backward(retain_graph=True)
+					else:
+						sae = get_sae(tracing.sae)
+						assert tracing.position < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[1], "Position out of range"
+						assert tracing.feature_index < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[2], "Feature index out of range"
+						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][:, tracing.position, tracing.feature_index].backward(retain_graph=True)
+					contributors = []
+					for sae, name in saes:
+						if cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad is None:
+							continue
+						attributions = cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad[0] * cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"][0]
+						for index in (attributions > request.tracing_threshold).nonzero():
+							index = tuple(index.tolist())
+							contributors.append(
+								{
+									"sae": name,
+									"position": index[0],
+									"feature_index": index[1],
+									"attribution": attributions[index].item(),
+									"activation": cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"][0][index].item(),
+								}
+							)
+						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad.zero_()
+					tracing_results.append({"node": tracing.model_dump(), "contributors": contributors})
+
+				result = {
+					"context": [
+						bytearray([byte_decoder[c] for c in t])
+						for t in model.tokenizer.convert_ids_to_tokens(input[0])
+					],
+					"token_ids": input[0].tolist(),
+					"tracings": tracing_results,
 				}
 	return Response(content=msgpack.packb(result), media_type="application/x-msgpack")
 
