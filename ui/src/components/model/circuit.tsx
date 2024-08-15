@@ -13,21 +13,21 @@ import {
 } from "@xyflow/react";
 import { useState } from "react";
 import dagre from "dagre";
+import { TracingNode } from "@/types/model";
 
-// const initialNodes: Node[] = [
-//   { id: "1", position: { x: 0, y: 0 }, data: { label: "1" } },
-//   { id: "12", position: { x: 300, y: 0 }, data: { label: "12" } },
-//   { id: "2", position: { x: 0, y: 100 }, data: { label: "2" } },
-// ];
-// const initialEdges: Edge[] = [{ id: "e1-2", source: "1", target: "2" }];
+export type NodeData = {
+  label: string;
+  tracingNode: TracingNode;
+};
 
 export type CircuitViewerProps = {
   className?: string;
   flowClassName?: string;
-  nodes: Node[];
+  nodes: Node<NodeData>[];
   edges: Edge[];
-  onNodesChange: React.Dispatch<React.SetStateAction<Node[]>>;
+  onNodesChange: React.Dispatch<React.SetStateAction<Node<NodeData>[]>>;
   onEdgesChange: React.Dispatch<React.SetStateAction<Edge[]>>;
+  onTrace?: (node: TracingNode) => void;
 };
 
 export const CircuitViewer = ({
@@ -37,6 +37,7 @@ export const CircuitViewer = ({
   edges,
   onNodesChange,
   onEdgesChange,
+  onTrace,
 }: CircuitViewerProps) => {
   const [nodeIds, setNodeIds] = useState<string[]>([]);
   const [edgeIds, setEdgeIds] = useState<string[]>([]);
@@ -45,7 +46,7 @@ export const CircuitViewer = ({
   const edgesHasChanged =
     !edgeIds.every((id) => edges.some((edge) => edge.id === id)) || !edges.every((edge) => edgeIds.includes(edge.id));
 
-  const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
+  const getLayoutedElements = (nodes: Node<NodeData>[], edges: Edge[]) => {
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
     dagreGraph.setGraph({ rankdir: "TB" });
@@ -62,9 +63,9 @@ export const CircuitViewer = ({
 
     dagre.layout(dagreGraph);
 
-    const newNodes: Node[] = nodes.map((node) => {
+    const newNodes: Node<NodeData>[] = nodes.map((node) => {
       const nodeWithPosition = dagreGraph.node(node.id);
-      const newNode: Node = {
+      const newNode: Node<NodeData> = {
         ...node,
         targetPosition: Position.Top,
         sourcePosition: Position.Bottom,
@@ -101,6 +102,9 @@ export const CircuitViewer = ({
         }}
         onEdgesChange={(changes) => {
           onEdgesChange((edges) => applyEdgeChanges(changes, edges));
+        }}
+        onNodeDoubleClick={(_, node) => {
+          onTrace?.(node.data.tracingNode);
         }}
       >
         <Controls />
