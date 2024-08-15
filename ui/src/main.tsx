@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "@xyflow/react/dist/style.css";
 import "./globals.css";
 import { RouterProvider, createBrowserRouter } from "react-router-dom";
 import { FeaturesPage } from "@/routes/features/page";
