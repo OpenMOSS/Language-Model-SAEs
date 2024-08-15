@@ -15,7 +15,13 @@ const LogitsNodeSchema = z.object({
 
 export const TracingNodeSchema = z.discriminatedUnion("type", [FeatureNodeSchema, LogitsNodeSchema]);
 
-export type TracingNode = z.infer<typeof TracingNodeSchema>;
+export type TracingNode = z.infer<typeof TracingNodeSchema> & {
+  activation?: number;
+  to?: {
+    node: TracingNode;
+    attribution: number;
+  }[];
+};
 
 export const ModelGenerationSchema = z.object({
   context: z.array(z.instanceof(Uint8Array)),

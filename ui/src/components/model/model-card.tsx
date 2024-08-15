@@ -36,7 +36,7 @@ import { Switch } from "../ui/switch";
 import { Label as SLabel } from "../ui/label";
 import { Toggle } from "../ui/toggle";
 import { Edge, Node } from "@xyflow/react";
-import { CircuitViewer } from "./circuit";
+import { CircuitViewer, NodeData } from "./circuit";
 
 const SAEInfo = ({
   position,
@@ -475,7 +475,7 @@ const ModelCustomInputArea = () => {
       }[]
     | null
   >(null);
-  const [nodes, setNodes] = useState<Node[]>([]);
+  const [nodes, setNodes] = useState<Node<NodeData>[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
 
   const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
@@ -503,14 +503,6 @@ const ModelCustomInputArea = () => {
           topP,
           saes: selectedDictionaries,
           steerings: steerings.filter((s) => s.sae !== null),
-          // tracings: [
-          //   {
-          //     type: "logits",
-          //     position: 0,
-          //     tokenId: 284,
-          //   },
-          // ],
-          // tracingThreshold: 0,
         })
       ),
       headers: {
@@ -569,19 +561,18 @@ const ModelCustomInputArea = () => {
         .then((res) => decode(new Uint8Array(res)) as any)
         .then((res) => camelcaseKeys(res, { deep: true, stopPaths: ["context"] }))
         .then((res) => TracingSchema.parse(res));
-      const newNodes = res.tracings.flatMap((t) => {
-        const node = ((t: TracingNode): Node => {
+
+      const newNodes: Node<NodeData>[] = res.tracings.flatMap((t) => {
+        const node = ((t: TracingNode): Omit<Node<NodeData>, "position"> => {
           if (t.type === "feature") {
             return {
               id: `feature-${t.sae}-${t.position}-${t.featureIndex}`,
-              position: { x: 0, y: 0 },
-              data: { label: `${t.position}.${t.sae}.${t.featureIndex}` },
+              data: { label: `${t.position}.${t.sae}.${t.featureIndex}`, tracingNode: t },
             };
           } else {
             return {
               id: `logits-${t.position}-${t.tokenId}`,
-              position: { x: 0, y: 0 },
-              data: { label: `${t.position}.logits.${t.tokenId}` },
+              data: { label: `${t.position}.logits.${t.tokenId}`, tracingNode: t },
             };
           }
         })(t.node);
@@ -589,10 +580,18 @@ const ModelCustomInputArea = () => {
           node,
           ...t.contributors.map((c) => ({
             id: `feature-${c.sae}-${c.position}-${c.featureIndex}`,
-            position: { x: 0, y: 0 },
-            data: { label: `${c.position}.${c.sae}.${c.featureIndex}` },
+            data: {
+              label: `${c.position}.${c.sae}.${c.featureIndex}`,
+              tracingNode: { type: "feature" as const, ...c },
+            },
           })),
-        ];
+        ].map<Node<NodeData>>((node) => ({
+          ...node,
+          position: { x: 0, y: 0 },
+          className: cn(
+            node.data.tracingNode.activation && getAccentClassname(node.data.tracingNode.activation, 20, "border")
+          ),
+        }));
       });
       const newEdges = newNodes.slice(1).map((node) => ({
         id: `edge-${node.id}-${newNodes[0].id}`,
@@ -602,9 +601,7 @@ const ModelCustomInputArea = () => {
       setNodes((prev) =>
         [...newNodes, ...prev].filter((node, i, self) => self.findIndex((n) => n.id === node.id) === i)
       );
-      setEdges((prev) =>
-        [...newEdges, ...prev].filter((edge, i, self) => self.findIndex((e) => e.id === edge.id) === i)
-      );
+      setEdges((prev) => [...prev.filter((edge) => edge.target !== newNodes[0].id), ...newEdges]);
     },
     [sample, selectedDictionaries, sampleSteerings]
   );
@@ -785,7 +782,7 @@ const ModelCustomInputArea = () => {
       </Button>
       {state.error && <p className="text-red-500">{state.error.message}</p>}
       {nodes.length > 0 && (
-        <CircuitViewer nodes={nodes} edges={edges} onNodesChange={setNodes} onEdgesChange={setEdges} />
+        <CircuitViewer nodes={nodes} edges={edges} onNodesChange={setNodes} onEdgesChange={setEdges} onTrace={trace} />
       )}
       {sample && (
         <ModelSample
