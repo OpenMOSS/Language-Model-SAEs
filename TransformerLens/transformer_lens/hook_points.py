@@ -898,7 +898,7 @@ class HookedRootModule(nn.Module):
     @contextmanager
     def mount_hooked_modules(
         self,
-        hooked_modules: List[Tuple[str, str, "HookedRootModule"]],
+        hooked_modules: List[Tuple[str, str, torch.nn.Module]],
     ):
         """
         A context manager for adding child hooked modules at specified hook points.
@@ -931,7 +931,8 @@ class HookedRootModule(nn.Module):
                     for hook_point_name, hp in self.hook_dict.items():
                         if name(hook_point_name):
                             delattr(hp, module_name)
-                module.setup()
+                if isinstance(module, HookedRootModule):
+                    module.setup()
             self.setup()
         
 
