@@ -41,7 +41,7 @@ def apply_sae(
             yield model
 
 @contextmanager
-def detach_on(
+def detach_at(
     model: HookedRootModule,
     hook_points: list[str],
 ):
