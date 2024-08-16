@@ -474,6 +474,11 @@ const ModelCustomInputArea = () => {
       }[]
     | null
   >(null);
+
+  const [tracingThreshold, setTracingThreshold] = useState<number>(0.1);
+  const [tracingTopK, setTracingTopK] = useState<number | null>(null);
+  const [detachAtAttnScores, setDetachAtAttnScores] = useState<boolean>(false);
+
   const [tracings, setTracings] = useState<Tracing[]>([]);
 
   const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
@@ -540,6 +545,9 @@ const ModelCustomInputArea = () => {
             saes: selectedDictionaries,
             steerings: sampleSteerings,
             tracings: [node],
+            tracingThreshold,
+            tracingTopK,
+            detachAtAttnScores,
           })
         ),
         headers: {
@@ -564,7 +572,7 @@ const ModelCustomInputArea = () => {
         ...res.tracings,
       ]);
     },
-    [sample, selectedDictionaries, sampleSteerings]
+    [sample, selectedDictionaries, sampleSteerings, tracingThreshold, tracingTopK, detachAtAttnScores]
   );
 
   const loading = state.loading || tracingState.loading;
@@ -732,6 +740,40 @@ const ModelCustomInputArea = () => {
               </div>
             </Fragment>
           ))}
+        {sample && selectedDictionaries.length > 0 && (
+          <Fragment>
+            <Separator className="col-span-4" />
+            <span className="font-bold justify-self-end">Tracing Threshold:</span>
+            <Input
+              disabled={loading}
+              className="bg-white"
+              type="number"
+              value={tracingThreshold.toString()}
+              onChange={(e) => setTracingThreshold(parseFloat(e.target.value))}
+            />
+            <span className="font-bold justify-self-end">Tracing Top K:</span>
+            <Input
+              disabled={loading}
+              className="bg-white"
+              value={tracingTopK?.toString() || ""}
+              onChange={(e) => setTracingTopK(e.target.value.trim() ? parseInt(e.target.value.trim()) : null)}
+            />
+            <span className="font-bold justify-self-end">Detach at Attention Scores:</span>
+            <div className="col-span-3 flex items-center space-x-2">
+              <Switch
+                id="detach-at-attn-scores"
+                checked={detachAtAttnScores}
+                onCheckedChange={setDetachAtAttnScores}
+                disabled={loading}
+              />
+              <SLabel htmlFor="detach-at-attn-scores" className="text-sm text-muted-foreground">
+                {detachAtAttnScores
+                  ? "Gradients will stop at the attention scores. This enables users to see respective functionalities of the QK and OV circuits."
+                  : "Gradients will flow through the attention scores. An overall attribution will be shown."}
+              </SLabel>
+            </div>
+          </Fragment>
+        )}
       </div>
       <Textarea
         placeholder="Type your custom input here."
@@ -742,7 +784,7 @@ const ModelCustomInputArea = () => {
         Submit
       </Button>
       {state.error && <p className="text-red-500">{state.error.message}</p>}
-      {tracings.length > 0 && <CircuitViewer tracings={tracings} onTrace={trace} />}
+      {tracings.length > 0 && <CircuitViewer tracings={tracings} onTrace={trace} onTracingsChange={setTracings} />}
       {sample && (
         <ModelSample
           sample={sample}

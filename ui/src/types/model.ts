@@ -18,7 +18,21 @@ const LogitsNodeSchema = z.object({
   activation: z.number(),
 });
 
-export const TracingNodeSchema = z.discriminatedUnion("type", [FeatureNodeSchema, LogitsNodeSchema]);
+const AttnScoreNodeSchema = z.object({
+  type: z.literal("attn-score"),
+  id: z.string(),
+  layer: z.number(),
+  head: z.number(),
+  query: z.number(),
+  key: z.number(),
+  activation: z.number(),
+});
+
+export const TracingNodeSchema = z.discriminatedUnion("type", [
+  FeatureNodeSchema,
+  LogitsNodeSchema,
+  AttnScoreNodeSchema,
+]);
 
 export type TracingNode = z.infer<typeof TracingNodeSchema>;
 
@@ -33,6 +47,13 @@ export type TracingAction =
       type: "logits";
       tokenId: number;
       position: number;
+    }
+  | {
+      type: "attn-score";
+      layer: number;
+      head: number;
+      query: number;
+      key: number;
     };
 
 export const ModelGenerationSchema = z.object({
