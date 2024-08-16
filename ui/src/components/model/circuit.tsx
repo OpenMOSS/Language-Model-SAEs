@@ -50,6 +50,8 @@ const NodeInfo = ({ node }: { node: Node<NodeData> }) => {
           <div className="text-sm">{node.data.tracingNode.tokenId}</div>
           <div className="text-sm font-bold">Position:</div>
           <div className="text-sm">{node.data.tracingNode.position}</div>
+          <div className="text-sm font-bold">Logits:</div>
+          <div className="text-sm">{node.data.tracingNode.activation.toFixed(3)}</div>
         </div>
       </div>
     );
@@ -213,6 +215,37 @@ export const CircuitViewer = memo(
       return "";
     }, []);
 
+    const getEdgeBySourceAndTarget = useCallback(
+      (sourceId: string, targetId: string) => {
+        return edges.find((edge) => edge.source === sourceId && edge.target === targetId);
+      },
+      [edges]
+    );
+
+    const PanelContent = useCallback(() => {
+      if (selection.nodes.length === 1) {
+        return <NodeInfo node={selection.nodes[0]} />;
+      } else if (selection.edges.length === 1) {
+        return (
+          <EdgeInfo
+            edge={selection.edges[0]}
+            source={nodes.find((n) => n.id === selection.edges[0].source)!}
+            target={nodes.find((n) => n.id === selection.edges[0].target)!}
+          />
+        );
+      } else if (selection.nodes.length === 2) {
+        const edge =
+          getEdgeBySourceAndTarget(selection.nodes[0].id, selection.nodes[1].id) ||
+          getEdgeBySourceAndTarget(selection.nodes[1].id, selection.nodes[0].id);
+        if (edge) {
+          const source = nodes.find((n) => n.id === edge.source)!;
+          const target = nodes.find((n) => n.id === edge.target)!;
+          return <EdgeInfo edge={edge} source={source} target={target} />;
+        }
+      }
+      return <></>;
+    }, [selection, nodes, getEdgeBySourceAndTarget]);
+
     useEffect(() => {
       const nodes: Node<NodeData>[] = [];
       const edges: Edge<EdgeData>[] = [];
@@ -293,14 +326,7 @@ export const CircuitViewer = memo(
           <Controls />
           <MiniMap />
           <Panel position="top-right">
-            {(selection.nodes.length === 1 && <NodeInfo node={selection.nodes[0]} />) ||
-              (selection.edges.length === 1 && (
-                <EdgeInfo
-                  edge={selection.edges[0]}
-                  source={nodes.find((n) => n.id === selection.edges[0].source)!}
-                  target={nodes.find((n) => n.id === selection.edges[0].target)!}
-                />
-              ))}
+            <PanelContent />
           </Panel>
           <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
         </ReactFlow>
