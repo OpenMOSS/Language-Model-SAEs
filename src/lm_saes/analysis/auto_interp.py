@@ -16,6 +16,8 @@ from lm_saes.sae import SparseAutoEncoder
 
 
 def _num_tokens_from_string(string: str, encoding_name: str = "cl100k_base") -> int:
+    if string is None:
+        return 0
     encoding = tiktoken.get_encoding(encoding_name)
     num_tokens = len(encoding.encode(string))
     return num_tokens
@@ -119,13 +121,13 @@ def _sample_sentences_few_shot(cfg: AutoInterpConfig, tokenizer, example_feature
     And then construct the sentences into a prompt for simulation and scoring.
     """
     assert len(example_description_list) == len(example_feature_activation_list), f"Got {len(example_description_list)=} and {len(example_feature_activation_list)=}"
-    print(f"{len(example_description_list)=}")
-    print(f"{len(example_feature_activation_list)=}")
-    print(f"{len(description)=}")
-    print(f"{len(feature_activation)=}")
+    # print(f"{len(example_description_list)=}")
+    # print(f"{len(example_feature_activation_list)=}")
+    # print(f"{len(description)=}")
+    # print(f"{len(feature_activation)=}")
     few_shot_number = min(10, len(example_feature_activation_list))
-    print(f"{few_shot_number=}")
-    task_description = """We're studying neurons in a neural network. Each neuron looks for some particular thing in a short document. Look at an explanation of what the neuron does, and try to predict how it will fire on each token.\n\nThe activation format is token<tab>activation, activations go from 0 to 10, "unknown" indicates an unknown activation. Most activations will be 0."""
+    # print(f"{few_shot_number=}")
+    task_description = """We're studying neurons in a neural network. Each neuron looks for some particular thing in a short document. Look at an explanation of what the neuron does, and try to predict how it will fire on each token.\n\nThe activation format is token<tab>activation, activations go from 0 to 10, "unknown" indicates an unknown activation. Most activations will be 0.\n\n"""
     for description_index, example_feature_activation in enumerate(example_feature_activation_list):    
         few_shot_context_list = []
         few_shot_max_acts = max(example_feature_activation["feature_acts"][0])
@@ -134,35 +136,34 @@ def _sample_sentences_few_shot(cfg: AutoInterpConfig, tokenizer, example_feature
             for i in range(len(example_feature_activation["feature_acts"]))
             if max(example_feature_activation["feature_acts"][i]) > cfg.p * few_shot_max_acts
         ]
-        print(f"{len(few_shot_filtered_sentences_id)=}, {few_shot_filtered_sentences_id=}")
+        # print(f"{len(few_shot_filtered_sentences_id)=}, {few_shot_filtered_sentences_id=}")
         if len(few_shot_filtered_sentences_id)==0: # here 10 is few-shot number
            print(f"Feature {description_index} doesn't have any qualified sentences.")
         else:
             sentences_id = random.sample(few_shot_filtered_sentences_id, 1)[0]
-        print(f"{sentences_id=}")
+        # print(f"{sentences_id=}")
     
         few_shot_contexts = torch.tensor(example_feature_activation["contexts"][sentences_id])
         few_shot_feature_acts = torch.tensor(example_feature_activation["feature_acts"][sentences_id])
         few_shot_context_list.append(_extract_context(cfg, tokenizer, few_shot_contexts, few_shot_feature_acts))
         few_shots_token_str = _construct_few_shots(few_shot_context_list, is_test=False)
         few_shots_neuron_explanation_str = f"Explanation of neuron {description_index + 1}: {example_description_list[description_index]}\n"
-        few_shots_sentence_prompt = f"Neuron {description_index + 1}\n{few_shots_neuron_explanation_str}\nActivations:\n<START>\n{few_shots_token_str}\n<END>\n\n"
+        few_shots_sentence_prompt = f"Neuron {description_index + 1}\n{few_shots_neuron_explanation_str}\nActivations:\n{few_shots_token_str}\n\n"
         task_description += few_shots_sentence_prompt
 
     test_context_list = []
-    for i in range(len(description)):
-        test_contexts = torch.tensor(feature_activation["contexts"][i])
-        test_feature_acts = torch.tensor(feature_activation["feature_acts"][i])
-        test_context_list.append(_extract_context(cfg, tokenizer, test_contexts, test_feature_acts))
+    test_contexts = torch.tensor(feature_activation["contexts"])
+    test_feature_acts = torch.tensor(feature_activation["feature_acts"])
+    test_context_list.append(_extract_context(cfg, tokenizer, test_contexts, test_feature_acts))
+    
     test_token_str = _construct_few_shots(test_context_list, is_test=True)
-    test_neuron_explanation_str = f"Explanation of neuron {len(example_description_list) + 1}: {description}\n"
-    test_sentence_prompt = f"Neuron {len(example_description_list) + 1}\n{test_neuron_explanation_str}\nActivations:\n<START>\n{test_token_str}\n<END>\n\n"
+    test_neuron_explanation_str = f"Explanation of neuron {len(example_description_list) + 1}: {description[0]}\n"
+    test_sentence_prompt = f"Neuron {len(example_description_list) + 1}\n{test_neuron_explanation_str}\nActivations:\n{test_token_str}\n\n"
     task_description += test_sentence_prompt
-    return task_description
 
-
-
-
+    test_requirement = "Predict the activation of each token in the sentence of the last neuron. The activation format is token<tab>activation, activations go from 0 to 10,. Most activations will be 0. Only output the predicted activations.\n"
+    task_description += test_requirement
+    return task_description, test_context_list
 
 
 def _chat_completion(client, prompt, max_retry=3):
@@ -179,8 +180,29 @@ def _chat_completion(client, prompt, max_retry=3):
             if i == max_retry - 1:
                 return f"ERROR: {e}"
 
+def generate_scoring(
+    tokenizer,
+    prompt: str,
+    price,
+    client_function
+):
+    input_tokens = _num_tokens_from_string(prompt)
+    # response = client_function(client, prompt)
+    response = client_function(prompt)
+    output_tokens = _num_tokens_from_string(response)
+    cost = _calculate_cost(input_tokens, output_tokens, price=price)
+    result = {
+        "prompt": prompt,
+        "response": response,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost": cost,
+    }
+    return result
+    
 
 def generate_description(
+    tokenizer,
     model: HookedTransformer,
     feature_activation: Dict,
     cfg: AutoInterpConfig,
@@ -188,8 +210,9 @@ def generate_description(
     price = (0.005, 0.015),
     client_function = _chat_completion
 ):
-    tokenizer = model.tokenizer
-    client = OpenAI(api_key=cfg.openai.openai_api_key, base_url=cfg.openai.openai_base_url)
+    if tokenizer is None:
+        tokenizer = model.tokenizer
+    # client = OpenAI(api_key=cfg.openai.openai_api_key, base_url=cfg.openai.openai_base_url)
     prompt = _sample_sentences(
         cfg, tokenizer, feature_activation
     )
@@ -210,6 +233,7 @@ def generate_description(
 
 
 def check_description(
+    tokenizer,  
     model: HookedTransformer,
     cfg: AutoInterpConfig,
     index: int,
@@ -226,7 +250,8 @@ def check_description(
     If `using_sae` is set to true, an SAE model must be provided.
     Otherwise, a `feature_activations` dataset is required for further processing.
     """
-    tokenizer = model.tokenizer
+    if tokenizer is None:
+        tokenizer = model.tokenizer
     client = OpenAI(api_key=cfg.openai.openai_api_key, base_url=cfg.openai.openai_base_url)
     if using_sae:
         assert sae is not None, "Sparse Auto Encoder is not provided."
