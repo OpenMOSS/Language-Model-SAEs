@@ -23,7 +23,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from lm_saes.analysis.auto_interp import check_description, generate_description
-from lm_saes.circuit.context import apply_sae, detach_on
+from lm_saes.circuit.context import apply_sae, detach_at
 from lm_saes.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.sae import SparseAutoEncoder
@@ -323,7 +323,14 @@ class LogitsNode(BaseModel):
 	position: int
 	token_id: int
 
-Node = Annotated[Union[FeatureNode, LogitsNode], Field(discriminator="type")]
+class AttnScoreNode(BaseModel):
+	type: Literal["attn-score"]
+	layer: int
+	head: int
+	query: int
+	key: int
+
+Node = Annotated[Union[FeatureNode, LogitsNode, AttnScoreNode], Field(discriminator="type")]
 
 class ModelGenerateRequest(BaseModel):
 	input_text: str | list[int]
@@ -424,6 +431,8 @@ class ModelTraceRequest(BaseModel):
 	steerings: list[SteeringConfig] = []
 	tracings: list[Node] = []
 	tracing_threshold: float = 0.1
+	tracing_top_k: int | None = None
+	detach_at_attn_scores: bool = False
 
 @app.post("/model/trace")
 def model_trace(request: ModelTraceRequest):
@@ -459,11 +468,17 @@ def model_trace(request: ModelTraceRequest):
 	
 	steerings_hooks = [generate_steering_hook(steering) for steering in request.steerings]
 
+	candidates = [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes]
+	if request.detach_at_attn_scores:
+		candidates += [f"blocks.{i}.attn.hook_attn_scores" for i in range(model.cfg.n_layers)]
+
 	with apply_sae(model, [sae for sae, _ in saes]):
 		with model.hooks(steerings_hooks):
-			with detach_on(model, [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes]):
+			with detach_at(model, candidates):
 				input = model.to_tokens(request.input_text, prepend_bos=False) if isinstance(request.input_text, str) else torch.tensor([request.input_text], device=device)
 				name_filter = [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post" for sae, _ in saes]
+				if request.detach_at_attn_scores:
+					name_filter += [f"blocks.{i}.attn.hook_attn_scores.pre" for i in range(model.cfg.n_layers)] + [f"blocks.{i}.attn.hook_attn_scores.post" for i in range(model.cfg.n_layers)]
 				logits, cache = model.run_with_ref_cache(input, names_filter=name_filter)
 				tracing_results = []
 				for tracing in request.tracings:
@@ -473,17 +488,29 @@ def model_trace(request: ModelTraceRequest):
 						assert tracing.token_id < logits.shape[2], "Token id out of range"
 						logits[:, tracing.position, tracing.token_id].backward(retain_graph=True)
 						node = {**tracing.model_dump(), "activation": logits[0, tracing.position, tracing.token_id].item(), "id": f"logits-{tracing.position}-{tracing.token_id}"}
-					else:
+					elif isinstance(tracing, FeatureNode):
 						sae = get_sae(tracing.sae)
 						assert tracing.position < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[0], "Position out of range"
 						assert tracing.feature_index < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[1], "Feature index out of range"
 						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][tracing.position, tracing.feature_index].backward(retain_graph=True)
 						node = {**tracing.model_dump(), "activation": cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][tracing.position, tracing.feature_index].item(), "max_activation": max_feature_acts[tracing.sae][tracing.feature_index], "id": f"feature-{tracing.sae}-{tracing.position}-{tracing.feature_index}"}
+					elif isinstance(tracing, AttnScoreNode):
+						assert tracing.layer < model.cfg.n_layers, "Layer out of range"
+						attn_scores = cache[f"blocks.{tracing.layer}.attn.hook_attn_scores.pre"]
+						assert tracing.head < attn_scores.shape[1], "Head out of range"
+						assert tracing.query < attn_scores.shape[2], "Query out of range"
+						assert tracing.key < attn_scores.shape[3], "Key out of range"
+						attn_scores[:, tracing.head, tracing.query, tracing.key].backward(retain_graph=True)
+						node = {**tracing.model_dump(), "activation": attn_scores[0, tracing.head, tracing.query, tracing.key].item(), "id": f"attn-score-{tracing.layer}-{tracing.head}-{tracing.query}-{tracing.key}"}
+					else:
+						raise AssertionError("Unknown node type")
+					
 					contributors = []
 					for sae, name in saes:
-						if cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad is None:
+						feature_acts = cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"]
+						if feature_acts.grad is None:
 							continue
-						attributions = cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad[0] * cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"][0]
+						attributions = feature_acts.grad[0] * feature_acts[0]
 						for index in (attributions > request.tracing_threshold).nonzero():
 							index = tuple(index.tolist())
 							contributors.append(
@@ -493,14 +520,42 @@ def model_trace(request: ModelTraceRequest):
 										"sae": name,
 										"feature_index": index[1],
 										"position": index[0],
-										"activation": cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"][0][index].item(),
+										"activation": feature_acts[0][index].item(),
 										"max_activation": max_feature_acts[name][index[1]],
 										"id": f"feature-{name}-{index[0]}-{index[1]}"
 									},
 									"attribution": attributions[index].item(),
 								}
 							)
-						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"].grad.zero_()
+						feature_acts.grad.zero_()
+
+					if request.detach_at_attn_scores:
+						for i in range(model.cfg.n_layers):
+							attn_scores = cache[f"blocks.{i}.attn.hook_attn_scores.post"]
+							if attn_scores.grad is None:
+								continue
+							attributions = attn_scores.grad[0] * attn_scores[0]
+							for index in (attributions > request.tracing_threshold).nonzero():
+								index = tuple(index.tolist())
+								contributors.append(
+									{
+										"node": {
+											"type": "attn-score",
+											"layer": i,
+											"head": index[0],
+											"query": index[1],
+											"key": index[2],
+											"activation": attn_scores[0][index].item(),
+											"id": f"attn-score-{i}-{index[0]}-{index[1]}-{index[2]}"
+										},
+										"attribution": attributions[index].item(),
+									}
+								)
+							attn_scores.grad.zero_()
+
+					if request.tracing_top_k is not None:
+						contributors = sorted(contributors, key=lambda c: -c["attribution"])[:request.tracing_top_k]					
+					
 					tracing_results.append({"node": node, "contributors": contributors})
 
 				result = {
