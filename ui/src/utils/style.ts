@@ -1,4 +1,8 @@
-export const getAccentClassname = (featureAct: number, maxFeatureAct: number, variant: "text" | "bg" | "border") => {
+export const getAccentClassname = (
+  featureAct: number,
+  maxFeatureAct: number,
+  variant: "text" | "bg" | "border" | "*:stroke"
+) => {
   const textAccentClassnames = [
     null,
     "text-orange-100",
@@ -26,8 +30,20 @@ export const getAccentClassname = (featureAct: number, maxFeatureAct: number, va
     "border-orange-500",
   ];
 
+  const strokeAccentClassnames = [
+    null,
+    "*:stroke-gray-300",
+    "*:stroke-gray-400 *:stroke-2",
+    "*:stroke-gray-500 *:stroke-2",
+    "*:stroke-gray-600 *:stroke-2",
+    "*:stroke-gray-700 *:stroke-2",
+  ];
+
   const accentClassnames =
-    variant === "text" ? textAccentClassnames : variant === "bg" ? bgAccentClassnames : borderAccentClassnames;
+    (variant === "text" && textAccentClassnames) ||
+    (variant === "bg" && bgAccentClassnames) ||
+    (variant === "border" && borderAccentClassnames) ||
+    strokeAccentClassnames;
 
   return accentClassnames[Math.ceil(Math.min(featureAct / maxFeatureAct, 1) * (accentClassnames.length - 1))];
 };
