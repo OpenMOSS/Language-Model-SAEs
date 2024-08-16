@@ -4,6 +4,7 @@ import { Feature, FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
 import { create } from "zustand";
+import { Link } from "react-router-dom";
 
 const useFeaturePreviewStore = create<{
   features: Record<string, Feature>;
@@ -84,9 +85,9 @@ export const FeatureLinkWithPreview = ({
   return (
     <HoverCard>
       <HoverCardTrigger>
-        <a href={`/features?dictionary=${encodeURIComponent(dictionaryName)}&featureIndex=${featureIndex}`}>
+        <Link to={`/features?dictionary=${encodeURIComponent(dictionaryName)}&featureIndex=${featureIndex}`}>
           #{featureIndex}
-        </a>
+        </Link>
       </HoverCardTrigger>
       <HoverCardContent className="w-[500px] max-h-[300px] overflow-y-auto">
         <FeaturePreview dictionaryName={dictionaryName} featureIndex={featureIndex} />
