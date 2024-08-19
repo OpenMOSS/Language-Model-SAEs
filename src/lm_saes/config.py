@@ -105,7 +105,7 @@ class TextDatasetConfig(RunnerConfig):
     context_size: int = 128
     store_batch_size: int = 64
     sample_probs: List[float] = field(default_factory=lambda: [1.0])
-    prepend_bos: List[bool] = field(default_factory=lambda: [False])
+    prepend_bos: List[bool] = field(default_factory=lambda: [True])
 
     def __post_init__(self):
         super().__post_init__()
@@ -117,6 +117,9 @@ class TextDatasetConfig(RunnerConfig):
 
         if isinstance(self.prepend_bos, bool):
             self.prepend_bos = [self.prepend_bos]
+
+        if False in self.prepend_bos:
+            print('Warning: prepend_bos is set to False for some datasets. This setting might not be suitable for most modern models.')
 
         self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
 
@@ -393,6 +396,8 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
             assert 0 <= self.lr_cool_down_steps <= 1.0
             self.lr_cool_down_steps = int(self.lr_cool_down_steps * total_training_steps)
             print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
+        if self.finetuning:
+            assert self.sae.l1_coefficient == 0.0, "L1 coefficient must be 0.0 for finetuning."
 
 @dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
