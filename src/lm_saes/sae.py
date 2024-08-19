@@ -332,6 +332,7 @@ class SparseAutoEncoder(HookedRootModule):
             | None
         ) = None,
         return_aux_data: bool = True,
+        during_init: bool = False,
     ) -> Union[
         Float[torch.Tensor, "batch"],
         tuple[
@@ -373,7 +374,7 @@ class SparseAutoEncoder(HookedRootModule):
         if self.cfg.sparsity_include_decoder_norm:
 
             l_l1 = torch.norm(
-                feature_acts_normed * self.decoder_norm(),
+                feature_acts_normed * self.decoder_norm(during_init=during_init),
                 p=self.cfg.lp,
                 dim=-1,
             )
@@ -669,7 +670,7 @@ class SparseAutoEncoder(HookedRootModule):
                 test_sae.encoder.weight.data = (
                     test_sae.decoder.weight.data.T.clone().contiguous()
                 )
-                mse = test_sae.compute_loss(x=activation_in, label=activation_out)[1][0]["l_rec"].mean().item()  # type: ignore
+                mse = test_sae.compute_loss(x=activation_in, label=activation_out, during_init=True)[1][0]["l_rec"].mean().item()  # type: ignore
                 losses[norm] = mse
             best_norm = min(losses, key=losses.get)  # type: ignore
             return best_norm
@@ -687,7 +688,7 @@ class SparseAutoEncoder(HookedRootModule):
         )
 
         test_sae.set_decoder_norm_to_fixed_norm(
-            best_norm_fine_grained, force_exact=True
+            best_norm_fine_grained, force_exact=True, during_init=True
         )
         test_sae.encoder.weight.data = (
             test_sae.decoder.weight.data.T.clone().contiguous()
