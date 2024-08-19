@@ -350,13 +350,13 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
         super().__post_init__()
 
         if is_master():
-            if os.path.exists(
-                os.path.join(self.exp_result_dir, self.exp_name, "checkpoints")
-            ):
-                raise ValueError(
-                    f"Checkpoints for experiment {self.exp_name} already exist. Consider changing the experiment name."
-                )
-            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "checkpoints"))
+            # if os.path.exists(
+            #     os.path.join(self.exp_result_dir, self.exp_name, "checkpoints")
+            # ):
+            #     raise ValueError(
+            #         f"Checkpoints for experiment {self.exp_name} already exist. Consider changing the experiment name."
+            #     )
+            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "checkpoints"), exist_ok=True)
 
         self.effective_batch_size = self.train_batch_size * self.sae.ddp_size
         print_once(f"Effective batch size: {self.effective_batch_size}")

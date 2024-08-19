@@ -68,7 +68,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         add_bos_token=True,
     )
 
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,
@@ -158,7 +158,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,
@@ -227,7 +227,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,
@@ -291,7 +291,7 @@ def activation_generation_runner(cfg: ActivationGenerationConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,
@@ -341,7 +341,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,
@@ -412,7 +412,7 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,

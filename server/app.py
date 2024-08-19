@@ -68,7 +68,7 @@ def get_model(dictionary_name: str) -> HookedTransformer:
 			use_fast=False,
 			add_bos_token=True,
 		)
-		model = HookedTransformer.from_pretrained(
+		model = HookedTransformer.from_pretrained_no_processing(
 			cfg.model_name,
 			device=device,
 			cache_dir=cfg.cache_dir,
