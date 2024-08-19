@@ -1,11 +1,11 @@
 import { z } from "zod";
 
-export const SampleSchema = z.object({
+export const FeatureSampleCompactSchema = z.object({
   context: z.array(z.instanceof(Uint8Array)),
   featureActs: z.array(z.number()),
 });
 
-export type Sample = z.infer<typeof SampleSchema>;
+export type FeatureSampleCompact = z.infer<typeof FeatureSampleCompactSchema>;
 
 export const InterpretationSchema = z.object({
   text: z.string(),
@@ -40,7 +40,7 @@ export const FeatureSchema = z.object({
   sampleGroups: z.array(
     z.object({
       analysisName: z.string(),
-      samples: z.array(SampleSchema),
+      samples: z.array(FeatureSampleCompactSchema),
     })
   ),
   logits: z
@@ -64,8 +64,3 @@ export const FeatureSchema = z.object({
 });
 
 export type Feature = z.infer<typeof FeatureSchema>;
-
-export type Token = {
-  token: Uint8Array;
-  featureAct: number;
-};

@@ -1,4 +1,4 @@
-import { Feature, SampleSchema } from "@/types/feature";
+import { Feature, FeatureSampleCompactSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
 import { useState } from "react";
@@ -45,7 +45,7 @@ const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
           stopPaths: ["context"],
         })
       )
-      .then((res) => SampleSchema.parse(res));
+      .then((res) => FeatureSampleCompactSchema.parse(res));
   }, [customInput]);
 
   return (
