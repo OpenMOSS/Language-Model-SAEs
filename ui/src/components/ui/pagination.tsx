@@ -86,13 +86,15 @@ export const AppPagination = ({
   page,
   setPage,
   maxPage,
+  className,
 }: {
   page: number;
   setPage: React.Dispatch<React.SetStateAction<number>>;
   maxPage: number;
+  className?: string;
 }) => {
   return (
-    <Pagination>
+    <Pagination className={className}>
       <PaginationContent>
         <PaginationItem>
           <PaginationPrevious onClick={() => setPage((prev) => Math.max(1, prev - 1))} />

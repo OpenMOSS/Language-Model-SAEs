@@ -8,14 +8,14 @@ export const DictionarySchema = z.object({
 
 export type Dictionary = z.infer<typeof DictionarySchema>;
 
-export const DictionarySampleSchema = z.object({
+export const DictionarySampleCompactSchema = z.object({
   context: z.array(z.instanceof(Uint8Array)),
   featureActsIndices: z.array(z.array(z.number())),
   featureActs: z.array(z.array(z.number())),
   maxFeatureActs: z.array(z.array(z.number())),
 });
 
-export type DictionarySample = z.infer<typeof DictionarySampleSchema>;
+export type DictionarySampleCompact = z.infer<typeof DictionarySampleCompactSchema>;
 
 export type DictionaryToken = {
   token: Uint8Array;
