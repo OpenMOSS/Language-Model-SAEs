@@ -82,7 +82,7 @@ class TransformerBlock(nn.Module):
             attn_type = self.cfg.attn_types[block_index]
             self.attn = attention(self.cfg, attn_type, block_index)
         if not self.cfg.attn_only:
-            self.mlp = MLPFactory.create_mlp(self.cfg)
+            self.mlp = MLPFactory.create_mlp(self.cfg).to(self.cfg.device).to(self.cfg.dtype)
 
         self.hook_attn_in = HookPoint()  # [batch, pos, n_heads, d_model]
         self.hook_q_input = HookPoint()  # [batch, pos, n_heads, d_model]
