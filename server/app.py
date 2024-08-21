@@ -107,6 +107,14 @@ def make_serializable(obj):
 async def assertion_error_handler(request, exc):
 	return Response(content=str(exc), status_code=400)
 
+@app.exception_handler(torch.cuda.OutOfMemoryError)
+async def oom_error_handler(request, exc):
+	print("CUDA Out of memory. Clearing cache.")
+	print("Current cache:", sae_cache.keys())
+	# Clear cache
+	sae_cache.clear()
+	return Response(content="CUDA Out of memory", status_code=500)
+
 
 @app.get("/dictionaries")
 def list_dictionaries():
@@ -481,6 +489,7 @@ def model_trace(request: ModelTraceRequest):
 				name_filter = [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post" for sae, _ in saes]
 				if request.detach_at_attn_scores:
 					name_filter += [f"blocks.{i}.attn.hook_attn_scores.pre" for i in range(model.cfg.n_layers)] + [f"blocks.{i}.attn.hook_attn_scores.post" for i in range(model.cfg.n_layers)]
+					name_filter += [f"blocks.{i}.attn.hook_pattern" for i in range(model.cfg.n_layers)]
 				logits, cache = model.run_with_ref_cache(input, names_filter=name_filter)
 				tracing_results = []
 				for tracing in request.tracings:
@@ -503,7 +512,7 @@ def model_trace(request: ModelTraceRequest):
 						assert tracing.query < attn_scores.shape[2], "Query out of range"
 						assert tracing.key < attn_scores.shape[3], "Key out of range"
 						attn_scores[:, tracing.head, tracing.query, tracing.key].backward(retain_graph=True)
-						node = {**tracing.model_dump(), "activation": attn_scores[0, tracing.head, tracing.query, tracing.key].item(), "id": f"attn-score-{tracing.layer}-{tracing.head}-{tracing.query}-{tracing.key}"}
+						node = {**tracing.model_dump(), "activation": attn_scores[0, tracing.head, tracing.query, tracing.key].item(), "id": f"attn-score-{tracing.layer}-{tracing.head}-{tracing.query}-{tracing.key}", "pattern": cache[f"blocks.{tracing.layer}.attn.hook_pattern"][0][tracing.head, tracing.query, tracing.key].item()}
 					else:
 						raise AssertionError("Unknown node type")
 					
@@ -548,6 +557,7 @@ def model_trace(request: ModelTraceRequest):
 											"query": index[1],
 											"key": index[2],
 											"activation": attn_scores[0][index].item(),
+											"pattern": cache[f"blocks.{i}.attn.hook_pattern"][0][index].item(),
 											"id": f"attn-score-{i}-{index[0]}-{index[1]}-{index[2]}"
 										},
 										"attribution": attributions[index].item(),
