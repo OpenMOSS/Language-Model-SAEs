@@ -26,6 +26,7 @@ const AttnScoreNodeSchema = z.object({
   query: z.number(),
   key: z.number(),
   activation: z.number(),
+  pattern: z.number(),
 });
 
 export const TracingNodeSchema = z.discriminatedUnion("type", [

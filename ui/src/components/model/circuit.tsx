@@ -69,6 +69,10 @@ const NodeInfo = ({ node }: { node: Node<NodeData> }) => {
           <div className="text-sm">{node.data.tracingNode.key}</div>
           <div className="text-sm font-bold">Score:</div>
           <div className="text-sm">{node.data.tracingNode.activation.toFixed(3)}</div>
+          <div className="text-sm font-bold">Pattern:</div>
+          <div className={cn("text-sm", getAccentClassname(node.data.tracingNode.pattern, 1, "text"))}>
+            {node.data.tracingNode.pattern.toFixed(3)}
+          </div>
         </div>
       </div>
     );
@@ -211,6 +215,8 @@ export const CircuitViewer = memo(
     const getNodeClassNames = useCallback((node: TracingNode) => {
       if (node.type === "feature") {
         return cn(getAccentClassname(node.activation, node.maxActivation, "border"));
+      } else if (node.type === "attn-score") {
+        return cn(getAccentClassname(node.pattern, 1, "border"));
       }
       return "";
     }, []);
