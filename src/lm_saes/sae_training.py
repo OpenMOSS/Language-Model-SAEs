@@ -318,8 +318,7 @@ def train_sae(
             ):
                 # Save the model and optimizer state
                 path = os.path.join(
-                    cfg.exp_result_dir,
-                    cfg.exp_name,
+                    cfg.exp_result_path,
                     "checkpoints",
                     f"{n_training_steps}.safetensors",
                 )
@@ -345,7 +344,7 @@ def train_sae(
     if not cfg.sae.sparsity_include_decoder_norm:
         sae.set_decoder_norm_to_fixed_norm(1)
     path = os.path.join(
-        cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.safetensors"
+        cfg.exp_result_path, "checkpoints", "final.safetensors"
     )
     sae.save_pretrained(path)
 
@@ -447,7 +446,7 @@ def prune_sae(
         print("Total pruned features:", (sae.feature_act_mask == 0).sum().item())
 
         path = os.path.join(
-            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "pruned.safetensors"
+            cfg.exp_result_path, "checkpoints", "pruned.safetensors"
         )
         sae.save_pretrained(path)
 
