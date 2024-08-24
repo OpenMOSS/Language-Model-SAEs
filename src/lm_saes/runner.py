@@ -98,8 +98,8 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
             sae.train_finetune_for_suppression_parameters()
 
     if is_master():
-        cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
-        cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+        cfg.sae.save_hyperparameters(cfg.exp_result_path)
+        cfg.lm.save_lm_config(cfg.exp_result_path)
 
     if cfg.wandb.log_to_wandb and is_master():
         wandb_config: dict = {
