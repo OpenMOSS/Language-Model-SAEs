@@ -41,7 +41,7 @@ cfg = LanguageModelSAEAnalysisConfig.from_flattened(dict(
 
     exp_name = "L3M",
     exp_series = "default",
-    exp_result_dir = "results",
+    exp_result_path = "results/L3M",
 ))
 
 sample_feature_activations_runner(cfg)
