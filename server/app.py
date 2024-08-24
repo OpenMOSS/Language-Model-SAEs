@@ -70,7 +70,7 @@ def get_model(dictionary_name: str) -> HookedTransformer:
 			use_fast=False,
 			add_bos_token=True,
 		)
-		model = HookedTransformer.from_pretrained(
+		model = HookedTransformer.from_pretrained_no_processing(
 			cfg.model_name,
 			device=device,
 			cache_dir=cfg.cache_dir,
@@ -84,8 +84,9 @@ def get_model(dictionary_name: str) -> HookedTransformer:
 
 
 def get_sae(dictionary_name: str) -> SparseAutoEncoder:
+	path = client.get_dictionary(dictionary_name, dictionary_series=dictionary_series)['path'] or f"{result_dir}/{dictionary_name}"
 	if dictionary_name not in sae_cache:
-		sae = SparseAutoEncoder.from_pretrained(f"{result_dir}/{dictionary_name}", device=device)
+		sae = SparseAutoEncoder.from_pretrained(path, device=device)
 		sae.eval()
 		sae_cache[dictionary_name] = sae
 	return sae_cache[dictionary_name]
@@ -401,6 +402,7 @@ def feature_interpretation(
 	custom_interpretation: str | None = None,
 ):
 	model = get_model(dictionary_name)
+	path = client.get_dictionary(dictionary_name, dictionary_series=dictionary_series)['path'] or f"{result_dir}/{dictionary_name}"
 	if type == "custom":
 		interpretation = {
 			"text": custom_interpretation,
@@ -414,8 +416,8 @@ def feature_interpretation(
 	elif type == "auto":
 		cfg = AutoInterpConfig(
 			**{
-				**SAEConfig.from_pretrained(f"{result_dir}/{dictionary_name}").to_dict(),
-				**LanguageModelConfig.from_pretrained_sae(f"{result_dir}/{dictionary_name}").to_dict(),
+				"sae": SAEConfig.from_pretrained(path).to_dict(),
+				"lm": LanguageModelConfig.from_pretrained_sae(path).to_dict(),
 				"openai_api_key": os.environ.get("OPENAI_API_KEY"),
 				"openai_base_url": os.environ.get("OPENAI_BASE_URL"),
 			}
@@ -430,8 +432,8 @@ def feature_interpretation(
 	elif type == "validate":
 		cfg = AutoInterpConfig(
 			**{
-				**SAEConfig.from_pretrained(f"{result_dir}/{dictionary_name}").to_dict(),
-				**LanguageModelConfig.from_pretrained_sae(f"{result_dir}/{dictionary_name}").to_dict(),
+				"sae": SAEConfig.from_pretrained(path).to_dict(),
+				"lm": LanguageModelConfig.from_pretrained_sae(path).to_dict(),
 				"openai_api_key": os.environ.get("OPENAI_API_KEY"),
 				"openai_base_url": os.environ.get("OPENAI_BASE_URL"),
 			}
