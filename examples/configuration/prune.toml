@@ -5,7 +5,7 @@ dtype = "torch.float32"
 
 exp_name = "L3M"
 exp_series = "default"
-exp_result_dir = "results"
+exp_result_path = "results/L3M"
 
 total_training_tokens = 10_000_000
 train_batch_size = 4096

@@ -58,8 +58,8 @@ class MongoClient:
         if isinstance(data, ObjectId) and self.fs.exists(data):
             self.fs.delete(data)
 
-    def create_dictionary(self, dictionary_name: str, n_features: int, dictionary_series: str | None = None):
-        dict_id = self.dictionary_collection.insert_one({'name': dictionary_name, 'n_features': n_features, 'series': dictionary_series}).inserted_id
+    def create_dictionary(self, dictionary_name: str, dictionary_path: str, n_features: int, dictionary_series: str | None = None):
+        dict_id = self.dictionary_collection.insert_one({'name': dictionary_name, 'n_features': n_features, 'series': dictionary_series, 'path': dictionary_path}).inserted_id
         self.feature_collection.insert_many([
             {
                 'dictionary_id': dict_id,
@@ -85,6 +85,7 @@ class MongoClient:
         self.feature_collection.update_one({'_id': feature['_id']}, {'$set': self._to_gridfs(feature_data)})
 
     def list_dictionaries(self, dictionary_series: str | None = None):
+        # return [{'name': d['name'], 'path': d['path']} for d in self.dictionary_collection.find({'series': dictionary_series} if dictionary_series is not None else {})]
         return [d['name'] for d in self.dictionary_collection.find({'series': dictionary_series} if dictionary_series is not None else {})]
     
     def get_dictionary(self, dictionary_name: str, dictionary_series: str | None = None):
@@ -211,3 +212,8 @@ class MongoClient:
         ]
         return self.attn_head_collection.aggregate(pipeline).next()
         
+    def get_dictionary_path(self, dictionary_name: str, dictionary_series: str | None = None):
+        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
+        if dictionary is None:
+            return None
+        return dictionary['path']
