@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass, field, fields
 from typing import Any, Dict, List, Optional, Tuple
 from typing_extensions import deprecated
+import math
 
 import torch
 import torch.distributed as dist
@@ -344,6 +345,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     log_frequency: int = 10
 
     n_checkpoints: int = 10
+    check_point_save_mode: str = 'log'  # 'log' or 'linear'
 
     def __post_init__(self):
         super().__post_init__()
@@ -398,6 +400,19 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
             print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
         if self.finetuning:
             assert self.sae.l1_coefficient == 0.0, "L1 coefficient must be 0.0 for finetuning."
+
+        if self.n_checkpoints > 0:
+            if self.check_point_save_mode == 'linear':
+                self.checkpoint_thresholds = list(
+                    range(0, total_training_tokens, total_training_tokens // self.n_checkpoints)
+                )[1:]
+            elif self.check_point_save_mode == 'log':
+                self.checkpoint_thresholds = [
+                    math.ceil(2 ** (i / self.n_checkpoints * math.log2(total_training_steps))) * self.effective_batch_size
+                    for i in range(1, self.n_checkpoints)
+                ]
+            else:
+                raise ValueError(f"Unknown checkpoint save mode: {self.check_point_save_mode}")
 
 @dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
