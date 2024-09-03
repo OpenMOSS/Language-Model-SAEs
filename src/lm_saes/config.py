@@ -346,6 +346,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
 
     n_checkpoints: int = 10
     check_point_save_mode: str = 'log'  # 'log' or 'linear'
+    checkpoint_thresholds: list = field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
@@ -404,7 +405,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
         if self.n_checkpoints > 0:
             if self.check_point_save_mode == 'linear':
                 self.checkpoint_thresholds = list(
-                    range(0, total_training_tokens, total_training_tokens // self.n_checkpoints)
+                    range(0, self.total_training_tokens, self.total_training_tokens // self.n_checkpoints)
                 )[1:]
             elif self.check_point_save_mode == 'log':
                 self.checkpoint_thresholds = [
