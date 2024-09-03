@@ -204,6 +204,8 @@ class SAEConfig(BaseModelConfig):
     l1_coefficient_warmup_steps: int | float = 0.1
     lp: int = 1
 
+    use_batch_norm_mse: bool = True  # will set to False in the future
+
     use_ghost_grads: bool = False
 
     tp_size: int = 1
