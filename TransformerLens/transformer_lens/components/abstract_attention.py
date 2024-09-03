@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from better_abc import abstract_attribute
 from jaxtyping import Float, Int
 from transformers.utils import is_bitsandbytes_available
+import math
 
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookPoint
@@ -138,6 +139,25 @@ class AbstractAttention(ABC, nn.Module):
         elif self.cfg.positional_embedding_type == "relative_positional_bias":
             # will be overwritten by the child T5Attention class
             self.has_relative_attention_bias = False
+        elif self.cfg.positional_embedding_type == "frequency_based_rotary":
+            self.hook_rot_k = HookPoint()
+            self.hook_rot_q = HookPoint()
+            if self.cfg.rotary_dim is None:  # keep mypy happy
+                raise ValueError("Rotary dim must be provided for rotary positional embeddings")
+
+            # Use the frequency-based method to calculate sin and cos
+            sin, cos = self.calculate_frequency_based_sin_cos_rotary(
+                self.cfg.rotary_dim,
+                self.cfg.n_ctx,
+                base=self.cfg.rotary_base,
+                dtype=self.cfg.dtype,
+                factor=self.cfg.factor,
+                low_freq_factor=self.cfg.low_freq_factor,
+                high_freq_factor=self.cfg.high_freq_factor,
+                original_max_position_embeddings=self.cfg.original_max_position_embeddings,
+            )
+            self.register_buffer("rotary_sin", sin)
+            self.register_buffer("rotary_cos", cos)
 
     @property
     def OV(self) -> FactoredMatrix:
@@ -508,6 +528,56 @@ class AbstractAttention(ABC, nn.Module):
             rot_x[..., n:] = x[..., :n]
 
         return rot_x
+
+    def get_default_inv_freq(self):
+        inv_freq = 1.0 / (
+            self.cfg.base
+            ** (torch.arange(0, self.cfg.dim, 2, dtype=torch.int64).float() / self.cfg.dim)
+        )
+        attention_factor = 1.0
+        return inv_freq, attention_factor
+
+    def calculate_frequency_based_sin_cos_rotary(
+        self,
+        rotary_dim,
+        n_ctx,
+        base,
+        dtype,
+        factor,
+        low_freq_factor,
+        high_freq_factor,
+        original_max_position_embeddings,
+    ):
+        inv_freq, _ = self.get_default_inv_freq(self.cfg)
+        factor = self.cfg.factor
+        low_freq_factor = self.cfg.low_freq_factor
+        high_freq_factor = self.cfg.high_freq_factor
+
+        pos = torch.arange(n_ctx, dtype=torch.float32, device=self.device)[None, :]
+
+        # Calculate wavelengths as described in the frequency-based method
+        low_freq_wavelen = original_max_position_embeddings / low_freq_factor
+        high_freq_wavelen = original_max_position_embeddings / high_freq_factor
+        wavelen = 2 * math.pi / inv_freq
+
+        inv_freq_updated = torch.where(wavelen > low_freq_wavelen, inv_freq / factor, inv_freq)
+        smooth_factor = (original_max_position_embeddings / wavelen - low_freq_factor) / (
+            high_freq_factor - low_freq_factor
+        )
+        smoothed_inv_freq = (
+            1 - smooth_factor
+        ) * inv_freq_updated / factor + smooth_factor * inv_freq_updated
+        is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
+        inv_freq_final = torch.where(is_medium_freq, smoothed_inv_freq, inv_freq_updated)
+
+        # Expand and apply frequency-based sin/cos calculations
+        freq_expanded = inv_freq_final[None, :, None].float().expand(pos.shape[0], -1, 1)
+        pos_expanded = pos[:, None, :].float()
+        freqs = (freq_expanded.float() @ pos_expanded.float()).transpose(1, 2)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        sin = emb.sin().to(dtype)
+        cos = emb.cos().to(dtype)
+        return sin, cos
 
     def apply_rotary(
         self,

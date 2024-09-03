@@ -246,6 +246,12 @@ class HookedTransformerConfig:
     use_normalization_before_and_after: bool = False
     attn_scores_soft_cap: float = -1.0
     output_logits_soft_cap: float = -1.0
+    # New parameters for frequency-based RoPE for models like Llama3
+    use_frequency_based_rope: bool = False
+    low_freq_factor: float = 1.0
+    high_freq_factor: float = 4.0
+    original_max_position_embeddings: int = 8192
+    factor: float = 8.0
 
     def __post_init__(self):
         if self.n_heads == -1:
