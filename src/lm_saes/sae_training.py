@@ -196,18 +196,20 @@ def train_sae(
                 l0 = (aux_data["feature_acts"] > 0).float().sum(-1).mean()
                 l_rec = loss_data["l_rec"].mean()
                 l_l1 = loss_data["l_l1"].mean()
-                l_ghost_resid = loss_data["l_ghost_resid"].mean()
+                if cfg.sae.use_ghost_grads:
+                    l_ghost_resid = loss_data["l_ghost_resid"].mean()
 
                 if cfg.sae.ddp_size > 1:
                     dist.reduce(loss, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l0, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l_rec, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l_l1, dst=0, op=dist.ReduceOp.AVG)
-                    dist.reduce(
-                        l_ghost_resid,
-                        dst=0,
-                        op=dist.ReduceOp.AVG,
-                    )
+                    if cfg.sae.use_ghost_grads:
+                        dist.reduce(
+                            l_ghost_resid,
+                            dst=0,
+                            op=dist.ReduceOp.AVG,
+                        )
 
                 per_token_l2_loss = (
                     (aux_data["reconstructed"] - activation_out).pow(2).sum(dim=-1)
@@ -265,34 +267,36 @@ def train_sae(
                 if cfg.wandb.log_to_wandb:
                     decoder_norm = sae.decoder_norm().mean()
                     encoder_norm = sae.encoder_norm().mean()
+                    logs = {
+                        # losses
+                        "losses/mse_loss": l_rec.item(),
+                        "losses/l1_loss": l_l1.item(),
+                        "losses/overall_loss": loss.item(),
+                        # variance explained
+                        "metrics/explained_variance": explained_variance.mean().item(),
+                        "metrics/explained_variance_std": explained_variance.std().item(),
+                        "metrics/l0": l0.item(),
+                        # "metrics/mean_thomson_potential": mean_thomson_potential.item(),
+                        "metrics/l2_norm_error": l2_norm_error.item(),
+                        "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
+                        # norm
+                        "metrics/decoder_norm": decoder_norm.item(),
+                        "metrics/encoder_norm": encoder_norm.item(),
+                        "metrics/decoder_bias_norm": sae.decoder.bias.norm().item() if sae.cfg.use_decoder_bias else 0,
+                        "metrics/encoder_bias_norm": sae.encoder.bias.norm().item(),
+                        "metrics/gradients_norm": grad_norm.item(),
+                        # sparsity
+                        "sparsity/l1_coefficient": sae.current_l1_coefficient,
+                        "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
+                        "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
+                        "details/current_learning_rate": current_learning_rate,
+                        "details/n_training_tokens": n_training_tokens,
+                    }
+                    if cfg.sae.use_ghost_grads:
+                        logs["losses/ghost_resid_loss"] = l_ghost_resid.item()
                     if is_master():
                         wandb.log(
-                            {
-                                # losses
-                                "losses/mse_loss": l_rec.item(),
-                                "losses/l1_loss": l_l1.item(),
-                                "losses/ghost_grad_loss": l_ghost_resid.item(),
-                                "losses/overall_loss": loss.item(),
-                                # variance explained
-                                "metrics/explained_variance": explained_variance.mean().item(),
-                                "metrics/explained_variance_std": explained_variance.std().item(),
-                                "metrics/l0": l0.item(),
-                                # "metrics/mean_thomson_potential": mean_thomson_potential.item(),
-                                "metrics/l2_norm_error": l2_norm_error.item(),
-                                "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
-                                # norm
-                                "metrics/decoder_norm": decoder_norm.item(),
-                                "metrics/encoder_norm": encoder_norm.item(),
-                                "metrics/decoder_bias_norm": sae.decoder.bias.norm().item() if sae.cfg.use_decoder_bias else 0,
-                                "metrics/encoder_bias_norm": sae.encoder.bias.norm().item(),
-                                "metrics/gradients_norm": grad_norm.item(),
-                                # sparsity
-                                "sparsity/l1_coefficient": sae.current_l1_coefficient,
-                                "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
-                                "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
-                                "details/current_learning_rate": current_learning_rate,
-                                "details/n_training_tokens": n_training_tokens,
-                            },
+                            logs,
                             step=n_training_steps + 1,
                         )
 

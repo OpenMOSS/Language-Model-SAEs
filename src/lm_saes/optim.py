@@ -83,7 +83,7 @@ def get_scheduler(
             optimizer,
             lr_lambda=lambda steps: min(
                 (steps + 1) / warm_up_steps, 
-                (training_steps - steps) / cool_down_steps, # type: ignore
+                max(training_steps - steps, 0) / max(cool_down_steps, 1), # type: ignore
                 1.0
             ),
         )
