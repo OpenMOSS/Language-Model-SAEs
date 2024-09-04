@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from better_abc import abstract_attribute
 from jaxtyping import Float, Int
 from transformers.utils import is_bitsandbytes_available
+import math
 
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookPoint
@@ -478,8 +479,32 @@ class AbstractAttention(ABC, nn.Module):
         pos = torch.arange(n_ctx, dtype=high_precision)
         dim = torch.arange(rotary_dim // 2, dtype=high_precision)
 
-        # A set of frequencies evenly spaced in log space
-        freq = base ** (dim / (rotary_dim / 2))
+        if self.cfg.use_llama3_1_rope:
+            inv_freq = 1.0 / (
+                base ** (torch.arange(0, rotary_dim, 2, dtype=torch.int64).float() / rotary_dim)
+            )
+            factor = self.cfg.factor
+            low_freq_factor = self.cfg.low_freq_factor
+            high_freq_factor = self.cfg.high_freq_factor
+            old_context_len = n_ctx
+
+            low_freq_wavelen = old_context_len / low_freq_factor
+            high_freq_wavelen = old_context_len / high_freq_factor
+
+            wavelen = 2 * math.pi / inv_freq
+            inv_freq_llama = torch.where(wavelen > low_freq_wavelen, inv_freq / factor, inv_freq)
+            smooth_factor = (old_context_len / wavelen - low_freq_factor) / (
+                high_freq_factor - low_freq_factor
+            )
+            smoothed_inv_freq = (
+                1 - smooth_factor
+            ) * inv_freq_llama / factor + smooth_factor * inv_freq_llama
+            is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
+            inv_freq_llama = torch.where(is_medium_freq, smoothed_inv_freq, inv_freq_llama)
+            freq = 1 / inv_freq_llama
+        else:
+            freq = base ** (dim / (rotary_dim / 2))
+
         if self.cfg.rotary_adjacent_pairs:
             freq = einops.repeat(freq, "d -> (d 2)")
         else:
