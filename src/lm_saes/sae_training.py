@@ -92,7 +92,7 @@ def train_sae(
         warm_up_steps=cfg.lr_warm_up_steps,
         cool_down_steps=cfg.lr_cool_down_steps,
         training_steps=total_training_steps,
-        lr_end=cfg.lr_end,
+        lr_end_ratio=cfg.lr_end_ratio,
     )
 
     scheduler.step()
@@ -142,9 +142,9 @@ def train_sae(
         if cfg.finetuning:
             loss = loss_data["l_rec"].mean()
         loss.backward()
-        grad_norm = torch.tensor([0.0], device=cfg.sae.device)
-        if cfg.clip_grad_norm > 0:
-            grad_norm = torch.nn.utils.clip_grad_norm_(sae.parameters(), cfg.clip_grad_norm)
+
+        grad_norm = torch.nn.utils.clip_grad_norm_(sae.parameters(), max_norm=cfg.clip_grad_norm if cfg.clip_grad_norm > 0 else math.inf)
+
         if cfg.remove_gradient_parallel_to_decoder_directions:
             sae.remove_gradient_parallel_to_decoder_directions()
         optimizer.step()

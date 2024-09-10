@@ -325,7 +325,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     lr_scheduler_name: str = (
         "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup, exponentialwarmup
     )
-    lr_end: Optional[float] = 1 / 32
+    lr_end_ratio: Optional[float] = 1 / 32
     lr_warm_up_steps: int | float = 0.1
     lr_cool_down_steps: int | float = 0.1
     train_batch_size: int = 4096
@@ -416,6 +416,8 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
                 ]
             else:
                 raise ValueError(f"Unknown checkpoint save mode: {self.check_point_save_mode}")
+
+        assert 0 <= self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
 
 @dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):

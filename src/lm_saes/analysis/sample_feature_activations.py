@@ -111,7 +111,7 @@ def sample_feature_activations(
             filter_mask, batch.eq(model.tokenizer.bos_token_id)
         )
 
-        feature_acts = sae.encode(activation_in, label=activation_out)[
+        feature_acts = sae.encode(activation_in)[
             ..., start_index:end_index
         ]
         if isinstance(feature_acts, DTensor):
