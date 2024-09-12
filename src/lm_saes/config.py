@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass, field, fields
 from typing import Any, Dict, List, Optional, Tuple
 from typing_extensions import deprecated
+import math
 
 import torch
 import torch.distributed as dist
@@ -53,13 +54,12 @@ class BaseModelConfig(BaseConfig):
 class RunnerConfig(BaseConfig):
     exp_name: str = "test"
     exp_series: Optional[str] = None
-    exp_result_dir: str = "results"
+    exp_result_path: str = "results"
 
     def __post_init__(self):
         super().__post_init__()
         if is_master():
-            os.makedirs(self.exp_result_dir, exist_ok=True)
-            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name), exist_ok=True)
+            os.makedirs(self.exp_result_path, exist_ok=True)
 
 
 @dataclass(kw_only=True)
@@ -257,12 +257,12 @@ class SAEConfig(BaseModelConfig):
     @deprecated("Use from_pretrained and to_dict instead.")
     @staticmethod
     def get_hyperparameters(
-        exp_name: str, exp_result_dir: str, ckpt_name: str, strict_loading: bool = True
+        exp_result_path: str, ckpt_name: str, strict_loading: bool = True
     ) -> dict[str, Any]:
-        with open(os.path.join(exp_result_dir, exp_name, "hyperparams.json"), "r") as f:
+        with open(os.path.join(exp_result_path, "hyperparams.json"), "r") as f:
             hyperparams = json.load(f)
         hyperparams["sae_pretrained_name_or_path"] = os.path.join(
-            exp_result_dir, exp_name, "checkpoints", ckpt_name
+            exp_result_path, "checkpoints", ckpt_name
         )
         hyperparams["strict_loading"] = strict_loading
         # Remove non-hyperparameters from the dict
@@ -345,18 +345,20 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     log_frequency: int = 10
 
     n_checkpoints: int = 10
+    check_point_save_mode: str = 'log'  # 'log' or 'linear'
+    checkpoint_thresholds: list = field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
 
         if is_master():
             if os.path.exists(
-                os.path.join(self.exp_result_dir, self.exp_name, "checkpoints")
+                os.path.join(self.exp_result_path, "checkpoints")
             ):
                 raise ValueError(
-                    f"Checkpoints for experiment {self.exp_name} already exist. Consider changing the experiment name."
+                    f"Checkpoints for experiment {self.exp_result_path} already exist. Consider changing the experiment name."
                 )
-            os.makedirs(os.path.join(self.exp_result_dir, self.exp_name, "checkpoints"))
+            os.makedirs(os.path.join(self.exp_result_path, "checkpoints"))
 
         self.effective_batch_size = self.train_batch_size * self.sae.ddp_size
         print_once(f"Effective batch size: {self.effective_batch_size}")
@@ -400,6 +402,19 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
         if self.finetuning:
             assert self.sae.l1_coefficient == 0.0, "L1 coefficient must be 0.0 for finetuning."
 
+        if self.n_checkpoints > 0:
+            if self.check_point_save_mode == 'linear':
+                self.checkpoint_thresholds = list(
+                    range(0, self.total_training_tokens, self.total_training_tokens // self.n_checkpoints)
+                )[1:]
+            elif self.check_point_save_mode == 'log':
+                self.checkpoint_thresholds = [
+                    math.ceil(2 ** (i / self.n_checkpoints * math.log2(total_training_steps))) * self.effective_batch_size
+                    for i in range(1, self.n_checkpoints)
+                ]
+            else:
+                raise ValueError(f"Unknown checkpoint save mode: {self.check_point_save_mode}")
+
 @dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
     """
@@ -418,7 +433,7 @@ class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
 
         if is_master():
             os.makedirs(
-                os.path.join(self.exp_result_dir, self.exp_name, "checkpoints"),
+                os.path.join(self.exp_result_path, "checkpoints"),
                 exist_ok=True,
             )
 

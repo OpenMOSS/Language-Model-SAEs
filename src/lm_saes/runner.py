@@ -34,6 +34,7 @@ from lm_saes.utils.misc import is_master
 
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
+    RowwiseParallel,
     parallelize_module,
     loss_parallel,
 )
@@ -68,7 +69,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         add_bos_token=True,
     )
 
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,
@@ -97,8 +98,8 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
             sae.train_finetune_for_suppression_parameters()
 
     if is_master():
-        cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
-        cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+        cfg.sae.save_hyperparameters(cfg.exp_result_path)
+        cfg.lm.save_lm_config(cfg.exp_result_path)
 
     if cfg.wandb.log_to_wandb and is_master():
         wandb_config: dict = {
@@ -115,7 +116,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
             entity=cfg.wandb.wandb_entity,
         )
         with open(
-            os.path.join(cfg.exp_result_dir, cfg.exp_name, "train_wandb_id.txt"), "w"
+            os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w"
         ) as f:
             f.write(wandb_run.id)
         wandb.watch(sae, log="all")
@@ -135,8 +136,8 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
 
 
 def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
-    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_dir, cfg.exp_name))
-    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_dir, cfg.exp_name))
+    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_path))
+    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_path))
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
@@ -158,7 +159,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,
@@ -184,7 +185,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
             entity=cfg.wandb.wandb_entity,
         )
         with open(
-            os.path.join(cfg.exp_result_dir, cfg.exp_name, "prune_wandb_id.txt"), "w"
+            os.path.join(cfg.exp_result_path, "prune_wandb_id.txt"), "w"
         ) as f:
             f.write(wandb_run.id)
 
@@ -227,7 +228,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,
@@ -236,6 +237,9 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
+    # model.offload_params_after(
+    #     cfg.act_store.hook_points[0], torch.tensor([[0]], device=cfg.lm.device)
+    # )
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
@@ -254,7 +258,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
             entity=cfg.wandb.wandb_entity,
         )
         with open(
-            os.path.join(cfg.exp_result_dir, cfg.exp_name, "eval_wandb_id.txt"), "w"
+            os.path.join(cfg.exp_result_path, "eval_wandb_id.txt"), "w"
         ) as f:
             f.write(wandb_run.id)
 
@@ -291,7 +295,7 @@ def activation_generation_runner(cfg: ActivationGenerationConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,
@@ -311,16 +315,15 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     if cfg.sae.tp_size > 1:
         plan = {
             "encoder": ColwiseParallel(output_layouts=Replicate()),
+            "decoder": RowwiseParallel(output_layouts=Replicate()),
         }
         if cfg.sae.use_glu_encoder:
             plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
-        sae = parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan) # type: ignore
+        sae = parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan)  # type: ignore
         sae.parallelize_plan = plan
 
     sae.decoder.weight = None  # type: ignore[assignment]
     torch.cuda.empty_cache()
-
-
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         (
@@ -341,7 +344,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,
@@ -351,16 +354,17 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         dtype=cfg.lm.dtype,
     )
     model.eval()
-
     client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
-    client.create_dictionary(cfg.exp_name, cfg.sae.d_sae, cfg.exp_series)
+    if is_master():
+        client.create_dictionary(
+            cfg.exp_name, cfg.exp_result_path, cfg.sae.d_sae, cfg.exp_series
+        )
 
     for chunk_id in range(cfg.n_sae_chunks):
         activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
         result = sample_feature_activations(
             sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks
         )
-
         for i in range(len(result["index"].cpu().numpy().tolist())):
             client.update_feature(
                 cfg.exp_name,
@@ -412,7 +416,7 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
         use_fast=True,
         add_bos_token=True,
     )
-    model = HookedTransformer.from_pretrained(
+    model = HookedTransformer.from_pretrained_no_processing(
         cfg.lm.model_name,
         use_flash_attn=cfg.lm.use_flash_attn,
         device=cfg.lm.device,

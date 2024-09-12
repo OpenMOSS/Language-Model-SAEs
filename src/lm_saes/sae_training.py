@@ -13,6 +13,7 @@ from transformer_lens import HookedTransformer
 
 from tqdm import tqdm
 import wandb
+import math
 
 from lm_saes.activation.activation_store import ActivationStore
 from lm_saes.sae import SparseAutoEncoder
@@ -52,11 +53,7 @@ def train_sae(
     n_training_tokens = 0
     log_feature_sparsity = None
 
-    checkpoint_thresholds = []
-    if cfg.n_checkpoints > 0:
-        checkpoint_thresholds = list(
-            range(0, total_training_tokens, total_training_tokens // cfg.n_checkpoints)
-        )[1:]
+
     activation_store.initialize()
     if is_master():
         print(f"Activation Store Initialized.")
@@ -313,20 +310,19 @@ def train_sae(
 
             # Checkpoint if at checkpoint frequency
             if (
-                len(checkpoint_thresholds) > 0
-                and n_training_tokens >= checkpoint_thresholds[0]
+                len(cfg.checkpoint_thresholds) > 0
+                and n_training_tokens >= cfg.checkpoint_thresholds[0]
             ):
                 # Save the model and optimizer state
                 path = os.path.join(
-                    cfg.exp_result_dir,
-                    cfg.exp_name,
+                    cfg.exp_result_path,
                     "checkpoints",
                     f"{n_training_steps}.safetensors",
                 )
                 if not cfg.sae.sparsity_include_decoder_norm:
                     sae.set_decoder_norm_to_fixed_norm(1)
                 sae.save_pretrained(path)
-                checkpoint_thresholds.pop(0)
+                cfg.checkpoint_thresholds.pop(0)
 
             n_training_steps += 1
 
@@ -345,7 +341,7 @@ def train_sae(
     if not cfg.sae.sparsity_include_decoder_norm:
         sae.set_decoder_norm_to_fixed_norm(1)
     path = os.path.join(
-        cfg.exp_result_dir, cfg.exp_name, "checkpoints", "final.safetensors"
+        cfg.exp_result_path, "checkpoints", "final.safetensors"
     )
     sae.save_pretrained(path)
 
@@ -447,7 +443,7 @@ def prune_sae(
         print("Total pruned features:", (sae.feature_act_mask == 0).sum().item())
 
         path = os.path.join(
-            cfg.exp_result_dir, cfg.exp_name, "checkpoints", "pruned.safetensors"
+            cfg.exp_result_path, "checkpoints", "pruned.safetensors"
         )
         sae.save_pretrained(path)
 
