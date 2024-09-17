@@ -11,7 +11,7 @@ import os
 
 from lm_saes.utils.config import FlattenableModel
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-from lm_saes.utils.misc import convert_str_to_torch_dtype, print_once, is_master
+from lm_saes.utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str, print_once, is_master
 
 from transformer_lens.loading_from_pretrained import get_official_model_name
 from torch.distributed.device_mesh import DeviceMesh
@@ -33,8 +33,6 @@ class BaseModelConfig(BaseConfig):
         return {
             field.name: getattr(self, field.name)
             for field in fields(self)
-            if field.name
-            not in [base_field.name for base_field in fields(BaseModelConfig)]
         }
 
     @classmethod
@@ -92,8 +90,14 @@ class LanguageModelConfig(BaseModelConfig):
         assert os.path.exists(
             sae_path
         ), f"{sae_path} does not exist. Unable to save LanguageModelConfig."
+
+        d = self.to_dict()
+        for k, v in d.items():
+            if isinstance(v, torch.dtype):
+                d[k] = convert_torch_dtype_to_str(v)
+
         with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
-            json.dump(self.to_dict(), f, indent=4)
+            json.dump(d, f, indent=4)
 
 
 @dataclass(kw_only=True)
@@ -283,6 +287,11 @@ class SAEConfig(BaseModelConfig):
         if remove_loading_info:
             d.pop("sae_pretrained_name_or_path", None)
             d.pop("strict_loading", None)
+
+        for k, v in d.items():
+            if isinstance(v, torch.dtype):
+                d[k] = convert_torch_dtype_to_str(v)
+
         with open(os.path.join(sae_path, "hyperparams.json"), "w") as f:
             json.dump(d, f, indent=4)
 

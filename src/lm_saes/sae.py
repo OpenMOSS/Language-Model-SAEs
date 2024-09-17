@@ -237,7 +237,8 @@ class SparseAutoEncoder(HookedRootModule):
                 else x - self.decoder.bias
             )
 
-        x = x * self.compute_norm_factor(x, hook_point="in")
+        input_norm_factor = self.compute_norm_factor(x, hook_point="in")
+        x = x * input_norm_factor
 
         hidden_pre = self.encoder(x)
 
@@ -246,7 +247,6 @@ class SparseAutoEncoder(HookedRootModule):
 
             hidden_pre = hidden_pre * hidden_pre_glu
 
-        hidden_pre = hidden_pre / self.compute_norm_factor(x, hook_point="in")
         hidden_pre = self.hook_hidden_pre(hidden_pre)
 
         feature_acts = torch.clamp(hidden_pre, min=0.0)
@@ -321,13 +321,12 @@ class SparseAutoEncoder(HookedRootModule):
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True)
         reconstructed = self.decode(feature_acts)
 
-        feature_acts_normed = feature_acts * self.compute_norm_factor(x, hook_point="in")  # (batch, d_sae)
         label_norm_factor = self.compute_norm_factor(label, hook_point="out")
-        reconstructed_normed = reconstructed * label_norm_factor
+
         label_normed = label * label_norm_factor
 
         # l_rec: (batch, d_model)
-        l_rec = (reconstructed_normed - label_normed).pow(2)
+        l_rec = (reconstructed - label_normed).pow(2)
 
         if self.cfg.use_batch_norm_mse:
             l_rec = l_rec / (
@@ -337,11 +336,9 @@ class SparseAutoEncoder(HookedRootModule):
 
         # l_l1: (batch,)
         if self.cfg.sparsity_include_decoder_norm:
-            true_feature_acts = feature_acts_normed * self.decoder_norm(during_init=during_init)
-        else:
-            true_feature_acts = feature_acts_normed
+            feature_acts = feature_acts * self.decoder_norm(during_init=during_init)
 
-        l_l1 = torch.norm(true_feature_acts, p=self.cfg.lp, dim=-1)
+        l_l1 = torch.norm(feature_acts, p=self.cfg.lp, dim=-1)
 
 
         loss = l_rec.mean() + self.current_l1_coefficient * l_l1.mean()
@@ -357,7 +354,7 @@ class SparseAutoEncoder(HookedRootModule):
             and dead_feature_mask.sum() > 0
         ):
             l_ghost_resid = self.compute_ghost_grad_loss(
-                reconstructed_normed,
+                reconstructed,
                 hidden_pre,
                 label_normed,
                 dead_feature_mask,
@@ -369,7 +366,7 @@ class SparseAutoEncoder(HookedRootModule):
         if return_aux_data:
             aux_data = {
                 "feature_acts": feature_acts,
-                "reconstructed": reconstructed,
+                "reconstructed": reconstructed / label_norm_factor,
                 "hidden_pre": hidden_pre,
             }
             return loss, (
@@ -393,7 +390,7 @@ class SparseAutoEncoder(HookedRootModule):
 
         feature_acts = self.encode(x)
         reconstructed = self.decode(feature_acts)
-
+        
         return reconstructed
 
     @torch.no_grad()
@@ -524,7 +521,16 @@ class SparseAutoEncoder(HookedRootModule):
         else:
             state_dict = torch.load(ckpt_path, map_location=cfg.device)["sae"]
 
+
         model = SparseAutoEncoder(cfg)
+
+        # if cfg.norm_activation == 'dataset-wise':
+        #     state_dict = model.standardize_parameters_of_dataset_activation_scaling(state_dict)
+
+        # if cfg.sparsity_include_decoder_norm:
+        #     state_dict = model.transform_to_unit_decoder_norm(state_dict)
+
+        
         model.load_state_dict(state_dict, strict=cfg.strict_loading)
 
         return model
@@ -587,9 +593,10 @@ class SparseAutoEncoder(HookedRootModule):
                 not cfg.sae.init_encoder_with_decoder_transpose
                 or cfg.sae.hook_point_in != cfg.sae.hook_point_out
             ):
-                raise NotImplementedError(
-                    "Transcoders cannot be initialized automatically."
-                )
+                sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+                print(f"Transcoders cannot be initialized automatically. Skipping.\nEncoder norm: {sae.encoder_norm(during_init=True).mean().item()}\nDecoder norm: {sae.decoder_norm(during_init=True).mean().item()}")
+                return sae
+
         print("SAE: Starting grid search for initial decoder norm.")
 
         test_sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
@@ -638,6 +645,39 @@ class SparseAutoEncoder(HookedRootModule):
                 for k, v in state_dict.items()
             }
         return state_dict
+    
+    @torch.no_grad()
+    def transform_to_unit_decoder_norm(
+        self, state_dict: Dict[str, torch.Tensor]
+    ) -> Dict[str, torch.Tensor]:
+        decoder_norm = torch.norm(
+            state_dict["decoder.weight"], p=2, dim=0, keepdim=False
+        )
+        state_dict["decoder.weight"] = state_dict["decoder.weight"] / decoder_norm
+        state_dict["encoder.weight"] = (
+            state_dict["encoder.weight"] * decoder_norm[:, None]
+        )
+        state_dict["encoder.bias"] = state_dict["encoder.bias"] * decoder_norm
+        return state_dict
+    
+    @torch.no_grad()
+    def standardize_parameters_of_dataset_activation_scaling(
+        self, state_dict: Dict[str, torch.Tensor]
+    ) -> Dict[str, torch.Tensor]:
+        assert self.cfg.norm_activation == 'dataset-wise'
+
+        input_norm_factor = self.compute_norm_factor(x=None, hook_point='in')
+        output_norm_factor = self.compute_norm_factor(x=None, hook_point='out')
+
+        state_dict["encoder.bias"] = state_dict["encoder.bias"] / input_norm_factor
+        state_dict["decoder.bias"] = state_dict["decoder.bias"] / output_norm_factor
+        state_dict["decoder.weight"] = state_dict["decoder.weight"] * input_norm_factor / output_norm_factor
+
+        self.cfg.norm_activation = 'inference'
+
+        return state_dict
+
+
 
     def save_pretrained(self, ckpt_path: str) -> None:
         """Save the model to the checkpoint path.
@@ -648,23 +688,7 @@ class SparseAutoEncoder(HookedRootModule):
         if os.path.isdir(ckpt_path):
             ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
         state_dict = self.get_full_state_dict()
-
-        @torch.no_grad()
-        def transform_to_unit_decoder_norm(
-            state_dict: Dict[str, torch.Tensor]
-        ) -> Dict[str, torch.Tensor]:
-            decoder_norm = torch.norm(
-                state_dict["decoder.weight"], p=2, dim=0, keepdim=False
-            )
-            state_dict["decoder.weight"] = state_dict["decoder.weight"] / decoder_norm
-            state_dict["encoder.weight"] = (
-                state_dict["encoder.weight"] * decoder_norm[:, None]
-            )
-            state_dict["encoder.bias"] = state_dict["encoder.bias"] * decoder_norm
-            return state_dict
-
-        if self.cfg.sparsity_include_decoder_norm:
-            state_dict = transform_to_unit_decoder_norm(state_dict)
+        
 
         if is_master():
             if ckpt_path.endswith(".safetensors"):
@@ -715,13 +739,13 @@ class SparseAutoEncoder(HookedRootModule):
             ).to_local()
             return encoder_norm
 
-    def compute_ghost_grad_loss(self, reconstructed_normed, hidden_pre, label_normed, dead_feature_mask, l_rec):
+    def compute_ghost_grad_loss(self, reconstructed, hidden_pre, label_normed, dead_feature_mask, l_rec):
         # ghost protocol
         assert (
                 self.cfg.tp_size == 1
         ), "Ghost protocol not supported in tensor parallel training"
         # 1.
-        residual = label_normed - reconstructed_normed
+        residual = label_normed - reconstructed
         residual_centred = residual - residual.mean(dim=0, keepdim=True)
         l2_norm_residual = torch.norm(residual, dim=-1)
 

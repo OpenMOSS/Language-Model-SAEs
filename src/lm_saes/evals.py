@@ -34,7 +34,7 @@ def run_evals(
         sae,
         activation_store,
         cfg,
-        n_batches=10,
+        n_batches=50,
     )
 
     recons_score = losses_df["score"].mean()
@@ -55,8 +55,11 @@ def run_evals(
     # get act
     original_act_in, original_act_out = cache[cfg.sae.hook_point_in][filter_mask], cache[cfg.sae.hook_point_out][filter_mask]
 
-    feature_acts = sae.encode(original_act_in, label=original_act_out)
+    feature_acts = sae.encode(original_act_in)
     reconstructed = sae.decode(feature_acts)
+
+    mse = sae.compute_loss(x=original_act_in, label=original_act_out, during_init=True)[1][0]["l_rec"]
+    l1 = sae.compute_loss(x=original_act_in, label=original_act_out, during_init=True)[1][0]["l_l1"]
 
     del cache
 
@@ -79,6 +82,8 @@ def run_evals(
         # l2 norms
         "metrics/l2_norm": l2_norm_out.mean().item(),
         "metrics/l2_ratio": l2_norm_ratio.mean().item(),
+        "metrics/mse": mse.mean().item(),
+        "metrics/l1": l1.mean().item(),
         # variance explained
         "metrics/l0": l0.mean().item(),
         # CE Loss
@@ -150,6 +155,9 @@ def get_recons_loss(
 ):
     batch_tokens = batch_tokens.to(torch.int64)
 
+    logits_mask = torch.logical_and(batch_tokens.ne(model.tokenizer.eos_token_id), batch_tokens.ne(model.tokenizer.pad_token_id))
+    logits_mask = torch.logical_and(logits_mask, batch_tokens.ne(model.tokenizer.bos_token_id))
+
     loss = model.forward(batch_tokens, return_type="loss", loss_per_token=True)
 
     _, cache = model.run_with_cache_until(
@@ -161,12 +169,13 @@ def get_recons_loss(
         cache[cfg.sae.hook_point_in],
         cache[cfg.sae.hook_point_out],
     )
-    replacements = sae.forward(activations_in, label=activations_out).to(
+    replacements = sae.forward(activations_in).to(
         activations_out.dtype
-    )
+    )  / sae.compute_norm_factor(None, hook_point='out')
+
 
     def replacement_hook(activations: torch.Tensor, hook: Any):
-        return replacements
+        return replacements.where(logits_mask[..., None], activations)
 
     recons_loss: torch.Tensor = model.run_with_hooks(
         batch_tokens,
@@ -179,12 +188,8 @@ def get_recons_loss(
         batch_tokens, return_type="loss", fwd_hooks=[(cfg.sae.hook_point_out, zero_ablate_hook)], loss_per_token=True
     )
 
-    logits_mask = torch.logical_and(batch_tokens.ne(model.tokenizer.eos_token_id), batch_tokens.ne(model.tokenizer.pad_token_id))
-    logits_mask = torch.logical_and(logits_mask, batch_tokens.ne(model.tokenizer.bos_token_id))
-    logits_mask = logits_mask[:, 1:]
-
     def get_useful_token_loss(per_token_loss):
-        per_token_loss = per_token_loss.where(logits_mask, 0)
+        per_token_loss = per_token_loss.where(logits_mask[:, 1:], 0)
         return per_token_loss.sum() / per_token_loss.ne(0).sum()
 
     loss, recons_loss, zero_abl_loss = get_useful_token_loss(loss), get_useful_token_loss(recons_loss), get_useful_token_loss(zero_abl_loss)
