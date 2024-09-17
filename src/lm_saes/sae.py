@@ -74,13 +74,6 @@ class SparseAutoEncoder(HookedRootModule):
             torch.nn.init.kaiming_uniform_(self.encoder_glu.weight)
             torch.nn.init.zeros_(self.encoder_glu.bias)
 
-        self.feature_act_mask = torch.nn.Parameter(
-            torch.ones((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device)
-        )
-        self.feature_act_scale = torch.nn.Parameter(
-            torch.ones((cfg.d_sae,), dtype=cfg.dtype, device=cfg.device)
-        )
-
         self.decoder = torch.nn.Linear(
             cfg.d_sae,
             cfg.d_model,
@@ -181,13 +174,6 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch d_model"],
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
-        label: (
-            Union[
-                Float[torch.Tensor, "batch d_model"],
-                Float[torch.Tensor, "batch seq_len d_model"],
-            ]
-            | None
-        ) = None,
         return_hidden_pre: Literal[False] = False,
     ) -> Union[
         Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]
@@ -200,13 +186,6 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch d_model"],
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
-        label: (
-            Union[
-                Float[torch.Tensor, "batch d_model"],
-                Float[torch.Tensor, "batch seq_len d_model"],
-            ]
-            | None
-        ),
         return_hidden_pre: Literal[True],
     ) -> tuple[
         Union[
@@ -225,13 +204,6 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch d_model"],
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
-        label: (
-            Union[
-                Float[torch.Tensor, "batch d_model"],
-                Float[torch.Tensor, "batch seq_len d_model"],
-            ]
-            | None
-        ) = None,
         return_hidden_pre: bool = False,
     ) -> Union[
         Float[torch.Tensor, "batch d_sae"],
@@ -251,16 +223,12 @@ class SparseAutoEncoder(HookedRootModule):
 
         Args:
             x (torch.Tensor): The input activation tensor.
-            label (torch.Tensor, optional): The label activation tensor in transcoder training. Used for normalizing the feature activations. Defaults to None, which means using x as the label.
             return_hidden_pre (bool, optional): Whether to return the hidden pre-activation. Defaults to False.
 
         Returns:
             torch.Tensor: The feature activations.
 
         """
-
-        if label is None:
-            label = x
 
         if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
             x = (
@@ -278,14 +246,10 @@ class SparseAutoEncoder(HookedRootModule):
 
             hidden_pre = hidden_pre * hidden_pre_glu
 
-        hidden_pre = hidden_pre / self.compute_norm_factor(label, hook_point="in")
+        hidden_pre = hidden_pre / self.compute_norm_factor(x, hook_point="in")
         hidden_pre = self.hook_hidden_pre(hidden_pre)
 
-        feature_acts = (
-            self.feature_act_mask
-            * self.feature_act_scale
-            * torch.clamp(hidden_pre, min=0.0)
-        )
+        feature_acts = torch.clamp(hidden_pre, min=0.0)
 
         feature_acts = self.hook_feature_acts(feature_acts)
 
@@ -354,34 +318,37 @@ class SparseAutoEncoder(HookedRootModule):
         if label is None:
             label = x
 
-        label_norm_factor = self.compute_norm_factor(label, hook_point="out")
-
-        feature_acts, hidden_pre = self.encode(x, label, return_hidden_pre=True)
-        feature_acts_normed = feature_acts * label_norm_factor  # (batch, d_sae)
-        # hidden_pre_normed = hidden_pre * label_norm_factor
-
+        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True)
         reconstructed = self.decode(feature_acts)
-        reconstructed_normed = reconstructed * label_norm_factor
 
+        feature_acts_normed = feature_acts * self.compute_norm_factor(x, hook_point="in")  # (batch, d_sae)
+        label_norm_factor = self.compute_norm_factor(label, hook_point="out")
+        reconstructed_normed = reconstructed * label_norm_factor
         label_normed = label * label_norm_factor
 
         # l_rec: (batch, d_model)
-        l_rec = (reconstructed_normed - label_normed).pow(2) / (
-            label_normed - label_normed.mean(dim=0, keepdim=True)
-        ).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+        l_rec = (reconstructed_normed - label_normed).pow(2)
+
+        if self.cfg.use_batch_norm_mse:
+            l_rec = l_rec / (
+                label_normed - label_normed.mean(dim=0, keepdim=True)
+            ).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+
 
         # l_l1: (batch,)
         if self.cfg.sparsity_include_decoder_norm:
-
-            l_l1 = torch.norm(
-                feature_acts_normed * self.decoder_norm(during_init=during_init),
-                p=self.cfg.lp,
-                dim=-1,
-            )
+            true_feature_acts = feature_acts_normed * self.decoder_norm(during_init=during_init)
         else:
-            l_l1 = torch.norm(feature_acts_normed, p=self.cfg.lp, dim=-1)
+            true_feature_acts = feature_acts_normed
 
-        l_ghost_resid = torch.tensor(0.0, dtype=self.cfg.dtype, device=self.cfg.device)
+        l_l1 = torch.norm(true_feature_acts, p=self.cfg.lp, dim=-1)
+
+
+        loss = l_rec.mean() + self.current_l1_coefficient * l_l1.mean()
+        loss_dict = {
+            "l_rec": l_rec,
+            "l_l1": l_l1
+        }
 
         if (
             self.cfg.use_ghost_grads
@@ -389,38 +356,15 @@ class SparseAutoEncoder(HookedRootModule):
             and dead_feature_mask is not None
             and dead_feature_mask.sum() > 0
         ):
-            # ghost protocol
-            assert (
-                self.cfg.tp_size == 1
-            ), "Ghost protocol not supported in tensor parallel training"
-            # 1.
-            residual = label_normed - reconstructed_normed
-            residual_centred = residual - residual.mean(dim=0, keepdim=True)
-            l2_norm_residual = torch.norm(residual, dim=-1)
-
-            # 2.
-            feature_acts_dead_neurons_only = torch.exp(hidden_pre[:, dead_feature_mask])
-            ghost_out = (
-                feature_acts_dead_neurons_only
-                @ self.decoder.weight[dead_feature_mask, :]
+            l_ghost_resid = self.compute_ghost_grad_loss(
+                reconstructed_normed,
+                hidden_pre,
+                label_normed,
+                dead_feature_mask,
+                l_rec,
             )
-            l2_norm_ghost_out = torch.norm(ghost_out, dim=-1)
-            norm_scaling_factor = l2_norm_residual / (1e-6 + l2_norm_ghost_out * 2)
-            ghost_out = ghost_out * norm_scaling_factor[:, None].detach()
-
-            # 3.
-            l_ghost_resid = (
-                torch.pow((ghost_out - residual.detach().float()), 2)
-                / (residual_centred.detach() ** 2).sum(dim=-1, keepdim=True).sqrt()
-            )
-            mse_rescaling_factor = (l_rec / (l_ghost_resid + 1e-6)).detach()
-            l_ghost_resid = mse_rescaling_factor * l_ghost_resid
-
-        loss = (
-            l_rec.mean()
-            + self.current_l1_coefficient * l_l1.mean()
-            + l_ghost_resid.mean()
-        )
+            loss = loss + l_ghost_resid.mean()
+            loss_dict["l_ghost_resid"] = l_ghost_resid
 
         if return_aux_data:
             aux_data = {
@@ -429,7 +373,7 @@ class SparseAutoEncoder(HookedRootModule):
                 "hidden_pre": hidden_pre,
             }
             return loss, (
-                {"l_rec": l_rec, "l_l1": l_l1, "l_ghost_resid": l_ghost_resid},
+                loss_dict,
                 aux_data,
             )
 
@@ -441,23 +385,13 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch d_model"],
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
-        label: (
-            Union[
-                Float[torch.Tensor, "batch d_model"],
-                Float[torch.Tensor, "batch seq_len d_model"],
-            ]
-            | None
-        ) = None,
     ) -> Union[
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
         """Encode and then decode the input activation tensor, outputting the reconstructed activation tensor."""
 
-        if label is None:
-            label = x
-
-        feature_acts = self.encode(x, label)
+        feature_acts = self.encode(x)
         reconstructed = self.decode(feature_acts)
 
         return reconstructed
@@ -629,7 +563,7 @@ class SparseAutoEncoder(HookedRootModule):
             and cfg.sae.dataset_average_activation_norm is None
         ):
             print(
-                f"SAE: Computing average activation norm on the first {cfg.train_batch_size * 8} samples."
+                f"SAE: Computing average activation norm on the first {cfg.train_batch_size} samples."
             )
 
             average_in_norm, average_out_norm = (
@@ -780,3 +714,33 @@ class SparseAutoEncoder(HookedRootModule):
                 placements=[Replicate()], async_op=True
             ).to_local()
             return encoder_norm
+
+    def compute_ghost_grad_loss(self, reconstructed_normed, hidden_pre, label_normed, dead_feature_mask, l_rec):
+        # ghost protocol
+        assert (
+                self.cfg.tp_size == 1
+        ), "Ghost protocol not supported in tensor parallel training"
+        # 1.
+        residual = label_normed - reconstructed_normed
+        residual_centred = residual - residual.mean(dim=0, keepdim=True)
+        l2_norm_residual = torch.norm(residual, dim=-1)
+
+        # 2.
+        feature_acts_dead_neurons_only = torch.exp(hidden_pre[:, dead_feature_mask])
+        ghost_out = (
+                feature_acts_dead_neurons_only
+                @ self.decoder.weight[dead_feature_mask, :]
+        )
+        l2_norm_ghost_out = torch.norm(ghost_out, dim=-1)
+        norm_scaling_factor = l2_norm_residual / (1e-6 + l2_norm_ghost_out * 2)
+        ghost_out = ghost_out * norm_scaling_factor[:, None].detach()
+
+        # 3.
+        l_ghost_resid = (
+                torch.pow((ghost_out - residual.detach().float()), 2)
+                / (residual_centred.detach() ** 2).sum(dim=-1, keepdim=True).sqrt()
+        )
+        mse_rescaling_factor = (l_rec / (l_ghost_resid + 1e-6)).detach()
+        l_ghost_resid = mse_rescaling_factor * l_ghost_resid
+
+        return l_ghost_resid
