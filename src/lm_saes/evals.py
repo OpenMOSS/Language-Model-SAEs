@@ -23,10 +23,6 @@ def run_evals(
     cfg: LanguageModelSAERunnerConfig,
     n_training_steps: int,
 ):
-    ### Evals
-    eval_tokens = activation_store.next_tokens(cfg.act_store.dataset.store_batch_size)
-    
-    assert eval_tokens is not None, "Activation store is empty"
 
     # Get Reconstruction Score
     losses_df = recons_loss_batched(
@@ -42,31 +38,31 @@ def run_evals(
     recons_loss = losses_df["recons_loss"].mean()
     zero_abl_loss = losses_df["zero_abl_loss"].mean()
 
-    # get cache
-    _, cache = model.run_with_cache_until(
-        eval_tokens,
-        names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
-        until=cfg.sae.hook_point_out,
+
+    # Standard Evals
+    batch = activation_store.next(batch_size=4096)
+
+    assert batch is not None, "Activation store is empty"
+
+    activation_in, activation_out = (
+        batch[cfg.sae.hook_point_in],
+        batch[cfg.sae.hook_point_out],
     )
 
-    filter_mask = torch.logical_and(eval_tokens.ne(model.tokenizer.eos_token_id), eval_tokens.ne(model.tokenizer.pad_token_id))
-    filter_mask = torch.logical_and(filter_mask, eval_tokens.ne(model.tokenizer.bos_token_id))
-
-    # get act
-    original_act_in, original_act_out = cache[cfg.sae.hook_point_in][filter_mask], cache[cfg.sae.hook_point_out][filter_mask]
-
-    feature_acts = sae.encode(original_act_in)
+    feature_acts = sae.encode(activation_in)
     reconstructed = sae.decode(feature_acts)
 
-    mse = sae.compute_loss(x=original_act_in, label=original_act_out, during_init=True)[1][0]["l_rec"]
-    l1 = sae.compute_loss(x=original_act_in, label=original_act_out, during_init=True)[1][0]["l_l1"]
-
-    del cache
+    per_token_l2_loss = (
+        (reconstructed - activation_out).pow(2).sum(dim=-1)
+    )
+    total_variance = (
+        (activation_out - activation_out.mean(0)).pow(2).sum(dim=-1)
+    )
 
     if "cuda" in str(model.cfg.device):
         torch.cuda.empty_cache()
 
-    l2_norm_in = torch.norm(original_act_out, dim=-1)
+    l2_norm_in = torch.norm(activation_out, dim=-1)
     l2_norm_out = torch.norm(reconstructed, dim=-1)
     if cfg.sae.ddp_size > 1:
         dist.reduce(
@@ -76,18 +72,18 @@ def run_evals(
     l2_norm_ratio = l2_norm_out / l2_norm_in
 
     l0 = (feature_acts > 0).float().sum(-1)
-
+    explained_variance = 1 - per_token_l2_loss / total_variance
 
     metrics = {
         # l2 norms
-        "metrics/l2_norm": l2_norm_out.mean().item(),
+        "metrics/l2_norm_reconstructed": l2_norm_out.mean().item(),
+        "metrics/l2_norm_original": l2_norm_in.mean().item(),
         "metrics/l2_ratio": l2_norm_ratio.mean().item(),
-        "metrics/mse": mse.mean().item(),
-        "metrics/l1": l1.mean().item(),
-        # variance explained
+        # variance explained & L0
+        "metrics/explained_variance": explained_variance.mean().item(),
         "metrics/l0": l0.mean().item(),
         # CE Loss
-        "metrics/ce_loss_score": recons_score,
+        "metrics/delta_ce_loss": recons_loss - ntp_loss,
         "metrics/ce_loss_without_sae": ntp_loss,
         "metrics/ce_loss_with_sae": recons_loss,
         "metrics/ce_loss_with_ablation": zero_abl_loss,
