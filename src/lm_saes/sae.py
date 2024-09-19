@@ -524,11 +524,11 @@ class SparseAutoEncoder(HookedRootModule):
 
         model = SparseAutoEncoder(cfg)
 
-        # if cfg.norm_activation == 'dataset-wise':
-        #     state_dict = model.standardize_parameters_of_dataset_activation_scaling(state_dict)
+        if cfg.norm_activation == 'dataset-wise':
+            state_dict = model.standardize_parameters_of_dataset_activation_scaling(state_dict)
 
-        # if cfg.sparsity_include_decoder_norm:
-        #     state_dict = model.transform_to_unit_decoder_norm(state_dict)
+        if cfg.sparsity_include_decoder_norm:
+            state_dict = model.transform_to_unit_decoder_norm(state_dict)
 
         
         model.load_state_dict(state_dict, strict=cfg.strict_loading)
