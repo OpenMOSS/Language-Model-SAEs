@@ -101,7 +101,10 @@ def train_sae(
         pbar = tqdm(total=total_training_tokens, desc="Training SAE", smoothing=0.01)
     while n_training_tokens < total_training_tokens:
         sae.train()
-        sae.update_l1_coefficient(n_training_steps)
+        if not sae.cfg.act_fn == 'topk':
+            sae.update_l1_coefficient(n_training_steps)
+        else: 
+            sae.update_k(n_training_steps)
         # Get the next batch of activations
 
         batch = activation_store.next(batch_size=cfg.train_batch_size)
@@ -195,7 +198,8 @@ def train_sae(
                 # metrics for currents acts
                 l0 = (aux_data["feature_acts"] > 0).float().sum(-1).mean()
                 l_rec = loss_data["l_rec"].mean()
-                l_l1 = loss_data["l_l1"].mean()
+                if not cfg.sae.act_fn == 'topk':
+                    l_l1 = loss_data["l_l1"].mean()
                 if cfg.sae.use_ghost_grads:
                     l_ghost_resid = loss_data["l_ghost_resid"].mean()
 
@@ -203,7 +207,8 @@ def train_sae(
                     dist.reduce(loss, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l0, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l_rec, dst=0, op=dist.ReduceOp.AVG)
-                    dist.reduce(l_l1, dst=0, op=dist.ReduceOp.AVG)
+                    if not cfg.sae.act_fn == 'topk':
+                        dist.reduce(l_l1, dst=0, op=dist.ReduceOp.AVG)
                     if cfg.sae.use_ghost_grads:
                         dist.reduce(
                             l_ghost_resid,
@@ -270,7 +275,6 @@ def train_sae(
                     logs = {
                         # losses
                         "losses/mse_loss": l_rec.item(),
-                        "losses/l1_loss": l_l1.item(),
                         "losses/overall_loss": loss.item(),
                         # variance explained
                         "metrics/explained_variance": explained_variance.mean().item(),
@@ -286,7 +290,6 @@ def train_sae(
                         "metrics/encoder_bias_norm": sae.encoder.bias.norm().item(),
                         "metrics/gradients_norm": grad_norm.item(),
                         # sparsity
-                        "sparsity/l1_coefficient": sae.current_l1_coefficient,
                         "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
                         "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
                         "details/current_learning_rate": current_learning_rate,
@@ -294,6 +297,12 @@ def train_sae(
                     }
                     if cfg.sae.use_ghost_grads:
                         logs["losses/ghost_resid_loss"] = l_ghost_resid.item()
+                    if not cfg.sae.act_fn == 'topk':
+                        logs["losses/l1_loss"] = l_l1.item()
+                        logs["sparsity/l1_coefficient"] = sae.current_l1_coefficient
+                    else:
+                        logs["sparsity/k"] = sae.current_k
+                        
                     if is_master():
                         wandb.log(
                             logs,
@@ -332,10 +341,12 @@ def train_sae(
 
             if is_master():
                 l_rec = loss_data["l_rec"].mean().item()
-                l_l1 = loss_data["l_l1"].mean().item()
-                pbar.set_description(
-                    f"{n_training_steps}| MSE Loss {l_rec:.3f} | L1 {l_l1:.3f}"
-                )
+                desc = f"{n_training_steps}| MSE Loss {l_rec:.3f}"
+                if not cfg.sae.act_fn == 'topk':
+                    l_l1 = loss_data["l_l1"].mean().item()
+                    desc += f' | L1 Loss {l_l1:.3f}'
+                    
+                pbar.set_description(desc)
                 pbar.update(n_tokens_current.item())
 
     if is_master():
