@@ -570,7 +570,6 @@ class SparseAutoEncoder(HookedRootModule):
         if cfg.act_fn == 'topk' and cfg.jump_relu_threshold > 0:
             print('Converting topk activation to jumprelu for inference. Features are set independent to each other.')
             model.cfg.act_fn = 'jumprelu'
-
         
         model.load_state_dict(state_dict, strict=cfg.strict_loading)
 

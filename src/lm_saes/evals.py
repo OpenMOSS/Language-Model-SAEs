@@ -148,18 +148,14 @@ def get_recons_loss(
 
     loss, cache = model.run_with_cache(batch_tokens, return_type="loss", loss_per_token=True, names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out])
 
-    # _, cache = model.run_with_cache_until(
-    #     batch_tokens,
-    #     names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
-    #     until=cfg.sae.hook_point_out,
-    # )
     activations_in, activations_out = (
         cache[cfg.sae.hook_point_in],
         cache[cfg.sae.hook_point_out],
     )
     replacements = sae.forward(activations_in).to(
         activations_out.dtype
-    )
+    )  / sae.compute_norm_factor(None, hook_point='out')
+
 
 
     def replacement_hook(activations: torch.Tensor, hook: Any):
