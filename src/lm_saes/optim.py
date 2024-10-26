@@ -78,14 +78,16 @@ def get_scheduler(
         warm_up_steps = kwargs.get("warm_up_steps", 0)
         cool_down_steps = kwargs.get("cool_down_steps", 0)
         training_steps = kwargs.get("training_steps")
+        lr_end_ratio = kwargs.get("lr_end_ratio", 0.)
+
         assert training_steps is not None, "training_steps must be provided"
         return lr_scheduler.LambdaLR(
             optimizer,
             lr_lambda=lambda steps: min(
-                (steps + 1) / warm_up_steps, 
-                (training_steps - steps) / cool_down_steps, # type: ignore
-                1.0
-            ),
+                1.0,
+                (steps + 1) / warm_up_steps,
+                lr_end_ratio + (1 - lr_end_ratio) / cool_down_steps * max(training_steps - steps, 1),
+            )
         )
     elif scheduler_name.lower() == "constantwithwarmupsmooth":
         warm_up_steps = kwargs.get("warm_up_steps", 0)

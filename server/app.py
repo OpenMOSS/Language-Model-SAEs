@@ -47,7 +47,7 @@ lm_cache = {}
 
 def get_model(dictionary_name: str) -> HookedTransformer:
 	path = client.get_dictionary_path(dictionary_name, dictionary_series=dictionary_series)
-	if path is "":
+	if path == "":
 		path = f"{result_dir}/{dictionary_name}"
 	cfg = LanguageModelConfig.from_pretrained_sae(path)
 	if (cfg.model_name, cfg.model_from_pretrained_path) not in lm_cache:
@@ -86,7 +86,7 @@ def get_model(dictionary_name: str) -> HookedTransformer:
 def get_sae(dictionary_name: str) -> SparseAutoEncoder:
 	path = client.get_dictionary(dictionary_name, dictionary_series=dictionary_series)['path'] or f"{result_dir}/{dictionary_name}"
 	if dictionary_name not in sae_cache:
-		sae = SparseAutoEncoder.from_pretrained(path, device=device)
+		sae = SparseAutoEncoder.from_pretrained(path)
 		sae.eval()
 		sae_cache[dictionary_name] = sae
 	return sae_cache[dictionary_name]
@@ -253,7 +253,7 @@ def feature_activation_custom_input(
 		input = model.to_tokens(input_text, prepend_bos=False)
 		_, cache = model.run_with_cache_until(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out], until=sae.cfg.hook_point_out)
 
-		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
+		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0])
 		sample = {
 			"context": [
 				bytearray([byte_decoder[c] for c in t])
@@ -282,7 +282,7 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
 		input = model.to_tokens(input_text, prepend_bos=False)
 		_, cache = model.run_with_cache_until(input, names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out], until=sae.cfg.hook_point_out)
 
-		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0], label=cache[sae.cfg.hook_point_out][0])
+		feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0])
 		sample = {
 			"context": [
 				bytearray([byte_decoder[c] for c in t])

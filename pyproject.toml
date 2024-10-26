@@ -38,7 +38,7 @@ dependencies = [
     "types-pyyaml>=6.0.12.20240311",
     "tomlkit>=0.12.5",
 ]
-requires-python = "==3.10.*"
+requires-python = ">3.10.*"
 readme = "README.md"
 license = {text = "MIT"}
 
