@@ -78,6 +78,7 @@ def train_sae(
             plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
         sae = parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan) # type: ignore
         sae.parallelize_plan = plan
+        sae.tensor_paralleled = True
 
     elif cfg.sae.ddp_size > 1:
         # parallelize_module does not work with DDP
