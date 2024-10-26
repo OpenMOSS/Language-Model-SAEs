@@ -110,9 +110,9 @@ class TokenSource:
     @staticmethod
     def _process_dataset(dataset_path: str, cfg: TextDatasetConfig):
         if not cfg.is_dataset_on_disk:
-            dataset = load_dataset(dataset_path, split="train", cache_dir=cfg.cache_dir)
+            dataset = load_dataset(dataset_path, split="train", cache_dir=cfg.cache_dir, keep_in_memory=True)
         else:
-            dataset = load_from_disk(dataset_path)
+            dataset = load_from_disk(dataset_path, keep_in_memory=True)
         if dist.is_initialized():
             shard_id = dist.get_rank()
             shard = dataset.shard(
@@ -122,7 +122,7 @@ class TokenSource:
             shard = dataset
 
 
-        dataloader = DataLoader(shard, batch_size=cfg.store_batch_size, num_workers=4, prefetch_factor=4, pin_memory=True)
+        dataloader = DataLoader(shard, batch_size=cfg.store_batch_size, pin_memory=True)
         return dataloader
 
     @staticmethod

@@ -23,10 +23,6 @@ def run_evals(
     cfg: LanguageModelSAERunnerConfig,
     n_training_steps: int,
 ):
-    ### Evals
-    eval_tokens = activation_store.next_tokens(cfg.act_store.dataset.store_batch_size)
-    
-    assert eval_tokens is not None, "Activation store is empty"
 
     # Get Reconstruction Score
     losses_df = recons_loss_batched(
@@ -34,36 +30,36 @@ def run_evals(
         sae,
         activation_store,
         cfg,
-        n_batches=10,
+        n_batches=50,
     )
 
-    recons_score = losses_df["score"].mean()
     ntp_loss = losses_df["loss"].mean()
     recons_loss = losses_df["recons_loss"].mean()
-    zero_abl_loss = losses_df["zero_abl_loss"].mean()
 
-    # get cache
-    _, cache = model.run_with_cache_until(
-        eval_tokens,
-        names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
-        until=cfg.sae.hook_point_out,
+    # Standard Evals
+    batch = activation_store.next(batch_size=4096)
+
+    assert batch is not None, "Activation store is empty"
+
+    activation_in, activation_out = (
+        batch[cfg.sae.hook_point_in],
+        batch[cfg.sae.hook_point_out],
     )
 
-    filter_mask = torch.logical_and(eval_tokens.ne(model.tokenizer.eos_token_id), eval_tokens.ne(model.tokenizer.pad_token_id))
-    filter_mask = torch.logical_and(filter_mask, eval_tokens.ne(model.tokenizer.bos_token_id))
-
-    # get act
-    original_act_in, original_act_out = cache[cfg.sae.hook_point_in][filter_mask], cache[cfg.sae.hook_point_out][filter_mask]
-
-    feature_acts = sae.encode(original_act_in, label=original_act_out)
+    feature_acts = sae.encode(activation_in)
     reconstructed = sae.decode(feature_acts)
 
-    del cache
+    per_token_l2_loss = (
+        (reconstructed - activation_out).pow(2).sum(dim=-1)
+    )
+    total_variance = (
+        (activation_out - activation_out.mean(0)).pow(2).sum(dim=-1)
+    )
 
     if "cuda" in str(model.cfg.device):
         torch.cuda.empty_cache()
 
-    l2_norm_in = torch.norm(original_act_out, dim=-1)
+    l2_norm_in = torch.norm(activation_out, dim=-1)
     l2_norm_out = torch.norm(reconstructed, dim=-1)
     if cfg.sae.ddp_size > 1:
         dist.reduce(
@@ -73,19 +69,20 @@ def run_evals(
     l2_norm_ratio = l2_norm_out / l2_norm_in
 
     l0 = (feature_acts > 0).float().sum(-1)
-
+    explained_variance = 1 - per_token_l2_loss / total_variance
 
     metrics = {
         # l2 norms
-        "metrics/l2_norm": l2_norm_out.mean().item(),
+        "metrics/l2_norm_reconstructed": l2_norm_out.mean().item(),
+        "metrics/l2_norm_original": l2_norm_in.mean().item(),
         "metrics/l2_ratio": l2_norm_ratio.mean().item(),
-        # variance explained
+        # variance explained & L0
+        "metrics/explained_variance": explained_variance.mean().item(),
         "metrics/l0": l0.mean().item(),
         # CE Loss
-        "metrics/ce_loss_score": recons_score,
+        "metrics/delta_ce_loss": recons_loss - ntp_loss,
         "metrics/ce_loss_without_sae": ntp_loss,
         "metrics/ce_loss_with_sae": recons_loss,
-        "metrics/ce_loss_with_ablation": zero_abl_loss,
     }
 
     if cfg.wandb.log_to_wandb and is_master():
@@ -112,20 +109,16 @@ def recons_loss_batched(
             cfg.act_store.dataset.store_batch_size
         )
         assert batch_tokens is not None, "Not enough tokens in the store"
-        score, loss, recons_loss, zero_abl_loss = get_recons_loss(
+        loss, recons_loss = get_recons_loss(
             model, sae, cfg, batch_tokens
         )
         if cfg.sae.ddp_size > 1:
-            dist.reduce(score, dst=0, op=dist.ReduceOp.AVG)
             dist.reduce(loss, dst=0, op=dist.ReduceOp.AVG)
             dist.reduce(recons_loss, dst=0, op=dist.ReduceOp.AVG)
-            dist.reduce(zero_abl_loss, dst=0, op=dist.ReduceOp.AVG)
         losses.append(
             (
-                score.mean().item(),
                 loss.mean().item(),
                 recons_loss.mean().item(),
-                zero_abl_loss.mean().item(),
             )
         )
         if is_master():
@@ -135,7 +128,7 @@ def recons_loss_batched(
         pbar.close()
 
     losses = pd.DataFrame(
-        losses, columns=cast(Any, ["score", "loss", "recons_loss", "zero_abl_loss"])
+        losses, columns=cast(Any, ["loss", "recons_loss"])
     )
 
     return losses
@@ -150,23 +143,27 @@ def get_recons_loss(
 ):
     batch_tokens = batch_tokens.to(torch.int64)
 
-    loss = model.forward(batch_tokens, return_type="loss", loss_per_token=True)
+    logits_mask = torch.logical_and(batch_tokens.ne(model.tokenizer.eos_token_id), batch_tokens.ne(model.tokenizer.pad_token_id))
+    logits_mask = torch.logical_and(logits_mask, batch_tokens.ne(model.tokenizer.bos_token_id))
 
-    _, cache = model.run_with_cache_until(
-        batch_tokens,
-        names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
-        until=cfg.sae.hook_point_out,
-    )
+    loss, cache = model.run_with_cache(batch_tokens, return_type="loss", loss_per_token=True, names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out])
+
+    # _, cache = model.run_with_cache_until(
+    #     batch_tokens,
+    #     names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
+    #     until=cfg.sae.hook_point_out,
+    # )
     activations_in, activations_out = (
         cache[cfg.sae.hook_point_in],
         cache[cfg.sae.hook_point_out],
     )
-    replacements = sae.forward(activations_in, label=activations_out).to(
+    replacements = sae.forward(activations_in).to(
         activations_out.dtype
     )
 
+
     def replacement_hook(activations: torch.Tensor, hook: Any):
-        return replacements
+        return replacements.where(logits_mask[..., None], activations)
 
     recons_loss: torch.Tensor = model.run_with_hooks(
         batch_tokens,
@@ -175,23 +172,13 @@ def get_recons_loss(
         loss_per_token=True
     )
 
-    zero_abl_loss: torch.Tensor = model.run_with_hooks(
-        batch_tokens, return_type="loss", fwd_hooks=[(cfg.sae.hook_point_out, zero_ablate_hook)], loss_per_token=True
-    )
-
-    logits_mask = torch.logical_and(batch_tokens.ne(model.tokenizer.eos_token_id), batch_tokens.ne(model.tokenizer.pad_token_id))
-    logits_mask = torch.logical_and(logits_mask, batch_tokens.ne(model.tokenizer.bos_token_id))
-    logits_mask = logits_mask[:, 1:]
-
     def get_useful_token_loss(per_token_loss):
-        per_token_loss = per_token_loss.where(logits_mask, 0)
+        per_token_loss = per_token_loss.where(logits_mask[:, 1:], 0)
         return per_token_loss.sum() / per_token_loss.ne(0).sum()
 
-    loss, recons_loss, zero_abl_loss = get_useful_token_loss(loss), get_useful_token_loss(recons_loss), get_useful_token_loss(zero_abl_loss)
+    loss, recons_loss = get_useful_token_loss(loss), get_useful_token_loss(recons_loss)
 
-    score = (zero_abl_loss - recons_loss) / (zero_abl_loss - loss)
-
-    return score, loss, recons_loss, zero_abl_loss
+    return loss, recons_loss
 
 
 def zero_ablate_hook(activations: torch.Tensor, hook: Any):

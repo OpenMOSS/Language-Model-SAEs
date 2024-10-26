@@ -148,9 +148,9 @@ OFFICIAL_MODEL_NAMES = [
     "CodeLlama-7b-Python-hf",
     "CodeLlama-7b-Instruct-hf",
     "meta-llama/Meta-Llama-3-8B",
-    "meta-llama/Meta-Llama-3.1-8B",
+    "meta-llama/Llama-3.1-8B",
     "meta-llama/Meta-Llama-3-8B-Instruct",
-    "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "meta-llama/Llama-3.1-8B-Instruct",
     "meta-llama/Meta-Llama-3-70B",
     "meta-llama/Meta-Llama-3-70B-Instruct",
     "Baidicoot/Othello-GPT-Transformer-Lens",
@@ -868,7 +868,7 @@ def convert_hf_model_config(model_name: str, **kwargs):
             "final_rms": True,
             "gated_mlp": True,
         }
-    elif "Meta-Llama-3.1-8B" in official_model_name:
+    elif "Llama-3.1-8B" in official_model_name:
         cfg_dict = {
             "d_model": 4096,
             "d_head": 128,

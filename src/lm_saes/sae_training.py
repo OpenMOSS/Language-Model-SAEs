@@ -92,7 +92,7 @@ def train_sae(
         warm_up_steps=cfg.lr_warm_up_steps,
         cool_down_steps=cfg.lr_cool_down_steps,
         training_steps=total_training_steps,
-        lr_end=cfg.lr_end,
+        lr_end_ratio=cfg.lr_end_ratio,
     )
 
     scheduler.step()
@@ -101,7 +101,10 @@ def train_sae(
         pbar = tqdm(total=total_training_tokens, desc="Training SAE", smoothing=0.01)
     while n_training_tokens < total_training_tokens:
         sae.train()
-        sae.update_l1_coefficient(n_training_steps)
+        if not sae.cfg.act_fn == 'topk':
+            sae.update_l1_coefficient(n_training_steps)
+        else: 
+            sae.update_k(n_training_steps)
         # Get the next batch of activations
 
         batch = activation_store.next(batch_size=cfg.train_batch_size)
@@ -142,9 +145,9 @@ def train_sae(
         if cfg.finetuning:
             loss = loss_data["l_rec"].mean()
         loss.backward()
-        grad_norm = torch.tensor([0.0], device=cfg.sae.device)
-        if cfg.clip_grad_norm > 0:
-            grad_norm = torch.nn.utils.clip_grad_norm_(sae.parameters(), cfg.clip_grad_norm)
+
+        grad_norm = torch.nn.utils.clip_grad_norm_(sae.parameters(), max_norm=cfg.clip_grad_norm if cfg.clip_grad_norm > 0 else math.inf)
+
         if cfg.remove_gradient_parallel_to_decoder_directions:
             sae.remove_gradient_parallel_to_decoder_directions()
         optimizer.step()
@@ -195,19 +198,23 @@ def train_sae(
                 # metrics for currents acts
                 l0 = (aux_data["feature_acts"] > 0).float().sum(-1).mean()
                 l_rec = loss_data["l_rec"].mean()
-                l_l1 = loss_data["l_l1"].mean()
-                l_ghost_resid = loss_data["l_ghost_resid"].mean()
+                if not cfg.sae.act_fn == 'topk':
+                    l_l1 = loss_data["l_l1"].mean()
+                if cfg.sae.use_ghost_grads:
+                    l_ghost_resid = loss_data["l_ghost_resid"].mean()
 
                 if cfg.sae.ddp_size > 1:
                     dist.reduce(loss, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l0, dst=0, op=dist.ReduceOp.AVG)
                     dist.reduce(l_rec, dst=0, op=dist.ReduceOp.AVG)
-                    dist.reduce(l_l1, dst=0, op=dist.ReduceOp.AVG)
-                    dist.reduce(
-                        l_ghost_resid,
-                        dst=0,
-                        op=dist.ReduceOp.AVG,
-                    )
+                    if not cfg.sae.act_fn == 'topk':
+                        dist.reduce(l_l1, dst=0, op=dist.ReduceOp.AVG)
+                    if cfg.sae.use_ghost_grads:
+                        dist.reduce(
+                            l_ghost_resid,
+                            dst=0,
+                            op=dist.ReduceOp.AVG,
+                        )
 
                 per_token_l2_loss = (
                     (aux_data["reconstructed"] - activation_out).pow(2).sum(dim=-1)
@@ -265,34 +272,40 @@ def train_sae(
                 if cfg.wandb.log_to_wandb:
                     decoder_norm = sae.decoder_norm().mean()
                     encoder_norm = sae.encoder_norm().mean()
+                    logs = {
+                        # losses
+                        "losses/mse_loss": l_rec.item(),
+                        "losses/overall_loss": loss.item(),
+                        # variance explained
+                        "metrics/explained_variance": explained_variance.mean().item(),
+                        "metrics/explained_variance_std": explained_variance.std().item(),
+                        "metrics/l0": l0.item(),
+                        # "metrics/mean_thomson_potential": mean_thomson_potential.item(),
+                        "metrics/l2_norm_error": l2_norm_error.item(),
+                        "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
+                        # norm
+                        "metrics/decoder_norm": decoder_norm.item(),
+                        "metrics/encoder_norm": encoder_norm.item(),
+                        "metrics/decoder_bias_norm": sae.decoder.bias.norm().item() if sae.cfg.use_decoder_bias else 0,
+                        "metrics/encoder_bias_norm": sae.encoder.bias.norm().item(),
+                        "metrics/gradients_norm": grad_norm.item(),
+                        # sparsity
+                        "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
+                        "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
+                        "details/current_learning_rate": current_learning_rate,
+                        "details/n_training_tokens": n_training_tokens,
+                    }
+                    if cfg.sae.use_ghost_grads:
+                        logs["losses/ghost_resid_loss"] = l_ghost_resid.item()
+                    if not cfg.sae.act_fn == 'topk':
+                        logs["losses/l1_loss"] = l_l1.item()
+                        logs["sparsity/l1_coefficient"] = sae.current_l1_coefficient
+                    else:
+                        logs["sparsity/k"] = sae.current_k
+                        
                     if is_master():
                         wandb.log(
-                            {
-                                # losses
-                                "losses/mse_loss": l_rec.item(),
-                                "losses/l1_loss": l_l1.item(),
-                                "losses/ghost_grad_loss": l_ghost_resid.item(),
-                                "losses/overall_loss": loss.item(),
-                                # variance explained
-                                "metrics/explained_variance": explained_variance.mean().item(),
-                                "metrics/explained_variance_std": explained_variance.std().item(),
-                                "metrics/l0": l0.item(),
-                                # "metrics/mean_thomson_potential": mean_thomson_potential.item(),
-                                "metrics/l2_norm_error": l2_norm_error.item(),
-                                "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
-                                # norm
-                                "metrics/decoder_norm": decoder_norm.item(),
-                                "metrics/encoder_norm": encoder_norm.item(),
-                                "metrics/decoder_bias_norm": sae.decoder.bias.norm().item() if sae.cfg.use_decoder_bias else 0,
-                                "metrics/encoder_bias_norm": sae.encoder.bias.norm().item(),
-                                "metrics/gradients_norm": grad_norm.item(),
-                                # sparsity
-                                "sparsity/l1_coefficient": sae.current_l1_coefficient,
-                                "sparsity/mean_passes_since_fired": n_forward_passes_since_fired.mean().item(),
-                                "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
-                                "details/current_learning_rate": current_learning_rate,
-                                "details/n_training_tokens": n_training_tokens,
-                            },
+                            logs,
                             step=n_training_steps + 1,
                         )
 
@@ -328,10 +341,12 @@ def train_sae(
 
             if is_master():
                 l_rec = loss_data["l_rec"].mean().item()
-                l_l1 = loss_data["l_l1"].mean().item()
-                pbar.set_description(
-                    f"{n_training_steps}| MSE Loss {l_rec:.3f} | L1 {l_l1:.3f}"
-                )
+                desc = f"{n_training_steps}| MSE Loss {l_rec:.3f}"
+                if not cfg.sae.act_fn == 'topk':
+                    l_l1 = loss_data["l_l1"].mean().item()
+                    desc += f' | L1 Loss {l_l1:.3f}'
+                    
+                pbar.set_description(desc)
                 pbar.update(n_tokens_current.item())
 
     if is_master():
