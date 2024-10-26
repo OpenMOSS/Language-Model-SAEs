@@ -39,3 +39,25 @@ def apply_sae(
     with model.mount_hooked_modules([(sae.cfg.hook_point_out, "sae", sae) for sae in saes]):
         with model.hooks(fwd_hooks):
             yield model
+
+@contextmanager
+def detach_at(
+    model: HookedRootModule,
+    hook_points: list[str],
+):
+    """
+    Detach the gradients on the given hook points.
+    """
+
+    def generate_hook():
+        hook_pre = HookPoint()
+        hook_post = HookPoint()
+        def hook(tensor: torch.Tensor, hook: HookPoint):
+            return hook_post(hook_pre(tensor).detach().requires_grad_())
+        return hook_pre, hook_post, hook
+    
+    hooks = {hook_point: generate_hook() for hook_point in hook_points}
+    fwd_hooks = [(hook_point, hook) for hook_point, (_, _, hook) in hooks.items()]
+    with model.mount_hooked_modules([(hook_point, "pre", hook) for hook_point, (hook, _, _) in hooks.items()] + [(hook_point, "post", hook) for hook_point, (_, hook, _) in hooks.items()]):
+        with model.hooks(fwd_hooks):
+            yield model
