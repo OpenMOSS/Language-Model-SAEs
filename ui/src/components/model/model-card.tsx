@@ -6,7 +6,7 @@ import { useAsyncFn, useMount } from "react-use";
 import camelcaseKeys from "camelcase-keys";
 import snakecaseKeys from "snakecase-keys";
 import { decode } from "@msgpack/msgpack";
-import { ModelGeneration, ModelGenerationSchema } from "@/types/model";
+import { ModelGeneration, ModelGenerationSchema, Tracing, TracingAction, TracingOutputSchema } from "@/types/model";
 import { Sample } from "../app/sample";
 import { cn } from "@/lib/utils";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Label, LabelList, ResponsiveContainer } from "recharts";
@@ -35,13 +35,17 @@ import { useNavigate } from "react-router-dom";
 import { Switch } from "../ui/switch";
 import { Label as SLabel } from "../ui/label";
 import { Toggle } from "../ui/toggle";
+import { CircuitViewer } from "./circuit";
 
 const SAEInfo = ({
+  position,
   saeInfo,
   saeSettings,
   onSteerFeature,
   setSAESettings,
+  onTrace,
 }: {
+  position: number;
   saeInfo: {
     name: string;
     featureActs: {
@@ -52,6 +56,7 @@ const SAEInfo = ({
   };
   saeSettings: { sortedBySum: boolean };
   onSteerFeature?: (name: string, featureIndex: number) => void;
+  onTrace?: (node: TracingAction) => void;
   setSAESettings: (settings: { sortedBySum: boolean }) => void;
 }) => {
   const navigate = useNavigate();
@@ -101,7 +106,14 @@ const SAEInfo = ({
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>Actions</DropdownMenuLabel>
             <DropdownMenuItem onClick={() => onSteerFeature?.(saeInfo.name, row.original.featureActIndex)}>
-              Steer feature
+              Steer this feature
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() =>
+                onTrace?.({ type: "feature", sae: saeInfo.name, position, featureIndex: row.original.featureActIndex })
+              }
+            >
+              Trace this feature
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -113,7 +125,7 @@ const SAEInfo = ({
                 );
               }}
             >
-              View feature
+              View this feature
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -150,17 +162,23 @@ const SAEInfo = ({
 };
 
 const LogitsInfo = ({
+  position,
   logits,
+  onTrace,
 }: {
+  position: number;
   logits: {
     logits: number;
     token: Uint8Array;
+    tokenId: number;
   }[];
+  onTrace?: (node: TracingAction) => void;
 }) => {
   const maxLogits = Math.max(...logits.map((logit) => logit.logits));
   const columns: ColumnDef<{
     logits: number;
     token: Uint8Array;
+    tokenId: number;
   }>[] = [
     {
       accessorKey: "token",
@@ -176,6 +194,14 @@ const LogitsInfo = ({
       ),
     },
     {
+      accessorKey: "tokenId",
+      header: () => (
+        <div>
+          <span className="font-bold">Token ID</span>
+        </div>
+      ),
+    },
+    {
       accessorKey: "logits",
       header: () => (
         <div>
@@ -187,6 +213,30 @@ const LogitsInfo = ({
           {row.original.logits.toFixed(3)}
         </div>
       ),
+    },
+    {
+      id: "actions",
+      enableHiding: false,
+      cell: ({ row }) => (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="h-8 w-8 p-0">
+              <span className="sr-only">Open menu</span>
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => onTrace?.({ type: "logits", position, tokenId: row.original.tokenId })}>
+              Trace this logits
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ),
+      meta: {
+        headerClassName: "w-16",
+        cellClassName: "py-0",
+      },
     },
   ];
 
@@ -245,9 +295,11 @@ const LogitsBarChart = ({
 const ModelSample = ({
   sample,
   onSteerFeature,
+  onTrace,
 }: {
   sample: ModelGeneration;
   onSteerFeature?: (name: string, featureIndex: number) => void;
+  onTrace?: (node: TracingAction) => void;
 }) => {
   const [selectedTokenGroupIndices, setSelectedTokenGroupIndices] = useState<number[]>([]);
   const toggleSelectedTokenGroupIndex = (tokenGroupIndex: number) => {
@@ -286,17 +338,21 @@ const ModelSample = ({
           )
         : sample.context.map(() => []);
 
-    return zip(sample.context, sample.inputMask, sample.logits, sample.logitsTokens, saeInfo).map(
-      ([token, inputMask, logits, logitsTokens, saeInfo]) => ({
-        token,
-        inputMask,
-        logits: zip(logits, logitsTokens).map(([logits, token]) => ({
+    const logits = zip(sample.logits.logits, sample.logits.tokens, sample.logits.tokenIds).map(
+      ([logits, token, tokenId]) =>
+        zip(logits, token, tokenId).map(([logits, token, tokenId]) => ({
           logits,
           token,
-        })),
-        saeInfo,
-      })
+          tokenId,
+        }))
     );
+
+    return zip(sample.context, sample.inputMask, logits, saeInfo).map(([token, inputMask, logits, saeInfo]) => ({
+      token,
+      inputMask,
+      logits,
+      saeInfo,
+    }));
   }, [sample]);
 
   type Token = (typeof tokens)[0];
@@ -363,23 +419,23 @@ const ModelSample = ({
 
       {selectedTokens.map((token, i) => (
         <Fragment key={selectedTokenPositions[i]}>
-          <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-              <div className="text-sm font-bold">Token:</div>
-              <div className="text-sm underline whitespace-pre-wrap">{hex(token)}</div>
-              <div className="text-sm font-bold">Position:</div>
-              <div className="text-sm">{selectedTokenPositions[i]}</div>
-            </div>
+          <div className="grid grid-cols-4 gap-x-8 gap-y-4">
+            <div className="text-sm font-bold">Token:</div>
+            <div className="text-sm underline whitespace-pre-wrap col-span-3">{hex(token)}</div>
+            <div className="text-sm font-bold">Position:</div>
+            <div className="text-sm col-span-3">{selectedTokenPositions[i]}</div>
           </div>
           <div key={i} className="grid grid-cols-2 gap-8">
-            <LogitsInfo logits={token.logits} />
+            <LogitsInfo position={selectedTokenPositions[i]} logits={token.logits} onTrace={onTrace} />
             {token.saeInfo.map((saeInfo, j) => (
               <SAEInfo
                 key={j}
+                position={selectedTokenPositions[i]}
                 saeInfo={saeInfo}
                 saeSettings={getSAESettings(saeInfo.name)}
                 onSteerFeature={onSteerFeature}
                 setSAESettings={(settings) => setSAESettings({ ...saeSettings, [saeInfo.name]: settings })}
+                onTrace={onTrace}
               />
             ))}
           </div>
@@ -409,6 +465,21 @@ const ModelCustomInputArea = () => {
   >([{ sae: null, featureIndex: 0, steeringType: "times", steeringValue: 1 }]);
 
   const [sample, setSample] = useState<ModelGeneration | null>(null);
+  const [sampleSteerings, setSampleSteerings] = useState<
+    | {
+        sae: string | null;
+        featureIndex: number;
+        steeringType: "times" | "ablate" | "add" | "set";
+        steeringValue: number | null;
+      }[]
+    | null
+  >(null);
+
+  const [tracingThreshold, setTracingThreshold] = useState<number>(0.1);
+  const [tracingTopK, setTracingTopK] = useState<number | null>(null);
+  const [detachAtAttnScores, setDetachAtAttnScores] = useState<boolean>(false);
+
+  const [tracings, setTracings] = useState<Tracing[]>([]);
 
   const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
     return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries`)
@@ -454,12 +525,57 @@ const ModelCustomInputArea = () => {
       .then((res) =>
         camelcaseKeys(res, {
           deep: true,
-          stopPaths: ["context", "logits_tokens"],
+          stopPaths: ["context", "logits.tokens"],
         })
       )
       .then((res) => ModelGenerationSchema.parse(res));
     setSample(sample);
-  }, [doGenerate, customInput, maxNewTokens, topK, topP, selectedDictionaries]);
+    setSampleSteerings(steerings.filter((s) => s.sae !== null));
+    setTracings([]);
+  }, [doGenerate, customInput, maxNewTokens, topK, topP, steerings, selectedDictionaries]);
+
+  const [tracingState, trace] = useAsyncFn(
+    async (node: TracingAction) => {
+      if (!sample) return;
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/model/trace`, {
+        method: "POST",
+        body: JSON.stringify(
+          snakecaseKeys({
+            inputText: sample.tokenIds,
+            saes: selectedDictionaries,
+            steerings: sampleSteerings,
+            tracings: [node],
+            tracingThreshold,
+            tracingTopK,
+            detachAtAttnScores,
+          })
+        ),
+        headers: {
+          Accept: "application/x-msgpack",
+          "Content-Type": "application/json",
+        },
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            throw new Error(await res.text());
+          }
+          return res;
+        })
+        .then(async (res) => await res.arrayBuffer())
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .then((res) => decode(new Uint8Array(res)) as any)
+        .then((res) => camelcaseKeys(res, { deep: true, stopPaths: ["context"] }))
+        .then((res) => TracingOutputSchema.parse(res));
+
+      setTracings((prev) => [
+        ...prev.filter((t) => !res.tracings.some((r) => r.node.id === t.node.id)),
+        ...res.tracings,
+      ]);
+    },
+    [sample, selectedDictionaries, sampleSteerings, tracingThreshold, tracingTopK, detachAtAttnScores]
+  );
+
+  const loading = state.loading || tracingState.loading;
 
   return (
     <div className="flex flex-col gap-4">
@@ -467,7 +583,7 @@ const ModelCustomInputArea = () => {
       <div className="container grid grid-cols-4 justify-center items-center gap-4 px-20">
         <span className="font-bold justify-self-end">Do generate:</span>
         <div className="col-span-3 flex items-center space-x-2">
-          <Switch id="do-generate" checked={doGenerate} onCheckedChange={setDoGenerate} disabled={state.loading} />
+          <Switch id="do-generate" checked={doGenerate} onCheckedChange={setDoGenerate} disabled={loading} />
           <SLabel htmlFor="do-generate" className="text-sm text-muted-foreground">
             {doGenerate
               ? "Model will generate new contents based on the following configuration."
@@ -476,7 +592,7 @@ const ModelCustomInputArea = () => {
         </div>
         <span className="font-bold justify-self-end">Max new tokens:</span>
         <Input
-          disabled={state.loading || !doGenerate}
+          disabled={loading || !doGenerate}
           className="bg-white"
           type="number"
           value={maxNewTokens.toString()}
@@ -484,7 +600,7 @@ const ModelCustomInputArea = () => {
         />
         <span className="font-bold justify-self-end">Top K:</span>
         <Input
-          disabled={state.loading || !doGenerate}
+          disabled={loading || !doGenerate}
           className="bg-white"
           type="number"
           value={topK.toString()}
@@ -492,7 +608,7 @@ const ModelCustomInputArea = () => {
         />
         <span className="font-bold justify-self-end">Top P:</span>
         <Input
-          disabled={state.loading || !doGenerate}
+          disabled={loading || !doGenerate}
           className="bg-white"
           type="number"
           value={topP.toString()}
@@ -502,7 +618,7 @@ const ModelCustomInputArea = () => {
         <span className="font-bold justify-self-end">SAEs:</span>
         <MultipleSelector
           className="bg-white"
-          disabled={state.loading}
+          disabled={loading}
           options={dictionariesState.value?.map((name) => ({ value: name, label: name })) || []}
           commandProps={{
             className: "col-span-3",
@@ -510,7 +626,13 @@ const ModelCustomInputArea = () => {
           hidePlaceholderWhenSelected
           placeholder="Bind SAEs to the language model to see features activated in the generation."
           value={selectedDictionaries.map((name) => ({ value: name, label: name }))}
-          onChange={(value) => setSelectedDictionaries(value.map((v) => v.value))}
+          onChange={(value) => {
+            const selectedDictionaries = value.map((v) => v.value);
+            setSelectedDictionaries(selectedDictionaries);
+            setSteerings((prev) =>
+              prev.map((s) => (!s.sae || selectedDictionaries.includes(s.sae) ? s : { ...s, sae: null }))
+            );
+          }}
           emptyIndicator={
             <p className="w-full text-center text-lg leading-10 text-muted-foreground">No dictionaries found.</p>
           }
@@ -528,14 +650,14 @@ const ModelCustomInputArea = () => {
                       setSteerings((prev) => prev.map((s, j) => (i === j ? { ...s, sae: value } : s)));
                     }}
                     options={selectedDictionaries.map((name) => ({ value: name, label: name }))}
-                    disabled={state.loading}
+                    disabled={loading}
                     placeholder="Select a dictionary to steer the generation."
                     commandPlaceholder="Search for a selected dictionary..."
                     emptyIndicator="No options found"
                   />
                   <span className="text-muted-foreground">#</span>
                   <Input
-                    disabled={state.loading}
+                    disabled={loading}
                     className="bg-white"
                     type="number"
                     value={steering.featureIndex.toString()}
@@ -546,7 +668,7 @@ const ModelCustomInputArea = () => {
                     }}
                   />
                   <Select
-                    disabled={state.loading}
+                    disabled={loading}
                     value={steering.steeringType}
                     onValueChange={(value) => {
                       if (value === "times" || value === "add" || value === "set")
@@ -578,7 +700,7 @@ const ModelCustomInputArea = () => {
                     </SelectContent>
                   </Select>
                   <Input
-                    disabled={state.loading || steering.steeringType === "ablate"}
+                    disabled={loading || steering.steeringType === "ablate"}
                     className="bg-white"
                     type={steering.steeringType === "ablate" ? "text" : "number"}
                     value={steering.steeringValue?.toString() || ""}
@@ -618,16 +740,51 @@ const ModelCustomInputArea = () => {
               </div>
             </Fragment>
           ))}
+        {sample && selectedDictionaries.length > 0 && (
+          <Fragment>
+            <Separator className="col-span-4" />
+            <span className="font-bold justify-self-end">Tracing Threshold:</span>
+            <Input
+              disabled={loading}
+              className="bg-white"
+              type="number"
+              value={tracingThreshold.toString()}
+              onChange={(e) => setTracingThreshold(parseFloat(e.target.value))}
+            />
+            <span className="font-bold justify-self-end">Tracing Top K:</span>
+            <Input
+              disabled={loading}
+              className="bg-white"
+              value={tracingTopK?.toString() || ""}
+              onChange={(e) => setTracingTopK(e.target.value.trim() ? parseInt(e.target.value.trim()) : null)}
+            />
+            <span className="font-bold justify-self-end">Detach at Attention Scores:</span>
+            <div className="col-span-3 flex items-center space-x-2">
+              <Switch
+                id="detach-at-attn-scores"
+                checked={detachAtAttnScores}
+                onCheckedChange={setDetachAtAttnScores}
+                disabled={loading}
+              />
+              <SLabel htmlFor="detach-at-attn-scores" className="text-sm text-muted-foreground">
+                {detachAtAttnScores
+                  ? "Gradients will stop at the attention scores. This enables users to see respective functionalities of the QK and OV circuits."
+                  : "Gradients will flow through the attention scores. An overall attribution will be shown."}
+              </SLabel>
+            </div>
+          </Fragment>
+        )}
       </div>
       <Textarea
         placeholder="Type your custom input here."
         value={customInput}
         onChange={(e) => setCustomInput(e.target.value)}
       />
-      <Button onClick={submit} disabled={state.loading}>
+      <Button onClick={submit} disabled={loading}>
         Submit
       </Button>
       {state.error && <p className="text-red-500">{state.error.message}</p>}
+      {tracings.length > 0 && <CircuitViewer tracings={tracings} onTrace={trace} onTracingsChange={setTracings} />}
       {sample && (
         <ModelSample
           sample={sample}
@@ -637,6 +794,7 @@ const ModelCustomInputArea = () => {
               return [...steerings, { sae: name, featureIndex, steeringType: "times", steeringValue: 1 }];
             });
           }}
+          onTrace={trace}
         />
       )}
     </div>
