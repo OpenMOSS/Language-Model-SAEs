@@ -156,7 +156,7 @@ class SparseAutoEncoder(HookedRootModule):
             def topk_activation(hidden_pre):
                 feature_acts = torch.clamp(hidden_pre, min=0.0)
                 if self.cfg.sparsity_include_decoder_norm:
-                    true_feature_acts = feature_acts * self.decoder_norm(during_init=during_init)
+                    true_feature_acts = feature_acts * self.decoder_norm(during_init=False)
                 else:
                     true_feature_acts = feature_acts
                 topk = torch.topk(true_feature_acts, k=self.current_k, dim=-1)
@@ -202,6 +202,7 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: Literal[False] = False,
+        during_init: bool = False,
     ) -> Union[
         Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]
     ]: ...
@@ -214,6 +215,7 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: Literal[True],
+        during_init: bool,
     ) -> tuple[
         Union[
             Float[torch.Tensor, "batch d_sae"],
@@ -731,9 +733,10 @@ class SparseAutoEncoder(HookedRootModule):
         self, state_dict: Dict[str, torch.Tensor]
     ) -> Dict[str, torch.Tensor]:
         assert self.cfg.norm_activation == 'dataset-wise'
+        assert self.cfg.dataset_average_activation_norm is not None
 
-        input_norm_factor = self.compute_norm_factor(x=None, hook_point='in')
-        output_norm_factor = self.compute_norm_factor(x=None, hook_point='out')
+        input_norm_factor = math.sqrt(self.cfg.d_model) / self.cfg.dataset_average_activation_norm['in']
+        output_norm_factor = math.sqrt(self.cfg.d_model) / self.cfg.dataset_average_activation_norm['out']
 
         state_dict["encoder.bias"] = state_dict["encoder.bias"] / input_norm_factor
         state_dict["decoder.bias"] = state_dict["decoder.bias"] / output_norm_factor

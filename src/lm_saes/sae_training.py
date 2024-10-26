@@ -387,7 +387,7 @@ def prune_sae(
             batch[cfg.sae.hook_point_out],
         )
 
-        feature_acts = sae.encode(activation_in, label=activation_out)
+        feature_acts = sae.encode(activation_in)
 
         act_times += (feature_acts > 0).int().sum(0)
         max_acts = torch.max(max_acts, feature_acts.max(0).values)
