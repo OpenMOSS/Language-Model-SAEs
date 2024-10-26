@@ -60,7 +60,7 @@ def _parse_repo_id(pretrained_name_or_path):
         sublayer = match.group(2)
         exp_factor = match.group(3)
         
-        return f"LX{letter}-{number_after_dash}x"
+        return f"LX{sublayer}-{exp_factor}x"
 
     output_string = re.sub(pattern, replace_match, pretrained_name_or_path)
 

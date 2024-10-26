@@ -16,6 +16,8 @@ def post_process_topk_to_jumprelu_for_inference(
     cfg: LanguageModelSAERunnerConfig
 ):
     batch = activation_store.next(batch_size=32768)
+    assert batch is not None, "Activation store is empty"
+    
     activation_in, activation_out = (
         batch[sae.cfg.hook_point_in],
         batch[sae.cfg.hook_point_out],
