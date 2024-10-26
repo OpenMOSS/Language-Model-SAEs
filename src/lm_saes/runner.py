@@ -29,6 +29,7 @@ from lm_saes.activation.activation_store import ActivationStore
 from lm_saes.sae_training import prune_sae, train_sae
 from lm_saes.analysis.sample_feature_activations import sample_feature_activations
 from lm_saes.analysis.features_to_logits import features_to_logits
+from lm_saes.post_processing import post_process_topk_to_jumprelu_for_inference
 from torch.nn.parallel import DistributedDataParallel as DDP
 from lm_saes.utils.misc import is_master
 
@@ -237,9 +238,8 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
-    model.offload_params_after(
-        cfg.act_store.hook_points[0], torch.tensor([[0]], device=cfg.lm.device)
-    )
+
+
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
@@ -471,3 +471,43 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
             },
             dictionary_series=cfg.exp_series,
         )
+
+
+
+@torch.no_grad()
+def post_process_topk_to_jumprelu_runner(cfg: LanguageModelSAERunnerConfig):
+    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        (
+            cfg.lm.model_name
+            if cfg.lm.model_from_pretrained_path is None
+            else cfg.lm.model_from_pretrained_path
+        ),
+        cache_dir=cfg.lm.cache_dir,
+        local_files_only=cfg.lm.local_files_only,
+    )
+
+    hf_tokenizer = AutoTokenizer.from_pretrained(
+        (
+            cfg.lm.model_name
+            if cfg.lm.model_from_pretrained_path is None
+            else cfg.lm.model_from_pretrained_path
+        ),
+        trust_remote_code=True,
+        use_fast=True,
+        add_bos_token=True,
+    )
+    model = HookedTransformer.from_pretrained_no_processing(
+        cfg.lm.model_name,
+        use_flash_attn=cfg.lm.use_flash_attn,
+        device=cfg.lm.device,
+        cache_dir=cfg.lm.cache_dir,
+        hf_model=hf_model,
+        tokenizer=hf_tokenizer,
+        dtype=cfg.lm.dtype,
+    )
+
+
+    model.eval()
+    activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
+    post_process_topk_to_jumprelu_for_inference(sae, activation_store, cfg)

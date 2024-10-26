@@ -5,6 +5,7 @@ import os
 import shutil
 from huggingface_hub import create_repo, upload_folder, snapshot_download
 from lm_saes.utils.misc import print_once
+import re
 
 
 def upload_pretrained_sae_to_hf(sae_path: str, repo_id: str, private: bool = False):
@@ -51,11 +52,31 @@ def download_pretrained_sae_from_hf(repo_id: str, hook_point: str):
     snapshot_path = snapshot_download(repo_id=repo_id, allow_patterns=[f"{hook_point}/*"])
     return os.path.join(snapshot_path, hook_point)
 
+def _parse_repo_id(pretrained_name_or_path):
+    pattern = r"L(\d{1,2})([RAMTC])-(8|32)x"
+
+    def replace_match(match):
+        layer = match.group(1)
+        sublayer = match.group(2)
+        exp_factor = match.group(3)
+        
+        return f"LX{letter}-{number_after_dash}x"
+
+    output_string = re.sub(pattern, replace_match, pretrained_name_or_path)
+
+    return output_string
+
+
 def parse_pretrained_name_or_path(pretrained_name_or_path: str):
     if os.path.exists(pretrained_name_or_path):
         return pretrained_name_or_path
     else:
         print_once(f'Local path `{pretrained_name_or_path}` not found. Downloading from huggingface model hub.')
-        repo_id = "/".join(pretrained_name_or_path.split("/")[:2])
-        hook_point = "/".join(pretrained_name_or_path.split("/")[2:])
+        if pretrained_name_or_path.startswith('fnlp'):
+            print_once(f'Downloading Llama Scope SAEs.')
+            repo_id = _parse_repo_id(pretrained_name_or_path)
+            hook_point = pretrained_name_or_path.split("/")[1]
+        else:
+            repo_id = "/".join(pretrained_name_or_path.split("/")[:2])
+            hook_point = "/".join(pretrained_name_or_path.split("/")[2:])
         return download_pretrained_sae_from_hf(repo_id, hook_point)

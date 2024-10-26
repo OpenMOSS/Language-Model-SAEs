@@ -59,3 +59,10 @@ def convert_str_to_torch_dtype(str_dtype: str) -> torch.dtype:
         return str_dtype_map[str_dtype]
     else:
         raise ValueError(f"Unsupported data type: {str_dtype}. Supported data types: {list(str_dtype_map.keys())}.")
+
+def convert_torch_dtype_to_str(dtype: torch.dtype) -> str:
+    dtype_str_map = {v: k for k, v in str_dtype_map.items()}
+    if dtype in dtype_str_map:
+        return dtype_str_map[dtype]
+    else:
+        raise ValueError(f"Unsupported data type: {dtype}. Supported data types: {list(dtype_str_map.values())}.")

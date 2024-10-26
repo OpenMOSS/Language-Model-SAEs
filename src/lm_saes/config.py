@@ -11,7 +11,7 @@ import os
 
 from lm_saes.utils.config import FlattenableModel
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-from lm_saes.utils.misc import convert_str_to_torch_dtype, print_once, is_master
+from lm_saes.utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str, print_once, is_master
 
 from transformer_lens.loading_from_pretrained import get_official_model_name
 from torch.distributed.device_mesh import DeviceMesh
@@ -33,8 +33,6 @@ class BaseModelConfig(BaseConfig):
         return {
             field.name: getattr(self, field.name)
             for field in fields(self)
-            if field.name
-            not in [base_field.name for base_field in fields(BaseModelConfig)]
         }
 
     @classmethod
@@ -92,8 +90,14 @@ class LanguageModelConfig(BaseModelConfig):
         assert os.path.exists(
             sae_path
         ), f"{sae_path} does not exist. Unable to save LanguageModelConfig."
+
+        d = self.to_dict()
+        for k, v in d.items():
+            if isinstance(v, torch.dtype):
+                d[k] = convert_torch_dtype_to_str(v)
+
         with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
-            json.dump(self.to_dict(), f, indent=4)
+            json.dump(d, f, indent=4)
 
 
 @dataclass(kw_only=True)
@@ -188,6 +192,10 @@ class SAEConfig(BaseModelConfig):
     expansion_factor: int = 128
     d_model: int = 768
     d_sae: int = None  # type: ignore
+    bias_init_method: str = 'all_zero'
+    act_fn: str = 'relu'
+    jump_relu_threshold: float = 0.0
+    
     """ The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor """
     norm_activation: str = "token-wise"  # none, token-wise, batch-wise, dataset-wise
     dataset_average_activation_norm: Dict[str, float] | None = None
@@ -200,9 +208,15 @@ class SAEConfig(BaseModelConfig):
     init_encoder_norm: float | None = None  # type: ignore
     init_encoder_with_decoder_transpose: bool = True
 
+    lp: int = 1
     l1_coefficient: float = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
-    lp: int = 1
+    top_k: int = 50
+    k_warmup_steps: int | float = 0.1
+
+    
+
+    use_batch_norm_mse: bool = True  # will set to False in the future
 
     use_ghost_grads: bool = False
 
@@ -281,6 +295,11 @@ class SAEConfig(BaseModelConfig):
         if remove_loading_info:
             d.pop("sae_pretrained_name_or_path", None)
             d.pop("strict_loading", None)
+
+        for k, v in d.items():
+            if isinstance(v, torch.dtype):
+                d[k] = convert_torch_dtype_to_str(v)
+
         with open(os.path.join(sae_path, "hyperparams.json"), "w") as f:
             json.dump(d, f, indent=4)
 
@@ -298,7 +317,7 @@ class AutoInterpConfig(BaseConfig):
     openai: OpenAIConfig
     num_sample: int = 10
     p: float = 0.7
-    num_left_token: int = 10
+    num_left_token: int = 20
     num_right_token: int = 5
 
 
@@ -323,7 +342,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     lr_scheduler_name: str = (
         "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup, exponentialwarmup
     )
-    lr_end: Optional[float] = 1 / 32
+    lr_end_ratio: Optional[float] = 1 / 32
     lr_warm_up_steps: int | float = 0.1
     lr_cool_down_steps: int | float = 0.1
     train_batch_size: int = 4096
@@ -371,13 +390,21 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
             assert 0 <= self.lr_warm_up_steps <= 1.0
             self.lr_warm_up_steps = int(self.lr_warm_up_steps * total_training_steps)
             print_once(f"Learning rate warm up steps: {self.lr_warm_up_steps}")
-        if isinstance(self.sae.l1_coefficient_warmup_steps, float):
+        if isinstance(self.sae.l1_coefficient_warmup_steps, float) and self.sae.act_fn != 'topk':
             assert 0 <= self.sae.l1_coefficient_warmup_steps <= 1.0
             self.sae.l1_coefficient_warmup_steps = int(
                 self.sae.l1_coefficient_warmup_steps * total_training_steps
             )
             print_once(
                 f"L1 coefficient warm up steps: {self.sae.l1_coefficient_warmup_steps}"
+            )
+        if isinstance(self.sae.k_warmup_steps, float) and self.sae.act_fn == 'topk':
+            assert 0 <= self.sae.k_warmup_steps <= 1.0
+            self.sae.k_warmup_steps = int(
+                self.sae.k_warmup_steps * total_training_steps
+            )
+            print_once(
+                f"K warm up steps: {self.sae.k_warmup_steps}"
             )
         if isinstance(self.lr_cool_down_steps, float):
             assert 0 <= self.lr_cool_down_steps <= 1.0
@@ -414,6 +441,8 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
                 ]
             else:
                 raise ValueError(f"Unknown checkpoint save mode: {self.check_point_save_mode}")
+
+        assert 0 <= self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
 
 @dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
