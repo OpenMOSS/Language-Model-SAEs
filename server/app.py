@@ -1,8 +1,8 @@
 import os
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, Union, cast
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import torch
 
 from transformer_lens.hook_points import HookPoint
@@ -23,7 +23,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from lm_saes.analysis.auto_interp import check_description, generate_description
-from lm_saes.circuit.context import apply_sae
+from lm_saes.circuit.context import apply_sae, detach_at
 from lm_saes.config import AutoInterpConfig, LanguageModelConfig, SAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.sae import SparseAutoEncoder
@@ -94,7 +94,7 @@ def get_sae(dictionary_name: str) -> SparseAutoEncoder:
 
 def make_serializable(obj):
 	if isinstance(obj, torch.Tensor):
-		return obj.cpu().numpy().tolist()
+		return obj.tolist()
 	if isinstance(obj, np.ndarray):
 		return obj.tolist()
 	if isinstance(obj, dict):
@@ -102,6 +102,18 @@ def make_serializable(obj):
 	if isinstance(obj, list):
 		return [make_serializable(v) for v in obj]
 	return obj
+
+@app.exception_handler(AssertionError)
+async def assertion_error_handler(request, exc):
+	return Response(content=str(exc), status_code=400)
+
+@app.exception_handler(torch.cuda.OutOfMemoryError)
+async def oom_error_handler(request, exc):
+	print("CUDA Out of memory. Clearing cache.")
+	print("Current cache:", sae_cache.keys())
+	# Clear cache
+	sae_cache.clear()
+	return Response(content="CUDA Out of memory", status_code=500)
 
 
 @app.get("/dictionaries")
@@ -259,7 +271,7 @@ def feature_activation_custom_input(
 				bytearray([byte_decoder[c] for c in t])
 				for t in model.tokenizer.convert_ids_to_tokens(input[0])
 			],
-			"feature_acts": feature_acts[:, feature_index].cpu().numpy().tolist(),
+			"feature_acts": feature_acts[:, feature_index].tolist(),
 		}
 
 	return Response(content=msgpack.packb(sample), media_type="application/x-msgpack")
@@ -289,15 +301,15 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
 				for t in model.tokenizer.convert_ids_to_tokens(input[0])
 			],
 			"feature_acts_indices": [
-				feature_acts[i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()
+				feature_acts[i].nonzero(as_tuple=True)[0].tolist()
 				for i in range(feature_acts.shape[0])
 			],
 			"feature_acts": [
-				feature_acts[i][feature_acts[i].nonzero(as_tuple=True)[0]].cpu().numpy().tolist()
+				feature_acts[i][feature_acts[i].nonzero(as_tuple=True)[0]].tolist()
 				for i in range(feature_acts.shape[0])
 			],
 			"max_feature_acts": [
-				[max_feature_acts[j] for j in feature_acts[i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()]
+				[max_feature_acts[j] for j in feature_acts[i].nonzero(as_tuple=True)[0].tolist()]
 				for i in range(feature_acts.shape[0])
 			]
 		}
@@ -310,8 +322,28 @@ class SteeringConfig(BaseModel):
 	steering_type: Literal["times", "add", "set", "ablate"]
 	steering_value: float | None = None
 
+class FeatureNode(BaseModel):
+	type: Literal["feature"]
+	sae: str
+	feature_index: int
+	position: int
+
+class LogitsNode(BaseModel):
+	type: Literal["logits"]
+	position: int
+	token_id: int
+
+class AttnScoreNode(BaseModel):
+	type: Literal["attn-score"]
+	layer: int
+	head: int
+	query: int
+	key: int
+
+Node = Annotated[Union[FeatureNode, LogitsNode, AttnScoreNode], Field(discriminator="type")]
+
 class ModelGenerateRequest(BaseModel):
-	input_text: str
+	input_text: str | list[int]
 	max_new_tokens: int = 128
 	top_k: int = 50
 	top_p: float = 0.95
@@ -330,7 +362,7 @@ def model_generate(request: ModelGenerateRequest):
 		for _, name in saes
 	}
 	assert all(steering.sae in request.saes for steering in request.steerings), "Steering SAE not found"
-	
+
 	def generate_steering_hook(steering: SteeringConfig):
 		def steering_hook(tensor: torch.Tensor, hook: HookPoint):
 			assert len(tensor.shape) == 3
@@ -355,41 +387,196 @@ def model_generate(request: ModelGenerateRequest):
 	with torch.no_grad():
 		with apply_sae(model, [sae for sae, _ in saes]):
 			with model.hooks(steerings_hooks):
-				input = model.to_tokens(request.input_text, prepend_bos=False)
-				output = model.generate(input, max_new_tokens=request.max_new_tokens, top_k=request.top_k, top_p=request.top_p)
-				output = output.clone()
-				logits, cache = model.run_with_cache(output, names_filter=[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes])
+				input = model.to_tokens(request.input_text, prepend_bos=False) if isinstance(request.input_text, str) else torch.tensor([request.input_text], device=device)
+				if request.max_new_tokens > 0:
+					output = model.generate(input, max_new_tokens=request.max_new_tokens, top_k=request.top_k, top_p=request.top_p)
+					input = output.clone()
+				name_filter = [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post" for sae, _ in saes]
+				logits, cache = model.run_with_ref_cache(input, names_filter=name_filter)
 				logits_topk = [torch.topk(l, request.return_logits_top_k) for l in logits[0]]
+
 				result = {
 					"context": [
 						bytearray([byte_decoder[c] for c in t])
-						for t in model.tokenizer.convert_ids_to_tokens(output[0])
+						for t in model.tokenizer.convert_ids_to_tokens(input[0])
 					],
-					"logits": [l.values.cpu().numpy().tolist() for l in logits_topk],
-					"logits_tokens": [
-						[
-							bytearray([byte_decoder[c] for c in t])
-							for t in model.tokenizer.convert_ids_to_tokens(l.indices)
-						] for l in logits_topk
-					],
-					"input_mask": [1 for _ in range(len(input[0]))] + [0 for _ in range(len(output[0]) - len(input[0]))],
+					"token_ids": input[0].tolist(),
+					"logits": {
+						"logits": [l.values.tolist() for l in logits_topk],
+						"tokens": [
+							[
+								bytearray([byte_decoder[c] for c in t])
+								for t in model.tokenizer.convert_ids_to_tokens(l.indices)
+							] for l in logits_topk
+						],
+						"token_ids": [
+							l.indices.tolist()
+							for l in logits_topk
+						],
+					},
+					"input_mask": [1 for _ in range(len(input[0]))] + [0 for _ in range(len(input[0]) - len(input[0]))],
 					"sae_info": [
 						{
 							"name": name,
 							"feature_acts_indices": [
-								cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()
+								cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0].tolist()
 								for i in range(cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0].shape[0])
 							],
 							"feature_acts": [
-								cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i][cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0]].cpu().numpy().tolist()
+								cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i][cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0]].tolist()
 								for i in range(cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0].shape[0])
 							],
 							"max_feature_acts": [
-								[max_feature_acts[name][j] for j in cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0].cpu().numpy().tolist()]
+								[max_feature_acts[name][j] for j in cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0][i].nonzero(as_tuple=True)[0].tolist()]
 								for i in range(cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts"][0].shape[0])
 							]
 						} for sae, name in saes
+					]
+				}
+	return Response(content=msgpack.packb(result), media_type="application/x-msgpack")
+
+class ModelTraceRequest(BaseModel):
+	input_text: str | list[int]
+	saes: list[str] = []
+	steerings: list[SteeringConfig] = []
+	tracings: list[Node] = []
+	tracing_threshold: float = 0.1
+	tracing_top_k: int | None = None
+	detach_at_attn_scores: bool = False
+
+@app.post("/model/trace")
+def model_trace(request: ModelTraceRequest):
+	dictionaries = client.list_dictionaries(dictionary_series=dictionary_series)
+	assert len(dictionaries) > 0, "No dictionaries found. Model name cannot be inferred."
+	model = get_model(dictionaries[0])
+	saes = [(get_sae(name), name) for name in request.saes]
+	max_feature_acts = {
+		name: client.get_max_feature_acts(name, dictionary_series=dictionary_series)
+		for _, name in saes
+	}
+	assert all(steering.sae in request.saes for steering in request.steerings), "Steering SAE not found"
+	assert all(tracing.sae in request.saes for tracing in request.tracings if isinstance(tracing, FeatureNode)), "Tracing SAE not found"
+	
+	def generate_steering_hook(steering: SteeringConfig):
+		def steering_hook(tensor: torch.Tensor, hook: HookPoint):
+			assert len(tensor.shape) == 3
+			tensor = tensor.clone()
+			if steering.steering_type == "times":
+				assert steering.steering_value is not None
+				tensor[:, :, steering.feature_index] *= steering.steering_value
+			elif steering.steering_type == "ablate":
+				tensor[:, :, steering.feature_index] = 0
+			elif steering.steering_type == "add":
+				assert steering.steering_value is not None
+				tensor[:, :, steering.feature_index] += steering.steering_value
+			elif steering.steering_type == "set":
+				assert steering.steering_value is not None
+				tensor[:, :, steering.feature_index] = steering.steering_value
+			return tensor
+		sae = get_sae(steering.sae)
+		return f"{sae.cfg.hook_point_out}.sae.hook_feature_acts", steering_hook
+	
+	steerings_hooks = [generate_steering_hook(steering) for steering in request.steerings]
+
+	candidates = [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes]
+	if request.detach_at_attn_scores:
+		candidates += [f"blocks.{i}.attn.hook_attn_scores" for i in range(model.cfg.n_layers)]
+
+	with apply_sae(model, [sae for sae, _ in saes]):
+		with model.hooks(steerings_hooks):
+			with detach_at(model, candidates):
+				input = model.to_tokens(request.input_text, prepend_bos=False) if isinstance(request.input_text, str) else torch.tensor([request.input_text], device=device)
+				name_filter = [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre" for sae, _ in saes] + [f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post" for sae, _ in saes]
+				if request.detach_at_attn_scores:
+					name_filter += [f"blocks.{i}.attn.hook_attn_scores.pre" for i in range(model.cfg.n_layers)] + [f"blocks.{i}.attn.hook_attn_scores.post" for i in range(model.cfg.n_layers)]
+					name_filter += [f"blocks.{i}.attn.hook_pattern" for i in range(model.cfg.n_layers)]
+				logits, cache = model.run_with_ref_cache(input, names_filter=name_filter)
+				tracing_results = []
+				for tracing in request.tracings:
+					model.zero_grad()
+					if isinstance(tracing, LogitsNode):
+						assert tracing.position < logits.shape[1], "Position out of range"
+						assert tracing.token_id < logits.shape[2], "Token id out of range"
+						logits[:, tracing.position, tracing.token_id].backward(retain_graph=True)
+						node = {**tracing.model_dump(), "activation": logits[0, tracing.position, tracing.token_id].item(), "id": f"logits-{tracing.position}-{tracing.token_id}"}
+					elif isinstance(tracing, FeatureNode):
+						sae = get_sae(tracing.sae)
+						assert tracing.position < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[0], "Position out of range"
+						assert tracing.feature_index < cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0].shape[1], "Feature index out of range"
+						cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][tracing.position, tracing.feature_index].backward(retain_graph=True)
+						node = {**tracing.model_dump(), "activation": cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.pre"][0][tracing.position, tracing.feature_index].item(), "max_activation": max_feature_acts[tracing.sae][tracing.feature_index], "id": f"feature-{tracing.sae}-{tracing.position}-{tracing.feature_index}"}
+					elif isinstance(tracing, AttnScoreNode):
+						assert tracing.layer < model.cfg.n_layers, "Layer out of range"
+						attn_scores = cache[f"blocks.{tracing.layer}.attn.hook_attn_scores.pre"]
+						assert tracing.head < attn_scores.shape[1], "Head out of range"
+						assert tracing.query < attn_scores.shape[2], "Query out of range"
+						assert tracing.key < attn_scores.shape[3], "Key out of range"
+						attn_scores[:, tracing.head, tracing.query, tracing.key].backward(retain_graph=True)
+						node = {**tracing.model_dump(), "activation": attn_scores[0, tracing.head, tracing.query, tracing.key].item(), "id": f"attn-score-{tracing.layer}-{tracing.head}-{tracing.query}-{tracing.key}", "pattern": cache[f"blocks.{tracing.layer}.attn.hook_pattern"][0][tracing.head, tracing.query, tracing.key].item()}
+					else:
+						raise AssertionError("Unknown node type")
+					
+					contributors = []
+					for sae, name in saes:
+						feature_acts = cache[f"{sae.cfg.hook_point_out}.sae.hook_feature_acts.post"]
+						if feature_acts.grad is None:
+							continue
+						attributions = feature_acts.grad[0] * feature_acts[0]
+						for index in (attributions > request.tracing_threshold).nonzero():
+							index = tuple(index.tolist())
+							contributors.append(
+								{
+									"node": {
+										"type": "feature",
+										"sae": name,
+										"feature_index": index[1],
+										"position": index[0],
+										"activation": feature_acts[0][index].item(),
+										"max_activation": max_feature_acts[name][index[1]],
+										"id": f"feature-{name}-{index[0]}-{index[1]}"
+									},
+									"attribution": attributions[index].item(),
+								}
+							)
+						feature_acts.grad.zero_()
+
+					if request.detach_at_attn_scores:
+						for i in range(model.cfg.n_layers):
+							attn_scores = cache[f"blocks.{i}.attn.hook_attn_scores.post"]
+							if attn_scores.grad is None:
+								continue
+							attributions = attn_scores.grad[0] * attn_scores[0]
+							for index in (attributions > request.tracing_threshold).nonzero():
+								index = tuple(index.tolist())
+								contributors.append(
+									{
+										"node": {
+											"type": "attn-score",
+											"layer": i,
+											"head": index[0],
+											"query": index[1],
+											"key": index[2],
+											"activation": attn_scores[0][index].item(),
+											"pattern": cache[f"blocks.{i}.attn.hook_pattern"][0][index].item(),
+											"id": f"attn-score-{i}-{index[0]}-{index[1]}-{index[2]}"
+										},
+										"attribution": attributions[index].item(),
+									}
+								)
+							attn_scores.grad.zero_()
+
+					if request.tracing_top_k is not None:
+						contributors = sorted(contributors, key=lambda c: -c["attribution"])[:request.tracing_top_k]					
+					
+					tracing_results.append({"node": node, "contributors": contributors})
+
+				result = {
+					"context": [
+						bytearray([byte_decoder[c] for c in t])
+						for t in model.tokenizer.convert_ids_to_tokens(input[0])
 					],
+					"token_ids": input[0].tolist(),
+					"tracings": tracing_results,
 				}
 	return Response(content=msgpack.packb(result), media_type="application/x-msgpack")
 
