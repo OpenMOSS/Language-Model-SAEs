@@ -86,7 +86,7 @@ def get_scheduler(
             lr_lambda=lambda steps: min(
                 1.0,
                 (steps + 1) / warm_up_steps,
-                lr_end_ratio + (1 - lr_end_ratio) / cool_down_steps * max(training_steps - steps, 1),
+                lr_end_ratio + (1 - lr_end_ratio) / cool_down_steps * max(training_steps - steps, 1),  # type: ignore
             )
         )
     elif scheduler_name.lower() == "constantwithwarmupsmooth":

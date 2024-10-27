@@ -164,7 +164,7 @@ def check_description(
         input_token = model.to_tokens(input_text)
         _, cache = model.run_with_cache_until(input_token, names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out], until=cfg.sae.hook_point_out)
         activation_in, activation_out = cache[cfg.sae.hook_point_in][0], cache[cfg.sae.hook_point_out][0]
-        feature_acts = sae.encode(activation_in, label=activation_out)
+        feature_acts = sae.encode(activation_in)
         max_value, max_pos = torch.max(feature_acts, dim=0)
         passed = torch.max(feature_acts) > 1
         result = {
