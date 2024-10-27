@@ -100,8 +100,8 @@ cfg = LanguageModelSAETrainingConfig.from_flattened(dict(
     lp=1,  # The p-norm to use for the L1 regularization.
     use_ghost_grads=False,  # Whether to use the ghost gradients for saving dead features.
     use_decoder_bias=True,
-    sparsity_include_decoder_norm=False,
-    remove_gradient_parallel_to_decoder_directions=True,
+    sparsity_include_decoder_norm=True,
+    remove_gradient_parallel_to_decoder_directions=False,
     apply_decoder_bias_to_pre_encoder=False,
     init_encoder_with_decoder_transpose=hook_in_suffix_abbr != "TC",
     init_decoder_norm=args.fix_norm,
