@@ -29,7 +29,7 @@ def apply_sae(
             def hook_out(tensor: torch.Tensor, hook: HookPoint):
                 nonlocal x
                 assert x is not None, "hook_in must be called before hook_out."
-                reconstructed = sae.forward(x, label=tensor)
+                reconstructed = sae.forward(x)
                 x = None
                 return reconstructed + (tensor - reconstructed).detach()
             return [(sae.cfg.hook_point_in, hook_in), (sae.cfg.hook_point_out, hook_out)]
