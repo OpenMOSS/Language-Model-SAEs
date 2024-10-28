@@ -1,19 +1,18 @@
-from typing import Dict
-from transformer_lens import HookedTransformer
-import torch
-from tqdm.auto import tqdm
 import os
-import torch.distributed as dist
+from typing import Dict
 
-from lm_saes.config import ActivationGenerationConfig
+import torch
+import torch.distributed as dist
+from tqdm.auto import tqdm
+from transformer_lens import HookedTransformer
+
 from lm_saes.activation.token_source import TokenSource
+from lm_saes.config import ActivationGenerationConfig
 from lm_saes.utils.misc import is_master, print_once
 
+
 @torch.no_grad()
-def make_activation_dataset(
-    model: HookedTransformer,
-    cfg: ActivationGenerationConfig
-):
+def make_activation_dataset(model: HookedTransformer, cfg: ActivationGenerationConfig):
     element_size = torch.finfo(cfg.lm.dtype).bits / 8
     token_act_size = element_size * cfg.lm.d_model
     max_tokens_per_chunk = cfg.chunk_size // token_act_size
@@ -33,10 +32,18 @@ def make_activation_dataset(
 
     n_tokens = 0
     chunk_idx = 0
-    pbar = tqdm(total=total_generating_tokens, desc=f"Activation dataset Rank {dist.get_rank()}" if dist.is_initialized() else "Activation dataset")
+    pbar = tqdm(
+        total=total_generating_tokens,
+        desc=f"Activation dataset Rank {dist.get_rank()}" if dist.is_initialized() else "Activation dataset",
+    )
 
     while n_tokens < total_generating_tokens:
-        act_dict = {hook_point: torch.empty((0, cfg.dataset.context_size, cfg.lm.d_model), dtype=cfg.lm.dtype, device=cfg.lm.device) for hook_point in cfg.hook_points}
+        act_dict = {
+            hook_point: torch.empty(
+                (0, cfg.dataset.context_size, cfg.lm.d_model), dtype=cfg.lm.dtype, device=cfg.lm.device
+            )
+            for hook_point in cfg.hook_points
+        }
         context = torch.empty((0, cfg.dataset.context_size), dtype=torch.long, device=cfg.lm.device)
 
         n_tokens_in_chunk = 0
@@ -53,8 +60,12 @@ def make_activation_dataset(
 
             pbar.update(tokens.size(0) * tokens.size(1))
 
-        position = torch.arange(cfg.dataset.context_size, device=cfg.lm.device, dtype=torch.long).unsqueeze(0).expand(context.size(0), -1)
-        
+        position = (
+            torch.arange(cfg.dataset.context_size, device=cfg.lm.device, dtype=torch.long)
+            .unsqueeze(0)
+            .expand(context.size(0), -1)
+        )
+
         for hook_point in cfg.hook_points:
             torch.save(
                 {
@@ -62,15 +73,29 @@ def make_activation_dataset(
                     "context": context,
                     "position": position,
                 },
-                os.path.join(cfg.activation_save_path, hook_point, f"chunk-{str(chunk_idx).zfill(5)}.pt" if not dist.is_initialized() else f"shard-{dist.get_rank()}-chunk-{str(chunk_idx).zfill(5)}.pt")
+                os.path.join(
+                    cfg.activation_save_path,
+                    hook_point,
+                    f"chunk-{str(chunk_idx).zfill(5)}.pt"
+                    if not dist.is_initialized()
+                    else f"shard-{dist.get_rank()}-chunk-{str(chunk_idx).zfill(5)}.pt",
+                ),
             )
         chunk_idx += 1
 
     pbar.close()
 
+
 @torch.no_grad()
 def list_activation_chunks(activation_path: str, hook_point: str) -> list[str]:
-    return sorted([os.path.join(activation_path, hook_point, f) for f in os.listdir(os.path.join(activation_path, hook_point)) if f.endswith(".pt")])
+    return sorted(
+        [
+            os.path.join(activation_path, hook_point, f)
+            for f in os.listdir(os.path.join(activation_path, hook_point))
+            if f.endswith(".pt")
+        ]
+    )
+
 
 @torch.no_grad()
 def load_activation_chunk(chunk_path: str) -> Dict[str, torch.Tensor]:
