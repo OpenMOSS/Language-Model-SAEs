@@ -42,7 +42,10 @@ jobs:
     name: Code Checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
       - name: Setup PDM
         uses: pdm-project/setup-pdm@v4
         # You are now able to use PDM in your workflow
