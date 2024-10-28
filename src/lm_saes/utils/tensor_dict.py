@@ -1,5 +1,6 @@
 import torch
 
+
 def sort_dict_of_tensor(
     tensor_dict: dict[str, torch.Tensor],
     sort_key: str,
@@ -19,7 +20,11 @@ def sort_dict_of_tensor(
         A dictionary of tensors sorted by the values of the specified tensor
     """
     sorted_idx = tensor_dict[sort_key].argsort(dim=sort_dim, descending=descending)
-    return {k: v.gather(sort_dim, sorted_idx.unsqueeze(-1).expand_as(v.reshape(*sorted_idx.shape, -1)).reshape_as(v)) for k, v in tensor_dict.items()}
+    return {
+        k: v.gather(sort_dim, sorted_idx.unsqueeze(-1).expand_as(v.reshape(*sorted_idx.shape, -1)).reshape_as(v))
+        for k, v in tensor_dict.items()
+    }
+
 
 def concat_dict_of_tensor(*dicts: dict[str, torch.Tensor], dim: int = 0) -> dict[str, torch.Tensor]:
     """

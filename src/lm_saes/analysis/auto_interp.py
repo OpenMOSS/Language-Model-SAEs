@@ -1,15 +1,13 @@
-from typing import Dict, Optional, cast
-import torch
-import os
-from datasets import Dataset
-from transformers import AutoTokenizer
-from tqdm import tqdm
-import tiktoken
 import random
 import traceback
+from typing import Dict, Optional, cast
+
+import tiktoken
+import torch
 from openai import OpenAI
-from lm_saes.config import AutoInterpConfig, SAEConfig
 from transformer_lens import HookedTransformer
+
+from lm_saes.config import AutoInterpConfig
 from lm_saes.sae import SparseAutoEncoder
 
 
@@ -119,9 +117,7 @@ def generate_description(
 ):
     tokenizer = model.tokenizer
     client = OpenAI(api_key=cfg.openai.openai_api_key, base_url=cfg.openai.openai_base_url)
-    prompt = _sample_sentences(
-        cfg, tokenizer, feature_activation
-    )
+    prompt = _sample_sentences(cfg, tokenizer, feature_activation)
     input_tokens = _num_tokens_from_string(prompt)
     response = _chat_completion(client, prompt)
     output_tokens = _num_tokens_from_string(response)
@@ -134,7 +130,6 @@ def generate_description(
         "cost": cost,
     }
     return result
-
 
 
 def check_description(
@@ -162,8 +157,15 @@ def check_description(
         cost = _calculate_cost(input_tokens, output_tokens)
         input_index, input_text = index, response
         input_token = model.to_tokens(input_text)
-        _, cache = model.run_with_cache_until(input_token, names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out], until=cfg.sae.hook_point_out)
-        activation_in, activation_out = cache[cfg.sae.hook_point_in][0], cache[cfg.sae.hook_point_out][0]
+        _, cache = model.run_with_cache_until(
+            input_token,
+            names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
+            until=cfg.sae.hook_point_out,
+        )
+        activation_in, _ = (
+            cache[cfg.sae.hook_point_in][0],
+            cache[cfg.sae.hook_point_out][0],
+        )
         feature_acts = sae.encode(activation_in)
         max_value, max_pos = torch.max(feature_acts, dim=0)
         passed = torch.max(feature_acts) > 1
@@ -183,7 +185,7 @@ def check_description(
     else:
         assert feature_activation is not None, "Feature activations are not provided."
         prompt_prefix = "We are analyzing the activation levels of features in a neural network, where each feature activates certain tokens in a text. Each token's activation value indicates its relevance to the feature, with higher values showing stronger association. We  will describe a feature's meaning and traits. Identify the token that most activates the feature in the given sentence and provide your answer with a single token. The sentence will use a <tab> to separate each token.\n\nSentence:\n"
-        
+
         context = _extract_context(
             cfg=cfg,
             tokenizer=tokenizer,

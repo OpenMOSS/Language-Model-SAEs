@@ -1,25 +1,22 @@
-from typing import Callable, Dict, Generator, Iterable
-import torch
-from torch.cuda import is_initialized
-import torch.distributed as dist
-import torch.utils.data
+import math
+from typing import Dict
 
+import torch
+import torch.distributed as dist
+import torch.distributed._functional_collectives as funcol
+import torch.utils.data
+from torch.distributed.device_mesh import init_device_mesh
 from transformer_lens import HookedTransformer
 
-from lm_saes.config import ActivationStoreConfig
 from lm_saes.activation.activation_source import (
     ActivationSource,
     CachedActivationSource,
     TokenActivationSource,
 )
-from lm_saes.activation.token_source import TokenSource
-import math
-from torch.distributed.device_mesh import init_device_mesh
-import torch.distributed._functional_collectives as funcol
+from lm_saes.config import ActivationStoreConfig
 
 
 class ActivationStore:
-
     def __init__(self, act_source: ActivationSource, cfg: ActivationStoreConfig):
         self.act_source = act_source
         self.buffer_size = cfg.n_tokens_in_buffer
@@ -28,9 +25,7 @@ class ActivationStore:
         self.tp_size = cfg.tp_size
         self._store: Dict[str, torch.Tensor] = {}
         self._all_gather_buffer: Dict[str, torch.Tensor] = {}
-        self.device_mesh = init_device_mesh(
-            "cuda", (self.ddp_size, self.tp_size), mesh_dim_names=("ddp", "tp")
-        )
+        self.device_mesh = init_device_mesh("cuda", (self.ddp_size, self.tp_size), mesh_dim_names=("ddp", "tp"))
 
     def initialize(self):
         self.refill()
@@ -69,9 +64,7 @@ class ActivationStore:
             device=self.device,
             dtype=torch.int,
         )
-        if (
-            dist.is_initialized()
-        ):  # When using DDP, we do refills in a synchronized manner to save time
+        if dist.is_initialized():  # When using DDP, we do refills in a synchronized manner to save time
             dist.all_reduce(need_refill, op=dist.ReduceOp.MAX)
         if need_refill.item() > 0:
             self.refill()
@@ -82,20 +75,14 @@ class ActivationStore:
             for k, v in self._store.items():
                 if k not in self._all_gather_buffer:
                     self._all_gather_buffer[k] = torch.empty(size=(0,), dtype=v.dtype, device=self.device)
-                
-                gather_len = math.ceil(
-                    (batch_size - self._all_gather_buffer[k].size(0)) / self.tp_size
-                )
+
+                gather_len = math.ceil((batch_size - self._all_gather_buffer[k].size(0)) / self.tp_size)
 
                 assert gather_len <= v.size(0), "Not enough activations in the store"
-                gather_tensor = funcol.all_gather_tensor(
-                    v[:gather_len], gather_dim=0, group=self.device_mesh["tp"]
-                )
+                gather_tensor = funcol.all_gather_tensor(v[:gather_len], gather_dim=0, group=self.device_mesh["tp"])
                 self._store[k] = v[gather_len:]
 
-                self._all_gather_buffer[k] = torch.cat(
-                    [self._all_gather_buffer[k], gather_tensor], dim=0
-                )
+                self._all_gather_buffer[k] = torch.cat([self._all_gather_buffer[k], gather_tensor], dim=0)
 
             ret = {k: self._all_gather_buffer[k][:batch_size] for k in self._store}
             for k in self._store:
@@ -103,7 +90,6 @@ class ActivationStore:
             return ret if len(ret) > 0 else None
 
         else:
-
             ret = {k: v[:batch_size] for k, v in self._store.items()}
             for k in self._store:
                 self._store[k] = self._store[k][batch_size:]

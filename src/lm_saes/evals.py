@@ -1,4 +1,3 @@
-from functools import partial
 from typing import Any, cast
 
 import pandas as pd
@@ -8,12 +7,13 @@ import wandb
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
-from lm_saes.sae import SparseAutoEncoder
 from lm_saes.activation.activation_store import ActivationStore
 
 # from lm_saes.activation_store_theirs import ActivationStoreTheirs
 from lm_saes.config import LanguageModelSAERunnerConfig
+from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.misc import is_master
+
 
 @torch.no_grad()
 def run_evals(
@@ -23,7 +23,6 @@ def run_evals(
     cfg: LanguageModelSAERunnerConfig,
     n_training_steps: int,
 ):
-
     # Get Reconstruction Score
     losses_df = recons_loss_batched(
         model,
@@ -49,12 +48,8 @@ def run_evals(
     feature_acts = sae.encode(activation_in)
     reconstructed = sae.decode(feature_acts)
 
-    per_token_l2_loss = (
-        (reconstructed - activation_out).pow(2).sum(dim=-1)
-    )
-    total_variance = (
-        (activation_out - activation_out.mean(0)).pow(2).sum(dim=-1)
-    )
+    per_token_l2_loss = (reconstructed - activation_out).pow(2).sum(dim=-1)
+    total_variance = (activation_out - activation_out.mean(0)).pow(2).sum(dim=-1)
 
     if "cuda" in str(model.cfg.device):
         torch.cuda.empty_cache()
@@ -62,9 +57,7 @@ def run_evals(
     l2_norm_in = torch.norm(activation_out, dim=-1)
     l2_norm_out = torch.norm(reconstructed, dim=-1)
     if cfg.sae.ddp_size > 1:
-        dist.reduce(
-            l2_norm_in, dst=0, op=dist.ReduceOp.AVG
-        )
+        dist.reduce(l2_norm_in, dst=0, op=dist.ReduceOp.AVG)
         dist.reduce(l2_norm_out, dst=0, op=dist.ReduceOp.AVG)
     l2_norm_ratio = l2_norm_out / l2_norm_in
 
@@ -105,13 +98,9 @@ def recons_loss_batched(
     if is_master():
         pbar = tqdm(total=n_batches, desc="Evaluation", smoothing=0.01)
     for _ in range(n_batches):
-        batch_tokens = activation_store.next_tokens(
-            cfg.act_store.dataset.store_batch_size
-        )
+        batch_tokens = activation_store.next_tokens(cfg.act_store.dataset.store_batch_size)
         assert batch_tokens is not None, "Not enough tokens in the store"
-        loss, recons_loss = get_recons_loss(
-            model, sae, cfg, batch_tokens
-        )
+        loss, recons_loss = get_recons_loss(model, sae, cfg, batch_tokens)
         if cfg.sae.ddp_size > 1:
             dist.reduce(loss, dst=0, op=dist.ReduceOp.AVG)
             dist.reduce(recons_loss, dst=0, op=dist.ReduceOp.AVG)
@@ -127,9 +116,7 @@ def recons_loss_batched(
     if is_master():
         pbar.close()
 
-    losses = pd.DataFrame(
-        losses, columns=cast(Any, ["loss", "recons_loss"])
-    )
+    losses = pd.DataFrame(losses, columns=cast(Any, ["loss", "recons_loss"]))
 
     return losses
 
@@ -143,10 +130,17 @@ def get_recons_loss(
 ):
     batch_tokens = batch_tokens.to(torch.int64)
 
-    logits_mask = torch.logical_and(batch_tokens.ne(model.tokenizer.eos_token_id), batch_tokens.ne(model.tokenizer.pad_token_id))
+    logits_mask = torch.logical_and(
+        batch_tokens.ne(model.tokenizer.eos_token_id), batch_tokens.ne(model.tokenizer.pad_token_id)
+    )
     logits_mask = torch.logical_and(logits_mask, batch_tokens.ne(model.tokenizer.bos_token_id))
 
-    loss, cache = model.run_with_cache(batch_tokens, return_type="loss", loss_per_token=True, names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out])
+    loss, cache = model.run_with_cache(
+        batch_tokens,
+        return_type="loss",
+        loss_per_token=True,
+        names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
+    )
 
     # _, cache = model.run_with_cache_until(
     #     batch_tokens,
@@ -157,19 +151,13 @@ def get_recons_loss(
         cache[cfg.sae.hook_point_in],
         cache[cfg.sae.hook_point_out],
     )
-    replacements = sae.forward(activations_in).to(
-        activations_out.dtype
-    )
-
+    replacements = sae.forward(activations_in).to(activations_out.dtype)
 
     def replacement_hook(activations: torch.Tensor, hook: Any):
         return replacements.where(logits_mask[..., None], activations)
 
     recons_loss: torch.Tensor = model.run_with_hooks(
-        batch_tokens,
-        return_type="loss",
-        fwd_hooks=[(cfg.sae.hook_point_out, replacement_hook)],
-        loss_per_token=True
+        batch_tokens, return_type="loss", fwd_hooks=[(cfg.sae.hook_point_out, replacement_hook)], loss_per_token=True
     )
 
     def get_useful_token_loss(per_token_loss):
