@@ -1,20 +1,17 @@
 import json
+import math
+import os
 from dataclasses import dataclass, field, fields
 from typing import Any, Dict, List, Optional, Tuple
-from typing_extensions import deprecated
-import math
 
 import torch
 import torch.distributed as dist
-
-import os
+from transformer_lens.loading_from_pretrained import get_official_model_name
+from typing_extensions import deprecated
 
 from lm_saes.utils.config import FlattenableModel
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-from lm_saes.utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str, print_once, is_master
-
-from transformer_lens.loading_from_pretrained import get_official_model_name
-from torch.distributed.device_mesh import DeviceMesh
+from lm_saes.utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str, is_master, print_once
 
 
 @dataclass(kw_only=True)
@@ -30,10 +27,7 @@ class BaseModelConfig(BaseConfig):
     dtype: torch.dtype = torch.float32
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            field.name: getattr(self, field.name)
-            for field in fields(self)
-        }
+        return {field.name: getattr(self, field.name) for field in fields(self)}
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any], **kwargs):
@@ -87,9 +81,7 @@ class LanguageModelConfig(BaseModelConfig):
         return LanguageModelConfig.from_dict(lm_config, **kwargs)
 
     def save_lm_config(self, sae_path: str):
-        assert os.path.exists(
-            sae_path
-        ), f"{sae_path} does not exist. Unable to save LanguageModelConfig."
+        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save LanguageModelConfig."
 
         d = self.to_dict()
         for k, v in d.items():
@@ -124,7 +116,9 @@ class TextDatasetConfig(RunnerConfig):
             self.prepend_bos = [self.prepend_bos]
 
         if False in self.prepend_bos:
-            print('Warning: prepend_bos is set to False for some datasets. This setting might not be suitable for most modern models.')
+            print(
+                "Warning: prepend_bos is set to False for some datasets. This setting might not be suitable for most modern models."
+            )
 
         self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
 
@@ -186,23 +180,19 @@ class SAEConfig(BaseModelConfig):
     strict_loading: bool = True
 
     use_decoder_bias: bool = True
-    apply_decoder_bias_to_pre_encoder: bool = (
-        True  # set to False when training transcoders
-    )
+    apply_decoder_bias_to_pre_encoder: bool = True  # set to False when training transcoders
     expansion_factor: int = 128
     d_model: int = 768
     d_sae: int = None  # type: ignore
-    bias_init_method: str = 'all_zero'
-    act_fn: str = 'relu'
+    bias_init_method: str = "all_zero"
+    act_fn: str = "relu"
     jump_relu_threshold: float = 0.0
-    
+
     """ The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor """
     norm_activation: str = "token-wise"  # none, token-wise, batch-wise, dataset-wise
     dataset_average_activation_norm: Dict[str, float] | None = None
     decoder_exactly_fixed_norm: bool = False
-    sparsity_include_decoder_norm: bool = (
-        True  # set to True: sparsity loss = sum(act * corresponding_decoder_norm), otherwise loss = sum(act). Incompatible with decoder_exactly_fixed_norm
-    )
+    sparsity_include_decoder_norm: bool = True  # set to True: sparsity loss = sum(act * corresponding_decoder_norm), otherwise loss = sum(act). Incompatible with decoder_exactly_fixed_norm
     use_glu_encoder: bool = False
     init_decoder_norm: float | None = None  # type: ignore
     init_encoder_norm: float | None = None  # type: ignore
@@ -213,8 +203,6 @@ class SAEConfig(BaseModelConfig):
     l1_coefficient_warmup_steps: int | float = 0.1
     top_k: int = 50
     k_warmup_steps: int | float = 0.1
-
-    
 
     use_batch_norm_mse: bool = True  # will set to False in the future
 
@@ -229,32 +217,19 @@ class SAEConfig(BaseModelConfig):
             self.hook_point_out = self.hook_point_in
         if self.d_sae is None:
             self.d_sae = self.d_model * self.expansion_factor
-        if (
-            self.norm_activation == "dataset-wise"
-            and self.dataset_average_activation_norm is None
-        ):
+        if self.norm_activation == "dataset-wise" and self.dataset_average_activation_norm is None:
             print(
-                f'dataset_average_activation_norm is None and norm_activation is "dataset-wise". Will be computed automatically from the dataset.'
+                'dataset_average_activation_norm is None and norm_activation is "dataset-wise". Will be computed automatically from the dataset.'
             )
         if self.sparsity_include_decoder_norm and self.decoder_exactly_fixed_norm:
-            raise ValueError(
-                "sparsity_include_decoder_norm and decoder_exactly_fixed_norm are incompatible."
-            )
+            raise ValueError("sparsity_include_decoder_norm and decoder_exactly_fixed_norm are incompatible.")
         if self.sparsity_include_decoder_norm and self.use_ghost_grads:
-            raise ValueError(
-                "sparsity_include_decoder_norm and use_ghost_grads are incompatible."
-            )
-        if self.init_encoder_with_decoder_transpose and isinstance(
-            self.init_encoder_norm, float
-        ):
-            raise ValueError(
-                "init_encoder_with_decoder_transpose and init_encoder_norm with float are incompatible."
-            )
+            raise ValueError("sparsity_include_decoder_norm and use_ghost_grads are incompatible.")
+        if self.init_encoder_with_decoder_transpose and isinstance(self.init_encoder_norm, float):
+            raise ValueError("init_encoder_with_decoder_transpose and init_encoder_norm with float are incompatible.")
 
     @staticmethod
-    def from_pretrained(
-        pretrained_name_or_path: str, strict_loading: bool = True, **kwargs
-    ):
+    def from_pretrained(pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
         """Load the SAEConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/hyperparams.json.
 
         Args:
@@ -270,27 +245,17 @@ class SAEConfig(BaseModelConfig):
 
     @deprecated("Use from_pretrained and to_dict instead.")
     @staticmethod
-    def get_hyperparameters(
-        exp_result_path: str, ckpt_name: str, strict_loading: bool = True
-    ) -> dict[str, Any]:
+    def get_hyperparameters(exp_result_path: str, ckpt_name: str, strict_loading: bool = True) -> dict[str, Any]:
         with open(os.path.join(exp_result_path, "hyperparams.json"), "r") as f:
             hyperparams = json.load(f)
-        hyperparams["sae_pretrained_name_or_path"] = os.path.join(
-            exp_result_path, "checkpoints", ckpt_name
-        )
+        hyperparams["sae_pretrained_name_or_path"] = os.path.join(exp_result_path, "checkpoints", ckpt_name)
         hyperparams["strict_loading"] = strict_loading
         # Remove non-hyperparameters from the dict
-        hyperparams = {
-            k: v
-            for k, v in hyperparams.items()
-            if k in SAEConfig.__dataclass_fields__.keys()
-        }
+        hyperparams = {k: v for k, v in hyperparams.items() if k in SAEConfig.__dataclass_fields__.keys()}
         return hyperparams
 
     def save_hyperparameters(self, sae_path: str, remove_loading_info: bool = True):
-        assert os.path.exists(
-            sae_path
-        ), f"{sae_path} does not exist. Unable to save hyperparameters."
+        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
         d = self.to_dict()
         if remove_loading_info:
             d.pop("sae_pretrained_name_or_path", None)
@@ -339,9 +304,7 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     total_training_tokens: int = 300_000_000
     lr: float = 0.0004
     betas: Tuple[float, float] = (0.9, 0.999)
-    lr_scheduler_name: str = (
-        "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup, exponentialwarmup
-    )
+    lr_scheduler_name: str = "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup, exponentialwarmup
     lr_end_ratio: float = 1 / 32
     lr_warm_up_steps: int | float = 0.1
     lr_cool_down_steps: int | float = 0.1
@@ -364,16 +327,14 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     log_frequency: int = 10
 
     n_checkpoints: int = 10
-    check_point_save_mode: str = 'log'  # 'log' or 'linear'
+    check_point_save_mode: str = "log"  # 'log' or 'linear'
     checkpoint_thresholds: list = field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
 
         if is_master():
-            if os.path.exists(
-                os.path.join(self.exp_result_path, "checkpoints")
-            ):
+            if os.path.exists(os.path.join(self.exp_result_path, "checkpoints")):
                 raise ValueError(
                     f"Checkpoints for experiment {self.exp_result_path} already exist. Consider changing the experiment name."
                 )
@@ -384,35 +345,22 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
 
         total_training_steps = self.total_training_tokens // self.effective_batch_size
         print_once(f"Total training steps: {total_training_steps}")
-        if self.lr_scheduler_name == "constantwithwarmup" and isinstance(
-            self.lr_warm_up_steps, float
-        ):
+        if self.lr_scheduler_name == "constantwithwarmup" and isinstance(self.lr_warm_up_steps, float):
             assert 0 <= self.lr_warm_up_steps <= 1.0
             self.lr_warm_up_steps = int(self.lr_warm_up_steps * total_training_steps)
             print_once(f"Learning rate warm up steps: {self.lr_warm_up_steps}")
-        if isinstance(self.sae.l1_coefficient_warmup_steps, float) and self.sae.act_fn != 'topk':
+        if isinstance(self.sae.l1_coefficient_warmup_steps, float) and self.sae.act_fn != "topk":
             assert 0 <= self.sae.l1_coefficient_warmup_steps <= 1.0
-            self.sae.l1_coefficient_warmup_steps = int(
-                self.sae.l1_coefficient_warmup_steps * total_training_steps
-            )
-            print_once(
-                f"L1 coefficient warm up steps: {self.sae.l1_coefficient_warmup_steps}"
-            )
-        if isinstance(self.sae.k_warmup_steps, float) and self.sae.act_fn == 'topk':
+            self.sae.l1_coefficient_warmup_steps = int(self.sae.l1_coefficient_warmup_steps * total_training_steps)
+            print_once(f"L1 coefficient warm up steps: {self.sae.l1_coefficient_warmup_steps}")
+        if isinstance(self.sae.k_warmup_steps, float) and self.sae.act_fn == "topk":
             assert 0 <= self.sae.k_warmup_steps <= 1.0
-            self.sae.k_warmup_steps = int(
-                self.sae.k_warmup_steps * total_training_steps
-            )
-            print_once(
-                f"K warm up steps: {self.sae.k_warmup_steps}"
-            )
+            self.sae.k_warmup_steps = int(self.sae.k_warmup_steps * total_training_steps)
+            print_once(f"K warm up steps: {self.sae.k_warmup_steps}")
         if isinstance(self.lr_cool_down_steps, float):
             assert 0 <= self.lr_cool_down_steps <= 1.0
-            self.lr_cool_down_steps = int(
-                self.lr_cool_down_steps * total_training_steps
-            )
+            self.lr_cool_down_steps = int(self.lr_cool_down_steps * total_training_steps)
             print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
-
 
         if self.lr_scheduler_name == "constantwithwarmup" and isinstance(self.lr_warm_up_steps, float):
             assert 0 <= self.lr_warm_up_steps <= 1.0
@@ -430,19 +378,21 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
             assert self.sae.l1_coefficient == 0.0, "L1 coefficient must be 0.0 for finetuning."
 
         if self.n_checkpoints > 0:
-            if self.check_point_save_mode == 'linear':
+            if self.check_point_save_mode == "linear":
                 self.checkpoint_thresholds = list(
                     range(0, self.total_training_tokens, self.total_training_tokens // self.n_checkpoints)
                 )[1:]
-            elif self.check_point_save_mode == 'log':
+            elif self.check_point_save_mode == "log":
                 self.checkpoint_thresholds = [
-                    math.ceil(2 ** (i / self.n_checkpoints * math.log2(total_training_steps))) * self.effective_batch_size
+                    math.ceil(2 ** (i / self.n_checkpoints * math.log2(total_training_steps)))
+                    * self.effective_batch_size
                     for i in range(1, self.n_checkpoints)
                 ]
             else:
                 raise ValueError(f"Unknown checkpoint save mode: {self.check_point_save_mode}")
 
         assert 0 <= self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
+
 
 @dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
@@ -510,19 +460,13 @@ class LanguageModelSAEAnalysisConfig(RunnerConfig):
     mongo: MongoConfig
 
     total_analyzing_tokens: int = 300_000_000
-    enable_sampling: bool = (
-        False  # If True, we will sample the activations based on weights. Otherwise, top n_samples activations will be used.
-    )
+    enable_sampling: bool = False  # If True, we will sample the activations based on weights. Otherwise, top n_samples activations will be used.
     sample_weight_exponent: float = 2.0
     subsample: Dict[str, Dict[str, Any]] = field(
-        default_factory=lambda: {
-            "top_activations": {"proportion": 1.0, "n_samples": 10}
-        }
+        default_factory=lambda: {"top_activations": {"proportion": 1.0, "n_samples": 10}}
     )
 
-    n_sae_chunks: int = (
-        1  # Number of chunks to split the SAE into for analysis. For large models and SAEs, this can be useful to avoid memory issues.
-    )
+    n_sae_chunks: int = 1  # Number of chunks to split the SAE into for analysis. For large models and SAEs, this can be useful to avoid memory issues.
 
     def __post_init__(self):
         super().__post_init__()

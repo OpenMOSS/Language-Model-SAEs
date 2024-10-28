@@ -1,25 +1,31 @@
-import os
 from typing import Any, Dict, Mapping
 
-from bson import ObjectId
+import gridfs
 import numpy as np
 import pymongo
-import gridfs
 import pymongo.database
+from bson import ObjectId
 
 from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
+
 
 class MongoClient:
     def __init__(self, mongo_uri: str, mongo_db: str):
         self.client: pymongo.MongoClient = pymongo.MongoClient(mongo_uri)
         self.db = self.client[mongo_db]
         self.fs = gridfs.GridFS(self.db)
-        self.feature_collection = self.db['features']
-        self.dictionary_collection = self.db['dictionaries']
-        self.attn_head_collection = self.db['attn_heads']
-        self.dictionary_collection.create_index([('name', pymongo.ASCENDING), ('series', pymongo.ASCENDING)], unique=True)
-        self.feature_collection.create_index([('dictionary_id', pymongo.ASCENDING), ('index', pymongo.ASCENDING)], unique=True)
-        self.attn_head_collection.create_index([('dictionary_id', pymongo.ASCENDING), ('index', pymongo.ASCENDING)], unique=True)
+        self.feature_collection = self.db["features"]
+        self.dictionary_collection = self.db["dictionaries"]
+        self.attn_head_collection = self.db["attn_heads"]
+        self.dictionary_collection.create_index(
+            [("name", pymongo.ASCENDING), ("series", pymongo.ASCENDING)], unique=True
+        )
+        self.feature_collection.create_index(
+            [("dictionary_id", pymongo.ASCENDING), ("index", pymongo.ASCENDING)], unique=True
+        )
+        self.attn_head_collection.create_index(
+            [("dictionary_id", pymongo.ASCENDING), ("index", pymongo.ASCENDING)], unique=True
+        )
 
     def _to_gridfs(self, data):
         """
@@ -32,7 +38,7 @@ class MongoClient:
         if isinstance(data, np.ndarray):
             return self.fs.put(np_to_bytes(data))
         return data
-    
+
     def _from_gridfs(self, data):
         """
         Recursively convert GridFS references in data object to numpy arrays
@@ -44,7 +50,7 @@ class MongoClient:
         if isinstance(data, ObjectId) and self.fs.exists(data):
             return bytes_to_np(self.fs.get(data).read())
         return data
-    
+
     def _remove_gridfs_objs(self, data):
         """
         Recursively remove GridFS objects in data object
@@ -58,95 +64,100 @@ class MongoClient:
         if isinstance(data, ObjectId) and self.fs.exists(data):
             self.fs.delete(data)
 
-    def create_dictionary(self, dictionary_name: str, dictionary_path: str, n_features: int, dictionary_series: str | None = None):
-        dict_id = self.dictionary_collection.insert_one({'name': dictionary_name, 'n_features': n_features, 'series': dictionary_series, 'path': dictionary_path}).inserted_id
-        self.feature_collection.insert_many([
-            {
-                'dictionary_id': dict_id,
-                'index': i
-            }
-            for i in range(n_features)
-        ])
+    def create_dictionary(
+        self, dictionary_name: str, dictionary_path: str, n_features: int, dictionary_series: str | None = None
+    ):
+        dict_id = self.dictionary_collection.insert_one(
+            {"name": dictionary_name, "n_features": n_features, "series": dictionary_series, "path": dictionary_path}
+        ).inserted_id
+        self.feature_collection.insert_many([{"dictionary_id": dict_id, "index": i} for i in range(n_features)])
 
     def remove_dictionary(self, dictionary_name: str, dictionary_series: str | None = None):
-        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
+        dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
         if dictionary is None:
             return
-        for feature in self.feature_collection.find({'dictionary_id': dictionary['_id']}):
+        for feature in self.feature_collection.find({"dictionary_id": dictionary["_id"]}):
             self._remove_gridfs_objs(feature)
-        self.feature_collection.delete_many({'dictionary_id': dictionary['_id']})
-        self.dictionary_collection.delete_one({'_id': dictionary['_id']})
+        self.feature_collection.delete_many({"dictionary_id": dictionary["_id"]})
+        self.dictionary_collection.delete_one({"_id": dictionary["_id"]})
 
-    def update_feature(self, dictionary_name: str, feature_index: int, feature_data: Dict, dictionary_series: str | None = None):
-        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
-        assert dictionary is not None, f'Dictionary {dictionary_name} not found'
-        feature = self.feature_collection.find_one({'dictionary_id': dictionary['_id'], 'index': feature_index})
-        assert feature is not None, f'Feature {feature_index} not found in dictionary {dictionary_name}'
-        self.feature_collection.update_one({'_id': feature['_id']}, {'$set': self._to_gridfs(feature_data)})
+    def update_feature(
+        self, dictionary_name: str, feature_index: int, feature_data: Dict, dictionary_series: str | None = None
+    ):
+        dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
+        assert dictionary is not None, f"Dictionary {dictionary_name} not found"
+        feature = self.feature_collection.find_one({"dictionary_id": dictionary["_id"], "index": feature_index})
+        assert feature is not None, f"Feature {feature_index} not found in dictionary {dictionary_name}"
+        self.feature_collection.update_one({"_id": feature["_id"]}, {"$set": self._to_gridfs(feature_data)})
 
     def list_dictionaries(self, dictionary_series: str | None = None):
         # return [{'name': d['name'], 'path': d['path']} for d in self.dictionary_collection.find({'series': dictionary_series} if dictionary_series is not None else {})]
-        return [d['name'] for d in self.dictionary_collection.find({'series': dictionary_series} if dictionary_series is not None else {})]
-    
+        return [
+            d["name"]
+            for d in self.dictionary_collection.find(
+                {"series": dictionary_series} if dictionary_series is not None else {}
+            )
+        ]
+
     def get_dictionary(self, dictionary_name: str, dictionary_series: str | None = None):
-        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
+        dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
         if dictionary is None:
             return None
         return {
-            'name': dictionary['name'],
-            'n_features': dictionary['n_features'],
-            'series': dictionary['series'],
-            'path': dictionary['path'] if 'path' in dictionary else None
+            "name": dictionary["name"],
+            "n_features": dictionary["n_features"],
+            "series": dictionary["series"],
+            "path": dictionary["path"] if "path" in dictionary else None,
         }
-    
+
     def get_feature(self, dictionary_name: str, feature_index: int, dictionary_series: str | None = None):
-        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
+        dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
         if dictionary is None:
             return None
-        feature = self.feature_collection.find_one({'dictionary_id': dictionary['_id'], 'index': feature_index})
+        feature = self.feature_collection.find_one({"dictionary_id": dictionary["_id"], "index": feature_index})
         if feature is None:
             return None
         return self._from_gridfs(feature)
 
     def get_random_alive_feature(self, dictionary_name: str, dictionary_series: str | None = None):
-        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
+        dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
         if dictionary is None:
             return None
-        feature = self.feature_collection.aggregate([
-            {'$match': {'dictionary_id': dictionary['_id'], 'max_feature_acts': {'$gt': 0}}},
-            {'$sample': {'size': 1}}
-        ]).next()
+        feature = self.feature_collection.aggregate(
+            [{"$match": {"dictionary_id": dictionary["_id"], "max_feature_acts": {"$gt": 0}}}, {"$sample": {"size": 1}}]
+        ).next()
         if feature is None:
             return None
         return self._from_gridfs(feature)
-    
-    def get_alive_feature_count(self, dictionary_name: str, dictionary_series: str | None = None):
-        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
-        if dictionary is None:
-            return None
-        return self.feature_collection.count_documents({'dictionary_id': dictionary['_id'], 'max_feature_acts': {'$gt': 0}})
-    
-    def get_max_feature_acts(self, dictionary_name: str, dictionary_series: str | None = None):
-        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
-        if dictionary is None:
-            return None
-        pipeline = [
-            {'$match': {'dictionary_id': dictionary['_id'], 'max_feature_acts': {'$gt': 0}}},
-            {'$project': {'_id': 0, 'index': 1, 'max_feature_acts': 1}}
-        ]
-        return {f['index']: f['max_feature_acts'] for f in self.feature_collection.aggregate(pipeline)}
-    
-    def get_feature_act_times(self, dictionary_name: str, dictionary_series: str | None = None):
-        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
-        if dictionary is None:
-            return None
-        pipeline = [
-            {'$match': {'dictionary_id': dictionary['_id'], 'max_feature_acts': {'$gt': 0}}},
-            {'$project': {'_id': 0, 'index': 1, 'act_times': 1}}
-        ]
-        return {f['index']: f['act_times'] for f in self.feature_collection.aggregate(pipeline)}
 
-    
+    def get_alive_feature_count(self, dictionary_name: str, dictionary_series: str | None = None):
+        dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
+        if dictionary is None:
+            return None
+        return self.feature_collection.count_documents(
+            {"dictionary_id": dictionary["_id"], "max_feature_acts": {"$gt": 0}}
+        )
+
+    def get_max_feature_acts(self, dictionary_name: str, dictionary_series: str | None = None):
+        dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
+        if dictionary is None:
+            return None
+        pipeline = [
+            {"$match": {"dictionary_id": dictionary["_id"], "max_feature_acts": {"$gt": 0}}},
+            {"$project": {"_id": 0, "index": 1, "max_feature_acts": 1}},
+        ]
+        return {f["index"]: f["max_feature_acts"] for f in self.feature_collection.aggregate(pipeline)}
+
+    def get_feature_act_times(self, dictionary_name: str, dictionary_series: str | None = None):
+        dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
+        if dictionary is None:
+            return None
+        pipeline = [
+            {"$match": {"dictionary_id": dictionary["_id"], "max_feature_acts": {"$gt": 0}}},
+            {"$project": {"_id": 0, "index": 1, "act_times": 1}},
+        ]
+        return {f["index"]: f["act_times"] for f in self.feature_collection.aggregate(pipeline)}
+
     def get_attn_head(self, dictionary_name: str, head_index: int, dictionary_series: str | None = None):
         pipeline: list[Mapping[str, Any]] = [
             {
@@ -169,7 +180,7 @@ class MongoClient:
                 "$project": {
                     "dictionary_id": 0,
                 }
-            }
+            },
         ]
         attn_head = self.attn_head_collection.aggregate(pipeline).next()
         if len(attn_head["attn_score"]) == 0:
@@ -211,9 +222,9 @@ class MongoClient:
             },
         ]
         return self.attn_head_collection.aggregate(pipeline).next()
-        
+
     def get_dictionary_path(self, dictionary_name: str, dictionary_series: str | None = None):
-        dictionary = self.dictionary_collection.find_one({'name': dictionary_name, 'series': dictionary_series})
+        dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
         if dictionary is None:
             return None
-        return dictionary['path']
+        return dictionary["path"]

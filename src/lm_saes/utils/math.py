@@ -1,5 +1,6 @@
 import torch
 
+
 def compute_geometric_median(x: torch.Tensor, max_iter=1000) -> torch.Tensor:
     """
     Compute the geometric median of a point cloud x.
@@ -13,7 +14,7 @@ def compute_geometric_median(x: torch.Tensor, max_iter=1000) -> torch.Tensor:
     Returns:
         The geometric median of the point cloud. Shape (n_dims,)
     """
-    
+
     # Initialize the geometric median as the mean of the points
     y = x.mean(dim=0)
 
@@ -26,7 +27,8 @@ def compute_geometric_median(x: torch.Tensor, max_iter=1000) -> torch.Tensor:
 
     return y
 
+
 def norm_ratio(a, b):
     a_norm = torch.norm(a, 2, dim=0).mean()
     b_norm = torch.norm(b, 2, dim=0).mean()
-    return a_norm/b_norm
+    return a_norm / b_norm

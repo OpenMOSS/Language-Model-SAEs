@@ -45,7 +45,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: 'true'
+          submodules: "true"
       - name: Setup PDM
         uses: pdm-project/setup-pdm@v4
         # You are now able to use PDM in your workflow
@@ -55,3 +55,9 @@ jobs:
         run: pdm run mypy .
       - name: Unit tests
         run: pdm run pytest ./tests
+
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v1

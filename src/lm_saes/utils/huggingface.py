@@ -1,11 +1,12 @@
 # Some helper function to interact with huggingface API
 
-from typing import Optional, Union
 import os
-import shutil
-from huggingface_hub import create_repo, upload_folder, snapshot_download
-from lm_saes.utils.misc import print_once
 import re
+import shutil
+
+from huggingface_hub import create_repo, snapshot_download, upload_folder
+
+from lm_saes.utils.misc import print_once
 
 
 def upload_pretrained_sae_to_hf(sae_path: str, repo_id: str, private: bool = False):
@@ -23,7 +24,11 @@ def upload_pretrained_sae_to_hf(sae_path: str, repo_id: str, private: bool = Fal
     lm_config = LanguageModelConfig.from_pretrained_sae(sae_path)
 
     # Create local temporary directory for uploading
-    folder_name = sae.cfg.hook_point_in if sae.cfg.hook_point_in == sae.cfg.hook_point_out else f"{sae.cfg.hook_point_in}-{sae.cfg.hook_point_out}"
+    folder_name = (
+        sae.cfg.hook_point_in
+        if sae.cfg.hook_point_in == sae.cfg.hook_point_out
+        else f"{sae.cfg.hook_point_in}-{sae.cfg.hook_point_out}"
+    )
     os.makedirs(f"{sae_path}/{folder_name}", exist_ok=True)
 
     try:
@@ -35,11 +40,17 @@ def upload_pretrained_sae_to_hf(sae_path: str, repo_id: str, private: bool = Fal
         lm_config.save_lm_config(f"{sae_path}/{folder_name}")
 
         # Upload the model
-        upload_folder(folder_path=f"{sae_path}/{folder_name}", repo_id=repo_id, path_in_repo=folder_name, commit_message=f"Upload pretrained SAE model. Hook point: {folder_name}. Language Model Name: {lm_config.model_name}")
+        upload_folder(
+            folder_path=f"{sae_path}/{folder_name}",
+            repo_id=repo_id,
+            path_in_repo=folder_name,
+            commit_message=f"Upload pretrained SAE model. Hook point: {folder_name}. Language Model Name: {lm_config.model_name}",
+        )
 
     finally:
         # Remove the temporary directory
         shutil.rmtree(f"{sae_path}/{folder_name}")
+
 
 def download_pretrained_sae_from_hf(repo_id: str, hook_point: str):
     """Download a pretrained SAE model from huggingface model hub
@@ -52,14 +63,14 @@ def download_pretrained_sae_from_hf(repo_id: str, hook_point: str):
     snapshot_path = snapshot_download(repo_id=repo_id, allow_patterns=[f"{hook_point}/*"])
     return os.path.join(snapshot_path, hook_point)
 
+
 def _parse_repo_id(pretrained_name_or_path):
     pattern = r"L(\d{1,2})([RAMTC])-(8|32)x"
 
     def replace_match(match):
-        layer = match.group(1)
         sublayer = match.group(2)
         exp_factor = match.group(3)
-        
+
         return f"LX{sublayer}-{exp_factor}x"
 
     output_string = re.sub(pattern, replace_match, pretrained_name_or_path)
@@ -71,9 +82,9 @@ def parse_pretrained_name_or_path(pretrained_name_or_path: str):
     if os.path.exists(pretrained_name_or_path):
         return pretrained_name_or_path
     else:
-        print_once(f'Local path `{pretrained_name_or_path}` not found. Downloading from huggingface model hub.')
-        if pretrained_name_or_path.startswith('fnlp'):
-            print_once(f'Downloading Llama Scope SAEs.')
+        print_once(f"Local path `{pretrained_name_or_path}` not found. Downloading from huggingface model hub.")
+        if pretrained_name_or_path.startswith("fnlp"):
+            print_once("Downloading Llama Scope SAEs.")
             repo_id = _parse_repo_id(pretrained_name_or_path)
             hook_point = pretrained_name_or_path.split("/")[1]
         else:

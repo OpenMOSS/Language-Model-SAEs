@@ -1,5 +1,7 @@
 from typing import Any
+
 from transformer_lens import HookedTransformer
+
 from lm_saes.circuit.attributors import DirectAttributor, HierachicalAttributor
 from lm_saes.circuit.context import apply_sae
 from lm_saes.circuit.graph import Node
@@ -37,9 +39,12 @@ def direct_attribute_transformer_with_saes(
         with model.hooks([(f"blocks.{i}.attn.hook_attn_scores", detach_hook) for i in range(12)]):
             attributor = DirectAttributor(model)
             if candidates is None:
-                candidates = [Node(f"{sae.cfg.hook_point_out}.sae.hook_feature_acts") for sae in saes] + [Node(f"blocks.{i}.attn.hook_attn_scores") for i in range(12)]
+                candidates = [Node(f"{sae.cfg.hook_point_out}.sae.hook_feature_acts") for sae in saes] + [
+                    Node(f"blocks.{i}.attn.hook_attn_scores") for i in range(12)
+                ]
             return attributor.attribute(input=input, target=target, candidates=candidates, threshold=threshold)
-        
+
+
 def hierarchical_attribute_transformer_with_saes(
     model: HookedTransformer,
     saes: list[SparseAutoEncoder],
@@ -70,5 +75,7 @@ def hierarchical_attribute_transformer_with_saes(
         with model.hooks([(f"blocks.{i}.attn.hook_attn_scores", detach_hook) for i in range(12)]):
             attributor = HierachicalAttributor(model)
             if candidates is None:
-                candidates = [Node(f"{sae.cfg.hook_point_out}.sae.hook_feature_acts") for sae in saes] + [Node(f"blocks.{i}.attn.hook_attn_scores") for i in range(12)]
+                candidates = [Node(f"{sae.cfg.hook_point_out}.sae.hook_feature_acts") for sae in saes] + [
+                    Node(f"blocks.{i}.attn.hook_attn_scores") for i in range(12)
+                ]
             return attributor.attribute(input=input, target=target, candidates=candidates, threshold=threshold)
