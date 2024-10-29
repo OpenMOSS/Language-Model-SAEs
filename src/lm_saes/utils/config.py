@@ -1,12 +1,15 @@
-from typing import Any, get_origin, get_args
-from dataclasses import fields as dataclass_fields, is_dataclass
 import inspect
+from dataclasses import fields as dataclass_fields
+from dataclasses import is_dataclass
+from typing import Any, get_args, get_origin
 
-from typing_extensions import TypedDict, is_typeddict, Self
+from typing_extensions import Self, TypedDict, is_typeddict
+
 
 class Field(TypedDict):
     name: str
     type: Any
+
 
 def fields(cls) -> list[Field]:
     assert is_dataclass(cls) or is_typeddict(cls), f"{cls} is not a dataclass or TypedDict"
@@ -14,7 +17,8 @@ def fields(cls) -> list[Field]:
         return [Field(name=f.name, type=f.type) for f in dataclass_fields(cls)]
     else:
         return [Field(name=k, type=v) for k, v in inspect.get_annotations(cls).items()]
-    
+
+
 def flattened_fields(cls) -> list[Field]:
     if is_dataclass(cls) or is_typeddict(cls):
         f = []
@@ -22,14 +26,16 @@ def flattened_fields(cls) -> list[Field]:
             f.extend(flattened_fields(field["type"]))
             f.append(field)
         return f
-    elif get_origin(cls) == list:
+    elif get_origin(cls) is list:
         return flattened_fields(get_args(cls)[0])
-    elif get_origin(cls) == dict:
+    elif get_origin(cls) is dict:
         return flattened_fields(get_args(cls)[1])
     return []
 
+
 def is_flattenable(cls) -> bool:
     return len(flattened_fields(cls)) > 0
+
 
 def from_flattened(cls, data: Any, context: dict | None = None, path: str = "obj"):
     """Construct an object, especially a dataclass or TypedDict, from a flat structure.
@@ -50,7 +56,7 @@ def from_flattened(cls, data: Any, context: dict | None = None, path: str = "obj
         The constructed object.
 
     Examples:
-    
+
         Construct a dataclass from a flat structure:
             >>> from dataclasses import dataclass
             >>>
@@ -111,34 +117,41 @@ def from_flattened(cls, data: Any, context: dict | None = None, path: str = "obj
         # Skip further checking for non-flattenable classes
         return data
     if is_dataclass(cls) or is_typeddict(cls):
-        if data == "__missing__": # Accept not specified fields and construct the object with the context.
+        if data == "__missing__":  # Accept not specified fields and construct the object with the context.
             data = {}
-        if is_dataclass(cls) and isinstance(data, cls):
+        if is_dataclass(cls) and isinstance(data, cls):  # type: ignore
             return data
         assert isinstance(data, dict), f"Field {path} is not a dict"
         data = {**context, **data}
         context = {**context, **data}
-        for field in fields(cls):        
+        for field in fields(cls):
             # We have to further transform the specified data (if exists) into the specified type
-            specified_data = data[field["name"]] if field["name"] in data else "__missing__" # We use __missing__ to indicate that the field is not specified. Not specified fields may have different behaviors due to their types and default values.
+            specified_data = (
+                data[field["name"]] if field["name"] in data else "__missing__"
+            )  # We use __missing__ to indicate that the field is not specified. Not specified fields may have different behaviors due to their types and default values.
             f = from_flattened(field["type"], specified_data, context, f"{path}.{field['name']}")
-            if f != "__missing__": # Don't update the field if it is still regarded as not specified, so that the default value can be used.
+            if (
+                f != "__missing__"
+            ):  # Don't update the field if it is still regarded as not specified, so that the default value can be used.
                 data[field["name"]] = f
         # Remove the fields that are not in the data. This fields may exist in the child classes
         # and we don't want to pass them to the constructor of the current class.
         data = {k: v for k, v in data.items() if k in [f["name"] for f in fields(cls)]}
         return cls(**data)
-    elif get_origin(cls) == list:
+    elif get_origin(cls) is list:
         if data == "__missing__":
             return "__missing__"
         assert isinstance(data, list), f"Field {path} is not a list"
         return [from_flattened(get_args(cls)[0], d, context, f"{path}.{i}") for i, d in enumerate(data)]
-    elif get_origin(cls) == dict:
+    elif get_origin(cls) is dict:
         if data == "__missing__":
             return "__missing__"
         assert isinstance(data, dict), f"Field {path} is not a dict"
         return {k: from_flattened(get_args(cls)[1], v, context, f"{path}.{k}") for k, v in data.items()}
-    raise ValueError(f"Unexpected flattenable type {cls}. It's an internal error. Please report this issue to the developers.")
+    raise ValueError(
+        f"Unexpected flattenable type {cls}. It's an internal error. Please report this issue to the developers."
+    )
+
 
 class FlattenableModel:
     @classmethod
@@ -157,7 +170,7 @@ class FlattenableModel:
             The constructed object.
 
         Examples:
-        
+
             Construct a dataclass from a flat structure:
                 >>> from dataclasses import dataclass
                 >>>
@@ -212,4 +225,3 @@ class FlattenableModel:
                 C(b=B(a=A(a1=1, a2='2'), b1=3), c=4)
         """
         return from_flattened(cls, data)
-    

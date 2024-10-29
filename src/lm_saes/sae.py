@@ -1,38 +1,20 @@
+import math
+import os
 from builtins import print
 from importlib.metadata import version
-import os
-from typing import Dict, Literal, Union, overload, List
-import torch
-from torch.distributed._tensor.placement_types import Placement
-from torch.distributed.device_mesh import init_device_mesh
-import torch.nn as nn
-import math
-from einops import einsum
-from jaxtyping import Float
-from transformer_lens.hook_points import HookPoint, HookedRootModule
+from typing import Dict, List, Literal, Union, overload
 
 import safetensors.torch as safe
+import torch
+from einops import einsum
+from jaxtyping import Float
+from torch.distributed._tensor import DTensor, Replicate, Shard, distribute_tensor
+from torch.distributed.device_mesh import init_device_mesh
+from transformer_lens.hook_points import HookedRootModule, HookPoint
 
-from lm_saes.config import SAEConfig, LanguageModelSAETrainingConfig
 from lm_saes.activation.activation_store import ActivationStore
+from lm_saes.config import LanguageModelSAETrainingConfig, SAEConfig
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-import torch.distributed._functional_collectives as funcol
-from torch.distributed._tensor import DTensor
-import torch.distributed as dist
-from torch.distributed._tensor import (
-    DTensor,
-    Shard,
-    Replicate,
-    distribute_module,
-    distribute_tensor,
-)
-from torch.distributed.tensor.parallel import (
-    ColwiseParallel,
-    RowwiseParallel,
-    parallelize_module,
-    loss_parallel,
-)
-
 from lm_saes.utils.misc import is_master
 
 
@@ -57,26 +39,18 @@ class SparseAutoEncoder(HookedRootModule):
         self.current_l1_coefficient = cfg.l1_coefficient
         self.current_k = cfg.top_k
         self.tensor_paralleled = False
-        
-        self.encoder = torch.nn.Linear(
-            cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype
-        )
+
+        self.encoder = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
         torch.nn.init.kaiming_uniform_(self.encoder.weight)
         torch.nn.init.zeros_(self.encoder.bias)
-        
+
         if cfg.tp_size > 1 or cfg.ddp_size > 1:
-            self.device_mesh = init_device_mesh(
-                "cuda", (cfg.ddp_size, cfg.tp_size), mesh_dim_names=("ddp", "tp")
-            )
+            self.device_mesh = init_device_mesh("cuda", (cfg.ddp_size, cfg.tp_size), mesh_dim_names=("ddp", "tp"))
 
         if cfg.use_glu_encoder:
-
-            self.encoder_glu = torch.nn.Linear(
-                cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype
-            )
+            self.encoder_glu = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
             torch.nn.init.kaiming_uniform_(self.encoder_glu.weight)
             torch.nn.init.zeros_(self.encoder_glu.bias)
-        
 
         self.activation_function = self.activation_function_factory(cfg)
 
@@ -106,9 +80,7 @@ class SparseAutoEncoder(HookedRootModule):
             torch.nn.init.zeros_(self.encoder_glu.bias)
 
         torch.nn.init.kaiming_uniform_(self.decoder.weight)
-        self.set_decoder_norm_to_fixed_norm(
-            self.cfg.init_decoder_norm, force_exact=True
-        )
+        self.set_decoder_norm_to_fixed_norm(self.cfg.init_decoder_norm, force_exact=True)
 
         if self.cfg.use_decoder_bias:
             torch.nn.init.zeros_(self.decoder.bias)
@@ -117,9 +89,7 @@ class SparseAutoEncoder(HookedRootModule):
         if self.cfg.init_encoder_with_decoder_transpose:
             self.encoder.weight.data = self.decoder.weight.data.T.clone().contiguous()
         else:
-            self.set_encoder_norm_to_fixed_norm(
-                self.cfg.init_encoder_norm
-            )
+            self.set_encoder_norm_to_fixed_norm(self.cfg.init_encoder_norm)
 
     def train_base_parameters(self):
         """Set the base parameters to be trained."""
@@ -149,11 +119,11 @@ class SparseAutoEncoder(HookedRootModule):
             p.requires_grad_(False)
         for p in finetune_for_suppression_parameters:
             p.requires_grad_(True)
-    
+
     def activation_function_factory(self, cfg: SAEConfig):
-        if self.cfg.act_fn.lower() == 'relu':
+        if self.cfg.act_fn.lower() == "relu":
             return lambda hidden_pre: torch.clamp(hidden_pre, min=0.0)
-        if self.cfg.act_fn.lower() == 'topk':
+        if self.cfg.act_fn.lower() == "topk":
 
             def topk_activation(hidden_pre):
                 feature_acts = torch.clamp(hidden_pre, min=0.0)
@@ -165,34 +135,27 @@ class SparseAutoEncoder(HookedRootModule):
                 result = torch.zeros_like(feature_acts)
                 result.scatter_(-1, topk.indices, feature_acts.gather(-1, topk.indices))
                 return result
-            
+
             return topk_activation
-            
-        elif cfg.act_fn.lower() == 'jumprelu':
+
+        elif cfg.act_fn.lower() == "jumprelu":
             return lambda hidden_pre: hidden_pre.where(hidden_pre > cfg.jump_relu_threshold, 0)
         else:
-            raise NotImplementedError(f'Not implemented activation function {cfg.act_fn}')
+            raise NotImplementedError(f"Not implemented activation function {cfg.act_fn}")
 
-    def compute_norm_factor(
-        self, x: torch.Tensor, hook_point: str
-    ) -> float | torch.Tensor:
+    def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> float | torch.Tensor:
         """Compute the normalization factor for the activation vectors."""
 
         # Normalize the activation vectors to have L2 norm equal to sqrt(d_model)
         if self.cfg.norm_activation == "token-wise":
             return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True)
         elif self.cfg.norm_activation == "batch-wise":
-            return math.sqrt(self.cfg.d_model) / torch.norm(
-                x, 2, dim=-1, keepdim=True
-            ).mean(dim=-2, keepdim=True)
+            return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True).mean(dim=-2, keepdim=True)
         elif self.cfg.norm_activation == "dataset-wise":
             assert (
                 self.cfg.dataset_average_activation_norm is not None
             ), "dataset_average_activation_norm must be provided for dataset-wise normalization"
-            return (
-                math.sqrt(self.cfg.d_model)
-                / self.cfg.dataset_average_activation_norm[hook_point]
-            )
+            return math.sqrt(self.cfg.d_model) / self.cfg.dataset_average_activation_norm[hook_point]
         else:
             return torch.tensor(1.0, dtype=self.cfg.dtype, device=self.cfg.device)
 
@@ -204,9 +167,7 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: Literal[False] = False,
-    ) -> Union[
-        Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]
-    ]: ...
+    ) -> Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]: ...
 
     @overload
     def encode(
@@ -310,13 +271,52 @@ class SparseAutoEncoder(HookedRootModule):
 
         return reconstructed
 
+    @overload
     def compute_loss(
         self,
         x: Union[
             Float[torch.Tensor, "batch d_model"],
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
-        dead_feature_mask: Float[torch.Tensor, "d_sae"] | None = None,
+        dead_feature_mask: Float[torch.Tensor, " d_sae"] | None = None,
+        label: (
+            Union[
+                Float[torch.Tensor, "batch d_model"],
+                Float[torch.Tensor, "batch seq_len d_model"],
+            ]
+            | None
+        ) = None,
+        return_aux_data: Literal[True] = True,
+    ) -> tuple[
+        Float[torch.Tensor, " batch"],
+        tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]],
+    ]: ...
+
+    @overload
+    def compute_loss(
+        self,
+        x: Union[
+            Float[torch.Tensor, "batch d_model"],
+            Float[torch.Tensor, "batch seq_len d_model"],
+        ],
+        dead_feature_mask: Float[torch.Tensor, " d_sae"] | None = None,
+        label: (
+            Union[
+                Float[torch.Tensor, "batch d_model"],
+                Float[torch.Tensor, "batch seq_len d_model"],
+            ]
+            | None
+        ) = None,
+        return_aux_data: Literal[False] = False,
+    ) -> Float[torch.Tensor, " batch"]: ...
+
+    def compute_loss(
+        self,
+        x: Union[
+            Float[torch.Tensor, "batch d_model"],
+            Float[torch.Tensor, "batch seq_len d_model"],
+        ],
+        dead_feature_mask: Float[torch.Tensor, " d_sae"] | None = None,
         label: (
             Union[
                 Float[torch.Tensor, "batch d_model"],
@@ -326,9 +326,9 @@ class SparseAutoEncoder(HookedRootModule):
         ) = None,
         return_aux_data: bool = True,
     ) -> Union[
-        Float[torch.Tensor, "batch"],
+        Float[torch.Tensor, " batch"],
         tuple[
-            Float[torch.Tensor, "batch"],
+            Float[torch.Tensor, " batch"],
             tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]],
         ],
     ]:
@@ -357,10 +357,14 @@ class SparseAutoEncoder(HookedRootModule):
         l_rec = (reconstructed - label_normed).pow(2)
 
         if self.cfg.use_batch_norm_mse:
-            l_rec = l_rec / (
-                label_normed - label_normed.mean(dim=0, keepdim=True)
-            ).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
-
+            l_rec = (
+                l_rec
+                / (label_normed - label_normed.mean(dim=0, keepdim=True))
+                .pow(2)
+                .sum(dim=-1, keepdim=True)
+                .clamp(min=1e-8)
+                .sqrt()
+            )
 
         # l_l1: (batch,)
         if self.cfg.sparsity_include_decoder_norm:
@@ -371,17 +375,12 @@ class SparseAutoEncoder(HookedRootModule):
             "l_rec": l_rec,
         }
 
-        if not self.cfg.act_fn == 'topk':
+        if not self.cfg.act_fn == "topk":
             l_l1 = torch.norm(feature_acts, p=self.cfg.lp, dim=-1)
-            loss_dict['l_l1'] = l_l1
+            loss_dict["l_l1"] = l_l1
             loss = loss + self.current_l1_coefficient * l_l1.mean()
 
-        if (
-            self.cfg.use_ghost_grads
-            and self.training
-            and dead_feature_mask is not None
-            and dead_feature_mask.sum() > 0
-        ):
+        if self.cfg.use_ghost_grads and self.training and dead_feature_mask is not None and dead_feature_mask.sum() > 0:
             l_ghost_resid = self.compute_ghost_grad_loss(
                 reconstructed,
                 hidden_pre,
@@ -419,7 +418,7 @@ class SparseAutoEncoder(HookedRootModule):
 
         feature_acts = self.encode(x)
         reconstructed = self.decode(feature_acts)
-        
+
         return reconstructed
 
     @torch.no_grad()
@@ -427,10 +426,9 @@ class SparseAutoEncoder(HookedRootModule):
         if self.cfg.l1_coefficient_warmup_steps <= 0:
             return
         self.current_l1_coefficient = (
-            min(1.0, training_step / self.cfg.l1_coefficient_warmup_steps)
-            * self.cfg.l1_coefficient
+            min(1.0, training_step / self.cfg.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
         )
-    
+
     @torch.no_grad()
     def update_k(self, training_step):
         if self.cfg.k_warmup_steps <= 0:
@@ -439,7 +437,10 @@ class SparseAutoEncoder(HookedRootModule):
         initial_k = self.cfg.d_model / (2 * self.cfg.top_k)
 
         self.current_k = math.ceil(
-            max(1.0, initial_k + (1 - initial_k) / self.cfg.k_warmup_steps * training_step)
+            max(
+                1.0,
+                initial_k + (1 - initial_k) / self.cfg.k_warmup_steps * training_step,
+            )
             * self.cfg.top_k
         )
 
@@ -469,15 +470,11 @@ class SparseAutoEncoder(HookedRootModule):
             self.decoder.weight.data *= value / torch.clamp(decoder_norm, min=value)
 
     @torch.no_grad()
-    def set_encoder_norm_to_fixed_norm(
-        self, value: float | None = 1.0
-    ):
+    def set_encoder_norm_to_fixed_norm(self, value: float | None = 1.0):
         if self.cfg.use_glu_encoder:
             raise NotImplementedError("GLU encoder not supported")
         if value is None:
-            print(
-                f"Encoder norm is not set to a fixed value, using random initialization."
-            )
+            print("Encoder norm is not set to a fixed value, using random initialization.")
             return
         encoder_norm = self.encoder_norm(keepdim=True)
         if self.cfg.tp_size > 1 and not self.tensor_paralleled:
@@ -486,7 +483,7 @@ class SparseAutoEncoder(HookedRootModule):
                 device_mesh=self.device_mesh["tp"],
                 placements=[Shard(0)],
             )
-        self.encoder.weight.data *=  (value / encoder_norm)
+        self.encoder.weight.data *= value / encoder_norm
 
     @torch.no_grad()
     def remove_gradient_parallel_to_decoder_directions(self):
@@ -501,9 +498,7 @@ class SparseAutoEncoder(HookedRootModule):
             "d_sae d_model, d_sae d_model -> d_sae",
         )
 
-        assert (
-            self.decoder.weight.grad is not None
-        ), "No gradient to remove parallel component from"
+        assert self.decoder.weight.grad is not None, "No gradient to remove parallel component from"
 
         self.decoder.weight.grad -= einsum(
             parallel_component,
@@ -552,37 +547,31 @@ class SparseAutoEncoder(HookedRootModule):
                 if os.path.exists(ckpt_path):
                     break
             else:
-                raise FileNotFoundError(
-                    f"Pretrained model not found at {pretrained_name_or_path}"
-                )
+                raise FileNotFoundError(f"Pretrained model not found at {pretrained_name_or_path}")
 
         if ckpt_path.endswith(".safetensors"):
             state_dict = safe.load_file(ckpt_path, device=cfg.device)
         else:
             state_dict = torch.load(ckpt_path, map_location=cfg.device)["sae"]
 
-
         model = SparseAutoEncoder(cfg)
 
-        if cfg.norm_activation == 'dataset-wise':
+        if cfg.norm_activation == "dataset-wise":
             state_dict = model.standardize_parameters_of_dataset_activation_scaling(state_dict)
 
         if cfg.sparsity_include_decoder_norm:
             state_dict = model.transform_to_unit_decoder_norm(state_dict)
-        
-        if cfg.act_fn == 'topk' and cfg.jump_relu_threshold > 0:
-            print('Converting topk activation to jumprelu for inference. Features are set independent to each other.')
-            model.cfg.act_fn = 'jumprelu'
 
-        
+        if cfg.act_fn == "topk" and cfg.jump_relu_threshold > 0:
+            print("Converting topk activation to jumprelu for inference. Features are set independent to each other.")
+            model.cfg.act_fn = "jumprelu"
+
         model.load_state_dict(state_dict, strict=cfg.strict_loading)
 
         return model
 
     @staticmethod
-    def from_pretrained(
-        pretrained_name_or_path: str, strict_loading: bool = True, **kwargs
-    ) -> "SparseAutoEncoder":
+    def from_pretrained(pretrained_name_or_path: str, strict_loading: bool = True, **kwargs) -> "SparseAutoEncoder":
         """Load the SparseAutoEncoder model from the pretrained configuration.
 
         Args:
@@ -593,9 +582,7 @@ class SparseAutoEncoder(HookedRootModule):
         Returns:
             SparseAutoEncoder: The pretrained SparseAutoEncoder model.
         """
-        cfg = SAEConfig.from_pretrained(
-            pretrained_name_or_path, strict_loading=strict_loading, **kwargs
-        )
+        cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
 
         return SparseAutoEncoder.from_config(cfg)
 
@@ -608,13 +595,8 @@ class SparseAutoEncoder(HookedRootModule):
         test_batch = activation_store.next(batch_size=cfg.train_batch_size * 8)
         activation_in, activation_out = test_batch[cfg.sae.hook_point_in], test_batch[cfg.sae.hook_point_out]  # type: ignore
 
-        if (
-            cfg.sae.norm_activation == "dataset-wise"
-            and cfg.sae.dataset_average_activation_norm is None
-        ):
-            print(
-                f"SAE: Computing average activation norm on the first {cfg.train_batch_size * 8} samples."
-            )
+        if cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None:
+            print(f"SAE: Computing average activation norm on the first {cfg.train_batch_size * 8} samples.")
 
             average_in_norm, average_out_norm = (
                 activation_in.norm(p=2, dim=1).mean().item(),
@@ -630,15 +612,12 @@ class SparseAutoEncoder(HookedRootModule):
             }
 
         if cfg.sae.init_decoder_norm is None:
-            assert (
-                cfg.sae.sparsity_include_decoder_norm
-            ), "Decoder norm must be included in sparsity loss"
-            if (
-                not cfg.sae.init_encoder_with_decoder_transpose
-                or cfg.sae.hook_point_in != cfg.sae.hook_point_out
-            ):
+            assert cfg.sae.sparsity_include_decoder_norm, "Decoder norm must be included in sparsity loss"
+            if not cfg.sae.init_encoder_with_decoder_transpose or cfg.sae.hook_point_in != cfg.sae.hook_point_out:
                 sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-                print(f"Transcoders cannot be initialized automatically. Skipping.\nEncoder norm: {sae.encoder_norm().mean().item()}\nDecoder norm: {sae.decoder_norm().mean().item()}")
+                print(
+                    f"Transcoders cannot be initialized automatically. Skipping.\nEncoder norm: {sae.encoder_norm().mean().item()}\nDecoder norm: {sae.decoder_norm().mean().item()}"
+                )
                 return sae
 
             print("SAE: Starting grid search for initial decoder norm.")
@@ -649,53 +628,41 @@ class SparseAutoEncoder(HookedRootModule):
                 losses: Dict[float, float] = {}
 
                 for norm in search_range:
-                    sae.set_decoder_norm_to_fixed_norm(
-                        norm, force_exact=True
-                    )
-                    sae.encoder.weight.data = (
-                        sae.decoder.weight.data.T.clone().contiguous()
-                    )
-                    mse = sae.compute_loss(
-                        x=activation_in[:cfg.train_batch_size], 
-                        label=activation_out[:cfg.train_batch_size], 
-                    )[1][0]["l_rec"].mean().item()  # type: ignore
+                    sae.set_decoder_norm_to_fixed_norm(norm, force_exact=True)
+                    sae.encoder.weight.data = sae.decoder.weight.data.T.clone().contiguous()
+                    mse = (
+                        sae.compute_loss(
+                            x=activation_in[: cfg.train_batch_size],
+                            label=activation_out[: cfg.train_batch_size],
+                        )[1][0]["l_rec"]
+                        .mean()
+                        .item()
+                    )  # type: ignore
 
                     losses[norm] = mse
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm
 
-            best_norm_coarse = grid_search_best_init_norm(
-                torch.linspace(0.1, 1, 10).numpy().tolist()
-            )
+            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())
             best_norm_fine_grained = grid_search_best_init_norm(
-                torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20)
-                .numpy()
-                .tolist()
+                torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()
             )
 
-            print(
-                f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}"
-            )
+            print(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")
 
-            sae.set_decoder_norm_to_fixed_norm(
-                best_norm_fine_grained, force_exact=True
-            )
+            sae.set_decoder_norm_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
         else:
             sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
 
         if cfg.sae.init_encoder_with_decoder_transpose:
-            sae.encoder.weight.data = (
-                sae.decoder.weight.data.T.clone().contiguous()
-            )
-        
-        if cfg.sae.bias_init_method == 'geometric_median':
-            sae.decoder.bias.data = (
-                sae.compute_norm_factor(activation_out, hook_point='out') * activation_out
-            ).mean(0)
+            sae.encoder.weight.data = sae.decoder.weight.data.T.clone().contiguous()
+
+        if cfg.sae.bias_init_method == "geometric_median":
+            sae.decoder.bias.data = (sae.compute_norm_factor(activation_out, hook_point="out") * activation_out).mean(0)
 
             if not cfg.sae.apply_decoder_bias_to_pre_encoder:
-                normalized_input = sae.compute_norm_factor(activation_in, hook_point='in') * activation_in
+                normalized_input = sae.compute_norm_factor(activation_in, hook_point="in") * activation_in
                 normalized_median = normalized_input.mean(0)
                 sae.encoder.bias.data = -normalized_median @ sae.encoder.weight.data.T
 
@@ -704,44 +671,34 @@ class SparseAutoEncoder(HookedRootModule):
     def get_full_state_dict(self) -> dict:
         state_dict = self.state_dict()
         if self.cfg.tp_size > 1:
-            state_dict = {
-                k: v.full_tensor() if isinstance(v, DTensor) else v
-                for k, v in state_dict.items()
-            }
+            state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
         return state_dict
-    
+
     @torch.no_grad()
-    def transform_to_unit_decoder_norm(
-        self, state_dict: Dict[str, torch.Tensor]
-    ) -> Dict[str, torch.Tensor]:
-        decoder_norm = torch.norm(
-            state_dict["decoder.weight"], p=2, dim=0, keepdim=False
-        )
+    def transform_to_unit_decoder_norm(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        decoder_norm = torch.norm(state_dict["decoder.weight"], p=2, dim=0, keepdim=False)
         state_dict["decoder.weight"] = state_dict["decoder.weight"] / decoder_norm
-        state_dict["encoder.weight"] = (
-            state_dict["encoder.weight"] * decoder_norm[:, None]
-        )
+        state_dict["encoder.weight"] = state_dict["encoder.weight"] * decoder_norm[:, None]
         state_dict["encoder.bias"] = state_dict["encoder.bias"] * decoder_norm
         return state_dict
-    
+
     @torch.no_grad()
     def standardize_parameters_of_dataset_activation_scaling(
         self, state_dict: Dict[str, torch.Tensor]
     ) -> Dict[str, torch.Tensor]:
-        assert self.cfg.norm_activation == 'dataset-wise'
+        assert self.cfg.norm_activation == "dataset-wise"
         assert self.cfg.dataset_average_activation_norm is not None
 
-        input_norm_factor = math.sqrt(self.cfg.d_model) / self.cfg.dataset_average_activation_norm['in']
-        output_norm_factor = math.sqrt(self.cfg.d_model) / self.cfg.dataset_average_activation_norm['out']
+        input_norm_factor = math.sqrt(self.cfg.d_model) / self.cfg.dataset_average_activation_norm["in"]
+        output_norm_factor = math.sqrt(self.cfg.d_model) / self.cfg.dataset_average_activation_norm["out"]
 
         state_dict["encoder.bias"] = state_dict["encoder.bias"] / input_norm_factor
         state_dict["decoder.bias"] = state_dict["decoder.bias"] / output_norm_factor
         state_dict["decoder.weight"] = state_dict["decoder.weight"] * input_norm_factor / output_norm_factor
 
-        self.cfg.norm_activation = 'inference'
+        self.cfg.norm_activation = "inference"
 
         return state_dict
-
 
     def save_pretrained(self, ckpt_path: str) -> None:
         """Save the model to the checkpoint path.
@@ -752,15 +709,12 @@ class SparseAutoEncoder(HookedRootModule):
         if os.path.isdir(ckpt_path):
             ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
         state_dict = self.get_full_state_dict()
-        
 
         if is_master():
             if ckpt_path.endswith(".safetensors"):
                 safe.save_file(state_dict, ckpt_path, {"version": version("lm-saes")})
             elif ckpt_path.endswith(".pt"):
-                torch.save(
-                    {"sae": state_dict, "version": version("lm-saes")}, ckpt_path
-                )
+                torch.save({"sae": state_dict, "version": version("lm-saes")}, ckpt_path)
             else:
                 raise ValueError(
                     f"Invalid checkpoint path {ckpt_path}. Currently only supports .safetensors and .pt formats."
@@ -771,17 +725,19 @@ class SparseAutoEncoder(HookedRootModule):
         if self.cfg.tp_size == 1 or not self.tensor_paralleled:
             return torch.norm(self.decoder.weight, p=2, dim=0, keepdim=keepdim)
         else:
+            assert isinstance(self.decoder.weight, DTensor)
             decoder_norm = torch.norm(
-                self.decoder.weight.to_local(), p=2, dim=0, keepdim=keepdim  # type: ignore
+                self.decoder.weight.to_local(),
+                p=2,
+                dim=0,
+                keepdim=keepdim,  # type: ignore
             )
             decoder_norm = DTensor.from_local(
                 decoder_norm,
                 device_mesh=self.device_mesh["tp"],
                 placements=[Shard(int(keepdim))],
             )
-            decoder_norm = decoder_norm.redistribute(
-                placements=[Replicate()], async_op=True
-            ).to_local()
+            decoder_norm = decoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return decoder_norm
 
     def encoder_norm(
@@ -791,22 +747,20 @@ class SparseAutoEncoder(HookedRootModule):
         if self.cfg.tp_size == 1 or not self.tensor_paralleled:
             return torch.norm(self.encoder.weight, p=2, dim=1, keepdim=keepdim)
         else:
+            assert isinstance(self.encoder.weight, DTensor)
             encoder_norm = torch.norm(
-                self.encoder.weight.to_local(), p=2, dim=1, keepdim=keepdim  # type: ignore
+                self.encoder.weight.to_local(),
+                p=2,
+                dim=1,
+                keepdim=keepdim,  # type: ignore
             )
-            encoder_norm = DTensor.from_local(
-                encoder_norm, device_mesh=self.device_mesh["tp"], placements=[Shard(0)]
-            )
-            encoder_norm = encoder_norm.redistribute(
-                placements=[Replicate()], async_op=True
-            ).to_local()
+            encoder_norm = DTensor.from_local(encoder_norm, device_mesh=self.device_mesh["tp"], placements=[Shard(0)])
+            encoder_norm = encoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return encoder_norm
 
     def compute_ghost_grad_loss(self, reconstructed, hidden_pre, label_normed, dead_feature_mask, l_rec):
         # ghost protocol
-        assert (
-                self.cfg.tp_size == 1
-        ), "Ghost protocol not supported in tensor parallel training"
+        assert self.cfg.tp_size == 1, "Ghost protocol not supported in tensor parallel training"
         # 1.
         residual = label_normed - reconstructed
         residual_centred = residual - residual.mean(dim=0, keepdim=True)
@@ -814,18 +768,15 @@ class SparseAutoEncoder(HookedRootModule):
 
         # 2.
         feature_acts_dead_neurons_only = torch.exp(hidden_pre[:, dead_feature_mask])
-        ghost_out = (
-                feature_acts_dead_neurons_only
-                @ self.decoder.weight[dead_feature_mask, :]
-        )
+        ghost_out = feature_acts_dead_neurons_only @ self.decoder.weight[dead_feature_mask, :]
         l2_norm_ghost_out = torch.norm(ghost_out, dim=-1)
         norm_scaling_factor = l2_norm_residual / (1e-6 + l2_norm_ghost_out * 2)
         ghost_out = ghost_out * norm_scaling_factor[:, None].detach()
 
         # 3.
         l_ghost_resid = (
-                torch.pow((ghost_out - residual.detach().float()), 2)
-                / (residual_centred.detach() ** 2).sum(dim=-1, keepdim=True).sqrt()
+            torch.pow((ghost_out - residual.detach().float()), 2)
+            / (residual_centred.detach() ** 2).sum(dim=-1, keepdim=True).sqrt()
         )
         mse_rescaling_factor = (l_rec / (l_ghost_resid + 1e-6)).detach()
         l_ghost_resid = mse_rescaling_factor * l_ghost_resid
