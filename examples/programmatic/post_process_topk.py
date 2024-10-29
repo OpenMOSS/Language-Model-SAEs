@@ -1,8 +1,6 @@
-from transformer_lens import hook_points
-from lm_saes import post_process_topk_to_jumprelu_runner, LanguageModelSAERunnerConfig, SAEConfig
 import os
-import torch
-import jsonlines
+from lm_saes import post_process_topk_to_jumprelu_runner, LanguageModelSAERunnerConfig, SAEConfig
+
 
 layer = 15
 
@@ -34,7 +32,7 @@ cfg = LanguageModelSAERunnerConfig.from_flattened(
     dict(
         **sae_config,
         model_name=model_name,
-        model_from_pretrained_path=model_from_pretrained_path,
+        # model_from_pretrained_path=model_from_pretrained_path,
         # d_model=4096,
         dataset_path="<local_dataset_path>",
         is_dataset_tokenized=False,
