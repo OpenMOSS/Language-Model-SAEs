@@ -7,13 +7,13 @@ The design of the pipeline (including the configuration and some training detail
 
 ## News
 
-- 2024.2.19 Our first attempt on SAE-based circuit analysis for Othello-GPT and found an example of Attention Superposition in the wild! Link: [Dictionary learning improves patch-free circuit discovery in mechanistic interpretability: A case study on othello-gpt](https://arxiv.org/pdf/2402.12201).
-
-- 2024.5.22 We propose hierarchical tracing, a promising method to scale up sparse feature circuit analysis to industrial size language models! Link: [Automatically Identifying Local and Global Circuits with Linear Computation Graphs](https://arxiv.org/pdf/2405.13868)
+- 2024.10.29 We introduce Llama Scope, our first contribution to the open-source Sparse Autoencoder ecosystem. Stay tuned! Link: [Llama Scope: Extracting Millions of Features from Llama-3.1-8B with Sparse Autoencoders](http://arxiv.org/abs/2410.20526)
 
 - 2024.10.9 Transformers and Mambas are mechanistically similar in both feature and circuit level. Can we follow this line and find universal motifs and fundamental differences between language model architectures? Link: [Towards Universality: Studying Mechanistic Similarity Across Language Model Architectures](https://arxiv.org/pdf/2410.06672)
 
-- 2024.10.29 We introduce Llama Scope, our first contribution to the open-source Sparse Autoencoder ecosystem. Stay tuned! Link: [Llama Scope: Extracting Millions of Features from Llama-3.1-8B with Sparse Autoencoders](http://arxiv.org/abs/2410.20526)
+- 2024.5.22 We propose hierarchical tracing, a promising method to scale up sparse feature circuit analysis to industrial size language models! Link: [Automatically Identifying Local and Global Circuits with Linear Computation Graphs](https://arxiv.org/pdf/2405.13868)
+
+- 2024.2.19 Our first attempt on SAE-based circuit analysis for Othello-GPT and found an example of Attention Superposition in the wild! Link: [Dictionary learning improves patch-free circuit discovery in mechanistic interpretability: A case study on othello-gpt](https://arxiv.org/pdf/2402.12201).
 
 ## Installation
 
