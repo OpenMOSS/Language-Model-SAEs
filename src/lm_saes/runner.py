@@ -1,70 +1,48 @@
-from typing import Any, cast
 import os
-
-from pandas.core.algorithms import rank
-import wandb
-
 from dataclasses import asdict
 
 import torch
-import torch.distributed as dist
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-from transformer_lens import HookedTransformer, HookedTransformerConfig
-from transformer_lens.loading_from_pretrained import convert_gpt2_weights
-
-from lm_saes.config import (
-    ActivationGenerationConfig,
-    LanguageModelSAEAnalysisConfig,
-    LanguageModelSAETrainingConfig,
-    LanguageModelSAERunnerConfig,
-    LanguageModelSAEPruningConfig,
-    FeaturesDecoderConfig,
+import wandb
+from torch.distributed._tensor import (
+    Replicate,
 )
-from lm_saes.database import MongoClient
-from lm_saes.evals import run_evals
-from lm_saes.sae import SparseAutoEncoder
-from lm_saes.activation.activation_dataset import make_activation_dataset
-from lm_saes.activation.activation_store import ActivationStore
-from lm_saes.sae_training import prune_sae, train_sae
-from lm_saes.analysis.sample_feature_activations import sample_feature_activations
-from lm_saes.analysis.features_to_logits import features_to_logits
-from lm_saes.post_processing import post_process_topk_to_jumprelu_for_inference
-from torch.nn.parallel import DistributedDataParallel as DDP
-from lm_saes.utils.misc import is_master
-
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     RowwiseParallel,
     parallelize_module,
-    loss_parallel,
 )
-from torch.distributed._tensor import (
-    DTensor,
-    Shard,
-    Replicate,
-    distribute_module,
-    distribute_tensor,
+from transformer_lens import HookedTransformer
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from lm_saes.activation.activation_dataset import make_activation_dataset
+from lm_saes.activation.activation_store import ActivationStore
+from lm_saes.analysis.features_to_logits import features_to_logits
+from lm_saes.analysis.sample_feature_activations import sample_feature_activations
+from lm_saes.config import (
+    ActivationGenerationConfig,
+    FeaturesDecoderConfig,
+    LanguageModelSAEAnalysisConfig,
+    LanguageModelSAEPruningConfig,
+    LanguageModelSAERunnerConfig,
+    LanguageModelSAETrainingConfig,
 )
+from lm_saes.database import MongoClient
+from lm_saes.evals import run_evals
+from lm_saes.post_processing import post_process_topk_to_jumprelu_for_inference
+from lm_saes.sae import SparseAutoEncoder
+from lm_saes.sae_training import prune_sae, train_sae
+from lm_saes.utils.misc import is_master
 
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     hf_model = AutoModelForCausalLM.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         cache_dir=cfg.lm.cache_dir,
         local_files_only=cfg.lm.local_files_only,
         torch_dtype=cfg.lm.dtype,
     )
     hf_tokenizer = AutoTokenizer.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         trust_remote_code=True,
         use_fast=True,
         add_bos_token=True,
@@ -84,8 +62,9 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
     if not cfg.finetuning and (
-            cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None
-            or cfg.sae.init_decoder_norm is None
+        cfg.sae.norm_activation == "dataset-wise"
+        and cfg.sae.dataset_average_activation_norm is None
+        or cfg.sae.init_decoder_norm is None
     ):
         sae = SparseAutoEncoder.from_initialization_searching(
             activation_store=activation_store,
@@ -116,9 +95,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
             name=cfg.wandb.exp_name,
             entity=cfg.wandb.wandb_entity,
         )
-        with open(
-            os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w"
-        ) as f:
+        with open(os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w") as f:
             f.write(wandb_run.id)
         wandb.watch(sae, log="all")
 
@@ -141,21 +118,13 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
     cfg.lm.save_lm_config(os.path.join(cfg.exp_result_path))
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
     hf_model = AutoModelForCausalLM.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         cache_dir=cfg.lm.cache_dir,
         local_files_only=cfg.lm.local_files_only,
         torch_dtype=cfg.lm.dtype,
     )
     hf_tokenizer = AutoTokenizer.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         trust_remote_code=True,
         use_fast=True,
         add_bos_token=True,
@@ -185,9 +154,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
             name=cfg.wandb.exp_name,
             entity=cfg.wandb.wandb_entity,
         )
-        with open(
-            os.path.join(cfg.exp_result_path, "prune_wandb_id.txt"), "w"
-        ) as f:
+        with open(os.path.join(cfg.exp_result_path, "prune_wandb_id.txt"), "w") as f:
             f.write(wandb_run.id)
 
     sae = prune_sae(
@@ -210,21 +177,13 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
 def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
     hf_model = AutoModelForCausalLM.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         cache_dir=cfg.lm.cache_dir,
         local_files_only=cfg.lm.local_files_only,
     )
 
     hf_tokenizer = AutoTokenizer.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         trust_remote_code=True,
         use_fast=True,
         add_bos_token=True,
@@ -238,7 +197,6 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
-
 
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
@@ -257,9 +215,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
             name=cfg.wandb.exp_name,
             entity=cfg.wandb.wandb_entity,
         )
-        with open(
-            os.path.join(cfg.exp_result_path, "eval_wandb_id.txt"), "w"
-        ) as f:
+        with open(os.path.join(cfg.exp_result_path, "eval_wandb_id.txt"), "w") as f:
             f.write(wandb_run.id)
 
     result = run_evals(model, sae, activation_store, cfg, 0)
@@ -277,20 +233,12 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
 
 def activation_generation_runner(cfg: ActivationGenerationConfig):
     hf_model = AutoModelForCausalLM.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         cache_dir=cfg.lm.cache_dir,
         local_files_only=cfg.lm.local_files_only,
     )
     hf_tokenizer = AutoTokenizer.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         trust_remote_code=True,
         use_fast=True,
         add_bos_token=True,
@@ -326,20 +274,12 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     torch.cuda.empty_cache()
 
     hf_model = AutoModelForCausalLM.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         cache_dir=cfg.lm.cache_dir,
         local_files_only=cfg.lm.local_files_only,
     )
     hf_tokenizer = AutoTokenizer.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         trust_remote_code=True,
         use_fast=True,
         add_bos_token=True,
@@ -356,15 +296,11 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     model.eval()
     client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
     if is_master():
-        client.create_dictionary(
-            cfg.exp_name, cfg.exp_result_path, cfg.sae.d_sae, cfg.exp_series
-        )
+        client.create_dictionary(cfg.exp_name, cfg.exp_result_path, cfg.sae.d_sae, cfg.exp_series)
 
     for chunk_id in range(cfg.n_sae_chunks):
         activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
-        result = sample_feature_activations(
-            sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks
-        )
+        result = sample_feature_activations(sae, model, activation_store, cfg, chunk_id, cfg.n_sae_chunks)
         for i in range(len(result["index"].cpu().numpy().tolist())):
             client.update_feature(
                 cfg.exp_name,
@@ -398,20 +334,12 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
 
     hf_model = AutoModelForCausalLM.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         cache_dir=cfg.lm.cache_dir,
         local_files_only=cfg.lm.local_files_only,
     )
     hf_tokenizer = AutoTokenizer.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         trust_remote_code=True,
         use_fast=True,
         add_bos_token=True,
@@ -437,12 +365,8 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
         top_positive_logits = logits[sorted_indeces[-cfg.top :]].cpu().tolist()
         top_negative_ids = sorted_indeces[: cfg.top].tolist()
         top_positive_ids = sorted_indeces[-cfg.top :].tolist()
-        top_negative_tokens = model.to_str_tokens(
-            torch.tensor(top_negative_ids), prepend_bos=False
-        )
-        top_positive_tokens = model.to_str_tokens(
-            torch.tensor(top_positive_ids), prepend_bos=False
-        )
+        top_negative_tokens = model.to_str_tokens(torch.tensor(top_negative_ids), prepend_bos=False)
+        top_positive_tokens = model.to_str_tokens(torch.tensor(top_positive_ids), prepend_bos=False)
         counts, edges = torch.histogram(
             logits.cpu(), bins=60, range=(-60.0, 60.0)
         )  # Why logits.cpu():Could not run 'aten::histogram.bin_ct' with arguments from the 'CUDA' backend
@@ -453,15 +377,11 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
                 "logits": {
                     "top_negative": [
                         {"token_id": id, "logit": logit, "token": token}
-                        for id, logit, token in zip(
-                            top_negative_ids, top_negative_logits, top_negative_tokens
-                        )
+                        for id, logit, token in zip(top_negative_ids, top_negative_logits, top_negative_tokens)
                     ],
                     "top_positive": [
                         {"token_id": id, "logit": logit, "token": token}
-                        for id, logit, token in zip(
-                            top_positive_ids, top_positive_logits, top_positive_tokens
-                        )
+                        for id, logit, token in zip(top_positive_ids, top_positive_logits, top_positive_tokens)
                     ],
                     "histogram": {
                         "counts": counts.cpu().tolist(),
@@ -473,26 +393,17 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
         )
 
 
-
 @torch.no_grad()
 def post_process_topk_to_jumprelu_runner(cfg: LanguageModelSAERunnerConfig):
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
     hf_model = AutoModelForCausalLM.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         cache_dir=cfg.lm.cache_dir,
         local_files_only=cfg.lm.local_files_only,
     )
 
     hf_tokenizer = AutoTokenizer.from_pretrained(
-        (
-            cfg.lm.model_name
-            if cfg.lm.model_from_pretrained_path is None
-            else cfg.lm.model_from_pretrained_path
-        ),
+        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
         trust_remote_code=True,
         use_fast=True,
         add_bos_token=True,
@@ -506,7 +417,6 @@ def post_process_topk_to_jumprelu_runner(cfg: LanguageModelSAERunnerConfig):
         tokenizer=hf_tokenizer,
         dtype=cfg.lm.dtype,
     )
-
 
     model.eval()
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)

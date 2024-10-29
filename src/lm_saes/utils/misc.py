@@ -3,8 +3,10 @@ import os
 import torch
 import torch.distributed as dist
 
+
 def is_master() -> bool:
     return not dist.is_initialized() or dist.get_rank() == 0
+
 
 def print_once(
     *values: object,
@@ -13,7 +15,8 @@ def print_once(
 ) -> None:
     if is_master():
         print(*values, sep=sep, end=end)
-        
+
+
 def check_file_path_unused(file_path):
     # Check if the file path is None
     if file_path is None:
@@ -23,7 +26,8 @@ def check_file_path_unused(file_path):
     # Check if the file already exists
     if os.path.exists(file_path):
         print(f"Error: File {file_path} already exists. Please choose a different file path.")
-        exit() 
+        exit()
+
 
 str_dtype_map = {
     "float16": torch.float16,
@@ -54,11 +58,13 @@ str_dtype_map = {
     "torch.int": torch.int,
 }
 
+
 def convert_str_to_torch_dtype(str_dtype: str) -> torch.dtype:
     if str_dtype in str_dtype_map:
         return str_dtype_map[str_dtype]
     else:
         raise ValueError(f"Unsupported data type: {str_dtype}. Supported data types: {list(str_dtype_map.keys())}.")
+
 
 def convert_torch_dtype_to_str(dtype: torch.dtype) -> str:
     dtype_str_map = {v: k for k, v in str_dtype_map.items()}

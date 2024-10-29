@@ -1,22 +1,19 @@
 # Language-Model-SAEs
 
-This repo aims to provide a general codebase for conducting dictionary-learning-based mechanistic interpretability research on Language Models (LMs). It powers a configurable pipeline for training and evaluating GPT-2 dictionaries, and provides a set of tools (mainly a React-based webpage) for analyzing and visualizing the learned dictionaries.
+This repo aims to provide a general codebase for conducting dictionary-learning-based mechanistic interpretability research on Language Models (LMs). It powers a configurable pipeline for training and evaluating Sparse Autoencoders and their variants, and provides a set of tools (mainly a React-based webpage) for analyzing and visualizing the learned dictionaries.
 
 The design of the pipeline (including the configuration and some training detail) is highly inspired by the [mats_sae_training
-](https://github.com/jbloomAus/mats_sae_training) project and heavily relies on the [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) library. We thank the authors for their great work.
+](https://github.com/jbloomAus/mats_sae_training) project (now known as [SAELens](https://github.com/jbloomAus/SAELens)) and heavily relies on the [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) library. We thank the authors for their great work.
 
-## Getting Started with Mechanistic Interpretability and Dictionary Learning
+## News
 
-If you are new to the concept of mechanistic interpretability and dictionary learning, we recommend you to start from the following paper:
+- 2024.10.29 We introduce Llama Scope, our first contribution to the open-source Sparse Autoencoder ecosystem. Stay tuned! Link: [Llama Scope: Extracting Millions of Features from Llama-3.1-8B with Sparse Autoencoders](http://arxiv.org/abs/2410.20526)
 
-- [A Mathematical Framework for Transformer Circuits](https://transformer-circuits.pub/2021/framework/index.html)
-- [Interpretability in the Wild: a Circuit for Indirect Object Identification in GPT-2 small](https://arxiv.org/abs/2211.00593)
-- [Emergent World Representations: Exploring a Sequence Model Trained on a Synthetic Task](https://arxiv.org/abs/2210.13382)
-- [Toy Models of Superposition](https://transformer-circuits.pub/2022/toy_model/index.html)
-- [Towards Monosemanticity: Decomposing Language Models With Dictionary Learning](https://transformer-circuits.pub/2023/monosemantic-features/index.html)
-- [Sparse Autoencoders Find Highly Interpretable Features in Language Models](https://arxiv.org/abs/2309.08600)
+- 2024.10.9 Transformers and Mambas are mechanistically similar in both feature and circuit level. Can we follow this line and find universal motifs and fundamental differences between language model architectures? Link: [Towards Universality: Studying Mechanistic Similarity Across Language Model Architectures](https://arxiv.org/pdf/2410.06672)
 
-Furthermore, to dive deeper into the inner activations of LMs, it's recommended to get familiar with the [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) library.
+- 2024.5.22 We propose hierarchical tracing, a promising method to scale up sparse feature circuit analysis to industrial size language models! Link: [Automatically Identifying Local and Global Circuits with Linear Computation Graphs](https://arxiv.org/pdf/2405.13868)
+
+- 2024.2.19 Our first attempt on SAE-based circuit analysis for Othello-GPT and found an example of Attention Superposition in the wild! Link: [Dictionary learning improves patch-free circuit discovery in mechanistic interpretability: A case study on othello-gpt](https://arxiv.org/pdf/2402.12201).
 
 ## Installation
 
@@ -35,7 +32,7 @@ cd ui
 bun install
 ```
 
-It's worth noting that `bun` is not well-supported on Windows, so you may need to use WSL or other Linux-based solutions to run the frontend, or consider using a different package manager, such as `pnpm` or `yarn`.
+`bun` is not well-supported on Windows, so you may need to use WSL or other Linux-based solutions to run the frontend, or consider using a different package manager, such as `pnpm` or `yarn`.
 
 ## Launch an Experiment
 
