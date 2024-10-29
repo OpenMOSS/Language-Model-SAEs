@@ -1,8 +1,9 @@
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.sae import SparseAutoEncoder
 from lm_saes.config import FeaturesDecoderConfig
+from lm_saes.sae import SparseAutoEncoder
+
 
 @torch.no_grad()
 def features_to_logits(sae: SparseAutoEncoder, model: HookedTransformer, cfg: FeaturesDecoderConfig):
@@ -17,9 +18,9 @@ def features_to_logits(sae: SparseAutoEncoder, model: HookedTransformer, cfg: Fe
             index += 1
 
     feature_acts = torch.unsqueeze(feature_acts, dim=1)
-    
+
     residual = sae.decode(feature_acts)
-    
+
     if model.cfg.normalization_type is not None:
         residual = model.ln_final(residual)  # [batch, pos, d_model]
     logits = model.unembed(residual)  # [batch, pos, d_vocab]
