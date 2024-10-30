@@ -1,15 +1,20 @@
 import os
-from lm_saes import post_process_topk_to_jumprelu_runner, LanguageModelSAERunnerConfig, SAEConfig
 
+from lm_saes import LanguageModelSAERunnerConfig, SAEConfig, post_process_topk_to_jumprelu_runner
 
 layer = 15
 
-hook_point_in = 'R'
-hook_point_out = hook_point_in if hook_point_in != 'TC' else 'M'
+hook_point_in = "R"
+hook_point_out = hook_point_in if hook_point_in != "TC" else "M"
 exp_factor = 8
 
-HOOK_SUFFIX = {"M": "hook_mlp_out", "A": "hook_attn_out", "R": "hook_resid_post", "TC": "ln2.hook_normalized",
-               "Emb": "hook_resid_pre"}
+HOOK_SUFFIX = {
+    "M": "hook_mlp_out",
+    "A": "hook_attn_out",
+    "R": "hook_resid_post",
+    "TC": "ln2.hook_normalized",
+    "Emb": "hook_resid_pre",
+}
 
 
 hook_suffix_in = HOOK_SUFFIX[hook_point_in]
@@ -17,7 +22,6 @@ hook_suffix_out = HOOK_SUFFIX[hook_point_out]
 ckpt_path = f"<base_path>/Llama3_1Base-LX{hook_point_in}-{exp_factor}x"
 ckpt_path = os.path.join(ckpt_path, f"Llama3_1Base-L{layer}{hook_point_in}-{exp_factor}x")
 sae_config = SAEConfig.from_pretrained(ckpt_path).to_dict()
-
 
 
 model_name = "meta-llama/Llama-3.1-8B"

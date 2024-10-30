@@ -54,6 +54,7 @@ dev = [
     "nbformat>=5.10.4",
     "kaleido==0.2.1",
     "pre-commit>=4.0.1",
+    "ruff>=0.7.1",
 ]
 
 [tool.mypy]
