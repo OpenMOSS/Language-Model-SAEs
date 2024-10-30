@@ -1,9 +1,10 @@
-from transformer_lens import HookedTransformer, HookedTransformerConfig
 import torch
+from einops import rearrange
 from torch.optim import Adam
+from transformer_lens import HookedTransformer, HookedTransformerConfig
+
 from lm_saes.config import SAEConfig
 from lm_saes.sae import SparseAutoEncoder
-from einops import rearrange
 
 
 def test_train_sae():
@@ -41,9 +42,7 @@ def test_train_sae():
     ### Get activations ###
     tokens = torch.randint(0, 50, (batch_size, 10))
     with torch.no_grad():
-        _, cache = model.run_with_cache_until(
-            tokens, names_filter=hook_point, until=hook_point
-        )
+        _, cache = model.run_with_cache_until(tokens, names_filter=hook_point, until=hook_point)
         batch = {
             hook_point: rearrange(
                 cache[hook_point].to(dtype=dtype, device=device),

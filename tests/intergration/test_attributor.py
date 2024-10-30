@@ -9,6 +9,7 @@ from lm_saes.circuit.attributors import DirectAttributor, HierachicalAttributor,
 
 class TestModule(HookedRootModule):
     __test__ = False
+
     def __init__(self):
         super().__init__()
         self.W_1 = nn.Parameter(torch.tensor([[1.0, 2.0]]))
