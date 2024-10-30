@@ -61,9 +61,7 @@ Generally, our configuration-based pipeline uses outer layer settings as default
 The analysis results will be saved using MongoDB, and you can use the provided visualization tools to visualize the learned dictionary. First, start the FastAPI server by running the following command:
 
 ```bash
-uvicorn server.app:app --port 24577
-# You may want to modify some environmental settings in server/.env.example to server/.env, and run with these environmental variables:
-# uvicorn server.app:app --port 24577 --env-file server/.env
+uvicorn server.app:app --port 24577 --env-file server/.env
 ```
 
 Then, copy the `ui/.env.example` file to `ui/.env` and modify the `VITE_BACKEND_URL` to fit your server settings (by default, it's `http://localhost:24577`), and start the frontend by running the following command:
