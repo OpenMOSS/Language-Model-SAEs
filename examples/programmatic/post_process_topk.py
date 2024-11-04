@@ -1,7 +1,8 @@
-import os
 import argparse
+import os
 
-from lm_saes import LanguageModelSAERunnerConfig, SAEConfig, post_process_topk_to_jumprelu_runner
+from lm_saes import (LanguageModelSAERunnerConfig, SAEConfig,
+                     post_process_topk_to_jumprelu_runner)
 
 parser = argparse.ArgumentParser(description="Process hyparameters")
 parser.add_argument("-l", "--layer", nargs="*", required=False, type=int, help="Layer number")
