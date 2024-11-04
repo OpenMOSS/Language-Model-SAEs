@@ -1,8 +1,5 @@
 import os
-
 import argparse
-
-import torch
 
 from lm_saes import LanguageModelSAERunnerConfig, SAEConfig, post_process_topk_to_jumprelu_runner
 
