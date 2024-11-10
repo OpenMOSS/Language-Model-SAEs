@@ -45,7 +45,7 @@ license = {text = "MIT"}
 [project.scripts]
 lm-saes = "lm_saes.entrypoint:entrypoint"
 
-[tool.pdm.dev-dependencies]
+[dependency-groups]
 dev = [
     "-e file:///${PROJECT_ROOT}/TransformerLens#egg=transformer-lens",
     "mypy>=1.13.0",
