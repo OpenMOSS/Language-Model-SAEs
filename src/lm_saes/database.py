@@ -1,4 +1,4 @@
-from typing import Any, Dict, Mapping
+from typing import Any, Mapping
 
 import gridfs
 import numpy as np
@@ -27,7 +27,7 @@ class MongoClient:
             [("dictionary_id", pymongo.ASCENDING), ("index", pymongo.ASCENDING)], unique=True
         )
 
-    def _to_gridfs(self, data):
+    def _to_gridfs(self, data: Any) -> Any:
         """
         Recursively convert numpy arrays in data object to bytes, and store in GridFS
         """
@@ -39,7 +39,7 @@ class MongoClient:
             return self.fs.put(np_to_bytes(data))
         return data
 
-    def _from_gridfs(self, data):
+    def _from_gridfs(self, data: Any) -> Any:
         """
         Recursively convert GridFS references in data object to numpy arrays
         """
@@ -51,7 +51,7 @@ class MongoClient:
             return bytes_to_np(self.fs.get(data).read())
         return data
 
-    def _remove_gridfs_objs(self, data):
+    def _remove_gridfs_objs(self, data: Any) -> None:
         """
         Recursively remove GridFS objects in data object
         """
@@ -82,15 +82,19 @@ class MongoClient:
         self.dictionary_collection.delete_one({"_id": dictionary["_id"]})
 
     def update_feature(
-        self, dictionary_name: str, feature_index: int, feature_data: Dict, dictionary_series: str | None = None
-    ):
+        self,
+        dictionary_name: str,
+        feature_index: int,
+        feature_data: dict[str, Any],
+        dictionary_series: str | None = None,
+    ) -> None:
         dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
         assert dictionary is not None, f"Dictionary {dictionary_name} not found"
         feature = self.feature_collection.find_one({"dictionary_id": dictionary["_id"], "index": feature_index})
         assert feature is not None, f"Feature {feature_index} not found in dictionary {dictionary_name}"
         self.feature_collection.update_one({"_id": feature["_id"]}, {"$set": self._to_gridfs(feature_data)})
 
-    def list_dictionaries(self, dictionary_series: str | None = None):
+    def list_dictionaries(self, dictionary_series: str | None = None) -> list[str]:
         # return [{'name': d['name'], 'path': d['path']} for d in self.dictionary_collection.find({'series': dictionary_series} if dictionary_series is not None else {})]
         return [
             d["name"]
@@ -99,7 +103,7 @@ class MongoClient:
             )
         ]
 
-    def get_dictionary(self, dictionary_name: str, dictionary_series: str | None = None):
+    def get_dictionary(self, dictionary_name: str, dictionary_series: str | None = None) -> dict[str, Any] | None:
         dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
         if dictionary is None:
             return None
@@ -110,7 +114,9 @@ class MongoClient:
             "path": dictionary["path"] if "path" in dictionary else None,
         }
 
-    def get_feature(self, dictionary_name: str, feature_index: int, dictionary_series: str | None = None):
+    def get_feature(
+        self, dictionary_name: str, feature_index: int, dictionary_series: str | None = None
+    ) -> dict[str, Any] | None:
         dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
         if dictionary is None:
             return None
@@ -138,7 +144,7 @@ class MongoClient:
             {"dictionary_id": dictionary["_id"], "max_feature_acts": {"$gt": 0}}
         )
 
-    def get_max_feature_acts(self, dictionary_name: str, dictionary_series: str | None = None):
+    def get_max_feature_acts(self, dictionary_name: str, dictionary_series: str | None = None) -> dict[int, int] | None:
         dictionary = self.dictionary_collection.find_one({"name": dictionary_name, "series": dictionary_series})
         if dictionary is None:
             return None

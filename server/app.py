@@ -42,7 +42,7 @@ lm_cache = {}
 
 def get_model(dictionary_name: str) -> HookedTransformer:
     path = client.get_dictionary_path(dictionary_name, dictionary_series=dictionary_series)
-    if path == "":
+    if path is None:
         path = f"{result_dir}/{dictionary_name}"
     cfg = LanguageModelConfig.from_pretrained_sae(path)
     if (cfg.model_name, cfg.model_from_pretrained_path) not in lm_cache:
@@ -71,10 +71,8 @@ def get_model(dictionary_name: str) -> HookedTransformer:
 
 
 def get_sae(dictionary_name: str) -> SparseAutoEncoder:
-    path = (
-        client.get_dictionary(dictionary_name, dictionary_series=dictionary_series)["path"]
-        or f"{result_dir}/{dictionary_name}"
-    )
+    dictionary = client.get_dictionary(dictionary_name, dictionary_series=dictionary_series)
+    path = dictionary["path"] if dictionary is not None else f"{result_dir}/{dictionary_name}"
     if dictionary_name not in sae_cache:
         sae = SparseAutoEncoder.from_pretrained(path)
         sae.eval()
@@ -116,18 +114,17 @@ def list_dictionaries():
 @app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
 def get_feature(dictionary_name: str, feature_index: str | int):
     tokenizer = get_model(dictionary_name).tokenizer
-    if isinstance(feature_index, str):
-        if feature_index == "random":
-            feature = client.get_random_alive_feature(dictionary_name, dictionary_series=dictionary_series)
-        else:
-            try:
-                feature_index = int(feature_index)
-            except ValueError:
-                return Response(
-                    content=f"Feature index {feature_index} is not a valid integer",
-                    status_code=400,
-                )
-    if isinstance(feature_index, int):
+    if isinstance(feature_index, str) and feature_index != "random":
+        try:
+            feature_index = int(feature_index)
+        except ValueError:
+            return Response(
+                content=f"Feature index {feature_index} is not a valid integer",
+                status_code=400,
+            )
+    if feature_index == "random":
+        feature = client.get_random_alive_feature(dictionary_name, dictionary_series=dictionary_series)
+    else:
         feature = client.get_feature(dictionary_name, feature_index, dictionary_series=dictionary_series)
 
     if feature is None:
@@ -142,7 +139,8 @@ def get_feature(dictionary_name: str, feature_index: str | int):
             {
                 "context": [
                     bytearray([byte_decoder[c] for c in t])
-                    for t in tokenizer.convert_ids_to_tokens(analysis["contexts"][i])
+                    # Method `convert_ids_to_tokens` should exist on GPT2Tokenizer and other BPE tokenizers.
+                    for t in tokenizer.convert_ids_to_tokens(analysis["contexts"][i])  # type: ignore
                 ],
                 "feature_acts": analysis["feature_acts"][i],
             }
@@ -176,6 +174,8 @@ def get_feature(dictionary_name: str, feature_index: str | int):
             + ["#636EFA" for _ in range((len(logits_bin_edges) - 1) // 2)],
             showlegend=False,
         ).to_plotly_json()
+    else:
+        logits_histogram = None
 
     return Response(
         content=msgpack.packb(
@@ -258,7 +258,9 @@ def feature_activation_custom_input(dictionary_name: str, feature_index: int, in
         feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0])
         sample = {
             "context": [
-                bytearray([byte_decoder[c] for c in t]) for t in model.tokenizer.convert_ids_to_tokens(input[0])
+                bytearray([byte_decoder[c] for c in t])
+                # Method `convert_ids_to_tokens` should exist on GPT2Tokenizer and other BPE tokenizers.
+                for t in model.tokenizer.convert_ids_to_tokens(input[0])  # type: ignore
             ],
             "feature_acts": feature_acts[:, feature_index].tolist(),
         }
@@ -274,6 +276,7 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
         return Response(content=f"Dictionary {dictionary_name} not found", status_code=404)
 
     max_feature_acts = client.get_max_feature_acts(dictionary_name, dictionary_series=dictionary_series)
+    assert max_feature_acts is not None, "Max feature acts not found"
 
     model = get_model(dictionary_name)
 
@@ -288,7 +291,9 @@ def dictionary_custom_input(dictionary_name: str, input_text: str):
         feature_acts = sae.encode(cache[sae.cfg.hook_point_in][0])
         sample = {
             "context": [
-                bytearray([byte_decoder[c] for c in t]) for t in model.tokenizer.convert_ids_to_tokens(input[0])
+                bytearray([byte_decoder[c] for c in t])
+                # Method `convert_ids_to_tokens` should exist on GPT2Tokenizer and other BPE tokenizers.
+                for t in model.tokenizer.convert_ids_to_tokens(input[0])  # type: ignore
             ],
             "feature_acts_indices": [
                 feature_acts[i].nonzero(as_tuple=True)[0].tolist() for i in range(feature_acts.shape[0])
@@ -356,6 +361,10 @@ def model_generate(request: ModelGenerateRequest):
     max_feature_acts = {
         name: client.get_max_feature_acts(name, dictionary_series=dictionary_series) for _, name in saes
     }
+    assert all(
+        max_feature_acts is not None for max_feature_acts in max_feature_acts.values()
+    ), "Max feature acts not found"
+    max_feature_acts = cast(dict[str, dict[int, int]], max_feature_acts)
     assert all(steering.sae in request.saes for steering in request.steerings), "Steering SAE not found"
 
     def generate_steering_hook(steering: SteeringConfig):
@@ -389,11 +398,14 @@ def model_generate(request: ModelGenerateRequest):
                     else torch.tensor([request.input_text], device=device)
                 )
                 if request.max_new_tokens > 0:
-                    output = model.generate(
-                        input,
-                        max_new_tokens=request.max_new_tokens,
-                        top_k=request.top_k,
-                        top_p=request.top_p,
+                    output = cast(
+                        torch.Tensor,
+                        model.generate(
+                            input,
+                            max_new_tokens=request.max_new_tokens,
+                            top_k=request.top_k,
+                            top_p=request.top_p,
+                        ),
                     )
                     input = output.clone()
                 name_filter = (
@@ -406,7 +418,9 @@ def model_generate(request: ModelGenerateRequest):
 
                 result = {
                     "context": [
-                        bytearray([byte_decoder[c] for c in t]) for t in model.tokenizer.convert_ids_to_tokens(input[0])
+                        bytearray([byte_decoder[c] for c in t])
+                        # Method `convert_ids_to_tokens` should exist on GPT2Tokenizer and other BPE tokenizers.
+                        for t in model.tokenizer.convert_ids_to_tokens(input[0])  # type: ignore
                     ],
                     "token_ids": input[0].tolist(),
                     "logits": {
@@ -414,7 +428,8 @@ def model_generate(request: ModelGenerateRequest):
                         "tokens": [
                             [
                                 bytearray([byte_decoder[c] for c in t])
-                                for t in model.tokenizer.convert_ids_to_tokens(l.indices)
+                                # Method `convert_ids_to_tokens` should exist on GPT2Tokenizer and other BPE tokenizers.
+                                for t in model.tokenizer.convert_ids_to_tokens(l.indices)  # type: ignore
                             ]
                             for l in logits_topk
                         ],
@@ -469,10 +484,15 @@ def model_trace(request: ModelTraceRequest):
     dictionaries = client.list_dictionaries(dictionary_series=dictionary_series)
     assert len(dictionaries) > 0, "No dictionaries found. Model name cannot be inferred."
     model = get_model(dictionaries[0])
+    assert model.tokenizer is not None, "Tokenizer not found"
     saes = [(get_sae(name), name) for name in request.saes]
     max_feature_acts = {
         name: client.get_max_feature_acts(name, dictionary_series=dictionary_series) for _, name in saes
     }
+    assert all(
+        max_feature_acts is not None for max_feature_acts in max_feature_acts.values()
+    ), "Max feature acts not found"
+    max_feature_acts = cast(dict[str, dict[int, int]], max_feature_acts)
     assert all(steering.sae in request.saes for steering in request.steerings), "Steering SAE not found"
     assert all(
         tracing.sae in request.saes for tracing in request.tracings if isinstance(tracing, FeatureNode)
@@ -629,7 +649,9 @@ def model_trace(request: ModelTraceRequest):
 
                 result = {
                     "context": [
-                        bytearray([byte_decoder[c] for c in t]) for t in model.tokenizer.convert_ids_to_tokens(input[0])
+                        bytearray([byte_decoder[c] for c in t])
+                        # Method `convert_ids_to_tokens` should exist on GPT2Tokenizer and other BPE tokenizers.
+                        for t in model.tokenizer.convert_ids_to_tokens(input[0])  # type: ignore
                     ],
                     "token_ids": input[0].tolist(),
                     "tracings": tracing_results,
@@ -645,10 +667,9 @@ def feature_interpretation(
     custom_interpretation: str | None = None,
 ):
     model = get_model(dictionary_name)
-    path = (
-        client.get_dictionary(dictionary_name, dictionary_series=dictionary_series)["path"]
-        or f"{result_dir}/{dictionary_name}"
-    )
+    dictionary = client.get_dictionary(dictionary_name, dictionary_series=dictionary_series)
+    assert dictionary is not None, "Dictionary not found"
+    path = dictionary["path"]
     if type == "custom":
         interpretation: Any = {
             "text": custom_interpretation,
@@ -669,6 +690,7 @@ def feature_interpretation(
             }
         )
         feature = client.get_feature(dictionary_name, feature_index, dictionary_series=dictionary_series)
+        assert feature is not None, "Feature not found"
         result = generate_description(model, feature["analysis"][0], cfg)
         interpretation = {
             "text": result["response"],
@@ -685,6 +707,7 @@ def feature_interpretation(
             }
         )
         feature = client.get_feature(dictionary_name, feature_index, dictionary_series=dictionary_series)
+        assert feature is not None, "Feature not found"
         interpretation = feature["interpretation"] if "interpretation" in feature else None
         if interpretation is None:
             return Response(content="Feature interpretation not found", status_code=404)
@@ -721,6 +744,8 @@ def feature_interpretation(
                     "detail": validation_result,
                 }
             )
+    else:
+        return Response(content="Invalid interpretation type", status_code=400)
 
     try:
         client.update_feature(

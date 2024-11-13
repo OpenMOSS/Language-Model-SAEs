@@ -101,5 +101,5 @@ def entrypoint():
         raise ValueError(f"Unsupported runner: {args.runner}.")
 
     if tp_size > 1 or ddp_size > 1:
-        if dist.is_initialized():
-            dist.destroy_process_group()
+        if dist.is_initialized():  # type: ignore
+            dist.destroy_process_group()  # type: ignore

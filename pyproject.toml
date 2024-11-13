@@ -48,21 +48,14 @@ lm-saes = "lm_saes.entrypoint:entrypoint"
 [dependency-groups]
 dev = [
     "-e file:///${PROJECT_ROOT}/TransformerLens#egg=transformer-lens",
-    "mypy>=1.13.0",
     "pytest>=8.3.3",
     "ipykernel>=6.29.5",
     "nbformat>=5.10.4",
     "kaleido==0.2.1",
     "pre-commit>=4.0.1",
     "ruff>=0.7.1",
+    "basedpyright>=1.21.0",
 ]
-
-[tool.mypy]
-check_untyped_defs=true
-exclude=[".venv/", "examples", "TransformerLens", "tests", "exp"]
-ignore_missing_imports=true
-allow_redefinition=true
-implicit_optional=true
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -144,3 +137,7 @@ docstring-code-format = false
 # enabled.
 docstring-code-line-length = "dynamic"
 
+[tool.pyright]
+ignore = [".venv/", "examples", "TransformerLens", "tests", "exp"]
+typeCheckingMode = "standard"
+reportRedeclaration = false

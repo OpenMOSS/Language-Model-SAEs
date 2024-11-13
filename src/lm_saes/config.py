@@ -11,7 +11,12 @@ from typing_extensions import deprecated
 
 from lm_saes.utils.config import FlattenableModel
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-from lm_saes.utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str, is_master, print_once
+from lm_saes.utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
+    is_master,
+    print_once,
+)
 
 
 @dataclass(kw_only=True)
@@ -436,9 +441,9 @@ class ActivationGenerationConfig(RunnerConfig):
 
         if self.activation_save_path is None:
             assert (
-                isinstance(self.dataset_path, list) and len(self.dataset_path) == 1
+                isinstance(self.dataset.dataset_path, list) and len(self.dataset.dataset_path) == 1
             ), "Only one dataset path is supported for activation generation."
-            self.activation_save_path = f"activations/{self.dataset_path[0].split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
+            self.activation_save_path = f"activations/{self.dataset.dataset_path[0].split('/')[-1]}/{self.lm.model_name.replace('/', '_')}_{self.dataset.context_size}"
         os.makedirs(self.activation_save_path, exist_ok=True)
 
 

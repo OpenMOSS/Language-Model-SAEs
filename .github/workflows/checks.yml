@@ -52,7 +52,7 @@ jobs:
       - name: Install dependencies
         run: pdm install
       - name: Type check
-        run: pdm run mypy .
+        run: pdm run basedpyright
       - name: Unit tests
         run: pdm run pytest ./tests
 

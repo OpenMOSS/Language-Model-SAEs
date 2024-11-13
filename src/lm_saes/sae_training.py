@@ -5,7 +5,7 @@ from typing import cast
 import torch
 import torch.distributed as dist
 import wandb
-from torch.distributed._tensor import Replicate
+from torch.distributed.tensor import Replicate
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     RowwiseParallel,
@@ -59,7 +59,7 @@ def train_sae(
         if cfg.sae.use_glu_encoder:
             plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
         sae = parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan)  # type: ignore
-        sae.parallelize_plan = plan
+        sae.parallelize_plan = plan  # type: ignore
         sae.tensor_paralleled = True
 
     elif cfg.sae.ddp_size > 1:
@@ -79,8 +79,7 @@ def train_sae(
 
     scheduler.step()
 
-    if is_master():
-        pbar = tqdm(total=total_training_tokens, desc="Training SAE", smoothing=0.01)
+    pbar = tqdm(total=total_training_tokens, desc="Training SAE", smoothing=0.01) if is_master() else None
     while n_training_tokens < total_training_tokens:
         sae.train()
         if not sae.cfg.act_fn == "topk":
@@ -173,23 +172,23 @@ def train_sae(
                 # metrics for currents acts
                 l0 = (aux_data["feature_acts"] > 0).float().sum(-1).mean()
                 l_rec = loss_data["l_rec"].mean()
-                if not cfg.sae.act_fn == "topk":
-                    l_l1 = loss_data["l_l1"].mean()
-                if cfg.sae.use_ghost_grads:
-                    l_ghost_resid = loss_data["l_ghost_resid"].mean()
+                l_l1 = (
+                    loss_data["l_l1"].mean() if not cfg.sae.act_fn == "topk" else torch.tensor(0, device=cfg.sae.device)
+                )
+                l_ghost_resid = (
+                    loss_data["l_ghost_resid"].mean()
+                    if cfg.sae.use_ghost_grads
+                    else torch.tensor(0, device=cfg.sae.device)
+                )
 
                 if cfg.sae.ddp_size > 1:
-                    dist.reduce(loss, dst=0, op=dist.ReduceOp.AVG)
-                    dist.reduce(l0, dst=0, op=dist.ReduceOp.AVG)
-                    dist.reduce(l_rec, dst=0, op=dist.ReduceOp.AVG)
+                    dist.all_reduce(loss, op=dist.ReduceOp.AVG)
+                    dist.all_reduce(l0, op=dist.ReduceOp.AVG)
+                    dist.all_reduce(l_rec, op=dist.ReduceOp.AVG)
                     if not cfg.sae.act_fn == "topk":
-                        dist.reduce(l_l1, dst=0, op=dist.ReduceOp.AVG)
+                        dist.all_reduce(l_l1, op=dist.ReduceOp.AVG)
                     if cfg.sae.use_ghost_grads:
-                        dist.reduce(
-                            l_ghost_resid,
-                            dst=0,
-                            op=dist.ReduceOp.AVG,
-                        )
+                        dist.all_reduce(l_ghost_resid, op=dist.ReduceOp.AVG)
 
                 per_token_l2_loss = (aux_data["reconstructed"] - activation_out).pow(2).sum(dim=-1)
                 total_variance = (activation_out - activation_out.mean(0)).pow(2).sum(dim=-1)
@@ -198,35 +197,18 @@ def train_sae(
                 l2_norm_error_ratio = l2_norm_error / activation_out.norm(p=2, dim=-1).mean()
 
                 if cfg.sae.ddp_size > 1:
-                    dist.reduce(
-                        l2_norm_error,
-                        dst=0,
-                        op=dist.ReduceOp.AVG,
-                    )
-                    dist.reduce(
-                        l2_norm_error_ratio,
-                        dst=0,
-                        op=dist.ReduceOp.AVG,
-                    )
+                    dist.all_reduce(l2_norm_error, op=dist.ReduceOp.AVG)
+                    dist.all_reduce(l2_norm_error_ratio, op=dist.ReduceOp.AVG)
 
-                    if dist.get_rank() == 0:
-                        per_token_l2_loss_list = [
-                            torch.zeros_like(per_token_l2_loss) for _ in range(dist.get_world_size())
-                        ]
-                        total_variance_list = [torch.zeros_like(total_variance) for _ in range(dist.get_world_size())]
-                    dist.gather(
-                        per_token_l2_loss,
-                        per_token_l2_loss_list if dist.get_rank() == 0 else None,
-                        dst=0,
-                    )
-                    dist.gather(
-                        total_variance,
-                        total_variance_list if dist.get_rank() == 0 else None,
-                        dst=0,
-                    )
-                    if dist.get_rank() == 0:
-                        per_token_l2_loss = torch.cat(per_token_l2_loss_list, dim=0)
-                        total_variance = torch.cat(total_variance_list, dim=0)
+                    # Replace gather with all_gather
+                    per_token_l2_loss_list = [torch.zeros_like(per_token_l2_loss) for _ in range(dist.get_world_size())]
+                    total_variance_list = [torch.zeros_like(total_variance) for _ in range(dist.get_world_size())]
+
+                    dist.all_gather(per_token_l2_loss_list, per_token_l2_loss)
+                    dist.all_gather(total_variance_list, total_variance)
+
+                    per_token_l2_loss = torch.cat(per_token_l2_loss_list, dim=0)
+                    total_variance = torch.cat(total_variance_list, dim=0)
 
                 explained_variance = 1 - per_token_l2_loss / total_variance
 
@@ -265,6 +247,7 @@ def train_sae(
                     if cfg.sae.use_ghost_grads:
                         logs["losses/ghost_resid_loss"] = l_ghost_resid.item()
                     if not cfg.sae.act_fn == "topk":
+                        assert l_l1 is not None, "L1 loss is None"
                         logs["losses/l1_loss"] = l_l1.item()
                         logs["sparsity/l1_coefficient"] = sae.current_l1_coefficient
                     else:
@@ -303,7 +286,7 @@ def train_sae(
 
             n_training_steps += 1
 
-            if is_master():
+            if pbar is not None:
                 l_rec = loss_data["l_rec"].mean()
                 desc = f"{n_training_steps}| MSE Loss {l_rec.item():.3f}"
                 if not cfg.sae.act_fn == "topk":
@@ -313,7 +296,7 @@ def train_sae(
                 pbar.set_description(desc)
                 pbar.update(n_tokens_current.item())
 
-    if is_master():
+    if pbar is not None:
         pbar.close()
 
     # Save the final model
@@ -338,8 +321,7 @@ def prune_sae(
     if cfg.sae.ddp_size > 1:
         _ = DDP(sae, device_mesh=sae.device_mesh["ddp"])
 
-    if is_master():
-        pbar = tqdm(total=cfg.total_training_tokens, desc="Pruning SAE", smoothing=0.01)
+    pbar = tqdm(total=cfg.total_training_tokens, desc="Pruning SAE", smoothing=0.01) if is_master() else None
     while n_training_tokens < cfg.total_training_tokens:
         # Get the next batch of activations
         batch = activation_store.next(batch_size=cfg.train_batch_size)
@@ -359,15 +341,15 @@ def prune_sae(
             dist.reduce(n_tokens_current, dst=0)
         n_training_tokens += n_tokens_current
 
-        if is_master():
+        if pbar is not None:
             pbar.update(n_tokens_current)
 
-    if is_master():
+    if pbar is not None:
         pbar.close()
 
     if cfg.sae.ddp_size > 1:
-        dist.reduce(act_times, dst=0, op=dist.ReduceOp.SUM)
-        dist.reduce(max_acts, dst=0, op=dist.ReduceOp.MAX)
+        dist.all_reduce(act_times, op=dist.ReduceOp.SUM)
+        dist.all_reduce(max_acts, op=dist.ReduceOp.MAX)
 
     decoder_norm = sae.decoder_norm()
     if is_master():
