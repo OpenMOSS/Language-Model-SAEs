@@ -50,6 +50,7 @@ def make_activation_dataset(model: HookedTransformer, cfg: ActivationGenerationC
 
         while n_tokens_in_chunk < max_tokens_per_chunk:
             tokens = token_source.next(cfg.dataset.store_batch_size)
+            assert tokens is not None, "Token source returned None"
             _, cache = model.run_with_cache_until(tokens, names_filter=cfg.hook_points, until=cfg.hook_points[-1])
             for hook_point in cfg.hook_points:
                 act = cache[hook_point]
