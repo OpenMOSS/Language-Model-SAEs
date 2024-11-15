@@ -59,7 +59,6 @@ def train_sae(
         if cfg.sae.use_glu_encoder:
             plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
         sae = parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan)  # type: ignore
-        sae.parallelize_plan = plan  # type: ignore
         sae.tensor_paralleled = True
 
     elif cfg.sae.ddp_size > 1:
@@ -152,13 +151,9 @@ def train_sae(
                 if cfg.wandb.log_to_wandb and (is_master()):
                     feature_sparsity = act_freq_scores / n_frac_active_tokens
                     log_feature_sparsity = torch.log10(feature_sparsity + 1e-10)
-                    # wandb_histogram = wandb.Histogram(
-                    #     log_feature_sparsity.detach().cpu().float().numpy()
-                    # )
                     wandb.log(
                         {
                             "metrics/mean_log10_feature_sparsity": log_feature_sparsity.mean().item(),
-                            # "plots/feature_density_line_chart": wandb_histogram,
                             "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                             "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
                         },
