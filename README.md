@@ -1,10 +1,5 @@
 # Language-Model-SAEs
 
-This repo aims to provide a general codebase for conducting dictionary-learning-based mechanistic interpretability research on Language Models (LMs). It powers a configurable pipeline for training and evaluating Sparse Autoencoders and their variants, and provides a set of tools (mainly a React-based webpage) for analyzing and visualizing the learned dictionaries.
-
-The design of the pipeline (including the configuration and some training detail) is highly inspired by the [mats_sae_training
-](https://github.com/jbloomAus/mats_sae_training) project (now known as [SAELens](https://github.com/jbloomAus/SAELens)) and heavily relies on the [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) library. We thank the authors for their great work.
-
 ## News
 
 - 2024.10.29 We introduce Llama Scope, our first contribution to the open-source Sparse Autoencoder ecosystem. Stay tuned! Link: [Llama Scope: Extracting Millions of Features from Llama-3.1-8B with Sparse Autoencoders](http://arxiv.org/abs/2410.20526)
@@ -78,6 +73,11 @@ That's it! You can now go to `http://localhost:24576` to visualize the learned d
 We highly welcome contributions to this project. If you have any questions or suggestions, feel free to open an issue or a pull request. We are looking forward to hearing from you!
 
 TODO: Add development guidelines
+
+## Acknowledgement
+
+The design of the pipeline (including the configuration and some training details) is highly inspired by the [mats_sae_training
+](https://github.com/jbloomAus/mats_sae_training) project (now known as [SAELens](https://github.com/jbloomAus/SAELens)) and heavily relies on the [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) library. We thank the authors for their great work.
 
 ## Citation
 
