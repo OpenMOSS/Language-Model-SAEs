@@ -95,6 +95,7 @@ def recons_loss_batched(
     n_batches: int = 100,
 ):
     losses = []
+    pbar = None
     if is_master():
         pbar = tqdm(total=n_batches, desc="Evaluation", smoothing=0.01)
     for _ in range(n_batches):
@@ -110,10 +111,10 @@ def recons_loss_batched(
                 recons_loss.mean().item(),
             )
         )
-        if is_master():
+        if pbar is not None:
             pbar.update(1)
 
-    if is_master():
+    if pbar is not None:
         pbar.close()
 
     losses = pd.DataFrame(losses, columns=cast(Any, ["loss", "recons_loss"]))
@@ -129,11 +130,13 @@ def get_recons_loss(
     batch_tokens: torch.Tensor,
 ):
     batch_tokens = batch_tokens.to(torch.int64)
+    assert model.tokenizer is not None, "Tokenizer is not set"
+    eos_token_id = model.tokenizer.eos_token_id
+    pad_token_id = model.tokenizer.pad_token_id
+    bos_token_id = model.tokenizer.bos_token_id
 
-    logits_mask = torch.logical_and(
-        batch_tokens.ne(model.tokenizer.eos_token_id), batch_tokens.ne(model.tokenizer.pad_token_id)
-    )
-    logits_mask = torch.logical_and(logits_mask, batch_tokens.ne(model.tokenizer.bos_token_id))
+    logits_mask = torch.logical_and(batch_tokens != eos_token_id, batch_tokens != pad_token_id)
+    logits_mask = torch.logical_and(logits_mask, batch_tokens != bos_token_id)
 
     loss, cache = model.run_with_cache(
         batch_tokens,
@@ -142,11 +145,6 @@ def get_recons_loss(
         names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
     )
 
-    # _, cache = model.run_with_cache_until(
-    #     batch_tokens,
-    #     names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
-    #     until=cfg.sae.hook_point_out,
-    # )
     activations_in, activations_out = (
         cache[cfg.sae.hook_point_in],
         cache[cfg.sae.hook_point_out],

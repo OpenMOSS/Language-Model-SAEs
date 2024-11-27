@@ -456,9 +456,9 @@ class ActivationGenerationConfig(RunnerConfig):
 
         if self.activation_save_path is None:
             assert (
-                isinstance(self.dataset_path, list) and len(self.dataset_path) == 1
+                isinstance(self.dataset.dataset_path, list) and len(self.dataset.dataset_path) == 1
             ), "Only one dataset path is supported for activation generation."
-            self.activation_save_path = f"activations/{self.dataset_path[0].split('/')[-1]}/{self.model_name.replace('/', '_')}_{self.context_size}"
+            self.activation_save_path = f"activations/{self.dataset.dataset_path[0].split('/')[-1]}/{self.lm.model_name.replace('/', '_')}_{self.dataset.context_size}"
         os.makedirs(self.activation_save_path, exist_ok=True)
 
 

@@ -1,5 +1,6 @@
 import os
 from dataclasses import asdict
+from typing import cast
 
 import torch
 import wandb
@@ -335,8 +336,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
         }
         if cfg.sae.use_glu_encoder:
             plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
-        sae = parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan)  # type: ignore
-        sae.parallelize_plan = plan
+        sae = cast(SparseAutoEncoder, parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan))
 
     sae.decoder.weight = None  # type: ignore[assignment]
     torch.cuda.empty_cache()
