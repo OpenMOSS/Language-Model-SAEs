@@ -9,9 +9,9 @@ import torch.distributed as dist
 from transformer_lens.loading_from_pretrained import get_official_model_name
 from typing_extensions import deprecated
 
-from lm_saes.utils.config import FlattenableModel
-from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-from lm_saes.utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str, is_master, print_once
+from .utils.config import FlattenableModel
+from .utils.huggingface import parse_pretrained_name_or_path
+from .utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str, is_master, print_once
 
 
 @dataclass(kw_only=True)
@@ -142,6 +142,7 @@ class ActivationStoreConfig(BaseModelConfig, RunnerConfig):
 
     use_cached_activations: bool = False
     cached_activations_path: List[str] = None  # type: ignore
+    shuffle_activations: bool = True
 
     n_tokens_in_buffer: int = 500_000
     tp_size: int = 1
@@ -163,6 +164,7 @@ class WandbConfig(BaseConfig):
     wandb_project: str = "gpt2-sae-training"
     exp_name: Optional[str] = None
     wandb_entity: Optional[str] = None
+    log_on_every_rank: bool = False
 
 
 @dataclass(kw_only=True)
@@ -202,6 +204,7 @@ class SAEConfig(BaseModelConfig):
     l1_coefficient: float = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
     top_k: int = 50
+    initial_k: int | float | None = None
     k_warmup_steps: int | float = 0.1
 
     use_batch_norm_mse: bool = True  # will set to False in the future
@@ -217,6 +220,10 @@ class SAEConfig(BaseModelConfig):
             self.hook_point_out = self.hook_point_in
         if self.d_sae is None:
             self.d_sae = self.d_model * self.expansion_factor
+        if self.k_warmup_steps > 0:
+            if self.initial_k is None:
+                self.initial_k = self.d_model
+            self.initial_k /= self.top_k
         if self.norm_activation == "dataset-wise" and self.dataset_average_activation_norm is None:
             print(
                 'dataset_average_activation_norm is None and norm_activation is "dataset-wise". Will be computed automatically from the dataset.'
@@ -329,11 +336,12 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
     n_checkpoints: int = 10
     check_point_save_mode: str = "log"  # 'log' or 'linear'
     checkpoint_thresholds: list = field(default_factory=list)
+    save_on_every_rank: bool = False
 
     def __post_init__(self):
         super().__post_init__()
 
-        if is_master():
+        if self.save_on_every_rank or is_master():
             if os.path.exists(os.path.join(self.exp_result_path, "checkpoints")):
                 raise ValueError(
                     f"Checkpoints for experiment {self.exp_result_path} already exist. Consider changing the experiment name."
@@ -395,6 +403,15 @@ class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
 
 
 @dataclass(kw_only=True)
+class LanguageModelCrossCoderTrainingConfig(LanguageModelSAETrainingConfig):
+    initialize_all_layers_identically: bool = True
+
+    def __post_init__(self):
+        super().__post_init__()
+        assert self.sae.sparsity_include_decoder_norm, f'sparsity_include_decoder_norm must be True for crosscoders'    
+
+
+@dataclass(kw_only=True)
 class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
     """
     Configuration for pruning a sparse autoencoder on a language model.
@@ -421,12 +438,15 @@ class LanguageModelSAEPruningConfig(LanguageModelSAERunnerConfig):
 class ActivationGenerationConfig(RunnerConfig):
     lm: LanguageModelConfig
     dataset: TextDatasetConfig
+    act_store: ActivationStoreConfig
 
     hook_points: list[str] = field(default_factory=list)
 
     activation_save_path: str = None  # type: ignore
 
-    total_generating_tokens: int = 300_000_000
+    generate_with_context: bool = False
+    generate_batch_size: int = 2048
+    total_generating_tokens: int = 100_000_000
     chunk_size: int = int(0.5 * 2**30)  # 0.5 GB
     ddp_size: int = 1
     tp_size: int = 1

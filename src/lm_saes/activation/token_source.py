@@ -6,7 +6,7 @@ from datasets import load_dataset, load_from_disk
 from torch.utils.data import DataLoader
 from transformer_lens import HookedTransformer
 
-from lm_saes.config import TextDatasetConfig
+from ..config import TextDatasetConfig
 
 
 class TokenSource:

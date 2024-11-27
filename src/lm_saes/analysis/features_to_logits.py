@@ -1,8 +1,8 @@
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.config import FeaturesDecoderConfig
-from lm_saes.sae import SparseAutoEncoder
+from ..config import FeaturesDecoderConfig
+from ..sae import SparseAutoEncoder
 
 
 @torch.no_grad()

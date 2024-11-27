@@ -4,7 +4,7 @@ from typing import Callable, Tuple, Union
 import torch
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 
-from lm_saes.sae import SparseAutoEncoder
+from ..sae import SparseAutoEncoder
 
 
 @contextmanager

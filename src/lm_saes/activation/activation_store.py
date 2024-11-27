@@ -8,17 +8,18 @@ import torch.utils.data
 from torch.distributed.device_mesh import init_device_mesh
 from transformer_lens import HookedTransformer
 
-from lm_saes.activation.activation_source import (
+from .activation_source import (
     ActivationSource,
     CachedActivationSource,
     TokenActivationSource,
 )
-from lm_saes.config import ActivationStoreConfig
+from ..config import ActivationStoreConfig
 
 
 class ActivationStore:
     def __init__(self, act_source: ActivationSource, cfg: ActivationStoreConfig):
         self.act_source = act_source
+        self.shuffle_activations = cfg.shuffle_activations
         self.buffer_size = cfg.n_tokens_in_buffer
         self.device = cfg.device
         self.ddp_size = cfg.ddp_size
@@ -29,7 +30,8 @@ class ActivationStore:
 
     def initialize(self):
         self.refill()
-        self.shuffle()
+        if self.shuffle_activations:
+            self.shuffle()
 
     def shuffle(self):
         if len(self._store) == 0:
@@ -68,7 +70,8 @@ class ActivationStore:
             dist.all_reduce(need_refill, op=dist.ReduceOp.MAX)
         if need_refill.item() > 0:
             self.refill()
-            self.shuffle()
+            if self.shuffle_activations:
+                self.shuffle()
         if dist.is_initialized():  # Wait for all processes to refill the store
             dist.barrier()
         if self.tp_size > 1:

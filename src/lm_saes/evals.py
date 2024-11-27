@@ -10,9 +10,9 @@ from transformer_lens import HookedTransformer
 from lm_saes.activation.activation_store import ActivationStore
 
 # from lm_saes.activation_store_theirs import ActivationStoreTheirs
-from lm_saes.config import LanguageModelSAERunnerConfig
-from lm_saes.sae import SparseAutoEncoder
-from lm_saes.utils.misc import is_master
+from .config import LanguageModelSAERunnerConfig
+from .sae import SparseAutoEncoder
+from .utils.misc import is_master
 
 
 @torch.no_grad()
