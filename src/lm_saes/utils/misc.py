@@ -72,3 +72,48 @@ def convert_torch_dtype_to_str(dtype: torch.dtype) -> str:
         return dtype_str_map[dtype]
     else:
         raise ValueError(f"Unsupported data type: {dtype}. Supported data types: {list(dtype_str_map.values())}.")
+
+
+def gather_tensors_from_specific_rank(tensor, dst=0):
+    world_size = dist.get_world_size()
+    gathered_tensors = [torch.zeros_like(tensor) for _ in range(world_size)] if dist.get_rank() == dst else None
+    dist.gather(tensor, gather_list=gathered_tensors, dst=dst)
+    return gathered_tensors if dist.get_rank() == dst else None
+
+
+def get_tensor_from_specific_rank(tensor, src=0):
+    dist.broadcast(tensor, src=src)
+    return tensor
+
+
+def all_gather_tensor(tensor, aggregate='none'):
+    _OP_MAP = {
+        'sum': dist.ReduceOp.SUM,
+        'mean': dist.ReduceOp.SUM,  # Use SUM for mean, but will need to divide by world size
+        'min': dist.ReduceOp.MIN,
+        'max': dist.ReduceOp.MAX,
+        'product': dist.ReduceOp.PRODUCT
+    }
+
+    world_size = dist.get_world_size()
+    # gathered_tensors = [torch.zeros_like(tensor) for _ in range(world_size)]
+    tensor = dist.nn.functional.all_reduce(tensor, op=_OP_MAP[aggregate])
+    if aggregate == 'mean':
+        tensor = tensor / dist.get_world_size()
+    return tensor
+
+
+def assert_tensor_consistency(tensor):
+    flat_tensor = tensor.flatten()
+    
+    local_checksum = flat_tensor.sum().item()
+    checksum_tensor = torch.tensor(local_checksum).to(tensor.device)
+    
+    dist.all_reduce(checksum_tensor, op=dist.ReduceOp.SUM)
+    
+    world_size = dist.get_world_size()
+    expected_checksum = local_checksum * world_size
+    
+    # Step 5: Assert that the checksums match across all ranks
+    assert checksum_tensor.item() == expected_checksum, \
+        f"Inconsistent tensor data across ranks. Checksum mismatch."

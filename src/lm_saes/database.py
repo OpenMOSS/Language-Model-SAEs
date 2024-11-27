@@ -6,7 +6,7 @@ import pymongo
 import pymongo.database
 from bson import ObjectId
 
-from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
+from .utils.bytes import bytes_to_np, np_to_bytes
 
 
 class MongoClient:

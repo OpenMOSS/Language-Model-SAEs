@@ -12,10 +12,10 @@ from torch.distributed._tensor import DTensor, Replicate, Shard, distribute_tens
 from torch.distributed.device_mesh import init_device_mesh
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 
-from lm_saes.activation.activation_store import ActivationStore
-from lm_saes.config import LanguageModelSAETrainingConfig, SAEConfig
-from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-from lm_saes.utils.misc import is_master
+from .activation.activation_store import ActivationStore
+from .config import LanguageModelSAETrainingConfig, SAEConfig
+from .utils.huggingface import parse_pretrained_name_or_path
+from .utils.misc import is_master, print_once
 
 
 class SparseAutoEncoder(HookedRootModule):
@@ -434,12 +434,10 @@ class SparseAutoEncoder(HookedRootModule):
         if self.cfg.k_warmup_steps <= 0:
             return
 
-        initial_k = self.cfg.d_model / (2 * self.cfg.top_k)
-
         self.current_k = math.ceil(
             max(
                 1.0,
-                initial_k + (1 - initial_k) / self.cfg.k_warmup_steps * training_step,
+                self.cfg.initial_k + (1 - self.cfg.initial_k) / self.cfg.k_warmup_steps * training_step,
             )
             * self.cfg.top_k
         )
@@ -516,8 +514,8 @@ class SparseAutoEncoder(HookedRootModule):
         mean_thomson_potential = (1 / dist).mean()
         return mean_thomson_potential
 
-    @staticmethod
-    def from_config(cfg: SAEConfig) -> "SparseAutoEncoder":
+    @classmethod
+    def from_config(cls, cfg: SAEConfig) -> "SparseAutoEncoder":
         """Load the SparseAutoEncoder model from the pretrained configuration.
 
         Args:
@@ -528,7 +526,7 @@ class SparseAutoEncoder(HookedRootModule):
         """
         pretrained_name_or_path = cfg.sae_pretrained_name_or_path
         if pretrained_name_or_path is None:
-            return SparseAutoEncoder(cfg)
+            return cls(cfg)
 
         path = parse_pretrained_name_or_path(pretrained_name_or_path)
 
@@ -554,7 +552,7 @@ class SparseAutoEncoder(HookedRootModule):
         else:
             state_dict = torch.load(ckpt_path, map_location=cfg.device)["sae"]
 
-        model = SparseAutoEncoder(cfg)
+        model = cls(cfg)
 
         if cfg.norm_activation == "dataset-wise":
             state_dict = model.standardize_parameters_of_dataset_activation_scaling(state_dict)
@@ -586,9 +584,10 @@ class SparseAutoEncoder(HookedRootModule):
 
         return SparseAutoEncoder.from_config(cfg)
 
+    @classmethod
     @torch.no_grad()
-    @staticmethod
     def from_initialization_searching(
+        cls,
         activation_store: ActivationStore,
         cfg: LanguageModelSAETrainingConfig,
     ):
@@ -596,14 +595,14 @@ class SparseAutoEncoder(HookedRootModule):
         activation_in, activation_out = test_batch[cfg.sae.hook_point_in], test_batch[cfg.sae.hook_point_out]  # type: ignore
 
         if cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None:
-            print(f"SAE: Computing average activation norm on the first {cfg.train_batch_size * 8} samples.")
+            print_once(f"SAE: Computing average activation norm on the first {cfg.train_batch_size * 8} samples.")
 
             average_in_norm, average_out_norm = (
                 activation_in.norm(p=2, dim=1).mean().item(),
                 activation_out.norm(p=2, dim=1).mean().item(),
             )
 
-            print(
+            print_once(
                 f"Average input activation norm: {average_in_norm}\nAverage output activation norm: {average_out_norm}"
             )
             cfg.sae.dataset_average_activation_norm = {
@@ -615,14 +614,14 @@ class SparseAutoEncoder(HookedRootModule):
             assert cfg.sae.sparsity_include_decoder_norm, "Decoder norm must be included in sparsity loss"
             if not cfg.sae.init_encoder_with_decoder_transpose or cfg.sae.hook_point_in != cfg.sae.hook_point_out:
                 sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-                print(
+                print_once(
                     f"Transcoders cannot be initialized automatically. Skipping.\nEncoder norm: {sae.encoder_norm().mean().item()}\nDecoder norm: {sae.decoder_norm().mean().item()}"
                 )
                 return sae
 
-            print("SAE: Starting grid search for initial decoder norm.")
+            print_once("SAE: Starting grid search for initial decoder norm.")
 
-            sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+            sae = cls.from_config(cfg=cfg.sae)
 
             def grid_search_best_init_norm(search_range: List[float]) -> float:
                 losses: Dict[float, float] = {}
@@ -653,7 +652,7 @@ class SparseAutoEncoder(HookedRootModule):
             sae.set_decoder_norm_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
         else:
-            sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+            sae = cls.from_config(cfg=cfg.sae)
 
         if cfg.sae.init_encoder_with_decoder_transpose:
             sae.encoder.weight.data = sae.decoder.weight.data.T.clone().contiguous()

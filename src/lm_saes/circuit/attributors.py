@@ -5,8 +5,8 @@ import networkx as nx
 import torch
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 
-from lm_saes.circuit.graph import Node
-from lm_saes.utils.hooks import compose_hooks, detach_hook, retain_grad_hook
+from .graph import Node
+from ..utils.hooks import compose_hooks, detach_hook, retain_grad_hook
 
 
 class Cache:

@@ -7,11 +7,11 @@ from torch.distributed._tensor import DTensor
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
-from lm_saes.activation.activation_store import ActivationStore
-from lm_saes.config import LanguageModelSAEAnalysisConfig
-from lm_saes.sae import SparseAutoEncoder
-from lm_saes.utils.misc import print_once
-from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
+from ..activation.activation_store import ActivationStore
+from ..config import LanguageModelSAEAnalysisConfig
+from ..sae import SparseAutoEncoder
+from ..utils.misc import print_once
+from ..utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
 
 @torch.no_grad()

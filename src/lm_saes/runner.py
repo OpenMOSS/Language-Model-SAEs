@@ -6,6 +6,7 @@ import wandb
 from torch.distributed._tensor import (
     Replicate,
 )
+from torch.distributed import get_rank, get_world_size
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     RowwiseParallel,
@@ -14,24 +15,27 @@ from torch.distributed.tensor.parallel import (
 from transformer_lens import HookedTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from lm_saes.activation.activation_dataset import make_activation_dataset
-from lm_saes.activation.activation_store import ActivationStore
-from lm_saes.analysis.features_to_logits import features_to_logits
-from lm_saes.analysis.sample_feature_activations import sample_feature_activations
-from lm_saes.config import (
+from .activation.activation_dataset import make_activation_dataset
+from .activation.activation_store import ActivationStore
+from .activation.activation_source import CachedActivationSource
+from .analysis.features_to_logits import features_to_logits
+from .analysis.sample_feature_activations import sample_feature_activations
+from .config import (
     ActivationGenerationConfig,
     FeaturesDecoderConfig,
     LanguageModelSAEAnalysisConfig,
     LanguageModelSAEPruningConfig,
     LanguageModelSAERunnerConfig,
     LanguageModelSAETrainingConfig,
+    LanguageModelCrossCoderTrainingConfig
 )
-from lm_saes.database import MongoClient
-from lm_saes.evals import run_evals
-from lm_saes.post_processing import post_process_topk_to_jumprelu_for_inference
-from lm_saes.sae import SparseAutoEncoder
-from lm_saes.sae_training import prune_sae, train_sae
-from lm_saes.utils.misc import is_master
+from .database import MongoClient
+from .evals import run_evals
+from .post_processing import post_process_topk_to_jumprelu_for_inference
+from .sae import SparseAutoEncoder
+from .crosscoder import CrossCoder
+from .sae_training import prune_sae, train_sae
+from .utils.misc import is_master
 
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
@@ -94,6 +98,8 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
             config=wandb_config,
             name=cfg.wandb.exp_name,
             entity=cfg.wandb.wandb_entity,
+            settings=wandb.Settings(_disable_stats=True),
+            mode=os.getenv('WANDB_MODE', 'online')
         )
         with open(os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w") as f:
             f.write(wandb_run.id)
@@ -102,6 +108,64 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     # train SAE
     sae = train_sae(
         model,
+        sae,
+        activation_store,
+        cfg,
+    )
+
+    if cfg.wandb.log_to_wandb and is_master():
+        wandb.finish()
+
+    return sae
+
+
+def language_model_crosscoder_runner(cfg: LanguageModelCrossCoderTrainingConfig):
+    activation_source = CachedActivationSource(cfg.act_store)
+    activation_store = ActivationStore(act_source=activation_source, cfg=cfg.act_store)
+
+    if not cfg.finetuning and (
+        cfg.sae.norm_activation == "dataset-wise"
+        and cfg.sae.dataset_average_activation_norm is None
+    ):
+        sae = CrossCoder.from_initialization_searching(
+            activation_store=activation_store,
+            cfg=cfg,
+        )
+    else:
+        sae = CrossCoder.from_config(cfg=cfg.sae)
+    
+    sae.initialize_with_same_weight_across_layers()
+    sae.train()
+    # sae.search_for_enc_dec_norm_with_lowest_mse(
+    #     activation_store=activation_store,
+    #     cfg=cfg
+    # )
+    
+
+    cfg.sae.save_hyperparameters(cfg.exp_result_path)
+
+    if cfg.wandb.log_to_wandb and (cfg.wandb.log_on_every_rank or is_master()):
+        wandb_config: dict = {
+            **asdict(cfg),
+            **asdict(cfg.sae),
+            **asdict(cfg.lm),
+        }
+        del wandb_config["sae"]
+        del wandb_config["lm"]
+        wandb_run = wandb.init(
+            project=cfg.wandb.wandb_project,
+            config=wandb_config,
+            name=cfg.wandb.exp_name,
+            entity=cfg.wandb.wandb_entity,
+            settings=wandb.Settings(_disable_stats=True),
+            mode=os.getenv('WANDB_MODE', 'online')
+        )
+        with open(os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w") as f:
+            f.write(wandb_run.id)
+        wandb.watch(sae, log="all")
+
+    # train SAE
+    sae = train_sae(
         sae,
         activation_store,
         cfg,
@@ -153,6 +217,8 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
             config=wandb_config,
             name=cfg.wandb.exp_name,
             entity=cfg.wandb.wandb_entity,
+            settings=wandb.Settings(_disable_stats=True),
+            mode=os.getenv('WANDB_MODE', 'online')
         )
         with open(os.path.join(cfg.exp_result_path, "prune_wandb_id.txt"), "w") as f:
             f.write(wandb_run.id)
@@ -214,6 +280,8 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
             config=wandb_config,
             name=cfg.wandb.exp_name,
             entity=cfg.wandb.wandb_entity,
+            settings=wandb.Settings(_disable_stats=True),
+            mode=os.getenv('WANDB_MODE', 'online')
         )
         with open(os.path.join(cfg.exp_result_path, "eval_wandb_id.txt"), "w") as f:
             f.write(wandb_run.id)

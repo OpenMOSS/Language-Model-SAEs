@@ -7,8 +7,8 @@ import torch
 from openai import OpenAI
 from transformer_lens import HookedTransformer
 
-from lm_saes.config import AutoInterpConfig
-from lm_saes.sae import SparseAutoEncoder
+from ..config import AutoInterpConfig
+from ..sae import SparseAutoEncoder
 
 
 def _num_tokens_from_string(string: str, encoding_name: str = "cl100k_base") -> int:
