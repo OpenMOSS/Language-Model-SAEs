@@ -1,9 +1,11 @@
 import random
+from typing import Any, cast
 
+import datasets
 import torch
 import torch.distributed as dist
 from datasets import load_dataset, load_from_disk
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from transformer_lens import HookedTransformer
 
 from ..config import TextDatasetConfig
@@ -22,6 +24,8 @@ class TokenSource:
     ):
         self.dataloader = dataloader
         self.model = model
+        assert model.tokenizer is not None, "Tokenizer is not set"
+        self.tokenizer = model.tokenizer
         self.is_dataset_tokenized = is_dataset_tokenized
         self.concat_tokens = concat_tokens
         self.seq_len = seq_len
@@ -31,15 +35,13 @@ class TokenSource:
 
         self.token_buffer = torch.empty((0, seq_len), dtype=torch.long, device=self.device)
 
-        self.bos_token_id_tensor = torch.tensor(
-            [self.model.tokenizer.bos_token_id], dtype=torch.long, device=self.device
-        )
+        self.bos_token_id_tensor = torch.tensor([self.tokenizer.bos_token_id], dtype=torch.long, device=self.device)
         self.resid = torch.tensor([], dtype=torch.long, device=self.device)
 
         self.sample_probs = sample_probs
         self.prepend_bos = prepend_bos
 
-    def fill_with_one_batch(self, batch, pack: bool, prepend_bos: bool) -> None:
+    def fill_with_one_batch(self, batch: dict[str, Any], pack: bool, prepend_bos: bool) -> None:
         if self.is_dataset_tokenized:
             tokens: torch.Tensor = batch["tokens"].to(self.device)
         else:
@@ -47,9 +49,9 @@ class TokenSource:
         if pack:
             while tokens.size(0) > 0:
                 cur_tokens = tokens[0]
-                cur_tokens = cur_tokens[cur_tokens != self.model.tokenizer.bos_token_id]
-                cur_tokens = cur_tokens[cur_tokens != self.model.tokenizer.eos_token_id]
-                cur_tokens = cur_tokens[cur_tokens != self.model.tokenizer.pad_token_id]
+                cur_tokens = cur_tokens[cur_tokens != self.tokenizer.bos_token_id]
+                cur_tokens = cur_tokens[cur_tokens != self.tokenizer.eos_token_id]
+                cur_tokens = cur_tokens[cur_tokens != self.tokenizer.pad_token_id]
 
                 self.resid = torch.cat([self.resid, self.bos_token_id_tensor.clone(), cur_tokens], dim=0)
                 while self.resid.size(0) >= self.seq_len:
@@ -65,12 +67,15 @@ class TokenSource:
 
             if tokens.size(1) < self.seq_len:
                 pad_len = self.seq_len - tokens.size(1)
+                pad_token_id = self.tokenizer.pad_token_id
+                if pad_token_id is None:
+                    pad_token_id = 0  # Default to 0 if pad token not set
                 tokens = torch.cat(
                     [
                         tokens,
                         torch.full(
                             (tokens.size(0), pad_len),
-                            self.model.tokenizer.pad_token_id,
+                            pad_token_id,
                             dtype=torch.long,
                             device=self.device,
                         ),
@@ -113,13 +118,16 @@ class TokenSource:
             dataset = load_dataset(dataset_path, split="train", cache_dir=cfg.cache_dir, keep_in_memory=True)
         else:
             dataset = load_from_disk(dataset_path, keep_in_memory=True)
+        dataset = cast(datasets.Dataset, dataset)
         if dist.is_initialized():
             shard_id = dist.get_rank()
             shard = dataset.shard(num_shards=dist.get_world_size(), index=shard_id, contiguous=True)
         else:
             shard = dataset
 
-        dataloader = DataLoader(shard, batch_size=cfg.store_batch_size, pin_memory=True)
+        dataloader = DataLoader(
+            dataset=cast(Dataset[dict[str, Any]], shard), batch_size=cfg.store_batch_size, pin_memory=True
+        )
         return dataloader
 
     @staticmethod

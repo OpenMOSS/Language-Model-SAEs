@@ -3,7 +3,7 @@ from typing import cast
 import torch
 import torch.distributed as dist
 from einops import rearrange, repeat
-from torch.distributed._tensor import DTensor
+from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
@@ -23,6 +23,8 @@ def sample_feature_activations(
     sae_chunk_id: int = 0,
     n_sae_chunks: int = 1,  # By default, we do not chunk the SAE. When the model & SAE is large, we can chunk the SAE to save memory.
 ):
+    assert model.tokenizer is not None, "Tokenizer is not set"
+
     if sae.cfg.ddp_size > 1:
         raise ValueError("Sampling feature activations does not support DDP yet")
     assert cfg.sae.d_sae is not None  # Make mypy happy
@@ -91,10 +93,10 @@ def sample_feature_activations(
         )
 
         filter_mask = torch.logical_or(
-            batch.eq(model.tokenizer.eos_token_id),
-            batch.eq(model.tokenizer.pad_token_id),
+            batch == model.tokenizer.eos_token_id,
+            batch == model.tokenizer.pad_token_id,
         )
-        filter_mask = torch.logical_or(filter_mask, batch.eq(model.tokenizer.bos_token_id))
+        filter_mask = torch.logical_or(filter_mask, batch == model.tokenizer.bos_token_id)
 
         feature_acts = sae.encode(activation_in)[..., start_index:end_index]
         if isinstance(feature_acts, DTensor):

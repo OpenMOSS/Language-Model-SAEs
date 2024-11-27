@@ -40,6 +40,8 @@ class TokenActivationSource(ActivationSource):
     def __init__(self, model: HookedTransformer, cfg: ActivationStoreConfig):
         self.token_source = TokenSource.from_config(model=model, cfg=cfg.dataset)
         self.model = model
+        assert model.tokenizer is not None, "Tokenizer is not set"
+        self.tokenizer = model.tokenizer
         self.cfg = cfg
 
     def next(self) -> Dict[str, torch.Tensor] | None:
@@ -53,9 +55,9 @@ class TokenActivationSource(ActivationSource):
             )
 
             filter_mask = torch.logical_and(
-                tokens.ne(self.model.tokenizer.eos_token_id), tokens.ne(self.model.tokenizer.pad_token_id)
+                tokens != self.tokenizer.eos_token_id, tokens != self.tokenizer.pad_token_id
             )
-            filter_mask = torch.logical_and(filter_mask, tokens.ne(self.model.tokenizer.bos_token_id))
+            filter_mask = torch.logical_and(filter_mask, tokens != self.tokenizer.bos_token_id)
 
             filter_mask = rearrange(filter_mask, "b l -> (b l)")
 

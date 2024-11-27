@@ -95,19 +95,20 @@ def _sample_sentences(cfg: AutoInterpConfig, tokenizer, feature_activation):
     return prompt
 
 
-def _chat_completion(client, prompt, max_retry=3):
+def _chat_completion(client: OpenAI, prompt: str, max_retry: int = 3) -> str:
+    assert client is not None, "Client is not set"
     for i in range(max_retry):
         try:
             chat_completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 model="gpt-4",
             )
+            assert chat_completion.choices[0].message.content is not None, "Response is None"
             return chat_completion.choices[0].message.content
         except Exception as e:
             print(f"Error: {e}")
             traceback.print_exc()
-            if i == max_retry - 1:
-                return f"ERROR: {e}"
+    raise Exception("Failed to get a response from the OpenAI API")
 
 
 def generate_description(
@@ -146,6 +147,7 @@ def check_description(
     Otherwise, a `feature_activations` dataset is required for further processing.
     """
     tokenizer = model.tokenizer
+    assert tokenizer is not None, "Tokenizer is not set"
     client = OpenAI(api_key=cfg.openai.openai_api_key, base_url=cfg.openai.openai_base_url)
     if using_sae:
         assert sae is not None, "Sparse Auto Encoder is not provided."
@@ -177,7 +179,7 @@ def check_description(
             "cost": cost,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "activation_token": model.tokenizer.decode(input_token[0][max_pos]),
+            "activation_token": tokenizer.decode(input_token[0][max_pos]),
             "max_value": max_value.item(),
         }
         return result

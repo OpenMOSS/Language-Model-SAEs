@@ -37,7 +37,7 @@ def is_flattenable(cls) -> bool:
     return len(flattened_fields(cls)) > 0
 
 
-def from_flattened(cls, data: Any, context: dict | None = None, path: str = "obj"):
+def from_flattened(cls, data: Any, context: dict | None = None, path: str = "obj") -> Any:
     """Construct an object, especially a dataclass or TypedDict, from a flat structure.
     This is a superset of a traditional deserialization aimed at conveniently constructing nested dataclasses.
 
@@ -137,7 +137,7 @@ def from_flattened(cls, data: Any, context: dict | None = None, path: str = "obj
         # Remove the fields that are not in the data. This fields may exist in the child classes
         # and we don't want to pass them to the constructor of the current class.
         data = {k: v for k, v in data.items() if k in [f["name"] for f in fields(cls)]}
-        return cls(**data)
+        return cls(**data)  # type: ignore
     elif get_origin(cls) is list:
         if data == "__missing__":
             return "__missing__"

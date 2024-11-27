@@ -1,12 +1,23 @@
+import argparse
 import os
 
 from lm_saes import LanguageModelSAERunnerConfig, SAEConfig, post_process_topk_to_jumprelu_runner
 
-layer = 15
+parser = argparse.ArgumentParser(description="Process hyparameters")
+parser.add_argument("-l", "--layer", nargs="*", required=False, type=int, help="Layer number")
+parser.add_argument("-d", "--expdir", type=str, required=False, default="./results", help="Export directory")
+parser.add_argument("--dtype", type=str, required=False, default="bfloat16", help="Dtype, default bfloat16")
+parser.add_argument("--exp_factor", type=int, required=False, default=32, help="Expansion factor, default 32")
+parser.add_argument("--tc_in_abbr", type=str, required=False, default="R", help="Input layer type, default None")
+parser.add_argument("--tc_out_abbr", type=str, required=False, default="R", help="Output layer type, default None")
+parser.add_argument("--store_batch_size", type=int, required=False, default=8)
+args = parser.parse_args()
 
-hook_point_in = "R"
-hook_point_out = hook_point_in if hook_point_in != "TC" else "M"
-exp_factor = 8
+layer = args.layer[0]
+
+hook_point_in = args.tc_in_abbr
+hook_point_out = args.tc_out_abbr
+exp_factor = args.exp_factor
 
 HOOK_SUFFIX = {
     "M": "hook_mlp_out",
@@ -43,7 +54,7 @@ cfg = LanguageModelSAERunnerConfig.from_flattened(
         is_dataset_on_disk=True,
         concat_tokens=False,
         context_size=1024,
-        store_batch_size=4,
+        store_batch_size=args.store_batch_size,
         hook_points=hook_points,
         use_cached_activations=False,
         hook_points_in=hook_points[0],
@@ -59,13 +70,13 @@ cfg = LanguageModelSAERunnerConfig.from_flattened(
         # apply_decoder_bias_to_pre_encoder=True,
         # init_encoder_with_decoder_transpose=True,
         # expansion_factor=8,
-        train_batch_size=2048,
+        # train_batch_size=2048,
         log_to_wandb=False,
         # device="cuda",
         # seed=44,
-        # dtype=torch.bfloat16,
+        # dtype=args.dtype,
         exp_name="eval",
-        exp_result_dir=f"./result/{layer}_{hook_point_in}",
+        exp_result_path=ckpt_path,
     )
 )
 
