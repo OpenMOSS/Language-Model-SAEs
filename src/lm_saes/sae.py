@@ -8,8 +8,8 @@ import safetensors.torch as safe
 import torch
 from einops import einsum
 from jaxtyping import Float
-from torch.distributed._tensor import DTensor, Replicate, Shard, distribute_tensor
 from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 
 from .activation.activation_store import ActivationStore
@@ -272,7 +272,7 @@ class SparseAutoEncoder(HookedRootModule):
         return reconstructed
 
     @overload
-    def compute_loss(
+    def compute_loss(  # type: ignore . I have no idea why these overloads are overlapping
         self,
         x: Union[
             Float[torch.Tensor, "batch d_model"],
