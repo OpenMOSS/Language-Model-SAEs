@@ -1,6 +1,6 @@
 import torch
 
-from lm_saes.sae import SparseAutoEncoder
+from ..sae import SparseAutoEncoder
 
 
 @torch.no_grad()

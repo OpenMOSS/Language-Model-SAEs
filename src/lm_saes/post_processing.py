@@ -1,10 +1,9 @@
 import torch
 
-from lm_saes.activation.activation_store import ActivationStore
+from .activation.activation_store import ActivationStore
 
-# from lm_saes.activation_store_theirs import ActivationStoreTheirs
-from lm_saes.config import LanguageModelSAERunnerConfig, SAEConfig
-from lm_saes.sae import SparseAutoEncoder
+from .config import LanguageModelSAERunnerConfig, SAEConfig
+from .sae import SparseAutoEncoder
 
 
 @torch.no_grad()

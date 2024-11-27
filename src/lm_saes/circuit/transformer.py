@@ -2,11 +2,11 @@ from typing import Any
 
 from transformer_lens import HookedTransformer
 
-from lm_saes.circuit.attributors import DirectAttributor, HierachicalAttributor
-from lm_saes.circuit.context import apply_sae
-from lm_saes.circuit.graph import Node
-from lm_saes.sae import SparseAutoEncoder
-from lm_saes.utils.hooks import detach_hook
+from .attributors import DirectAttributor, HierachicalAttributor
+from .context import apply_sae
+from .graph import Node
+from ..sae import SparseAutoEncoder
+from ..utils.hooks import detach_hook
 
 
 def direct_attribute_transformer_with_saes(

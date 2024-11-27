@@ -1,4 +1,5 @@
 from .activation.activation_store import ActivationStore
+from .activation.activation_dataset import make_activation_dataset
 from .config import (
     ActivationGenerationConfig,
     ActivationStoreConfig,

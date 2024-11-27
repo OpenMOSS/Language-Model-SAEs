@@ -77,10 +77,10 @@ cfg = LanguageModelSAETrainingConfig.from_flattened(
     dict(
         # LanguageModelConfig
         model_name="meta-llama/Llama-3.1-8B",  # The model name or path for the pre-trained model.
-        # model_from_pretrained_path="<Local Model Path>",
+        model_from_pretrained_path="/inspire/hdd/ws-f4d69b29-e0a5-44e6-bd92-acf4de9990f0/public-project/hezhengfu-240208120186/models/Llama-3.1-8B",
         d_model=4096,  # The hidden size of the model.
         # TextDatasetConfig
-        dataset_path="<Local Dataset Path>",
+        dataset_path="/inspire/hdd/ws-f4d69b29-e0a5-44e6-bd92-acf4de9990f0/public-project/hezhengfu-240208120186/data/SlimPajama-3B",
         # The corpus name or path. Each of a data record should contain (and may only contain) a "text" field.
         is_dataset_tokenized=False,  # Whether the dataset is tokenized.
         is_dataset_on_disk=True,

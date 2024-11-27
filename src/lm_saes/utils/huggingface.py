@@ -6,7 +6,7 @@ import shutil
 
 from huggingface_hub import create_repo, snapshot_download, upload_folder
 
-from lm_saes.utils.misc import print_once
+from .misc import print_once
 
 
 def upload_pretrained_sae_to_hf(sae_path: str, repo_id: str, private: bool = False):

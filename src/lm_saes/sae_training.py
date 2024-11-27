@@ -16,19 +16,19 @@ from torch.optim import Adam
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
-from lm_saes.activation.activation_store import ActivationStore
-from lm_saes.config import LanguageModelSAEPruningConfig, LanguageModelSAETrainingConfig
-from lm_saes.evals import run_evals
-from lm_saes.optim import get_scheduler
-from lm_saes.sae import SparseAutoEncoder
-from lm_saes.utils.misc import is_master, print_once
+from .activation.activation_store import ActivationStore
+from .config import LanguageModelSAEPruningConfig, LanguageModelSAETrainingConfig
+from .evals import run_evals
+from .optim import get_scheduler
+from .sae import SparseAutoEncoder
+from .utils.misc import is_master, print_once
 
 
 def train_sae(
-    model: HookedTransformer,
     sae: SparseAutoEncoder,
     activation_store: ActivationStore,
     cfg: LanguageModelSAETrainingConfig,
+    model: HookedTransformer | None = None,
 ):
     total_training_tokens = cfg.total_training_tokens
     total_training_steps = total_training_tokens // cfg.effective_batch_size
@@ -150,21 +150,27 @@ def train_sae(
                 if cfg.sae.ddp_size > 1:
                     dist.reduce(act_freq_scores, dst=0)
                     dist.reduce(n_frac_active_tokens, dst=0)
-                if cfg.wandb.log_to_wandb and (is_master()):
+                if cfg.wandb.log_to_wandb and (cfg.wandb.log_on_every_rank or is_master()):
                     feature_sparsity = act_freq_scores / n_frac_active_tokens
                     log_feature_sparsity = torch.log10(feature_sparsity + 1e-10)
+
+                    log_dict = {
+                        "metrics/mean_log10_feature_sparsity": log_feature_sparsity.mean().item(),
+                        # "plots/feature_density_line_chart": wandb_histogram,
+                        "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
+                        "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
+                    }
+
+                    if cfg.wandb.log_on_every_rank:
+                        dist.all_reduce(feature_sparsity, op=dist.ReduceOp.MAX)
+                        log_dict.update({
+                            "sparsity/overall_below_1e-5": (feature_sparsity < 1e-5).sum().item(),
+                            "sparsity/overall_below_1e-6": (feature_sparsity < 1e-6).sum().item(),
+                        })
                     # wandb_histogram = wandb.Histogram(
                     #     log_feature_sparsity.detach().cpu().float().numpy()
                     # )
-                    wandb.log(
-                        {
-                            "metrics/mean_log10_feature_sparsity": log_feature_sparsity.mean().item(),
-                            # "plots/feature_density_line_chart": wandb_histogram,
-                            "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
-                            "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
-                        },
-                        step=n_training_steps + 1,
-                    )
+                    wandb.log(log_dict, step=n_training_steps + 1)
 
                 act_freq_scores = torch.zeros(cfg.sae.d_sae, device=cfg.sae.device)
                 n_frac_active_tokens = torch.tensor([0], device=cfg.sae.device, dtype=torch.int)
@@ -270,7 +276,7 @@ def train_sae(
                     else:
                         logs["sparsity/k"] = sae.current_k
 
-                    if is_master():
+                    if cfg.wandb.log_on_every_rank or is_master():
                         wandb.log(
                             logs,
                             step=n_training_steps + 1,
@@ -278,6 +284,8 @@ def train_sae(
 
             # record loss frequently, but not all the time.
             if (n_training_steps + 1) % (cfg.eval_frequency) == 0:
+                if model is None:
+                    raise NotImplementedError('Evaluation for model-free training is not implemented yet.')
                 sae.eval()
                 run_evals(
                     sae=sae,
