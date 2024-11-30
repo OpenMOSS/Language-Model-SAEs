@@ -122,6 +122,10 @@ def make_activation_dataset(model: HookedTransformer, cfg: ActivationGenerationC
                 .unsqueeze(0)
                 .expand(context.size(0), -1)
             )
+        
+        if cfg.zero_center_activations:
+            non_activation_dims = [0, 1] if cfg.generate_with_context else 0
+            act_dict[hook_point] -= act_dict[hook_point].mean(dim=non_activation_dims)
 
         for hook_point in cfg.hook_points:
             result = {"activation": act_dict[hook_point]}

@@ -447,6 +447,7 @@ class ActivationGenerationConfig(RunnerConfig):
     generate_with_context: bool = False
     generate_batch_size: int = 2048
     total_generating_tokens: int = 100_000_000
+    zero_center_activations: bool = False
     chunk_size: int = int(0.5 * 2**30)  # 0.5 GB
     ddp_size: int = 1
     tp_size: int = 1
