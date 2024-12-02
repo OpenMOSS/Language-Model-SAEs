@@ -4,10 +4,7 @@ from typing import cast
 
 import torch
 import wandb
-from torch.distributed._tensor import (
-    Replicate,
-)
-from torch.distributed import get_rank, get_world_size
+from torch.distributed.tensor import Replicate
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     RowwiseParallel,
@@ -17,24 +14,24 @@ from transformer_lens import HookedTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .activation.activation_dataset import make_activation_dataset
-from .activation.activation_store import ActivationStore
 from .activation.activation_source import CachedActivationSource
+from .activation.activation_store import ActivationStore
 from .analysis.features_to_logits import features_to_logits
 from .analysis.sample_feature_activations import sample_feature_activations
 from .config import (
     ActivationGenerationConfig,
     FeaturesDecoderConfig,
+    LanguageModelCrossCoderTrainingConfig,
     LanguageModelSAEAnalysisConfig,
     LanguageModelSAEPruningConfig,
     LanguageModelSAERunnerConfig,
     LanguageModelSAETrainingConfig,
-    LanguageModelCrossCoderTrainingConfig
 )
+from .crosscoder import CrossCoder
 from .database import MongoClient
 from .evals import run_evals
 from .post_processing import post_process_topk_to_jumprelu_for_inference
 from .sae import SparseAutoEncoder
-from .crosscoder import CrossCoder
 from .sae_training import prune_sae, train_sae
 from .utils.misc import is_master
 
@@ -43,6 +40,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     if cfg.act_store.use_cached_activations:
         activation_source = CachedActivationSource(cfg.act_store)
         activation_store = ActivationStore(act_source=activation_source, cfg=cfg.act_store)
+        model = None
     else:
         hf_model = AutoModelForCausalLM.from_pretrained(
             (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
@@ -104,7 +102,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
             name=cfg.wandb.exp_name,
             entity=cfg.wandb.wandb_entity,
             settings=wandb.Settings(_disable_stats=True),
-            mode=os.getenv('WANDB_MODE', 'online')
+            mode=os.getenv("WANDB_MODE", "online"),
         )
         with open(os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w") as f:
             f.write(wandb_run.id)
@@ -115,7 +113,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         sae,
         activation_store,
         cfg,
-        None if cfg.act_store.use_cached_activations else model,
+        model,
     )
 
     if cfg.wandb.log_to_wandb and is_master():
@@ -129,8 +127,7 @@ def language_model_crosscoder_runner(cfg: LanguageModelCrossCoderTrainingConfig)
     activation_store = ActivationStore(act_source=activation_source, cfg=cfg.act_store)
 
     if not cfg.finetuning and (
-        cfg.sae.norm_activation == "dataset-wise"
-        and cfg.sae.dataset_average_activation_norm is None
+        cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None
     ):
         sae = CrossCoder.from_initialization_searching(
             activation_store=activation_store,
@@ -138,14 +135,13 @@ def language_model_crosscoder_runner(cfg: LanguageModelCrossCoderTrainingConfig)
         )
     else:
         sae = CrossCoder.from_config(cfg=cfg.sae)
-    
+
     sae.initialize_with_same_weight_across_layers()
     sae.train()
     # sae.search_for_enc_dec_norm_with_lowest_mse(
     #     activation_store=activation_store,
     #     cfg=cfg
     # )
-    
 
     cfg.sae.save_hyperparameters(cfg.exp_result_path)
 
@@ -163,7 +159,7 @@ def language_model_crosscoder_runner(cfg: LanguageModelCrossCoderTrainingConfig)
             name=cfg.wandb.exp_name,
             entity=cfg.wandb.wandb_entity,
             settings=wandb.Settings(_disable_stats=True),
-            mode=os.getenv('WANDB_MODE', 'online')
+            mode=os.getenv("WANDB_MODE", "online"),
         )
         with open(os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w") as f:
             f.write(wandb_run.id)
@@ -223,7 +219,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
             name=cfg.wandb.exp_name,
             entity=cfg.wandb.wandb_entity,
             settings=wandb.Settings(_disable_stats=True),
-            mode=os.getenv('WANDB_MODE', 'online')
+            mode=os.getenv("WANDB_MODE", "online"),
         )
         with open(os.path.join(cfg.exp_result_path, "prune_wandb_id.txt"), "w") as f:
             f.write(wandb_run.id)
@@ -286,7 +282,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
             name=cfg.wandb.exp_name,
             entity=cfg.wandb.wandb_entity,
             settings=wandb.Settings(_disable_stats=True),
-            mode=os.getenv('WANDB_MODE', 'online')
+            mode=os.getenv("WANDB_MODE", "online"),
         )
         with open(os.path.join(cfg.exp_result_path, "eval_wandb_id.txt"), "w") as f:
             f.write(wandb_run.id)

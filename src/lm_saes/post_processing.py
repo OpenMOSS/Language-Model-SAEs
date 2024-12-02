@@ -1,7 +1,6 @@
 import torch
 
 from .activation.activation_store import ActivationStore
-
 from .config import LanguageModelSAERunnerConfig, SAEConfig
 from .sae import SparseAutoEncoder
 
