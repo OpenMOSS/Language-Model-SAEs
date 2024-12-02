@@ -7,9 +7,9 @@ import torch.distributed as dist
 from einops import rearrange, repeat
 from transformer_lens import HookedTransformer
 
-from .utils import list_activation_chunks, load_activation_chunk
-from .token_source import TokenSource
 from ..config import ActivationStoreConfig
+from .token_source import TokenSource
+from .utils import list_activation_chunks, load_activation_chunk
 
 
 class ActivationSource(ABC):
@@ -99,20 +99,28 @@ class CachedActivationSource(ActivationSource):
         chunk = self._load_next_chunk()
         if chunk is None:
             return None
-        assert len(chunk["activation"].size()) in [2, 3], f'activation size must be 2-dim (no context) or 3-dim (with context stored in batches)'
+        assert len(chunk["activation"].size()) in [
+            2,
+            3,
+        ], "activation size must be 2-dim (no context) or 3-dim (with context stored in batches)"
         with_context = len(chunk["activation"].size()) == 3
 
         activations = chunk["activation"].to(dtype=self.cfg.dtype, device=self.cfg.device)
 
         ret = {self.hook_point: rearrange(activations, "b l d -> (b l) d") if with_context else activations}
         if with_context:
-            ret.update({
-                "position": rearrange(chunk["position"].to(dtype=torch.long, device=self.cfg.device), "b l -> (b l)"),
-                "context": repeat(
-                    chunk["context"].to(dtype=torch.long, device=self.cfg.device),
-                    "b l -> (b repeat) l",
-                    repeat=activations.size(1),
-            )})
+            ret.update(
+                {
+                    "position": rearrange(
+                        chunk["position"].to(dtype=torch.long, device=self.cfg.device), "b l -> (b l)"
+                    ),
+                    "context": repeat(
+                        chunk["context"].to(dtype=torch.long, device=self.cfg.device),
+                        "b l -> (b repeat) l",
+                        repeat=activations.size(1),
+                    ),
+                }
+            )
         return ret
 
     def next_tokens(self, batch_size: int) -> torch.Tensor | None:
