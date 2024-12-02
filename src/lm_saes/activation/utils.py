@@ -4,10 +4,9 @@ from typing import Dict
 import torch
 
 
-
 @torch.no_grad()
 def list_activation_chunks(activation_path: str, hook_point: str) -> list[str]:
-    print(f'Reading cached activations from {os.path.join(activation_path, hook_point)}')
+    print(f"Reading cached activations from {os.path.join(activation_path, hook_point)}")
     return sorted(
         [
             os.path.join(activation_path, hook_point, f)

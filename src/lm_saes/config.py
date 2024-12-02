@@ -408,7 +408,7 @@ class LanguageModelCrossCoderTrainingConfig(LanguageModelSAETrainingConfig):
 
     def __post_init__(self):
         super().__post_init__()
-        assert self.sae.sparsity_include_decoder_norm, f'sparsity_include_decoder_norm must be True for crosscoders'    
+        assert self.sae.sparsity_include_decoder_norm, "sparsity_include_decoder_norm must be True for crosscoders"
 
 
 @dataclass(kw_only=True)

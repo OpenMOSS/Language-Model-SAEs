@@ -8,12 +8,12 @@ import torch.utils.data
 from torch.distributed.device_mesh import init_device_mesh
 from transformer_lens import HookedTransformer
 
+from ..config import ActivationStoreConfig
 from .activation_source import (
     ActivationSource,
     CachedActivationSource,
     TokenActivationSource,
 )
-from ..config import ActivationStoreConfig
 
 
 class ActivationStore:

@@ -161,10 +161,12 @@ def train_sae(
 
                     if cfg.wandb.log_on_every_rank:
                         dist.all_reduce(feature_sparsity, op=dist.ReduceOp.MAX)
-                        log_dict.update({
-                            "sparsity/overall_below_1e-5": (feature_sparsity < 1e-5).sum().item(),
-                            "sparsity/overall_below_1e-6": (feature_sparsity < 1e-6).sum().item(),
-                        })
+                        log_dict.update(
+                            {
+                                "sparsity/overall_below_1e-5": (feature_sparsity < 1e-5).sum().item(),
+                                "sparsity/overall_below_1e-6": (feature_sparsity < 1e-6).sum().item(),
+                            }
+                        )
 
                     wandb.log(log_dict, step=n_training_steps + 1)
 
@@ -265,7 +267,7 @@ def train_sae(
             # record loss frequently, but not all the time.
             if (n_training_steps + 1) % (cfg.eval_frequency) == 0:
                 if model is None:
-                    raise NotImplementedError('Evaluation for model-free training is not implemented yet.')
+                    raise NotImplementedError("Evaluation for model-free training is not implemented yet.")
                 sae.eval()
                 run_evals(
                     sae=sae,

@@ -1,5 +1,5 @@
-from .activation.activation_store import ActivationStore
 from .activation.activation_dataset import make_activation_dataset
+from .activation.activation_store import ActivationStore
 from .config import (
     ActivationGenerationConfig,
     ActivationStoreConfig,
@@ -29,6 +29,7 @@ from .runner import (
 from .sae import SparseAutoEncoder
 
 __all__ = [
+    "make_activation_dataset",
     "ActivationStore",
     "ActivationGenerationConfig",
     "ActivationStoreConfig",

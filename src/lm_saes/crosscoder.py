@@ -1,21 +1,13 @@
-import math
-import os
-from builtins import print
-from importlib.metadata import version
 from typing import Dict, List, Literal, Union, overload
 
-import safetensors.torch as safe
 import torch
-import torch.distributed as dist
-from einops import einsum
 from jaxtyping import Float
-from transformer_lens.hook_points import HookedRootModule, HookPoint
+from transformer_lens.hook_points import HookPoint
 
 from .activation.activation_store import ActivationStore
 from .config import LanguageModelSAETrainingConfig, SAEConfig
-from .utils.huggingface import parse_pretrained_name_or_path
-from .utils.misc import is_master, gather_tensors_from_specific_rank, all_gather_tensor, print_once, get_tensor_from_specific_rank, assert_tensor_consistency
 from .sae import SparseAutoEncoder
+from .utils.misc import all_gather_tensor, get_tensor_from_specific_rank, print_once
 
 
 class CrossCoder(SparseAutoEncoder):
@@ -45,8 +37,8 @@ class CrossCoder(SparseAutoEncoder):
         torch.nn.init.zeros_(self.encoder.bias)
 
         if cfg.tp_size > 1 or cfg.ddp_size > 1:
-            raise NotImplementedError('TODO: currently do not support further distributing each layer')
-            self.device_mesh = init_device_mesh("cuda", (cfg.ddp_size, cfg.tp_size), mesh_dim_names=("ddp", "tp"))
+            raise NotImplementedError("TODO: currently do not support further distributing each layer")
+            # self.device_mesh = init_device_mesh("cuda", (cfg.ddp_size, cfg.tp_size), mesh_dim_names=("ddp", "tp"))
 
         if cfg.use_glu_encoder:
             self.encoder_glu = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
@@ -72,7 +64,6 @@ class CrossCoder(SparseAutoEncoder):
         self.hook_reconstructed = HookPoint()
 
         self.initialize_parameters()
-    
 
     def activation_function_factory(self, cfg: SAEConfig):
         if self.cfg.act_fn.lower() == "relu":
@@ -96,14 +87,12 @@ class CrossCoder(SparseAutoEncoder):
             return lambda hidden_pre: hidden_pre.where(hidden_pre > cfg.jump_relu_threshold, 0)
         else:
             raise NotImplementedError(f"Not implemented activation function {cfg.act_fn}")
-    
 
-    def decoder_norm(self, keepdim: bool = False, local_only=True, aggregate='none'):
+    def decoder_norm(self, keepdim: bool = False, local_only=True, aggregate="none"):
         decoder_norm = torch.norm(self.decoder.weight, p=2, dim=0, keepdim=keepdim)
         if not local_only:
             decoder_norm = all_gather_tensor(decoder_norm, aggregate=aggregate)
         return decoder_norm
-
 
     @classmethod
     @torch.no_grad()
@@ -125,10 +114,10 @@ class CrossCoder(SparseAutoEncoder):
                 "in": average_in_norm,
                 "out": average_out_norm,
             }
-        
+
         sae = cls.from_config(cfg=cfg.sae)
         return sae
-    
+
     @overload
     def encode(
         self,
@@ -207,7 +196,7 @@ class CrossCoder(SparseAutoEncoder):
 
             hidden_pre = hidden_pre * hidden_pre_glu
 
-        hidden_pre = all_gather_tensor(hidden_pre, aggregate='sum')
+        hidden_pre = all_gather_tensor(hidden_pre, aggregate="sum")
         hidden_pre = self.hook_hidden_pre(hidden_pre)
 
         feature_acts = self.activation_function(hidden_pre)
@@ -216,9 +205,9 @@ class CrossCoder(SparseAutoEncoder):
         if return_hidden_pre:
             return feature_acts, hidden_pre
         return feature_acts
-    
+
     @overload
-    def compute_loss(
+    def compute_loss(  # type: ignore . I have no idea why these overloads are overlapping
         self,
         x: Union[
             Float[torch.Tensor, "batch d_model"],
@@ -255,7 +244,7 @@ class CrossCoder(SparseAutoEncoder):
         ) = None,
         return_aux_data: Literal[False] = False,
     ) -> Float[torch.Tensor, " batch"]: ...
-    
+
     def compute_loss(
         self,
         x: Union[
@@ -311,9 +300,9 @@ class CrossCoder(SparseAutoEncoder):
                 .clamp(min=1e-8)
                 .sqrt()
             )
-        
+
         l_rec = l_rec.mean()
-        l_rec = all_gather_tensor(l_rec, aggregate='mean')
+        l_rec = all_gather_tensor(l_rec, aggregate="mean")
 
         loss = l_rec
         loss_dict = {
@@ -321,7 +310,7 @@ class CrossCoder(SparseAutoEncoder):
         }
 
         # l_l1: (batch,)
-        feature_acts = feature_acts * self.decoder_norm(local_only=False, aggregate='mean')
+        feature_acts = feature_acts * self.decoder_norm(local_only=False, aggregate="mean")
 
         if not self.cfg.act_fn == "topk":
             l_l1 = torch.norm(feature_acts, p=self.cfg.lp, dim=-1)
@@ -351,7 +340,7 @@ class CrossCoder(SparseAutoEncoder):
             )
 
         return loss
-    
+
     def initialize_with_same_weight_across_layers(self):
         self.encoder.weight.data = get_tensor_from_specific_rank(self.encoder.weight.data.clone(), src=0)
         self.encoder.bias.data = get_tensor_from_specific_rank(self.encoder.bias.data.clone(), src=0)
@@ -359,28 +348,27 @@ class CrossCoder(SparseAutoEncoder):
         self.decoder.bias.data = get_tensor_from_specific_rank(self.decoder.bias.data.clone(), src=0)
 
     def search_for_enc_dec_norm_with_lowest_mse(self, activation_store, cfg):
-
         test_batch = activation_store.next(batch_size=cfg.train_batch_size * 8)
         activation_in, activation_out = test_batch[self.cfg.hook_point_in], test_batch[self.cfg.hook_point_out]
 
         def grid_search_best_init_norm(search_range: List[float]) -> float:
-                losses: Dict[float, float] = {}
+            losses: Dict[float, float] = {}
 
-                for norm in search_range:
-                    self.set_decoder_norm_to_fixed_norm(norm, force_exact=True)
-                    self.set_encoder_norm_to_fixed_norm(norm)
-                    mse = (
-                        self.compute_loss(
-                            x=activation_in[: cfg.train_batch_size],
-                            label=activation_out[: cfg.train_batch_size],
-                        )[1][0]["l_rec"]
-                        .mean()
-                        .item()
-                    )  # type: ignore
+            for norm in search_range:
+                self.set_decoder_norm_to_fixed_norm(norm, force_exact=True)
+                self.set_encoder_norm_to_fixed_norm(norm)
+                mse = (
+                    self.compute_loss(
+                        x=activation_in[: cfg.train_batch_size],
+                        label=activation_out[: cfg.train_batch_size],
+                    )[1][0]["l_rec"]
+                    .mean()
+                    .item()
+                )  # type: ignore
 
-                    losses[norm] = mse
-                best_norm = min(losses, key=losses.get)  # type: ignore
-                return best_norm
+                losses[norm] = mse
+            best_norm = min(losses, key=losses.get)  # type: ignore
+            return best_norm
 
         best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())
         best_norm_fine_grained = grid_search_best_init_norm(

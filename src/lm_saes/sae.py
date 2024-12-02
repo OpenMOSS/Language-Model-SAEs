@@ -434,6 +434,8 @@ class SparseAutoEncoder(HookedRootModule):
         if self.cfg.k_warmup_steps <= 0:
             return
 
+        assert self.cfg.initial_k is not None, "initial_k must be provided"
+
         self.current_k = math.ceil(
             max(
                 1.0,
