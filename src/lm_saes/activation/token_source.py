@@ -43,7 +43,18 @@ class TokenSource:
 
     def fill_with_one_batch(self, batch: dict[str, Any], pack: bool, prepend_bos: bool) -> None:
         if self.is_dataset_tokenized:
-            tokens: torch.Tensor = batch["tokens"].to(self.device)
+            if isinstance(batch["input_ids"], torch.Tensor):
+                assert not batch["input_ids"].dtype.is_floating_point, "input_ids must be a tensor of integers"
+                tokens = batch["input_ids"].to(self.device)
+            else:
+                assert isinstance(batch["input_ids"], list), "input_ids must be a list or a tensor"
+                print("Batch size:", len(batch["input_ids"]), "Type:", type(batch["input_ids"]))
+                print("Sequence length:", len(batch["input_ids"][0]), "Type:", type(batch["input_ids"][0]))
+                # Check if all sequences in the batch have the same length
+                assert all(
+                    len(seq) == len(batch["input_ids"][0]) for seq in batch["input_ids"]
+                ), "All sequences must have the same length"
+                tokens = torch.tensor(batch["input_ids"], dtype=torch.long, device=self.device)
         else:
             tokens = self.model.to_tokens(batch["text"], prepend_bos=prepend_bos).to(self.device)
         if pack:
@@ -124,6 +135,7 @@ class TokenSource:
             shard = dataset.shard(num_shards=dist.get_world_size(), index=shard_id, contiguous=True)
         else:
             shard = dataset
+        shard = shard.with_format("torch")
 
         dataloader = DataLoader(
             dataset=cast(Dataset[dict[str, Any]], shard), batch_size=cfg.store_batch_size, pin_memory=True
