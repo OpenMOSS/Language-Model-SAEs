@@ -6,6 +6,7 @@ import torch.distributed as dist
 import torch.distributed._functional_collectives as funcol
 import torch.utils.data
 from torch.distributed.device_mesh import init_device_mesh
+from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
 from ..config import ActivationStoreConfig
@@ -26,7 +27,10 @@ class ActivationStore:
         self.tp_size = cfg.tp_size
         self._store: Dict[str, torch.Tensor] = {}
         self._all_gather_buffer: Dict[str, torch.Tensor] = {}
-        self.device_mesh = init_device_mesh("cuda", (self.ddp_size, self.tp_size), mesh_dim_names=("ddp", "tp"))
+        if self.tp_size > 1 or self.ddp_size > 1:
+            self.device_mesh = init_device_mesh("cuda", (self.ddp_size, self.tp_size), mesh_dim_names=("ddp", "tp"))
+        else:
+            self.device_mesh = None
 
     def initialize(self):
         self.refill()
@@ -41,6 +45,14 @@ class ActivationStore:
             self._store[k] = self._store[k][perm]
 
     def refill(self):
+        pbar = tqdm(
+            total=self.buffer_size,
+            desc="Refilling activation store",
+            smoothing=0,
+            leave=False,
+            initial=self.__len__(),
+        )
+        n_seqs = 0
         while self.__len__() < self.buffer_size:
             new_act = self.act_source.next()
             if new_act is None:
@@ -53,6 +65,10 @@ class ActivationStore:
                     self._store[k] = torch.cat([self._store[k], v], dim=0)
             # Check if all activations have the same size
             assert len(set(v.size(0) for v in self._store.values())) == 1
+            n_seqs += 1
+            pbar.update(next(iter(new_act.values())).size(0))
+            pbar.set_postfix({"Sequences": n_seqs})
+        pbar.close()
 
     def __len__(self):
         if len(self._store) == 0:
@@ -75,6 +91,7 @@ class ActivationStore:
         if dist.is_initialized():  # Wait for all processes to refill the store
             dist.barrier()
         if self.tp_size > 1:
+            assert self.device_mesh is not None, "Device mesh not initialized"
             for k, v in self._store.items():
                 if k not in self._all_gather_buffer:
                     self._all_gather_buffer[k] = torch.empty(size=(0,), dtype=v.dtype, device=self.device)
