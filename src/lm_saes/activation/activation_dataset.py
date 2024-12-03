@@ -5,9 +5,7 @@ import torch.distributed as dist
 from tqdm.auto import tqdm
 from transformer_lens import HookedTransformer
 
-from ..config import (
-    ActivationGenerationConfig,
-)
+from ..config import ActivationGenerationConfig
 from ..utils.misc import is_master, print_once
 from .activation_store import ActivationStore
 from .token_source import TokenSource
@@ -90,6 +88,7 @@ def make_activation_dataset(model: HookedTransformer, cfg: ActivationGenerationC
     pbar = tqdm(
         total=total_generating_tokens,
         desc=f"Activation dataset Rank {dist.get_rank()}" if dist.is_initialized() else "Activation dataset",
+        smoothing=0.001,
     )
 
     while n_tokens < total_generating_tokens:

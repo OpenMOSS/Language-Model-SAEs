@@ -11,7 +11,12 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 from transformer_lens import HookedTransformer
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    ChameleonForConditionalGeneration,
+    PreTrainedModel,
+)
 
 from .activation.activation_dataset import make_activation_dataset
 from .activation.activation_source import CachedActivationSource
@@ -21,6 +26,7 @@ from .analysis.sample_feature_activations import sample_feature_activations
 from .config import (
     ActivationGenerationConfig,
     FeaturesDecoderConfig,
+    LanguageModelConfig,
     LanguageModelCrossCoderTrainingConfig,
     LanguageModelSAEAnalysisConfig,
     LanguageModelSAEPruningConfig,
@@ -36,36 +42,47 @@ from .sae_training import prune_sae, train_sae
 from .utils.misc import is_master
 
 
+def get_model(cfg: LanguageModelConfig):
+    if "chameleon" in cfg.model_name:
+        hf_model = ChameleonForConditionalGeneration.from_pretrained(
+            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
+            cache_dir=cfg.cache_dir,
+            local_files_only=cfg.local_files_only,
+            torch_dtype=cfg.dtype,
+        )
+    else:
+        hf_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
+            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
+            cache_dir=cfg.cache_dir,
+            local_files_only=cfg.local_files_only,
+            torch_dtype=cfg.dtype,
+        )
+    hf_tokenizer = AutoTokenizer.from_pretrained(
+        (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
+        trust_remote_code=True,
+        use_fast=True,
+        add_bos_token=True,
+    )
+    model = HookedTransformer.from_pretrained_no_processing(
+        cfg.model_name,
+        use_flash_attn=cfg.use_flash_attn,
+        device=cfg.device,
+        cache_dir=cfg.cache_dir,
+        hf_model=hf_model,
+        tokenizer=hf_tokenizer,
+        dtype=cfg.dtype,
+    )
+    model.eval()
+    return model
+
+
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
     if cfg.act_store.use_cached_activations:
         activation_source = CachedActivationSource(cfg.act_store)
         activation_store = ActivationStore(act_source=activation_source, cfg=cfg.act_store)
         model = None
     else:
-        hf_model = AutoModelForCausalLM.from_pretrained(
-            (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
-            cache_dir=cfg.lm.cache_dir,
-            local_files_only=cfg.lm.local_files_only,
-            torch_dtype=cfg.lm.dtype,
-        )
-        hf_tokenizer = AutoTokenizer.from_pretrained(
-            (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
-            trust_remote_code=True,
-            use_fast=True,
-            add_bos_token=True,
-        )
-
-        model = HookedTransformer.from_pretrained_no_processing(
-            cfg.lm.model_name,
-            use_flash_attn=cfg.lm.use_flash_attn,
-            device=cfg.lm.device,
-            cache_dir=cfg.lm.cache_dir,
-            hf_model=hf_model,
-            tokenizer=hf_tokenizer,
-            dtype=cfg.lm.dtype,
-        )
-        model.offload_params_after(cfg.act_store.hook_points[-1], torch.tensor([[0]], device=cfg.lm.device))
-        model.eval()
+        model = get_model(cfg.lm)
         activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
     if not cfg.finetuning and (
@@ -182,28 +199,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
     cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_path))
     cfg.lm.save_lm_config(os.path.join(cfg.exp_result_path))
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    hf_model = AutoModelForCausalLM.from_pretrained(
-        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
-        cache_dir=cfg.lm.cache_dir,
-        local_files_only=cfg.lm.local_files_only,
-        torch_dtype=cfg.lm.dtype,
-    )
-    hf_tokenizer = AutoTokenizer.from_pretrained(
-        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
-        trust_remote_code=True,
-        use_fast=True,
-        add_bos_token=True,
-    )
-    model = HookedTransformer.from_pretrained_no_processing(
-        cfg.lm.model_name,
-        use_flash_attn=cfg.lm.use_flash_attn,
-        device=cfg.lm.device,
-        cache_dir=cfg.lm.cache_dir,
-        hf_model=hf_model,
-        tokenizer=hf_tokenizer,
-        dtype=cfg.lm.dtype,
-    )
-    model.eval()
+    model = get_model(cfg.lm)
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
     if cfg.wandb.log_to_wandb and is_master():
         wandb_config: dict = {
@@ -243,29 +239,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
 
 def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    hf_model = AutoModelForCausalLM.from_pretrained(
-        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
-        cache_dir=cfg.lm.cache_dir,
-        local_files_only=cfg.lm.local_files_only,
-    )
-
-    hf_tokenizer = AutoTokenizer.from_pretrained(
-        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
-        trust_remote_code=True,
-        use_fast=True,
-        add_bos_token=True,
-    )
-    model = HookedTransformer.from_pretrained_no_processing(
-        cfg.lm.model_name,
-        use_flash_attn=cfg.lm.use_flash_attn,
-        device=cfg.lm.device,
-        cache_dir=cfg.lm.cache_dir,
-        hf_model=hf_model,
-        tokenizer=hf_tokenizer,
-        dtype=cfg.lm.dtype,
-    )
-
-    model.eval()
+    model = get_model(cfg.lm)
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
     if cfg.wandb.log_to_wandb and is_master():
@@ -301,27 +275,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
 
 
 def activation_generation_runner(cfg: ActivationGenerationConfig):
-    hf_model = AutoModelForCausalLM.from_pretrained(
-        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
-        cache_dir=cfg.lm.cache_dir,
-        local_files_only=cfg.lm.local_files_only,
-    )
-    hf_tokenizer = AutoTokenizer.from_pretrained(
-        (cfg.lm.model_name if cfg.lm.model_from_pretrained_path is None else cfg.lm.model_from_pretrained_path),
-        trust_remote_code=True,
-        use_fast=True,
-        add_bos_token=True,
-    )
-    model = HookedTransformer.from_pretrained_no_processing(
-        cfg.lm.model_name,
-        use_flash_attn=cfg.lm.use_flash_attn,
-        device=cfg.lm.device,
-        cache_dir=cfg.lm.cache_dir,
-        hf_model=hf_model,
-        tokenizer=hf_tokenizer,
-        dtype=cfg.lm.dtype,
-    )
-    model.eval()
+    model = get_model(cfg.lm)
 
     make_activation_dataset(model, cfg)
 
