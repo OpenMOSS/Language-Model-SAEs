@@ -60,7 +60,10 @@ def entrypoint():
     if args.sae is not None:
         from lm_saes.config import SAEConfig
 
-        config["sae"] = SAEConfig.from_pretrained(args.sae).to_dict()
+        sae_config = SAEConfig.from_pretrained(args.sae).to_dict()
+        if "sae" in config:
+            sae_config.update(config["sae"])
+        config["sae"] = sae_config
     print(config)
 
     tp_size = config.get("tp_size", 1)
@@ -72,6 +75,7 @@ def entrypoint():
 
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         dist.init_process_group(backend="nccl")
+        print(f"Setting device to {dist.get_rank()}")
         torch.cuda.set_device(dist.get_rank())
 
     if args.runner == SupportedRunner.TRAIN:

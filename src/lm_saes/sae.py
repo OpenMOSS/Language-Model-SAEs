@@ -644,9 +644,9 @@ class SparseAutoEncoder(HookedRootModule):
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm
 
-            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())
+            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
             best_norm_fine_grained = grid_search_best_init_norm(
-                torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()
+                torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
             )
 
             print(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")

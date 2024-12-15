@@ -11,7 +11,12 @@ from typing_extensions import deprecated
 
 from .utils.config import FlattenableModel
 from .utils.huggingface import parse_pretrained_name_or_path
-from .utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str, is_master, print_once
+from .utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
+    is_master,
+    print_once,
+)
 
 
 @dataclass(kw_only=True)
@@ -477,7 +482,7 @@ class LanguageModelSAEAnalysisConfig(RunnerConfig):
 
     sae: SAEConfig
     lm: LanguageModelConfig
-    act_store: ActivationStoreConfig
+    dataset: TextDatasetConfig
     mongo: MongoConfig
 
     total_analyzing_tokens: int = 300_000_000
