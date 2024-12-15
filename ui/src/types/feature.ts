@@ -1,7 +1,27 @@
 import { z } from "zod";
 
+export const TextTokenOriginSchema = z.object({
+  key: z.literal("text"),
+  range: z.tuple([z.number(), z.number()]),
+});
+
+export type TextTokenOrigin = z.infer<typeof TextTokenOriginSchema>;
+
+export const ImageTokenOriginSchema = z.object({
+  key: z.literal("image"),
+  rect: z.tuple([z.number(), z.number(), z.number(), z.number()]),
+});
+
+export type ImageTokenOrigin = z.infer<typeof ImageTokenOriginSchema>;
+
+export const TokenOriginSchema = z.union([TextTokenOriginSchema, ImageTokenOriginSchema]);
+
+export type TokenOrigin = z.infer<typeof TokenOriginSchema>;
+
 export const FeatureSampleCompactSchema = z.object({
-  context: z.array(z.instanceof(Uint8Array)),
+  text: z.string().nullish(),
+  images: z.array(z.string()).nullish(),
+  origins: z.array(TokenOriginSchema),
   featureActs: z.array(z.number()),
 });
 

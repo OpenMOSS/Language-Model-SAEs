@@ -6,6 +6,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import torch
+from datasets import Dataset, load_dataset
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -38,6 +39,7 @@ dictionary_series = os.environ.get("DICTIONARY_SERIES", None)
 
 sae_cache = {}
 lm_cache = {}
+dataset_cache: dict[str, Dataset] = {}
 
 
 def get_model(dictionary_name: str) -> HookedTransformer:
@@ -80,6 +82,12 @@ def get_sae(dictionary_name: str) -> SparseAutoEncoder:
     return sae_cache[dictionary_name]
 
 
+def get_dataset(dataset_name: str) -> Dataset:
+    if dataset_name not in dataset_cache:
+        dataset_cache[dataset_name] = cast(Dataset, load_dataset(dataset_name))
+    return dataset_cache[dataset_name]
+
+
 def make_serializable(obj):
     if isinstance(obj, torch.Tensor):
         return obj.tolist()
@@ -113,7 +121,7 @@ def list_dictionaries():
 
 @app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
 def get_feature(dictionary_name: str, feature_index: str | int):
-    tokenizer = get_model(dictionary_name).tokenizer
+    model = get_model(dictionary_name)
     if isinstance(feature_index, str) and feature_index != "random":
         try:
             feature_index = int(feature_index)
@@ -132,20 +140,24 @@ def get_feature(dictionary_name: str, feature_index: str | int):
             content=f"Feature {feature_index} not found in dictionary {dictionary_name}",
             status_code=404,
         )
+    dataset = get_dataset(feature["dataset"])
 
     sample_groups = []
     for analysis in feature["analysis"]:
-        samples = [
-            {
-                "context": [
-                    bytearray([byte_decoder[c] for c in t])
-                    # Method `convert_ids_to_tokens` should exist on GPT2Tokenizer and other BPE tokenizers.
-                    for t in tokenizer.convert_ids_to_tokens(analysis["contexts"][i])  # type: ignore
-                ],
-                "feature_acts": analysis["feature_acts"][i],
-            }
-            for i in range(len(analysis["feature_acts"]))
-        ]
+        samples = []
+        for i in range(len(analysis["feature_acts"])):
+            feature_acts = analysis["feature_acts"][i]
+            context_id = analysis["context_ids"][i]
+            data = dataset[context_id]
+            _, token_origins = model.to_tokens_with_origins(data)
+            samples.append(
+                {
+                    **data,
+                    "origins": token_origins,
+                    "feature_acts": feature_acts,
+                }
+            )
+
         sample_groups.append(
             {
                 "analysis_name": analysis["name"],

@@ -1,8 +1,9 @@
 import os
+from typing import cast
 
 import torch
 import torch.distributed as dist
-from tqdm.auto import tqdm
+from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
 from ..config import ActivationGenerationConfig
@@ -50,7 +51,8 @@ def generate_unshuffled_activation(model: HookedTransformer, cfg: ActivationGene
     token_source = SingletonTokenSource(model, cfg)
     tokens = token_source.next(cfg.dataset.store_batch_size)
     assert tokens is not None, "Out of tokens"
-    num_generated_tokens = tokens.size(0) * tokens.size(1)
+    assert model.tokenizer is not None, "Tokenizer is not initialized"
+    num_generated_tokens = (tokens != cast(int, model.tokenizer.pad_token_id)).sum().item()
 
     _, cache = model.run_with_cache_until(tokens, names_filter=cfg.hook_points, until=cfg.hook_points[-1])
 
@@ -70,7 +72,7 @@ def make_activation_dataset(model: HookedTransformer, cfg: ActivationGenerationC
     element_size = torch.finfo(cfg.lm.dtype).bits / 8
     token_act_size = element_size * cfg.lm.d_model
     max_tokens_per_chunk = cfg.chunk_size // token_act_size
-    print(f"Each token takes {token_act_size} bytes.")
+    print_once(f"Each token takes {token_act_size} bytes.")
     print_once(f"Making activation dataset with approximately {max_tokens_per_chunk} tokens per chunk")
 
     if is_master():
@@ -89,6 +91,7 @@ def make_activation_dataset(model: HookedTransformer, cfg: ActivationGenerationC
         total=total_generating_tokens,
         desc=f"Activation dataset Rank {dist.get_rank()}" if dist.is_initialized() else "Activation dataset",
         smoothing=0.001,
+        position=dist.get_rank() + 1 if dist.is_initialized() else None,
     )
 
     while n_tokens < total_generating_tokens:
@@ -122,16 +125,6 @@ def make_activation_dataset(model: HookedTransformer, cfg: ActivationGenerationC
 
             pbar.update(num_generated_tokens)
 
-        if cfg.generate_with_context:
-            assert context is not None, "Context is not initialized"
-            position = (
-                torch.arange(cfg.dataset.context_size, device=cfg.lm.device, dtype=torch.long)
-                .unsqueeze(0)
-                .expand(context.size(0), -1)
-            )
-        else:
-            position = None
-
         if cfg.zero_center_activations:
             non_activation_dims = [0, 1] if cfg.generate_with_context else 0
             for hook_point in cfg.hook_points:
@@ -141,9 +134,7 @@ def make_activation_dataset(model: HookedTransformer, cfg: ActivationGenerationC
             result = {"activation": act_dict[hook_point]}
             if cfg.generate_with_context:
                 assert context is not None, "Context is not initialized"
-                assert position is not None, "Position is not initialized"
                 result["context"] = context
-                result["position"] = position
             torch.save(
                 result,
                 os.path.join(
