@@ -1,13 +1,14 @@
-from typing import cast
+from typing import Any, cast
 
 import torch
 import torch.distributed as dist
+from datasets import Dataset
 from einops import rearrange, repeat
 from torch.distributed.tensor import DTensor
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
-from ..activation.activation_store import ActivationStore
 from ..config import LanguageModelSAEAnalysisConfig
 from ..sae import SparseAutoEncoder
 from ..utils.misc import print_once
@@ -18,7 +19,7 @@ from ..utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 def sample_feature_activations(
     sae: SparseAutoEncoder,
     model: HookedTransformer,
-    activation_store: ActivationStore,
+    dataset: Dataset,
     cfg: LanguageModelSAEAnalysisConfig,
     sae_chunk_id: int = 0,
     n_sae_chunks: int = 1,  # By default, we do not chunk the SAE. When the model & SAE is large, we can chunk the SAE to save memory.
@@ -30,9 +31,7 @@ def sample_feature_activations(
     assert cfg.sae.d_sae is not None  # Make mypy happy
 
     total_analyzing_tokens = cfg.total_analyzing_tokens
-    total_analyzing_steps = (
-        total_analyzing_tokens // cfg.act_store.dataset.store_batch_size // cfg.act_store.dataset.context_size
-    )
+    total_analyzing_steps = total_analyzing_tokens // cfg.dataset.store_batch_size // cfg.dataset.context_size
 
     print_once(f"Total Analyzing Tokens: {total_analyzing_tokens}")
     print_once(f"Total Analyzing Steps: {total_analyzing_steps}")
@@ -60,12 +59,12 @@ def sample_feature_activations(
         k: {
             "elt": torch.empty((0, d_sae), dtype=cfg.sae.dtype, device=cfg.sae.device),
             "feature_acts": torch.empty(
-                (0, d_sae, cfg.act_store.dataset.context_size),
+                (0, d_sae, cfg.dataset.context_size),
                 dtype=cfg.sae.dtype,
                 device=cfg.sae.device,
             ),
             "contexts": torch.empty(
-                (0, d_sae, cfg.act_store.dataset.context_size),
+                (0, d_sae, cfg.dataset.context_size),
                 dtype=torch.int32,
                 device=cfg.sae.device,
             ),
@@ -73,17 +72,21 @@ def sample_feature_activations(
         for k in cfg.subsample.keys()
     }
     act_times = torch.zeros((d_sae,), dtype=torch.long, device=cfg.sae.device)
-    feature_acts_all = [torch.empty((0,), dtype=cfg.sae.dtype, device=cfg.sae.device) for _ in range(d_sae)]
     max_feature_acts = torch.zeros((d_sae,), dtype=cfg.sae.dtype, device=cfg.sae.device)
 
-    while n_training_tokens < total_analyzing_tokens:
-        batch = activation_store.next_tokens(cfg.act_store.dataset.store_batch_size)
+    dataloader = DataLoader(
+        cast(torch.utils.data.Dataset[dict[str, Any]], dataset),
+        batch_size=cfg.dataset.store_batch_size,
+        shuffle=False,
+        collate_fn=lambda x: x,
+    )
 
-        if batch is None:
-            raise ValueError("Not enough tokens to sample")
+    for batch_idx, batch in enumerate(dataloader):
+        tokens, token_origins = zip(*[model.to_tokens_with_origins(input) for input in batch])
+        tokens = torch.cat(tokens, dim=0)
 
         _, cache = model.run_with_cache_until(
-            batch,
+            tokens,
             names_filter=[cfg.sae.hook_point_in, cfg.sae.hook_point_out],
             until=cfg.sae.hook_point_out,
         )
@@ -93,10 +96,10 @@ def sample_feature_activations(
         )
 
         filter_mask = torch.logical_or(
-            batch == model.tokenizer.eos_token_id,
-            batch == model.tokenizer.pad_token_id,
+            tokens == model.tokenizer.eos_token_id,
+            tokens == model.tokenizer.pad_token_id,
         )
-        filter_mask = torch.logical_or(filter_mask, batch == model.tokenizer.bos_token_id)
+        filter_mask = torch.logical_or(filter_mask, tokens == model.tokenizer.bos_token_id)
 
         feature_acts = sae.encode(activation_in)[..., start_index:end_index]
         if isinstance(feature_acts, DTensor):
@@ -108,7 +111,7 @@ def sample_feature_activations(
         for name in cfg.subsample.keys():
             if cfg.enable_sampling:
                 weights = feature_acts.clamp(min=0.0).pow(cfg.sample_weight_exponent).max(dim=1).values
-                elt = torch.rand(batch.size(0), d_sae, device=cfg.sae.device, dtype=cfg.sae.dtype).log() / weights
+                elt = torch.rand(tokens.size(0), d_sae, device=cfg.sae.device, dtype=cfg.sae.dtype).log() / weights
                 elt[weights == 0.0] = -torch.inf
             else:
                 elt = feature_acts.clamp(min=0.0).max(dim=1).values
@@ -131,9 +134,9 @@ def sample_feature_activations(
                         feature_acts,
                         "batch_size context_size d_sae -> batch_size d_sae context_size",
                     ),
-                    "contexts": repeat(
-                        batch.to(torch.int32),
-                        "batch_size context_size -> batch_size d_sae context_size",
+                    "context_ids": repeat(
+                        torch.arange(len(batch), device=cfg.sae.device) + batch_idx * cfg.dataset.store_batch_size,
+                        "batch_size -> batch_size d_sae",
                         d_sae=d_sae,
                     ),
                 },
@@ -143,21 +146,6 @@ def sample_feature_activations(
             sample_result[name] = sort_dict_of_tensor(sample_result[name], sort_dim=0, sort_key="elt", descending=True)
             sample_result[name] = {k: v[: cfg.subsample[name]["n_samples"]] for k, v in sample_result[name].items()}
 
-        # Update feature activation histogram every 10 steps
-        if n_training_steps % 50 == 49:
-            feature_acts_cur = rearrange(
-                feature_acts,
-                "batch_size context_size d_sae -> d_sae (batch_size context_size)",
-            )
-            for i in range(d_sae):
-                feature_acts_all[i] = torch.cat(
-                    [
-                        feature_acts_all[i],
-                        feature_acts_cur[i][feature_acts_cur[i] > 0.0],
-                    ],
-                    dim=0,
-                )
-
         max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
 
         n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.sae.device, dtype=torch.int)
@@ -165,6 +153,9 @@ def sample_feature_activations(
         n_training_steps += 1
 
         pbar.update(n_tokens_current.item())
+
+        if n_training_tokens >= total_analyzing_tokens:
+            break
 
     pbar.close()
 
@@ -176,13 +167,12 @@ def sample_feature_activations(
     result = {
         "index": torch.arange(start_index, end_index, device=cfg.sae.device, dtype=torch.int32),
         "act_times": act_times,
-        "feature_acts_all": feature_acts_all,
         "max_feature_acts": max_feature_acts,
         "analysis": [
             {
                 "name": k,
                 "feature_acts": v["feature_acts"],
-                "contexts": v["contexts"],
+                "context_ids": v["context_ids"],
             }
             for k, v in sample_result.items()
         ],

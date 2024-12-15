@@ -2,142 +2,83 @@
 name = "lm-saes"
 version = "0.1.0"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
-authors = [
-    {name = "Xuyang Ge", email = "xyge20@fudan.edu.cn"},
-    {name = "Zhengfu He", email = "zfhe19@fudan.edu.cn"},
-    {name = "Wentao Shu", email = "wtshu20@fudan.edu.cn"},
-    {name = "Fukang Zhu", email = "fkzhu21@m.fudan.edu.cn"},
-    {name = "Lingjie Chen", email = "ljchen21@m.fudan.edu.cn"},
-    {name = "Junxuan Wang", email = "junxuanwang21@m.fudan.edu.cn"},
-]
-dependencies = [
-    "datasets>=3.0.2",
-    "transformers>=4.46.0",
-    "einops>=0.8.0",
-    "fastapi>=0.115.4",
-    "matplotlib>=3.9.2",
-    "numpy>=2.1.2",
-    "pandas>=2.2.3",
-    "pymongo>=4.10.1",
-    "tensorboardX>=2.6.2.2",
-    "torch>=2.5.0",
-    "tqdm>=4.66.5",
-    "transformer-lens @ file:///${PROJECT_ROOT}/TransformerLens",
-    "uvicorn>=0.32.0",
-    "wandb>=0.18.5",
-    "msgpack>=1.1.0",
-    "plotly>=5.24.1",
-    "openai>=1.52.2",
-    "tiktoken>=0.8.0",
-    "python-dotenv>=1.0.1",
-    "jaxtyping>=0.2.34",
-    "safetensors>=0.4.5",
-    "pydantic>=2.9.2",
-    "argparse>=1.4.0",
-    "pyyaml>=6.0.2",
-    "types-pyyaml>=6.0.12.20240917",
-    "tomlkit>=0.13.2",
-]
+dependencies = ["datasets>=3.0.2", "transformers>=4.46.0", "einops>=0.8.0", "fastapi>=0.115.4", "matplotlib>=3.9.2", "numpy>=2.1.2", "pandas>=2.2.3", "pymongo>=4.10.1", "tensorboardX>=2.6.2.2", "torch>=2.5.0", "tqdm>=4.66.5", "transformer-lens", "uvicorn>=0.32.0", "wandb>=0.18.5", "msgpack>=1.1.0", "plotly>=5.24.1", "openai>=1.52.2", "tiktoken>=0.8.0", "python-dotenv>=1.0.1", "jaxtyping>=0.2.34", "safetensors>=0.4.5", "pydantic>=2.9.2", "argparse>=1.4.0", "pyyaml>=6.0.2", "types-pyyaml>=6.0.12.20240917", "tomlkit>=0.13.2"]
 requires-python = "==3.10.*"
 readme = "README.md"
-license = {text = "MIT"}
+
+[[project.authors]]
+name = "Xuyang Ge"
+email = "xyge20@fudan.edu.cn"
+
+[[project.authors]]
+name = "Zhengfu He"
+email = "zfhe19@fudan.edu.cn"
+
+[[project.authors]]
+name = "Wentao Shu"
+email = "wtshu20@fudan.edu.cn"
+
+[[project.authors]]
+name = "Fukang Zhu"
+email = "fkzhu21@m.fudan.edu.cn"
+
+[[project.authors]]
+name = "Lingjie Chen"
+email = "ljchen21@m.fudan.edu.cn"
+
+[[project.authors]]
+name = "Junxuan Wang"
+email = "junxuanwang21@m.fudan.edu.cn"
+
+[project.license]
+text = "MIT"
 
 [project.scripts]
 lm-saes = "lm_saes.entrypoint:entrypoint"
 
 [dependency-groups]
 dev = [
-    "-e file:///${PROJECT_ROOT}/TransformerLens#egg=transformer-lens",
-    "pytest>=8.3.3",
-    "ipykernel>=6.29.5",
-    "nbformat>=5.10.4",
-    "kaleido==0.2.1",
-    "pre-commit>=4.0.1",
-    "ruff>=0.7.1",
-    "basedpyright>=1.21.0",
+    "transformer-lens", 
+    "jupyter>=1.1.1", 
+    "ipywidgets>=8.1.5", 
+    "pytest>=8.3.3", 
+    "ipykernel>=6.29.5", 
+    "nbformat>=5.10.4", 
+    "kaleido==0.2.1", 
+    "pre-commit>=4.0.1", 
+    "ruff>=0.7.1", 
+    "basedpyright>=1.21.0", 
 ]
 
 [tool.ruff]
-# Exclude a variety of commonly ignored directories.
-exclude = [
-    ".bzr",
-    ".direnv",
-    ".eggs",
-    ".git",
-    ".git-rewrite",
-    ".hg",
-    ".ipynb_checkpoints",
-    ".mypy_cache",
-    ".nox",
-    ".pants.d",
-    ".pyenv",
-    ".pytest_cache",
-    ".pytype",
-    ".ruff_cache",
-    ".svn",
-    ".tox",
-    ".venv",
-    ".vscode",
-    "__pypackages__",
-    "_build",
-    "buck-out",
-    "build",
-    "dist",
-    "node_modules",
-    "site-packages",
-    "venv",
-    "TransformerLens",
-    "ui"
-]
-
+exclude = [".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints", ".mypy_cache", ".nox", ".pants.d", ".pyenv", ".pytest_cache", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv", ".vscode", "__pypackages__", "_build", "buck-out", "build", "dist", "node_modules", "site-packages", "venv", "TransformerLens", "ui"]
 line-length = 120
 indent-width = 4
-
-# Assume Python 3.10
 target-version = "py310"
 
 [tool.ruff.lint]
-# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
-# Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
-# McCabe complexity (`C901`) by default.
 select = ["E4", "E7", "E9", "F", "I"]
 ignore = ["E741", "F722"]
-
-# Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
 unfixable = []
-
-# Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.ruff.format]
-# Like Black, use double quotes for strings.
 quote-style = "double"
-
-# Like Black, indent with spaces, rather than tabs.
 indent-style = "space"
-
-# Like Black, respect magic trailing commas.
 skip-magic-trailing-comma = false
-
-# Like Black, automatically detect the appropriate line ending.
 line-ending = "auto"
-
-# Enable auto-formatting of code examples in docstrings. Markdown,
-# reStructuredText code/literal blocks and doctests are all supported.
-#
-# This is currently disabled by default, but it is planned for this
-# to be opt-out in the future.
 docstring-code-format = false
-
-# Set the line length limit used when formatting code snippets in
-# docstrings.
-#
-# This only has an effect when the `docstring-code-format` setting is
-# enabled.
 docstring-code-line-length = "dynamic"
 
 [tool.pyright]
 ignore = [".venv/", "examples", "TransformerLens", "tests", "exp"]
 typeCheckingMode = "standard"
 reportRedeclaration = false
+
+[tool.uv]
+package = true
+
+[tool.uv.sources.transformer-lens]
+path = "./TransformerLens"
+editable = true
