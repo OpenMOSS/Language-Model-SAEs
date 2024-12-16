@@ -4,7 +4,7 @@ from typing import Dict
 
 import torch
 import torch.distributed as dist
-from einops import rearrange, repeat
+from einops import rearrange
 from transformer_lens import HookedTransformer
 
 from ..config import ActivationStoreConfig
@@ -75,23 +75,45 @@ class TokenActivationSource(ActivationSource):
 class CachedActivationSource(ActivationSource):
     def __init__(self, cfg: ActivationStoreConfig):
         self.cfg = cfg
-        assert cfg.use_cached_activations and len(cfg.cached_activations_path) == 1
-        assert len(cfg.hook_points) == 1, "CachedActivationSource only supports one hook point"
+        self.sample_probs = cfg.cache_sample_probs
+        # assert cfg.use_cached_activations and len(cfg.cached_activations_path) == 1
+        assert cfg.use_cached_activations
+        # assert len(cfg.hook_points) == 1, "CachedActivationSource only supports one hook point"
+        # show warning if there are more than one hook hook_points
+        if len(cfg.hook_points) > 1:
+            print(
+                "CachedActivationSource only supports one hook point, but %d hook points are provided. Only the first hook point will be used.",
+                len(cfg.hook_points),
+            )
         self.hook_point = cfg.hook_points[0]
-        self.chunk_paths = list_activation_chunks(cfg.cached_activations_path[0], self.hook_point)
+        self.chunk_paths = [
+            list_activation_chunks(cached_activations_path, self.hook_point)
+            for cached_activations_path in cfg.cached_activations_path
+        ]
         if cfg.ddp_size > 1:
+            # self.chunk_paths = [
+            #     p for i, p in enumerate(self.chunk_paths) if i % dist.get_world_size() == dist.get_rank()
+            # ]
             self.chunk_paths = [
-                p for i, p in enumerate(self.chunk_paths) if i % dist.get_world_size() == dist.get_rank()
+                [p for i, p in enumerate(chunk_paths) if i % dist.get_world_size() == dist.get_rank()]
+                for chunk_paths in self.chunk_paths
             ]
         if cfg.shuffle_activations:
-            random.shuffle(self.chunk_paths)
+            for num in range(len(self.chunk_paths)):
+                random.shuffle(self.chunk_paths[num])
 
         self.token_buffer = torch.empty((0, cfg.dataset.context_size), dtype=torch.long, device=cfg.device)
 
     def _load_next_chunk(self):
-        if len(self.chunk_paths) == 0:
+        if sum(self.sample_probs) == 0:
             return None
-        chunk_path = self.chunk_paths.pop()
+        # get one chunk from sample_probs
+        chunk_id = random.choices(range(len(self.chunk_paths)), weights=self.sample_probs)[0]
+        chunk_path = self.chunk_paths[chunk_id].pop()
+        # print(chunk_path)
+        if len(self.chunk_paths[chunk_id]) == 0:
+            self.sample_probs[chunk_id] = 0
+            self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
         chunk = load_activation_chunk(chunk_path)
         return chunk
 
@@ -108,19 +130,19 @@ class CachedActivationSource(ActivationSource):
         activations = chunk["activation"].to(dtype=self.cfg.dtype, device=self.cfg.device)
 
         ret = {self.hook_point: rearrange(activations, "b l d -> (b l) d") if with_context else activations}
-        if with_context:
-            ret.update(
-                {
-                    "position": rearrange(
-                        chunk["position"].to(dtype=torch.long, device=self.cfg.device), "b l -> (b l)"
-                    ),
-                    "context": repeat(
-                        chunk["context"].to(dtype=torch.long, device=self.cfg.device),
-                        "b l -> (b repeat) l",
-                        repeat=activations.size(1),
-                    ),
-                }
-            )
+        # if with_context:
+        #     ret.update(
+        #         {
+        #             "position": rearrange(
+        #                 chunk["position"].to(dtype=torch.long, device=self.cfg.device), "b l -> (b l)"
+        #             ),
+        #             "context": repeat(
+        #                 chunk["context"].to(dtype=torch.long, device=self.cfg.device),
+        #                 "b l -> (b repeat) l",
+        #                 repeat=activations.size(1),
+        #             ),
+        #         }
+        #     )
         return ret
 
     def next_tokens(self, batch_size: int) -> torch.Tensor | None:
