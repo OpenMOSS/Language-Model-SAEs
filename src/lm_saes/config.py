@@ -148,6 +148,7 @@ class ActivationStoreConfig(BaseModelConfig, RunnerConfig):
     use_cached_activations: bool = False
     cached_activations_path: List[str] = None  # type: ignore
     shuffle_activations: bool = True
+    cache_sample_probs: List[float] = field(default_factory=lambda: [1.0])
 
     n_tokens_in_buffer: int = 500_000
     tp_size: int = 1
@@ -161,6 +162,10 @@ class ActivationStoreConfig(BaseModelConfig, RunnerConfig):
                 f"activations/{path.split('/')[-1]}/{self.lm.model_name.replace('/', '_')}_{self.dataset.context_size}"
                 for path in self.dataset.dataset_path
             ]
+        if self.use_cached_activations:
+            assert len(self.cache_sample_probs) == len(
+                self.cached_activations_path
+            ), "Number of cache_sample_probs must match number of cached_activations_path"
 
 
 @dataclass(kw_only=True)
