@@ -10,14 +10,6 @@ from torch.distributed.tensor.parallel import (
     RowwiseParallel,
     parallelize_module,
 )
-from transformer_lens import HookedTransformer
-from transformers import (
-    AutoModelForCausalLM,
-    AutoProcessor,
-    AutoTokenizer,
-    ChameleonForConditionalGeneration,
-    PreTrainedModel,
-)
 
 from lm_saes.activation.token_source import MappedTokenSource
 
@@ -29,7 +21,6 @@ from .analysis.sample_feature_activations import sample_feature_activations
 from .config import (
     ActivationGenerationConfig,
     FeaturesDecoderConfig,
-    LanguageModelConfig,
     LanguageModelCrossCoderTrainingConfig,
     LanguageModelSAEAnalysisConfig,
     LanguageModelSAEPruningConfig,
@@ -43,55 +34,7 @@ from .post_processing import post_process_topk_to_jumprelu_for_inference
 from .sae import SparseAutoEncoder
 from .sae_training import prune_sae, train_sae
 from .utils.misc import is_master
-
-
-def get_model(cfg: LanguageModelConfig):
-    if "chameleon" in cfg.model_name:
-        hf_model = ChameleonForConditionalGeneration.from_pretrained(
-            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
-            cache_dir=cfg.cache_dir,
-            local_files_only=cfg.local_files_only,
-            torch_dtype=cfg.dtype,
-        ).to(cfg.device)  # type: ignore
-        print(f"Model loaded on device {cfg.device}")
-    else:
-        hf_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
-            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
-            cache_dir=cfg.cache_dir,
-            local_files_only=cfg.local_files_only,
-            torch_dtype=cfg.dtype,
-        ).to(cfg.device)  # type: ignore
-    if "chameleon" in cfg.model_name:
-        hf_processor = AutoProcessor.from_pretrained(
-            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
-            trust_remote_code=True,
-            use_fast=True,
-            add_bos_token=True,
-            local_files_only=cfg.local_files_only,
-        )
-        hf_tokenizer = None
-    else:
-        hf_tokenizer = AutoTokenizer.from_pretrained(
-            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
-            trust_remote_code=True,
-            use_fast=True,
-            add_bos_token=True,
-            local_files_only=cfg.local_files_only,
-        )
-        hf_processor = None
-
-    model = HookedTransformer.from_pretrained_no_processing(
-        cfg.model_name,
-        use_flash_attn=cfg.use_flash_attn,
-        device=cfg.device,
-        cache_dir=cfg.cache_dir,
-        hf_model=hf_model,
-        tokenizer=hf_tokenizer,
-        processor=hf_processor,
-        dtype=cfg.dtype,
-    )
-    model.eval()
-    return model
+from .utils.model import load_model
 
 
 def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
@@ -100,7 +43,7 @@ def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
         activation_store = ActivationStore(act_source=activation_source, cfg=cfg.act_store)
         model = None
     else:
-        model = get_model(cfg.lm)
+        model = load_model(cfg.lm)
         activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
     if not cfg.finetuning and (
@@ -217,7 +160,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
     cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_path))
     cfg.lm.save_lm_config(os.path.join(cfg.exp_result_path))
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    model = get_model(cfg.lm)
+    model = load_model(cfg.lm)
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
     if cfg.wandb.log_to_wandb and is_master():
         wandb_config: dict = {
@@ -257,7 +200,7 @@ def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
 
 def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    model = get_model(cfg.lm)
+    model = load_model(cfg.lm)
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
 
     if cfg.wandb.log_to_wandb and is_master():
@@ -293,7 +236,7 @@ def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
 
 
 def activation_generation_runner(cfg: ActivationGenerationConfig):
-    model = get_model(cfg.lm)
+    model = load_model(cfg.lm)
 
     make_activation_dataset(model, cfg)
 
@@ -314,7 +257,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
     # sae.decoder.weight = None  # type: ignore[assignment]
     # torch.cuda.empty_cache()
 
-    model = get_model(cfg.lm)
+    model = load_model(cfg.lm)
     client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
     if is_master():
         client.create_dictionary(cfg.exp_name, cfg.exp_result_path, cfg.sae.d_sae, cfg.exp_series)
@@ -352,7 +295,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
 def features_to_logits_runner(cfg: FeaturesDecoderConfig):
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
 
-    model = get_model(cfg.lm)
+    model = load_model(cfg.lm)
 
     result_dict = features_to_logits(sae, model, cfg)
 
@@ -395,7 +338,7 @@ def features_to_logits_runner(cfg: FeaturesDecoderConfig):
 @torch.no_grad()
 def post_process_topk_to_jumprelu_runner(cfg: LanguageModelSAERunnerConfig):
     sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    model = get_model(cfg.lm)
+    model = load_model(cfg.lm)
 
     activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
     post_process_topk_to_jumprelu_for_inference(sae, activation_store, cfg)
