@@ -114,7 +114,7 @@ class CachedActivationSource(ActivationSource):
         if len(self.chunk_paths[chunk_id]) == 0:
             self.sample_probs[chunk_id] = 0
             self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
-        chunk = load_activation_chunk(chunk_path)
+        chunk = load_activation_chunk(chunk_path, self.cfg.device)
         return chunk
 
     def next(self) -> Dict[str, torch.Tensor] | None:

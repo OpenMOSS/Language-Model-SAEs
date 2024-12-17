@@ -193,9 +193,6 @@ class TokenSource(BaseTokenSource):
 
     @staticmethod
     def from_config(model: HookedTransformer, cfg: TextDatasetConfig):
-        if not all(cfg.concat_tokens):
-            raise ValueError("PackedTokenSource requires concat_tokens=True for all datasets")
-
         dataloader = [TokenSource._process_dataset(dataset_path, cfg) for dataset_path in cfg.dataset_path]
 
         return TokenSource(
