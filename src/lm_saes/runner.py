@@ -4,7 +4,6 @@ from typing import cast
 
 import torch
 import wandb
-from datasets import Dataset, load_dataset, load_from_disk
 from torch.distributed.tensor import Replicate
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
@@ -19,6 +18,8 @@ from transformers import (
     ChameleonForConditionalGeneration,
     PreTrainedModel,
 )
+
+from lm_saes.activation.token_source import MappedTokenSource
 
 from .activation.activation_dataset import make_activation_dataset
 from .activation.activation_source import CachedActivationSource
@@ -66,7 +67,7 @@ def get_model(cfg: LanguageModelConfig):
             trust_remote_code=True,
             use_fast=True,
             add_bos_token=True,
-            local_files_only=True,
+            local_files_only=cfg.local_files_only,
         )
         hf_tokenizer = None
     else:
@@ -75,7 +76,7 @@ def get_model(cfg: LanguageModelConfig):
             trust_remote_code=True,
             use_fast=True,
             add_bos_token=True,
-            local_files_only=True,
+            local_files_only=cfg.local_files_only,
         )
         hf_processor = None
 
@@ -309,26 +310,19 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
             plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
         sae = cast(SparseAutoEncoder, parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan))
 
-    sae.decoder.weight = None  # type: ignore[assignment]
-    torch.cuda.empty_cache()
+    # JumpReLU need SAE decoder weight, so we currently do not remove it
+    # sae.decoder.weight = None  # type: ignore[assignment]
+    # torch.cuda.empty_cache()
 
     model = get_model(cfg.lm)
     client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
     if is_master():
         client.create_dictionary(cfg.exp_name, cfg.exp_result_path, cfg.sae.d_sae, cfg.exp_series)
 
-    assert len(cfg.dataset.dataset_path) == 1, "Only one dataset path is supported"
-    if not cfg.dataset.is_dataset_on_disk:
-        dataset = load_dataset(
-            cfg.dataset.dataset_path[0], split="train", cache_dir=cfg.dataset.cache_dir, keep_in_memory=True
-        )
-    else:
-        dataset = load_from_disk(cfg.dataset.dataset_path[0], keep_in_memory=True)
-    dataset = cast(Dataset, dataset)
-    dataset = dataset.with_format("torch", device=cfg.lm.device)
+    token_source = MappedTokenSource.from_config(model=model, cfg=cfg.dataset)
 
     for chunk_id in range(cfg.n_sae_chunks):
-        result = sample_feature_activations(sae, model, dataset, cfg, chunk_id, cfg.n_sae_chunks)
+        result = sample_feature_activations(sae, model, token_source, cfg, chunk_id, cfg.n_sae_chunks)
         for i in range(len(result["index"].cpu().numpy().tolist())):
             client.update_feature(
                 cfg.exp_name,
@@ -342,6 +336,7 @@ def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
                             "name": v["name"],
                             "feature_acts": v["feature_acts"][i].cpu().float().numpy(),
                             "context_ids": v["context_ids"][i].cpu().numpy(),
+                            "dataset_ids": v["dataset_ids"][i].cpu().numpy(),
                         }
                         for v in result["analysis"]
                     ],

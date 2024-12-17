@@ -1,13 +1,13 @@
-from typing import Any, cast
+from typing import cast
 
 import torch
 import torch.distributed as dist
-from datasets import Dataset
 from einops import rearrange, repeat
 from torch.distributed.tensor import DTensor
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
+
+from lm_saes.activation.token_source import MappedTokenSource
 
 from ..config import LanguageModelSAEAnalysisConfig
 from ..sae import SparseAutoEncoder
@@ -19,7 +19,7 @@ from ..utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 def sample_feature_activations(
     sae: SparseAutoEncoder,
     model: HookedTransformer,
-    dataset: Dataset,
+    token_source: MappedTokenSource,
     cfg: LanguageModelSAEAnalysisConfig,
     sae_chunk_id: int = 0,
     n_sae_chunks: int = 1,  # By default, we do not chunk the SAE. When the model & SAE is large, we can chunk the SAE to save memory.
@@ -63,8 +63,13 @@ def sample_feature_activations(
                 dtype=cfg.sae.dtype,
                 device=cfg.sae.device,
             ),
-            "contexts": torch.empty(
-                (0, d_sae, cfg.dataset.context_size),
+            "context_ids": torch.empty(
+                (0, d_sae),
+                dtype=torch.int32,
+                device=cfg.sae.device,
+            ),
+            "dataset_ids": torch.empty(
+                (0, d_sae),
                 dtype=torch.int32,
                 device=cfg.sae.device,
             ),
@@ -74,16 +79,10 @@ def sample_feature_activations(
     act_times = torch.zeros((d_sae,), dtype=torch.long, device=cfg.sae.device)
     max_feature_acts = torch.zeros((d_sae,), dtype=cfg.sae.dtype, device=cfg.sae.device)
 
-    dataloader = DataLoader(
-        cast(torch.utils.data.Dataset[dict[str, Any]], dataset),
-        batch_size=cfg.dataset.store_batch_size,
-        shuffle=False,
-        collate_fn=lambda x: x,
-    )
-
-    for batch_idx, batch in enumerate(dataloader):
-        tokens, token_origins = zip(*[model.to_tokens_with_origins(input) for input in batch])
-        tokens = torch.cat(tokens, dim=0)
+    while n_training_tokens < total_analyzing_tokens:
+        batch = token_source.next(cfg.dataset.store_batch_size)
+        assert batch is not None, "Token source is exhausted"
+        tokens, sources = batch.tokens, batch.source_info
 
         _, cache = model.run_with_cache_until(
             tokens,
@@ -135,7 +134,12 @@ def sample_feature_activations(
                         "batch_size context_size d_sae -> batch_size d_sae context_size",
                     ),
                     "context_ids": repeat(
-                        torch.arange(len(batch), device=cfg.sae.device) + batch_idx * cfg.dataset.store_batch_size,
+                        torch.tensor([source.context_idx for source in sources], device=cfg.sae.device),
+                        "batch_size -> batch_size d_sae",
+                        d_sae=d_sae,
+                    ),
+                    "dataset_ids": repeat(
+                        torch.tensor([source.dataset_idx for source in sources], device=cfg.sae.device),
                         "batch_size -> batch_size d_sae",
                         d_sae=d_sae,
                     ),
@@ -148,14 +152,11 @@ def sample_feature_activations(
 
         max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
 
-        n_tokens_current = torch.tensor(batch.size(0) * batch.size(1), device=cfg.sae.device, dtype=torch.int)
+        n_tokens_current = torch.tensor(tokens.size(0) * tokens.size(1), device=cfg.sae.device, dtype=torch.int)
         n_training_tokens += cast(int, n_tokens_current.item())
         n_training_steps += 1
 
         pbar.update(n_tokens_current.item())
-
-        if n_training_tokens >= total_analyzing_tokens:
-            break
 
     pbar.close()
 
@@ -173,6 +174,7 @@ def sample_feature_activations(
                 "name": k,
                 "feature_acts": v["feature_acts"],
                 "context_ids": v["context_ids"],
+                "dataset_ids": v["dataset_ids"],
             }
             for k, v in sample_result.items()
         ],
