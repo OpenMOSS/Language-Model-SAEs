@@ -103,7 +103,7 @@ class TextDatasetConfig(RunnerConfig):
     cache_dir: Optional[str] = None
     is_dataset_tokenized: bool = False
     is_dataset_on_disk: bool = False
-    concat_tokens: List[bool] = False  # type: ignore
+    concat_tokens: List[bool] = field(default_factory=lambda: [False])  # type: ignore
     context_size: int = 128
     store_batch_size: int = 64
     sample_probs: List[float] = field(default_factory=lambda: [1.0])
