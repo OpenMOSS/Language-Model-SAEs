@@ -165,15 +165,18 @@ def get_feature(dictionary_name: str, feature_index: str | int):
             }
         )
 
-    feature_activation_histogram = px.histogram(feature["feature_acts_all"], width=600, nbins=50)
+    if "feature_acts_all" in feature:
+        feature_activation_histogram = px.histogram(feature["feature_acts_all"], width=600, nbins=50)
 
-    feature_activation_histogram = go.Histogram(
-        x=feature["feature_acts_all"],
-        nbinsx=50,
-        hovertemplate="Count: %{y}<br>Range: %{x}<extra></extra>",
-        marker_color="#636EFA",
-        showlegend=False,
-    ).to_plotly_json()
+        feature_activation_histogram = go.Histogram(
+            x=feature["feature_acts_all"],
+            nbinsx=50,
+            hovertemplate="Count: %{y}<br>Range: %{x}<extra></extra>",
+            marker_color="#636EFA",
+            showlegend=False,
+        ).to_plotly_json()
+    else:
+        feature_activation_histogram = None
 
     if "logits" in feature:
         logits_bin_edges = np.array(feature["logits"]["histogram"]["edges"])
@@ -195,7 +198,9 @@ def get_feature(dictionary_name: str, feature_index: str | int):
                 {
                     "feature_index": feature["index"],
                     "dictionary_name": dictionary_name,
-                    "feature_activation_histogram": [feature_activation_histogram],
+                    "feature_activation_histogram": [feature_activation_histogram]
+                    if feature_activation_histogram is not None
+                    else None,
                     "act_times": feature["act_times"],
                     "max_feature_act": feature["max_feature_acts"],
                     "sample_groups": sample_groups,
