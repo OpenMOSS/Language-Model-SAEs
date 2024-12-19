@@ -2,7 +2,35 @@
 name = "lm-saes"
 version = "0.1.0"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
-dependencies = ["datasets>=3.0.2", "transformers>=4.46.0", "einops>=0.8.0", "fastapi>=0.115.4", "matplotlib>=3.9.2", "numpy>=2.1.2", "pandas>=2.2.3", "pymongo>=4.10.1", "tensorboardX>=2.6.2.2", "torch>=2.5.0", "tqdm>=4.66.5", "transformer-lens", "uvicorn>=0.32.0", "wandb>=0.18.5", "msgpack>=1.1.0", "plotly>=5.24.1", "openai>=1.52.2", "tiktoken>=0.8.0", "python-dotenv>=1.0.1", "jaxtyping>=0.2.34", "safetensors>=0.4.5", "pydantic>=2.9.2", "argparse>=1.4.0", "pyyaml>=6.0.2", "types-pyyaml>=6.0.12.20240917", "tomlkit>=0.13.2"]
+dependencies = [
+    "datasets>=3.0.2",
+    "transformers>=4.46.0",
+    "einops>=0.8.0",
+    "fastapi>=0.115.4",
+    "matplotlib>=3.9.2",
+    "numpy>=2.1.2",
+    "pandas>=2.2.3",
+    "pymongo>=4.10.1",
+    "tensorboardX>=2.6.2.2",
+    "torch>=2.5.0",
+    "tqdm>=4.66.5",
+    "transformer-lens",
+    "uvicorn>=0.32.0",
+    "wandb>=0.18.5",
+    "msgpack>=1.1.0",
+    "plotly>=5.24.1",
+    "openai>=1.52.2",
+    "tiktoken>=0.8.0",
+    "python-dotenv>=1.0.1",
+    "jaxtyping>=0.2.34",
+    "safetensors>=0.4.5",
+    "pydantic>=2.9.2",
+    "argparse>=1.4.0",
+    "pyyaml>=6.0.2",
+    "types-pyyaml>=6.0.12.20240917",
+    "tomlkit>=0.13.2",
+    "torchvision>=0.20.1",
+]
 requires-python = "==3.10.*"
 readme = "README.md"
 

@@ -1,3 +1,4 @@
+import io
 import os
 from typing import Annotated, Any, Literal, Union, cast
 
@@ -11,6 +12,7 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
+from torchvision import transforms
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 
@@ -64,8 +66,10 @@ def get_sae(dictionary_name: str) -> SparseAutoEncoder:
 
 
 def get_dataset(dataset_name: str) -> Dataset:
+    dataset = client.get_dataset(dataset_name)
+    assert dataset is not None, f"Dataset {dataset_name} not found"
     if dataset_name not in dataset_cache:
-        dataset_cache[dataset_name] = cast(Dataset, load_from_disk(dataset_name).with_format("torch", device=device))
+        dataset_cache[dataset_name] = cast(Dataset, load_from_disk(dataset["path"]).with_format("torch", device=device))
     return dataset_cache[dataset_name]
 
 
@@ -100,6 +104,29 @@ def list_dictionaries():
     return client.list_dictionaries(dictionary_series=dictionary_series)
 
 
+@app.get("/images/{dataset_name}/{context_idx}/{image_idx}")
+def get_image(dataset_name: str, context_idx: int, image_idx: int):
+    dataset = get_dataset(dataset_name)
+    data = dataset[int(context_idx)]
+
+    image_key = "image" if "image" in data else "images" if "images" in data else None
+    if image_key is None:
+        return Response(content="Image not found", status_code=404)
+
+    if len(data[image_key]) <= image_idx:
+        return Response(content="Image not found", status_code=404)
+
+    image_tensor = data[image_key][image_idx]
+
+    # Convert tensor to PIL Image and then to bytes
+    image = transforms.ToPILImage()(image_tensor.to(torch.uint8))
+    img_byte_arr = io.BytesIO()
+    image.save(img_byte_arr, format="PNG")
+    img_byte_arr = img_byte_arr.getvalue()
+
+    return Response(content=img_byte_arr, media_type="image/png")
+
+
 @app.get("/dictionaries/{dictionary_name}/features/{feature_index}")
 def get_feature(dictionary_name: str, feature_index: str | int):
     model = get_model(dictionary_name)
@@ -132,6 +159,14 @@ def get_feature(dictionary_name: str, feature_index: str | int):
             dataset_id = analysis["dataset_ids"][i].item()
             data = datasets[dataset_id][context_id]
             _, token_origins = model.to_tokens_with_origins(data)
+
+            # Replace image_key with image_url
+            image_key = "image" if "image" in data else "images" if "images" in data else None
+            if image_key is not None:
+                image_urls = [f"/images/{feature['dataset'][i]}/{context_id}/{i}" for i in range(len(data[image_key]))]
+                del data[image_key]
+                data["images"] = image_urls
+
             samples.append(
                 {
                     **data,

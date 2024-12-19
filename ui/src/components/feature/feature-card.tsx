@@ -108,19 +108,21 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
 
           <FeatureInterpretation feature={feature} />
 
-          <div id="Histogram" className="flex flex-col w-full gap-4">
-            <p className="font-bold">Activation Histogram</p>
-            <Plot
-              data={feature.featureActivationHistogram}
-              layout={{
-                xaxis: { title: "Activation" },
-                yaxis: { title: "Count" },
-                bargap: 0.2,
-                margin: { t: 0, b: 40 },
-                showlegend: false,
-              }}
-            />
-          </div>
+          {feature.featureActivationHistogram && (
+            <div id="Histogram" className="flex flex-col w-full gap-4">
+              <p className="font-bold">Activation Histogram</p>
+              <Plot
+                data={feature.featureActivationHistogram}
+                layout={{
+                  xaxis: { title: "Activation" },
+                  yaxis: { title: "Count" },
+                  bargap: 0.2,
+                  margin: { t: 0, b: 40 },
+                  showlegend: false,
+                }}
+              />
+            </div>
+          )}
 
           {feature.logits && (
             <div id="Logits" className="flex flex-col w-full gap-4">

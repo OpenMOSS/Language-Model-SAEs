@@ -1,11 +1,9 @@
-import { Feature, FeatureSampleCompact } from "@/types/feature";
+import { Feature, FeatureSampleCompact, ImageTokenOrigin, TextTokenOrigin } from "@/types/feature";
 import { useState } from "react";
 import { AppPagination } from "../ui/pagination";
-import { countTokenGroupPositions, groupToken, hex } from "@/utils/token";
-import { zip } from "@/utils/array";
 import { getAccentClassname } from "@/utils/style";
 import { cn } from "@/lib/utils";
-import { Sample } from "../app/sample";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card";
 
 export const FeatureSampleGroup = ({
   feature,
@@ -34,21 +32,28 @@ export const FeatureSampleGroup = ({
 };
 
 export type TokenInfoProps = {
-  token: { token: Uint8Array; featureAct: number };
+  featureAct: number;
   maxFeatureAct: number;
-  position: number;
+  origin: TextTokenOrigin | ImageTokenOrigin;
 };
 
-export const TokenInfo = ({ token, maxFeatureAct, position }: TokenInfoProps) => {
+export const TokenInfo = ({ featureAct, maxFeatureAct, origin }: TokenInfoProps) => {
   return (
     <div className="grid grid-cols-2 gap-2">
-      <div className="text-sm font-bold">Token:</div>
-      <div className="text-sm underline whitespace-pre-wrap">{hex(token)}</div>
-      <div className="text-sm font-bold">Position:</div>
-      <div className="text-sm">{position}</div>
+      {origin.key === "text" ? (
+        <>
+          <div className="text-sm font-bold">Text Range:</div>
+          <div className="text-sm">{origin.range.join(" - ")}</div>
+        </>
+      ) : (
+        <>
+          <div className="text-sm font-bold">Image Region:</div>
+          <div className="text-sm">{origin.rect.map((n) => n.toFixed(3)).join(", ")}</div>
+        </>
+      )}
       <div className="text-sm font-bold">Activation:</div>
-      <div className={cn("text-sm", getAccentClassname(token.featureAct, maxFeatureAct, "text"))}>
-        {token.featureAct.toFixed(3)}
+      <div className={cn("text-sm", getAccentClassname(featureAct, maxFeatureAct, "text"))}>
+        {featureAct.toFixed(3)}
       </div>
     </div>
   );
@@ -61,34 +66,146 @@ export type FeatureActivationSampleProps = {
 };
 
 export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: FeatureActivationSampleProps) => {
-  const sampleMaxFeatureAct = Math.max(...sample.featureActs);
+  // Process text highlights
+  const textHighlights = sample.origins
+    .map((origin, index) => ({
+      origin,
+      featureAct: sample.featureActs[index],
+    }))
+    .filter((item): item is { origin: TextTokenOrigin; featureAct: number } => item.origin?.key === "text");
 
-  const tokens = zip(sample.context, sample.featureActs).map(([token, featureAct]) => ({
-    token,
-    featureAct,
-  }));
+  // Create segments for overlapping highlights
+  const segments: { start: number; end: number; highlights: typeof textHighlights }[] = [];
+  if (sample.text && textHighlights.length > 0) {
+    // Get all unique positions
+    const positions = new Set<number>();
+    textHighlights.forEach((h) => {
+      positions.add(h.origin.range[0]);
+      positions.add(h.origin.range[1]);
+    });
+    const sortedPositions = Array.from(positions).sort((a, b) => a - b);
 
-  const tokenGroups = groupToken(tokens);
-  const tokenGroupPositions = countTokenGroupPositions(tokenGroups);
-
-  const featureActs = tokenGroups.map((group) => Math.max(...group.map((token) => token.featureAct)));
-  const start = Math.max(featureActs.findIndex((act) => act === sampleMaxFeatureAct) - 60, 0);
+    // Create segments between each pair of positions
+    for (let i = 0; i < sortedPositions.length - 1; i++) {
+      const start = sortedPositions[i];
+      const end = sortedPositions[i + 1];
+      const activeHighlights = textHighlights.filter((h) => h.origin.range[0] <= start && h.origin.range[1] >= end);
+      if (activeHighlights.length > 0) {
+        segments.push({ start, end, highlights: activeHighlights });
+      }
+    }
+  }
+  
+  // Process image highlights
+  const imageHighlights = sample.origins
+    .map((origin, index) => ({
+      origin,
+      featureAct: sample.featureActs[index],
+    }))
+    .filter((item): item is { origin: ImageTokenOrigin; featureAct: number } => item.origin?.key === "image");
 
   return (
-    <Sample
-      tokenGroups={tokenGroups}
-      sampleName={sampleName}
-      tokenInfoContent={(_, i) => (token, j) =>
-        <TokenInfo token={token} maxFeatureAct={maxFeatureAct} position={tokenGroupPositions[i] + j} />}
-      tokenGroupClassName={(tokenGroup) => {
-        const tokenGroupMaxFeatureAct = Math.max(...tokenGroup.map((t) => t.featureAct));
-        return cn(
-          tokenGroupMaxFeatureAct > 0 && "hover:underline cursor-pointer",
-          sampleMaxFeatureAct > 0 && tokenGroupMaxFeatureAct == sampleMaxFeatureAct && "font-bold",
-          getAccentClassname(tokenGroupMaxFeatureAct, maxFeatureAct, "bg")
-        );
-      }}
-      foldedStart={start}
-    />
+    <div className="border rounded p-4 w-full flex flex-col gap-2">
+      <h3 className="font-bold mb-2">{sampleName}</h3>
+
+      <div className="flex gap-4 w-full justify-between">
+        {/* Text display with highlights */}
+        {sample.text && (
+          <div className="relative whitespace-pre-wrap mb-4">
+            {segments.map((segment, index) => {
+              const beforeText = index === 0 ? sample.text!.slice(0, segment.start) : "";
+              const segmentText = sample.text!.slice(segment.start, segment.end);
+              // Get the highest activation for this segment
+              const maxSegmentAct = Math.max(...segment.highlights.map((h) => h.featureAct));
+
+              return (
+                <span key={index}>
+                  {beforeText}
+                  <HoverCard>
+                    <HoverCardTrigger>
+                      <span
+                        className={cn("relative cursor-help", getAccentClassname(maxSegmentAct, maxFeatureAct, "bg"))}
+                      >
+                        {segmentText}
+                      </span>
+                    </HoverCardTrigger>
+                    <HoverCardContent>
+                      <div className="flex flex-col gap-2">
+                        {segment.highlights.map((highlight, i) => (
+                          <TokenInfo
+                            key={i}
+                            featureAct={highlight.featureAct}
+                            maxFeatureAct={maxFeatureAct}
+                            origin={highlight.origin}
+                          />
+                        ))}
+                      </div>
+                    </HoverCardContent>
+                  </HoverCard>
+                  {index === segments.length - 1 && sample.text!.slice(segment.end)}
+                </span>
+              );
+            })}
+
+            <div className="flex flex-col gap-2">
+              <div className="text-sm font-bold">Image Highlights:</div>
+              {imageHighlights.filter((v) => v.featureAct > 0.01).map((highlight, index) => {
+                return <div key={index}>{highlight.origin.rect.join(", ")}</div>;
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Images with highlight overlays */}
+        {sample.images && (
+          <div className="flex flex-wrap gap-2">
+            {sample.images.map((imageUrl, imgIndex) => {
+              // Concat imageUrl with baseUrl
+              const fullImageUrl = `${import.meta.env.VITE_BACKEND_URL}${imageUrl}`;
+              return (
+                <div key={imgIndex} className="relative">
+                  <img src={fullImageUrl} alt="" className="max-w-[200px] h-auto" />
+                  {imageHighlights
+                    .filter((highlight) => highlight.origin.imageIndex === imgIndex)
+                    .map((highlight, index) => {
+                      const [x1, y1, x2, y2] = highlight.origin.rect;
+                      const left = x1;
+                      const top = y1;
+                      const width = x2 - x1;
+                      const height = y2 - y1;
+                      return (
+                        <HoverCard key={index}>
+                          <HoverCardTrigger>
+                            <div
+                              className={cn(
+                                "absolute cursor-help",
+                                getAccentClassname(highlight.featureAct, maxFeatureAct, "bg")
+                              )}
+                              style={{
+                                left: `${left * 100}%`,
+                                top: `${top * 100}%`,
+                                width: `${width * 100}%`,
+                                height: `${height * 100}%`,
+                                opacity: 0.3,
+                              }}
+                            />
+                          </HoverCardTrigger>
+                          <HoverCardContent>
+                            <TokenInfo
+                              featureAct={highlight.featureAct}
+                              maxFeatureAct={maxFeatureAct}
+                              origin={highlight.origin}
+                            />
+                          </HoverCardContent>
+                        </HoverCard>
+                      );
+                    })}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
   );
 };

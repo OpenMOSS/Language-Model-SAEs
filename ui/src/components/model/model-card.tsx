@@ -358,17 +358,20 @@ const ModelSample = ({
   type Token = (typeof tokens)[0];
 
   const sortTokenInfo = (tokens: Token[]) => {
-    const featureActSum = tokens.reduce((acc, token) => {
-      token.saeInfo.forEach((saeInfo) => {
-        saeInfo.featureActs.forEach((featureAct) => {
-          acc[saeInfo.name] = acc[saeInfo.name] || {};
-          acc[saeInfo.name][featureAct.featureActIndex.toString()] =
-            acc[saeInfo.name][featureAct.featureActIndex.toString()] || 0;
-          acc[saeInfo.name][featureAct.featureActIndex.toString()] += featureAct.featureAct;
+    const featureActSum = tokens.reduce(
+      (acc, token) => {
+        token.saeInfo.forEach((saeInfo) => {
+          saeInfo.featureActs.forEach((featureAct) => {
+            acc[saeInfo.name] = acc[saeInfo.name] || {};
+            acc[saeInfo.name][featureAct.featureActIndex.toString()] =
+              acc[saeInfo.name][featureAct.featureActIndex.toString()] || 0;
+            acc[saeInfo.name][featureAct.featureActIndex.toString()] += featureAct.featureAct;
+          });
         });
-      });
-      return acc;
-    }, {} as { [name: string]: { [featureIndex: string]: number } });
+        return acc;
+      },
+      {} as { [name: string]: { [featureIndex: string]: number } }
+    );
 
     return tokens.map((token) => ({
       ...token,

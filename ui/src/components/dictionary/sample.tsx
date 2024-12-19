@@ -108,17 +108,19 @@ export const DictionarySample = ({ samples, onSamplesChange, dictionaryName }: D
           ...featureAct,
         }))
       )
-      .reduce((acc, featureAct) => {
-        // Group by featureActIndex
-        const key = featureAct.featureActIndex.toString();
-        if (acc[key]) {
-          acc[key].push(featureAct);
-        } else {
-          acc[key] = [featureAct];
-        }
-        return acc;
-      }, {} as Record<string, { token: Uint8Array; tokenIndex: number; featureAct: number; maxFeatureAct: number }[]>) ||
-      {}
+      .reduce(
+        (acc, featureAct) => {
+          // Group by featureActIndex
+          const key = featureAct.featureActIndex.toString();
+          if (acc[key]) {
+            acc[key].push(featureAct);
+          } else {
+            acc[key] = [featureAct];
+          }
+          return acc;
+        },
+        {} as Record<string, { token: Uint8Array; tokenIndex: number; featureAct: number; maxFeatureAct: number }[]>
+      ) || {}
   )
     .sort(
       // Sort by sum of featureAct
