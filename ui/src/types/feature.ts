@@ -9,6 +9,7 @@ export type TextTokenOrigin = z.infer<typeof TextTokenOriginSchema>;
 
 export const ImageTokenOriginSchema = z.object({
   key: z.literal("image"),
+  imageIndex: z.number(),
   rect: z.tuple([z.number(), z.number(), z.number(), z.number()]),
 });
 
@@ -21,7 +22,7 @@ export type TokenOrigin = z.infer<typeof TokenOriginSchema>;
 export const FeatureSampleCompactSchema = z.object({
   text: z.string().nullish(),
   images: z.array(z.string()).nullish(),
-  origins: z.array(TokenOriginSchema),
+  origins: z.array(TokenOriginSchema.nullable()),
   featureActs: z.array(z.number()),
 });
 
@@ -54,7 +55,7 @@ export type Interpretation = z.infer<typeof InterpretationSchema>;
 export const FeatureSchema = z.object({
   featureIndex: z.number(),
   dictionaryName: z.string(),
-  featureActivationHistogram: z.any(),
+  featureActivationHistogram: z.any().nullable(),
   actTimes: z.number(),
   maxFeatureAct: z.number(),
   sampleGroups: z.array(
