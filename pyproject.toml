@@ -66,16 +66,17 @@ lm-saes = "lm_saes.entrypoint:entrypoint"
 
 [dependency-groups]
 dev = [
-    "transformer-lens", 
-    "jupyter>=1.1.1", 
-    "ipywidgets>=8.1.5", 
-    "pytest>=8.3.3", 
-    "ipykernel>=6.29.5", 
-    "nbformat>=5.10.4", 
-    "kaleido==0.2.1", 
-    "pre-commit>=4.0.1", 
-    "ruff>=0.7.1", 
-    "basedpyright>=1.21.0", 
+    "transformer-lens",
+    "jupyter>=1.1.1",
+    "ipywidgets>=8.1.5",
+    "pytest>=8.3.3",
+    "ipykernel>=6.29.5",
+    "nbformat>=5.10.4",
+    "kaleido==0.2.1",
+    "pre-commit>=4.0.1",
+    "ruff>=0.7.1",
+    "basedpyright>=1.21.0",
+    "scikit-learn>=1.6.0",
 ]
 
 [tool.ruff]
