@@ -86,10 +86,11 @@ class CachedActivationSource(ActivationSource):
                 len(cfg.hook_points),
             )
         self.hook_point = cfg.hook_points[0]
-        self.chunk_paths = [
+        self.chunk_paths: list[list[str]] = [
             list_activation_chunks(cached_activations_path, self.hook_point)
             for cached_activations_path in cfg.cached_activations_path
         ]
+        self.chunk_buffer = {}  # n_tokens_in_buffer
         if cfg.ddp_size > 1:
             # self.chunk_paths = [
             #     p for i, p in enumerate(self.chunk_paths) if i % dist.get_world_size() == dist.get_rank()
@@ -104,46 +105,64 @@ class CachedActivationSource(ActivationSource):
 
         self.token_buffer = torch.empty((0, cfg.dataset.context_size), dtype=torch.long, device=cfg.device)
 
-    def _load_next_chunk(self):
-        if sum(self.sample_probs) == 0:
-            return None
-        # get one chunk from sample_probs
-        chunk_id = random.choices(range(len(self.chunk_paths)), weights=self.sample_probs)[0]
-        chunk_path = self.chunk_paths[chunk_id].pop()
-        # print(chunk_path)
-        if len(self.chunk_paths[chunk_id]) == 0:
-            self.sample_probs[chunk_id] = 0
-            self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
-        chunk = load_activation_chunk(chunk_path, self.cfg.device)
-        return chunk
+    # def _load_next_chunk(self):
+    #     if sum(self.sample_probs) == 0:
+    #         return None
+    #     # get one chunk from sample_probs
+    #     chunk_id = random.choices(range(len(self.chunk_paths)), weights=self.sample_probs)[0]
+    #     chunk_path = self.chunk_paths[chunk_id].pop()
+    #     # print(chunk_path)
+    #     if len(self.chunk_paths[chunk_id]) == 0:
+    #         self.sample_probs[chunk_id] = 0
+    #         self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
+    #     chunk = load_activation_chunk(chunk_path, self.cfg.device)
+    #     return chunk
 
-    def next(self) -> Dict[str, torch.Tensor] | None:
-        chunk = self._load_next_chunk()
-        if chunk is None:
-            return None
-        assert len(chunk["activation"].size()) in [
-            2,
-            3,
-        ], "activation size must be 2-dim (no context) or 3-dim (with context stored in batches)"
-        with_context = len(chunk["activation"].size()) == 3
+    def load_chunk_into_buffer(self, dataset_id, chunk_path: list[str], ban_token_list=None):
+        if dataset_id not in self.chunk_buffer:
+            self.chunk_buffer[dataset_id] = torch.empty((0, self.cfg.lm.d_model), dtype=self.cfg.dtype, device=self.cfg.device)
+        to_fill_length = self.cfg.n_tokens_in_buffer // len(self.chunk_paths) - self.chunk_buffer[dataset_id].size(0)
+        while to_fill_length > 0 and len(chunk_path) > 0:
+            chunk = load_activation_chunk(chunk_path.pop(), self.cfg.device)
+            with_context = len(chunk["activation"].size()) == 3
+            activation = chunk["activation"]
+            if with_context:
+                chunk["context"] = chunk["context"].to(dtype=torch.long, device=self.cfg.device)
+                not_ban_token = torch.isin(rearrange(chunk["context"], "b l -> (b l)"), torch.tensor(ban_token_list, device=self.cfg.device), invert=True)
+                activation = rearrange(chunk["activation"], "b l d -> (b l) d")[not_ban_token] 
+            self.chunk_buffer[dataset_id] = torch.cat([self.chunk_buffer[dataset_id], activation], dim=0)
+            to_fill_length -= activation.size(0)
+        return chunk_path
 
-        activations = chunk["activation"].to(dtype=self.cfg.dtype, device=self.cfg.device)
 
-        ret = {self.hook_point: rearrange(activations, "b l d -> (b l) d") if with_context else activations}
-        # if with_context:
-        #     ret.update(
-        #         {
-        #             "position": rearrange(
-        #                 chunk["position"].to(dtype=torch.long, device=self.cfg.device), "b l -> (b l)"
-        #             ),
-        #             "context": repeat(
-        #                 chunk["context"].to(dtype=torch.long, device=self.cfg.device),
-        #                 "b l -> (b repeat) l",
-        #                 repeat=activations.size(1),
-        #             ),
-        #         }
-        #     )
+    def next(self)-> Dict[str, torch.Tensor] | None:
+
+        for i, chunk_paths in enumerate(self.chunk_paths):
+            self.sample_probs[i] = 0 if len(chunk_paths) == 0 else self.sample_probs[i]
+        self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
+
+        for i, chunk_paths in enumerate(self.chunk_paths):
+            self.chunk_paths[i] = self.load_chunk_into_buffer(i, chunk_paths, self.cfg.ban_token_list[i])
+
+        next_length_list = [min(int(self.sample_probs[i] * self.cfg.n_tokens_in_buffer), self.chunk_buffer[i].size(0)) for i in range(len(self.chunk_paths))]
+
+        ret = {self.hook_point: torch.cat([self.chunk_buffer[i][:next_length_list[i]] for i in range(len(self.chunk_paths))], dim=0)}
         return ret
+
+    # def next(self) -> Dict[str, torch.Tensor] | None:
+    #     chunk = self._load_next_chunk()
+    #     if chunk is None:
+    #         return None
+    #     assert len(chunk["activation"].size()) in [
+    #         2,
+    #         3,
+    #     ], "activation size must be 2-dim (no context) or 3-dim (with context stored in batches)"
+    #     with_context = len(chunk["activation"].size()) == 3
+
+    #     activations = chunk["activation"].to(dtype=self.cfg.dtype, device=self.cfg.device)
+
+    #     ret = {self.hook_point: rearrange(activations, "b l d -> (b l) d") if with_context else activations}
+    #     return ret
 
     def next_tokens(self, batch_size: int) -> torch.Tensor | None:
         if self.token_buffer.size(0) < batch_size:
