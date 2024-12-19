@@ -145,7 +145,6 @@ class ActivationStoreConfig(BaseModelConfig, RunnerConfig):
     hook_points: List[str] = field(default_factory=lambda: ["blocks.0.hook_resid_pre"])
     """ Hook points to store activations from, i.e. the layer output of which is used for training/evaluating the dictionary. Will run until the last hook point in the list, so make sure to order them correctly. """
 
-
     use_cached_activations: bool = False
     cached_activations_path: List[str] = None  # type: ignore
     shuffle_activations: bool = True
