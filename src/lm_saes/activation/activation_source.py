@@ -105,20 +105,8 @@ class CachedActivationSource(ActivationSource):
 
         self.token_buffer = torch.empty((0, cfg.dataset.context_size), dtype=torch.long, device=cfg.device)
 
-    # def _load_next_chunk(self):
-    #     if sum(self.sample_probs) == 0:
-    #         return None
-    #     # get one chunk from sample_probs
-    #     chunk_id = random.choices(range(len(self.chunk_paths)), weights=self.sample_probs)[0]
-    #     chunk_path = self.chunk_paths[chunk_id].pop()
-    #     # print(chunk_path)
-    #     if len(self.chunk_paths[chunk_id]) == 0:
-    #         self.sample_probs[chunk_id] = 0
-    #         self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
-    #     chunk = load_activation_chunk(chunk_path, self.cfg.device)
-    #     return chunk
 
-    def load_chunk_into_buffer(self, dataset_id, chunk_path: list[str], ban_token_list=None):
+    def load_chunk_into_buffer(self, dataset_id, chunk_path: list[str], ignore_token_list=None):
         if dataset_id not in self.chunk_buffer:
             self.chunk_buffer[dataset_id] = torch.empty(
                 (0, self.cfg.lm.d_model), dtype=self.cfg.dtype, device=self.cfg.device
@@ -130,12 +118,12 @@ class CachedActivationSource(ActivationSource):
             activation = chunk["activation"]
             if with_context:
                 chunk["context"] = chunk["context"].to(dtype=torch.long, device=self.cfg.device)
-                not_ban_token = torch.isin(
+                not_ignore_token = torch.isin(
                     rearrange(chunk["context"], "b l -> (b l)"),
-                    torch.tensor(ban_token_list, device=self.cfg.device),
+                    torch.tensor(ignore_token_list, device=self.cfg.device),
                     invert=True,
                 )
-                activation = rearrange(chunk["activation"], "b l d -> (b l) d")[not_ban_token]
+                activation = rearrange(chunk["activation"], "b l d -> (b l) d")[not_ignore_token]
             self.chunk_buffer[dataset_id] = torch.cat([self.chunk_buffer[dataset_id], activation], dim=0)
             to_fill_length -= activation.size(0)
         return chunk_path
@@ -146,7 +134,7 @@ class CachedActivationSource(ActivationSource):
         self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
 
         for i, chunk_paths in enumerate(self.chunk_paths):
-            self.chunk_paths[i] = self.load_chunk_into_buffer(i, chunk_paths, self.cfg.ban_token_list[i])
+            self.chunk_paths[i] = self.load_chunk_into_buffer(i, chunk_paths, self.cfg.ignore_token_list[i])
 
         next_length_list = [
             min(int(self.sample_probs[i] * self.cfg.n_tokens_in_buffer), self.chunk_buffer[i].size(0))
@@ -158,6 +146,8 @@ class CachedActivationSource(ActivationSource):
                 [self.chunk_buffer[i][: next_length_list[i]] for i in range(len(self.chunk_paths))], dim=0
             )
         }
+        for i in range(len(self.chunk_paths)):
+            self.chunk_buffer[i] = self.chunk_buffer[i][next_length_list[i]:]
         return ret
 
     # def next(self) -> Dict[str, torch.Tensor] | None:

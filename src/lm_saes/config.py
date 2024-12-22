@@ -149,7 +149,7 @@ class ActivationStoreConfig(BaseModelConfig, RunnerConfig):
     cached_activations_path: List[str] = None  # type: ignore
     shuffle_activations: bool = True
     cache_sample_probs: List[float] = field(default_factory=lambda: [1.0])
-    ban_token_list: List[List[int]] = field(default_factory=lambda: [[]])
+    ignore_token_list: List[List[int]] = field(default_factory=lambda: [[]])
     n_tokens_in_buffer: int = 500_000
     tp_size: int = 1
     ddp_size: int = 1
