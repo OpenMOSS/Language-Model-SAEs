@@ -4,6 +4,7 @@ import { AppPagination } from "../ui/pagination";
 import { getAccentClassname } from "@/utils/style";
 import { cn } from "@/lib/utils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card";
+import { Switch } from "../ui/switch";
 
 export const FeatureSampleGroup = ({
   feature,
@@ -104,6 +105,9 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
     }))
     .filter((item): item is { origin: ImageTokenOrigin; featureAct: number } => item.origin?.key === "image");
 
+  const [showImageHighlights, setShowImageHighlights] = useState(true);
+  const [showImageGrid, setShowImageGrid] = useState(false);
+
   return (
     <div className="border rounded p-4 w-full flex flex-col gap-2">
       <h3 className="font-bold mb-2">{sampleName}</h3>
@@ -111,61 +115,81 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
       <div className="flex gap-4 w-full justify-between">
         {/* Text display with highlights */}
         {sample.text && (
-          <div className="relative whitespace-pre-wrap mb-4">
-            {segments.map((segment, index) => {
-              const beforeText = index === 0 ? sample.text!.slice(0, segment.start) : "";
-              const segmentText = sample.text!.slice(segment.start, segment.end);
-              // Get the highest activation for this segment
-              const maxSegmentAct = Math.max(...segment.highlights.map((h) => h.featureAct));
+          <div className="flex flex-col gap-2">
+            <div className="relative whitespace-pre-wrap mb-4">
+              {segments.map((segment, index) => {
+                const beforeText = index === 0 ? sample.text!.slice(0, segment.start) : "";
+                const segmentText = sample.text!.slice(segment.start, segment.end);
+                // Get the highest activation for this segment
+                const maxSegmentAct = Math.max(...segment.highlights.map((h) => h.featureAct));
 
-              return (
-                <span key={index}>
-                  {beforeText}
-                  <HoverCard>
-                    <HoverCardTrigger>
-                      <span
-                        className={cn("relative cursor-help", getAccentClassname(maxSegmentAct, maxFeatureAct, "bg"))}
-                      >
-                        {segmentText}
-                      </span>
-                    </HoverCardTrigger>
-                    <HoverCardContent>
-                      <div className="flex flex-col gap-2">
-                        {segment.highlights.map((highlight, i) => (
-                          <TokenInfo
-                            key={i}
-                            featureAct={highlight.featureAct}
-                            maxFeatureAct={maxFeatureAct}
-                            origin={highlight.origin}
-                          />
-                        ))}
-                      </div>
-                    </HoverCardContent>
-                  </HoverCard>
-                  {index === segments.length - 1 && sample.text!.slice(segment.end)}
-                </span>
-              );
-            })}
-
-            <div className="flex flex-col gap-2">
-              <div className="text-sm font-bold">Image Highlights:</div>
-              {imageHighlights.filter((v) => v.featureAct > 0.01).map((highlight, index) => {
-                return <div key={index}>{highlight.origin.rect.join(", ")}</div>;
+                return (
+                  <span key={index}>
+                    {beforeText}
+                    <HoverCard>
+                      <HoverCardTrigger>
+                        <span
+                          className={cn("relative cursor-help", getAccentClassname(maxSegmentAct, maxFeatureAct, "bg"))}
+                        >
+                          {segmentText}
+                        </span>
+                      </HoverCardTrigger>
+                      <HoverCardContent>
+                        <div className="flex flex-col gap-2">
+                          {segment.highlights.map((highlight, i) => (
+                            <TokenInfo
+                              key={i}
+                              featureAct={highlight.featureAct}
+                              maxFeatureAct={maxFeatureAct}
+                              origin={highlight.origin}
+                            />
+                          ))}
+                        </div>
+                      </HoverCardContent>
+                    </HoverCard>
+                    {index === segments.length - 1 && sample.text!.slice(segment.end)}
+                  </span>
+                );
               })}
+
+              
+            </div>
+            <div className="flex flex-col gap-2">
+              <div className="text-sm font-bold">Top 10 Image Highlights:</div>
+              {imageHighlights
+                .filter((v) => v.featureAct > 0.01)
+                .sort((a, b) => b.featureAct - a.featureAct)
+                .slice(0, 10)
+                .map((highlight, index) => {
+                  return (
+                    <div key={index}>
+                      [{highlight.origin.rect.map((n) => (n * 100).toFixed(1) + "%").join(", ")}]
+                    </div>
+                  );
+                })}
             </div>
           </div>
         )}
 
         {/* Images with highlight overlays */}
         {sample.images && (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-4">
+              <div className="flex gap-2">
+                <div className="text-sm font-bold">Show Image Highlights</div>
+                <Switch checked={showImageHighlights} onCheckedChange={setShowImageHighlights} />
+              </div>
+              <div className="flex gap-2">
+                <div className="text-sm font-bold">Show Image Grid</div>
+                <Switch checked={showImageGrid} onCheckedChange={setShowImageGrid} />
+              </div>
+            </div>
             {sample.images.map((imageUrl, imgIndex) => {
               // Concat imageUrl with baseUrl
               const fullImageUrl = `${import.meta.env.VITE_BACKEND_URL}${imageUrl}`;
               return (
                 <div key={imgIndex} className="relative">
-                  <img src={fullImageUrl} alt="" className="max-w-[200px] h-auto" />
-                  {imageHighlights
+                  {(showImageHighlights || showImageGrid) && imageHighlights
                     .filter((highlight) => highlight.origin.imageIndex === imgIndex)
                     .map((highlight, index) => {
                       const [x1, y1, x2, y2] = highlight.origin.rect;
@@ -178,15 +202,16 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
                           <HoverCardTrigger>
                             <div
                               className={cn(
-                                "absolute cursor-help",
-                                getAccentClassname(highlight.featureAct, maxFeatureAct, "bg")
+                                "absolute cursor-help bg-opacity-30",
+                                showImageHighlights && getAccentClassname(highlight.featureAct, maxFeatureAct, "bg"),
+                                showImageGrid && "border-[1px] border-gray-500",
+                                showImageHighlights && highlight.featureAct > 0 && "border-2 border-orange-500",
                               )}
                               style={{
                                 left: `${left * 100}%`,
                                 top: `${top * 100}%`,
                                 width: `${width * 100}%`,
                                 height: `${height * 100}%`,
-                                opacity: 0.3,
                               }}
                             />
                           </HoverCardTrigger>
@@ -200,6 +225,8 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
                         </HoverCard>
                       );
                     })}
+                  <img src={fullImageUrl} alt="" className="max-w-[500px] h-auto" />
+                  
                 </div>
               );
             })}
