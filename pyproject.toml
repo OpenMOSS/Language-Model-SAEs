@@ -77,6 +77,8 @@ dev = [
     "ruff>=0.7.1",
     "basedpyright>=1.21.0",
     "scikit-learn>=1.6.0",
+    "plotly>=5.24.1",
+    "pandas>=2.2.3",
 ]
 
 [tool.ruff]
