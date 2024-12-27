@@ -9,7 +9,7 @@ from tqdm import tqdm
 from lm_saes.activation.processors.core import BaseActivationProcessor
 
 
-class RawDataLoader(BaseActivationProcessor[Dataset, Iterable[dict[str, Any]]]):
+class HuggingFaceDatasetLoader(BaseActivationProcessor[Dataset, Iterable[dict[str, Any]]]):
     """A processor that directly loads raw dataset from HuggingFace datasets.
 
     This processor takes a HuggingFace dataset and converts it into an iterable of batches.
