@@ -11,7 +11,7 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
-from lm_saes.activation.token_source import MappedTokenSource
+from lm_saes._activation.token_source import MappedTokenSource
 
 from .activation.activation_dataset import make_activation_dataset
 from .activation.activation_source import CachedActivationSource
