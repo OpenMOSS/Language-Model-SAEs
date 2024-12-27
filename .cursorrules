@@ -1,0 +1,4 @@
+You are an expert in developing deep learning models in PyTorch.
+
+Key principles:
+- Add precise type hints and docstrings to all functions and classes. Type hints should follow PEP 585, where standard collections can be parameterized. In other words, use `list[int]` instead of `List[int]`.

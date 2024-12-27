@@ -60,20 +60,40 @@ class RunnerConfig(BaseConfig):
 
 
 @dataclass(kw_only=True)
-class ActivationPipelineConfig(BaseConfig):
-    concat_tokens: List[bool] = field(default_factory=lambda: [False])
-    context_size: int = 128
-    store_batch_size: int = 64
-    sample_probs: List[float] = field(default_factory=lambda: [1.0])
-    prepend_bos: List[bool] = field(default_factory=lambda: [True])
-
-
-@dataclass(kw_only=True)
 class DatasetConfig(BaseConfig):
     dataset_name_or_path: str = "openwebtext"
     cache_dir: Optional[str] = None
-    is_dataset_tokenized: bool = False
     is_dataset_on_disk: bool = False
+
+
+@dataclass(kw_only=True)
+class ActivationPipelineSource:
+    type: str
+    sample_weights: float = 1.0
+
+
+@dataclass(kw_only=True)
+class ActivationPipelineDatasetSource(ActivationPipelineSource):
+    type: str = "dataset"
+    name: str
+    is_dataset_tokenized: bool = False
+    prepend_bos: bool = False
+
+
+@dataclass(kw_only=True)
+class ActivationPipelineActivationsSource(ActivationPipelineSource):
+    type: str = "activations"
+    path: str
+
+
+@dataclass(kw_only=True)
+class ActivationPipelineConfig(BaseConfig):
+    sources: list[ActivationPipelineDatasetSource | ActivationPipelineActivationsSource]
+    hook_points: list[str]
+    context_size: int = 128
+    batch_size: int = 64
+    buffer_size: int = 500_000
+    shuffle_activations: bool = True
 
 
 @dataclass(kw_only=True)
@@ -112,36 +132,6 @@ class LanguageModelConfig(BaseModelConfig):
 
         with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
             json.dump(d, f, indent=4)
-
-
-@dataclass(kw_only=True)
-class ActivationStoreConfig(BaseModelConfig, RunnerConfig):
-    lm: LanguageModelConfig
-    dataset: TextDatasetConfig
-    hook_points: List[str] = field(default_factory=lambda: ["blocks.0.hook_resid_pre"])
-    """ Hook points to store activations from, i.e. the layer output of which is used for training/evaluating the dictionary. Will run until the last hook point in the list, so make sure to order them correctly. """
-
-    use_cached_activations: bool = False
-    cached_activations_path: List[str] = None  # type: ignore
-    shuffle_activations: bool = True
-    cache_sample_probs: List[float] = field(default_factory=lambda: [1.0])
-    ignore_token_list: List[List[int]] = field(default_factory=lambda: [[]])
-    n_tokens_in_buffer: int = 500_000
-    tp_size: int = 1
-    ddp_size: int = 1
-
-    def __post_init__(self):
-        super().__post_init__()
-        # Autofill cached_activations_path unless the user overrode it
-        if self.cached_activations_path is None:
-            self.cached_activations_path = [
-                f"activations/{path.split('/')[-1]}/{self.lm.model_name.replace('/', '_')}_{self.dataset.context_size}"
-                for path in self.dataset.dataset_path
-            ]
-        if self.use_cached_activations:
-            assert len(self.cache_sample_probs) == len(
-                self.cached_activations_path
-            ), "Number of cache_sample_probs must match number of cached_activations_path"
 
 
 @dataclass(kw_only=True)
