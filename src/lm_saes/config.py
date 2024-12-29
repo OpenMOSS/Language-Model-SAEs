@@ -2,7 +2,7 @@ import json
 import math
 import os
 from dataclasses import dataclass, field, fields
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -26,10 +26,10 @@ class BaseConfig(FlattenableModel):
 
 
 @dataclass(kw_only=True)
-class BaseModelConfig(BaseConfig):
+class BaseModelConfig:
     device: str = "cpu"
     seed: int = 42
-    dtype: torch.dtype = torch.float32
+    dtype: torch.dtype = torch.bfloat16
 
     def to_dict(self) -> Dict[str, Any]:
         return {field.name: getattr(self, field.name) for field in fields(self)}
@@ -40,11 +40,84 @@ class BaseModelConfig(BaseConfig):
         return cls(**d, **kwargs)
 
     def __post_init__(self):
-        super().__post_init__()
         if isinstance(self.dtype, str):
             self.dtype = convert_str_to_torch_dtype(self.dtype)
-        if dist.is_initialized() and self.device == "cuda":
-            self.device = f"cuda:{dist.get_rank()}"
+
+
+@dataclass(kw_only=True)
+class BaseSAEConfig(BaseModelConfig):
+    """
+    Base class for SAE configs.
+    Initializer will initialize SAE based on config type.
+    So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, MixCoderConfig, CrossCoderConfig, etc.
+    """
+
+    hook_point_in: str
+    hook_point_out: str
+    d_model: int
+    d_sae: int = None  # type: ignore
+    expansion_factor: int
+    use_decoder_bias: bool = True
+    use_glu_encoder: bool = False
+    act_fn: str = "relu"
+    jump_relu_threshold: float = 0.0
+    apply_decoder_bias_to_pre_encoder: bool = True
+    norm_activation: str = "token-wise"
+    sparsity_include_decoder_norm: bool = True
+    top_k: int = 50
+    sae_pretrained_name_or_path: Optional[str] = None
+    strict_loading: bool = True
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.hook_point_out is None:
+            self.hook_point_out = self.hook_point_in
+        if self.d_sae is None:
+            self.d_sae = self.d_model * self.expansion_factor
+
+    @classmethod
+    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+        """Load the SAEConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/hyperparams.json.
+
+        Args:
+            sae_path (str): The path to the pretrained SAE.
+            **kwargs: Additional keyword arguments to pass to the SAEConfig constructor.
+        """
+        path = parse_pretrained_name_or_path(pretrained_name_or_path)
+        with open(os.path.join(path, "hyperparams.json"), "r") as f:
+            sae_config = json.load(f)
+        sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
+        sae_config["strict_loading"] = strict_loading
+        return cls.from_dict(sae_config, **kwargs)
+
+    def save_hyperparameters(self, sae_path: str, remove_loading_info: bool = True):
+        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
+        d = self.to_dict()
+        if remove_loading_info:
+            d.pop("sae_pretrained_name_or_path", None)
+            d.pop("strict_loading", None)
+
+        for k, v in d.items():
+            if isinstance(v, torch.dtype):
+                d[k] = convert_torch_dtype_to_str(v)
+
+        with open(os.path.join(sae_path, "hyperparams.json"), "w") as f:
+            json.dump(d, f, indent=4)
+
+
+@dataclass(kw_only=True)
+class SAEConfig(BaseSAEConfig):
+    pass
+
+
+@dataclass(kw_only=True)
+class InitializerConfig(BaseConfig):
+    bias_init_method: str = "all_zero"
+    init_decoder_norm: float | None = None
+    init_encoder_norm: float | None = None
+    init_encoder_with_decoder_transpose: bool = True
+    init_search: bool = False
+    state: Literal["training", "finetuning", "inference"] = "training"
 
 
 @dataclass(kw_only=True)
@@ -175,115 +248,6 @@ class WandbConfig(BaseConfig):
     exp_name: Optional[str] = None
     wandb_entity: Optional[str] = None
     log_on_every_rank: bool = False
-
-
-@dataclass(kw_only=True)
-class SAEConfig(BaseModelConfig):
-    """
-    Configuration for training or running a sparse autoencoder.
-    """
-
-    hook_point_in: str = "blocks.0.hook_resid_pre"
-    """ The hook point to use as input to the SAE. """
-    hook_point_out: str = None  # type: ignore
-    """ The hook point to use as label of the SAE. If None, it will be set to hook_point_in. """
-
-    sae_pretrained_name_or_path: Optional[str] = None
-    strict_loading: bool = True
-
-    use_decoder_bias: bool = True
-    apply_decoder_bias_to_pre_encoder: bool = True  # set to False when training transcoders
-    expansion_factor: int = 128
-    d_model: int = 768
-    d_sae: int = None  # type: ignore
-    bias_init_method: str = "all_zero"
-    act_fn: str = "relu"
-    jump_relu_threshold: float = 0.0
-
-    """ The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor """
-    norm_activation: str = "token-wise"  # none, token-wise, batch-wise, dataset-wise
-    dataset_average_activation_norm: Dict[str, float] | None = None
-    decoder_exactly_fixed_norm: bool = False
-    sparsity_include_decoder_norm: bool = True  # set to True: sparsity loss = sum(act * corresponding_decoder_norm), otherwise loss = sum(act). Incompatible with decoder_exactly_fixed_norm
-    use_glu_encoder: bool = False
-    init_decoder_norm: float | None = None  # type: ignore
-    init_encoder_norm: float | None = None  # type: ignore
-    init_encoder_with_decoder_transpose: bool = True
-
-    lp: int = 1
-    l1_coefficient: float = 0.00008
-    l1_coefficient_warmup_steps: int | float = 0.1
-    top_k: int = 50
-    initial_k: int | float | None = None
-    k_warmup_steps: int | float = 0.1
-
-    use_batch_norm_mse: bool = True  # will set to False in the future
-
-    use_ghost_grads: bool = False
-
-    tp_size: int = 1
-    ddp_size: int = 1
-
-    def __post_init__(self):
-        super().__post_init__()
-        if self.hook_point_out is None:
-            self.hook_point_out = self.hook_point_in
-        if self.d_sae is None:
-            self.d_sae = self.d_model * self.expansion_factor
-        if self.k_warmup_steps > 0:
-            if self.initial_k is None:
-                self.initial_k = self.d_model
-            self.initial_k /= self.top_k
-        if self.norm_activation == "dataset-wise" and self.dataset_average_activation_norm is None:
-            print(
-                'dataset_average_activation_norm is None and norm_activation is "dataset-wise". Will be computed automatically from the dataset.'
-            )
-        if self.sparsity_include_decoder_norm and self.decoder_exactly_fixed_norm:
-            raise ValueError("sparsity_include_decoder_norm and decoder_exactly_fixed_norm are incompatible.")
-        if self.sparsity_include_decoder_norm and self.use_ghost_grads:
-            raise ValueError("sparsity_include_decoder_norm and use_ghost_grads are incompatible.")
-        if self.init_encoder_with_decoder_transpose and isinstance(self.init_encoder_norm, float):
-            raise ValueError("init_encoder_with_decoder_transpose and init_encoder_norm with float are incompatible.")
-
-    @staticmethod
-    def from_pretrained(pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
-        """Load the SAEConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/hyperparams.json.
-
-        Args:
-            sae_path (str): The path to the pretrained SAE.
-            **kwargs: Additional keyword arguments to pass to the SAEConfig constructor.
-        """
-        path = parse_pretrained_name_or_path(pretrained_name_or_path)
-        with open(os.path.join(path, "hyperparams.json"), "r") as f:
-            sae_config = json.load(f)
-        sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
-        sae_config["strict_loading"] = strict_loading
-        return SAEConfig.from_dict(sae_config, **kwargs)
-
-    @deprecated("Use from_pretrained and to_dict instead.")
-    @staticmethod
-    def get_hyperparameters(exp_result_path: str, ckpt_name: str, strict_loading: bool = True) -> dict[str, Any]:
-        with open(os.path.join(exp_result_path, "hyperparams.json"), "r") as f:
-            hyperparams = json.load(f)
-        hyperparams["sae_pretrained_name_or_path"] = os.path.join(exp_result_path, "checkpoints", ckpt_name)
-        hyperparams["strict_loading"] = strict_loading
-        # Remove non-hyperparameters from the dict
-        hyperparams = {k: v for k, v in hyperparams.items() if k in SAEConfig.__dataclass_fields__.keys()}
-        return hyperparams
-
-    def save_hyperparameters(self, sae_path: str, remove_loading_info: bool = True):
-        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
-        d = self.to_dict()
-        if remove_loading_info:
-            d.pop("sae_pretrained_name_or_path", None)
-            d.pop("strict_loading", None)
-
-        for k, v in d.items():
-            if isinstance(v, torch.dtype):
-                d[k] = convert_torch_dtype_to_str(v)
-
-        with open(os.path.join(sae_path, "hyperparams.json"), "w") as f:
-            json.dump(d, f, indent=4)
 
 
 @dataclass(kw_only=True)
