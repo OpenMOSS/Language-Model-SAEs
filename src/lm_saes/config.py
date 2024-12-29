@@ -133,6 +133,43 @@ class RunnerConfig(BaseConfig):
 
 
 @dataclass(kw_only=True)
+class DatasetConfig(BaseConfig):
+    dataset_name_or_path: str = "openwebtext"
+    cache_dir: Optional[str] = None
+    is_dataset_on_disk: bool = False
+
+
+@dataclass(kw_only=True)
+class ActivationPipelineSource:
+    type: str
+    sample_weights: float = 1.0
+
+
+@dataclass(kw_only=True)
+class ActivationPipelineDatasetSource(ActivationPipelineSource):
+    type: str = "dataset"
+    name: str
+    is_dataset_tokenized: bool = False
+    prepend_bos: bool = False
+
+
+@dataclass(kw_only=True)
+class ActivationPipelineActivationsSource(ActivationPipelineSource):
+    type: str = "activations"
+    path: str
+
+
+@dataclass(kw_only=True)
+class ActivationPipelineConfig(BaseConfig):
+    sources: list[ActivationPipelineDatasetSource | ActivationPipelineActivationsSource]
+    hook_points: list[str]
+    context_size: int = 128
+    batch_size: int = 64
+    buffer_size: int = 500_000
+    shuffle_activations: bool = True
+
+
+@dataclass(kw_only=True)
 class LanguageModelConfig(BaseModelConfig):
     model_name: str = "gpt2"
     model_from_pretrained_path: Optional[str] = None
@@ -168,77 +205,6 @@ class LanguageModelConfig(BaseModelConfig):
 
         with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
             json.dump(d, f, indent=4)
-
-
-@dataclass(kw_only=True)
-class TextDatasetConfig(RunnerConfig):
-    dataset_path: List[str] = "openwebtext"  # type: ignore
-    cache_dir: Optional[str] = None
-    is_dataset_tokenized: bool = False
-    is_dataset_on_disk: bool = False
-    concat_tokens: List[bool] = field(default_factory=lambda: [False])  # type: ignore
-    context_size: int = 128
-    store_batch_size: int = 64
-    sample_probs: List[float] = field(default_factory=lambda: [1.0])
-    prepend_bos: List[bool] = field(default_factory=lambda: [True])
-
-    def __post_init__(self):
-        super().__post_init__()
-        if isinstance(self.dataset_path, str):
-            self.dataset_path = [self.dataset_path]
-
-        if isinstance(self.concat_tokens, bool):
-            self.concat_tokens = [self.concat_tokens]
-
-        if isinstance(self.prepend_bos, bool):
-            self.prepend_bos = [self.prepend_bos]
-
-        if False in self.prepend_bos:
-            print(
-                "Warning: prepend_bos is set to False for some datasets. This setting might not be suitable for most modern models."
-            )
-
-        self.sample_probs = [p / sum(self.sample_probs) for p in self.sample_probs]
-
-        assert len(self.sample_probs) == len(
-            self.dataset_path
-        ), "Number of sample_probs must match number of dataset paths"
-        assert len(self.concat_tokens) == len(
-            self.dataset_path
-        ), "Number of concat_tokens must match number of dataset paths"
-        assert len(self.prepend_bos) == len(
-            self.dataset_path
-        ), "Number of prepend_bos must match number of dataset paths"
-
-
-@dataclass(kw_only=True)
-class ActivationStoreConfig(BaseModelConfig, RunnerConfig):
-    lm: LanguageModelConfig
-    dataset: TextDatasetConfig
-    hook_points: List[str] = field(default_factory=lambda: ["blocks.0.hook_resid_pre"])
-    """ Hook points to store activations from, i.e. the layer output of which is used for training/evaluating the dictionary. Will run until the last hook point in the list, so make sure to order them correctly. """
-
-    use_cached_activations: bool = False
-    cached_activations_path: List[str] = None  # type: ignore
-    shuffle_activations: bool = True
-    cache_sample_probs: List[float] = field(default_factory=lambda: [1.0])
-    ignore_token_list: List[List[int]] = field(default_factory=lambda: [[]])
-    n_tokens_in_buffer: int = 500_000
-    tp_size: int = 1
-    ddp_size: int = 1
-
-    def __post_init__(self):
-        super().__post_init__()
-        # Autofill cached_activations_path unless the user overrode it
-        if self.cached_activations_path is None:
-            self.cached_activations_path = [
-                f"activations/{path.split('/')[-1]}/{self.lm.model_name.replace('/', '_')}_{self.dataset.context_size}"
-                for path in self.dataset.dataset_path
-            ]
-        if self.use_cached_activations:
-            assert len(self.cache_sample_probs) == len(
-                self.cached_activations_path
-            ), "Number of cache_sample_probs must match number of cached_activations_path"
 
 
 @dataclass(kw_only=True)

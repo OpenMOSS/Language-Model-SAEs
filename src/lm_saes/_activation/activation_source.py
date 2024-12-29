@@ -105,7 +105,6 @@ class CachedActivationSource(ActivationSource):
 
         self.token_buffer = torch.empty((0, cfg.dataset.context_size), dtype=torch.long, device=cfg.device)
 
-
     def load_chunk_into_buffer(self, dataset_id, chunk_path: list[str], ignore_token_list=None):
         if dataset_id not in self.chunk_buffer:
             self.chunk_buffer[dataset_id] = torch.empty(
@@ -147,7 +146,7 @@ class CachedActivationSource(ActivationSource):
             )
         }
         for i in range(len(self.chunk_paths)):
-            self.chunk_buffer[i] = self.chunk_buffer[i][next_length_list[i]:]
+            self.chunk_buffer[i] = self.chunk_buffer[i][next_length_list[i] :]
         return ret
 
     # def next(self) -> Dict[str, torch.Tensor] | None:
