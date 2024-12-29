@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Generic, Iterable, TypeVar
 
 # Define type variables for input and output iterable containers
-InputT = TypeVar("InputT", bound=Iterable)
+InputT = TypeVar("InputT", bound=Iterable | None)
 OutputT = TypeVar("OutputT", bound=Iterable)
 
 

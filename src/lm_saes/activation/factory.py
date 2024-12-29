@@ -74,6 +74,7 @@ class ActivationFactory:
             )
 
             # Map target type to number of processing stages needed
+            # TODO: refactor to use comparable enum for filtering needed stages
             stage_map = {
                 "tokens": 1,
                 "activations-2d": 3,
