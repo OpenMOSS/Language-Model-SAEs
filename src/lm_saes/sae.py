@@ -6,7 +6,7 @@ from typing import Dict, Literal, Union, overload
 import safetensors.torch as safe
 import torch
 from jaxtyping import Float
-from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 
@@ -359,7 +359,7 @@ class SparseAutoEncoder(HookedRootModule):
         return reconstructed
 
     @overload
-    def compute_loss(  # type: ignore . I have no idea why these overloads are overlapping
+    def compute_loss(
         self,
         x: Union[
             Float[torch.Tensor, "batch d_model"],
@@ -372,6 +372,7 @@ class SparseAutoEncoder(HookedRootModule):
             ]
             | None
         ) = None,
+        *,
         use_batch_norm_mse: bool = False,
         lp: int = 1,
         return_aux_data: Literal[True] = True,
@@ -394,9 +395,10 @@ class SparseAutoEncoder(HookedRootModule):
             ]
             | None
         ) = None,
+        *,
         use_batch_norm_mse: bool = False,
         lp: int = 1,
-        return_aux_data: Literal[False] = False,
+        return_aux_data: Literal[False],
     ) -> Float[torch.Tensor, " batch"]: ...
 
     def compute_loss(
@@ -412,6 +414,7 @@ class SparseAutoEncoder(HookedRootModule):
             ]
             | None
         ) = None,
+        *,
         use_batch_norm_mse: bool = False,
         lp: int = 1,
         return_aux_data: bool = True,
