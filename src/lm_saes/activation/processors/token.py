@@ -1,4 +1,4 @@
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional, cast
 
 import torch
 from transformer_lens import HookedTransformer
@@ -21,18 +21,18 @@ def pad_and_truncate_tokens(
     Returns:
         torch.Tensor: Padded token tensor with shape (batch_size, seq_len)
     """
-    if tokens.size(1) > seq_len:
+    if tokens.size(-1) > seq_len:
         return tokens[..., :seq_len]
 
-    pad_len = seq_len - tokens.size(1)
+    pad_len = seq_len - tokens.size(-1)
 
     padding = torch.full(
-        (tokens.size(0), pad_len),
+        (*tokens.shape[:-1], pad_len),
         pad_token_id,
         dtype=torch.long,
         device=tokens.device,
     )
-    return torch.cat([tokens, padding], dim=1)
+    return torch.cat([tokens, padding], dim=-1)
 
 
 class RawDatasetTokenProcessor(BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]):
@@ -63,8 +63,8 @@ class RawDatasetTokenProcessor(BaseActivationProcessor[Iterable[dict[str, Any]],
             dict: Processed token data with optional info field
         """
         for d in data:
-            tokens = model.to_tokens_with_origins(d["tokens"], tokens_only=True, prepend_bos=self.prepend_bos)
-            ret = {"tokens": tokens}
+            tokens = model.to_tokens_with_origins(d, tokens_only=True, prepend_bos=self.prepend_bos)
+            ret = {"tokens": tokens[0]}
             if "info" in d:
                 ret = ret | {"info": d["info"]}
             yield ret
@@ -84,18 +84,39 @@ class PadAndTruncateTokensProcessor(BaseActivationProcessor[Iterable[dict[str, A
     def __init__(self, seq_len: int):
         self.seq_len = seq_len
 
-    def process(self, data: Iterable[dict[str, Any]], *, pad_token_id: int = 0, **kwargs) -> Iterable[dict[str, Any]]:
+    def process(
+        self,
+        data: Iterable[dict[str, Any]],
+        *,
+        pad_token_id: Optional[int] = None,
+        model: Optional[HookedTransformer] = None,
+        **kwargs,
+    ) -> Iterable[dict[str, Any]]:
         """Process tokens by padding or truncating to desired sequence length.
 
         Args:
             data (Iterable[dict[str, Any]]): Input data containing tokens to process
-            pad_token_id (int, optional): The token ID to use for padding. Defaults to 0.
+            pad_token_id (int, optional): The token ID to use for padding. Defaults to None.
+                If not specified, the pad_token_id will be inferred from the model's tokenizer.
+                If neither is provided, the pad_token_id will be 0.
+            model (HookedTransformer, optional): The model to use for padding. Defaults to None.
+                If provided, the pad_token_id will be inferred from the model's tokenizer.
             **kwargs: Additional keyword arguments. Not used by this processor.
 
         Yields:
             dict[str, Any]: Dictionary containing processed tokens padded/truncated to seq_len,
                 and original info field if present
         """
+
+        # Infer pad_token_id if not provided
+        if pad_token_id is None:
+            if model is not None:
+                tokenizer = model.tokenizer
+                assert tokenizer is not None, "model must have a tokenizer"
+                pad_token_id = cast(int, tokenizer.pad_token_id)
+            else:
+                pad_token_id = 0
+
         for d in data:
             assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
             tokens = pad_and_truncate_tokens(d["tokens"], seq_len=self.seq_len, pad_token_id=pad_token_id)
