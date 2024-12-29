@@ -153,7 +153,7 @@ class ActivationBuffer:
             ActivationBuffer: New buffer containing concatenated activations
         """
         if self.buffer is None:
-            buffer = activations
+            buffer = {k: activations[k] for k in self.hook_points}
         else:
             buffer = {k: torch.cat([self.buffer[k], activations[k]], dim=0) for k in self.hook_points}
         return ActivationBuffer(hook_points=self.hook_points, buffer=buffer)
@@ -252,7 +252,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             ), "All tensors must have the same shape"
 
             # Add new data to buffer
-            buffer = buffer.cat(cast(dict[str, torch.Tensor], d))
+            buffer = buffer.cat(d)
 
             if self.buffer_size is not None:
                 # If buffer is full, shuffle and yield batches until half empty
@@ -270,7 +270,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
                     batch, buffer = cast(ActivationBuffer, buffer).yield_batch(self.batch_size)
                     yield batch
 
-        # Yield any remaining samples as final batch
+        # Yield any remaining samples in batches
         while len(buffer) > 0:
-            batch, buffer = buffer.yield_batch(len(buffer))
+            batch, buffer = buffer.yield_batch(self.batch_size)
             yield batch
