@@ -80,6 +80,7 @@ dev = [
     "pandas>=2.2.3",
     "pytest-mock>=3.14.0",
     "typeguard>=4.4.1",
+    "pyfakefs>=5.7.3",
 ]
 
 [tool.ruff]
