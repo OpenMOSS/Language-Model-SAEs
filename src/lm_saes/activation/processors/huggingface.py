@@ -9,14 +9,23 @@ from tqdm import tqdm
 from lm_saes.activation.processors.core import BaseActivationProcessor
 
 
+def identity_collate_fn(x):
+    """Identity collate function that returns the input as is.
+
+    This should be defined in the global scope so it can be pickled when multiprocessing with `num_workers > 0`.
+    """
+    return x
+
+
 class HuggingFaceDatasetLoader(BaseActivationProcessor[Dataset, Iterable[dict[str, Any]]]):
     """A processor that directly loads raw dataset from HuggingFace datasets.
 
-    This processor takes a HuggingFace dataset and converts it into an iterable of batches.
-    It can optionally add context index information to each batch and show a progress bar.
+    This processor takes a HuggingFace dataset and converts it into an iterable of raw data records.
+    It can optionally add context index information to each data record and show a progress bar.
 
     Args:
-        batch_size (int): Number of samples per batch
+        batch_size (int): Number of samples per batch. The batch is only used for loading the dataset.
+            The returned data is always a flattened list of raw data records.
         num_workers (int, optional): Number of workers to use for loading the dataset.
             Defaults to 0. Use a larger `num_workers` if you have a large dataset and want to speed up loading.
         with_info (bool, optional): Whether to include context index information with each batch.
@@ -55,7 +64,7 @@ class HuggingFaceDatasetLoader(BaseActivationProcessor[Dataset, Iterable[dict[st
                 batch_size=self.batch_size,
                 shuffle=False,
                 pin_memory=True,
-                collate_fn=lambda x: x,
+                collate_fn=identity_collate_fn,
                 num_workers=self.num_workers,
             ),
         )
