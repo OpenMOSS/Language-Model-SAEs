@@ -80,8 +80,8 @@ def test_activation_factory_tokens_target(
 
     assert len(result) == 3  # One for each input text
     assert "tokens" in result[0]
-    assert "info" in result[0]
-    assert result[0]["info"]["source"] == "test_dataset"
+    assert "meta" in result[0]
+    assert result[0]["meta"]["dataset_name"] == "test_dataset"
     assert torch.allclose(result[0]["tokens"], torch.tensor([12, 13, 14]))
 
 
@@ -98,7 +98,7 @@ def test_activation_factory_activations_2d_target(
 
     assert len(result) == 3  # One for each input text
     assert all(h in result[0] for h in basic_config.hook_points)
-    assert result[0]["info"]["source"] == "test_dataset"
+    assert result[0]["meta"]["dataset_name"] == "test_dataset"
     assert result[0]["h0"].shape == (4, 3)
     assert torch.allclose(result[0]["h0"], torch.tensor([[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11]]))
 
@@ -115,7 +115,7 @@ def test_activation_factory_activations_1d_target(
 
     assert len(result) == 3  # One for each input text
     assert all(h in result[0] for h in basic_config.hook_points)
-    assert result[0]["info"]["source"] == "test_dataset"
+    assert result[0]["meta"]["dataset_name"] == "test_dataset"
     assert result[0]["h0"].ndim == 2
     assert result[0]["h0"].shape == (3, 3)
     assert torch.allclose(result[0]["h0"], torch.tensor([[0, 1, 2], [3, 4, 5], [6, 7, 8]]))
@@ -142,7 +142,7 @@ def test_activation_factory_batched_activations_1d_target(
     assert torch.allclose(result[2]["h0"], torch.tensor([[3, 4, 5], [6, 7, 8]]))
     assert torch.allclose(result[3]["h0"], torch.tensor([[0, 1, 2], [3, 4, 5]]))
     assert torch.allclose(result[4]["h0"], torch.tensor([[6, 7, 8]]))
-    assert "info" not in result[0]  # Info is removed for batched activations
+    assert "meta" not in result[0]  # Info is removed for batched activations
 
 
 def test_activation_factory_multiple_sources(
@@ -176,7 +176,7 @@ def test_activation_factory_multiple_sources(
 
     assert len(result) > 0
     for item in result:
-        assert item["info"]["source"] in ["dataset1", "dataset2"]
+        assert item["meta"]["dataset_name"] in ["dataset1", "dataset2"]
 
 
 def test_activation_factory_invalid_dataset(

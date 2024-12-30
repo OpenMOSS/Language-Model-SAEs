@@ -27,21 +27,31 @@ def test_huggingface_dataset_loader():
     assert len(result) == 4  # Should be flattened
     assert all(isinstance(x, dict) for x in result)
     assert all("text" in x for x in result)
-    assert all("info" not in x for x in result)
+    assert all("meta" not in x for x in result)
 
     # Test with info
     loader_with_info = HuggingFaceDatasetLoader(batch_size=2, with_info=True)
     result_with_info = list(loader_with_info.process(dataset))
     assert len(result_with_info) == 4
-    assert all("info" in x for x in result_with_info)
-    assert all("context_idx" in x["info"] for x in result_with_info)
+    assert all("meta" in x for x in result_with_info)
+    assert all("context_idx" in x["meta"] for x in result_with_info)
+    assert all("dataset_name" not in x["meta"] for x in result_with_info)
+
+    # Test with info and dataset_name
+    loader_with_info = HuggingFaceDatasetLoader(batch_size=2, with_info=True)
+    result_with_info = list(loader_with_info.process(dataset, dataset_name="test"))
+    assert len(result_with_info) == 4
+    assert all("meta" in x for x in result_with_info)
+    assert all("context_idx" in x["meta"] for x in result_with_info)
+    assert all("dataset_name" in x["meta"] for x in result_with_info)
+    assert all(x["meta"]["dataset_name"] == "test" for x in result_with_info)
 
     # Test multiple workers
     loader_with_info = HuggingFaceDatasetLoader(batch_size=2, with_info=True, num_workers=2)
     result_with_info = list(loader_with_info.process(dataset))
     assert len(result_with_info) == 4
-    assert all("info" in x for x in result_with_info)
-    assert all("context_idx" in x["info"] for x in result_with_info)
+    assert all("meta" in x for x in result_with_info)
+    assert all("context_idx" in x["meta"] for x in result_with_info)
 
 
 def test_token_processors(mocker: MockerFixture):
@@ -51,16 +61,16 @@ def test_token_processors(mocker: MockerFixture):
 
     # Test RawDatasetTokenProcessor
     token_processor = RawDatasetTokenProcessor()
-    input_data = [{"text": "test text", "info": {"some": "info"}}]
+    input_data = [{"text": "test text", "meta": {"some": "meta"}}]
     result = list(token_processor.process(input_data, model=mock_model))
     assert len(result) == 1
     assert "tokens" in result[0]
-    assert "info" in result[0]
+    assert "meta" in result[0]
     assert torch.allclose(result[0]["tokens"], torch.tensor([1, 2, 3]))
 
     # Test PadAndTruncateTokensProcessor
     pad_processor = PadAndTruncateTokensProcessor(seq_len=5)
-    input_tokens = [{"tokens": torch.tensor([1, 2, 3]), "info": {"some": "info"}}]
+    input_tokens = [{"tokens": torch.tensor([1, 2, 3]), "meta": {"some": "meta"}}]
     result = list(pad_processor.process(input_tokens))
     assert len(result) == 1
     assert result[0]["tokens"].shape == (5,)  # Should be padded to length 5
@@ -94,8 +104,8 @@ def test_activation_processors(mocker: MockerFixture):
     input_activations = [
         {
             "tokens": torch.tensor([1, 3, 2]),
-            "h0": torch.arange(9).reshape(1, 3, 3),
-            "h1": torch.arange(9, 18).reshape(1, 3, 3),
+            "h0": torch.arange(9).reshape(3, 3),
+            "h1": torch.arange(9, 18).reshape(3, 3),
         }
     ]
     result = list(transformer.process(input_activations, model=mock_model))

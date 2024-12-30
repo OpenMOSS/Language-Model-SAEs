@@ -46,11 +46,13 @@ class HuggingFaceDatasetLoader(BaseActivationProcessor[Dataset, Iterable[dict[st
         self.with_info = with_info
         self.show_progress = show_progress
 
-    def process(self, data: Dataset, **kwargs) -> Iterable[dict[str, Any]]:
+    def process(self, data: Dataset, *, dataset_name: str | None = None, **kwargs) -> Iterable[dict[str, Any]]:
         """Process the input dataset into batches.
 
         Args:
             data (Dataset): Input HuggingFace dataset to process
+            dataset_name (str, optional): Name of the dataset. If provided, it will be added to the info field.
+                Defaults to None.
             **kwargs: Additional keyword arguments for processing. Not used by this processor.
 
         Returns:
@@ -75,6 +77,10 @@ class HuggingFaceDatasetLoader(BaseActivationProcessor[Dataset, Iterable[dict[st
         flattened = itertools.chain.from_iterable(dataloader)
 
         if self.with_info:
-            flattened = map(lambda x: x[1] | {"info": {"context_idx": x[0]}}, enumerate(flattened))
+            flattened = map(
+                lambda x: x[1]
+                | {"meta": {"context_idx": x[0]} | ({"dataset_name": dataset_name} if dataset_name else {})},
+                enumerate(flattened),
+            )
 
         return flattened

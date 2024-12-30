@@ -78,7 +78,7 @@ def test_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, 
         return {
             "activation": sample_activation,
             "tokens": sample_tokens,
-            "info": sample_info,
+            "meta": sample_info,
         }
 
     mocker.patch("torch.load", side_effect=mock_torch_load)
@@ -98,7 +98,7 @@ def test_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, 
 
         # Check tokens and info
         assert torch.equal(result["tokens"], sample_tokens[i % 2])
-        assert result["info"] == sample_info[i % 2]
+        assert result["meta"] == sample_info[i % 2]
 
 
 def test_cached_activation_loader_missing_dir(fs):
@@ -132,7 +132,7 @@ def test_cached_activation_loader_mismatched_chunks(
         return_value={
             "activation": sample_activation,
             "tokens": sample_tokens,
-            "info": sample_info,
+            "meta": sample_info,
         },
     )
 

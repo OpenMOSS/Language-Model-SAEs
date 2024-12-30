@@ -40,7 +40,7 @@ class RawDatasetTokenProcessor(BaseActivationProcessor[Iterable[dict[str, Any]],
 
     This processor takes an iterable of dictionaries containing raw data (e.g. text and images) and converts
     them into a tokens. The output is a dictionary with a "tokens" key, which contains the (non-padded and non-truncated)
-    tokens. The "info" key is preserved if it exists in the input.
+    tokens. The "meta" key is preserved if it exists in the input.
 
     Args:
         prepend_bos: Whether to prepend beginning-of-sequence token. If None, uses model default.
@@ -65,8 +65,8 @@ class RawDatasetTokenProcessor(BaseActivationProcessor[Iterable[dict[str, Any]],
         for d in data:
             tokens = model.to_tokens_with_origins(d, tokens_only=True, prepend_bos=self.prepend_bos)
             ret = {"tokens": tokens[0]}
-            if "info" in d:
-                ret = ret | {"info": d["info"]}
+            if "meta" in d:
+                ret = ret | {"meta": d["meta"]}
             yield ret
 
 
@@ -121,6 +121,6 @@ class PadAndTruncateTokensProcessor(BaseActivationProcessor[Iterable[dict[str, A
             assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
             tokens = pad_and_truncate_tokens(d["tokens"], seq_len=self.seq_len, pad_token_id=pad_token_id)
             ret = {"tokens": tokens}
-            if "info" in d:
-                ret = ret | {"info": d["info"]}
+            if "meta" in d:
+                ret = ret | {"meta": d["meta"]}
             yield ret

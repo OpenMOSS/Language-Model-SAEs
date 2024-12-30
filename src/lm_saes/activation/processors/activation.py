@@ -44,8 +44,8 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
             _, cache = model.run_with_cache_until(tokens, names_filter=self.hook_points, until=self.hook_points[-1])
             ret = {k: cache[k][0] for k in self.hook_points}
             ret = ret | {"tokens": tokens}
-            if "info" in d:
-                ret = ret | {"info": d["info"]}
+            if "meta" in d:
+                ret = ret | {"meta": d["meta"]}
             yield ret
 
 
@@ -105,8 +105,8 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
                 mask &= tokens != token_id
             activations = {k: d[k][mask] for k in self.hook_points}
             activations = activations | {"tokens": tokens}
-            if "info" in d:
-                activations = activations | {"info": d["info"]}
+            if "meta" in d:
+                activations = activations | {"meta": d["meta"]}
             yield activations
 
 
@@ -201,7 +201,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
     The input activations are expected to be of shape (arbitary, d), and the output activations
     will be of shape (batch_size, d). Also, this processor supports performing online shuffling.
 
-    Additional fields, including "tokens" and "info", will be removed.
+    Additional fields, including "tokens" and "meta", will be removed.
 
     Args:
         hook_points (list[str]): List of hook point names to process
