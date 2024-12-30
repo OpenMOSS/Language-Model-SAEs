@@ -2,10 +2,12 @@ from .factory import ActivationFactory
 from .processors import (
     ActivationBatchler,
     BaseActivationProcessor,
+    CachedActivationLoader,
     HuggingFaceDatasetLoader,
     PadAndTruncateTokensProcessor,
     RawDatasetTokenProcessor,
 )
+from .writer import ActivationWriter
 
 __all__ = [
     "ActivationFactory",
@@ -14,4 +16,6 @@ __all__ = [
     "HuggingFaceDatasetLoader",
     "PadAndTruncateTokensProcessor",
     "RawDatasetTokenProcessor",
+    "CachedActivationLoader",
+    "ActivationWriter",
 ]
