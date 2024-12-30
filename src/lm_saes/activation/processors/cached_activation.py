@@ -142,20 +142,20 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 assert isinstance(data, dict), f"Loading cached activation {chunk.path} error: returned {type(data)}"
                 assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
                 assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
-                assert "info" in data, f"Loading cached activation {chunk.path} error: missing 'info' field"
+                assert "meta" in data, f"Loading cached activation {chunk.path} error: missing 'info' field"
 
                 chunk_data[hook] = data["activation"]
 
                 # Store tokens and info from first hook point only
                 if hook == self.hook_points[0]:
                     chunk_data["tokens"] = data["tokens"]
-                    chunk_data["info"] = data["info"]
+                    chunk_data["meta"] = data["meta"]
                 else:
                     assert torch.allclose(
                         data["tokens"], chunk_data["tokens"]
                     ), f"Loading cached activation {chunk.path} error: tokens mismatch"
                     assert (
-                        data["info"] == chunk_data["info"]
+                        data["meta"] == chunk_data["meta"]
                     ), f"Loading cached activation {chunk.path} error: info mismatch"
 
             # Yield chunk data in sample-wise format
