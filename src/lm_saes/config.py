@@ -1,6 +1,7 @@
 import json
 import os
 from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 import torch
@@ -194,9 +195,16 @@ class LanguageModelConfig(BaseModelConfig):
 
 
 @dataclass(kw_only=True)
-class ActivationGenerationConfig(BaseConfig):
-    total_generating_tokens: int = 100_000_000
+class ActivationWriterConfig(BaseConfig):
+    hook_points: list[str]
+    """ The hook points to capture activations from. """
+    total_generating_tokens: Optional[int] = None
+    """ The total number of tokens to generate. If None, will write all activations to disk. """
     n_samples_per_chunk: int = 16
+    """ The number of samples to write to disk per chunk. """
+    cache_dir: str | Path = Path("activations")
+    """ The directory to save the activations. """
+    format: Literal["pt", "safetensors"] = "safetensors"
 
 
 @dataclass(kw_only=True)
