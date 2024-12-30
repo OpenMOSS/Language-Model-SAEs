@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import torch
+from safetensors.torch import load_file
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
 
@@ -26,9 +27,9 @@ class ChunkInfo:
     def from_path(cls, path: Path) -> "ChunkInfo":
         """Create ChunkInfo from a file path.
 
-        Supports two filename formats:
-        - shard-{shard_id}-chunk-{chunk_id}.pt
-        - chunk-{chunk_id}.pt
+        Supports formats:
+        - shard-{shard_id}-chunk-{chunk_id}.(pt|safetensors)
+        - chunk-{chunk_id}.(pt|safetensors)
 
         Args:
             path: Path to chunk file
@@ -40,12 +41,12 @@ class ChunkInfo:
             ValueError: If filename doesn't match either expected pattern
         """
         # Try shard-chunk format first
-        match = re.match(r"shard-(\d+)-chunk-(\d+)\.pt", path.name)
+        match = re.match(r"shard-(\d+)-chunk-(\d+)\.(pt|safetensors)", path.name)
         if match:
             return cls(path=path, shard_id=int(match.group(1)), chunk_id=int(match.group(2)))
 
         # Try chunk-only format
-        match = re.match(r"chunk-(\d+)\.pt", path.name)
+        match = re.match(r"chunk-(\d+)\.(pt|safetensors)", path.name)
         if match:
             return cls(
                 path=path,
@@ -54,7 +55,8 @@ class ChunkInfo:
             )
 
         raise ValueError(
-            f"Invalid chunk filename format: {path.name}. " "Expected 'shard-{N}-chunk-{N}.pt' or 'chunk-{N}.pt'"
+            f"Invalid chunk filename format: {path.name}. "
+            "Expected 'shard-{N}-chunk-{N}.(pt|safetensors)' or 'chunk-{N}.(pt|safetensors)'"
         )
 
 
@@ -90,11 +92,31 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         if not hook_dir.exists():
             raise FileNotFoundError(f"Hook point directory not found: {hook_dir}")
 
-        # Get both shard-chunk and chunk-only files
+        # Get both shard-chunk and chunk-only files, supporting both .pt and .safetensors
         chunks = [
-            ChunkInfo.from_path(p) for pattern in ["shard-*-chunk-*.pt", "chunk-*.pt"] for p in hook_dir.glob(pattern)
+            ChunkInfo.from_path(p)
+            for pattern in ["shard-*-chunk-*.pt", "shard-*-chunk-*.safetensors", "chunk-*.pt", "chunk-*.safetensors"]
+            for p in hook_dir.glob(pattern)
         ]
         return sorted(chunks, key=lambda x: (x.shard_id, x.chunk_id))
+
+    def _load_chunk(self, chunk_path: Path) -> dict[str, Any]:
+        """Load a chunk file, supporting both PyTorch and safetensors formats.
+
+        Args:
+            chunk_path: Path to the chunk file
+
+        Returns:
+            dict[str, Any]: Loaded data containing activations, tokens, and meta
+        """
+        if chunk_path.suffix == ".safetensors":
+            chunk_data = load_file(chunk_path)
+            meta_path = chunk_path.with_suffix(".meta")
+            return chunk_data | ({"meta": torch.load(meta_path)} if meta_path.exists() else {})
+        elif chunk_path.suffix == ".pt":
+            return torch.load(chunk_path, map_location="cpu", weights_only=True)
+        else:
+            raise ValueError(f"Invalid chunk file format: {chunk_path}. Expected .safetensors or .pt")
 
     def process(self, data: None = None, **kwargs) -> Iterable[dict[str, Any]]:
         """Load cached activations in a streaming fashion.
@@ -136,7 +158,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             # Load data from each hook point
             for hook in self.hook_points:
                 chunk = hook_chunks[hook][chunk_idx]
-                data: dict[str, Any] = torch.load(chunk.path, map_location="cpu", weights_only=True)
+                data: dict[str, Any] = self._load_chunk(chunk.path)
 
                 # Validate data format
                 assert isinstance(data, dict), f"Loading cached activation {chunk.path} error: returned {type(data)}"
