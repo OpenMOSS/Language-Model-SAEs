@@ -1,22 +1,14 @@
 import json
-import math
 import os
-from dataclasses import dataclass, field, fields
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from dataclasses import dataclass, fields
+from typing import Any, Dict, Literal, Optional
 
 import torch
-import torch.distributed as dist
 from transformer_lens.loading_from_pretrained import get_official_model_name
-from typing_extensions import deprecated
 
 from .utils.config import FlattenableModel
 from .utils.huggingface import parse_pretrained_name_or_path
-from .utils.misc import (
-    convert_str_to_torch_dtype,
-    convert_torch_dtype_to_str,
-    is_master,
-    print_once,
-)
+from .utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str
 
 
 @dataclass(kw_only=True)
@@ -121,18 +113,6 @@ class InitializerConfig(BaseConfig):
 
 
 @dataclass(kw_only=True)
-class RunnerConfig(BaseConfig):
-    exp_name: str = "test"
-    exp_series: Optional[str] = None
-    exp_result_path: str = "results"
-
-    def __post_init__(self):
-        super().__post_init__()
-        if is_master():
-            os.makedirs(self.exp_result_path, exist_ok=True)
-
-
-@dataclass(kw_only=True)
 class DatasetConfig(BaseConfig):
     dataset_name_or_path: str = "openwebtext"
     cache_dir: Optional[str] = None
@@ -142,13 +122,13 @@ class DatasetConfig(BaseConfig):
 @dataclass(kw_only=True)
 class ActivationFactorySource:
     type: str
-    name: str
     sample_weights: float = 1.0
 
 
 @dataclass(kw_only=True)
 class ActivationFactoryDatasetSource(ActivationFactorySource):
     type: str = "dataset"
+    name: str
     is_dataset_tokenized: bool = False
     prepend_bos: bool = False
 
@@ -211,6 +191,12 @@ class LanguageModelConfig(BaseModelConfig):
 
         with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
             json.dump(d, f, indent=4)
+
+
+@dataclass(kw_only=True)
+class ActivationGenerationConfig(BaseConfig):
+    total_generating_tokens: int = 100_000_000
+    n_samples_per_chunk: int = 16
 
 
 @dataclass(kw_only=True)

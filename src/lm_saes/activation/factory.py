@@ -112,10 +112,10 @@ class ActivationFactory:
                 dataset = datasets.get(dataset_source.name)
                 assert dataset is not None, f"Dataset {dataset_source.name} not found in `datasets`"
 
-                stream = loader(dataset)
+                stream = loader.process(dataset, dataset_name=dataset_source.name)
 
                 for processor in processors:
-                    stream = processor(stream, model=model)
+                    stream = processor.process(stream, model=model)
 
                 return stream
 
@@ -169,7 +169,7 @@ class ActivationFactory:
                 Processed activation stream
             """
             for processor in processors:
-                activations = processor(activations, **kwargs)
+                activations = processor.process(activations, **kwargs)
             return activations
 
         return process_activations
@@ -208,14 +208,6 @@ class ActivationFactory:
                 sampled_sources = np.random.choice(len(activations), replace=True, p=weights)
                 try:
                     result = next(activations[sampled_sources])
-                    if "info" in result:
-                        result = result | {
-                            "info": {
-                                **result["info"],
-                                "source": cfg.sources[sampled_sources].name,
-                            },
-                        }
-
                 except StopIteration:
                     ran_out_of_samples[sampled_sources] = True
                     continue
