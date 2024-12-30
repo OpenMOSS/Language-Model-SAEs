@@ -131,7 +131,7 @@ class ActivationFactoryDatasetSource(ActivationFactorySource):
     type: str = "dataset"
     name: str
     is_dataset_tokenized: bool = False
-    prepend_bos: bool = False
+    prepend_bos: bool = True
 
 
 @dataclass(kw_only=True)
