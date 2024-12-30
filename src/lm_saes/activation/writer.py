@@ -42,12 +42,6 @@ class ActivationWriter:
                 - Meta information
             **kwargs: Additional keyword arguments (unused)
         """
-        # Validate all inputs have required fields
-        for d in data:
-            assert all(
-                k in d for k in ["tokens", "meta"] + self.cfg.hook_points
-            ), f"Missing required fields in input. Found keys: {list(d.keys())}"
-
         pbar = tqdm(
             desc="Writing activations to disk",
             total=self.cfg.total_generating_tokens,
@@ -74,8 +68,8 @@ class ActivationWriter:
                 else:
                     raise ValueError(f"Invalid format: {self.cfg.format}")
 
-            n_tokens_written += self.cfg.n_samples_per_chunk
-            pbar.update(self.cfg.n_samples_per_chunk)
+            n_tokens_written += tokens.shape[0] * tokens.shape[1]
+            pbar.update(tokens.shape[0] * tokens.shape[1])
 
             if self.cfg.total_generating_tokens is not None and n_tokens_written >= self.cfg.total_generating_tokens:
                 break
