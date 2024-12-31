@@ -162,7 +162,6 @@ class LanguageModelConfig(BaseModelConfig):
     model_from_pretrained_path: Optional[str] = None
     use_flash_attn: bool = False
     cache_dir: Optional[str] = None
-    d_model: int = 768
     local_files_only: bool = False
 
     def __post_init__(self):
