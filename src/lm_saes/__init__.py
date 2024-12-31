@@ -3,6 +3,7 @@ from .config import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
     ActivationFactoryDatasetSource,
+    ActivationFactoryTarget,
     ActivationWriterConfig,
     DatasetConfig,
     LanguageModelConfig,
@@ -18,6 +19,7 @@ __all__ = [
     "ActivationFactoryDatasetSource",
     "ActivationFactoryConfig",
     "ActivationWriterConfig",
+    "ActivationFactoryTarget",
     "load_dataset",
     "load_model",
 ]
