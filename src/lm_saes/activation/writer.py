@@ -29,7 +29,13 @@ class ActivationWriter:
             hook_dir = self.cache_dir / hook_point
             hook_dir.mkdir(parents=True, exist_ok=True)
 
-    def process(self, data: Iterable[dict[str, Any]], *, device_mesh: Optional[DeviceMesh] = None) -> None:
+    def process(
+        self,
+        data: Iterable[dict[str, Any]],
+        *,
+        device_mesh: Optional[DeviceMesh] = None,
+        start_shard: int = 0,
+    ) -> None:
         """Write activation data to disk in chunks.
 
         Processes a stream of activation dictionaries, accumulating samples until reaching
@@ -42,6 +48,7 @@ class ActivationWriter:
                 - Original tokens
                 - Meta information
             device_mesh: The device mesh to use for distributed writing. If None, will write to disk on the current rank.
+            start_shard: The shard to start writing from.
         """
         total = (
             self.cfg.total_generating_tokens // device_mesh.get_group("data").size()
@@ -62,7 +69,7 @@ class ActivationWriter:
                 chunk_name = (
                     f"chunk-{chunk_id:08d}"
                     if device_mesh is None
-                    else f"shard-{device_mesh.get_group('data').rank()}-chunk-{chunk_id:08d}"
+                    else f"shard-{device_mesh.get_group('data').rank() + start_shard}-chunk-{chunk_id:08d}"
                 )
                 chunk_path = self.cache_dir / hook_point / f"{chunk_name}.{self.cfg.format}"
                 if self.cfg.format == "pt":
