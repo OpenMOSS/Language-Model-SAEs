@@ -9,6 +9,7 @@ from .config import (
     LanguageModelConfig,
 )
 from .resource_loaders import load_dataset, load_model
+from .runner import GenerateActivationsSettings, generate_activations
 
 __all__ = [
     "ActivationFactory",
@@ -22,4 +23,6 @@ __all__ = [
     "ActivationFactoryTarget",
     "load_dataset",
     "load_model",
+    "GenerateActivationsSettings",
+    "generate_activations",
 ]
