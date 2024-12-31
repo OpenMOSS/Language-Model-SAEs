@@ -1,4 +1,4 @@
-from typing import Any, Callable, Iterable, Iterator
+from typing import Any, Callable, Iterable, Iterator, Sequence
 
 import numpy as np
 from datasets import Dataset
@@ -19,6 +19,7 @@ from lm_saes.config import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
     ActivationFactoryDatasetSource,
+    ActivationFactoryTarget,
 )
 
 
@@ -74,26 +75,28 @@ class ActivationFactory:
             )
 
             # Map target type to number of processing stages needed
-            # TODO: refactor to use comparable enum for filtering needed stages
-            stage_map = {
-                "tokens": 1,
-                "activations-2d": 3,
-                "activations-1d": 4,
-                "batched-activations-1d": 4,
-            }
-
             # Define processor pipeline factories
-            processor_factories: list[
-                Callable[[], BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]]
+            processors_optional: Sequence[
+                BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]] | None
             ] = [
-                lambda: RawDatasetTokenProcessor(prepend_bos=dataset_source.prepend_bos),
-                lambda: PadAndTruncateTokensProcessor(seq_len=cfg.context_size),
-                lambda: ActivationGenerator(hook_points=cfg.hook_points),
-                lambda: ActivationTransformer(hook_points=cfg.hook_points),
+                RawDatasetTokenProcessor(prepend_bos=dataset_source.prepend_bos)
+                if cfg.target >= ActivationFactoryTarget.TOKENS
+                else None,
+                PadAndTruncateTokensProcessor(seq_len=cfg.context_size)
+                if cfg.target >= ActivationFactoryTarget.TOKENS
+                else None,
+                ActivationGenerator(hook_points=cfg.hook_points)
+                if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
+                else None,
+                ActivationTransformer(hook_points=cfg.hook_points)
+                if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
+                else None,
             ]
 
             # Create processors up to required stage
-            processors = [factory() for factory in processor_factories[: stage_map[cfg.target]]]
+            processors: Sequence[BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]] = [
+                processor for processor in processors_optional if processor is not None
+            ]
 
             def process_dataset(**kwargs: Any):
                 """Process a single dataset through the pipeline.
@@ -138,12 +141,6 @@ class ActivationFactory:
         Returns:
             Callable that processes aggregated data
         """
-        stage_map = {
-            "tokens": 0,
-            "activations-2d": 0,
-            "activations-1d": 0,
-            "batched-activations-1d": 1,
-        }
 
         def build_batchler():
             """Create batchler for batched-activations-1d target."""
@@ -152,11 +149,7 @@ class ActivationFactory:
                 hook_points=cfg.hook_points, batch_size=cfg.batch_size, buffer_size=cfg.buffer_size
             )
 
-        processor_factories: list[
-            Callable[[], BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]]
-        ] = [lambda: build_batchler()]
-
-        processors = [factory() for factory in processor_factories[: stage_map[cfg.target]]]
+        processors = [build_batchler()] if cfg.target >= ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D else []
 
         def process_activations(activations: Iterable[dict[str, Any]], **kwargs: Any):
             """Process aggregated activations through post-processors.

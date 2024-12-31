@@ -1,10 +1,11 @@
 import json
 import os
-from dataclasses import dataclass, fields
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import Annotated, Any, Dict, Literal, Optional
 
 import torch
+from pydantic import BaseModel, BeforeValidator, PlainSerializer, WithJsonSchema
 from transformer_lens.loading_from_pretrained import get_official_model_name
 
 from .utils.config import FlattenableModel
@@ -12,32 +13,37 @@ from .utils.huggingface import parse_pretrained_name_or_path
 from .utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str
 
 
-@dataclass(kw_only=True)
-class BaseConfig(FlattenableModel):
-    def __post_init__(self):
-        pass
+class BaseConfig(BaseModel, FlattenableModel):
+    pass
 
 
-@dataclass(kw_only=True)
-class BaseModelConfig:
+class BaseModelConfig(BaseModel):
     device: str = "cpu"
     seed: int = 42
-    dtype: torch.dtype = torch.bfloat16
+    dtype: Annotated[
+        torch.dtype,
+        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+        PlainSerializer(convert_torch_dtype_to_str),
+        WithJsonSchema(
+            {
+                "type": "string",
+            },
+            mode="serialization",
+        ),
+    ] = torch.bfloat16
 
     def to_dict(self) -> Dict[str, Any]:
-        return {field.name: getattr(self, field.name) for field in fields(self)}
+        return self.model_dump()
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any], **kwargs):
-        d = {k: v for k, v in d.items() if k in [field.name for field in fields(cls)]}
+        d = {k: v for k, v in d.items() if k in cls.model_fields}
         return cls(**d, **kwargs)
 
-    def __post_init__(self):
-        if isinstance(self.dtype, str):
-            self.dtype = convert_str_to_torch_dtype(self.dtype)
+    class Config:
+        arbitrary_types_allowed = True  # allow parsing torch.dtype
 
 
-@dataclass(kw_only=True)
 class BaseSAEConfig(BaseModelConfig):
     """
     Base class for SAE configs.
@@ -46,9 +52,9 @@ class BaseSAEConfig(BaseModelConfig):
     """
 
     hook_point_in: str
-    hook_point_out: str
+    hook_point_out: str | None = None
     d_model: int
-    d_sae: int = None  # type: ignore
+    d_sae: int | None = None
     expansion_factor: int
     use_decoder_bias: bool = True
     use_glu_encoder: bool = False
@@ -61,8 +67,8 @@ class BaseSAEConfig(BaseModelConfig):
     sae_pretrained_name_or_path: Optional[str] = None
     strict_loading: bool = True
 
-    def __post_init__(self):
-        super().__post_init__()
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
         if self.hook_point_out is None:
             self.hook_point_out = self.hook_point_in
         if self.d_sae is None:
@@ -98,12 +104,10 @@ class BaseSAEConfig(BaseModelConfig):
             json.dump(d, f, indent=4)
 
 
-@dataclass(kw_only=True)
 class SAEConfig(BaseSAEConfig):
     pass
 
 
-@dataclass(kw_only=True)
 class InitializerConfig(BaseConfig):
     bias_init_method: str = "all_zero"
     init_decoder_norm: float | None = None
@@ -113,20 +117,17 @@ class InitializerConfig(BaseConfig):
     state: Literal["training", "finetuning", "inference"] = "training"
 
 
-@dataclass(kw_only=True)
 class DatasetConfig(BaseConfig):
     dataset_name_or_path: str = "openwebtext"
     cache_dir: Optional[str] = None
     is_dataset_on_disk: bool = False
 
 
-@dataclass(kw_only=True)
-class ActivationFactorySource:
+class ActivationFactorySource(BaseModel):
     type: str
     sample_weights: float = 1.0
 
 
-@dataclass(kw_only=True)
 class ActivationFactoryDatasetSource(ActivationFactorySource):
     type: str = "dataset"
     name: str
@@ -134,18 +135,38 @@ class ActivationFactoryDatasetSource(ActivationFactorySource):
     prepend_bos: bool = True
 
 
-@dataclass(kw_only=True)
 class ActivationFactoryActivationsSource(ActivationFactorySource):
     type: str = "activations"
     path: str
 
 
-@dataclass(kw_only=True)
+class ActivationFactoryTarget(Enum):
+    TOKENS = "tokens"
+    ACTIVATIONS_2D = "activations-2d"
+    ACTIVATIONS_1D = "activations-1d"
+    BATCHED_ACTIVATIONS_1D = "batched-activations-1d"
+
+    @property
+    def stage(self) -> int:
+        return {
+            ActivationFactoryTarget.TOKENS: 0,
+            ActivationFactoryTarget.ACTIVATIONS_2D: 1,
+            ActivationFactoryTarget.ACTIVATIONS_1D: 2,
+            ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D: 3,
+        }[self]
+
+    def __lt__(self, other: "ActivationFactoryTarget") -> bool:
+        return self.stage < other.stage
+
+    def __le__(self, other: "ActivationFactoryTarget") -> bool:
+        return self.stage <= other.stage
+
+
 class ActivationFactoryConfig(BaseConfig):
     sources: list[ActivationFactoryDatasetSource | ActivationFactoryActivationsSource]
     """ List of sources to use for activations. Can be a dataset or a path to activations. """
-    target: Literal["tokens", "activations-2d", "activations-1d", "batched-activations-1d"]
-    """ The target to produce. Supported targets: tokens, activations-2d, activations-1d, batched-activations-1d """
+    target: ActivationFactoryTarget
+    """ The target to produce. """
     hook_points: list[str]
     """ The hook points to capture activations from. """
     context_size: int = 128
@@ -156,7 +177,6 @@ class ActivationFactoryConfig(BaseConfig):
     """ Buffer size for online shuffling. If None, no shuffling will be performed. """
 
 
-@dataclass(kw_only=True)
 class LanguageModelConfig(BaseModelConfig):
     model_name: str = "gpt2"
     model_from_pretrained_path: Optional[str] = None
@@ -164,8 +184,8 @@ class LanguageModelConfig(BaseModelConfig):
     cache_dir: Optional[str] = None
     local_files_only: bool = False
 
-    def __post_init__(self):
-        super().__post_init__()
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
         self.model_name = get_official_model_name(self.model_name)
 
     @staticmethod
@@ -193,7 +213,6 @@ class LanguageModelConfig(BaseModelConfig):
             json.dump(d, f, indent=4)
 
 
-@dataclass(kw_only=True)
 class ActivationWriterConfig(BaseConfig):
     hook_points: list[str]
     """ The hook points to capture activations from. """
@@ -206,7 +225,6 @@ class ActivationWriterConfig(BaseConfig):
     format: Literal["pt", "safetensors"] = "safetensors"
 
 
-@dataclass(kw_only=True)
 class WandbConfig(BaseConfig):
     log_to_wandb: bool = True
     wandb_project: str = "gpt2-sae-training"
