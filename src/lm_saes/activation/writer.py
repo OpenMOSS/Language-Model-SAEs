@@ -1,9 +1,10 @@
 import itertools
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 import torch
 from safetensors.torch import save_file
+from torch.distributed.device_mesh import DeviceMesh
 from tqdm import tqdm
 
 from lm_saes.config import ActivationWriterConfig
@@ -28,7 +29,7 @@ class ActivationWriter:
             hook_dir = self.cache_dir / hook_point
             hook_dir.mkdir(parents=True, exist_ok=True)
 
-    def process(self, data: Iterable[dict[str, Any]], **kwargs) -> None:
+    def process(self, data: Iterable[dict[str, Any]], *, device_mesh: Optional[DeviceMesh] = None) -> None:
         """Write activation data to disk in chunks.
 
         Processes a stream of activation dictionaries, accumulating samples until reaching
@@ -40,12 +41,14 @@ class ActivationWriter:
                 - Activations for each hook point
                 - Original tokens
                 - Meta information
-            **kwargs: Additional keyword arguments (unused)
+            device_mesh: The device mesh to use for distributed writing. If None, will write to disk on the current rank.
         """
-        pbar = tqdm(
-            desc="Writing activations to disk",
-            total=self.cfg.total_generating_tokens,
+        total = (
+            self.cfg.total_generating_tokens // device_mesh.get_group("data").size()
+            if device_mesh is not None and self.cfg.total_generating_tokens is not None
+            else self.cfg.total_generating_tokens
         )
+        pbar = tqdm(desc="Writing activations to disk", total=total)
         n_tokens_written = 0
 
         # Use itertools to batch the data
@@ -56,7 +59,12 @@ class ActivationWriter:
             # Write chunk for each hook point
             for hook_point in self.cfg.hook_points:
                 chunk_data = {"activation": torch.stack([d[hook_point] for d in chunk]), "tokens": tokens}
-                chunk_path = self.cache_dir / hook_point / f"chunk-{chunk_id}.{self.cfg.format}"
+                chunk_name = (
+                    f"chunk-{chunk_id:08d}"
+                    if device_mesh is None
+                    else f"shard-{device_mesh.get_group('data').rank()}-chunk-{chunk_id:08d}"
+                )
+                chunk_path = self.cache_dir / hook_point / f"{chunk_name}.{self.cfg.format}"
                 if self.cfg.format == "pt":
                     torch.save(chunk_data | ({"meta": meta} if meta is not None else {}), chunk_path)
                 elif self.cfg.format == "safetensors":
@@ -71,7 +79,7 @@ class ActivationWriter:
             n_tokens_written += tokens.shape[0] * tokens.shape[1]
             pbar.update(tokens.shape[0] * tokens.shape[1])
 
-            if self.cfg.total_generating_tokens is not None and n_tokens_written >= self.cfg.total_generating_tokens:
+            if total is not None and n_tokens_written >= total:
                 break
 
         pbar.close()

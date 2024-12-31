@@ -1,6 +1,7 @@
 from typing import Optional, cast
 
 import datasets
+import torch
 from torch.distributed.device_mesh import DeviceMesh
 from transformer_lens import HookedTransformer
 from transformers import (
@@ -30,21 +31,25 @@ def load_dataset(cfg: DatasetConfig, device_mesh: Optional[DeviceMesh] = None) -
 
 
 def load_model(cfg: LanguageModelConfig):
+    if cfg.device == "cuda":
+        device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    else:
+        device = torch.device(cfg.device)
+
     if "chameleon" in cfg.model_name:
         hf_model = ChameleonForConditionalGeneration.from_pretrained(
             (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
             cache_dir=cfg.cache_dir,
             local_files_only=cfg.local_files_only,
             torch_dtype=cfg.dtype,
-        ).to(cfg.device)  # type: ignore
-        print(f"Model loaded on device {cfg.device}")
+        ).to(device)  # type: ignore
     else:
         hf_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
             (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
             cache_dir=cfg.cache_dir,
             local_files_only=cfg.local_files_only,
             torch_dtype=cfg.dtype,
-        ).to(cfg.device)  # type: ignore
+        ).to(device)
     if "chameleon" in cfg.model_name:
         hf_processor = AutoProcessor.from_pretrained(
             (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
@@ -67,7 +72,7 @@ def load_model(cfg: LanguageModelConfig):
     model = HookedTransformer.from_pretrained_no_processing(
         cfg.model_name,
         use_flash_attn=cfg.use_flash_attn,
-        device=cfg.device,
+        device=device,
         cache_dir=cfg.cache_dir,
         hf_model=hf_model,
         tokenizer=hf_tokenizer,
