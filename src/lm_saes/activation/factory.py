@@ -86,10 +86,10 @@ class ActivationFactory:
                 if cfg.target >= ActivationFactoryTarget.TOKENS
                 else None,
                 ActivationGenerator(hook_points=cfg.hook_points)
-                if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
+                if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
                 else None,
                 ActivationTransformer(hook_points=cfg.hook_points)
-                if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
+                if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
                 else None,
             ]
 
