@@ -15,14 +15,18 @@ from transformers import (
 from lm_saes.config import DatasetConfig, LanguageModelConfig
 
 
-def load_dataset(cfg: DatasetConfig, device_mesh: Optional[DeviceMesh] = None) -> datasets.Dataset:
+def load_dataset(
+    cfg: DatasetConfig,
+    device_mesh: Optional[DeviceMesh] = None,
+    start_shard: int = 0,
+) -> datasets.Dataset:
     if not cfg.is_dataset_on_disk:
         dataset = datasets.load_dataset(cfg.dataset_name_or_path, split="train", cache_dir=cfg.cache_dir)
     else:
         dataset = datasets.load_from_disk(cfg.dataset_name_or_path)
     dataset = cast(datasets.Dataset, dataset)
     if device_mesh is not None:
-        shard_id = device_mesh.get_rank()
+        shard_id = device_mesh.get_rank() + start_shard
         shard = dataset.shard(num_shards=device_mesh.get_group("data").size(), index=shard_id, contiguous=True)
     else:
         shard = dataset
