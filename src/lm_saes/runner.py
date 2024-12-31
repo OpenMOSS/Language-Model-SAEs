@@ -1,344 +1,104 @@
 import os
-from dataclasses import asdict
-from typing import cast
+from pathlib import Path
+from typing import Literal, Optional
 
-import torch
-import wandb
-from torch.distributed.tensor import Replicate
-from torch.distributed.tensor.parallel import (
-    ColwiseParallel,
-    RowwiseParallel,
-    parallelize_module,
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from torch.distributed.device_mesh import init_device_mesh
+
+from lm_saes.activation.factory import ActivationFactory
+from lm_saes.activation.writer import ActivationWriter
+from lm_saes.config import (
+    ActivationFactoryConfig,
+    ActivationFactoryDatasetSource,
+    ActivationFactoryTarget,
+    ActivationWriterConfig,
+    DatasetConfig,
+    LanguageModelConfig,
 )
-
-from lm_saes._activation.token_source import MappedTokenSource
-
-from .activation.activation_dataset import make_activation_dataset
-from .activation.activation_source import CachedActivationSource
-from .activation.activation_store import ActivationStore
-from .analysis.features_to_logits import features_to_logits
-from .analysis.sample_feature_activations import sample_feature_activations
-from .config import (
-    ActivationGenerationConfig,
-    FeaturesDecoderConfig,
-    LanguageModelCrossCoderTrainingConfig,
-    LanguageModelSAEAnalysisConfig,
-    LanguageModelSAEPruningConfig,
-    LanguageModelSAERunnerConfig,
-    LanguageModelSAETrainingConfig,
-)
-from .crosscoder import CrossCoder
-from .database import MongoClient
-from .evals import run_evals
-from .post_processing import post_process_topk_to_jumprelu_for_inference
-from .sae import SparseAutoEncoder
-from .sae_training import prune_sae, train_sae
-from .utils.misc import is_master
-from .utils.model import load_model
+from lm_saes.resource_loaders import load_dataset, load_model
 
 
-def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
-    if cfg.act_store.use_cached_activations:
-        activation_source = CachedActivationSource(cfg.act_store)
-        activation_store = ActivationStore(act_source=activation_source, cfg=cfg.act_store)
-        model = None
-    else:
-        model = load_model(cfg.lm)
-        activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
+class GenerateActivationsSettings(BaseSettings):
+    """Settings for activation generation.
 
-    if not cfg.finetuning and (
-        cfg.sae.norm_activation == "dataset-wise"
-        and cfg.sae.dataset_average_activation_norm is None
-        or cfg.sae.init_decoder_norm is None
-    ):
-        sae = SparseAutoEncoder.from_initialization_searching(
-            activation_store=activation_store,
-            cfg=cfg,
+    Attributes:
+        model_cfg: Configuration for loading the language model
+        dataset_cfg: Configuration for loading the dataset
+        dataset_name: Name of the dataset
+        hook_points: List of model hook points to capture activations from
+        output_dir: Directory to save activation files
+        total_tokens: Optional total number of tokens to generate
+        context_size: Context window size for tokenization
+        n_samples_per_chunk: Number of samples per saved chunk
+        n_shards: Number of shards to split the dataset into. If None, the dataset is split to the world size.
+        start_shard: The shard to start writing from
+        format: Format to save activations in ('pt' or 'safetensors')
+    """
+
+    model_config = SettingsConfigDict(cli_parse_args=True)
+
+    model_cfg: LanguageModelConfig
+    dataset_cfg: DatasetConfig
+    dataset_name: str
+    hook_points: list[str]
+    output_dir: Path
+    total_tokens: Optional[int] = None
+    context_size: int = 128
+    n_samples_per_chunk: int = 16
+    format: Literal["pt", "safetensors"] = "safetensors"
+    n_shards: Optional[int] = None
+    start_shard: int = 0
+
+
+def generate_activations(settings: GenerateActivationsSettings) -> None:
+    """Generate and save model activations from a dataset.
+
+    Args:
+        settings: Configuration settings for activation generation
+    """
+    # Initialize device mesh
+    device_mesh = (
+        init_device_mesh(
+            device_type="cuda",
+            mesh_shape=(int(os.environ.get("WORLD_SIZE", 1)), 1),
+            mesh_dim_names=("data", "model"),
         )
-    else:
-        sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-
-        if cfg.finetuning:
-            # Fine-tune SAE with frozen encoder weights and bias
-            sae.train_finetune_for_suppression_parameters()
-
-    if is_master():
-        cfg.sae.save_hyperparameters(cfg.exp_result_path)
-        cfg.lm.save_lm_config(cfg.exp_result_path)
-
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb_config: dict = {
-            **asdict(cfg),
-            **asdict(cfg.sae),
-            **asdict(cfg.lm),
-        }
-        del wandb_config["sae"]
-        del wandb_config["lm"]
-        wandb_run = wandb.init(
-            project=cfg.wandb.wandb_project,
-            config=wandb_config,
-            name=cfg.wandb.exp_name,
-            entity=cfg.wandb.wandb_entity,
-            settings=wandb.Settings(x_disable_stats=True),
-            mode=os.getenv("WANDB_MODE", "online"),
-        )
-        with open(os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w") as f:
-            f.write(wandb_run.id)
-        wandb.watch(sae, log="all")
-
-    # train SAE
-    sae = train_sae(
-        sae,
-        activation_store,
-        cfg,
-        model,
+        if os.environ.get("WORLD_SIZE") is not None
+        else None
     )
 
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb.finish()
-
-    return sae
-
-
-def language_model_crosscoder_runner(cfg: LanguageModelCrossCoderTrainingConfig):
-    activation_source = CachedActivationSource(cfg.act_store)
-    activation_store = ActivationStore(act_source=activation_source, cfg=cfg.act_store)
-
-    if not cfg.finetuning and (
-        cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None
-    ):
-        sae = CrossCoder.from_initialization_searching(
-            activation_store=activation_store,
-            cfg=cfg,
-        )
-    else:
-        sae = CrossCoder.from_config(cfg=cfg.sae)
-
-    sae.initialize_with_same_weight_across_layers()
-    sae.train()
-    # sae.search_for_enc_dec_norm_with_lowest_mse(
-    #     activation_store=activation_store,
-    #     cfg=cfg
-    # )
-
-    cfg.sae.save_hyperparameters(cfg.exp_result_path)
-
-    if cfg.wandb.log_to_wandb and (cfg.wandb.log_on_every_rank or is_master()):
-        wandb_config: dict = {
-            **asdict(cfg),
-            **asdict(cfg.sae),
-            **asdict(cfg.lm),
-        }
-        del wandb_config["sae"]
-        del wandb_config["lm"]
-        wandb_run = wandb.init(
-            project=cfg.wandb.wandb_project,
-            config=wandb_config,
-            name=cfg.wandb.exp_name,
-            entity=cfg.wandb.wandb_entity,
-            settings=wandb.Settings(x_disable_stats=True),
-            mode=os.getenv("WANDB_MODE", "online"),
-        )
-        with open(os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w") as f:
-            f.write(wandb_run.id)
-        wandb.watch(sae, log="all")
-
-    # train SAE
-    sae = train_sae(
-        sae,
-        activation_store,
-        cfg,
+    # Load model and dataset
+    model = load_model(settings.model_cfg)
+    dataset = load_dataset(
+        settings.dataset_cfg,
+        device_mesh=device_mesh,
+        n_shards=settings.n_shards,
+        start_shard=settings.start_shard,
     )
 
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb.finish()
-
-    return sae
-
-
-def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
-    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_path))
-    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_path))
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    model = load_model(cfg.lm)
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb_config: dict = {
-            **asdict(cfg),
-            **asdict(cfg.sae),
-            **asdict(cfg.lm),
-        }
-        del wandb_config["sae"]
-        del wandb_config["lm"]
-        wandb_run = wandb.init(
-            project=cfg.wandb.wandb_project,
-            config=wandb_config,
-            name=cfg.wandb.exp_name,
-            entity=cfg.wandb.wandb_entity,
-            settings=wandb.Settings(x_disable_stats=True),
-            mode=os.getenv("WANDB_MODE", "online"),
-        )
-        with open(os.path.join(cfg.exp_result_path, "prune_wandb_id.txt"), "w") as f:
-            f.write(wandb_run.id)
-
-    sae = prune_sae(
-        sae,
-        activation_store,
-        cfg,
+    # Configure activation generation
+    factory_cfg = ActivationFactoryConfig(
+        sources=[ActivationFactoryDatasetSource(name=settings.dataset_name)],
+        target=ActivationFactoryTarget.ACTIVATIONS_2D,
+        hook_points=settings.hook_points,
+        context_size=settings.context_size,
+        batch_size=None,
+        buffer_size=None,
     )
 
-    result = run_evals(model, sae, activation_store, cfg, 0)
+    # Configure activation writer
+    writer_cfg = ActivationWriterConfig(
+        hook_points=settings.hook_points,
+        total_generating_tokens=settings.total_tokens,
+        n_samples_per_chunk=settings.n_samples_per_chunk,
+        cache_dir=settings.output_dir,
+        format=settings.format,
+    )
 
-    # Print results in tabular format
-    if is_master():
-        for key, value in result.items():
-            print(f"{key}: {value}")
+    # Create factory and writer
+    factory = ActivationFactory(factory_cfg)
+    writer = ActivationWriter(writer_cfg)
 
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb.finish()
-
-
-def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    model = load_model(cfg.lm)
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
-
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb_config: dict = {
-            **asdict(cfg),
-            **asdict(cfg.sae),
-            **asdict(cfg.lm),
-        }
-        del wandb_config["sae"]
-        del wandb_config["lm"]
-        wandb_run = wandb.init(
-            project=cfg.wandb.wandb_project,
-            config=wandb_config,
-            name=cfg.wandb.exp_name,
-            entity=cfg.wandb.wandb_entity,
-            settings=wandb.Settings(x_disable_stats=True),
-            mode=os.getenv("WANDB_MODE", "online"),
-        )
-        with open(os.path.join(cfg.exp_result_path, "eval_wandb_id.txt"), "w") as f:
-            f.write(wandb_run.id)
-
-    result = run_evals(model, sae, activation_store, cfg, 0)
-
-    # Print results in tabular format
-    if is_master():
-        for key, value in result.items():
-            print(f"{key}: {value}")
-
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb.finish()
-
-    return sae
-
-
-def activation_generation_runner(cfg: ActivationGenerationConfig):
-    model = load_model(cfg.lm)
-
-    make_activation_dataset(model, cfg)
-
-
-def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-
-    if cfg.sae.tp_size > 1:
-        plan = {
-            "encoder": ColwiseParallel(output_layouts=Replicate()),
-            "decoder": RowwiseParallel(output_layouts=Replicate()),
-        }
-        if cfg.sae.use_glu_encoder:
-            plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
-        sae = cast(SparseAutoEncoder, parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan))
-
-    # JumpReLU need SAE decoder weight, so we currently do not remove it
-    # sae.decoder.weight = None  # type: ignore[assignment]
-    # torch.cuda.empty_cache()
-
-    model = load_model(cfg.lm)
-    client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
-    if is_master():
-        client.create_dictionary(cfg.exp_name, cfg.exp_result_path, cfg.sae.d_sae, cfg.exp_series)
-
-    token_source = MappedTokenSource.from_config(model=model, cfg=cfg.dataset)
-
-    for chunk_id in range(cfg.n_sae_chunks):
-        result = sample_feature_activations(sae, model, token_source, cfg, chunk_id, cfg.n_sae_chunks)
-        for i in range(len(result["index"].cpu().numpy().tolist())):
-            client.update_feature(
-                cfg.exp_name,
-                result["index"][i].item(),
-                {
-                    "act_times": result["act_times"][i].item(),
-                    "max_feature_acts": result["max_feature_acts"][i].item(),
-                    "dataset": cfg.dataset.dataset_path,
-                    "analysis": [
-                        {
-                            "name": v["name"],
-                            "feature_acts": v["feature_acts"][i].cpu().float().numpy(),
-                            "context_ids": v["context_ids"][i].cpu().numpy(),
-                            "dataset_ids": v["dataset_ids"][i].cpu().numpy(),
-                        }
-                        for v in result["analysis"]
-                    ],
-                },
-                dictionary_series=cfg.exp_series,
-            )
-
-        del result
-        torch.cuda.empty_cache()
-
-
-@torch.no_grad()
-def features_to_logits_runner(cfg: FeaturesDecoderConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-
-    model = load_model(cfg.lm)
-
-    result_dict = features_to_logits(sae, model, cfg)
-
-    client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
-
-    for feature_index, logits in result_dict.items():
-        sorted_indeces = torch.argsort(logits)
-        top_negative_logits = logits[sorted_indeces[: cfg.top]].cpu().tolist()
-        top_positive_logits = logits[sorted_indeces[-cfg.top :]].cpu().tolist()
-        top_negative_ids = sorted_indeces[: cfg.top].tolist()
-        top_positive_ids = sorted_indeces[-cfg.top :].tolist()
-        top_negative_tokens = model.to_str_tokens(torch.tensor(top_negative_ids), prepend_bos=False)
-        top_positive_tokens = model.to_str_tokens(torch.tensor(top_positive_ids), prepend_bos=False)
-        counts, edges = torch.histogram(
-            logits.cpu(), bins=60, range=(-60.0, 60.0)
-        )  # Why logits.cpu():Could not run 'aten::histogram.bin_ct' with arguments from the 'CUDA' backend
-        client.update_feature(
-            cfg.exp_name,
-            int(feature_index),
-            {
-                "logits": {
-                    "top_negative": [
-                        {"token_id": id, "logit": logit, "token": token}
-                        for id, logit, token in zip(top_negative_ids, top_negative_logits, top_negative_tokens)
-                    ],
-                    "top_positive": [
-                        {"token_id": id, "logit": logit, "token": token}
-                        for id, logit, token in zip(top_positive_ids, top_positive_logits, top_positive_tokens)
-                    ],
-                    "histogram": {
-                        "counts": counts.cpu().tolist(),
-                        "edges": edges.cpu().tolist(),
-                    },
-                }
-            },
-            dictionary_series=cfg.exp_series,
-        )
-
-
-@torch.no_grad()
-def post_process_topk_to_jumprelu_runner(cfg: LanguageModelSAERunnerConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    model = load_model(cfg.lm)
-
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
-    post_process_topk_to_jumprelu_for_inference(sae, activation_store, cfg)
+    # Generate and write activations
+    activations = factory.process(model=model, datasets={settings.dataset_name: dataset})
+    writer.process(activations, device_mesh=device_mesh, start_shard=settings.start_shard)
