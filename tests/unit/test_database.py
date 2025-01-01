@@ -1,5 +1,3 @@
-from typing import Generator
-
 import mongomock
 import pytest
 

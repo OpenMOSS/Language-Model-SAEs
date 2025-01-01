@@ -1,14 +1,11 @@
 import math
-from ast import Dict
 import os
-from typing import Callable, Iterable, Literal
+from typing import Callable, Iterable
 
 import torch
 import torch.optim.lr_scheduler as lr_scheduler
-import wandb
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
-from torch.nn.modules import activation
 from torch.optim import Adam, Optimizer
 from wandb.sdk.wandb_run import Run
 
