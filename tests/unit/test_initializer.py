@@ -1,10 +1,9 @@
-from typing import Iterable
 import pytest
 import torch
+from pytest_mock import MockerFixture
 
 from lm_saes.config import InitializerConfig, SAEConfig
 from lm_saes.initializer import Initializer
-from pytest_mock import MockerFixture
 
 
 @pytest.fixture
