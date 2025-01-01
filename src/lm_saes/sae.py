@@ -72,7 +72,7 @@ class SparseAutoEncoder(HookedRootModule):
             # and then redistribute it to different nodes.
             assert isinstance(self.encoder.weight, DTensor)
             encoder_norm = torch.norm(self.encoder.weight.to_local(), p=2, dim=1, keepdim=keepdim)
-            encoder_norm = DTensor.from_local(encoder_norm, device_mesh=device_mesh["tp"], placements=[Shard(0)])
+            encoder_norm = DTensor.from_local(encoder_norm, device_mesh=device_mesh["model"], placements=[Shard(0)])
             encoder_norm = encoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return encoder_norm
 
@@ -84,7 +84,7 @@ class SparseAutoEncoder(HookedRootModule):
             assert isinstance(self.decoder.weight, DTensor)
             decoder_norm = torch.norm(self.decoder.weight.to_local(), p=2, dim=0, keepdim=keepdim)
             decoder_norm = DTensor.from_local(
-                decoder_norm, device_mesh=device_mesh["tp"], placements=[Shard(int(keepdim))]
+                decoder_norm, device_mesh=device_mesh["model"], placements=[Shard(int(keepdim))]
             )
             decoder_norm = decoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return decoder_norm
@@ -176,7 +176,7 @@ class SparseAutoEncoder(HookedRootModule):
         if device_mesh:
             # TODO: check if this is correct
             # guess that norm should be distributed as the decoder weight
-            decoder_norm = distribute_tensor(decoder_norm, device_mesh=device_mesh["tp"], placements=[Shard(0)])
+            decoder_norm = distribute_tensor(decoder_norm, device_mesh=device_mesh["model"], placements=[Shard(0)])
         if force_exact:
             self.decoder.weight.data *= value / decoder_norm
         else:
@@ -193,7 +193,7 @@ class SparseAutoEncoder(HookedRootModule):
         encoder_norm = self.encoder_norm(keepdim=True, device_mesh=device_mesh)
         if device_mesh:
             # TODO: check if this is correct
-            encoder_norm = distribute_tensor(encoder_norm, device_mesh=device_mesh["tp"], placements=[Shard(0)])
+            encoder_norm = distribute_tensor(encoder_norm, device_mesh=device_mesh["model"], placements=[Shard(0)])
         self.encoder.weight.data *= value / encoder_norm
 
     @torch.no_grad()
