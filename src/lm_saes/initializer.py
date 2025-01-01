@@ -1,5 +1,4 @@
-import math
-from typing import Dict, Iterable, List, Type
+from typing import Dict, Iterable, List
 
 import torch
 from torch import Tensor

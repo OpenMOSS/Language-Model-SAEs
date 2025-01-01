@@ -1,12 +1,10 @@
 import json
-import math
 import os
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, Dict, Literal, Optional, Tuple
 
 import torch
-import torch.distributed as dist
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -15,7 +13,6 @@ from pydantic import (
     WithJsonSchema,
 )
 from transformer_lens.loading_from_pretrained import get_official_model_name
-from typing_extensions import deprecated
 
 from .utils.config import FlattenableModel
 from .utils.huggingface import parse_pretrained_name_or_path
