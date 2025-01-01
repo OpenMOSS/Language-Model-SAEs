@@ -29,6 +29,7 @@ dependencies = [
     "pyyaml>=6.0.2",
     "tomlkit>=0.13.2",
     "torchvision>=0.20.1",
+    "pydantic-settings>=2.7.1",
 ]
 requires-python = "==3.12.*"
 readme = "README.md"
