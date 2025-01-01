@@ -2,32 +2,36 @@ import json
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any, Dict, Literal, Optional, Tuple
+from typing import Annotated, Literal, Optional, Tuple
 
 import torch
 from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Field,
     PlainSerializer,
     WithJsonSchema,
 )
 from transformer_lens.loading_from_pretrained import get_official_model_name
 
-from .utils.config import FlattenableModel
 from .utils.huggingface import parse_pretrained_name_or_path
-from .utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str, is_master
+from .utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
+    is_master,
+)
 
 
-class BaseConfig(BaseModel, FlattenableModel):
+class BaseConfig(BaseModel):
     pass
 
 
 class BaseModelConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
 
-    device: str = "cpu"
-    seed: int = 42
+    device: str = Field(default="cpu", exclude=True)
+
     dtype: Annotated[
         torch.dtype,
         BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
@@ -38,15 +42,7 @@ class BaseModelConfig(BaseModel):
             },
             mode="serialization",
         ),
-    ] = torch.bfloat16
-
-    def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump()
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any], **kwargs):
-        d = {k: v for k, v in d.items() if k in cls.model_fields}
-        return cls(**d, **kwargs)
+    ] = Field(default=torch.bfloat16, exclude=True, validate_default=False)
 
 
 class BaseSAEConfig(BaseModelConfig):
@@ -88,24 +84,20 @@ class BaseSAEConfig(BaseModelConfig):
             **kwargs: Additional keyword arguments to pass to the SAEConfig constructor.
         """
         path = parse_pretrained_name_or_path(pretrained_name_or_path)
-        with open(os.path.join(path, "hyperparams.json"), "r") as f:
+        with open(os.path.join(path, "config.json"), "r") as f:
             sae_config = json.load(f)
         sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
         sae_config["strict_loading"] = strict_loading
-        return cls.from_dict(sae_config, **kwargs)
+        return cls.model_validate(sae_config, **kwargs)
 
     def save_hyperparameters(self, sae_path: str, remove_loading_info: bool = True):
         assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
-        d = self.to_dict()
+        d = self.model_dump()
         if remove_loading_info:
             d.pop("sae_pretrained_name_or_path", None)
             d.pop("strict_loading", None)
 
-        for k, v in d.items():
-            if isinstance(v, torch.dtype):
-                d[k] = convert_torch_dtype_to_str(v)
-
-        with open(os.path.join(sae_path, "hyperparams.json"), "w") as f:
+        with open(os.path.join(sae_path, "config.json"), "w") as f:
             json.dump(d, f, indent=4)
 
 
@@ -254,16 +246,12 @@ class LanguageModelConfig(BaseModelConfig):
         path = parse_pretrained_name_or_path(pretrained_name_or_path)
         with open(os.path.join(path, "lm_config.json"), "r") as f:
             lm_config = json.load(f)
-        return LanguageModelConfig.from_dict(lm_config, **kwargs)
+        return LanguageModelConfig.model_validate(lm_config, **kwargs)
 
     def save_lm_config(self, sae_path: str):
         assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save LanguageModelConfig."
 
-        d = self.to_dict()
-        for k, v in d.items():
-            if isinstance(v, torch.dtype):
-                d[k] = convert_torch_dtype_to_str(v)
-
+        d = self.model_dump()
         with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
             json.dump(d, f, indent=4)
 
