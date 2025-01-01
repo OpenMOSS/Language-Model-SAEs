@@ -35,10 +35,10 @@ class GenerateActivationsSettings(BaseSettings):
         format: Format to save activations in ('pt' or 'safetensors')
     """
 
-    model_config = SettingsConfigDict(cli_parse_args=True)
+    model_config = SettingsConfigDict(cli_parse_args=True, cli_kebab_case=True)
 
-    model_cfg: LanguageModelConfig
-    dataset_cfg: DatasetConfig
+    model: LanguageModelConfig
+    dataset: DatasetConfig
     dataset_name: str
     hook_points: list[str]
     output_dir: Path
@@ -68,9 +68,9 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
     )
 
     # Load model and dataset
-    model = load_model(settings.model_cfg)
+    model = load_model(settings.model)
     dataset = load_dataset(
-        settings.dataset_cfg,
+        settings.dataset,
         device_mesh=device_mesh,
         n_shards=settings.n_shards,
         start_shard=settings.start_shard,
