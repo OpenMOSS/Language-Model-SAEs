@@ -82,6 +82,7 @@ dev = [
     "pytest-mock>=3.14.0",
     "typeguard>=4.4.1",
     "pyfakefs>=5.7.3",
+    "mongomock>=4.3.0",
 ]
 
 [tool.ruff]
