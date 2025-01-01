@@ -1,15 +1,22 @@
 import json
+import math
 import os
-from dataclasses import dataclass, fields
-from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from dataclasses import dataclass, field, fields
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import torch
+import torch.distributed as dist
 from transformer_lens.loading_from_pretrained import get_official_model_name
+from typing_extensions import deprecated
 
 from .utils.config import FlattenableModel
 from .utils.huggingface import parse_pretrained_name_or_path
-from .utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str
+from .utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
+    is_master,
+    print_once,
+)
 
 
 @dataclass(kw_only=True)
@@ -110,7 +117,64 @@ class InitializerConfig(BaseConfig):
     init_encoder_norm: float | None = None
     init_encoder_with_decoder_transpose: bool = True
     init_search: bool = False
-    state: Literal["training", "finetuning", "inference"] = "training"
+    state: Literal["training", "inference"] = "training"
+
+
+@dataclass(kw_only=True)
+class RunnerConfig(BaseConfig):
+    exp_name: str = "test"
+    exp_series: Optional[str] = None
+    exp_result_path: str = "results"
+
+    def __post_init__(self):
+        super().__post_init__()
+        if is_master():
+            os.makedirs(self.exp_result_path, exist_ok=True)
+
+
+@dataclass(kw_only=True)
+class TrainerConfig(RunnerConfig):
+    lp: int = 1
+    l1_coefficient: float = 0.00008
+    l1_coefficient_warmup_steps: int | float = 0.1
+    initial_k: int | float | None = None
+    k_warmup_steps: int | float = 0.1
+    use_batch_norm_mse: bool = True
+
+    lr: float = 0.0004
+    betas: Tuple[float, float] = (0.9, 0.999)
+    lr_scheduler_name: Literal[
+        "constant",
+        "constantwithwarmup",
+        "linearwarmupdecay",
+        "cosineannealing",
+        "cosineannealingwarmup",
+        "exponentialwarmup",
+    ] = "constantwithwarmup"
+    lr_end_ratio: float = 1 / 32
+    lr_warm_up_steps: int | float = 0.1
+    lr_cool_down_steps: int | float = 0.1
+    clip_grad_norm: float = 0.0
+    feature_sampling_window: int = 1000
+    dead_feature_window: int = 5000
+    dead_feature_threshold: float = 1e-6
+    total_training_tokens: int = 300_000_000
+
+    log_frequency: int = 1000
+    eval_frequency: int = 1000
+    n_checkpoints: int = 10
+    check_point_save_mode: Literal["log", "linear"] = "log"
+    save_on_every_rank: bool = False
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.save_on_every_rank or is_master():
+            if os.path.exists(os.path.join(self.exp_result_path, "checkpoints")):
+                raise ValueError(
+                    f"Checkpoints for experiment {self.exp_result_path} already exist. Consider changing the experiment name."
+                )
+            os.makedirs(os.path.join(self.exp_result_path, "checkpoints"))
+        assert self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
 
 
 @dataclass(kw_only=True)
@@ -123,15 +187,15 @@ class DatasetConfig(BaseConfig):
 @dataclass(kw_only=True)
 class ActivationFactorySource:
     type: str
+    name: str
     sample_weights: float = 1.0
 
 
 @dataclass(kw_only=True)
 class ActivationFactoryDatasetSource(ActivationFactorySource):
     type: str = "dataset"
-    name: str
     is_dataset_tokenized: bool = False
-    prepend_bos: bool = True
+    prepend_bos: bool = False
 
 
 @dataclass(kw_only=True)
@@ -162,6 +226,7 @@ class LanguageModelConfig(BaseModelConfig):
     model_from_pretrained_path: Optional[str] = None
     use_flash_attn: bool = False
     cache_dir: Optional[str] = None
+    d_model: int = 768
     local_files_only: bool = False
 
     def __post_init__(self):
@@ -194,19 +259,6 @@ class LanguageModelConfig(BaseModelConfig):
 
 
 @dataclass(kw_only=True)
-class ActivationWriterConfig(BaseConfig):
-    hook_points: list[str]
-    """ The hook points to capture activations from. """
-    total_generating_tokens: Optional[int] = None
-    """ The total number of tokens to generate. If None, will write all activations to disk. """
-    n_samples_per_chunk: int = 16
-    """ The number of samples to write to disk per chunk. """
-    cache_dir: str | Path = Path("activations")
-    """ The directory to save the activations. """
-    format: Literal["pt", "safetensors"] = "safetensors"
-
-
-@dataclass(kw_only=True)
 class WandbConfig(BaseConfig):
     log_to_wandb: bool = True
     wandb_project: str = "gpt2-sae-training"
@@ -214,240 +266,235 @@ class WandbConfig(BaseConfig):
     wandb_entity: Optional[str] = None
     log_on_every_rank: bool = False
 
+    # @dataclass(kw_only=True)
+    # class SAEConfig(BaseModelConfig):
+    #     """
+    #     Configuration for training or running a sparse autoencoder.
+    #     """
 
-# @dataclass(kw_only=True)
-# class SAEConfig(BaseModelConfig):
-#     """
-#     Configuration for training or running a sparse autoencoder.
-#     """
+    #     hook_point_in: str = "blocks.0.hook_resid_pre"
+    #     """ The hook point to use as input to the SAE. """
+    #     hook_point_out: str = None  # type: ignore
+    #     """ The hook point to use as label of the SAE. If None, it will be set to hook_point_in. """
 
-#     hook_point_in: str = "blocks.0.hook_resid_pre"
-#     """ The hook point to use as input to the SAE. """
-#     hook_point_out: str = None  # type: ignore
-#     """ The hook point to use as label of the SAE. If None, it will be set to hook_point_in. """
+    #     sae_pretrained_name_or_path: Optional[str] = None
+    #     strict_loading: bool = True
 
-#     sae_pretrained_name_or_path: Optional[str] = None
-#     strict_loading: bool = True
+    #     use_decoder_bias: bool = True
+    #     apply_decoder_bias_to_pre_encoder: bool = True  # set to False when training transcoders
+    #     expansion_factor: int = 128
+    #     d_model: int = 768
+    #     d_sae: int = None  # type: ignore
+    #     bias_init_method: str = "all_zero"
+    #     act_fn: str = "relu"
+    #     jump_relu_threshold: float = 0.0
 
-#     use_decoder_bias: bool = True
-#     apply_decoder_bias_to_pre_encoder: bool = True  # set to False when training transcoders
-#     expansion_factor: int = 128
-#     d_model: int = 768
-#     d_sae: int = None  # type: ignore
-#     bias_init_method: str = "all_zero"
-#     act_fn: str = "relu"
-#     jump_relu_threshold: float = 0.0
+    #     """ The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor """
+    #     norm_activation: str = "token-wise"  # none, token-wise, batch-wise, dataset-wise
+    #     dataset_average_activation_norm: Dict[str, float] | None = None
+    # decoder_exactly_fixed_norm: bool = False
+    # sparsity_include_decoder_norm: bool = True  # set to True: sparsity loss = sum(act * corresponding_decoder_norm), otherwise loss = sum(act). Incompatible with decoder_exactly_fixed_norm
+    #     use_glu_encoder: bool = False
+    #     init_decoder_norm: float | None = None  # type: ignore
+    #     init_encoder_norm: float | None = None  # type: ignore
+    #     init_encoder_with_decoder_transpose: bool = True
 
-#     """ The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor """
-#     norm_activation: str = "token-wise"  # none, token-wise, batch-wise, dataset-wise
-#     dataset_average_activation_norm: Dict[str, float] | None = None
-#     decoder_exactly_fixed_norm: bool = False
-#     sparsity_include_decoder_norm: bool = True  # set to True: sparsity loss = sum(act * corresponding_decoder_norm), otherwise loss = sum(act). Incompatible with decoder_exactly_fixed_norm
-#     use_glu_encoder: bool = False
-#     init_decoder_norm: float | None = None  # type: ignore
-#     init_encoder_norm: float | None = None  # type: ignore
-#     init_encoder_with_decoder_transpose: bool = True
+    #     lp: int = 1
+    #     l1_coefficient: float = 0.00008
+    #     l1_coefficient_warmup_steps: int | float = 0.1
+    #     top_k: int = 50
+    #     initial_k: int | float | None = None
+    #     k_warmup_steps: int | float = 0.1
 
-#     lp: int = 1
-#     l1_coefficient: float = 0.00008
-#     l1_coefficient_warmup_steps: int | float = 0.1
-#     top_k: int = 50
-#     initial_k: int | float | None = None
-#     k_warmup_steps: int | float = 0.1
+    #     use_batch_norm_mse: bool = True  # will set to False in the future
 
-#     use_batch_norm_mse: bool = True  # will set to False in the future
+    #     use_ghost_grads: bool = False
 
-#     use_ghost_grads: bool = False
+    #     tp_size: int = 1
+    #     ddp_size: int = 1
 
-#     tp_size: int = 1
-#     ddp_size: int = 1
+    #     def __post_init__(self):
+    #         super().__post_init__()
+    #         if self.hook_point_out is None:
+    #             self.hook_point_out = self.hook_point_in
+    #         if self.d_sae is None:
+    #             self.d_sae = self.d_model * self.expansion_factor
+    #         if self.k_warmup_steps > 0:
+    #             if self.initial_k is None:
+    #                 self.initial_k = self.d_model
+    #             self.initial_k /= self.top_k
+    #         if self.norm_activation == "dataset-wise" and self.dataset_average_activation_norm is None:
+    #             print(
+    #                 'dataset_average_activation_norm is None and norm_activation is "dataset-wise". Will be computed automatically from the dataset.'
+    #             )
+    #         if self.sparsity_include_decoder_norm and self.decoder_exactly_fixed_norm:
+    #             raise ValueError("sparsity_include_decoder_norm and decoder_exactly_fixed_norm are incompatible.")
+    #         if self.sparsity_include_decoder_norm and self.use_ghost_grads:
+    #             raise ValueError("sparsity_include_decoder_norm and use_ghost_grads are incompatible.")
+    #         if self.init_encoder_with_decoder_transpose and isinstance(self.init_encoder_norm, float):
+    #             raise ValueError("init_encoder_with_decoder_transpose and init_encoder_norm with float are incompatible.")
 
-#     def __post_init__(self):
-#         super().__post_init__()
-#         if self.hook_point_out is None:
-#             self.hook_point_out = self.hook_point_in
-#         if self.d_sae is None:
-#             self.d_sae = self.d_model * self.expansion_factor
-#         if self.k_warmup_steps > 0:
-#             if self.initial_k is None:
-#                 self.initial_k = self.d_model
-#             self.initial_k /= self.top_k
-#         if self.norm_activation == "dataset-wise" and self.dataset_average_activation_norm is None:
-#             print(
-#                 'dataset_average_activation_norm is None and norm_activation is "dataset-wise". Will be computed automatically from the dataset.'
-#             )
-#         if self.sparsity_include_decoder_norm and self.decoder_exactly_fixed_norm:
-#             raise ValueError("sparsity_include_decoder_norm and decoder_exactly_fixed_norm are incompatible.")
-#         if self.sparsity_include_decoder_norm and self.use_ghost_grads:
-#             raise ValueError("sparsity_include_decoder_norm and use_ghost_grads are incompatible.")
-#         if self.init_encoder_with_decoder_transpose and isinstance(self.init_encoder_norm, float):
-#             raise ValueError("init_encoder_with_decoder_transpose and init_encoder_norm with float are incompatible.")
+    #     @staticmethod
+    #     def from_pretrained(pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+    #         """Load the SAEConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/hyperparams.json.
 
-#     @staticmethod
-#     def from_pretrained(pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
-#         """Load the SAEConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/hyperparams.json.
+    #         Args:
+    #             sae_path (str): The path to the pretrained SAE.
+    #             **kwargs: Additional keyword arguments to pass to the SAEConfig constructor.
+    #         """
+    #         path = parse_pretrained_name_or_path(pretrained_name_or_path)
+    #         with open(os.path.join(path, "hyperparams.json"), "r") as f:
+    #             sae_config = json.load(f)
+    #         sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
+    #         sae_config["strict_loading"] = strict_loading
+    #         return SAEConfig.from_dict(sae_config, **kwargs)
 
-#         Args:
-#             sae_path (str): The path to the pretrained SAE.
-#             **kwargs: Additional keyword arguments to pass to the SAEConfig constructor.
-#         """
-#         path = parse_pretrained_name_or_path(pretrained_name_or_path)
-#         with open(os.path.join(path, "hyperparams.json"), "r") as f:
-#             sae_config = json.load(f)
-#         sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
-#         sae_config["strict_loading"] = strict_loading
-#         return SAEConfig.from_dict(sae_config, **kwargs)
+    #     @deprecated("Use from_pretrained and to_dict instead.")
+    #     @staticmethod
+    #     def get_hyperparameters(exp_result_path: str, ckpt_name: str, strict_loading: bool = True) -> dict[str, Any]:
+    #         with open(os.path.join(exp_result_path, "hyperparams.json"), "r") as f:
+    #             hyperparams = json.load(f)
+    #         hyperparams["sae_pretrained_name_or_path"] = os.path.join(exp_result_path, "checkpoints", ckpt_name)
+    #         hyperparams["strict_loading"] = strict_loading
+    #         # Remove non-hyperparameters from the dict
+    #         hyperparams = {k: v for k, v in hyperparams.items() if k in SAEConfig.__dataclass_fields__.keys()}
+    #         return hyperparams
 
-#     @deprecated("Use from_pretrained and to_dict instead.")
-#     @staticmethod
-#     def get_hyperparameters(exp_result_path: str, ckpt_name: str, strict_loading: bool = True) -> dict[str, Any]:
-#         with open(os.path.join(exp_result_path, "hyperparams.json"), "r") as f:
-#             hyperparams = json.load(f)
-#         hyperparams["sae_pretrained_name_or_path"] = os.path.join(exp_result_path, "checkpoints", ckpt_name)
-#         hyperparams["strict_loading"] = strict_loading
-#         # Remove non-hyperparameters from the dict
-#         hyperparams = {k: v for k, v in hyperparams.items() if k in SAEConfig.__dataclass_fields__.keys()}
-#         return hyperparams
+    #     def save_hyperparameters(self, sae_path: str, remove_loading_info: bool = True):
+    #         assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
+    #         d = self.to_dict()
+    #         if remove_loading_info:
+    #             d.pop("sae_pretrained_name_or_path", None)
+    #             d.pop("strict_loading", None)
 
-#     def save_hyperparameters(self, sae_path: str, remove_loading_info: bool = True):
-#         assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
-#         d = self.to_dict()
-#         if remove_loading_info:
-#             d.pop("sae_pretrained_name_or_path", None)
-#             d.pop("strict_loading", None)
+    #         for k, v in d.items():
+    #             if isinstance(v, torch.dtype):
+    #                 d[k] = convert_torch_dtype_to_str(v)
 
-#         for k, v in d.items():
-#             if isinstance(v, torch.dtype):
-#                 d[k] = convert_torch_dtype_to_str(v)
+    #         with open(os.path.join(sae_path, "hyperparams.json"), "w") as f:
+    #             json.dump(d, f, indent=4)
 
-#         with open(os.path.join(sae_path, "hyperparams.json"), "w") as f:
-#             json.dump(d, f, indent=4)
+    # @dataclass(kw_only=True)
+    # class OpenAIConfig(BaseConfig):
+    #     openai_api_key: str
+    #     openai_base_url: str
 
+    # @dataclass(kw_only=True)
+    # class AutoInterpConfig(BaseConfig):
+    #     sae: SAEConfig
+    #     lm: LanguageModelConfig
+    #     openai: OpenAIConfig
+    #     num_sample: int = 10
+    #     p: float = 0.7
+    #     num_left_token: int = 20
+    #     num_right_token: int = 5
 
-# @dataclass(kw_only=True)
-# class OpenAIConfig(BaseConfig):
-#     openai_api_key: str
-#     openai_base_url: str
+    # @dataclass(kw_only=True)
+    # class LanguageModelSAERunnerConfig(RunnerConfig):
+    #     sae: SAEConfig
+    #     lm: LanguageModelConfig
+    #     # act_store: ActivationStoreConfig
+    #     wandb: WandbConfig
 
+    # @dataclass(kw_only=True)
+    # class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
+    #     """
+    #     Configuration for training a sparse autoencoder on a language model.
+    #     """
 
-# @dataclass(kw_only=True)
-# class AutoInterpConfig(BaseConfig):
-#     sae: SAEConfig
-#     lm: LanguageModelConfig
-#     openai: OpenAIConfig
-#     num_sample: int = 10
-#     p: float = 0.7
-#     num_left_token: int = 20
-#     num_right_token: int = 5
+    #     # Training Parameters
+    #     total_training_tokens: int = 300_000_000
+    #     lr: float = 0.0004
+    #     betas: Tuple[float, float] = (0.9, 0.999)
+    #     lr_scheduler_name: str = "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup, exponentialwarmup
+    #     lr_end_ratio: float = 1 / 32
+    #     lr_warm_up_steps: int | float = 0.1
+    #     lr_cool_down_steps: int | float = 0.1
+    #     train_batch_size: int = 4096
+    #     clip_grad_norm: float = 0.0
+    #     remove_gradient_parallel_to_decoder_directions: bool = False
 
+    #     finetuning: bool = False
 
-# @dataclass(kw_only=True)
-# class LanguageModelSAERunnerConfig(RunnerConfig):
-#     sae: SAEConfig
-#     lm: LanguageModelConfig
-#     # act_store: ActivationStoreConfig
-#     wandb: WandbConfig
+    #     # Resampling protocol args
+    #     feature_sampling_window: int = 1000
+    #     dead_feature_window: int = 5000  # unless this window is larger feature sampling,
 
+    #     dead_feature_threshold: float = 1e-6
 
-# @dataclass(kw_only=True)
-# class LanguageModelSAETrainingConfig(LanguageModelSAERunnerConfig):
-#     """
-#     Configuration for training a sparse autoencoder on a language model.
-#     """
+    #     # Evaluation
+    #     eval_frequency: int = 1000
 
-#     # Training Parameters
-#     total_training_tokens: int = 300_000_000
-#     lr: float = 0.0004
-#     betas: Tuple[float, float] = (0.9, 0.999)
-#     lr_scheduler_name: str = "constantwithwarmup"  # constant, constantwithwarmup, linearwarmupdecay, cosineannealing, cosineannealingwarmup, exponentialwarmup
-#     lr_end_ratio: float = 1 / 32
-#     lr_warm_up_steps: int | float = 0.1
-#     lr_cool_down_steps: int | float = 0.1
-#     train_batch_size: int = 4096
-#     clip_grad_norm: float = 0.0
-#     remove_gradient_parallel_to_decoder_directions: bool = False
+    #     # Misc
+    #     log_frequency: int = 10
 
-#     finetuning: bool = False
+    #     n_checkpoints: int = 10
+    #     check_point_save_mode: str = "log"  # 'log' or 'linear'
+    #     checkpoint_thresholds: list = field(default_factory=list)
+    #     save_on_every_rank: bool = False
 
-#     # Resampling protocol args
-#     feature_sampling_window: int = 1000
-#     dead_feature_window: int = 5000  # unless this window is larger feature sampling,
+    # def __post_init__(self):
+    #     super().__post_init__()
 
-#     dead_feature_threshold: float = 1e-6
+    #     if self.save_on_every_rank or is_master():
+    #         if os.path.exists(os.path.join(self.exp_result_path, "checkpoints")):
+    #             raise ValueError(
+    #                 f"Checkpoints for experiment {self.exp_result_path} already exist. Consider changing the experiment name."
+    #             )
+    #         os.makedirs(os.path.join(self.exp_result_path, "checkpoints"))
 
-#     # Evaluation
-#     eval_frequency: int = 1000
+    #     self.effective_batch_size = self.train_batch_size * self.sae.ddp_size
+    #     print_once(f"Effective batch size: {self.effective_batch_size}")
 
-#     # Misc
-#     log_frequency: int = 10
+    #     total_training_steps = self.total_training_tokens // self.effective_batch_size
+    #     print_once(f"Total training steps: {total_training_steps}")
+    #     if self.lr_scheduler_name == "constantwithwarmup" and isinstance(self.lr_warm_up_steps, float):
+    #         assert 0 <= self.lr_warm_up_steps <= 1.0
+    #         self.lr_warm_up_steps = int(self.lr_warm_up_steps * total_training_steps)
+    #         print_once(f"Learning rate warm up steps: {self.lr_warm_up_steps}")
+    #     if isinstance(self.sae.l1_coefficient_warmup_steps, float) and self.sae.act_fn != "topk":
+    #         assert 0 <= self.sae.l1_coefficient_warmup_steps <= 1.0
+    #         self.sae.l1_coefficient_warmup_steps = int(self.sae.l1_coefficient_warmup_steps * total_training_steps)
+    #         print_once(f"L1 coefficient warm up steps: {self.sae.l1_coefficient_warmup_steps}")
+    #     if isinstance(self.sae.k_warmup_steps, float) and self.sae.act_fn == "topk":
+    #         assert 0 <= self.sae.k_warmup_steps <= 1.0
+    #         self.sae.k_warmup_steps = int(self.sae.k_warmup_steps * total_training_steps)
+    #         print_once(f"K warm up steps: {self.sae.k_warmup_steps}")
+    #     if isinstance(self.lr_cool_down_steps, float):
+    #         assert 0 <= self.lr_cool_down_steps <= 1.0
+    #         self.lr_cool_down_steps = int(self.lr_cool_down_steps * total_training_steps)
+    #         print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
 
-#     n_checkpoints: int = 10
-#     check_point_save_mode: str = "log"  # 'log' or 'linear'
-#     checkpoint_thresholds: list = field(default_factory=list)
-#     save_on_every_rank: bool = False
+    #     if self.lr_scheduler_name == "constantwithwarmup" and isinstance(self.lr_warm_up_steps, float):
+    #         assert 0 <= self.lr_warm_up_steps <= 1.0
+    #         self.lr_warm_up_steps = int(self.lr_warm_up_steps * total_training_steps)
+    #         print_once(f"Learning rate warm up steps: {self.lr_warm_up_steps}")
+    #     if isinstance(self.sae.l1_coefficient_warmup_steps, float):
+    #         assert 0 <= self.sae.l1_coefficient_warmup_steps <= 1.0
+    #         self.sae.l1_coefficient_warmup_steps = int(self.sae.l1_coefficient_warmup_steps * total_training_steps)
+    #         print_once(f"L1 coefficient warm up steps: {self.sae.l1_coefficient_warmup_steps}")
+    #     if isinstance(self.lr_cool_down_steps, float):
+    #         assert 0 <= self.lr_cool_down_steps <= 1.0
+    #         self.lr_cool_down_steps = int(self.lr_cool_down_steps * total_training_steps)
+    #         print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
+    #     if self.finetuning:
+    #         assert self.sae.l1_coefficient == 0.0, "L1 coefficient must be 0.0 for finetuning."
 
-#     def __post_init__(self):
-#         super().__post_init__()
+    #     if self.n_checkpoints > 0:
+    #         if self.check_point_save_mode == "linear":
+    #             self.checkpoint_thresholds = list(
+    #                 range(0, self.total_training_tokens, self.total_training_tokens // self.n_checkpoints)
+    #             )[1:]
+    #         elif self.check_point_save_mode == "log":
+    #             self.checkpoint_thresholds = [
+    #                 math.ceil(2 ** (i / self.n_checkpoints * math.log2(total_training_steps)))
+    #                 * self.effective_batch_size
+    #                 for i in range(1, self.n_checkpoints)
+    #             ]
+    #         else:
+    #             raise ValueError(f"Unknown checkpoint save mode: {self.check_point_save_mode}")
 
-#         if self.save_on_every_rank or is_master():
-#             if os.path.exists(os.path.join(self.exp_result_path, "checkpoints")):
-#                 raise ValueError(
-#                     f"Checkpoints for experiment {self.exp_result_path} already exist. Consider changing the experiment name."
-#                 )
-#             os.makedirs(os.path.join(self.exp_result_path, "checkpoints"))
-
-#         self.effective_batch_size = self.train_batch_size * self.sae.ddp_size
-#         print_once(f"Effective batch size: {self.effective_batch_size}")
-
-#         total_training_steps = self.total_training_tokens // self.effective_batch_size
-#         print_once(f"Total training steps: {total_training_steps}")
-#         if self.lr_scheduler_name == "constantwithwarmup" and isinstance(self.lr_warm_up_steps, float):
-#             assert 0 <= self.lr_warm_up_steps <= 1.0
-#             self.lr_warm_up_steps = int(self.lr_warm_up_steps * total_training_steps)
-#             print_once(f"Learning rate warm up steps: {self.lr_warm_up_steps}")
-#         if isinstance(self.sae.l1_coefficient_warmup_steps, float) and self.sae.act_fn != "topk":
-#             assert 0 <= self.sae.l1_coefficient_warmup_steps <= 1.0
-#             self.sae.l1_coefficient_warmup_steps = int(self.sae.l1_coefficient_warmup_steps * total_training_steps)
-#             print_once(f"L1 coefficient warm up steps: {self.sae.l1_coefficient_warmup_steps}")
-#         if isinstance(self.sae.k_warmup_steps, float) and self.sae.act_fn == "topk":
-#             assert 0 <= self.sae.k_warmup_steps <= 1.0
-#             self.sae.k_warmup_steps = int(self.sae.k_warmup_steps * total_training_steps)
-#             print_once(f"K warm up steps: {self.sae.k_warmup_steps}")
-#         if isinstance(self.lr_cool_down_steps, float):
-#             assert 0 <= self.lr_cool_down_steps <= 1.0
-#             self.lr_cool_down_steps = int(self.lr_cool_down_steps * total_training_steps)
-#             print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
-
-#         if self.lr_scheduler_name == "constantwithwarmup" and isinstance(self.lr_warm_up_steps, float):
-#             assert 0 <= self.lr_warm_up_steps <= 1.0
-#             self.lr_warm_up_steps = int(self.lr_warm_up_steps * total_training_steps)
-#             print_once(f"Learning rate warm up steps: {self.lr_warm_up_steps}")
-#         if isinstance(self.sae.l1_coefficient_warmup_steps, float):
-#             assert 0 <= self.sae.l1_coefficient_warmup_steps <= 1.0
-#             self.sae.l1_coefficient_warmup_steps = int(self.sae.l1_coefficient_warmup_steps * total_training_steps)
-#             print_once(f"L1 coefficient warm up steps: {self.sae.l1_coefficient_warmup_steps}")
-#         if isinstance(self.lr_cool_down_steps, float):
-#             assert 0 <= self.lr_cool_down_steps <= 1.0
-#             self.lr_cool_down_steps = int(self.lr_cool_down_steps * total_training_steps)
-#             print_once(f"Learning rate cool down steps: {self.lr_cool_down_steps}")
-#         if self.finetuning:
-#             assert self.sae.l1_coefficient == 0.0, "L1 coefficient must be 0.0 for finetuning."
-
-#         if self.n_checkpoints > 0:
-#             if self.check_point_save_mode == "linear":
-#                 self.checkpoint_thresholds = list(
-#                     range(0, self.total_training_tokens, self.total_training_tokens // self.n_checkpoints)
-#                 )[1:]
-#             elif self.check_point_save_mode == "log":
-#                 self.checkpoint_thresholds = [
-#                     math.ceil(2 ** (i / self.n_checkpoints * math.log2(total_training_steps)))
-#                     * self.effective_batch_size
-#                     for i in range(1, self.n_checkpoints)
-#                 ]
-#             else:
-#                 raise ValueError(f"Unknown checkpoint save mode: {self.check_point_save_mode}")
-
-#         assert 0 <= self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
+    #     assert 0 <= self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
 
 
 # @dataclass(kw_only=True)

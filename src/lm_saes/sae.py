@@ -1,7 +1,7 @@
 import math
 import os
 from importlib.metadata import version
-from typing import Dict, Literal, Union, overload
+from typing import Callable, Dict, Literal, Union, overload
 
 import safetensors.torch as safe
 import torch
@@ -10,6 +10,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 
+from lm_saes.database import MongoClient
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.misc import is_master
 
@@ -30,7 +31,7 @@ class SparseAutoEncoder(HookedRootModule):
         )
         if cfg.use_glu_encoder:
             self.encoder_glu = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
-        self.activation_function = self.activation_function_factory(cfg)
+        self.activation_function: Callable[[torch.Tensor], torch.Tensor] = self.activation_function_factory(cfg)
         self.hook_hidden_pre = HookPoint()
         self.hook_feature_acts = HookPoint()
         self.hook_reconstructed = HookPoint()
@@ -87,7 +88,7 @@ class SparseAutoEncoder(HookedRootModule):
             decoder_norm = decoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return decoder_norm
 
-    def activation_function_factory(self, cfg: SAEConfig):  # type: ignore
+    def activation_function_factory(self, cfg: SAEConfig) -> Callable[[torch.Tensor], torch.Tensor]:  # type: ignore
         assert cfg.act_fn.lower() in ["relu", "topk", "jumprelu"], f"Not implemented activation function {cfg.act_fn}"
         if cfg.act_fn.lower() == "relu":
             return lambda hidden_pre: torch.clamp(hidden_pre, min=0.0)
@@ -108,7 +109,7 @@ class SparseAutoEncoder(HookedRootModule):
 
             return topk_activation
 
-    def compute_norm_factor(self, x: torch.Tensor, hook_point: str):
+    def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> torch.Tensor:  # type: ignore
         """Compute the normalization factor for the activation vectors.
         This should be called during forward pass.
         There are four modes for norm_activation:
@@ -131,7 +132,11 @@ class SparseAutoEncoder(HookedRootModule):
             assert (
                 self.dataset_average_activation_norm is not None
             ), "dataset_average_activation_norm must be provided from Initializer"
-            return math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point]
+            return torch.tensor(
+                math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point],
+                device=x.device,
+                dtype=x.dtype,
+            )
         if self.cfg.norm_activation == "inference":
             return torch.tensor(1.0, device=x.device, dtype=x.dtype)
 
@@ -195,6 +200,14 @@ class SparseAutoEncoder(HookedRootModule):
         state_dict = self.state_dict()
         if device_mesh:
             state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
+
+        # If sparsity_include_decoder_norm is False, we need to normalize the decoder weight before saving
+        # We use a deepcopy to avoid modifying the original weight to avoid affecting the training progress
+        if not self.cfg.sparsity_include_decoder_norm:
+            state_dict["decoder.weight"] = self.decoder.weight.data.clone()  # deepcopy
+            decoder_norm = torch.norm(state_dict["decoder.weight"], p=2, dim=0, keepdim=True)
+            state_dict["decoder.weight"] = state_dict["decoder.weight"] / decoder_norm
+
         return state_dict
 
     @torch.no_grad()
@@ -237,8 +250,9 @@ class SparseAutoEncoder(HookedRootModule):
         assert self.dataset_average_activation_norm is not None or dataset_average_activation_norm is not None
         if dataset_average_activation_norm is not None:
             self.set_dataset_average_activation_norm(dataset_average_activation_norm)
-        input_norm_factor = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm["in"]  # type: ignore
-        output_norm_factor = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm["out"]  # type: ignore
+        assert self.dataset_average_activation_norm is not None
+        input_norm_factor: float = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm["in"]
+        output_norm_factor: float = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm["out"]
         self.encoder.bias.data = self.encoder.bias.data / input_norm_factor
         if self.cfg.use_decoder_bias:
             self.decoder.bias.data = self.decoder.bias.data / output_norm_factor
@@ -246,12 +260,20 @@ class SparseAutoEncoder(HookedRootModule):
         self.cfg.norm_activation = "inference"
 
     @torch.no_grad()
-    def save(self, ckpt_path: str) -> None:
+    def save_checkpoint(self, ckpt_path: str) -> None:
         # TODO: save the config to MongoDB
+        """
+        {
+            "name": sae_name,
+            "config": sae_config,
+            "path": final_ckpt_path,
+        }
+        """
         if os.path.isdir(ckpt_path):
             ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
         state_dict = self.get_full_state_dict()
         if is_master():
+            self.cfg.save_hyperparameters(ckpt_path)
             if ckpt_path.endswith(".safetensors"):
                 safe.save_file(state_dict, ckpt_path, {"version": version("lm-saes")})
             elif ckpt_path.endswith(".pt"):
@@ -260,6 +282,14 @@ class SparseAutoEncoder(HookedRootModule):
                 raise ValueError(
                     f"Invalid checkpoint path {ckpt_path}. Currently only supports .safetensors and .pt formats."
                 )
+
+    @torch.no_grad()
+    def save_pretrained(self, ckpt_path: str, sae_name: str, mongodb_client: MongoClient) -> None:
+        if not os.path.isdir(ckpt_path):
+            ckpt_path = os.path.join(ckpt_path, "final.safetensors")
+        if is_master():
+            self.save_checkpoint(ckpt_path)
+            mongodb_client.create_sae(sae_name, ckpt_path, self.cfg)
 
     @overload
     def encode(
@@ -323,7 +353,7 @@ class SparseAutoEncoder(HookedRootModule):
             hidden_pre = hidden_pre * hidden_pre_glu
 
         hidden_pre = self.hook_hidden_pre(hidden_pre)
-        feature_acts = self.activation_function(hidden_pre)  # type: ignore
+        feature_acts = self.activation_function(hidden_pre)
         feature_acts = self.hook_feature_acts(feature_acts)
         if return_hidden_pre:
             return feature_acts, hidden_pre
@@ -428,7 +458,7 @@ class SparseAutoEncoder(HookedRootModule):
         label = x if label is None else label
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True)
         reconstructed = self.decode(feature_acts)
-        label_norm_factor = self.compute_norm_factor(label, hook_point="out")
+        label_norm_factor: torch.Tensor = self.compute_norm_factor(label, hook_point="out")
         label_normed = label * label_norm_factor
         l_rec = (reconstructed - label_normed).pow(2)
         if use_batch_norm_mse:

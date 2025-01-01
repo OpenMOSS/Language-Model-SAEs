@@ -85,7 +85,7 @@ class Initializer:
                         )[1][0]["l_rec"]
                         .mean()
                         .item()
-                    )  # type: ignore
+                    )
                     losses[norm] = mse
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm
@@ -115,7 +115,7 @@ class Initializer:
     def initialize_sae_from_config(
         self,
         cfg: SAEConfig,
-        activation_iter: Iterable[dict[str, Tensor]] | None = None,
+        activation_stream: Iterable[dict[str, Tensor]] | None = None,
         is_activation_normalized: bool = False,
         activation_norm: dict[str, float] | None = None,
         device_mesh: DeviceMesh | None = None,
@@ -135,26 +135,25 @@ class Initializer:
         else:
             # TODO: add support for different SAE config types, e.g. MixCoderConfig, CrossCoderConfig, etc.
             pass
-        if self.cfg.state == "training" or self.cfg.state == "finetuning":
-            sae: SparseAutoEncoder = self.initialize_parameters(sae) if self.cfg.state == "training" else sae
+        if self.cfg.state == "training":
+            if cfg.sae_pretrained_name_or_path is None:
+                sae: SparseAutoEncoder = self.initialize_parameters(sae)
             if sae.cfg.norm_activation == "dataset-wise":
-                if not is_activation_normalized:
-                    assert (
-                        activation_norm is not None
-                    ), "Activation normalization must be provided if data from activation_iter is not normalized"
-                activation_norm = (
-                    {
+                if is_activation_normalized:
+                    print("Activation is normalized, using 1.0 as the activation norm")
+                    activation_norm = {
                         "in": 1.0,
                         "out": 1.0,
                     }
-                    if activation_norm is None
-                    else activation_norm
-                )
+                else:
+                    assert (
+                        activation_norm is not None
+                    ), "Activation normalization must be provided if data from activation_iter is not normalized"
                 sae.set_dataset_average_activation_norm(activation_norm)
 
             if self.cfg.init_search:
-                assert activation_iter is not None, "Activation iterator must be provided for initialization search"
-                activation_batch = next(activation_iter)  # type: ignore
+                assert activation_stream is not None, "Activation iterator must be provided for initialization search"
+                activation_batch = next(iter(activation_stream))  # type: ignore
                 sae = self.initialization_search(sae, activation_batch)
 
         elif self.cfg.state == "inference":
