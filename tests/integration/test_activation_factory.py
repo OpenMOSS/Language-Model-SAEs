@@ -4,7 +4,7 @@ from datasets import Dataset
 from pytest_mock import MockerFixture
 from transformer_lens import HookedTransformer
 
-from lm_saes.activation.factory import ActivationFactory
+from lm_saes.activation.factory import ActivationFactory, ActivationFactoryTarget
 from lm_saes.config import ActivationFactoryConfig, ActivationFactoryDatasetSource
 
 
@@ -51,7 +51,7 @@ def basic_config() -> ActivationFactoryConfig:
                 sample_weights=1.0,
             )
         ],
-        target="batched-activations-1d",
+        target=ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D,
         hook_points=["h0", "h1"],
         context_size=4,
         batch_size=2,
@@ -72,16 +72,23 @@ def test_activation_factory_tokens_target(
     mock_model: HookedTransformer,
     mock_dataset: Dataset,
 ):
-    basic_config.target = "tokens"
+    basic_config.target = ActivationFactoryTarget.TOKENS
     factory = ActivationFactory(basic_config)
 
-    result = list(factory.process(model=mock_model, datasets={"test_dataset": mock_dataset}))
+    result = list(
+        factory.process(
+            model=mock_model,
+            datasets={"test_dataset": (mock_dataset, {"shard_idx": 0, "n_shards": 8})},
+        )
+    )
     print(result)
 
     assert len(result) == 3  # One for each input text
     assert "tokens" in result[0]
     assert "meta" in result[0]
     assert result[0]["meta"]["dataset_name"] == "test_dataset"
+    assert result[0]["meta"]["shard_idx"] == 0
+    assert result[0]["meta"]["n_shards"] == 8
     assert torch.allclose(result[0]["tokens"], torch.tensor([12, 13, 14]))
 
 
@@ -90,10 +97,10 @@ def test_activation_factory_activations_2d_target(
     mock_model: HookedTransformer,
     mock_dataset: Dataset,
 ):
-    basic_config.target = "activations-2d"
+    basic_config.target = ActivationFactoryTarget.ACTIVATIONS_2D
     factory = ActivationFactory(basic_config)
 
-    result = list(factory.process(model=mock_model, datasets={"test_dataset": mock_dataset}))
+    result = list(factory.process(model=mock_model, datasets={"test_dataset": (mock_dataset, None)}))
     print(result)
 
     assert len(result) == 3  # One for each input text
@@ -108,10 +115,10 @@ def test_activation_factory_activations_1d_target(
     mock_model: HookedTransformer,
     mock_dataset: Dataset,
 ):
-    basic_config.target = "activations-1d"
+    basic_config.target = ActivationFactoryTarget.ACTIVATIONS_1D
     factory = ActivationFactory(basic_config)
 
-    result = list(factory.process(model=mock_model, datasets={"test_dataset": mock_dataset}))
+    result = list(factory.process(model=mock_model, datasets={"test_dataset": (mock_dataset, None)}))
 
     assert len(result) == 3  # One for each input text
     assert all(h in result[0] for h in basic_config.hook_points)
@@ -128,8 +135,7 @@ def test_activation_factory_batched_activations_1d_target(
 ):
     factory = ActivationFactory(basic_config)
 
-    result = list(factory.process(model=mock_model, datasets={"test_dataset": mock_dataset}))
-
+    result = list(factory.process(model=mock_model, datasets={"test_dataset": (mock_dataset, None)}))
     print(result)
 
     # With batch_size=2 and 3 samples * 3 activations per sample, we expect 5 batches, with 2 samples in the first 4
@@ -163,13 +169,13 @@ def test_activation_factory_multiple_sources(
             sample_weights=0.3,
         ),
     ]
-    basic_config.target = "activations-2d"
+    basic_config.target = ActivationFactoryTarget.ACTIVATIONS_2D
 
     factory = ActivationFactory(basic_config)
 
     datasets = {
-        "dataset1": mock_dataset,
-        "dataset2": mock_dataset,
+        "dataset1": (mock_dataset, None),
+        "dataset2": (mock_dataset, None),
     }
 
     result = list(factory.process(model=mock_model, datasets=datasets))
