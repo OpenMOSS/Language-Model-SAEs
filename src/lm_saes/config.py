@@ -123,6 +123,7 @@ class InitializerConfig(BaseConfig):
     init_encoder_with_decoder_transpose: bool = True
     init_search: bool = False
     state: Literal["training", "inference"] = "training"
+    l1_coefficient: float | None = None
 
 
 class TrainerConfig(BaseConfig):
