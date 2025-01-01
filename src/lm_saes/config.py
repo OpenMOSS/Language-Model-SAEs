@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import Annotated, Any, Dict, Literal, Optional
 
 import torch
-from pydantic import BaseModel, BeforeValidator, PlainSerializer, WithJsonSchema
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    PlainSerializer,
+    WithJsonSchema,
+)
 from transformer_lens.loading_from_pretrained import get_official_model_name
 
 from .utils.config import FlattenableModel
@@ -18,6 +24,8 @@ class BaseConfig(BaseModel, FlattenableModel):
 
 
 class BaseModelConfig(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
+
     device: str = "cpu"
     seed: int = 42
     dtype: Annotated[
@@ -39,9 +47,6 @@ class BaseModelConfig(BaseModel):
     def from_dict(cls, d: Dict[str, Any], **kwargs):
         d = {k: v for k, v in d.items() if k in cls.model_fields}
         return cls(**d, **kwargs)
-
-    class Config:
-        arbitrary_types_allowed = True  # allow parsing torch.dtype
 
 
 class BaseSAEConfig(BaseModelConfig):
