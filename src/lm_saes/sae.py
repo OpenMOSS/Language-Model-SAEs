@@ -24,6 +24,7 @@ class SparseAutoEncoder(HookedRootModule):
         # should be set by Trainer during training
         self.current_k = cfg.top_k
         # should be initialized by Initializer and set by Trainer during training
+        assert cfg.d_sae is not None
         self.current_l1_coefficient = None
         self.encoder = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
         self.decoder = torch.nn.Linear(
@@ -289,7 +290,8 @@ class SparseAutoEncoder(HookedRootModule):
             ckpt_path = os.path.join(ckpt_path, "final.safetensors")
         if is_master():
             self.save_checkpoint(ckpt_path)
-            mongodb_client.create_sae(sae_name, ckpt_path, self.cfg)
+            # TODO: save to MongoDB
+            pass
 
     @overload
     def encode(

@@ -2,13 +2,10 @@ import argparse
 from enum import Enum
 
 import torch
+from pydantic_settings import CliApp, CliSettingsSource
 
 
 class SupportedRunner(Enum):
-    TRAIN = "train"
-    EVAL = "eval"
-    ANALYZE = "analyze"
-    PRUNE = "prune"
     GENERATE_ACTIVATIONS = "gen-activations"
 
     def __str__(self):
@@ -25,8 +22,7 @@ def entrypoint():
         metavar="runner",
     )
     parser.add_argument("config", type=str, help="The configuration to use.")
-    parser.add_argument("--sae", type=str, help="The path to the pretrained SAE model.")
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     config_file: str = args.config
     if config_file.endswith(".json"):
@@ -57,60 +53,14 @@ def entrypoint():
             f"Unsupported configuration file format: {config_file}. Supported formats: json, yaml, toml, py."
         )
 
-    if args.sae is not None:
-        from lm_saes.config import SAEConfig
+    if args.runner == SupportedRunner.GENERATE_ACTIVATIONS:
+        from lm_saes.runner import GenerateActivationsSettings, generate_activations
 
-        sae_config = SAEConfig.from_pretrained(args.sae).to_dict()
-        if "sae" in config:
-            sae_config.update(config["sae"])
-        config["sae"] = sae_config
-    print(config)
-
-    tp_size = config.get("tp_size", 1)
-    ddp_size = config.get("ddp_size", 1)
-    if tp_size > 1 or ddp_size > 1:
-        import os
-
-        import torch.distributed as dist
-
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        dist.init_process_group(backend="nccl")
-        print(f"Setting device to {dist.get_rank()}")
-        torch.cuda.set_device(dist.get_rank())
-
-    if args.runner == SupportedRunner.TRAIN:
-        from lm_saes.config import LanguageModelSAETrainingConfig
-        from lm_saes.runner import language_model_sae_runner
-
-        config = LanguageModelSAETrainingConfig.from_flattened(config)
-        language_model_sae_runner(config)
-    elif args.runner == SupportedRunner.EVAL:
-        from lm_saes.config import LanguageModelSAERunnerConfig
-        from lm_saes.runner import language_model_sae_eval_runner
-
-        config = LanguageModelSAERunnerConfig.from_flattened(config)
-        language_model_sae_eval_runner(config)
-    elif args.runner == SupportedRunner.ANALYZE:
-        from lm_saes.config import LanguageModelSAEAnalysisConfig
-        from lm_saes.runner import sample_feature_activations_runner
-
-        config = LanguageModelSAEAnalysisConfig.from_flattened(config)
-        sample_feature_activations_runner(config)
-    elif args.runner == SupportedRunner.PRUNE:
-        from lm_saes.config import LanguageModelSAEPruningConfig
-        from lm_saes.runner import language_model_sae_prune_runner
-
-        config = LanguageModelSAEPruningConfig.from_flattened(config)
-        language_model_sae_prune_runner(config)
-    elif args.runner == SupportedRunner.GENERATE_ACTIVATIONS:
-        from lm_saes.config import ActivationGenerationConfig
-        from lm_saes.runner import activation_generation_runner
-
-        config = ActivationGenerationConfig.from_flattened(config)
-        activation_generation_runner(config)
+        cli_settings = CliSettingsSource(GenerateActivationsSettings, root_parser=parser)
+        config = CliApp.run(GenerateActivationsSettings, cli_settings_source=cli_settings, **config)
+        generate_activations(config)
     else:
         raise ValueError(f"Unsupported runner: {args.runner}.")
 
-    if tp_size > 1 or ddp_size > 1:
-        if dist.is_initialized():  # type: ignore
-            dist.destroy_process_group()  # type: ignore
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
