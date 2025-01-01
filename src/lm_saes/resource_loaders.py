@@ -17,7 +17,7 @@ from lm_saes.config import DatasetConfig, LanguageModelConfig
 
 def load_dataset_shard(
     cfg: DatasetConfig,
-    shard_index: int,
+    shard_idx: int,
     n_shards: int,
 ) -> datasets.Dataset:
     if not cfg.is_dataset_on_disk:
@@ -25,7 +25,7 @@ def load_dataset_shard(
     else:
         dataset = datasets.load_from_disk(cfg.dataset_name_or_path)
     dataset = cast(datasets.Dataset, dataset)
-    dataset = dataset.shard(num_shards=n_shards, index=shard_index, contiguous=True)
+    dataset = dataset.shard(num_shards=n_shards, index=shard_idx, contiguous=True)
     return dataset
 
 
@@ -47,7 +47,7 @@ def load_dataset(
             contiguous=True,
         )
         shard_metadata = {
-            "shard_index": start_shard + device_mesh.get_group("data").rank(),
+            "shard_idx": start_shard + device_mesh.get_group("data").rank(),
             "n_shards": n_shards or device_mesh.get_group("data").size(),
         }
     else:
