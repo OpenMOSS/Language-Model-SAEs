@@ -480,6 +480,7 @@ class SparseAutoEncoder(HookedRootModule):
         if not self.cfg.act_fn == "topk":
             l_lp = torch.norm(feature_acts, p=lp, dim=-1)
             loss_dict["l_lp"] = l_lp
+            assert self.current_l1_coefficient is not None
             loss = loss + self.current_l1_coefficient * l_lp.mean()
 
         if return_aux_data:

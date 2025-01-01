@@ -91,6 +91,8 @@ class Initializer:
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm
 
+            assert self.cfg.l1_coefficient is not None
+            sae.set_current_l1_coefficient(self.cfg.l1_coefficient)
             best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
             best_norm_fine_grained = grid_search_best_init_norm(
                 torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
