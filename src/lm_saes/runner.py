@@ -69,7 +69,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
 
     # Load model and dataset
     model = load_model(settings.model)
-    dataset = load_dataset(
+    dataset, metadata = load_dataset(
         settings.dataset,
         device_mesh=device_mesh,
         n_shards=settings.n_shards,
@@ -100,5 +100,5 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
     writer = ActivationWriter(writer_cfg)
 
     # Generate and write activations
-    activations = factory.process(model=model, datasets={settings.dataset_name: dataset})
+    activations = factory.process(model=model, datasets={settings.dataset_name: (dataset, metadata)})
     writer.process(activations, device_mesh=device_mesh, start_shard=settings.start_shard)

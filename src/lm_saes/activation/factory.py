@@ -1,4 +1,4 @@
-from typing import Any, Callable, Iterable, Iterator, Sequence
+from typing import Any, Callable, Iterable, Iterator, Optional, Sequence
 
 import numpy as np
 from datasets import Dataset
@@ -83,7 +83,7 @@ class ActivationFactory:
                 if cfg.target >= ActivationFactoryTarget.TOKENS
                 else None,
                 PadAndTruncateTokensProcessor(seq_len=cfg.context_size)
-                if cfg.target >= ActivationFactoryTarget.TOKENS
+                if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
                 else None,
                 ActivationGenerator(hook_points=cfg.hook_points)
                 if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
@@ -107,15 +107,16 @@ class ActivationFactory:
                 Returns:
                     Stream of processed data
                 """
-                datasets: dict[str, Dataset] | None = kwargs.get("datasets")
+                datasets: dict[str, tuple[Dataset, Optional[dict[str, Any]]]] | None = kwargs.get("datasets")
                 assert datasets is not None, "`datasets` must be provided for dataset sources"
                 model: HookedTransformer | None = kwargs.get("model")
                 assert model is not None, "`model` must be provided for dataset sources"
 
                 dataset = datasets.get(dataset_source.name)
                 assert dataset is not None, f"Dataset {dataset_source.name} not found in `datasets`"
+                dataset, metadata = dataset
 
-                stream = loader.process(dataset, dataset_name=dataset_source.name)
+                stream = loader.process(dataset, dataset_name=dataset_source.name, metadata=metadata)
 
                 for processor in processors:
                     stream = processor.process(stream, model=model)
