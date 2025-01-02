@@ -27,16 +27,18 @@ def test_create_and_get_sae(mongo_client: MongoClient) -> None:
     # Arrange
     name = "test_sae"
     series = "test_series"
+    path = "test_path"
     cfg = SAEConfig(hook_point_in="test_hook_point_in", d_sae=10, d_model=10, expansion_factor=1)
 
     # Act
-    mongo_client.create_sae(name, series, cfg)
+    mongo_client.create_sae(name, series, path, cfg)
     result = mongo_client.get_sae(name, series)
 
     # Assert
     assert isinstance(result, SAERecord)
     assert result.name == name
     assert result.series == series
+    assert result.path == path
     assert result.cfg.d_sae == cfg.d_sae
 
 
@@ -45,9 +47,9 @@ def test_list_saes(mongo_client: MongoClient) -> None:
     # Arrange
     cfg = SAEConfig(hook_point_in="test_hook_point_in", d_sae=10, d_model=10, expansion_factor=1)
     print(mongo_client.sae_collection.find_one())
-    mongo_client.create_sae("sae1", "series1", cfg)
-    mongo_client.create_sae("sae2", "series1", cfg)
-    mongo_client.create_sae("sae3", "series2", cfg)
+    mongo_client.create_sae("sae1", "series1", "test_path", cfg)
+    mongo_client.create_sae("sae2", "series1", "test_path", cfg)
+    mongo_client.create_sae("sae3", "series2", "test_path", cfg)
 
     # Act & Assert
     assert set(mongo_client.list_saes()) == {"sae1", "sae2", "sae3"}
@@ -60,8 +62,9 @@ def test_remove_sae(mongo_client: MongoClient) -> None:
     # Arrange
     name = "test_sae"
     series = "test_series"
+    path = "test_path"
     cfg = SAEConfig(hook_point_in="test_hook_point_in", d_sae=10, d_model=10, expansion_factor=1)
-    mongo_client.create_sae(name, series, cfg)
+    mongo_client.create_sae(name, series, path, cfg)
 
     # Act
     mongo_client.remove_sae(name, series)
@@ -75,7 +78,7 @@ def test_create_and_get_analysis(mongo_client: MongoClient) -> None:
     """Test creating and retrieving analysis records."""
     # Arrange
     cfg = SAEConfig(hook_point_in="test_hook_point_in", d_sae=10, d_model=10, expansion_factor=1)
-    mongo_client.create_sae("test_sae", "test_series", cfg)
+    mongo_client.create_sae("test_sae", "test_series", "test_path", cfg)
 
     # Act
     mongo_client.create_analysis("test_analysis", "test_sae", "test_series")
@@ -94,7 +97,7 @@ def test_get_feature(mongo_client: MongoClient) -> None:
     """Test retrieving feature records."""
     # Arrange
     cfg = SAEConfig(hook_point_in="test_hook_point_in", d_sae=2, d_model=2, expansion_factor=1)
-    mongo_client.create_sae("test_sae", "test_series", cfg)
+    mongo_client.create_sae("test_sae", "test_series", "test_path", cfg)
 
     # Act
     feature = mongo_client.get_feature("test_sae", "test_series", 0)

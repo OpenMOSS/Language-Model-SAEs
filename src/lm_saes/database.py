@@ -58,6 +58,7 @@ class ModelRecord(BaseModel):
 class SAERecord(BaseModel):
     name: str
     series: str
+    path: str
     cfg: SAEConfig  # TODO: add more variants of SAEConfig
 
 
@@ -129,9 +130,9 @@ class MongoClient:
         if isinstance(data, ObjectId) and self.fs.exists(data):
             self.fs.delete(data)
 
-    def create_sae(self, name: str, series: str, cfg: BaseSAEConfig):
+    def create_sae(self, name: str, series: str, path: str, cfg: BaseSAEConfig):
         inserted_id = self.sae_collection.insert_one(
-            {"name": name, "series": series, "cfg": cfg.model_dump()}
+            {"name": name, "series": series, "path": path, "cfg": cfg.model_dump()}
         ).inserted_id
         assert cfg.d_sae is not None, "d_sae must be set"
         self.feature_collection.insert_many(
