@@ -113,6 +113,7 @@ class InitializerConfig(BaseConfig):
     init_search: bool = False
     state: Literal["training", "inference"] = "training"
     l1_coefficient: float | None = None
+    is_activation_normalized: bool = False
 
 
 class TrainerConfig(BaseConfig):

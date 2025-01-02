@@ -1,59 +1,92 @@
+import os
+
+import pytest
 import torch
-from einops import rearrange
-from torch.optim import Adam
-from transformer_lens import HookedTransformer, HookedTransformerConfig
+from pytest_mock import MockerFixture
+from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.config import SAEConfig
-from lm_saes.sae import SparseAutoEncoder
+from lm_saes.config import (
+    InitializerConfig,
+    SAEConfig,
+    TrainerConfig,
+)
+from lm_saes.initializer import Initializer
+from lm_saes.trainer import Trainer
 
 
-def test_train_sae():
-    ### Traing setup ###
-    batch_size = 2
-    hook_point = "blocks.0.hook_resid_pre"
-    device = "cpu"
-    dtype = torch.float32
-    torch.manual_seed(42)
-
-    ### Model setup ###
-    model_cfg = HookedTransformerConfig(
-        n_layers=2,
-        d_mlp=2,
-        d_model=5,
-        d_head=5,
-        n_heads=2,
-        n_ctx=10,
-        d_vocab=50,
-        act_fn="relu",
-    )
-    model = HookedTransformer(
-        cfg=model_cfg,
-    )
-
-    ### SAE setup ###
-    sae_cfg = SAEConfig(
-        hook_point_in=hook_point,
+@pytest.fixture
+def sae_config() -> SAEConfig:
+    return SAEConfig(
+        hook_point_in="in",
+        hook_point_out="out",
+        d_model=2,
         expansion_factor=2,
-        d_model=5,
-        # top_k=5,
+        device="cuda",
+        dtype=torch.bfloat16,  # the precision of bfloat16 is not enough for the tests
+        act_fn="topk",
+        norm_activation="dataset-wise",
+        sparsity_include_decoder_norm=True,
+        top_k=2,
     )
-    sae = SparseAutoEncoder.from_config(sae_cfg)
 
-    ### Get activations ###
-    tokens = torch.randint(0, 50, (batch_size, 10))
-    with torch.no_grad():
-        _, cache = model.run_with_cache_until(tokens, names_filter=hook_point, until=hook_point)
-        batch = {
-            hook_point: rearrange(
-                cache[hook_point].to(dtype=dtype, device=device),
-                "b l d -> (b l) d",
-            )
+
+@pytest.fixture
+def initializer_config() -> InitializerConfig:
+    return InitializerConfig(
+        state="training",
+        is_activation_normalized=True,
+        init_search=True,
+        l1_coefficient=0.00008,
+    )
+
+
+@pytest.fixture
+def trainer_config(tmp_path) -> TrainerConfig:
+    return TrainerConfig(
+        initial_k=2,
+        total_training_tokens=400,
+        log_frequency=10,
+        eval_frequency=10,
+        n_checkpoints=0,
+        exp_result_path=str(tmp_path),
+    )
+
+
+def test_train_sae(
+    sae_config: SAEConfig,
+    initializer_config: InitializerConfig,
+    trainer_config: TrainerConfig,
+    mocker: MockerFixture,
+    tmp_path,
+) -> None:
+    wandb_runner = mocker.Mock()
+    wandb_runner.log = lambda x: None
+    device_mesh = (
+        init_device_mesh(
+            device_type="cuda",
+            mesh_shape=(int(os.environ.get("WORLD_SIZE", 1)), 1),
+            mesh_dim_names=("data", "model"),
+        )
+        if os.environ.get("WORLD_SIZE") is not None
+        else None
+    )
+    activation_stream = [
+        {
+            "in": torch.randn(4, 2, dtype=sae_config.dtype, device=sae_config.device),
+            "out": torch.randn(4, 2, dtype=sae_config.dtype, device=sae_config.device),
         }
-
-    ### Train SAE ###
-    optimizer = Adam(sae.parameters(), lr=0.001)
-    sae.train()
-    activation_in, activation_out = batch[hook_point], batch[hook_point]
-    loss, _ = sae.compute_loss(activation_in, label=activation_out)
-    loss.backward()
-    optimizer.step()
+        for _ in range(200)
+    ]
+    initializer = Initializer(initializer_config)
+    sae = initializer.initialize_sae_from_config(
+        sae_config,
+        device_mesh=device_mesh,
+        activation_stream=activation_stream,
+    )
+    trainer = Trainer(trainer_config)
+    trainer.fit(
+        sae=sae,
+        activation_stream=activation_stream,
+        eval_fn=lambda x: None,
+        wandb_logger=wandb_runner,
+    )
