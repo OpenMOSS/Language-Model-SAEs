@@ -24,7 +24,6 @@ class SparseAutoEncoder(HookedRootModule):
         # should be set by Trainer during training
         self.current_k = cfg.top_k
         # should be initialized by Initializer and set by Trainer during training
-        assert cfg.d_sae is not None
         self.current_l1_coefficient = None
         self.encoder = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
         self.decoder = torch.nn.Linear(

@@ -53,9 +53,8 @@ class BaseSAEConfig(BaseModelConfig):
     """
 
     hook_point_in: str
-    hook_point_out: str | None = None
+    hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
     d_model: int
-    d_sae: int | None = None
     expansion_factor: int
     use_decoder_bias: bool = True
     use_glu_encoder: bool = False
@@ -68,12 +67,9 @@ class BaseSAEConfig(BaseModelConfig):
     sae_pretrained_name_or_path: Optional[str] = None
     strict_loading: bool = True
 
-    def model_post_init(self, __context):
-        super().model_post_init(__context)
-        if self.hook_point_out is None:
-            self.hook_point_out = self.hook_point_in
-        if self.d_sae is None:
-            self.d_sae = self.d_model * self.expansion_factor
+    @property
+    def d_sae(self) -> int:
+        return self.d_model * self.expansion_factor
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):

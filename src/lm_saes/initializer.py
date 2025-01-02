@@ -62,7 +62,6 @@ class Initializer:
         """
         This function is used to search for the best initialization norm for the SAE decoder.
         """
-        assert sae.cfg.hook_point_out is not None
         activation_in, activation_out = (
             activation_batch[sae.cfg.hook_point_in],
             activation_batch[sae.cfg.hook_point_out],
