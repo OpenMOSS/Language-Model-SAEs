@@ -1,4 +1,5 @@
 import itertools
+import json
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -60,6 +61,9 @@ class ActivationWriter:
 
         # Use itertools to batch the data
         for chunk_id, chunk in enumerate(itertools.batched(data, self.cfg.n_samples_per_chunk)):
+            assert all(
+                [hook_point in d for d in chunk for hook_point in self.cfg.hook_points]
+            ), f"All samples must have all hook points: {self.cfg.hook_points}"
             tokens = torch.stack([d["tokens"] for d in chunk])
             meta = [d["meta"] for d in chunk] if "meta" in chunk[0] else None
 
@@ -78,8 +82,9 @@ class ActivationWriter:
                     save_file(chunk_data, chunk_path)
                     if meta is not None:
                         # Save meta as a separate file
-                        meta_path = chunk_path.with_suffix(".meta")
-                        torch.save(meta, meta_path)
+                        meta_path = chunk_path.with_suffix(".meta.json")
+                        with open(meta_path, "w") as f:
+                            json.dump(meta, f)
                 else:
                     raise ValueError(f"Invalid format: {self.cfg.format}")
 

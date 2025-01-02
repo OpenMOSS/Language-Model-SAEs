@@ -221,6 +221,8 @@ class ActivationFactoryConfig(BaseConfig):
     """ The batch size to use for outputting batched-activations-1d. """
     buffer_size: Optional[int] = 500_000
     """ Buffer size for online shuffling. If None, no shuffling will be performed. """
+    ignore_token_ids: Optional[list[int]] = None
+    """ Tokens to ignore in the activations. """
 
 
 class LanguageModelConfig(BaseModelConfig):
