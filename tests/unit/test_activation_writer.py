@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -56,8 +57,8 @@ def test_process_pytorch_format(writer: ActivationWriter, sample_data: list[dict
 
     # Should create 2 chunks (2 samples in first, 1 in second)
     for hook_point in writer.cfg.hook_points:
-        chunk0_path = tmp_path / hook_point / "chunk-0.pt"
-        chunk1_path = tmp_path / hook_point / "chunk-1.pt"
+        chunk0_path = tmp_path / hook_point / f"chunk-{0:08d}.pt"
+        chunk1_path = tmp_path / hook_point / f"chunk-{1:08d}.pt"
 
         assert chunk0_path.exists()
         assert chunk1_path.exists()
@@ -82,18 +83,18 @@ def test_process_safetensors_format(mock_config: ActivationWriterConfig, sample_
     writer.process(sample_data)
 
     # Verify first chunk of first hook point
-    chunk0_path = tmp_path / "h0" / "chunk-0.safetensors"
+    chunk0_path = tmp_path / "h0" / f"chunk-{0:08d}.safetensors"
     assert chunk0_path.exists()
 
     # Verify meta file exists
-    meta_path = chunk0_path.with_suffix(".meta")
+    meta_path = chunk0_path.with_suffix(".meta.json")
     assert meta_path.exists()
 
     chunk0_data = load_file(chunk0_path)
     assert "activation" in chunk0_data
     assert "tokens" in chunk0_data
 
-    chunk0_meta = torch.load(meta_path, weights_only=True)
+    chunk0_meta = json.load(open(meta_path, "r"))
     assert len(chunk0_meta) == 2
     assert chunk0_meta[0]["context_idx"] == 1
     assert chunk0_meta[1]["context_idx"] == 2

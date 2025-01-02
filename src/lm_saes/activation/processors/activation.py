@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional, cast
 
@@ -88,6 +89,12 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
                 - Original tokens as "tokens"
                 - Original info field if present in input
         """
+        if ignore_token_ids is None and model is None:
+            warnings.warn(
+                "Both ignore_token_ids and model are not provided. No tokens (including pad tokens) will be filtered out. If this is intentional, set ignore_token_ids explicitly to an empty list to avoid this warning.",
+                UserWarning,
+                stacklevel=2,
+            )
         if ignore_token_ids is None and model is not None:
             assert model.tokenizer is not None, "Tokenizer is required to obtain ignore_token_ids"
             ignore_token_ids = [

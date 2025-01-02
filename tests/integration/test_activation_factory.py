@@ -1,10 +1,18 @@
+import json
+from pathlib import Path
+
 import pytest
 import torch
 from datasets import Dataset
 from pytest_mock import MockerFixture
+from safetensors.torch import save_file
 from transformer_lens import HookedTransformer
 
-from lm_saes.activation.factory import ActivationFactory, ActivationFactoryTarget
+from lm_saes.activation.factory import (
+    ActivationFactory,
+    ActivationFactoryActivationsSource,
+    ActivationFactoryTarget,
+)
 from lm_saes.config import ActivationFactoryConfig, ActivationFactoryDatasetSource
 
 
@@ -203,3 +211,74 @@ def test_activation_factory_missing_model(
 
     with pytest.raises(AssertionError, match="`model` must be provided for dataset sources"):
         list(factory.process(datasets={"test_dataset": mock_dataset}))
+
+
+def test_activation_factory_activations_source(
+    mocker: MockerFixture,
+    tmp_path: Path,
+    basic_config: ActivationFactoryConfig,
+    mock_model: HookedTransformer,
+):
+    # Setup mock activation files
+    hook_dir = tmp_path / "h0"
+    hook_dir.mkdir()
+
+    # Create sample activation data
+    sample_data = {
+        "activation": torch.randn(2, 3, 4),  # (n_samples, n_context, d_model)
+        "tokens": torch.randint(0, 1000, (2, 3)),  # (n_samples, n_context)
+        "meta": [{"context_id": f"ctx_{i}"} for i in range(2)],
+    }
+
+    # Create mock files
+    for i in range(2):
+        chunk_path = hook_dir / f"chunk-{i}.safetensors"
+        meta_path = hook_dir / f"chunk-{i}.meta.json"
+
+        # Save activation data using safetensors
+        save_file({"activation": sample_data["activation"], "tokens": sample_data["tokens"]}, chunk_path)
+        # Save meta data
+        with open(meta_path, "w") as f:
+            json.dump(sample_data["meta"], f)
+
+    # Configure factory to use activation source
+    basic_config.sources = [
+        ActivationFactoryActivationsSource(name="test_activations", path=str(tmp_path), sample_weights=1.0)
+    ]
+    basic_config.target = ActivationFactoryTarget.ACTIVATIONS_2D
+    basic_config.hook_points = ["h0"]
+
+    # Initialize factory and process data
+    factory = ActivationFactory(basic_config)
+    result = list(factory.process(model=mock_model))
+
+    # Verify results
+    assert len(result) == 4  # 2 chunks * 2 samples per chunk
+    for i, item in enumerate(result):
+        # Check activation shape and content
+        assert "h0" in item
+        assert item["h0"].shape == (3, 4)
+        assert torch.allclose(item["h0"], sample_data["activation"][i % 2])
+
+        # Check tokens
+        assert "tokens" in item
+        assert item["tokens"].shape == (3,)  # context_size
+        assert torch.allclose(item["tokens"], sample_data["tokens"][i % 2])
+
+        # Check metadata
+        assert "meta" in item
+        assert isinstance(item["meta"], dict)
+        assert "context_id" in item["meta"]
+        assert item["meta"]["context_id"] == f"ctx_{i % 2}"
+
+
+def test_activation_factory_activations_source_invalid_target(basic_config: ActivationFactoryConfig):
+    # Configure factory with invalid target
+    basic_config.sources = [
+        ActivationFactoryActivationsSource(name="test_activations", path="dummy/path", sample_weights=1.0)
+    ]
+    basic_config.target = ActivationFactoryTarget.TOKENS  # Too low level target for activation source
+
+    # Should raise error when initializing factory
+    with pytest.raises(ValueError, match="Activations sources are only supported for target >= ACTIVATIONS_2D"):
+        ActivationFactory(basic_config)
