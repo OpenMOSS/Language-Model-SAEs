@@ -12,7 +12,7 @@ from transformer_lens.hook_points import HookedRootModule, HookPoint
 
 from lm_saes.database import MongoClient
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-from lm_saes.utils.misc import is_master
+from lm_saes.utils.misc import is_master, print_once
 
 from .config import SAEConfig
 
@@ -39,6 +39,7 @@ class SparseAutoEncoder(HookedRootModule):
         # if cfg.norm_activation == "dataset-wise", the dataset average activation norm should be
         # calculated by the initializer before training starts and set by standardize_parameters_of_dataset_activation_scaling
         self.dataset_average_activation_norm: dict[str, float] | None = None
+        self.device_mesh: DeviceMesh | None = None
 
     @torch.no_grad()
     def set_dataset_average_activation_norm(self, dataset_average_activation_norm: dict[str, float]):
@@ -61,30 +62,30 @@ class SparseAutoEncoder(HookedRootModule):
         """
         self.current_l1_coefficient = current_l1_coefficient
 
-    def encoder_norm(self, keepdim: bool = False, device_mesh: DeviceMesh | None = None):
+    def encoder_norm(self, keepdim: bool = False):
         """Compute the norm of the encoder weight."""
-        if not device_mesh:
+        if not isinstance(self.encoder.weight, DTensor):
             return torch.norm(self.encoder.weight, p=2, dim=1, keepdim=keepdim).to(self.cfg.device)
         else:
             # We suspect that using torch.norm on dtensor may lead to some bugs
             # during the backward process that are difficult to pinpoint and resolve.
             # Therefore, we first convert the decoder weight from dtensor to tensor for norm calculation,
             # and then redistribute it to different nodes.
-            assert isinstance(self.encoder.weight, DTensor)
+            assert self.device_mesh is not None
             encoder_norm = torch.norm(self.encoder.weight.to_local(), p=2, dim=1, keepdim=keepdim)
             encoder_norm = DTensor.from_local(encoder_norm, device_mesh=device_mesh["model"], placements=[Shard(0)])
             encoder_norm = encoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return encoder_norm
 
-    def decoder_norm(self, keepdim: bool = False, device_mesh: DeviceMesh | None = None):
+    def decoder_norm(self, keepdim: bool = False):
         """Compute the norm of the decoder weight."""
-        if not device_mesh:
+        if not isinstance(self.decoder.weight, DTensor):
             return torch.norm(self.decoder.weight, p=2, dim=0, keepdim=keepdim).to(self.cfg.device)
         else:
-            assert isinstance(self.decoder.weight, DTensor)
+            assert self.device_mesh is not None
             decoder_norm = torch.norm(self.decoder.weight.to_local(), p=2, dim=0, keepdim=keepdim)
             decoder_norm = DTensor.from_local(
-                decoder_norm, device_mesh=device_mesh["model"], placements=[Shard(int(keepdim))]
+                decoder_norm, device_mesh=self.device_mesh["model"], placements=[Shard(int(keepdim))]
             )
             decoder_norm = decoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return decoder_norm
@@ -164,7 +165,7 @@ class SparseAutoEncoder(HookedRootModule):
             p.requires_grad_(True)
 
     @torch.no_grad()
-    def set_decoder_to_fixed_norm(self, value: float, force_exact: bool, device_mesh: DeviceMesh | None = None):
+    def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
         """Set the decoder to a fixed norm.
         Args:
             value (float): The target norm value.
@@ -172,34 +173,34 @@ class SparseAutoEncoder(HookedRootModule):
                 If False, the decoder weight will be scaled to match the target norm up to a small tolerance.
             device_mesh (DeviceMesh | None): The device mesh to use for distributed training.
         """
-        decoder_norm = self.decoder_norm(keepdim=True, device_mesh=device_mesh)
-        if device_mesh:
+        decoder_norm = self.decoder_norm(keepdim=True)
+        if self.device_mesh:
             # TODO: check if this is correct
             # guess that norm should be distributed as the decoder weight
-            decoder_norm = distribute_tensor(decoder_norm, device_mesh=device_mesh["model"], placements=[Shard(0)])
+            decoder_norm = distribute_tensor(decoder_norm, device_mesh=self.device_mesh["model"], placements=[Shard(0)])
         if force_exact:
             self.decoder.weight.data *= value / decoder_norm
         else:
             self.decoder.weight.data *= value / torch.clamp(decoder_norm, min=value)
 
     @torch.no_grad()
-    def set_encoder_to_fixed_norm(self, value: float, device_mesh: DeviceMesh | None = None):
+    def set_encoder_to_fixed_norm(self, value: float):
         """Set the encoder to a fixed norm.
         Args:
             value (float): The target norm value.
             device_mesh (DeviceMesh | None): The device mesh to use for distributed training.
         """
         assert not self.cfg.use_glu_encoder, "GLU encoder not supported"
-        encoder_norm = self.encoder_norm(keepdim=True, device_mesh=device_mesh)
-        if device_mesh:
+        encoder_norm = self.encoder_norm(keepdim=True)
+        if self.device_mesh:
             # TODO: check if this is correct
-            encoder_norm = distribute_tensor(encoder_norm, device_mesh=device_mesh["model"], placements=[Shard(0)])
+            encoder_norm = distribute_tensor(encoder_norm, device_mesh=self.device_mesh["model"], placements=[Shard(0)])
         self.encoder.weight.data *= value / encoder_norm
 
     @torch.no_grad()
-    def get_full_state_dict(self, device_mesh: DeviceMesh | None = None):
+    def get_full_state_dict(self):
         state_dict = self.state_dict()
-        if device_mesh:
+        if self.device_mesh and self.device_mesh["model"].size(0) > 1:
             state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
 
         # If sparsity_include_decoder_norm is False, we need to normalize the decoder weight before saving

@@ -45,15 +45,16 @@ class Initializer:
 
     @torch.no_grad()
     def initialize_tensor_parallel(self, sae: SparseAutoEncoder, device_mesh: DeviceMesh | None = None):
-        if not device_mesh:
+        if not device_mesh or device_mesh["model"].size(0) == 1:
             return sae
+        sae.device_mesh = device_mesh
         plan = {
             "encoder": ColwiseParallel(output_layouts=Replicate()),
             "decoder": RowwiseParallel(input_layouts=Replicate()),
         }
         if sae.cfg.use_glu_encoder:
             plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
-        sae = parallelize_module(sae, device_mesh=device_mesh, parallelize_plan=plan)  # type: ignore
+        sae = parallelize_module(sae, device_mesh=device_mesh["model"], parallelize_plan=plan)  # type: ignore
         return sae
 
     @torch.no_grad()
@@ -118,7 +119,6 @@ class Initializer:
         self,
         cfg: SAEConfig,
         activation_stream: Iterable[dict[str, Tensor]] | None = None,
-        is_activation_normalized: bool = False,
         activation_norm: dict[str, float] | None = None,
         device_mesh: DeviceMesh | None = None,
     ):
@@ -127,7 +127,6 @@ class Initializer:
         Args:
             cfg (SAEConfig): The SAE config.
             activation_iter (Iterable[dict[str, Tensor]] | None): The activation iterator. Used for initialization search when self.cfg.init_search is True.
-            is_activation_normalized (bool): Whether the activation from activation_iter is normalized. If True, the activation_norm is ignored.
             activation_norm (dict[str, float] | None): The activation normalization. Used for dataset-wise normalization when self.cfg.norm_activation is "dataset-wise".
             device_mesh (DeviceMesh | None): The device mesh.
         """
@@ -141,7 +140,7 @@ class Initializer:
             if cfg.sae_pretrained_name_or_path is None:
                 sae: SparseAutoEncoder = self.initialize_parameters(sae)
             if sae.cfg.norm_activation == "dataset-wise":
-                if is_activation_normalized:
+                if self.cfg.is_activation_normalized:
                     print("Activation is normalized, using 1.0 as the activation norm")
                     activation_norm = {
                         "in": 1.0,
@@ -169,6 +168,5 @@ class Initializer:
                 )
                 sae.cfg.act_fn = "jumprelu"
 
-        if device_mesh:
-            sae = self.initialize_tensor_parallel(sae, device_mesh)
+        sae = self.initialize_tensor_parallel(sae, device_mesh)
         return sae

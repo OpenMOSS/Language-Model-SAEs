@@ -28,7 +28,6 @@ class Trainer:
         self.optimizer: Optimizer | None = None
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
-
         if self.cfg.n_checkpoints > 0:
             if self.cfg.check_point_save_mode == "linear":
                 self.checkpoint_thresholds = list(
@@ -78,17 +77,19 @@ class Trainer:
         assert sae.cfg.hook_point_in is not None
         assert sae.cfg.hook_point_out is not None
         if (not sae.cfg.act_fn == "topk") and self.l1_coefficient_warmup_steps > 0:
-            sae.update_l1_coefficient(
+            sae.set_current_l1_coefficient(
                 min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
             )
         elif self.k_warmup_steps > 0:
             assert self.cfg.initial_k is not None, "initial_k must be provided"
-            sae.update_k(
-                max(
-                    1.0,
-                    self.cfg.initial_k + (1 - self.cfg.initial_k) / self.cfg.k_warmup_steps * self.cur_step,
+            sae.set_current_k(
+                math.ceil(
+                    max(
+                        1.0,
+                        self.cfg.initial_k + (1 - self.cfg.initial_k) / self.cfg.k_warmup_steps * self.cur_step,
+                    )
+                    * sae.cfg.top_k
                 )
-                * sae.cfg.top_k
             )
 
         activation_in, activation_out = batch[sae.cfg.hook_point_in], batch[sae.cfg.hook_point_out]
@@ -103,9 +104,7 @@ class Trainer:
         return loss_dict
 
     @torch.no_grad()
-    def _log(
-        self, sae: SparseAutoEncoder, log_info: dict, batch: dict[str, Tensor], device_mesh: DeviceMesh | None = None
-    ):
+    def _log(self, sae: SparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
         assert self.optimizer is not None, "Optimizer must be initialized"
         assert self.wandb_logger is not None, "Wandb logger must be provided"
         activation_out = batch["output"]
@@ -183,9 +182,8 @@ class Trainer:
         self,
         sae: SparseAutoEncoder,
         activation_stream: Iterable[dict[str, Tensor]],
-        eval_fn: Callable[[SparseAutoEncoder]] | None = None,
+        eval_fn: Callable[[SparseAutoEncoder], None] | None = None,
         wandb_logger: Run | None = None,
-        device_mesh: DeviceMesh | None = None,
     ):
         self._initialize_trainer(sae, activation_stream, wandb_logger)
         self._initialize_optimizer(sae)
@@ -201,7 +199,6 @@ class Trainer:
         }
         for batch in activation_stream:
             sae.train()
-            self.scheduler.step()
             self.optimizer.zero_grad()
             loss_dict = self._training_step(sae, batch)
             loss_dict["loss"].backward()
@@ -210,8 +207,9 @@ class Trainer:
                 max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
             )
             self.optimizer.step()
+            self.scheduler.step()
             if not sae.cfg.sparsity_include_decoder_norm:
-                sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True, device_mesh=device_mesh)
+                sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
 
             log_info.update(loss_dict)
             """
@@ -230,7 +228,7 @@ class Trainer:
             activation_in, activation_out = batch[sae.cfg.hook_point_in], batch[sae.cfg.hook_point_out]
 
             if self.wandb_logger is not None:
-                self._log(sae, log_info, {"input": activation_in, "output": activation_out}, device_mesh)
+                self._log(sae, log_info, {"input": activation_in, "output": activation_out})
 
             if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
                 eval_fn(sae)
