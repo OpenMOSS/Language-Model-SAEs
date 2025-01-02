@@ -1,3 +1,4 @@
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,9 +111,13 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             dict[str, Any]: Loaded data containing activations, tokens, and meta
         """
         if chunk_path.suffix == ".safetensors":
-            chunk_data = load_file(chunk_path)
-            meta_path = chunk_path.with_suffix(".meta")
-            return chunk_data | ({"meta": torch.load(meta_path)} if meta_path.exists() else {})
+            chunk_data: dict[str, Any] = load_file(chunk_path)
+            meta_path = chunk_path.with_suffix(".meta.json")
+            if meta_path.exists():
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
+                chunk_data = chunk_data | {"meta": meta}
+            return chunk_data
         elif chunk_path.suffix == ".pt":
             return torch.load(chunk_path, map_location="cpu", weights_only=True)
         else:

@@ -1,4 +1,4 @@
-from typing import Any, Callable, Iterable, Iterator, Optional, Sequence
+from typing import Any, Iterable, Iterator, Optional, Sequence
 
 import numpy as np
 from datasets import Dataset
@@ -9,6 +9,7 @@ from lm_saes.activation.processors.activation import (
     ActivationGenerator,
     ActivationTransformer,
 )
+from lm_saes.activation.processors.cached_activation import CachedActivationLoader
 from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.activation.processors.huggingface import HuggingFaceDatasetLoader
 from lm_saes.activation.processors.token import (
@@ -48,6 +49,102 @@ class ActivationFactory:
         self.aggregator = self.build_aggregator(cfg)
 
     @staticmethod
+    def _build_pre_aggregation_dataset_source_processors(
+        cfg: ActivationFactoryConfig, dataset_source: ActivationFactoryDatasetSource
+    ):
+        loader = HuggingFaceDatasetLoader(
+            batch_size=1,
+            num_workers=4,
+            with_info=True,
+            show_progress=True,
+        )
+
+        processors_optional: Sequence[
+            BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]] | None
+        ] = [
+            RawDatasetTokenProcessor(prepend_bos=dataset_source.prepend_bos)
+            if cfg.target >= ActivationFactoryTarget.TOKENS
+            else None,
+            PadAndTruncateTokensProcessor(seq_len=cfg.context_size)
+            if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
+            else None,
+            ActivationGenerator(hook_points=cfg.hook_points)
+            if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
+            else None,
+            ActivationTransformer(hook_points=cfg.hook_points)
+            if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
+            else None,
+        ]
+
+        # Create processors up to required stage
+        processors: Sequence[BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]] = [
+            processor for processor in processors_optional if processor is not None
+        ]
+
+        def process_dataset(**kwargs: Any):
+            """Process a single dataset through the pipeline.
+
+            Args:
+                **kwargs: Must contain 'datasets' dict and 'model' transformer
+
+            Returns:
+                Stream of processed data
+            """
+            datasets: dict[str, tuple[Dataset, Optional[dict[str, Any]]]] | None = kwargs.get("datasets")
+            assert datasets is not None, "`datasets` must be provided for dataset sources"
+            model: HookedTransformer | None = kwargs.get("model")
+            assert model is not None, "`model` must be provided for dataset sources"
+
+            dataset = datasets.get(dataset_source.name)
+            assert dataset is not None, f"Dataset {dataset_source.name} not found in `datasets`"
+            dataset, metadata = dataset
+
+            stream = loader.process(dataset, dataset_name=dataset_source.name, metadata=metadata)
+
+            for processor in processors:
+                stream = processor.process(stream, model=model, ignore_token_ids=cfg.ignore_token_ids)
+
+            return stream
+
+        return process_dataset
+
+    @staticmethod
+    def _build_pre_aggregation_activations_source_processors(
+        cfg: ActivationFactoryConfig, activations_source: ActivationFactoryActivationsSource
+    ):
+        if cfg.target < ActivationFactoryTarget.ACTIVATIONS_2D:
+            raise ValueError("Activations sources are only supported for target >= ACTIVATIONS_2D")
+
+        loader = CachedActivationLoader(
+            cache_dir=activations_source.path,
+            hook_points=cfg.hook_points,
+        )
+
+        processors = (
+            [ActivationTransformer(hook_points=cfg.hook_points)]
+            if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
+            else []
+        )
+
+        def process_activations(**kwargs: Any):
+            """Process a single activations source through the pipeline.
+
+            Args:
+                **kwargs: Could contain 'model' for providing tokenizer info for special tokens filtering
+
+            Returns:
+                Stream of processed data
+            """
+            model: HookedTransformer | None = kwargs.get("model")
+
+            stream = loader.process()
+            for processor in processors:
+                stream = processor.process(stream, ignore_token_ids=cfg.ignore_token_ids, model=model)
+            return stream
+
+        return process_activations
+
+    @staticmethod
     def build_pre_aggregation_processors(cfg: ActivationFactoryConfig):
         """Build processors that run before aggregation for each data source.
 
@@ -63,71 +160,13 @@ class ActivationFactory:
             source for source in cfg.sources if isinstance(source, ActivationFactoryActivationsSource)
         ]
 
-        pre_aggregation_processors: list[Callable[..., Iterable[dict[str, Any]]]] = []
-
-        # Build processors for dataset sources
-        for dataset_source in dataset_sources:
-            loader = HuggingFaceDatasetLoader(
-                batch_size=1,
-                num_workers=4,
-                with_info=True,
-                show_progress=True,
-            )
-
-            # Map target type to number of processing stages needed
-            # Define processor pipeline factories
-            processors_optional: Sequence[
-                BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]] | None
-            ] = [
-                RawDatasetTokenProcessor(prepend_bos=dataset_source.prepend_bos)
-                if cfg.target >= ActivationFactoryTarget.TOKENS
-                else None,
-                PadAndTruncateTokensProcessor(seq_len=cfg.context_size)
-                if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
-                else None,
-                ActivationGenerator(hook_points=cfg.hook_points)
-                if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
-                else None,
-                ActivationTransformer(hook_points=cfg.hook_points)
-                if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
-                else None,
-            ]
-
-            # Create processors up to required stage
-            processors: Sequence[BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]] = [
-                processor for processor in processors_optional if processor is not None
-            ]
-
-            def process_dataset(**kwargs: Any):
-                """Process a single dataset through the pipeline.
-
-                Args:
-                    **kwargs: Must contain 'datasets' dict and 'model' transformer
-
-                Returns:
-                    Stream of processed data
-                """
-                datasets: dict[str, tuple[Dataset, Optional[dict[str, Any]]]] | None = kwargs.get("datasets")
-                assert datasets is not None, "`datasets` must be provided for dataset sources"
-                model: HookedTransformer | None = kwargs.get("model")
-                assert model is not None, "`model` must be provided for dataset sources"
-
-                dataset = datasets.get(dataset_source.name)
-                assert dataset is not None, f"Dataset {dataset_source.name} not found in `datasets`"
-                dataset, metadata = dataset
-
-                stream = loader.process(dataset, dataset_name=dataset_source.name, metadata=metadata)
-
-                for processor in processors:
-                    stream = processor.process(stream, model=model)
-
-                return stream
-
-            pre_aggregation_processors.append(process_dataset)
-
-        if len(activations_sources) > 0:
-            raise NotImplementedError("Activations sources are not implemented yet")
-
+        pre_aggregation_processors = [
+            ActivationFactory._build_pre_aggregation_dataset_source_processors(cfg, source)
+            for source in dataset_sources
+        ] + [
+            ActivationFactory._build_pre_aggregation_activations_source_processors(cfg, source)
+            for source in activations_sources
+        ]
         return pre_aggregation_processors
 
     @staticmethod
