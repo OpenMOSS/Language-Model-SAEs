@@ -134,7 +134,6 @@ class MongoClient:
         inserted_id = self.sae_collection.insert_one(
             {"name": name, "series": series, "path": path, "cfg": cfg.model_dump()}
         ).inserted_id
-        assert cfg.d_sae is not None, "d_sae must be set"
         self.feature_collection.insert_many(
             [{"sae_name": name, "sae_series": series, "index": i} for i in range(cfg.d_sae)]
         )
