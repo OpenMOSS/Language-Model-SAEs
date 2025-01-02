@@ -74,8 +74,6 @@ class Trainer:
         sae: SparseAutoEncoder,
         batch: dict[str, Tensor],
     ) -> dict[str, Tensor]:
-        assert sae.cfg.hook_point_in is not None
-        assert sae.cfg.hook_point_out is not None
         if (not sae.cfg.act_fn == "topk") and self.l1_coefficient_warmup_steps > 0:
             sae.set_current_l1_coefficient(
                 min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
@@ -189,9 +187,6 @@ class Trainer:
         self._initialize_optimizer(sae)
         assert self.optimizer is not None
         assert self.scheduler is not None
-        assert sae.cfg.d_sae is not None
-        assert sae.cfg.hook_point_in is not None
-        assert sae.cfg.hook_point_out is not None
         log_info = {
             "act_freq_scores": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
             "n_forward_passes_since_fired": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
