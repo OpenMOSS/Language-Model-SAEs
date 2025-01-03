@@ -175,7 +175,7 @@ class ActivationFactorySource(BaseModel):
 class ActivationFactoryDatasetSource(ActivationFactorySource):
     type: str = "dataset"
     is_dataset_tokenized: bool = False
-    prepend_bos: bool = False
+    prepend_bos: bool = True
 
 
 class ActivationFactoryActivationsSource(ActivationFactorySource):
