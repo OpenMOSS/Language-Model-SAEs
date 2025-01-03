@@ -168,26 +168,35 @@ class DatasetConfig(BaseConfig):
 
 class ActivationFactorySource(BaseModel):
     type: str
+    """ The type of the source. Used to determine the source of activations in deserialization. """
     name: str
     sample_weights: float = 1.0
+    """ The sample weights to use for the source. Will be used to randomly pull tokens from the source when multiple sources are present. """
 
 
 class ActivationFactoryDatasetSource(ActivationFactorySource):
     type: str = "dataset"
     is_dataset_tokenized: bool = False
+    """ Whether the dataset is tokenized. Non-tokenized datasets should have records with fields `text`, `images`, etc. Tokenized datasets should have records with fields `tokens`, which could contain either padded or non-padded tokens. """
     prepend_bos: bool = True
+    """ Whether to prepend the BOS token to each record when tokenizing. """
 
 
 class ActivationFactoryActivationsSource(ActivationFactorySource):
     type: str = "activations"
     path: str
+    """ The path to the cached activations. """
 
 
 class ActivationFactoryTarget(Enum):
     TOKENS = "tokens"
+    """ Output non-padded and non-truncated tokens. """
     ACTIVATIONS_2D = "activations-2d"
+    """ Output activations in `(seq_len, d_model)` shape. Tokens are padded and truncated to the same length. """
     ACTIVATIONS_1D = "activations-1d"
+    """ Output activations in `(n_filtered_tokens, d_model)` shape. Tokens are filtered in this stage. """
     BATCHED_ACTIVATIONS_1D = "batched-activations-1d"
+    """ Output batched activations in `(batch_size, d_model)` shape. Tokens may be shuffled in this stage. """
 
     @property
     def stage(self) -> int:
@@ -214,25 +223,35 @@ class ActivationFactoryConfig(BaseConfig):
     """ The hook points to capture activations from. """
     context_size: int = 128
     """ The context size to use for generating activations. All tokens will be padded or truncated to this size. """
-    batch_size: Optional[int] = 64
-    """ The batch size to use for outputting batched-activations-1d. """
-    buffer_size: Optional[int] = 500_000
+    batch_size: Optional[int] = Field(
+        default_factory=lambda validated_model: 64
+        if validated_model["target"] == ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D
+        else None
+    )
+    """ The batch size to use for outputting `batched-activations-1d`. """
+    buffer_size: Optional[int] = Field(
+        default_factory=lambda validated_model: 500_000
+        if validated_model["target"] == ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D
+        else None
+    )
     """ Buffer size for online shuffling. If None, no shuffling will be performed. """
     ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
 
 
 class LanguageModelConfig(BaseModelConfig):
-    model_name: str = "gpt2"
+    model_name: Annotated[str, BeforeValidator(lambda v: get_official_model_name(v))] = "gpt2"
+    """ The name of the model to use. """
     model_from_pretrained_path: Optional[str] = None
+    """ The path to the pretrained model. If None, will use the model from HuggingFace. """
     use_flash_attn: bool = False
+    """ Whether to use Flash Attention. """
     cache_dir: Optional[str] = None
+    """ The directory of the HuggingFace cache. Should have the same effect as `HF_HOME`. """
     d_model: int = 768
+    """ The dimension of the model. """
     local_files_only: bool = False
-
-    def model_post_init(self, __context):
-        super().model_post_init(__context)
-        self.model_name = get_official_model_name(self.model_name)
+    """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
 
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
