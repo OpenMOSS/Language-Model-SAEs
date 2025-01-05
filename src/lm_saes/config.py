@@ -233,7 +233,7 @@ class ActivationFactoryConfig(BaseConfig):
         if validated_model["target"] == ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D
         else None
     )
-    """ Buffer size for online shuffling. If None, no shuffling will be performed. """
+    """ Buffer size for online shuffling. If `None`, no shuffling will be performed. """
     ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
 
@@ -242,7 +242,7 @@ class LanguageModelConfig(BaseModelConfig):
     model_name: Annotated[str, BeforeValidator(lambda v: get_official_model_name(v))] = "gpt2"
     """ The name of the model to use. """
     model_from_pretrained_path: Optional[str] = None
-    """ The path to the pretrained model. If None, will use the model from HuggingFace. """
+    """ The path to the pretrained model. If `None`, will use the model from HuggingFace. """
     use_flash_attn: bool = False
     """ Whether to use Flash Attention. """
     cache_dir: Optional[str] = None
@@ -277,12 +277,36 @@ class ActivationWriterConfig(BaseConfig):
     hook_points: list[str]
     """ The hook points to capture activations from. """
     total_generating_tokens: Optional[int] = None
-    """ The total number of tokens to generate. If None, will write all activations to disk. """
+    """ The total number of tokens to generate. If `None`, will write all activations to disk. """
     n_samples_per_chunk: int = 16
     """ The number of samples to write to disk per chunk. """
     cache_dir: str | Path = Path("activations")
     """ The directory to save the activations. """
     format: Literal["pt", "safetensors"] = "safetensors"
+
+
+class FeatureAnalyzerConfig(BaseConfig):
+    total_analyzing_tokens: int
+    """ Total number of tokens to analyze """
+
+    batch_size: int = 16
+    """ Batch size for processing activations. """
+
+    enable_sampling: bool = False
+    """ Whether to use weighted sampling for selecting activations. 
+        If `False`, will only keep top activations (below the subsample threshold). 
+    """
+
+    sample_weight_exponent: float = 2.0
+    """ Exponent for weighting samples by activation value """
+
+    subsamples: dict[str, dict[str, int | float]] = Field(
+        default_factory=lambda: {"top_activations": {"proportion": 1.0, "n_samples": 10}}
+    )
+    """ Dictionary mapping subsample names to their parameters:
+        - `proportion`: Proportion of max activation to consider
+        - `n_samples`: Number of samples to keep
+    """
 
 
 class WandbConfig(BaseConfig):
@@ -301,7 +325,7 @@ class WandbConfig(BaseConfig):
     #     hook_point_in: str = "blocks.0.hook_resid_pre"
     #     """ The hook point to use as input to the SAE. """
     #     hook_point_out: str = None  # type: ignore
-    #     """ The hook point to use as label of the SAE. If None, it will be set to hook_point_in. """
+    #     """ The hook point to use as label of the SAE. If `None`, it will be set to hook_point_in. """
 
     #     sae_pretrained_name_or_path: Optional[str] = None
     #     strict_loading: bool = True
@@ -315,7 +339,7 @@ class WandbConfig(BaseConfig):
     #     act_fn: str = "relu"
     #     jump_relu_threshold: float = 0.0
 
-    #     """ The dimension of the SAE, i.e. the number of dictionary components (or features). If None, it will be set to d_model * expansion_factor """
+    #     """ The dimension of the SAE, i.e. the number of dictionary components (or features). If `None`, it will be set to d_model * expansion_factor """
     #     norm_activation: str = "token-wise"  # none, token-wise, batch-wise, dataset-wise
     #     dataset_average_activation_norm: Dict[str, float] | None = None
     # decoder_exactly_fixed_norm: bool = False
