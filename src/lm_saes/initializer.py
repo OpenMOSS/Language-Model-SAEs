@@ -66,7 +66,6 @@ class Initializer:
             activation_batch[sae.cfg.hook_point_in],
             activation_batch[sae.cfg.hook_point_out],
         )
-
         if self.cfg.init_decoder_norm is None:
             assert sae.cfg.sparsity_include_decoder_norm, "Decoder norm must be included in sparsity loss"
             if not self.cfg.init_encoder_with_decoder_transpose or sae.cfg.hook_point_in != sae.cfg.hook_point_out:
@@ -90,8 +89,9 @@ class Initializer:
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm
 
-            assert self.cfg.l1_coefficient is not None
-            sae.set_current_l1_coefficient(self.cfg.l1_coefficient)
+            if sae.cfg.act_fn != "topk":
+                assert self.cfg.l1_coefficient is not None
+                sae.set_current_l1_coefficient(self.cfg.l1_coefficient)
             best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
             best_norm_fine_grained = grid_search_best_init_norm(
                 torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
@@ -139,16 +139,7 @@ class Initializer:
             if cfg.sae_pretrained_name_or_path is None:
                 sae: SparseAutoEncoder = self.initialize_parameters(sae)
             if sae.cfg.norm_activation == "dataset-wise":
-                if self.cfg.is_activation_normalized:
-                    print("Activation is normalized, using 1.0 as the activation norm")
-                    activation_norm = {
-                        "in": 1.0,
-                        "out": 1.0,
-                    }
-                else:
-                    assert (
-                        activation_norm is not None
-                    ), "Activation normalization must be provided if data from activation_iter is not normalized"
+                assert activation_norm is not None, "Activation normalization must be provided for dataset-wise normalization"
                 sae.set_dataset_average_activation_norm(activation_norm)
 
             if self.cfg.init_search:

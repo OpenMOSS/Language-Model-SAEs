@@ -6,10 +6,19 @@ from .config import (
     ActivationFactoryTarget,
     ActivationWriterConfig,
     DatasetConfig,
+    InitializerConfig,
     LanguageModelConfig,
+    SAEConfig,
+    TrainerConfig,
+    WandbConfig,
 )
 from .resource_loaders import load_dataset, load_model
-from .runner import GenerateActivationsSettings, generate_activations
+from .runner import (
+    GenerateActivationsSettings,
+    TrainSAESettings,
+    generate_activations,
+    train_sae,
+)
 
 __all__ = [
     "ActivationFactory",
@@ -25,4 +34,10 @@ __all__ = [
     "load_model",
     "GenerateActivationsSettings",
     "generate_activations",
+    "InitializerConfig",
+    "SAEConfig",
+    "TrainerConfig",
+    "WandbConfig",
+    "train_sae",
+    "TrainSAESettings",
 ]

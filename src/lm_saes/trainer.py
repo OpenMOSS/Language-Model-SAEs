@@ -7,6 +7,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.optim import Adam, Optimizer
+from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import TrainerConfig
@@ -28,16 +29,7 @@ class Trainer:
         self.optimizer: Optimizer | None = None
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
-        if self.cfg.n_checkpoints > 0:
-            if self.cfg.check_point_save_mode == "linear":
-                self.checkpoint_thresholds = list(
-                    range(0, self.cfg.total_training_tokens, self.cfg.total_training_tokens // self.cfg.n_checkpoints)
-                )[1:]
-            elif self.cfg.check_point_save_mode == "log":
-                self.checkpoint_thresholds = [
-                    math.ceil(2 ** (i / self.cfg.n_checkpoints * math.log2(self.cfg.total_training_tokens)))
-                    for i in range(1, self.cfg.n_checkpoints)
-                ]
+        
 
     def _initialize_trainer(
         self, sae: SparseAutoEncoder, activation_stream: Iterable[dict[str, Tensor]], wandb_logger: Run | None = None
@@ -55,6 +47,17 @@ class Trainer:
         self.lr_cool_down_steps = calculate_warmup_steps(self.cfg.lr_cool_down_steps)
         self.k_warmup_steps = calculate_warmup_steps(self.cfg.k_warmup_steps)
         self.l1_coefficient_warmup_steps = calculate_warmup_steps(self.cfg.l1_coefficient_warmup_steps)
+        if self.cfg.n_checkpoints > 0:
+            if self.cfg.check_point_save_mode == "linear":
+                self.checkpoint_thresholds = list(
+                    range(0, self.cfg.total_training_tokens, self.cfg.total_training_tokens // self.cfg.n_checkpoints)
+                )[1:]
+            elif self.cfg.check_point_save_mode == "log":
+                self.checkpoint_thresholds = [
+                    math.ceil(2 ** (i / self.cfg.n_checkpoints * math.log2(self.total_training_steps))) * batch_size
+                    for i in range(1, self.cfg.n_checkpoints)
+                ]
+        self.wandb_logger = wandb_logger
 
     def _initialize_optimizer(self, sae: SparseAutoEncoder):
         optimizer = Adam(sae.parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
@@ -75,6 +78,7 @@ class Trainer:
         batch: dict[str, Tensor],
     ) -> dict[str, Tensor]:
         if (not sae.cfg.act_fn == "topk") and self.l1_coefficient_warmup_steps > 0:
+            assert self.cfg.l1_coefficient is not None
             sae.set_current_l1_coefficient(
                 min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
             )
@@ -91,6 +95,10 @@ class Trainer:
             )
 
         activation_in, activation_out = batch[sae.cfg.hook_point_in], batch[sae.cfg.hook_point_out]
+        # TODO: remove this
+        activation_in = activation_in.to(sae.cfg.device)
+        activation_out = activation_out.to(sae.cfg.device)
+
         loss, (loss_data, aux_data) = sae.compute_loss(
             x=activation_in,
             label=activation_out,
@@ -106,6 +114,8 @@ class Trainer:
         assert self.optimizer is not None, "Optimizer must be initialized"
         assert self.wandb_logger is not None, "Wandb logger must be provided"
         activation_out = batch["output"]
+        # TODO: remove this
+        activation_out = activation_out.to(sae.cfg.device)
         did_fire = (log_info["feature_acts"] > 0).float().sum(0) > 0
         log_info["n_forward_passes_since_fired"] += 1
         log_info["n_forward_passes_since_fired"][did_fire] = 0
@@ -135,6 +145,7 @@ class Trainer:
             explained_variance = 1 - per_token_l2_loss / total_variance
             decoder_norm = sae.decoder_norm().mean()
             encoder_norm = sae.encoder_norm().mean()
+            ghost_grad_neuron_mask = (log_info["n_forward_passes_since_fired"] > self.cfg.dead_feature_window).bool()
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.item(),
@@ -153,7 +164,7 @@ class Trainer:
                 "metrics/gradients_norm": log_info["grad_norm"].item(),
                 # sparsity
                 "sparsity/mean_passes_since_fired": log_info["n_forward_passes_since_fired"].mean().item(),
-                "sparsity/dead_features": log_info["ghost_grad_neuron_mask"].sum().item(),
+                "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
             }
@@ -192,7 +203,9 @@ class Trainer:
             "n_forward_passes_since_fired": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
             "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
         }
+        proc_bar = tqdm(total=self.total_training_steps)
         for batch in activation_stream:
+            proc_bar.update(1)
             sae.train()
             self.optimizer.zero_grad()
             loss_dict = self._training_step(sae, batch)
@@ -207,6 +220,7 @@ class Trainer:
                 sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
 
             log_info.update(loss_dict)
+            proc_bar.set_description(f"loss: {log_info['loss'].item()}")
             """
             log_info is a dict with the following keys:
             - act_freq_scores: Tensor[d_sae]
@@ -227,6 +241,8 @@ class Trainer:
 
             if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
                 eval_fn(sae)
+
+            self._save_checkpoint(sae)
 
             self.cur_step += 1
             self.cur_tokens += batch[sae.cfg.hook_point_in].shape[0]
