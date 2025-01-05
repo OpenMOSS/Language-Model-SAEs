@@ -72,7 +72,7 @@ class SparseAutoEncoder(HookedRootModule):
             # and then redistribute it to different nodes.
             assert self.device_mesh is not None
             encoder_norm = torch.norm(self.encoder.weight.to_local(), p=2, dim=1, keepdim=keepdim)
-            encoder_norm = DTensor.from_local(encoder_norm, device_mesh=device_mesh["model"], placements=[Shard(0)])
+            encoder_norm = DTensor.from_local(encoder_norm, device_mesh=self.device_mesh["model"], placements=[Shard(0)])
             encoder_norm = encoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return encoder_norm
 
@@ -274,7 +274,7 @@ class SparseAutoEncoder(HookedRootModule):
             ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
         state_dict = self.get_full_state_dict()
         if is_master():
-            self.cfg.save_hyperparameters(ckpt_path)
+            self.cfg.save_hyperparameters(os.path.dirname(ckpt_path))
             if ckpt_path.endswith(".safetensors"):
                 safe.save_file(state_dict, ckpt_path, {"version": version("lm-saes")})
             elif ckpt_path.endswith(".pt"):

@@ -1,4 +1,5 @@
 import os
+import wandb
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -13,9 +14,16 @@ from lm_saes.config import (
     ActivationFactoryTarget,
     ActivationWriterConfig,
     DatasetConfig,
+    InitializerConfig,
     LanguageModelConfig,
+    SAEConfig,
+    TrainerConfig,
+    WandbConfig,
 )
+from lm_saes.initializer import Initializer
 from lm_saes.resource_loaders import load_dataset, load_model
+from lm_saes.trainer import Trainer
+from lm_saes.utils.misc import is_master
 
 
 class GenerateActivationsSettings(BaseSettings):
@@ -48,6 +56,17 @@ class GenerateActivationsSettings(BaseSettings):
     format: Literal["pt", "safetensors"] = "safetensors"
     n_shards: Optional[int] = None
     start_shard: int = 0
+
+
+class TrainSAESettings(BaseSettings):
+    sae: SAEConfig
+    initializer: InitializerConfig
+    trainer: TrainerConfig
+    activation_factory: ActivationFactoryConfig
+    wandb: WandbConfig
+    eval: bool = False
+    data_parallel_size: int = 1
+    model_parallel_size: int = 1
 
 
 def generate_activations(settings: GenerateActivationsSettings) -> None:
@@ -102,3 +121,44 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
     # Generate and write activations
     activations = factory.process(model=model, datasets={settings.dataset_name: (dataset, metadata)})
     writer.process(activations, device_mesh=device_mesh, start_shard=settings.start_shard)
+
+
+def train_sae(settings: TrainSAESettings) -> None:
+    """Train a SAE model.
+
+    Args:
+        settings: Configuration settings for SAE training
+    """
+    device_mesh = (
+        init_device_mesh(
+            device_type="cuda",
+            mesh_shape=(settings.data_parallel_size, settings.model_parallel_size),
+            mesh_dim_names=("data", "model"),
+        )
+        if settings.data_parallel_size > 1 or settings.model_parallel_size > 1
+        else None
+    )
+    activation_factory = ActivationFactory(settings.activation_factory)
+    activations_stream = activation_factory.process()
+    # TODO: get activation norm from activation_factory
+    # activation_norm = activation_factory.get_activation_norm()
+    activation_norm = {settings.sae.hook_point_in: 1.0, settings.sae.hook_point_out: 1.0}
+    initializer = Initializer(settings.initializer)
+    sae = initializer.initialize_sae_from_config(settings.sae, activation_stream=activations_stream, activation_norm=activation_norm, device_mesh=device_mesh)
+
+    wandb_logger = wandb.init(
+            project=settings.wandb.wandb_project,
+            config=settings.model_dump(),
+            name=settings.wandb.exp_name,
+            entity=settings.wandb.wandb_entity,
+            settings=wandb.Settings(x_disable_stats=True),
+            mode=os.getenv("WANDB_MODE", "online"),
+        ) if settings.wandb.log_to_wandb and is_master() else None
+    if wandb_logger is not None:
+        wandb_logger.watch(sae, log="all")
+    
+    # TODO: implement eval_fn
+    eval_fn = lambda x: None if settings.eval else None
+
+    trainer = Trainer(settings.trainer)
+    trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
