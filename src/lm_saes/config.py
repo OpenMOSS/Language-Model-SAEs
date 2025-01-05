@@ -108,13 +108,12 @@ class InitializerConfig(BaseConfig):
     init_encoder_with_decoder_transpose: bool = True
     init_search: bool = False
     state: Literal["training", "inference"] = "training"
-    l1_coefficient: float | None = None
-    is_activation_normalized: bool = False
+    l1_coefficient: float | None = 0.00008
 
 
 class TrainerConfig(BaseConfig):
     lp: int = 1
-    l1_coefficient: float = 0.00008
+    l1_coefficient: float | None = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
     initial_k: int | float | None = None
     k_warmup_steps: int | float = 0.1

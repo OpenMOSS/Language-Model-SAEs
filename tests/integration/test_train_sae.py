@@ -34,7 +34,6 @@ def sae_config() -> SAEConfig:
 def initializer_config() -> InitializerConfig:
     return InitializerConfig(
         state="training",
-        is_activation_normalized=True,
         init_search=True,
         l1_coefficient=0.00008,
     )
