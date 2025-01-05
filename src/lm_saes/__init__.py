@@ -1,4 +1,5 @@
 from .activation import ActivationFactory, ActivationWriter
+from .analysis import FeatureAnalyzer
 from .config import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
@@ -32,6 +33,7 @@ __all__ = [
     "ActivationFactoryTarget",
     "load_dataset",
     "load_model",
+    "FeatureAnalyzer",
     "GenerateActivationsSettings",
     "generate_activations",
     "InitializerConfig",
