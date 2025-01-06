@@ -12,7 +12,7 @@ from transformer_lens.hook_points import HookedRootModule, HookPoint
 
 from lm_saes.database import MongoClient
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-from lm_saes.utils.misc import is_master, print_once
+from lm_saes.utils.misc import is_master
 
 from .config import SAEConfig
 
@@ -72,7 +72,9 @@ class SparseAutoEncoder(HookedRootModule):
             # and then redistribute it to different nodes.
             assert self.device_mesh is not None
             encoder_norm = torch.norm(self.encoder.weight.to_local(), p=2, dim=1, keepdim=keepdim)
-            encoder_norm = DTensor.from_local(encoder_norm, device_mesh=self.device_mesh["model"], placements=[Shard(0)])
+            encoder_norm = DTensor.from_local(
+                encoder_norm, device_mesh=self.device_mesh["model"], placements=[Shard(0)]
+            )
             encoder_norm = encoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return encoder_norm
 
