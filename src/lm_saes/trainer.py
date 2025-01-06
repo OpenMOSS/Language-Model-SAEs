@@ -62,8 +62,8 @@ class Trainer:
         scheduler = get_scheduler(
             scheduler_name=self.cfg.lr_scheduler_name,
             optimizer=optimizer,
-            warm_up_steps=self.cfg.lr_warm_up_steps,
-            cool_down_steps=self.cfg.lr_cool_down_steps,
+            warm_up_steps=self.lr_warm_up_steps,
+            cool_down_steps=self.lr_cool_down_steps,
             training_steps=self.total_training_steps,
             lr_end_ratio=self.cfg.lr_end_ratio,
         )
@@ -86,7 +86,8 @@ class Trainer:
                 math.ceil(
                     max(
                         1.0,
-                        self.cfg.initial_k + (1 - self.cfg.initial_k) / self.cfg.k_warmup_steps * self.cur_step,
+                        self.cfg.initial_k
+                        + (1 - self.cfg.initial_k) / self.k_warmup_steps * self.cur_step,  # d_model / top_k
                     )
                     * sae.cfg.top_k
                 )
@@ -125,10 +126,11 @@ class Trainer:
             log_feature_sparsity = torch.log10(feature_sparsity + 1e-10)
             wandb_log_dict = {
                 "metrics/mean_log10_feature_sparsity": log_feature_sparsity.mean().item(),
+                "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum().item(),
+                "sparsity/above_1e-2": (feature_sparsity > 1e-2).sum().item(),
                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
             }
-            # wandb.log(wandb_log_dict, step=self.cur_step + 1)
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
             log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
             log_info["n_frac_active_tokens"] = torch.zeros_like(log_info["n_frac_active_tokens"])
@@ -143,7 +145,6 @@ class Trainer:
             explained_variance = 1 - per_token_l2_loss / total_variance
             decoder_norm = sae.decoder_norm().mean()
             encoder_norm = sae.encoder_norm().mean()
-            ghost_grad_neuron_mask = (log_info["n_forward_passes_since_fired"] > self.cfg.dead_feature_window).bool()
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.item(),
@@ -162,7 +163,6 @@ class Trainer:
                 "metrics/gradients_norm": log_info["grad_norm"].item(),
                 # sparsity
                 "sparsity/mean_passes_since_fired": log_info["n_forward_passes_since_fired"].mean().item(),
-                "sparsity/dead_features": ghost_grad_neuron_mask.sum().item(),
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
             }

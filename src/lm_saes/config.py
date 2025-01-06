@@ -134,8 +134,6 @@ class TrainerConfig(BaseConfig):
     lr_cool_down_steps: int | float = 0.1
     clip_grad_norm: float = 0.0
     feature_sampling_window: int = 1000
-    dead_feature_window: int = 5000
-    dead_feature_threshold: float = 1e-6
     total_training_tokens: int = 300_000_000
 
     log_frequency: int = 1000
@@ -185,6 +183,7 @@ class ActivationFactoryActivationsSource(ActivationFactorySource):
     type: str = "activations"
     path: str
     """ The path to the cached activations. """
+    device: str = "cpu"
 
 
 class ActivationFactoryTarget(Enum):

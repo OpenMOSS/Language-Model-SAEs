@@ -10,7 +10,7 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
-from lm_saes.config import InitializerConfig, SAEConfig
+from lm_saes.config import BaseSAEConfig, InitializerConfig, SAEConfig
 from lm_saes.sae import SparseAutoEncoder
 
 
@@ -131,7 +131,7 @@ class Initializer:
 
     def initialize_sae_from_config(
         self,
-        cfg: SAEConfig,
+        cfg: BaseSAEConfig,
         activation_stream: Iterable[dict[str, Tensor]] | None = None,
         activation_norm: dict[str, float] | None = None,
         device_mesh: DeviceMesh | None = None,

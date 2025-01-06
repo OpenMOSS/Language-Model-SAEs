@@ -73,9 +73,10 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         hook_points: List of hook point names to load
     """
 
-    def __init__(self, cache_dir: str | Path, hook_points: list[str]):
+    def __init__(self, cache_dir: str | Path, hook_points: list[str], device: str):
         self.cache_dir = Path(cache_dir)
         self.hook_points = hook_points
+        self.device = device
 
     def _get_sorted_chunks(self, hook_point: str) -> list[ChunkInfo]:
         """Get sorted list of chunk files for a hook point.
@@ -111,7 +112,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             dict[str, Any]: Loaded data containing activations, tokens, and meta
         """
         if chunk_path.suffix == ".safetensors":
-            chunk_data: dict[str, Any] = load_file(chunk_path)
+            chunk_data: dict[str, Any] = load_file(chunk_path, device=self.device)
             meta_path = chunk_path.with_suffix(".meta.json")
             if meta_path.exists():
                 with open(meta_path, "r") as f:
@@ -119,7 +120,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 chunk_data = chunk_data | {"meta": meta}
             return chunk_data
         elif chunk_path.suffix == ".pt":
-            return torch.load(chunk_path, map_location="cpu", weights_only=True)
+            return torch.load(chunk_path, map_location=self.device, weights_only=True)
         else:
             raise ValueError(f"Invalid chunk file format: {chunk_path}. Expected .safetensors or .pt")
 

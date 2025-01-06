@@ -118,6 +118,7 @@ class ActivationFactory:
         loader = CachedActivationLoader(
             cache_dir=activations_source.path,
             hook_points=cfg.hook_points,
+            device=activations_source.device,
         )
 
         processors = (
