@@ -45,8 +45,6 @@ class AnalysisRecord(BaseModel):
     name: str
     sae_name: str
     sae_series: str
-    dataset_names: list[str]
-    lm_name: str
 
 
 class ModelRecord(BaseModel):

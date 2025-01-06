@@ -88,11 +88,12 @@ def test_activation_processors(mocker: MockerFixture):
     hook_points = ["h0", "h1"]
     generator = ActivationGenerator(hook_points=hook_points)
     input_data = [{"tokens": torch.tensor([1, 2, 3])}]
-    result = list(generator.process(input_data, model=mock_model))
+    result = list(generator.process(input_data, model=mock_model, model_name="test"))
     assert len(result) == 1
     assert all(h in result[0] for h in hook_points)
     assert torch.allclose(result[0]["h0"], torch.tensor([[0, 1, 2], [3, 4, 5], [6, 7, 8]]))
     assert torch.allclose(result[0]["h1"], torch.tensor([[9, 10, 11], [12, 13, 14], [15, 16, 17]]))
+    assert result[0]["meta"]["model_name"] == "test"
 
     # Test ActivationTransformer
     transformer = ActivationTransformer(hook_points=hook_points)
