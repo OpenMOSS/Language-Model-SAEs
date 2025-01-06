@@ -94,6 +94,8 @@ class ActivationFactory:
             assert datasets is not None, "`datasets` must be provided for dataset sources"
             model: HookedTransformer | None = kwargs.get("model")
             assert model is not None, "`model` must be provided for dataset sources"
+            model_name: str | None = kwargs.get("model_name")
+            assert model_name is not None, "`model_name` must be provided for dataset sources"
 
             dataset = datasets.get(dataset_source.name)
             assert dataset is not None, f"Dataset {dataset_source.name} not found in `datasets`"
@@ -102,7 +104,9 @@ class ActivationFactory:
             stream = loader.process(dataset, dataset_name=dataset_source.name, metadata=metadata)
 
             for processor in processors:
-                stream = processor.process(stream, model=model, ignore_token_ids=cfg.ignore_token_ids)
+                stream = processor.process(
+                    stream, model=model, model_name=model_name, ignore_token_ids=cfg.ignore_token_ids
+                )
 
             return stream
 

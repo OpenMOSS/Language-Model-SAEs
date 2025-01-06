@@ -86,6 +86,7 @@ def test_activation_factory_tokens_target(
     result = list(
         factory.process(
             model=mock_model,
+            model_name="test",
             datasets={"test_dataset": (mock_dataset, {"shard_idx": 0, "n_shards": 8})},
         )
     )
@@ -108,7 +109,7 @@ def test_activation_factory_activations_2d_target(
     basic_config.target = ActivationFactoryTarget.ACTIVATIONS_2D
     factory = ActivationFactory(basic_config)
 
-    result = list(factory.process(model=mock_model, datasets={"test_dataset": (mock_dataset, None)}))
+    result = list(factory.process(model=mock_model, model_name="test", datasets={"test_dataset": (mock_dataset, None)}))
     print(result)
 
     assert len(result) == 3  # One for each input text
@@ -126,7 +127,7 @@ def test_activation_factory_activations_1d_target(
     basic_config.target = ActivationFactoryTarget.ACTIVATIONS_1D
     factory = ActivationFactory(basic_config)
 
-    result = list(factory.process(model=mock_model, datasets={"test_dataset": (mock_dataset, None)}))
+    result = list(factory.process(model=mock_model, model_name="test", datasets={"test_dataset": (mock_dataset, None)}))
 
     assert len(result) == 3  # One for each input text
     assert all(h in result[0] for h in basic_config.hook_points)
@@ -143,7 +144,7 @@ def test_activation_factory_batched_activations_1d_target(
 ):
     factory = ActivationFactory(basic_config)
 
-    result = list(factory.process(model=mock_model, datasets={"test_dataset": (mock_dataset, None)}))
+    result = list(factory.process(model=mock_model, model_name="test", datasets={"test_dataset": (mock_dataset, None)}))
     print(result)
 
     # With batch_size=2 and 3 samples * 3 activations per sample, we expect 5 batches, with 2 samples in the first 4
@@ -186,7 +187,7 @@ def test_activation_factory_multiple_sources(
         "dataset2": (mock_dataset, None),
     }
 
-    result = list(factory.process(model=mock_model, datasets=datasets))
+    result = list(factory.process(model=mock_model, model_name="test", datasets=datasets))
 
     assert len(result) > 0
     for item in result:
@@ -200,24 +201,27 @@ def test_activation_factory_invalid_dataset(
     factory = ActivationFactory(basic_config)
 
     with pytest.raises(AssertionError, match="Dataset test_dataset not found in `datasets`"):
-        list(factory.process(model=mock_model, datasets={}))
+        list(factory.process(model=mock_model, model_name="test", datasets={}))
 
 
 def test_activation_factory_missing_model(
     basic_config: ActivationFactoryConfig,
     mock_dataset: Dataset,
+    mock_model: HookedTransformer,
 ):
     factory = ActivationFactory(basic_config)
 
     with pytest.raises(AssertionError, match="`model` must be provided for dataset sources"):
         list(factory.process(datasets={"test_dataset": mock_dataset}))
 
+    with pytest.raises(AssertionError, match="`model_name` must be provided for dataset sources"):
+        list(factory.process(model=mock_model, datasets={"test_dataset": mock_dataset}))
+
 
 def test_activation_factory_activations_source(
     mocker: MockerFixture,
     tmp_path: Path,
     basic_config: ActivationFactoryConfig,
-    mock_model: HookedTransformer,
 ):
     # Setup mock activation files
     hook_dir = tmp_path / "h0"
@@ -250,7 +254,7 @@ def test_activation_factory_activations_source(
 
     # Initialize factory and process data
     factory = ActivationFactory(basic_config)
-    result = list(factory.process(model=mock_model))
+    result = list(factory.process())
 
     # Verify results
     assert len(result) == 4  # 2 chunks * 2 samples per chunk

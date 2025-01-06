@@ -24,13 +24,19 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
         self.hook_points = hook_points
 
     def process(
-        self, data: Iterable[dict[str, Any]], *, model: HookedTransformer, **kwargs
+        self,
+        data: Iterable[dict[str, Any]],
+        *,
+        model: HookedTransformer,
+        model_name: str,
+        **kwargs,
     ) -> Iterable[dict[str, Any]]:
         """Process tokens to extract model activations.
 
         Args:
             data (Iterable[dict[str, Any]]): Input data containing tokens to process
             model (HookedTransformer): Model to extract activations from
+            model_name (str): Name of the model. Save to metadata.
             **kwargs: Additional keyword arguments. Not used by this processor.
 
         Yields:
@@ -45,8 +51,7 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
             _, cache = model.run_with_cache_until(tokens, names_filter=self.hook_points, until=self.hook_points[-1])
             ret = {k: cache[k][0] for k in self.hook_points}
             ret = ret | {"tokens": tokens}
-            if "meta" in d:
-                ret = ret | {"meta": d["meta"]}
+            ret = ret | {"meta": {**(d["meta"] if "meta" in d else {}), "model_name": model_name}}
             yield ret
 
 
