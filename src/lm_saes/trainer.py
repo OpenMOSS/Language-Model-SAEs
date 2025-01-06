@@ -5,7 +5,6 @@ from typing import Callable, Iterable
 import torch
 import torch.optim.lr_scheduler as lr_scheduler
 from torch import Tensor
-from torch.distributed.device_mesh import DeviceMesh
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
@@ -29,7 +28,6 @@ class Trainer:
         self.optimizer: Optimizer | None = None
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
-        
 
     def _initialize_trainer(
         self, sae: SparseAutoEncoder, activation_stream: Iterable[dict[str, Tensor]], wandb_logger: Run | None = None
