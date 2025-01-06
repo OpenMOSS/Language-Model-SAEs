@@ -1,8 +1,8 @@
 import os
-import wandb
 from pathlib import Path
 from typing import Literal, Optional
 
+import wandb
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from torch.distributed.device_mesh import init_device_mesh
 
@@ -144,21 +144,27 @@ def train_sae(settings: TrainSAESettings) -> None:
     # activation_norm = activation_factory.get_activation_norm()
     activation_norm = {settings.sae.hook_point_in: 1.0, settings.sae.hook_point_out: 1.0}
     initializer = Initializer(settings.initializer)
-    sae = initializer.initialize_sae_from_config(settings.sae, activation_stream=activations_stream, activation_norm=activation_norm, device_mesh=device_mesh)
+    sae = initializer.initialize_sae_from_config(
+        settings.sae, activation_stream=activations_stream, activation_norm=activation_norm, device_mesh=device_mesh
+    )
 
-    wandb_logger = wandb.init(
+    wandb_logger = (
+        wandb.init(
             project=settings.wandb.wandb_project,
             config=settings.model_dump(),
             name=settings.wandb.exp_name,
             entity=settings.wandb.wandb_entity,
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),
-        ) if settings.wandb.log_to_wandb and is_master() else None
+        )
+        if settings.wandb.log_to_wandb and is_master()
+        else None
+    )
     if wandb_logger is not None:
         wandb_logger.watch(sae, log="all")
-    
+
     # TODO: implement eval_fn
-    eval_fn = lambda x: None if settings.eval else None
+    eval_fn = (lambda x: None) if settings.eval else None
 
     trainer = Trainer(settings.trainer)
     trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)

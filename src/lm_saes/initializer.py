@@ -139,7 +139,9 @@ class Initializer:
             if cfg.sae_pretrained_name_or_path is None:
                 sae: SparseAutoEncoder = self.initialize_parameters(sae)
             if sae.cfg.norm_activation == "dataset-wise":
-                assert activation_norm is not None, "Activation normalization must be provided for dataset-wise normalization"
+                assert (
+                    activation_norm is not None
+                ), "Activation normalization must be provided for dataset-wise normalization"
                 sae.set_dataset_average_activation_norm(activation_norm)
 
             if self.cfg.init_search:
