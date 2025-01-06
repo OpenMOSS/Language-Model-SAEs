@@ -1,4 +1,5 @@
 import os
+from typing import Iterable
 
 import torch
 import torch.distributed as dist
@@ -117,3 +118,20 @@ def assert_tensor_consistency(tensor):
 
     # Step 5: Assert that the checksums match across all ranks
     assert checksum_tensor.item() == expected_checksum, "Inconsistent tensor data across ranks. Checksum mismatch."
+
+
+def calculate_activation_norm(
+    activation_stream: Iterable[dict[str, torch.Tensor]], batch_num: int = 8
+) -> dict[str, float]:
+    activation_norm = {}
+    while batch_num > 0:
+        batch = next(iter(activation_stream))
+        for key, value in batch.items():
+            if key not in activation_norm:
+                activation_norm[key] = value.norm(p=2, dim=1).mean()
+            else:
+                activation_norm[key] = torch.cat((activation_norm[key], value.norm(p=2, dim=1).mean()), dim=0)
+        batch_num -= 1
+    for key in activation_norm:
+        activation_norm[key] = activation_norm[key].mean().item()
+    return activation_norm

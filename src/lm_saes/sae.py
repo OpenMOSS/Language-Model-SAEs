@@ -242,8 +242,8 @@ class SparseAutoEncoder(HookedRootModule):
                 specify the average activation norm of the dataset during inference.
 
                 dataset_average_activation_norm = {
-                    "in": 1.0,
-                    "out": 1.0,
+                    self.cfg.hook_point_in: 1.0,
+                    self.cfg.hook_point_out: 1.0,
                 }
 
         Returns:
@@ -254,8 +254,12 @@ class SparseAutoEncoder(HookedRootModule):
         if dataset_average_activation_norm is not None:
             self.set_dataset_average_activation_norm(dataset_average_activation_norm)
         assert self.dataset_average_activation_norm is not None
-        input_norm_factor: float = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm["in"]
-        output_norm_factor: float = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm["out"]
+        input_norm_factor: float = (
+            math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_in]
+        )
+        output_norm_factor: float = (
+            math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_out]
+        )
         self.encoder.bias.data = self.encoder.bias.data / input_norm_factor
         if self.cfg.use_decoder_bias:
             self.decoder.bias.data = self.decoder.bias.data / output_norm_factor
@@ -345,7 +349,7 @@ class SparseAutoEncoder(HookedRootModule):
             ],
         ],
     ]:
-        input_norm_factor = self.compute_norm_factor(x, hook_point="in")
+        input_norm_factor = self.compute_norm_factor(x, hook_point=self.cfg.hook_point_in)
         x = x * input_norm_factor
         if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
             # We need to convert decoder bias to a tensor before subtracting
@@ -462,7 +466,7 @@ class SparseAutoEncoder(HookedRootModule):
         label = x if label is None else label
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True)
         reconstructed = self.decode(feature_acts)
-        label_norm_factor: torch.Tensor = self.compute_norm_factor(label, hook_point="out")
+        label_norm_factor: torch.Tensor = self.compute_norm_factor(label, hook_point=self.cfg.hook_point_out)
         label_normed = label * label_norm_factor
         l_rec = (reconstructed - label_normed).pow(2)
         if use_batch_norm_mse:

@@ -102,16 +102,31 @@ class Initializer:
             sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
         if self.cfg.bias_init_method == "geometric_median":
-            sae.decoder.bias.data = (sae.compute_norm_factor(activation_out, hook_point="out") * activation_out).mean(0)
+            sae.decoder.bias.data = (
+                sae.compute_norm_factor(activation_out, hook_point=sae.cfg.hook_point_out) * activation_out
+            ).mean(0)
 
             if not sae.cfg.apply_decoder_bias_to_pre_encoder:
-                normalized_input = sae.compute_norm_factor(activation_in, hook_point="in") * activation_in
+                normalized_input = (
+                    sae.compute_norm_factor(activation_in, hook_point=sae.cfg.hook_point_in) * activation_in
+                )
                 normalized_median = normalized_input.mean(0)
                 sae.encoder.bias.data = -normalized_median @ sae.encoder.weight.data.T
 
         if self.cfg.init_encoder_with_decoder_transpose:
             sae.encoder.weight.data = sae.decoder.weight.data.T.clone().contiguous()
 
+        return sae
+
+    @torch.no_grad()
+    def initialize_jump_relu_threshold(self, sae: SparseAutoEncoder, activation_batch: Dict[str, Tensor]):
+        activation_in = activation_batch[sae.cfg.hook_point_in]
+        batch_size = activation_in.size(0)
+        _, hidden_pre = sae.encode(activation_in, return_hidden_pre=True)
+        hidden_pre = torch.clamp(hidden_pre, min=0.0)
+        hidden_pre = hidden_pre.flatten()
+        threshold = hidden_pre.topk(k=batch_size * sae.cfg.top_k).values[-1]
+        sae.cfg.jump_relu_threshold = threshold.item()
         return sae
 
     def initialize_sae_from_config(
@@ -154,10 +169,16 @@ class Initializer:
                 sae.standardize_parameters_of_dataset_norm(activation_norm)
             if sae.cfg.sparsity_include_decoder_norm:
                 sae.transform_to_unit_decoder_norm()
-            if sae.cfg.act_fn == "topk" and sae.cfg.jump_relu_threshold > 0:
+            if sae.cfg.act_fn == "topk":
                 print(
                     "Converting topk activation to jumprelu for inference. Features are set independent to each other."
                 )
+                if sae.cfg.jump_relu_threshold is None:
+                    assert (
+                        activation_stream is not None
+                    ), "Activation iterator must be provided for jump_relu_threshold initialization"
+                    activation_batch = next(iter(activation_stream))
+                    self.initialize_jump_relu_threshold(sae, activation_batch)
                 sae.cfg.act_fn = "jumprelu"
 
         sae = self.initialize_tensor_parallel(sae, device_mesh)
