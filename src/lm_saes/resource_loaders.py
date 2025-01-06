@@ -102,6 +102,7 @@ def load_model(cfg: LanguageModelConfig):
         device=device,
         cache_dir=cfg.cache_dir,
         hf_model=hf_model,
+        hf_config=hf_model.config,
         tokenizer=hf_tokenizer,
         processor=hf_processor,
         dtype=cfg.dtype,
