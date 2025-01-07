@@ -1,8 +1,10 @@
 import json
 import re
+from abc import abstractmethod
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator, Optional
 
 import torch
 from safetensors.torch import load_file
@@ -61,22 +63,57 @@ class ChunkInfo:
         )
 
 
-class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, Any]]]):
-    """Loads cached model activations from disk in a streaming fashion.
-
-    This processor loads pre-computed activations that were cached to disk, maintaining
-    the same data format as ActivationGenerator output. Files are loaded in order by
-    shard ID then chunk ID to preserve data ordering.
+class BaseCachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, Any]]]):
+    """Base class for cached activation loaders.
 
     Args:
         cache_dir: Root directory containing cached activations
         hook_points: List of hook point names to load
+        device: Device to load tensors to
     """
 
-    def __init__(self, cache_dir: str | Path, hook_points: list[str], device: str):
+    def __init__(self, cache_dir: str | Path, hook_points: list[str], device: str = "cpu"):
         self.cache_dir = Path(cache_dir)
         self.hook_points = hook_points
         self.device = device
+
+    def _load_chunk_for_hooks(self, chunk_idx: int, hook_chunks: dict[str, list[ChunkInfo]]) -> dict[str, Any]:
+        """Load chunk data for all hook points at given index.
+
+        Args:
+            chunk_idx: Index of the chunk to load
+            hook_chunks: Dictionary mapping hook points to their chunk info lists
+
+        Returns:
+            dict[str, Any]: Combined chunk data for all hooks
+        """
+        chunk_data = {}
+
+        for hook in self.hook_points:
+            chunk = hook_chunks[hook][chunk_idx]
+            data: dict[str, Any] = self._load_chunk(chunk.path)
+
+            # Validate data format
+            assert isinstance(data, dict), f"Loading cached activation {chunk.path} error: returned {type(data)}"
+            assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
+            assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
+            assert "meta" in data, f"Loading cached activation {chunk.path} error: missing 'info' field"
+
+            chunk_data[hook] = data["activation"]
+
+            # Store tokens and info from first hook point only
+            if hook == self.hook_points[0]:
+                chunk_data["tokens"] = data["tokens"]
+                chunk_data["meta"] = data["meta"]
+            else:
+                assert torch.allclose(
+                    data["tokens"], chunk_data["tokens"]
+                ), f"Loading cached activation {chunk.path} error: tokens mismatch"
+                assert (
+                    data["meta"] == chunk_data["meta"]
+                ), f"Loading cached activation {chunk.path} error: info mismatch"
+
+        return chunk_data
 
     def _get_sorted_chunks(self, hook_point: str) -> list[ChunkInfo]:
         """Get sorted list of chunk files for a hook point.
@@ -124,6 +161,19 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         else:
             raise ValueError(f"Invalid chunk file format: {chunk_path}. Expected .safetensors or .pt")
 
+    @abstractmethod
+    def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int) -> Iterator[dict[str, Any]]:
+        """Process chunks and yield samples.
+
+        Args:
+            hook_chunks: Dictionary mapping hook points to their chunk info lists
+            total_chunks: Total number of chunks to process
+
+        Yields:
+            dict[str, Any]: Sample data containing activations, tokens, and meta
+        """
+        pass
+
     def process(self, data: None = None, **kwargs) -> Iterable[dict[str, Any]]:
         """Load cached activations in a streaming fashion.
 
@@ -157,35 +207,68 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 "All hook points must have the same number of chunks."
             )
 
-        # Load chunks in order
-        for chunk_idx in range(len(hook_chunks[self.hook_points[0]])):
-            chunk_data = {}
+        yield from self._process_chunks(hook_chunks, len(hook_chunks[self.hook_points[0]]))
 
-            # Load data from each hook point
-            for hook in self.hook_points:
-                chunk = hook_chunks[hook][chunk_idx]
-                data: dict[str, Any] = self._load_chunk(chunk.path)
 
-                # Validate data format
-                assert isinstance(data, dict), f"Loading cached activation {chunk.path} error: returned {type(data)}"
-                assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
-                assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
-                assert "meta" in data, f"Loading cached activation {chunk.path} error: missing 'info' field"
+class SequentialCachedActivationLoader(BaseCachedActivationLoader):
+    """Sequential implementation of cached activation loader."""
 
-                chunk_data[hook] = data["activation"]
+    def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int) -> Iterator[dict[str, Any]]:
+        for chunk_idx in range(total_chunks):
+            chunk_data = self._load_chunk_for_hooks(chunk_idx, hook_chunks)
+            yield from (
+                {k: v[i] for k, v in chunk_data.items()} for i in range(chunk_data[self.hook_points[0]].shape[0])
+            )
 
-                # Store tokens and info from first hook point only
-                if hook == self.hook_points[0]:
-                    chunk_data["tokens"] = data["tokens"]
-                    chunk_data["meta"] = data["meta"]
-                else:
-                    assert torch.allclose(
-                        data["tokens"], chunk_data["tokens"]
-                    ), f"Loading cached activation {chunk.path} error: tokens mismatch"
-                    assert (
-                        data["meta"] == chunk_data["meta"]
-                    ), f"Loading cached activation {chunk.path} error: info mismatch"
 
-            # Yield chunk data in sample-wise format
-            for i in range(chunk_data[self.hook_points[0]].shape[0]):
-                yield {k: v[i] for k, v in chunk_data.items()}
+class ParallelCachedActivationLoader(BaseCachedActivationLoader):
+    """Parallel implementation of cached activation loader using ThreadPoolExecutor.
+
+    Args:
+        cache_dir: Root directory containing cached activations
+        hook_points: List of hook point names to load
+        device: Device to load tensors to
+        executor: ThreadPoolExecutor for parallel loading
+        max_active_chunks: Maximum number of chunks to load in parallel. Defaults to 2.
+    """
+
+    def __init__(
+        self,
+        cache_dir: str | Path,
+        hook_points: list[str],
+        device: str,
+        executor: Optional[ThreadPoolExecutor] = None,
+        max_active_chunks: int = 2,
+    ):
+        super().__init__(cache_dir, hook_points, device)
+        self.executor = executor or ThreadPoolExecutor(max_workers=max_active_chunks)
+        self._owned_executor = executor is None
+        self.max_active_chunks = max_active_chunks
+
+    def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int) -> Iterator[dict[str, Any]]:
+        futures = {}
+        next_chunk = 0
+
+        while next_chunk < total_chunks or futures:
+            # Submit new tasks up to max_active_chunks
+            while len(futures) < self.max_active_chunks and next_chunk < total_chunks:
+                future = self.executor.submit(self._load_chunk_for_hooks, next_chunk, hook_chunks)
+                futures[future] = next_chunk
+                next_chunk += 1
+
+            if futures:
+                # Wait for any task to complete
+                done, _ = wait(futures.keys(), return_when=FIRST_COMPLETED)
+
+                # Process completed chunks in order
+                for future in done:
+                    chunk_data = future.result()
+                    yield from (
+                        {k: v[i] for k, v in chunk_data.items()}
+                        for i in range(chunk_data[self.hook_points[0]].shape[0])
+                    )
+                    del futures[future]
+
+    def __del__(self) -> None:
+        if self._owned_executor:
+            self.executor.shutdown(wait=False, cancel_futures=True)
