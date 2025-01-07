@@ -287,6 +287,8 @@ class ActivationWriterConfig(BaseConfig):
     cache_dir: str | Path = Path("activations")
     """ The directory to save the activations. """
     format: Literal["pt", "safetensors"] = "safetensors"
+    num_workers: Optional[int] = None
+    """ The number of workers to use for writing the activations. If `None`, will not use multi-threaded writing. """
 
 
 class FeatureAnalyzerConfig(BaseConfig):

@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,14 @@ def mock_config() -> ActivationWriterConfig:
 @pytest.fixture
 def writer(mock_config: ActivationWriterConfig, tmp_path: Path) -> ActivationWriter:
     mock_config.cache_dir = str(tmp_path)
+    return ActivationWriter(mock_config)
+
+
+@pytest.fixture
+def parallel_writer(mock_config: ActivationWriterConfig, tmp_path: Path) -> ActivationWriter:
+    """Create a writer configured for parallel writing."""
+    mock_config.cache_dir = str(tmp_path)
+    mock_config.num_workers = 2
     return ActivationWriter(mock_config)
 
 
@@ -116,3 +125,92 @@ def test_missing_required_fields(writer: ActivationWriter):
 
     with pytest.raises(AssertionError):
         writer.process(invalid_data)
+
+
+def test_parallel_process(parallel_writer: ActivationWriter, sample_data: list[dict], tmp_path: Path):
+    """Test processing data in parallel mode."""
+    parallel_writer.process(sample_data)
+
+    # Should create 2 chunks (2 samples in first, 1 in second)
+    for hook_point in parallel_writer.cfg.hook_points:
+        chunk0_path = tmp_path / hook_point / f"chunk-{0:08d}.pt"
+        chunk1_path = tmp_path / hook_point / f"chunk-{1:08d}.pt"
+
+        assert chunk0_path.exists()
+        assert chunk1_path.exists()
+
+        # Verify content of first chunk
+        chunk0_data = torch.load(chunk0_path, weights_only=True)
+        assert isinstance(chunk0_data, dict)
+        assert "activation" in chunk0_data
+        assert "tokens" in chunk0_data
+        assert "meta" in chunk0_data
+        assert len(chunk0_data["meta"]) == 2
+        assert torch.allclose(
+            chunk0_data["activation"], torch.stack([sample_data[0][hook_point], sample_data[1][hook_point]])
+        )
+        assert chunk0_data["tokens"].shape == (2, 3)
+
+        chunk1_data = torch.load(chunk1_path, weights_only=True)
+        assert isinstance(chunk1_data, dict)
+        assert "activation" in chunk1_data
+        assert "tokens" in chunk1_data
+        assert "meta" in chunk1_data
+        assert len(chunk1_data["meta"]) == 1
+        assert torch.allclose(chunk1_data["activation"], sample_data[2][hook_point])
+        assert chunk1_data["tokens"].shape == (1, 3)
+
+
+def test_custom_executor(mock_config: ActivationWriterConfig, sample_data: list[dict], tmp_path: Path):
+    """Test using a custom executor."""
+    mock_config.cache_dir = str(tmp_path)
+    mock_config.num_workers = 2
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        writer = ActivationWriter(mock_config, executor=executor)
+        writer.process(sample_data)
+
+    # Verify files were written correctly
+    for hook_point in mock_config.hook_points:
+        chunk0_path = tmp_path / hook_point / f"chunk-{0:08d}.pt"
+        assert chunk0_path.exists()
+
+
+def test_parallel_safetensors_format(mock_config: ActivationWriterConfig, sample_data: list[dict], tmp_path: Path):
+    """Test parallel processing with safetensors format."""
+    mock_config.format = "safetensors"
+    mock_config.cache_dir = str(tmp_path)
+    mock_config.num_workers = 2
+    writer = ActivationWriter(mock_config)
+
+    writer.process(sample_data)
+
+    # Verify first chunk of first hook point
+    chunk0_path = tmp_path / "h0" / f"chunk-{0:08d}.safetensors"
+    assert chunk0_path.exists()
+
+    # Verify meta file exists
+    meta_path = chunk0_path.with_suffix(".meta.json")
+    assert meta_path.exists()
+
+    chunk0_data = load_file(chunk0_path)
+    assert "activation" in chunk0_data
+    assert "tokens" in chunk0_data
+
+    chunk0_meta = json.load(open(meta_path, "r"))
+    assert len(chunk0_meta) == 2
+    assert chunk0_meta[0]["context_idx"] == 1
+    assert chunk0_meta[1]["context_idx"] == 2
+
+
+def test_parallel_writer_cleanup(mock_config: ActivationWriterConfig, tmp_path: Path):
+    """Test that the executor is properly cleaned up when writer owns it."""
+    mock_config.cache_dir = str(tmp_path)
+    mock_config.num_workers = 2
+    writer = ActivationWriter(mock_config)
+
+    assert writer._owned_executor
+    assert not writer.executor._shutdown
+
+    # Trigger cleanup
+    del writer
