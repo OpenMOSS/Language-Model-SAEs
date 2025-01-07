@@ -184,6 +184,11 @@ class ActivationFactoryActivationsSource(ActivationFactorySource):
     path: str
     """ The path to the cached activations. """
     device: str = "cpu"
+    """ The device to load the activations on. """
+    num_workers: Optional[int] = None
+    """ The number of workers to use for loading the activations. If `None`, will not use multi-threaded loading. """
+    prefetch: Optional[int] = None
+    """ The number of chunks to prefetch. If `None`, will not prefetch. """
 
 
 class ActivationFactoryTarget(Enum):
