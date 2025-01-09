@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Optional, cast
 
 import torch
+from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
@@ -252,6 +253,8 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             AssertionError: If hook points are missing or tensors have invalid shapes
         """
         buffer = ActivationBuffer(hook_points=self.hook_points)
+        pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1)
+
         for d in data:
             # Validate input: ensure all hook points exist and are 2D tensors
             assert all(
@@ -265,24 +268,31 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
 
             # Add new data to buffer
             buffer = buffer.cat(d)
+            pbar.update(len(buffer) - pbar.n)
 
             if self.buffer_size is not None:
                 # If buffer is full, shuffle and yield batches until half empty
                 if len(buffer) >= self.buffer_size:
+                    pbar.set_postfix({"Shuffling": True})
                     buffer = buffer.shuffle()
+                    pbar.set_postfix({"Shuffling": False})
                     while len(buffer) >= self.buffer_size // 2 and len(buffer) >= self.batch_size:
                         # I have no idea why the buffer is Never in the while block and I need to cast it to ActivationBuffer
                         # Perhaps this is a bug with basedpyright
                         batch, buffer = cast(ActivationBuffer, buffer).yield_batch(self.batch_size)
+                        pbar.update(len(buffer) - pbar.n)
                         yield batch
             else:
                 # If no buffer size specified, yield complete batches as they become available
                 while len(buffer) >= self.batch_size:
                     # The same issue as above
                     batch, buffer = cast(ActivationBuffer, buffer).yield_batch(self.batch_size)
+                    pbar.update(len(buffer) - pbar.n)
                     yield batch
 
         # Yield any remaining samples in batches
         while len(buffer) > 0:
             batch, buffer = buffer.yield_batch(self.batch_size)
+            pbar.update(len(buffer) - pbar.n)
             yield batch
+        pbar.close()

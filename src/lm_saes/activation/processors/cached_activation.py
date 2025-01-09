@@ -8,6 +8,7 @@ from typing import Any, Iterable, Iterator, Optional
 
 import torch
 from safetensors.torch import load_file
+from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
 
@@ -149,7 +150,7 @@ class BaseCachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str
             dict[str, Any]: Loaded data containing activations, tokens, and meta
         """
         if chunk_path.suffix == ".safetensors":
-            chunk_data: dict[str, Any] = load_file(chunk_path, device=self.device)
+            chunk_data: dict[str, Any] = load_file(chunk_path, device="cpu")
             meta_path = chunk_path.with_suffix(".meta.json")
             if meta_path.exists():
                 with open(meta_path, "r") as f:
@@ -157,7 +158,7 @@ class BaseCachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str
                 chunk_data = chunk_data | {"meta": meta}
             return chunk_data
         elif chunk_path.suffix == ".pt":
-            return torch.load(chunk_path, map_location=self.device, weights_only=True)
+            return torch.load(chunk_path, map_location="cpu", weights_only=True)
         else:
             raise ValueError(f"Invalid chunk file format: {chunk_path}. Expected .safetensors or .pt")
 
@@ -246,28 +247,31 @@ class ParallelCachedActivationLoader(BaseCachedActivationLoader):
         self.max_active_chunks = max_active_chunks
 
     def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int) -> Iterator[dict[str, Any]]:
-        futures = {}
+        futures = set()
         next_chunk = 0
+
+        pbar = tqdm(total=total_chunks, desc="Loading chunks", smoothing=0.001, miniters=1)
 
         while next_chunk < total_chunks or futures:
             # Submit new tasks up to max_active_chunks
             while len(futures) < self.max_active_chunks and next_chunk < total_chunks:
                 future = self.executor.submit(self._load_chunk_for_hooks, next_chunk, hook_chunks)
-                futures[future] = next_chunk
+                futures.add(future)
+                pbar.set_postfix({"Active chunks": len(futures)})
                 next_chunk += 1
 
             if futures:
                 # Wait for any task to complete
-                done, _ = wait(futures.keys(), return_when=FIRST_COMPLETED)
-
+                done, futures = wait(futures, return_when=FIRST_COMPLETED)
+                pbar.set_postfix({"Active chunks": len(futures)})
                 # Process completed chunks in order
-                for future in done:
+                for future in tqdm(done, desc="Processing chunks", smoothing=0.001, leave=False):
                     chunk_data = future.result()
-                    yield from (
-                        {k: v[i] for k, v in chunk_data.items()}
-                        for i in range(chunk_data[self.hook_points[0]].shape[0])
-                    )
-                    del futures[future]
+                    chunk_data = {k: v.to(self.device) for k, v in chunk_data.items() if isinstance(v, torch.Tensor)}
+                    yield chunk_data
+                    pbar.update(1)
+
+        pbar.close()
 
     def __del__(self) -> None:
         if self._owned_executor:

@@ -2,6 +2,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from queue import Queue
 from typing import Iterable, Optional, TypeVar
 
+from tqdm import tqdm
+
 T = TypeVar("T")
 
 
@@ -18,6 +20,7 @@ class BackgroundGenerator(Iterable[T]):
         generator: Iterable[T],
         max_prefetch: int = 1,
         executor: Optional[ThreadPoolExecutor] = None,
+        name: Optional[str] = None,
     ) -> None:
         """Initialize the background generator.
 
@@ -35,6 +38,7 @@ class BackgroundGenerator(Iterable[T]):
         self._future: Optional[Future] = None
         self.continue_iteration = True
         self._started = False
+        self.pbar = tqdm(total=max_prefetch, desc=f"Background Processing {name}", smoothing=0.001, miniters=1)
         self._start()
 
     def _process_generator(self) -> None:
@@ -44,10 +48,13 @@ class BackgroundGenerator(Iterable[T]):
                 if not self.continue_iteration:
                     break
                 self.queue.put((True, item))
+                self.pbar.update(1)
         except Exception as e:
             self.queue.put((False, e))
+            self.pbar.update(1)
         finally:
             self.queue.put((False, StopIteration))
+            self.pbar.update(1)
 
     def _start(self) -> None:
         """Start the background processing."""
@@ -65,6 +72,7 @@ class BackgroundGenerator(Iterable[T]):
         """
         if self.continue_iteration:
             success, next_item = self.queue.get()
+            self.pbar.update(-1)
             if success:
                 return next_item
             else:
@@ -90,10 +98,12 @@ class BackgroundGenerator(Iterable[T]):
         while not self.queue.empty():
             try:
                 self.queue.get_nowait()
+                self.pbar.update(-1)
             except Exception:
                 pass
         if self._owned_executor:
             self._executor.shutdown(wait=False, cancel_futures=True)
+        self.pbar.close()
 
     def __del__(self) -> None:
         """Clean up resources when the object is deleted."""
