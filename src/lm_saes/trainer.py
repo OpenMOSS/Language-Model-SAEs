@@ -201,7 +201,7 @@ class Trainer:
             "n_forward_passes_since_fired": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
             "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
         }
-        proc_bar = tqdm(total=self.total_training_steps)
+        proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001)
         for batch in activation_stream:
             proc_bar.update(1)
             sae.train()
