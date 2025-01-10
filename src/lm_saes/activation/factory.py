@@ -72,7 +72,7 @@ class ActivationFactory:
             PadAndTruncateTokensProcessor(seq_len=cfg.context_size)
             if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
             else None,
-            ActivationGenerator(hook_points=cfg.hook_points)
+            ActivationGenerator(hook_points=cfg.hook_points, batch_size=cfg.model_batch_size)
             if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
             else None,
             ActivationTransformer(hook_points=cfg.hook_points)

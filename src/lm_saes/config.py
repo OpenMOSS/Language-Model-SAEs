@@ -226,6 +226,8 @@ class ActivationFactoryConfig(BaseConfig):
     """ The hook points to capture activations from. """
     context_size: int = 128
     """ The context size to use for generating activations. All tokens will be padded or truncated to this size. """
+    model_batch_size: Optional[int] = None
+    """ The batch size to use for generating activations. If `None`, will not use batched generation. """
     batch_size: Optional[int] = Field(
         default_factory=lambda validated_model: 64
         if validated_model["target"] == ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D
