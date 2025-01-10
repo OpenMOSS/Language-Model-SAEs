@@ -49,6 +49,15 @@ class GenerateActivationsSettings(BaseSettings):
     output_dir: Path
     """Directory to save activation files"""
 
+    target: ActivationFactoryTarget = ActivationFactoryTarget.ACTIVATIONS_2D
+    """Target type for activation generation"""
+
+    batch_size: Optional[int] = None
+    """Size of the batch for activation generation"""
+
+    buffer_size: Optional[int] = None
+    """Size of the buffer for activation generation"""
+
     total_tokens: Optional[int] = None
     """Optional total number of tokens to generate"""
 
@@ -57,6 +66,9 @@ class GenerateActivationsSettings(BaseSettings):
 
     n_samples_per_chunk: int = 16
     """Number of samples per saved chunk"""
+
+    num_workers: Optional[int] = None
+    """Number of workers for parallel writing"""
 
     format: Literal["pt", "safetensors"] = "safetensors"
     """Format to save activations in ('pt' or 'safetensors')"""
@@ -97,11 +109,11 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
     # Configure activation generation
     factory_cfg = ActivationFactoryConfig(
         sources=[ActivationFactoryDatasetSource(name=settings.dataset_name)],
-        target=ActivationFactoryTarget.ACTIVATIONS_2D,
+        target=settings.target,
         hook_points=settings.hook_points,
         context_size=settings.context_size,
-        batch_size=None,
-        buffer_size=None,
+        batch_size=settings.batch_size,
+        buffer_size=settings.buffer_size,
     )
 
     # Configure activation writer
@@ -111,6 +123,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
         n_samples_per_chunk=settings.n_samples_per_chunk,
         cache_dir=settings.output_dir,
         format=settings.format,
+        num_workers=settings.num_workers,
     )
 
     # Create factory and writer
