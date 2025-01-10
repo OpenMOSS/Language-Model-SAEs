@@ -1,8 +1,9 @@
 import os
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, TypeVar, overload
 
 import wandb
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from torch.distributed.device_mesh import init_device_mesh
 
@@ -16,14 +17,71 @@ from lm_saes.config import (
     DatasetConfig,
     InitializerConfig,
     LanguageModelConfig,
+    MongoDBConfig,
     SAEConfig,
     TrainerConfig,
     WandbConfig,
 )
+from lm_saes.database import MongoClient
 from lm_saes.initializer import Initializer
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.trainer import Trainer
 from lm_saes.utils.misc import is_master
+
+T = TypeVar("T")
+
+
+@overload
+def load_config(
+    config: Optional[T],
+    name: Optional[str],
+    mongo_client: Optional[MongoClient],
+    config_type: str,
+    required: Literal[True] = True,
+) -> T: ...
+
+
+@overload
+def load_config(
+    config: Optional[T],
+    name: Optional[str],
+    mongo_client: Optional[MongoClient],
+    config_type: str,
+    required: Literal[False] = False,
+) -> Optional[T]: ...
+
+
+def load_config(
+    config: Optional[T],
+    name: Optional[str],
+    mongo_client: Optional[MongoClient],
+    config_type: str,
+    required: bool = True,
+) -> Optional[T]:
+    """Load configuration from settings or database.
+
+    Args:
+        config: Configuration provided directly in settings
+        name: Name of the config to load from database
+        mongo_client: Optional MongoDB client for database operations
+        config_type: String identifier for error messages ('model' or 'dataset')
+        required: Whether the config must be present
+
+    Returns:
+        Loaded configuration or None if not required and not found
+
+    Raises:
+        AssertionError: If config is required but not found
+    """
+    if mongo_client is not None and name is not None:
+        if config is None:
+            config = getattr(mongo_client, f"get_{config_type}_cfg")(name)
+        else:
+            getattr(mongo_client, f"add_{config_type}")(name, config)
+
+    if required:
+        assert config is not None, f"{config_type} config not provided and not found in database"
+    return config
 
 
 class GenerateActivationsSettings(BaseSettings):
@@ -31,14 +89,14 @@ class GenerateActivationsSettings(BaseSettings):
 
     model_config = SettingsConfigDict(cli_parse_args=True, cli_kebab_case=True)
 
-    model: LanguageModelConfig
-    """Configuration for loading the language model"""
+    model: Optional[LanguageModelConfig] = None
+    """Configuration for loading the language model. If `None`, will read from the database."""
 
     model_name: str
     """Name of the model to load"""
 
-    dataset: DatasetConfig
-    """Configuration for loading the dataset"""
+    dataset: Optional[DatasetConfig] = None
+    """Configuration for loading the dataset. If `None`, will read from the database."""
 
     dataset_name: str
     """Name of the dataset"""
@@ -51,6 +109,9 @@ class GenerateActivationsSettings(BaseSettings):
 
     target: ActivationFactoryTarget = ActivationFactoryTarget.ACTIVATIONS_2D
     """Target type for activation generation"""
+
+    model_batch_size: Optional[int] = None
+    """Batch size for model forward"""
 
     batch_size: Optional[int] = None
     """Size of the batch for activation generation"""
@@ -79,13 +140,19 @@ class GenerateActivationsSettings(BaseSettings):
     start_shard: int = 0
     """The shard to start writing from"""
 
+    mongo: Optional[MongoDBConfig] = None
+    """Configuration for the MongoDB database. If `None`, will not use the database."""
+
+    @model_validator(mode="after")
+    def validate_cfg(self) -> "GenerateActivationsSettings":
+        if self.mongo is not None:
+            assert self.model is not None, "Database not provided. Must manually provide model config."
+            assert self.dataset is not None, "Database not provided. Must manually provide dataset config."
+        return self
+
 
 def generate_activations(settings: GenerateActivationsSettings) -> None:
-    """Generate and save model activations from a dataset.
-
-    Args:
-        settings: Configuration settings for activation generation
-    """
+    """Generate and save model activations from a dataset."""
     # Initialize device mesh
     device_mesh = (
         init_device_mesh(
@@ -97,10 +164,21 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
         else None
     )
 
+    mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
+
+    # Load configurations
+    model_cfg = load_config(
+        config=settings.model, name=settings.model_name, mongo_client=mongo_client, config_type="model"
+    )
+
+    dataset_cfg = load_config(
+        config=settings.dataset, name=settings.dataset_name, mongo_client=mongo_client, config_type="dataset"
+    )
+
     # Load model and dataset
-    model = load_model(settings.model)
+    model = load_model(model_cfg)
     dataset, metadata = load_dataset(
-        settings.dataset,
+        dataset_cfg,
         device_mesh=device_mesh,
         n_shards=settings.n_shards,
         start_shard=settings.start_shard,
@@ -112,6 +190,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
         target=settings.target,
         hook_points=settings.hook_points,
         context_size=settings.context_size,
+        model_batch_size=settings.model_batch_size,
         batch_size=settings.batch_size,
         buffer_size=settings.buffer_size,
     )
