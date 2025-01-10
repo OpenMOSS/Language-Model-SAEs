@@ -242,3 +242,19 @@ class MongoClient:
         if model is None:
             return None
         return LanguageModelConfig.model_validate(model["cfg"])
+
+    def add_feature_analysis(self, name: str, sae_name: str, sae_series: str, analysis: list[dict]):
+        operations = []
+        for feature_analysis in analysis:
+            feature_index = feature_analysis["index"]
+            update_operation = pymongo.UpdateOne(
+                {"sae_name": sae_name, "sae_series": sae_series, "index": feature_index},
+                {"$push": {"analyses": feature_analysis}},
+                upsert=True,
+            )
+            operations.append(update_operation)
+
+        if operations:
+            self.feature_collection.bulk_write(operations)
+
+        self.analysis_collection.insert_one({"name": name, "sae_name": sae_name, "sae_series": sae_series})

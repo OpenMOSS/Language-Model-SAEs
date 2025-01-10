@@ -9,12 +9,14 @@ from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.activation.writer import ActivationWriter
+from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
 from lm_saes.config import (
     ActivationFactoryConfig,
     ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
     ActivationWriterConfig,
     DatasetConfig,
+    FeatureAnalyzerConfig,
     InitializerConfig,
     LanguageModelConfig,
     MongoDBConfig,
@@ -25,6 +27,7 @@ from lm_saes.config import (
 from lm_saes.database import MongoClient
 from lm_saes.initializer import Initializer
 from lm_saes.resource_loaders import load_dataset, load_model
+from lm_saes.sae import SparseAutoEncoder
 from lm_saes.trainer import Trainer
 from lm_saes.utils.misc import is_master
 
@@ -289,3 +292,37 @@ def train_sae(settings: TrainSAESettings) -> None:
 
     trainer = Trainer(settings.trainer)
     trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+
+
+class AnalyzeSAESettings(BaseSettings):
+    sae: SAEConfig
+    """Configuration for the SAE model architecture and parameters"""
+
+    sae_name: str
+    sae_series: str
+
+    activation_factory: ActivationFactoryConfig
+    """Configuration for generating activations"""
+
+    analyzer: FeatureAnalyzerConfig
+    """Configuration for feature analysis"""
+
+    mongo: MongoDBConfig
+    """Configuration for the MongoDB database."""
+
+
+def analyze_sae(settings: AnalyzeSAESettings) -> None:
+    """Analyze a SAE model."""
+    mongo_client = MongoClient(settings.mongo)
+    activation_factory = ActivationFactory(settings.activation_factory)
+
+    sae = SparseAutoEncoder.from_config(settings.sae)
+
+    analyzer = FeatureAnalyzer(settings.analyzer)
+
+    activations = activation_factory.process()
+    result = analyzer.analyze_chunk(activations, sae=sae)
+
+    mongo_client.add_feature_analysis(
+        name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result
+    )
