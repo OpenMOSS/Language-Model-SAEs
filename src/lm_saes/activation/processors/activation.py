@@ -1,5 +1,5 @@
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, cast
 
 import torch
@@ -7,6 +7,83 @@ from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
+
+
+@dataclass
+class ActivationBuffer:
+    """Buffer for storing and manipulating activation tensors.
+
+    This class provides functionality to store activations from multiple hook points,
+    concatenate new activations, yield batches, and shuffle the stored data. All operations
+    are performed out-of-place.
+
+    Args:
+        hook_points (list[str]): List of hook point names to track
+        buffer (dict[str, torch.Tensor] | None, optional): Initial buffer of activations. Defaults to None.
+    """
+
+    buffer: list[dict[str, Any]] = field(default_factory=list)
+
+    def __len__(self) -> int:
+        """Get the number of samples in the buffer.
+
+        Returns:
+            int: Number of samples, or 0 if buffer is empty
+        """
+        return sum(len(list(d.values())[0]) for d in self.buffer)
+
+    def cat(self, activations: dict[str, Any]) -> "ActivationBuffer":
+        """Concatenate new activations to the buffer.
+
+        Args:
+            activations (dict[str, torch.Tensor]): New activations to add
+
+        Returns:
+            ActivationBuffer: New buffer containing concatenated activations
+        """
+        return ActivationBuffer(buffer=self.buffer + [activations])
+
+    def consume(self) -> dict[str, torch.Tensor | list[Any]]:
+        """Consume the buffer and return the activations as a dictionary."""
+        return {
+            k: torch.cat([d[k] for d in self.buffer])
+            if isinstance(self.buffer[0][k], torch.Tensor)
+            else sum([d[k] for d in self.buffer], [])
+            for k in self.buffer[0].keys()
+        }
+
+    def yield_batch(self, batch_size: int) -> tuple[dict[str, torch.Tensor | list[Any]], "ActivationBuffer"]:
+        """Extract a batch of samples from the buffer.
+
+        Args:
+            batch_size (int): Number of samples to extract
+
+        Returns:
+            tuple[dict[str, torch.Tensor], ActivationBuffer]: Tuple containing:
+                - Dictionary of extracted batch activations
+                - New buffer with remaining samples
+        """
+        if self.__len__() == 0:
+            raise ValueError("Buffer is empty")
+        data = self.consume()
+        batch = {k: v[:batch_size] for k, v in data.items()}
+        buffer = {k: v[batch_size:] for k, v in data.items()}
+        return batch, ActivationBuffer(buffer=[buffer])
+
+    def shuffle(self) -> "ActivationBuffer":
+        """Randomly shuffle all samples in the buffer.
+
+        Returns:
+            ActivationBuffer: New buffer with shuffled samples
+        """
+        data = self.consume()
+        assert all(
+            isinstance(data[k], torch.Tensor) for k in data.keys()
+        ), "All data must be tensors to perform shuffling"
+        data = cast(dict[str, torch.Tensor], data)
+        perm = torch.randperm(data[list(data.keys())[0]].shape[0])
+        buffer = {k: v[perm] for k, v in data.items()}
+        return ActivationBuffer(buffer=[buffer])
 
 
 class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]):
@@ -19,10 +96,30 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
 
     Args:
         hook_points (list[str]): List of hook point names to extract activations from
+        batch_size (Optional[int], optional): Size of the batch to run through the model at a time.
+            If None, will keep the original data structure of the tokens (batched or not). If specified,
+            will batch the tokens to the specified size, so if the tokens are already batched, the size
+            should be divisible by the original batch size.
     """
 
-    def __init__(self, hook_points: list[str]):
+    def __init__(self, hook_points: list[str], batch_size: Optional[int] = None):
         self.hook_points = hook_points
+        self.batch_size = batch_size
+
+    def batched(self, data: Iterable[dict[str, Any]]) -> Iterable[dict[str, Any]]:
+        if self.batch_size is None:
+            yield from data
+            return
+        buffer = ActivationBuffer()
+        for d in data:
+            if len(d["tokens"].shape) == 1:
+                d = {k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else [v] for k, v in d.items()}
+            buffer = buffer.cat(d)
+            if len(buffer) >= self.batch_size:
+                yield buffer.consume()
+                buffer = ActivationBuffer()
+        if len(buffer) > 0:
+            yield buffer.consume()
 
     def process(
         self,
@@ -46,13 +143,24 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
                 - Original tokens as "tokens"
                 - Original info field if present in input
         """
-        for d in data:
+        for d in self.batched(data):
             assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
             tokens = d["tokens"]
             _, cache = model.run_with_cache_until(tokens, names_filter=self.hook_points, until=self.hook_points[-1])
-            ret = {k: cache[k][0] for k in self.hook_points}
+            # TODO: Further organize this
+            if len(tokens.shape) == 1:
+                ret = {k: cache[k][0] for k in self.hook_points}
+                if "meta" in d:
+                    ret = ret | {"meta": d["meta"] | {"model_name": model_name}}
+                else:
+                    ret = ret | {"meta": {"model_name": model_name}}
+            else:
+                ret = {k: cache[k] for k in self.hook_points}
+                if "meta" in d:
+                    ret = ret | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
+                else:
+                    ret = ret | {"meta": [{"model_name": model_name} for _ in range(tokens.shape[0])]}
             ret = ret | {"tokens": tokens}
-            ret = ret | {"meta": {**(d["meta"] if "meta" in d else {}), "model_name": model_name}}
             yield ret
 
 
@@ -130,83 +238,6 @@ def shuffle_activations(activations: dict[str, torch.Tensor], hook_points: list[
     return {k: v[perm] for k, v in activations.items()}
 
 
-@dataclass
-class ActivationBuffer:
-    """Buffer for storing and manipulating activation tensors.
-
-    This class provides functionality to store activations from multiple hook points,
-    concatenate new activations, yield batches, and shuffle the stored data. All operations
-    are performed out-of-place.
-
-    Args:
-        hook_points (list[str]): List of hook point names to track
-        buffer (dict[str, torch.Tensor] | None, optional): Initial buffer of activations. Defaults to None.
-    """
-
-    hook_points: list[str]
-    buffer: dict[str, torch.Tensor] | None = None
-
-    def __len__(self) -> int:
-        """Get the number of samples in the buffer.
-
-        Returns:
-            int: Number of samples, or 0 if buffer is empty
-        """
-        if self.buffer is None:
-            return 0
-        return self.buffer[self.hook_points[0]].shape[0]
-
-    def cat(self, activations: dict[str, torch.Tensor]) -> "ActivationBuffer":
-        """Concatenate new activations to the buffer.
-
-        Args:
-            activations (dict[str, torch.Tensor]): New activations to add
-
-        Returns:
-            ActivationBuffer: New buffer containing concatenated activations
-        """
-        if self.buffer is None:
-            buffer = {k: activations[k] for k in self.hook_points}
-        else:
-            buffer = {k: torch.cat([self.buffer[k], activations[k]], dim=0) for k in self.hook_points}
-        return ActivationBuffer(hook_points=self.hook_points, buffer=buffer)
-
-    def yield_batch(self, batch_size: int) -> tuple[dict[str, torch.Tensor], "ActivationBuffer"]:
-        """Extract a batch of samples from the buffer.
-
-        Args:
-            batch_size (int): Number of samples to extract
-
-        Returns:
-            tuple[dict[str, torch.Tensor], ActivationBuffer]: Tuple containing:
-                - Dictionary of extracted batch activations
-                - New buffer with remaining samples
-
-        Raises:
-            ValueError: If buffer is empty
-        """
-        if self.buffer is None:
-            raise ValueError("Buffer is empty")
-        batch = {k: v[:batch_size] for k, v in self.buffer.items()}
-        buffer = {k: v[batch_size:] for k, v in self.buffer.items()}
-        return batch, ActivationBuffer(hook_points=self.hook_points, buffer=buffer)
-
-    def shuffle(self) -> "ActivationBuffer":
-        """Randomly shuffle all samples in the buffer.
-
-        Returns:
-            ActivationBuffer: New buffer with shuffled samples
-
-        Raises:
-            ValueError: If buffer is empty
-        """
-        if self.buffer is None:
-            raise ValueError("Buffer is empty")
-        perm = torch.randperm(self.buffer[self.hook_points[0]].shape[0])
-        buffer = {k: v[perm] for k, v in self.buffer.items()}
-        return ActivationBuffer(hook_points=self.hook_points, buffer=buffer)
-
-
 class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]):
     """Processor for batching activations.
 
@@ -252,7 +283,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
         Raises:
             AssertionError: If hook points are missing or tensors have invalid shapes
         """
-        buffer = ActivationBuffer(hook_points=self.hook_points)
+        buffer = ActivationBuffer()
         pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1)
 
         for d in data:
@@ -267,7 +298,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             ), "All tensors must have the same shape"
 
             # Add new data to buffer
-            buffer = buffer.cat(d)
+            buffer = buffer.cat({k: v for k, v in d.items() if k in self.hook_points or k == "tokens"})
             pbar.update(len(buffer) - pbar.n)
 
             if self.buffer_size is not None:

@@ -117,8 +117,7 @@ def test_activation_processors(mocker: MockerFixture):
 
 
 def test_activation_buffer(mocker: MockerFixture):
-    hook_points = ["h0", "h1"]
-    buffer = ActivationBuffer(hook_points=hook_points)
+    buffer = ActivationBuffer()
 
     # Test empty buffer
     assert len(buffer) == 0
@@ -127,27 +126,44 @@ def test_activation_buffer(mocker: MockerFixture):
     activations = {"h0": torch.arange(9).reshape(3, 3), "h1": torch.arange(9, 18).reshape(3, 3)}
     buffer = buffer.cat(activations)
     assert len(buffer) == 3
-    assert torch.allclose(buffer.buffer["h0"], torch.tensor([[0, 1, 2], [3, 4, 5], [6, 7, 8]]))
-    assert torch.allclose(buffer.buffer["h1"], torch.tensor([[9, 10, 11], [12, 13, 14], [15, 16, 17]]))
+    assert torch.allclose(buffer.buffer[0]["h0"], torch.tensor([[0, 1, 2], [3, 4, 5], [6, 7, 8]]))
+    assert torch.allclose(buffer.buffer[0]["h1"], torch.tensor([[9, 10, 11], [12, 13, 14], [15, 16, 17]]))
 
     # Test batch yielding
-    batch, new_buffer = buffer.yield_batch(2)
+    batch, buffer = buffer.yield_batch(2)
     assert len(batch) == 2  # Two hook points
     assert torch.allclose(batch["h0"], torch.tensor([[0, 1, 2], [3, 4, 5]]))
     assert torch.allclose(batch["h1"], torch.tensor([[9, 10, 11], [12, 13, 14]]))
-    assert len(new_buffer) == 1
-    assert torch.allclose(new_buffer.buffer["h0"], torch.tensor([[6, 7, 8]]))
-    assert torch.allclose(new_buffer.buffer["h1"], torch.tensor([[15, 16, 17]]))
+    assert len(buffer) == 1
+    assert torch.allclose(buffer.buffer[0]["h0"], torch.tensor([[6, 7, 8]]))
+    assert torch.allclose(buffer.buffer[0]["h1"], torch.tensor([[15, 16, 17]]))
+
+    # Test concat
+    buffer = buffer.cat(activations)
+    assert len(buffer) == 4
+    assert torch.allclose(buffer.buffer[0]["h0"], torch.tensor([[6, 7, 8]]))
+    assert torch.allclose(buffer.buffer[0]["h1"], torch.tensor([[15, 16, 17]]))
+    assert torch.allclose(buffer.buffer[1]["h0"], torch.tensor([[0, 1, 2], [3, 4, 5], [6, 7, 8]]))
+    assert torch.allclose(buffer.buffer[1]["h1"], torch.tensor([[9, 10, 11], [12, 13, 14], [15, 16, 17]]))
+
+    # Test batch yielding
+    batch, buffer = buffer.yield_batch(2)
+    assert len(batch) == 2
+    assert torch.allclose(batch["h0"], torch.tensor([[6, 7, 8], [0, 1, 2]]))
+    assert torch.allclose(batch["h1"], torch.tensor([[15, 16, 17], [9, 10, 11]]))
+    assert len(buffer) == 2
+    assert torch.allclose(buffer.buffer[0]["h0"], torch.tensor([[3, 4, 5], [6, 7, 8]]))
+    assert torch.allclose(buffer.buffer[0]["h1"], torch.tensor([[12, 13, 14], [15, 16, 17]]))
 
     # Mock shuffle
-    buffer = ActivationBuffer(hook_points=["h0", "h1"], buffer=activations)
+    buffer = ActivationBuffer(buffer=[activations])
     mocker.patch("torch.randperm", return_value=torch.tensor([1, 0, 2]))
 
     # Test shuffle
     buffer = buffer.shuffle()
     assert len(buffer) == 3
-    assert torch.allclose(buffer.buffer["h0"], torch.tensor([[3, 4, 5], [0, 1, 2], [6, 7, 8]]))
-    assert torch.allclose(buffer.buffer["h1"], torch.tensor([[12, 13, 14], [9, 10, 11], [15, 16, 17]]))
+    assert torch.allclose(buffer.buffer[0]["h0"], torch.tensor([[3, 4, 5], [0, 1, 2], [6, 7, 8]]))
+    assert torch.allclose(buffer.buffer[0]["h1"], torch.tensor([[12, 13, 14], [9, 10, 11], [15, 16, 17]]))
 
 
 def test_activation_batchler(mocker: MockerFixture):
@@ -169,7 +185,6 @@ def test_activation_batchler(mocker: MockerFixture):
     result = list(batchler.process(input_data))
     assert len(result) == 3  # Should create 2 full batches and 1 partial batch
     assert all(h in result[0] for h in hook_points)
-    assert "tokens" not in result[0]  # Additional fields should be removed
     assert torch.allclose(result[0]["h0"], torch.tensor([[3, 4, 5], [13, 14, 15]]))
     assert torch.allclose(result[0]["h1"], torch.tensor([[12, 13, 14], [22, 23, 24]]))
     assert torch.allclose(result[1]["h0"], torch.tensor([[23, 24, 25], [33, 34, 35]]))
@@ -189,7 +204,6 @@ def test_activation_batchler(mocker: MockerFixture):
     result = list(batchler.process(input_data))
     assert len(result) == 3  # Should create 2 full batches and 1 partial batch
     assert all(h in result[0] for h in hook_points)
-    assert "tokens" not in result[0]  # Additional fields should be removed
     assert torch.allclose(result[0]["h0"], torch.tensor([[13, 14, 15], [3, 4, 5]]))
     assert torch.allclose(result[0]["h1"], torch.tensor([[22, 23, 24], [12, 13, 14]]))
     assert torch.allclose(result[1]["h0"], torch.tensor([[33, 34, 35], [23, 24, 25]]))
