@@ -27,10 +27,10 @@ class DatasetRecord(BaseModel):
 class FeatureAnalysisSampling(BaseModel):
     name: str
     feature_acts: list[float]
-    dataset_ids: list[int]
-    shard_ids: Optional[list[int]] = None
+    dataset_name: list[str]
+    shard_idx: Optional[list[int]] = None
     n_shards: Optional[list[int]] = None
-    context_ids: list[int]
+    context_idx: list[int]
 
 
 class FeatureAnalysis(BaseModel):
