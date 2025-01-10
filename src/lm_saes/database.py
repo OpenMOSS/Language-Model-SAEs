@@ -8,7 +8,13 @@ from bson import ObjectId
 from pydantic import BaseModel
 from typing_extensions import deprecated
 
-from lm_saes.config import BaseSAEConfig, DatasetConfig, LanguageModelConfig, SAEConfig
+from lm_saes.config import (
+    BaseSAEConfig,
+    DatasetConfig,
+    LanguageModelConfig,
+    MongoDBConfig,
+    SAEConfig,
+)
 
 from .utils.bytes import bytes_to_np, np_to_bytes
 
@@ -49,7 +55,6 @@ class AnalysisRecord(BaseModel):
 
 class ModelRecord(BaseModel):
     name: str
-    series: str
     cfg: LanguageModelConfig
 
 
@@ -61,14 +66,15 @@ class SAERecord(BaseModel):
 
 
 class MongoClient:
-    def __init__(self, mongo_uri: str, mongo_db: str):
-        self.client: pymongo.MongoClient = pymongo.MongoClient(mongo_uri)
-        self.db = self.client[mongo_db]
+    def __init__(self, cfg: MongoDBConfig):
+        self.client: pymongo.MongoClient = pymongo.MongoClient(cfg.mongo_uri)
+        self.db = self.client[cfg.mongo_db]
         self.fs: gridfs.GridFS | None = None
         self.feature_collection = self.db["features"]
         self.sae_collection = self.db["saes"]
         self.analysis_collection = self.db["analyses"]
         self.dataset_collection = self.db["datasets"]
+        self.model_collection = self.db["models"]
         self.sae_collection.create_index([("name", pymongo.ASCENDING), ("series", pymongo.ASCENDING)], unique=True)
         self.sae_collection.create_index([("series", pymongo.ASCENDING)])
         self.analysis_collection.create_index(
@@ -80,6 +86,7 @@ class MongoClient:
             unique=True,
         )
         self.dataset_collection.create_index([("name", pymongo.ASCENDING)], unique=True)
+        self.model_collection.create_index([("name", pymongo.ASCENDING)], unique=True)
 
     @deprecated("Not recommended for new code, where any single record can fit in 16MB size limit of BSON")
     def _init_fs(self):
@@ -217,3 +224,21 @@ class MongoClient:
         if sae is None:
             return None
         return sae["path"]
+
+    def add_dataset(self, name: str, cfg: DatasetConfig):
+        self.dataset_collection.update_one({"name": name}, {"$set": {"cfg": cfg.model_dump()}}, upsert=True)
+
+    def get_dataset_cfg(self, name: str) -> Optional[DatasetConfig]:
+        dataset = self.dataset_collection.find_one({"name": name})
+        if dataset is None:
+            return None
+        return DatasetConfig.model_validate(dataset["cfg"])
+
+    def add_model(self, name: str, cfg: LanguageModelConfig):
+        self.model_collection.update_one({"name": name}, {"$set": {"cfg": cfg.model_dump()}}, upsert=True)
+
+    def get_model_cfg(self, name: str) -> Optional[LanguageModelConfig]:
+        model = self.model_collection.find_one({"name": name})
+        if model is None:
+            return None
+        return LanguageModelConfig.model_validate(model["cfg"])
