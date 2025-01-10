@@ -225,7 +225,7 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
             for token_id in ignore_token_ids:
                 mask &= tokens != token_id
             activations = {k: d[k][mask] for k in self.hook_points}
-            activations = activations | {"tokens": tokens}
+            activations = activations | {"tokens": tokens[mask]}
             if "meta" in d:
                 activations = activations | {"meta": d["meta"]}
             yield activations
