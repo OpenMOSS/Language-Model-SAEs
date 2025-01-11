@@ -9,14 +9,17 @@ from .config import (
     DatasetConfig,
     InitializerConfig,
     LanguageModelConfig,
+    MongoDBConfig,
     SAEConfig,
     TrainerConfig,
     WandbConfig,
 )
 from .resource_loaders import load_dataset, load_model
 from .runner import (
+    AnalyzeSAESettings,
     GenerateActivationsSettings,
     TrainSAESettings,
+    analyze_sae,
     generate_activations,
     train_sae,
 )
@@ -42,4 +45,7 @@ __all__ = [
     "WandbConfig",
     "train_sae",
     "TrainSAESettings",
+    "AnalyzeSAESettings",
+    "analyze_sae",
+    "MongoDBConfig",
 ]
