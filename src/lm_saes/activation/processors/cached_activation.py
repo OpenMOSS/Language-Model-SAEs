@@ -98,21 +98,22 @@ class BaseCachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str
             assert isinstance(data, dict), f"Loading cached activation {chunk.path} error: returned {type(data)}"
             assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
             assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
-            assert "meta" in data, f"Loading cached activation {chunk.path} error: missing 'info' field"
 
             chunk_data[hook] = data["activation"]
 
             # Store tokens and info from first hook point only
             if hook == self.hook_points[0]:
                 chunk_data["tokens"] = data["tokens"]
-                chunk_data["meta"] = data["meta"]
+                if "meta" in data:
+                    chunk_data["meta"] = data["meta"]
             else:
                 assert torch.allclose(
                     data["tokens"], chunk_data["tokens"]
                 ), f"Loading cached activation {chunk.path} error: tokens mismatch"
-                assert (
-                    data["meta"] == chunk_data["meta"]
-                ), f"Loading cached activation {chunk.path} error: info mismatch"
+                if "meta" in data:
+                    assert (
+                        data["meta"] == chunk_data["meta"]
+                    ), f"Loading cached activation {chunk.path} error: info mismatch"
 
         return chunk_data
 
@@ -217,9 +218,8 @@ class SequentialCachedActivationLoader(BaseCachedActivationLoader):
     def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int) -> Iterator[dict[str, Any]]:
         for chunk_idx in range(total_chunks):
             chunk_data = self._load_chunk_for_hooks(chunk_idx, hook_chunks)
-            yield from (
-                {k: v[i] for k, v in chunk_data.items()} for i in range(chunk_data[self.hook_points[0]].shape[0])
-            )
+            chunk_data = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in chunk_data.items()}
+            yield chunk_data
 
 
 class ParallelCachedActivationLoader(BaseCachedActivationLoader):
@@ -267,7 +267,9 @@ class ParallelCachedActivationLoader(BaseCachedActivationLoader):
                 # Process completed chunks in order
                 for future in tqdm(done, desc="Processing chunks", smoothing=0.001, leave=False):
                     chunk_data = future.result()
-                    chunk_data = {k: v.to(self.device) for k, v in chunk_data.items() if isinstance(v, torch.Tensor)}
+                    chunk_data = {
+                        k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in chunk_data.items()
+                    }
                     yield chunk_data
                     pbar.update(1)
 
