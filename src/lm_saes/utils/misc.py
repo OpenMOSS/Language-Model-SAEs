@@ -128,9 +128,9 @@ def calculate_activation_norm(
         batch = next(iter(activation_stream))
         for key, value in batch.items():
             if key not in activation_norm:
-                activation_norm[key] = value.norm(p=2, dim=1).mean()
+                activation_norm[key] = value.norm(p=2, dim=1)
             else:
-                activation_norm[key] = torch.cat((activation_norm[key], value.norm(p=2, dim=1).mean()), dim=0)
+                activation_norm[key] = torch.cat((activation_norm[key], value.norm(p=2, dim=1)), dim=0)
         batch_num -= 1
     for key in activation_norm:
         activation_norm[key] = activation_norm[key].mean().item()
