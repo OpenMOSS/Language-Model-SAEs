@@ -224,6 +224,12 @@ class TrainSAESettings(BaseSettings):
     sae: SAEConfig
     """Configuration for the SAE model architecture and parameters"""
 
+    sae_name: str
+    """Name of the SAE model"""
+
+    sae_series: str
+    """Series of the SAE model"""
+
     initializer: InitializerConfig
     """Configuration for model initialization"""
 
@@ -298,8 +304,8 @@ def train_sae(settings: TrainSAESettings) -> None:
     trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
     sae.save_pretrained(
         ckpt_path=settings.trainer.exp_result_path,
-        sae_name="final",
-        sae_series=settings.trainer.exp_series,
+        sae_name=settings.sae_name,
+        sae_series=settings.sae_series,
         mongodb_client=mongodb_client,
     )
 
