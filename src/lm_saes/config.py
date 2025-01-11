@@ -16,10 +16,7 @@ from pydantic import (
 from transformer_lens.loading_from_pretrained import get_official_model_name
 
 from .utils.huggingface import parse_pretrained_name_or_path
-from .utils.misc import (
-    convert_str_to_torch_dtype,
-    convert_torch_dtype_to_str,
-)
+from .utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str
 
 
 class BaseConfig(BaseModel):
@@ -140,8 +137,6 @@ class TrainerConfig(BaseConfig):
     n_checkpoints: int = 10
     check_point_save_mode: Literal["log", "linear"] = "log"
 
-    exp_name: str = "test"
-    exp_series: str = "default"
     exp_result_path: str = "results"
 
     def model_post_init(self, __context):
