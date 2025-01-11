@@ -12,7 +12,6 @@ from transformer_lens.hook_points import HookedRootModule, HookPoint
 
 from lm_saes.database import MongoClient
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
-from lm_saes.utils.misc import is_master
 
 from .config import SAEConfig
 
@@ -279,7 +278,7 @@ class SparseAutoEncoder(HookedRootModule):
         if os.path.isdir(ckpt_path):
             ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
         state_dict = self.get_full_state_dict()
-        if is_master():
+        if self.device_mesh is None or self.device_mesh.get_rank() == 0:
             self.cfg.save_hyperparameters(os.path.dirname(ckpt_path))
             if ckpt_path.endswith(".safetensors"):
                 safe.save_file(state_dict, ckpt_path, {"version": version("lm-saes")})
@@ -291,13 +290,15 @@ class SparseAutoEncoder(HookedRootModule):
                 )
 
     @torch.no_grad()
-    def save_pretrained(self, ckpt_path: str, sae_name: str, mongodb_client: MongoClient) -> None:
+    def save_pretrained(
+        self, ckpt_path: str, sae_name: str, sae_series: str, mongodb_client: MongoClient | None
+    ) -> None:
+        # TODO: save dataset_average_activation_norm
         if not os.path.isdir(ckpt_path):
             ckpt_path = os.path.join(ckpt_path, "final.safetensors")
-        if is_master():
-            self.save_checkpoint(ckpt_path)
-            # TODO: save to MongoDB
-            pass
+        self.save_checkpoint(ckpt_path)
+        if self.device_mesh is not None and self.device_mesh.get_rank() == 0 and mongodb_client is not None:
+            mongodb_client.create_sae(name=sae_name, series=sae_series, path=ckpt_path, cfg=self.cfg)
 
     @overload
     def encode(
