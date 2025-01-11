@@ -19,7 +19,6 @@ from .utils.huggingface import parse_pretrained_name_or_path
 from .utils.misc import (
     convert_str_to_torch_dtype,
     convert_torch_dtype_to_str,
-    is_master,
 )
 
 
@@ -140,21 +139,26 @@ class TrainerConfig(BaseConfig):
     eval_frequency: int = 1000
     n_checkpoints: int = 10
     check_point_save_mode: Literal["log", "linear"] = "log"
-    save_on_every_rank: bool = False
 
     exp_name: str = "test"
-    exp_series: Optional[str] = None
+    exp_series: str = "default"
     exp_result_path: str = "results"
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
-        if self.save_on_every_rank or is_master():
-            if os.path.exists(os.path.join(self.exp_result_path, "checkpoints")):
-                raise ValueError(
-                    f"Checkpoints for experiment {self.exp_result_path} already exist. Consider changing the experiment name."
-                )
-            os.makedirs(os.path.join(self.exp_result_path, "checkpoints"))
+        if os.path.exists(os.path.join(self.exp_result_path, "checkpoints")):
+            raise ValueError(
+                f"Checkpoints for experiment {self.exp_result_path} already exist. Consider changing the experiment name."
+            )
+        os.makedirs(os.path.join(self.exp_result_path, "checkpoints"))
         assert self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
+
+
+class EvalConfig(BaseConfig):
+    feature_sampling_window: int = 1000
+    total_eval_tokens: int = 1000000
+    use_cached_activations: bool = False
+    device: str = "cpu"
 
 
 class DatasetConfig(BaseConfig):

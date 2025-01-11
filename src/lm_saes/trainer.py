@@ -94,10 +94,6 @@ class Trainer:
             )
 
         activation_in, activation_out = batch[sae.cfg.hook_point_in], batch[sae.cfg.hook_point_out]
-        # TODO: remove this
-        activation_in = activation_in.to(sae.cfg.device)
-        activation_out = activation_out.to(sae.cfg.device)
-
         loss, (loss_data, aux_data) = sae.compute_loss(
             x=activation_in,
             label=activation_out,
@@ -113,8 +109,6 @@ class Trainer:
         assert self.optimizer is not None, "Optimizer must be initialized"
         assert self.wandb_logger is not None, "Wandb logger must be provided"
         activation_out = batch["output"]
-        # TODO: remove this
-        activation_out = activation_out.to(sae.cfg.device)
         did_fire = (log_info["feature_acts"] > 0).float().sum(0) > 0
         log_info["n_forward_passes_since_fired"] += 1
         log_info["n_forward_passes_since_fired"][did_fire] = 0
