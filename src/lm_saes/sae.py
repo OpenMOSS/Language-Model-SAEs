@@ -297,7 +297,7 @@ class SparseAutoEncoder(HookedRootModule):
         if not os.path.isdir(ckpt_path):
             ckpt_path = os.path.join(ckpt_path, "final.safetensors")
         self.save_checkpoint(ckpt_path)
-        if self.device_mesh is not None and self.device_mesh.get_rank() == 0 and mongodb_client is not None:
+        if (self.device_mesh is None or self.device_mesh.get_rank() == 0) and mongodb_client is not None:
             mongodb_client.create_sae(name=sae_name, series=sae_series, path=ckpt_path, cfg=self.cfg)
 
     @overload
