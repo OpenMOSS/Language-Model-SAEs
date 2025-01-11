@@ -29,7 +29,6 @@ from lm_saes.initializer import Initializer
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.trainer import Trainer
-from lm_saes.utils.misc import is_master
 
 T = TypeVar("T")
 
@@ -246,6 +245,9 @@ class TrainSAESettings(BaseSettings):
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
 
+    mongodb: Optional[MongoDBConfig] = None
+    """Configuration for MongoDB"""
+
 
 def train_sae(settings: TrainSAESettings) -> None:
     """Train a SAE model.
@@ -281,17 +283,25 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),
         )
-        if settings.wandb.log_to_wandb and is_master()
+        if settings.wandb.log_to_wandb and (device_mesh is not None and device_mesh.get_rank() == 0)
         else None
     )
     if wandb_logger is not None:
         wandb_logger.watch(sae, log="all")
+
+    mongodb_client = MongoClient(settings.mongodb) if settings.mongodb is not None else None
 
     # TODO: implement eval_fn
     eval_fn = (lambda x: None) if settings.eval else None
 
     trainer = Trainer(settings.trainer)
     trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+    sae.save_pretrained(
+        ckpt_path=settings.trainer.exp_result_path,
+        sae_name="final",
+        sae_series=settings.trainer.exp_series,
+        mongodb_client=mongodb_client,
+    )
 
 
 class AnalyzeSAESettings(BaseSettings):
