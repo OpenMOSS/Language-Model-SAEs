@@ -7,6 +7,7 @@ from .config import (
     ActivationFactoryTarget,
     ActivationWriterConfig,
     DatasetConfig,
+    FeatureAnalyzerConfig,
     InitializerConfig,
     LanguageModelConfig,
     MongoDBConfig,
@@ -47,5 +48,6 @@ __all__ = [
     "TrainSAESettings",
     "AnalyzeSAESettings",
     "analyze_sae",
+    "FeatureAnalyzerConfig",
     "MongoDBConfig",
 ]
