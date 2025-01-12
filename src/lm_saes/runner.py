@@ -127,7 +127,7 @@ class GenerateActivationsSettings(BaseSettings):
     context_size: int = 128
     """Context window size for tokenization"""
 
-    n_samples_per_chunk: int = 16
+    n_samples_per_chunk: Optional[int] = None
     """Number of samples per saved chunk"""
 
     num_workers: Optional[int] = None
