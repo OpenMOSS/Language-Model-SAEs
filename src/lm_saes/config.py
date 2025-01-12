@@ -284,8 +284,8 @@ class ActivationWriterConfig(BaseConfig):
     """ The hook points to capture activations from. """
     total_generating_tokens: Optional[int] = None
     """ The total number of tokens to generate. If `None`, will write all activations to disk. """
-    n_samples_per_chunk: int = 16
-    """ The number of samples to write to disk per chunk. """
+    n_samples_per_chunk: Optional[int] = None
+    """ The number of samples to write to disk per chunk. If `None`, will not further batch the activations. """
     cache_dir: str | Path = Path("activations")
     """ The directory to save the activations. """
     format: Literal["pt", "safetensors"] = "safetensors"

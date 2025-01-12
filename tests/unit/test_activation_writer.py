@@ -109,6 +109,26 @@ def test_process_safetensors_format(mock_config: ActivationWriterConfig, sample_
     assert chunk0_meta[1]["context_idx"] == 2
 
 
+def test_no_batching(writer: ActivationWriter, sample_data: list[dict], tmp_path: Path):
+    """Test processing data without batching."""
+    writer.cfg.n_samples_per_chunk = None
+    writer.process(sample_data)
+
+    for hook_point in writer.cfg.hook_points:
+        for i, sample in enumerate(sample_data):
+            chunk_path = tmp_path / hook_point / f"chunk-{i:08d}.pt"
+            assert chunk_path.exists()
+
+            chunk_data = torch.load(chunk_path, weights_only=True)
+            assert isinstance(chunk_data, dict)
+            assert "activation" in chunk_data
+            assert "tokens" in chunk_data
+            assert "meta" in chunk_data
+            assert chunk_data["meta"] == sample["meta"]
+            assert chunk_data["activation"].shape == (3, 4)
+            assert chunk_data["tokens"].shape == (3,)
+
+
 def test_invalid_format(mock_config: ActivationWriterConfig, sample_data: list[dict], tmp_path: Path):
     """Test that invalid format raises ValueError."""
     mock_config.format = "invalid"
