@@ -55,7 +55,7 @@ export type Interpretation = z.infer<typeof InterpretationSchema>;
 export const FeatureSchema = z.object({
   featureIndex: z.number(),
   dictionaryName: z.string(),
-  featureActivationHistogram: z.any().nullable(),
+  featureActivationHistogram: z.any().nullish(),
   actTimes: z.number(),
   maxFeatureAct: z.number(),
   sampleGroups: z.array(
@@ -80,8 +80,8 @@ export const FeatureSchema = z.object({
       ),
       histogram: z.any(),
     })
-    .nullable(),
-  interpretation: InterpretationSchema.nullable(),
+    .nullish(),
+  interpretation: InterpretationSchema.nullish(),
 });
 
 export type Feature = z.infer<typeof FeatureSchema>;
