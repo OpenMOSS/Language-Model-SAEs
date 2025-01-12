@@ -94,7 +94,7 @@ class FeatureAnalyzer:
                 sample_result_cur = batch_data
             elif (
                 sample_result_cur["elt"].size(0) > 0
-                and (elt_cur.max(dim=0).values <= sample_result_cur["elt"][-1]).all()
+                and (elt_cur.max(dim=0).values > sample_result_cur["elt"][-1]).any()
             ):
                 sample_result_cur = concat_dict_of_tensor(
                     sample_result_cur,
