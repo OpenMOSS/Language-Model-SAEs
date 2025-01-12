@@ -2,7 +2,7 @@ import itertools
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, Sequence
 
 import torch
 from safetensors.torch import save_file
@@ -99,13 +99,26 @@ class ActivationWriter:
 
         futures = set() if self.cfg.num_workers is not None else None
 
-        for chunk_id, chunk in enumerate(itertools.batched(data, self.cfg.n_samples_per_chunk)):
-            assert all(
-                [hook_point in d for d in chunk for hook_point in self.cfg.hook_points]
-            ), f"All samples must have all hook points: {self.cfg.hook_points}"
+        if self.cfg.n_samples_per_chunk is not None:
 
-            tokens = torch.stack([d["tokens"] for d in chunk])
-            meta = [d["meta"] for d in chunk] if "meta" in chunk[0] else None
+            def collate_batch(batch: Sequence[dict[str, Any]]) -> dict[str, Any]:
+                # Assert that all samples have the same keys
+                assert all(
+                    k in d for k in batch[0] for d in batch
+                ), f"All samples must have the same keys: {batch[0].keys()}"
+                return {
+                    k: torch.stack([d[k] for d in batch])
+                    if isinstance(batch[0][k], torch.Tensor)
+                    else [d[k] for d in batch]
+                    for k in batch[0].keys()
+                }
+
+            data = map(collate_batch, itertools.batched(data, self.cfg.n_samples_per_chunk))
+
+        for chunk_id, chunk in enumerate(data):
+            assert all(
+                k in chunk for k in self.cfg.hook_points
+            ), f"All samples must have the hook points: {self.cfg.hook_points}"
 
             chunk_name = (
                 f"chunk-{chunk_id:08d}"
@@ -115,9 +128,9 @@ class ActivationWriter:
 
             # Submit writing tasks for each hook point
             for hook_point in self.cfg.hook_points:
-                chunk_data = {"activation": torch.stack([d[hook_point] for d in chunk]), "tokens": tokens}
+                chunk_data = {"activation": chunk[hook_point], "tokens": chunk["tokens"]}
                 if futures is None:
-                    self._write_chunk(hook_point, chunk_data, chunk_name, meta)
+                    self._write_chunk(hook_point, chunk_data, chunk_name, chunk["meta"] if "meta" in chunk else None)
                 else:
                     assert self.executor is not None, "Executor is not initialized"
                     future = self.executor.submit(
@@ -125,7 +138,7 @@ class ActivationWriter:
                         hook_point,
                         chunk_data,
                         chunk_name,
-                        meta,
+                        chunk["meta"] if "meta" in chunk else None,
                     )
                     futures.add(future)
 
@@ -137,8 +150,8 @@ class ActivationWriter:
                     for future in done:
                         future.result()  # Raise any exceptions that occurred
 
-            n_tokens_written += tokens.shape[0] * tokens.shape[1]
-            pbar.update(tokens.shape[0] * tokens.shape[1])
+            n_tokens_written += chunk["tokens"].numel()
+            pbar.update(chunk["tokens"].numel())
 
             if total is not None and n_tokens_written >= total:
                 break
