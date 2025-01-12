@@ -1,6 +1,7 @@
 import math
 import os
 from importlib.metadata import version
+from pathlib import Path
 from typing import Callable, Dict, Literal, Union, overload
 
 import safetensors.torch as safe
@@ -266,7 +267,7 @@ class SparseAutoEncoder(HookedRootModule):
         self.cfg.norm_activation = "inference"
 
     @torch.no_grad()
-    def save_checkpoint(self, ckpt_path: str) -> None:
+    def save_checkpoint(self, ckpt_path: Path | str) -> None:
         # TODO: save the config to MongoDB
         """
         {
@@ -279,10 +280,9 @@ class SparseAutoEncoder(HookedRootModule):
             ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
         state_dict = self.get_full_state_dict()
         if self.device_mesh is None or self.device_mesh.get_rank() == 0:
-            self.cfg.save_hyperparameters(os.path.dirname(ckpt_path))
-            if ckpt_path.endswith(".safetensors"):
+            if Path(ckpt_path).suffix == ".safetensors":
                 safe.save_file(state_dict, ckpt_path, {"version": version("lm-saes")})
-            elif ckpt_path.endswith(".pt"):
+            elif Path(ckpt_path).suffix == ".pt":
                 torch.save({"sae": state_dict, "version": version("lm-saes")}, ckpt_path)
             else:
                 raise ValueError(
@@ -291,14 +291,15 @@ class SparseAutoEncoder(HookedRootModule):
 
     @torch.no_grad()
     def save_pretrained(
-        self, ckpt_path: str, sae_name: str, sae_series: str, mongodb_client: MongoClient | None
+        self, save_path: Path | str, sae_name: str, sae_series: str, mongo_client: MongoClient | None
     ) -> None:
         # TODO: save dataset_average_activation_norm
-        if not os.path.isdir(ckpt_path):
-            ckpt_path = os.path.join(ckpt_path, "final.safetensors")
-        self.save_checkpoint(ckpt_path)
-        if (self.device_mesh is None or self.device_mesh.get_rank() == 0) and mongodb_client is not None:
-            mongodb_client.create_sae(name=sae_name, series=sae_series, path=ckpt_path, cfg=self.cfg)
+        self.save_checkpoint(save_path)
+        if (self.device_mesh is None or self.device_mesh.get_rank() == 0) and mongo_client is not None:
+            self.cfg.save_hyperparameters(save_path)
+            mongo_client.create_sae(
+                name=sae_name, series=sae_series, path=str(Path(save_path).absolute()), cfg=self.cfg
+            )
 
     @overload
     def encode(
@@ -529,3 +530,8 @@ class SparseAutoEncoder(HookedRootModule):
         model = cls(cfg)
         model.load_state_dict(state_dict, strict=cfg.strict_loading)
         return model
+
+    @classmethod
+    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+        cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
+        return cls.from_config(cfg)

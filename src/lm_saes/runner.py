@@ -95,13 +95,13 @@ class GenerateActivationsSettings(BaseSettings):
     """Configuration for loading the language model. If `None`, will read from the database."""
 
     model_name: str
-    """Name of the model to load"""
+    """Name of the model to load. Use as identifier for the model in the database."""
 
     dataset: Optional[DatasetConfig] = None
     """Configuration for loading the dataset. If `None`, will read from the database."""
 
     dataset_name: str
-    """Name of the dataset"""
+    """Name of the dataset. Use as identifier for the dataset in the database."""
 
     hook_points: list[str]
     """List of model hook points to capture activations from"""
@@ -225,10 +225,10 @@ class TrainSAESettings(BaseSettings):
     """Configuration for the SAE model architecture and parameters"""
 
     sae_name: str
-    """Name of the SAE model"""
+    """Name of the SAE model. Use as identifier for the SAE model in the database."""
 
     sae_series: str
-    """Series of the SAE model"""
+    """Series of the SAE model. Use as identifier for the SAE model in the database."""
 
     initializer: InitializerConfig
     """Configuration for model initialization"""
@@ -251,7 +251,7 @@ class TrainSAESettings(BaseSettings):
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
 
-    mongodb: Optional[MongoDBConfig] = None
+    mongo: Optional[MongoDBConfig] = None
     """Configuration for MongoDB"""
 
 
@@ -286,13 +286,13 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),
         )
-        if settings.wandb.log_to_wandb and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb.log_to_wandb and (device_mesh is not None and device_mesh.get_rank() == 0)
         else None
     )
     if wandb_logger is not None:
         wandb_logger.watch(sae, log="all")
 
-    mongodb_client = MongoClient(settings.mongodb) if settings.mongodb is not None else None
+    mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
 
     # TODO: implement eval_fn
     eval_fn = (lambda x: None) if settings.eval else None
@@ -300,10 +300,10 @@ def train_sae(settings: TrainSAESettings) -> None:
     trainer = Trainer(settings.trainer)
     trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
     sae.save_pretrained(
-        ckpt_path=settings.trainer.exp_result_path,
+        save_path=settings.trainer.exp_result_path,
         sae_name=settings.sae_name,
         sae_series=settings.sae_series,
-        mongodb_client=mongodb_client,
+        mongo_client=mongo_client,
     )
 
 
@@ -312,7 +312,10 @@ class AnalyzeSAESettings(BaseSettings):
     """Configuration for the SAE model architecture and parameters"""
 
     sae_name: str
+    """Name of the SAE model. Use as identifier for the SAE model in the database."""
+
     sae_series: str
+    """Series of the SAE model. Use as identifier for the SAE model in the database."""
 
     activation_factory: ActivationFactoryConfig
     """Configuration for generating activations"""
