@@ -15,6 +15,7 @@ from .config import (
     TrainerConfig,
     WandbConfig,
 )
+from .database import MongoClient
 from .resource_loaders import load_dataset, load_model
 from .runner import (
     AnalyzeSAESettings,
@@ -50,4 +51,5 @@ __all__ = [
     "analyze_sae",
     "FeatureAnalyzerConfig",
     "MongoDBConfig",
+    "MongoClient",
 ]
