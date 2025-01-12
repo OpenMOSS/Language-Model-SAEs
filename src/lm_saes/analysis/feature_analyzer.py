@@ -1,4 +1,3 @@
-import itertools
 from typing import Any, Iterable, Mapping
 
 import torch
@@ -156,28 +155,24 @@ class FeatureAnalyzer:
         mapper = KeyedDiscreteMapper()
 
         # Process activation batches
-        for batch in itertools.batched(activation_stream, self.cfg.batch_size):
-            batch = {
-                "activations": torch.stack([b[sae.cfg.hook_point_in] for b in batch]),
-                "meta": {k: [b["meta"][k] for b in batch] for k in batch[0]["meta"].keys()},
-            }
+        for batch in activation_stream:
+            # Reshape meta to zip outer dimensions to inner
+            meta = {k: [m[k] for m in batch["meta"]] for k in batch["meta"][0].keys()}
 
             # Get feature activations from SAE
-            feature_acts = sae.encode(batch["activations"])
-
+            feature_acts = sae.encode(batch[sae.cfg.hook_point_in])
             # Update activation statistics
             act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
             max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
 
             # TODO: Filter out meta that is not string
             discrete_meta = {
-                k: torch.tensor(mapper.encode(k, v), device=sae.cfg.device, dtype=torch.int32)
-                for k, v in batch["meta"].items()
+                k: torch.tensor(mapper.encode(k, v), device=sae.cfg.device, dtype=torch.int32) for k, v in meta.items()
             }
             sample_result = self._process_batch(feature_acts, discrete_meta, sample_result, max_feature_acts)
 
             # Update progress
-            n_tokens_current = batch["activations"].size(0) * batch["activations"].size(1)
+            n_tokens_current = batch["tokens"].numel()
             n_training_tokens += n_tokens_current
             pbar.update(n_tokens_current)
 

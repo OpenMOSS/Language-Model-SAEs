@@ -297,9 +297,6 @@ class FeatureAnalyzerConfig(BaseConfig):
     total_analyzing_tokens: int
     """ Total number of tokens to analyze """
 
-    batch_size: int = 16
-    """ Batch size for processing activations. """
-
     enable_sampling: bool = False
     """ Whether to use weighted sampling for selecting activations. 
         If `False`, will only keep top activations (below the subsample threshold). 
