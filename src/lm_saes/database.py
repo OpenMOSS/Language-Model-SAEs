@@ -248,7 +248,7 @@ class MongoClient:
         for i, feature_analysis in enumerate(analysis):
             update_operation = pymongo.UpdateOne(
                 {"sae_name": sae_name, "sae_series": sae_series, "index": i},
-                {"$push": {"analyses": feature_analysis}},
+                {"$push": {"analyses": feature_analysis | {"name": name}}},
                 upsert=True,
             )
             operations.append(update_operation)
@@ -257,3 +257,14 @@ class MongoClient:
             self.feature_collection.bulk_write(operations)
 
         self.analysis_collection.insert_one({"name": name, "sae_name": sae_name, "sae_series": sae_series})
+
+    def remove_feature_analysis(self, name: str, sae_name: str, sae_series: str):
+        self.feature_collection.update_many(
+            {"sae_name": sae_name, "sae_series": sae_series}, {"$pull": {"analyses": {"name": name}}}
+        )
+        self.analysis_collection.delete_one({"name": name, "sae_name": sae_name, "sae_series": sae_series})
+
+    def remove_sae_analysis(self, sae_name: str, sae_series: str):
+        self.feature_collection.delete_many({"sae_name": sae_name, "sae_series": sae_series})
+        self.analysis_collection.delete_many({"sae_name": sae_name, "sae_series": sae_series})
+        self.sae_collection.delete_one({"name": sae_name, "series": sae_series})
