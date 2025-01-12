@@ -272,12 +272,9 @@ def train_sae(settings: TrainSAESettings) -> None:
     )
     activation_factory = ActivationFactory(settings.activation_factory)
     activations_stream = activation_factory.process()
-    # TODO: get activation norm from activation_factory
-    # activation_norm = activation_factory.get_activation_norm()
-    activation_norm = {settings.sae.hook_point_in: 1.0, settings.sae.hook_point_out: 1.0}
     initializer = Initializer(settings.initializer)
     sae = initializer.initialize_sae_from_config(
-        settings.sae, activation_stream=activations_stream, activation_norm=activation_norm, device_mesh=device_mesh
+        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
     )
 
     wandb_logger = (
