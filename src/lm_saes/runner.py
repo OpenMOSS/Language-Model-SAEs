@@ -78,8 +78,10 @@ def load_config(
     if mongo_client is not None and name is not None:
         if config is None:
             config = getattr(mongo_client, f"get_{config_type}_cfg")(name)
+            print(f"Loaded {config_type} config from database: {name}")
         else:
             getattr(mongo_client, f"add_{config_type}")(name, config)
+            print(f"Added {config_type} config to database: {name}")
 
     if required:
         assert config is not None, f"{config_type} config not provided and not found in database"
