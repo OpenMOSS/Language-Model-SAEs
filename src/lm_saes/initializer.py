@@ -12,6 +12,7 @@ from torch.distributed.tensor.parallel import (
 
 from lm_saes.config import BaseSAEConfig, InitializerConfig, SAEConfig
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.utils.misc import calculate_activation_norm
 
 
 class Initializer:
@@ -154,9 +155,11 @@ class Initializer:
             if cfg.sae_pretrained_name_or_path is None:
                 sae: SparseAutoEncoder = self.initialize_parameters(sae)
             if sae.cfg.norm_activation == "dataset-wise":
-                assert (
-                    activation_norm is not None
-                ), "Activation normalization must be provided for dataset-wise normalization"
+                if activation_norm is None:
+                    assert (
+                        activation_stream is not None
+                    ), "Activation iterator must be provided for dataset-wise normalization"
+                    activation_norm = calculate_activation_norm(activation_stream)
                 sae.set_dataset_average_activation_norm(activation_norm)
 
             if self.cfg.init_search:

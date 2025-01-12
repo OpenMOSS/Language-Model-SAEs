@@ -1,3 +1,4 @@
+import math
 from typing import Iterator
 
 import pytest
@@ -72,9 +73,10 @@ class TestCalculateActivationNorm:
         """Test with mixed positive/negative values."""
 
         def mixed_stream():
-            yield {
-                "mixed": torch.tensor([[1.0, -1.0], [1.0, -1.0]])  # norm should be 1.414
-            }
+            for i in range(10):
+                yield {"mixed": torch.tensor([[1.0, -2.0], [3.0, -4.0], [3.0, -2.0], [9.0, -4.0]]) * (i + 1)}
 
-        result = calculate_activation_norm(mixed_stream(), batch_num=1)
-        assert pytest.approx(result["mixed"], rel=1e-4) == 1.4142
+        result = calculate_activation_norm(mixed_stream(), batch_num=10)
+        assert (
+            pytest.approx(result["mixed"], rel=1e-4) == ((math.sqrt(5) + 5 + math.sqrt(13) + math.sqrt(97)) / 4) * 5.5
+        )

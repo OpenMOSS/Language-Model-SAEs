@@ -124,8 +124,9 @@ def calculate_activation_norm(
     activation_stream: Iterable[dict[str, torch.Tensor]], batch_num: int = 8
 ) -> dict[str, float]:
     activation_norm = {}
+    stream_iter = iter(activation_stream)
     while batch_num > 0:
-        batch = next(iter(activation_stream))
+        batch = next(stream_iter)
         for key, value in batch.items():
             if key not in activation_norm:
                 activation_norm[key] = value.norm(p=2, dim=1)
