@@ -26,17 +26,18 @@ class DatasetRecord(BaseModel):
 
 class FeatureAnalysisSampling(BaseModel):
     name: str
-    feature_acts: list[float]
+    feature_acts: list[list[float]]
     dataset_name: list[str]
     shard_idx: Optional[list[int]] = None
     n_shards: Optional[list[int]] = None
     context_idx: list[int]
+    model_name: list[str]
 
 
 class FeatureAnalysis(BaseModel):
     name: str
     act_times: int
-    max_feature_act: int
+    max_feature_acts: float
     samplings: list[FeatureAnalysisSampling]
 
 
@@ -189,33 +190,76 @@ class MongoClient:
             return None
         return SAERecord.model_validate(sae)
 
-    def get_random_alive_feature(self, sae_name: str, sae_series: str):
-        feature = self.feature_collection.aggregate(
-            [
-                {"$match": {"sae_name": sae_name, "sae_series": sae_series, "max_feature_acts": {"$gt": 0}}},
-                {"$sample": {"size": 1}},
-            ]
-        ).next()
+    def get_random_alive_feature(
+        self, sae_name: str, sae_series: str, name: str = "default"
+    ) -> Optional[FeatureRecord]:
+        """Get a random feature that has non-zero activation.
+
+        Args:
+            sae_name: Name of the SAE model
+            sae_series: Series of the SAE model
+            name: Name of the analysis
+
+        Returns:
+            A random feature record with non-zero activation, or None if no such feature exists
+        """
+        pipeline = [
+            {
+                "$match": {
+                    "sae_name": sae_name,
+                    "sae_series": sae_series,
+                    "analyses": {"$elemMatch": {"name": name, "max_feature_acts": {"$gt": 0}}},
+                }
+            },
+            {"$sample": {"size": 1}},
+        ]
+        feature = next(self.feature_collection.aggregate(pipeline), None)
         if feature is None:
             return None
-        return FeatureRecord.model_validate(**feature)
+        return FeatureRecord.model_validate(feature)
 
-    def get_alive_feature_count(self, sae_name: str, sae_series: str):
-        return self.feature_collection.count_documents(
-            {"sae_name": sae_name, "sae_series": sae_series, "max_feature_acts": {"$gt": 0}}
-        )
-
-    def get_max_feature_acts(self, sae_name: str, sae_series: str) -> dict[int, int] | None:
+    def get_alive_feature_count(self, sae_name: str, sae_series: str, name: str = "default"):
         pipeline = [
-            {"$match": {"sae_name": sae_name, "sae_series": sae_series, "max_feature_acts": {"$gt": 0}}},
-            {"$project": {"_id": 0, "index": 1, "max_feature_acts": 1}},
+            {"$unwind": "$analyses"},
+            {
+                "$match": {
+                    "sae_name": sae_name,
+                    "sae_series": sae_series,
+                    "analyses.name": name,
+                    "analyses.max_feature_acts": {"$gt": 0},
+                }
+            },
+            {"$count": "count"},
+        ]
+        return self.feature_collection.aggregate(pipeline).next()["count"]
+
+    def get_max_feature_acts(self, sae_name: str, sae_series: str, name: str = "default") -> dict[int, int] | None:
+        pipeline = [
+            {"$unwind": "$analyses"},
+            {
+                "$match": {
+                    "sae_name": sae_name,
+                    "sae_series": sae_series,
+                    "analyses.name": name,
+                    "analyses.max_feature_acts": {"$gt": 0},
+                }
+            },
+            {"$project": {"_id": 0, "index": 1, "max_feature_acts": "$analyses.max_feature_acts"}},
         ]
         return {f["index"]: f["max_feature_acts"] for f in self.feature_collection.aggregate(pipeline)}
 
-    def get_feature_act_times(self, sae_name: str, sae_series: str):
+    def get_feature_act_times(self, sae_name: str, sae_series: str, name: str = "default"):
         pipeline = [
-            {"$match": {"sae_name": sae_name, "sae_series": sae_series, "max_feature_acts": {"$gt": 0}}},
-            {"$project": {"_id": 0, "index": 1, "act_times": 1}},
+            {"$unwind": "$analyses"},
+            {
+                "$match": {
+                    "sae_name": sae_name,
+                    "sae_series": sae_series,
+                    "analyses.name": name,
+                    "analyses.act_times": {"$gt": 0},
+                }
+            },
+            {"$project": {"_id": 0, "index": 1, "act_times": "$analyses.act_times"}},
         ]
         return {f["index"]: f["act_times"] for f in self.feature_collection.aggregate(pipeline)}
 

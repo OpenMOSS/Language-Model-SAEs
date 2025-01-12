@@ -116,7 +116,6 @@ def get_image(dataset_name: str, context_idx: int, image_idx: int):
 
 @app.get("/dictionaries/{name}/features/{feature_index}")
 def get_feature(name: str, feature_index: str | int):
-    model = get_model(name)
     if isinstance(feature_index, str) and feature_index != "random":
         try:
             feature_index = int(feature_index)
@@ -143,6 +142,8 @@ def get_feature(name: str, feature_index: str | int):
             feature_acts = sampling.feature_acts[i]
             context_idx = sampling.context_idx[i]
             dataset_name = sampling.dataset_name[i]
+            model_name = sampling.model_name[i]
+            model = get_model(model_name)
             data = get_dataset(dataset_name)[context_idx]
             _, token_origins = model.to_tokens_with_origins(data)
 
@@ -173,8 +174,9 @@ def get_feature(name: str, feature_index: str | int):
             make_serializable(
                 {
                     "feature_index": feature.index,
+                    "dictionary_name": feature.sae_name,
                     "act_times": feature.analyses[0].act_times,
-                    "max_feature_act": feature.analyses[0].max_feature_act,
+                    "max_feature_act": feature.analyses[0].max_feature_acts,
                     "sample_groups": sample_groups,
                 }
             )
