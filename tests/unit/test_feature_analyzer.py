@@ -67,8 +67,6 @@ def test_process_batch(feature_analyzer: FeatureAnalyzer):
         max_feature_acts=max_feature_acts,
     )
 
-    print(result_1)
-
     # Process second batch
     result_2 = feature_analyzer._process_batch(
         feature_acts=feature_acts_2,
@@ -76,8 +74,6 @@ def test_process_batch(feature_analyzer: FeatureAnalyzer):
         sample_result=result_1,
         max_feature_acts=max_feature_acts,
     )
-
-    print(result_2)
 
     # Verify final results
     assert "top" in result_2
@@ -90,20 +86,35 @@ def test_process_batch(feature_analyzer: FeatureAnalyzer):
     assert torch.allclose(
         top_samples["feature_acts"],
         torch.tensor(
-            [[[1.0000, 0.3000], [0.9000, 0.1000]], [[0.2000, 0.4000], [0.2000, 0.8000]]],
+            [[[1.0000, 0.3000], [0.9000, 0.1000]], [[0.9000, 0.1000], [0.2000, 0.8000]]],
         ),
     )
     assert torch.allclose(
         top_samples["elt"],
-        torch.tensor([[1.0000, 0.9000], [0.4000, 0.8000]]),
+        torch.tensor([[1.0000, 0.9000], [0.9000, 0.8000]]),
+    )
+    assert torch.allclose(
+        top_samples["context"],
+        torch.tensor([[0, 1], [3, 0]]),
     )
 
     # For mid samples (proportion=0.5)
     mid_samples = result_2["mid"]
-    assert mid_samples["feature_acts"].shape[1] == 2  # d_sae
-    assert mid_samples["feature_acts"].shape[2] == 2  # context_size
-    # Verify mid samples have activations below 50% of max
-    assert torch.all(mid_samples["feature_acts"].max(dim=-1).values <= 0.5 * max_feature_acts)
+    assert mid_samples["feature_acts"].shape == (2, 2, 2)
+    assert torch.allclose(
+        mid_samples["feature_acts"][0],
+        torch.tensor(
+            [[0.2000, 0.4000], [0.3000, 0.2000]],
+        ),
+    )
+    assert torch.allclose(
+        mid_samples["elt"],
+        torch.tensor([[0.4000, 0.3000], [-torch.inf, -torch.inf]]),
+    )
+    assert torch.allclose(
+        mid_samples["context"],
+        torch.tensor([[1, 2], [2, 0]]),
+    )
 
 
 def test_analyze_chunk_no_sampling(
