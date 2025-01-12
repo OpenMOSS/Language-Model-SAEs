@@ -80,7 +80,7 @@ class BaseSAEConfig(BaseModelConfig):
             sae_config = json.load(f)
         sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
         sae_config["strict_loading"] = strict_loading
-        return cls.model_validate(sae_config, **kwargs)
+        return cls.model_validate({**sae_config, **kwargs})
 
     def save_hyperparameters(self, sae_path: Path | str, remove_loading_info: bool = True):
         assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."

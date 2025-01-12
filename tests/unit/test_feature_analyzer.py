@@ -11,8 +11,7 @@ from lm_saes.sae import SparseAutoEncoder
 def feature_analyzer_config() -> FeatureAnalyzerConfig:
     return FeatureAnalyzerConfig(
         total_analyzing_tokens=1000,
-        enable_sampling=True,
-        sample_weight_exponent=2.0,
+        enable_sampling=False,
         subsamples={
             "top": {"n_samples": 2, "proportion": 1.0},
             "mid": {"n_samples": 2, "proportion": 0.5},
@@ -26,18 +25,31 @@ def feature_analyzer(feature_analyzer_config: FeatureAnalyzerConfig) -> FeatureA
 
 
 def test_process_batch(feature_analyzer: FeatureAnalyzer):
-    """Test _process_batch method with sampling enabled."""
-    # Setup test data
-    feature_acts = torch.tensor(
+    """Test _process_batch method with two consecutive calls to verify sample updating."""
+    # First batch
+    feature_acts_1 = torch.tensor(
         [
-            [[1.0, 0.5], [0.3, 0.8]],  # batch 0
-            [[0.2, 0.9], [0.4, 0.6]],  # batch 1
+            [[1.0, 0.2], [0.3, 0.8]],  # context 0
+            [[0.2, 0.9], [0.4, 0.1]],  # context 1
         ]
     )  # shape: (2, 2, 2) - (batch_size, context_size, d_sae)
 
-    discrete_meta = {
-        "dataset": torch.tensor([0, 1]),  # batch_size
-        "context": torch.tensor([0, 1]),  # batch_size
+    discrete_meta_1 = {
+        "dataset": torch.tensor([0, 1]),
+        "context": torch.tensor([0, 1]),
+    }
+
+    # Second batch
+    feature_acts_2 = torch.tensor(
+        [
+            [[0.7, 0.3], [0.2, 0.2]],  # context 0
+            [[0.9, 0.4], [0.1, 0.6]],  # context 1
+        ]
+    )
+
+    discrete_meta_2 = {
+        "dataset": torch.tensor([2, 3]),
+        "context": torch.tensor([2, 3]),
     }
 
     sample_result = {
@@ -45,22 +57,53 @@ def test_process_batch(feature_analyzer: FeatureAnalyzer):
         "mid": None,
     }
 
-    max_feature_acts = torch.tensor([0.8, 0.7])  # d_sae
+    max_feature_acts = torch.tensor([1.0, 0.9])
 
-    # Run method
-    result = feature_analyzer._process_batch(
-        feature_acts=feature_acts,
-        discrete_meta=discrete_meta,
+    # Process first batch
+    result_1 = feature_analyzer._process_batch(
+        feature_acts=feature_acts_1,
+        discrete_meta=discrete_meta_1,
         sample_result=sample_result,
         max_feature_acts=max_feature_acts,
     )
 
-    # Verify results
-    assert "top" in result
-    assert "mid" in result
-    assert all(k in result["top"] for k in ["elt", "feature_acts", "dataset", "context"])
-    assert result["top"]["feature_acts"].shape[1] == 2  # n_samples
-    assert result["top"]["feature_acts"].shape[2] == 2  # context_size
+    print(result_1)
+
+    # Process second batch
+    result_2 = feature_analyzer._process_batch(
+        feature_acts=feature_acts_2,
+        discrete_meta=discrete_meta_2,
+        sample_result=result_1,
+        max_feature_acts=max_feature_acts,
+    )
+
+    print(result_2)
+
+    # Verify final results
+    assert "top" in result_2
+    assert "mid" in result_2
+
+    # For top samples (proportion=1.0)
+    top_samples = result_2["top"]
+    assert top_samples["feature_acts"].shape == (2, 2, 2)  # n_samples, d_sae, context_size
+    # Verify the samples are sorted by activation magnitude
+    assert torch.allclose(
+        top_samples["feature_acts"],
+        torch.tensor(
+            [[[1.0000, 0.3000], [0.9000, 0.1000]], [[0.2000, 0.4000], [0.2000, 0.8000]]],
+        ),
+    )
+    assert torch.allclose(
+        top_samples["elt"],
+        torch.tensor([[1.0000, 0.9000], [0.4000, 0.8000]]),
+    )
+
+    # For mid samples (proportion=0.5)
+    mid_samples = result_2["mid"]
+    assert mid_samples["feature_acts"].shape[1] == 2  # d_sae
+    assert mid_samples["feature_acts"].shape[2] == 2  # context_size
+    # Verify mid samples have activations below 50% of max
+    assert torch.all(mid_samples["feature_acts"].max(dim=-1).values <= 0.5 * max_feature_acts)
 
 
 def test_analyze_chunk_no_sampling(

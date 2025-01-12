@@ -245,10 +245,9 @@ class MongoClient:
 
     def add_feature_analysis(self, name: str, sae_name: str, sae_series: str, analysis: list[dict]):
         operations = []
-        for feature_analysis in analysis:
-            feature_index = feature_analysis["index"]
+        for i, feature_analysis in enumerate(analysis):
             update_operation = pymongo.UpdateOne(
-                {"sae_name": sae_name, "sae_series": sae_series, "index": feature_index},
+                {"sae_name": sae_name, "sae_series": sae_series, "index": i},
                 {"$push": {"analyses": feature_analysis}},
                 upsert=True,
             )
