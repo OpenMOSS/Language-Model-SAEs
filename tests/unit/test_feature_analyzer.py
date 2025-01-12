@@ -84,6 +84,7 @@ def test_analyze_chunk_no_sampling(
     # Create carefully crafted feature activations
     # Shape: (batch_size=2, context_size=2, d_sae=2)
     mock_sae.encode.return_value = torch.tensor(
+        # Batch 0
         [
             # Context 0
             [
@@ -101,18 +102,18 @@ def test_analyze_chunk_no_sampling(
     # Create mock activation stream
     activation_stream = [
         {
-            "activations_in": torch.randn(2, 10),  # (context_size, d_model)
-            "meta": {
-                "dataset": "train",
-                "context": "ctx1",
-            },
-        },
-        {
-            "activations_in": torch.randn(2, 10),  # (context_size, d_model)
-            "meta": {
-                "dataset": "valid",
-                "context": "ctx2",
-            },
+            "activations_in": torch.randn(2, 2, 10),  # (batch_size, context_size, d_model)
+            "tokens": torch.randint(0, 1000, (2, 2)),  # (batch_size, context_size)
+            "meta": [
+                {
+                    "dataset": "train",
+                    "context": "ctx1",
+                },
+                {
+                    "dataset": "valid",
+                    "context": "ctx2",
+                },
+            ],
         },
     ]
 
