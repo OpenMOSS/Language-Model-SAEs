@@ -97,6 +97,16 @@ class SAEConfig(BaseSAEConfig):
     pass
 
 
+class MixCoderConfig(BaseSAEConfig):
+    d_single_modal: int
+    d_shared: int
+    n_modalities: int = 2
+
+    @property
+    def d_sae(self) -> int:
+        return self.d_single_modal * self.n_modalities + self.d_shared
+
+
 class InitializerConfig(BaseConfig):
     bias_init_method: str = "all_zero"
     init_decoder_norm: float | None = None
