@@ -70,10 +70,10 @@ def test_initialize_search(
     activation_stream_iter = stream_generator()
     initializer = Initializer(initializer_config)
     sae = initializer.initialize_sae_from_config(sae_config, activation_stream=activation_stream_iter)
-    assert torch.allclose(sae.decoder_norm(), sae.decoder_norm().mean(), atol=1e-4, rtol=1e-5)
+    assert torch.allclose(sae._decoder_norm(sae.decoder), sae._decoder_norm(sae.decoder).mean(), atol=1e-4, rtol=1e-5)
 
     initializer_config.bias_init_method = "geometric_median"
     initializer_config.init_encoder_with_decoder_transpose = True
     sae_config.apply_decoder_bias_to_pre_encoder = False
     sae = initializer.initialize_sae_from_config(sae_config, activation_stream=activation_stream_iter)
-    assert torch.allclose(sae.decoder_norm(), sae.decoder_norm().mean(), atol=1e-4, rtol=1e-5)
+    assert torch.allclose(sae._decoder_norm(sae.decoder), sae._decoder_norm(sae.decoder).mean(), atol=1e-4, rtol=1e-5)

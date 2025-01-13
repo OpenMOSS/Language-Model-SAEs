@@ -37,7 +37,7 @@ class Initializer:
             sae.set_decoder_to_fixed_norm(self.cfg.init_decoder_norm, force_exact=True)
 
         if self.cfg.init_encoder_with_decoder_transpose:
-            sae.encoder.weight.data = sae.decoder.weight.data.T.clone().contiguous()
+            sae.init_encoder_with_decoder_transpose()
         else:
             if self.cfg.init_encoder_norm:
                 sae.set_encoder_to_fixed_norm(self.cfg.init_encoder_norm)
@@ -77,15 +77,8 @@ class Initializer:
 
                 for norm in search_range:
                     sae.set_decoder_to_fixed_norm(norm, force_exact=True)
-                    sae.encoder.weight.data = sae.decoder.weight.data.T.clone().contiguous()
-                    mse = (
-                        sae.compute_loss(
-                            x=activation_in,
-                            label=activation_out,
-                        )[1][0]["l_rec"]
-                        .mean()
-                        .item()
-                    )
+                    sae.init_encoder_with_decoder_transpose()
+                    mse = sae.compute_loss(activation_batch)[1][0]["l_rec"].mean().item()
                     losses[norm] = mse
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm
@@ -115,7 +108,7 @@ class Initializer:
                 sae.encoder.bias.data = -normalized_median @ sae.encoder.weight.data.T
 
         if self.cfg.init_encoder_with_decoder_transpose:
-            sae.encoder.weight.data = sae.decoder.weight.data.T.clone().contiguous()
+            sae.init_encoder_with_decoder_transpose()
 
         return sae
 

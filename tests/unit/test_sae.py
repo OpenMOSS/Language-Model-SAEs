@@ -17,8 +17,10 @@ def sae_config() -> SAEConfig:
         hook_point_out="out",
         d_model=2,
         expansion_factor=2,
-        device="cuda:0",
-        dtype=torch.float32,  # the precision of bfloat16 is not enough for the tests
+        device="cpu",
+        dtype=torch.float32,
+        act_fn="topk",
+        jump_relu_threshold=2.0,
     )
 
 
@@ -58,14 +60,14 @@ def test_set_norm(sae: SparseAutoEncoder):
         model.set_decoder_to_fixed_norm(norm, force_exact=force_exact)
         if force_exact:
             assert torch.allclose(
-                model.decoder_norm(keepdim=False),
+                model._decoder_norm(model.decoder, keepdim=False),
                 norm * torch.ones(size=(model.cfg.d_sae,), device=model.cfg.device, dtype=model.cfg.dtype),
                 atol=1e-4,
                 rtol=1e-5,
             )
         else:
             assert torch.all(
-                model.decoder_norm(keepdim=False)
+                model._decoder_norm(model.decoder, keepdim=False)
                 <= norm * torch.ones(size=(model.cfg.d_sae,), device=model.cfg.device, dtype=model.cfg.dtype) + 1e-4
             )
 
@@ -73,7 +75,7 @@ def test_set_norm(sae: SparseAutoEncoder):
         model = sae
         model.set_encoder_to_fixed_norm(norm)
         assert torch.allclose(
-            model.encoder_norm(keepdim=False),
+            model._encoder_norm(model.encoder, keepdim=False),
             norm * torch.ones(size=(model.cfg.d_sae,), device=model.cfg.device, dtype=model.cfg.dtype),
             atol=1e-4,
             rtol=1e-5,
@@ -86,10 +88,22 @@ def test_set_norm(sae: SparseAutoEncoder):
     set_encoder_norm(3.7)
 
 
+def test_sae_activate_fn(sae_config: SAEConfig, sae: SparseAutoEncoder):
+    sae.current_k = 2
+    assert torch.allclose(
+        sae.activation_function(
+            torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]], device=sae_config.device, dtype=sae_config.dtype)
+        ).to(sae_config.device, sae_config.dtype),
+        torch.tensor([[0.0, 0.0, 0.0, 0.0, 1.0, 1.0]], device=sae_config.device, dtype=sae_config.dtype),
+        atol=1e-4,
+        rtol=1e-5,
+    )
+
+
 def test_transform_to_unit_decoder_norm(sae_config: SAEConfig, sae: SparseAutoEncoder):
     sae.transform_to_unit_decoder_norm()
     assert torch.allclose(
-        sae.decoder_norm(keepdim=False),
+        sae._decoder_norm(sae.decoder, keepdim=False),
         torch.ones(size=(sae_config.d_sae,), device=sae_config.device, dtype=sae_config.dtype),
         atol=1e-4,
         rtol=1e-5,
@@ -144,7 +158,7 @@ def test_compute_norm_factor(sae_config: SAEConfig, sae: SparseAutoEncoder):
 
 def test_get_full_state_dict(sae_config: SAEConfig, sae: SparseAutoEncoder):
     sae_config.sparsity_include_decoder_norm = False
-    state_dict = sae.get_full_state_dict()
+    state_dict = sae._get_full_state_dict()
     assert "decoder.weight" in state_dict
     assert not torch.allclose(state_dict["decoder.weight"], sae.decoder.weight.data, atol=1e-4, rtol=1e-5)
     sae.set_decoder_to_fixed_norm(1.0, force_exact=True)

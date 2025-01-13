@@ -22,7 +22,7 @@ def eval_config() -> EvalConfig:
 
 @pytest.fixture
 def sae_config(mocker: MockerFixture, eval_config: EvalConfig):
-    config = mocker.Mock()
+    config = mocker.Mock(spec=SAEConfig)
     config.hook_point_in = "hook_point_in"
     config.hook_point_out = "hook_point_out"
     config.d_sae = 4
