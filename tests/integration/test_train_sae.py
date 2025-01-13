@@ -5,11 +5,10 @@ import torch
 from pytest_mock import MockerFixture
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.config import (
-    InitializerConfig,
-    SAEConfig,
-    TrainerConfig,
-)
+if not torch.cuda.is_available():
+    pytest.skip("CUDA is not available", allow_module_level=True)
+
+from lm_saes.config import InitializerConfig, SAEConfig, TrainerConfig
 from lm_saes.initializer import Initializer
 from lm_saes.trainer import Trainer
 

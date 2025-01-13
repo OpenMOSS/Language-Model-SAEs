@@ -3,6 +3,9 @@ import math
 import pytest
 import torch
 
+if not torch.cuda.is_available():
+    pytest.skip("CUDA device not available", allow_module_level=True)
+
 from lm_saes.config import SAEConfig
 from lm_saes.sae import SparseAutoEncoder
 
