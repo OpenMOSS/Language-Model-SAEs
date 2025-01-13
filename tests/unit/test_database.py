@@ -1,7 +1,7 @@
 import mongomock
 import pytest
 
-from lm_saes.config import SAEConfig
+from lm_saes.config import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient, SAERecord
 
 
@@ -14,7 +14,7 @@ def mongo_client() -> MongoClient:
         MongoClient: A configured MongoClient instance for testing
     """
     with mongomock.patch(servers=(("fake", 27017),)):
-        client = MongoClient("mongodb://fake", "test_db")
+        client = MongoClient(MongoDBConfig(mongo_uri="mongodb://fake", mongo_db="test_db"))
         yield client
         # Clear all collections after each test
         client.db.drop_collection("sae")
