@@ -291,15 +291,23 @@ class SparseAutoEncoder(HookedRootModule):
 
     @torch.no_grad()
     def save_pretrained(
-        self, save_path: Path | str, sae_name: str, sae_series: str, mongo_client: MongoClient | None
+        self,
+        save_path: Path | str,
+        sae_name: str | None = None,
+        sae_series: str | None = None,
+        mongo_client: MongoClient | None = None,
     ) -> None:
         # TODO: save dataset_average_activation_norm
         self.save_checkpoint(save_path)
-        if (self.device_mesh is None or self.device_mesh.get_rank() == 0) and mongo_client is not None:
+        if self.device_mesh is None or self.device_mesh.get_rank() == 0:
             self.cfg.save_hyperparameters(save_path)
-            mongo_client.create_sae(
-                name=sae_name, series=sae_series, path=str(Path(save_path).absolute()), cfg=self.cfg
-            )
+            if mongo_client is not None:
+                assert (
+                    sae_name is not None and sae_series is not None
+                ), "sae_name and sae_series must be provided when saving to MongoDB"
+                mongo_client.create_sae(
+                    name=sae_name, series=sae_series, path=str(Path(save_path).absolute()), cfg=self.cfg
+                )
 
     @overload
     def encode(

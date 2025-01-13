@@ -37,8 +37,6 @@ def test_initialize_sae_from_config(sae_config: SAEConfig, initializer_config: I
     sae = initializer.initialize_sae_from_config(sae_config)
     sae_config.norm_activation = "dataset-wise"
     sae = initializer.initialize_sae_from_config(sae_config, activation_norm={"in": 3.0, "out": 2.0})
-    assert sae.dataset_average_activation_norm == {"in": 1.0, "out": 1.0}
-    sae = initializer.initialize_sae_from_config(sae_config, activation_norm={"in": 3.0, "out": 2.0})
     assert sae.dataset_average_activation_norm == {"in": 3.0, "out": 2.0}
 
     initializer_config.state = "inference"

@@ -40,6 +40,8 @@ def initializer_config() -> InitializerConfig:
 
 @pytest.fixture
 def trainer_config(tmp_path) -> TrainerConfig:
+    # Remove tmp path
+    os.rmdir(tmp_path)
     return TrainerConfig(
         initial_k=2,
         total_training_tokens=400,
@@ -58,7 +60,7 @@ def test_train_sae(
     tmp_path,
 ) -> None:
     wandb_runner = mocker.Mock()
-    wandb_runner.log = lambda x: None
+    wandb_runner.log = lambda *args, **kwargs: None
     device_mesh = (
         init_device_mesh(
             device_type="cuda",

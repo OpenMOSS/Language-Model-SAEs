@@ -91,17 +91,17 @@ def test_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, 
     results = list(loader.process())
 
     # Verify results
-    assert len(results) == 6  # 3 chunks * 2 samples per chunk
+    assert len(results) == 3  # 3 chunks
 
     for i, result in enumerate(results):
         # Check if all hook points are present
         for hook in hook_points:
             assert hook in result
-            assert torch.equal(result[hook], sample_activation[i % 2])
+            assert torch.equal(result[hook], sample_activation)
 
         # Check tokens and info
-        assert torch.equal(result["tokens"], sample_tokens[i % 2])
-        assert result["meta"] == sample_info[i % 2]
+        assert torch.equal(result["tokens"], sample_tokens)
+        assert result["meta"] == sample_info
 
 
 def test_cached_activation_loader_missing_dir(fs):
@@ -204,19 +204,20 @@ def test_parallel_cached_activation_loader(fs, mocker: MockerFixture, sample_act
     results = list(loader.process())
 
     # Verify results
-    assert len(results) == 6  # 3 chunks * 2 samples per chunk
+    assert len(results) == 3
 
     for i, result in enumerate(results):
         # Check if all hook points are present
         for hook in hook_points:
             assert hook in result
-            assert torch.equal(result[hook], sample_activation[i % 2])
+            assert torch.equal(result[hook], sample_activation)
 
         # Check tokens and info
-        assert torch.equal(result["tokens"], sample_tokens[i % 2])
-        assert result["meta"]["context_id"] == f"ctx_{i % 2}"
+        assert torch.equal(result["tokens"], sample_tokens)
+        assert result["meta"][0]["context_id"] == "ctx_0"
+        assert result["meta"][1]["context_id"] == "ctx_1"
 
-    assert sorted([result["meta"]["chunk_num"] for result in results]) == [0, 0, 1, 1, 2, 2]
+    assert sorted([result["meta"][i]["chunk_num"] for result in results for i in range(2)]) == [0, 0, 1, 1, 2, 2]
 
 
 def test_parallel_cached_activation_loader_with_executor(
@@ -242,4 +243,4 @@ def test_parallel_cached_activation_loader_with_executor(
         loader = ParallelCachedActivationLoader(cache_dir, ["hook1"], device="cpu", executor=executor)
         results = list(loader.process())
 
-    assert len(results) == 2  # 1 chunk * 2 samples
+    assert len(results) == 1

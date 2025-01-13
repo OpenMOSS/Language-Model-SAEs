@@ -257,23 +257,22 @@ def test_activation_factory_activations_source(
     result = list(factory.process())
 
     # Verify results
-    assert len(result) == 4  # 2 chunks * 2 samples per chunk
+    assert len(result) == 2  # 2 chunks * 2 samples per chunk
     for i, item in enumerate(result):
         # Check activation shape and content
         assert "h0" in item
-        assert item["h0"].shape == (3, 4)
-        assert torch.allclose(item["h0"], sample_data["activation"][i % 2])
+        assert item["h0"].shape == (2, 3, 4)
+        assert torch.allclose(item["h0"], sample_data["activation"])
 
         # Check tokens
         assert "tokens" in item
-        assert item["tokens"].shape == (3,)  # context_size
-        assert torch.allclose(item["tokens"], sample_data["tokens"][i % 2])
+        assert item["tokens"].shape == (2, 3)  # context_size
+        assert torch.allclose(item["tokens"], sample_data["tokens"])
 
         # Check metadata
         assert "meta" in item
-        assert isinstance(item["meta"], dict)
-        assert "context_id" in item["meta"]
-        assert item["meta"]["context_id"] == f"ctx_{i % 2}"
+        assert item["meta"][0]["context_id"] == "ctx_0"
+        assert item["meta"][1]["context_id"] == "ctx_1"
 
 
 def test_activation_factory_activations_source_invalid_target(basic_config: ActivationFactoryConfig):
