@@ -1,344 +1,346 @@
 import os
-from dataclasses import asdict
-from typing import cast
+from pathlib import Path
+from typing import Literal, Optional, TypeVar, overload
 
-import torch
 import wandb
-from torch.distributed.tensor import Replicate
-from torch.distributed.tensor.parallel import (
-    ColwiseParallel,
-    RowwiseParallel,
-    parallelize_module,
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from torch.distributed.device_mesh import init_device_mesh
+
+from lm_saes.activation.factory import ActivationFactory
+from lm_saes.activation.writer import ActivationWriter
+from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
+from lm_saes.config import (
+    ActivationFactoryConfig,
+    ActivationFactoryDatasetSource,
+    ActivationFactoryTarget,
+    ActivationWriterConfig,
+    DatasetConfig,
+    FeatureAnalyzerConfig,
+    InitializerConfig,
+    LanguageModelConfig,
+    MongoDBConfig,
+    SAEConfig,
+    TrainerConfig,
+    WandbConfig,
 )
+from lm_saes.database import MongoClient
+from lm_saes.initializer import Initializer
+from lm_saes.resource_loaders import load_dataset, load_model
+from lm_saes.sae import SparseAutoEncoder
+from lm_saes.trainer import Trainer
 
-from lm_saes.activation.token_source import MappedTokenSource
-
-from .activation.activation_dataset import make_activation_dataset
-from .activation.activation_source import CachedActivationSource
-from .activation.activation_store import ActivationStore
-from .analysis.features_to_logits import features_to_logits
-from .analysis.sample_feature_activations import sample_feature_activations
-from .config import (
-    ActivationGenerationConfig,
-    FeaturesDecoderConfig,
-    LanguageModelCrossCoderTrainingConfig,
-    LanguageModelSAEAnalysisConfig,
-    LanguageModelSAEPruningConfig,
-    LanguageModelSAERunnerConfig,
-    LanguageModelSAETrainingConfig,
-)
-from .crosscoder import CrossCoder
-from .database import MongoClient
-from .evals import run_evals
-from .post_processing import post_process_topk_to_jumprelu_for_inference
-from .sae import SparseAutoEncoder
-from .sae_training import prune_sae, train_sae
-from .utils.misc import is_master
-from .utils.model import load_model
+T = TypeVar("T")
 
 
-def language_model_sae_runner(cfg: LanguageModelSAETrainingConfig):
-    if cfg.act_store.use_cached_activations:
-        activation_source = CachedActivationSource(cfg.act_store)
-        activation_store = ActivationStore(act_source=activation_source, cfg=cfg.act_store)
-        model = None
-    else:
-        model = load_model(cfg.lm)
-        activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
+@overload
+def load_config(
+    config: Optional[T],
+    name: Optional[str],
+    mongo_client: Optional[MongoClient],
+    config_type: str,
+    required: Literal[True] = True,
+) -> T: ...
 
-    if not cfg.finetuning and (
-        cfg.sae.norm_activation == "dataset-wise"
-        and cfg.sae.dataset_average_activation_norm is None
-        or cfg.sae.init_decoder_norm is None
-    ):
-        sae = SparseAutoEncoder.from_initialization_searching(
-            activation_store=activation_store,
-            cfg=cfg,
+
+@overload
+def load_config(
+    config: Optional[T],
+    name: Optional[str],
+    mongo_client: Optional[MongoClient],
+    config_type: str,
+    required: Literal[False] = False,
+) -> Optional[T]: ...
+
+
+def load_config(
+    config: Optional[T],
+    name: Optional[str],
+    mongo_client: Optional[MongoClient],
+    config_type: str,
+    required: bool = True,
+) -> Optional[T]:
+    """Load configuration from settings or database.
+
+    Args:
+        config: Configuration provided directly in settings
+        name: Name of the config to load from database
+        mongo_client: Optional MongoDB client for database operations
+        config_type: String identifier for error messages ('model' or 'dataset')
+        required: Whether the config must be present
+
+    Returns:
+        Loaded configuration or None if not required and not found
+
+    Raises:
+        AssertionError: If config is required but not found
+    """
+    if mongo_client is not None and name is not None:
+        if config is None:
+            config = getattr(mongo_client, f"get_{config_type}_cfg")(name)
+            print(f"Loaded {config_type} config from database: {name}")
+        else:
+            getattr(mongo_client, f"add_{config_type}")(name, config)
+            print(f"Added {config_type} config to database: {name}")
+
+    if required:
+        assert config is not None, f"{config_type} config not provided and not found in database"
+    return config
+
+
+class GenerateActivationsSettings(BaseSettings):
+    """Settings for activation generation."""
+
+    model_config = SettingsConfigDict(cli_parse_args=True, cli_kebab_case=True)
+
+    model: Optional[LanguageModelConfig] = None
+    """Configuration for loading the language model. If `None`, will read from the database."""
+
+    model_name: str
+    """Name of the model to load. Use as identifier for the model in the database."""
+
+    dataset: Optional[DatasetConfig] = None
+    """Configuration for loading the dataset. If `None`, will read from the database."""
+
+    dataset_name: str
+    """Name of the dataset. Use as identifier for the dataset in the database."""
+
+    hook_points: list[str]
+    """List of model hook points to capture activations from"""
+
+    output_dir: Path
+    """Directory to save activation files"""
+
+    target: ActivationFactoryTarget = ActivationFactoryTarget.ACTIVATIONS_2D
+    """Target type for activation generation"""
+
+    model_batch_size: Optional[int] = None
+    """Batch size for model forward"""
+
+    batch_size: Optional[int] = None
+    """Size of the batch for activation generation"""
+
+    buffer_size: Optional[int] = None
+    """Size of the buffer for activation generation"""
+
+    total_tokens: Optional[int] = None
+    """Optional total number of tokens to generate"""
+
+    context_size: int = 128
+    """Context window size for tokenization"""
+
+    n_samples_per_chunk: Optional[int] = None
+    """Number of samples per saved chunk"""
+
+    num_workers: Optional[int] = None
+    """Number of workers for parallel writing"""
+
+    format: Literal["pt", "safetensors"] = "safetensors"
+    """Format to save activations in ('pt' or 'safetensors')"""
+
+    n_shards: Optional[int] = None
+    """Number of shards to split the dataset into. If None, the dataset is split to the world size. Must be larger than the world size."""
+
+    start_shard: int = 0
+    """The shard to start writing from"""
+
+    mongo: Optional[MongoDBConfig] = None
+    """Configuration for the MongoDB database. If `None`, will not use the database."""
+
+    @model_validator(mode="after")
+    def validate_cfg(self) -> "GenerateActivationsSettings":
+        if self.mongo is not None:
+            assert self.model is not None, "Database not provided. Must manually provide model config."
+            assert self.dataset is not None, "Database not provided. Must manually provide dataset config."
+        return self
+
+
+def generate_activations(settings: GenerateActivationsSettings) -> None:
+    """Generate and save model activations from a dataset."""
+    # Initialize device mesh
+    device_mesh = (
+        init_device_mesh(
+            device_type="cuda",
+            mesh_shape=(int(os.environ.get("WORLD_SIZE", 1)), 1),
+            mesh_dim_names=("data", "model"),
         )
-    else:
-        sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-
-        if cfg.finetuning:
-            # Fine-tune SAE with frozen encoder weights and bias
-            sae.train_finetune_for_suppression_parameters()
-
-    if is_master():
-        cfg.sae.save_hyperparameters(cfg.exp_result_path)
-        cfg.lm.save_lm_config(cfg.exp_result_path)
-
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb_config: dict = {
-            **asdict(cfg),
-            **asdict(cfg.sae),
-            **asdict(cfg.lm),
-        }
-        del wandb_config["sae"]
-        del wandb_config["lm"]
-        wandb_run = wandb.init(
-            project=cfg.wandb.wandb_project,
-            config=wandb_config,
-            name=cfg.wandb.exp_name,
-            entity=cfg.wandb.wandb_entity,
-            settings=wandb.Settings(x_disable_stats=True),
-            mode=os.getenv("WANDB_MODE", "online"),
-        )
-        with open(os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w") as f:
-            f.write(wandb_run.id)
-        wandb.watch(sae, log="all")
-
-    # train SAE
-    sae = train_sae(
-        sae,
-        activation_store,
-        cfg,
-        model,
+        if os.environ.get("WORLD_SIZE") is not None
+        else None
     )
 
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb.finish()
+    mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
 
-    return sae
-
-
-def language_model_crosscoder_runner(cfg: LanguageModelCrossCoderTrainingConfig):
-    activation_source = CachedActivationSource(cfg.act_store)
-    activation_store = ActivationStore(act_source=activation_source, cfg=cfg.act_store)
-
-    if not cfg.finetuning and (
-        cfg.sae.norm_activation == "dataset-wise" and cfg.sae.dataset_average_activation_norm is None
-    ):
-        sae = CrossCoder.from_initialization_searching(
-            activation_store=activation_store,
-            cfg=cfg,
-        )
-    else:
-        sae = CrossCoder.from_config(cfg=cfg.sae)
-
-    sae.initialize_with_same_weight_across_layers()
-    sae.train()
-    # sae.search_for_enc_dec_norm_with_lowest_mse(
-    #     activation_store=activation_store,
-    #     cfg=cfg
-    # )
-
-    cfg.sae.save_hyperparameters(cfg.exp_result_path)
-
-    if cfg.wandb.log_to_wandb and (cfg.wandb.log_on_every_rank or is_master()):
-        wandb_config: dict = {
-            **asdict(cfg),
-            **asdict(cfg.sae),
-            **asdict(cfg.lm),
-        }
-        del wandb_config["sae"]
-        del wandb_config["lm"]
-        wandb_run = wandb.init(
-            project=cfg.wandb.wandb_project,
-            config=wandb_config,
-            name=cfg.wandb.exp_name,
-            entity=cfg.wandb.wandb_entity,
-            settings=wandb.Settings(x_disable_stats=True),
-            mode=os.getenv("WANDB_MODE", "online"),
-        )
-        with open(os.path.join(cfg.exp_result_path, "train_wandb_id.txt"), "w") as f:
-            f.write(wandb_run.id)
-        wandb.watch(sae, log="all")
-
-    # train SAE
-    sae = train_sae(
-        sae,
-        activation_store,
-        cfg,
+    # Load configurations
+    model_cfg = load_config(
+        config=settings.model, name=settings.model_name, mongo_client=mongo_client, config_type="model"
     )
 
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb.finish()
-
-    return sae
-
-
-def language_model_sae_prune_runner(cfg: LanguageModelSAEPruningConfig):
-    cfg.sae.save_hyperparameters(os.path.join(cfg.exp_result_path))
-    cfg.lm.save_lm_config(os.path.join(cfg.exp_result_path))
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    model = load_model(cfg.lm)
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb_config: dict = {
-            **asdict(cfg),
-            **asdict(cfg.sae),
-            **asdict(cfg.lm),
-        }
-        del wandb_config["sae"]
-        del wandb_config["lm"]
-        wandb_run = wandb.init(
-            project=cfg.wandb.wandb_project,
-            config=wandb_config,
-            name=cfg.wandb.exp_name,
-            entity=cfg.wandb.wandb_entity,
-            settings=wandb.Settings(x_disable_stats=True),
-            mode=os.getenv("WANDB_MODE", "online"),
-        )
-        with open(os.path.join(cfg.exp_result_path, "prune_wandb_id.txt"), "w") as f:
-            f.write(wandb_run.id)
-
-    sae = prune_sae(
-        sae,
-        activation_store,
-        cfg,
+    dataset_cfg = load_config(
+        config=settings.dataset, name=settings.dataset_name, mongo_client=mongo_client, config_type="dataset"
     )
 
-    result = run_evals(model, sae, activation_store, cfg, 0)
+    # Load model and dataset
+    model = load_model(model_cfg)
+    dataset, metadata = load_dataset(
+        dataset_cfg,
+        device_mesh=device_mesh,
+        n_shards=settings.n_shards,
+        start_shard=settings.start_shard,
+    )
 
-    # Print results in tabular format
-    if is_master():
-        for key, value in result.items():
-            print(f"{key}: {value}")
+    # Configure activation generation
+    factory_cfg = ActivationFactoryConfig(
+        sources=[ActivationFactoryDatasetSource(name=settings.dataset_name)],
+        target=settings.target,
+        hook_points=settings.hook_points,
+        context_size=settings.context_size,
+        model_batch_size=settings.model_batch_size,
+        batch_size=settings.batch_size,
+        buffer_size=settings.buffer_size,
+    )
 
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb.finish()
+    # Configure activation writer
+    writer_cfg = ActivationWriterConfig(
+        hook_points=settings.hook_points,
+        total_generating_tokens=settings.total_tokens,
+        n_samples_per_chunk=settings.n_samples_per_chunk,
+        cache_dir=settings.output_dir,
+        format=settings.format,
+        num_workers=settings.num_workers,
+    )
+
+    # Create factory and writer
+    factory = ActivationFactory(factory_cfg)
+    writer = ActivationWriter(writer_cfg)
+
+    # Generate and write activations
+    activations = factory.process(
+        model=model, model_name=settings.model_name, datasets={settings.dataset_name: (dataset, metadata)}
+    )
+    writer.process(activations, device_mesh=device_mesh, start_shard=settings.start_shard)
 
 
-def language_model_sae_eval_runner(cfg: LanguageModelSAERunnerConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    model = load_model(cfg.lm)
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
+class TrainSAESettings(BaseSettings):
+    """Settings for training a Sparse Autoencoder (SAE)."""
 
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb_config: dict = {
-            **asdict(cfg),
-            **asdict(cfg.sae),
-            **asdict(cfg.lm),
-        }
-        del wandb_config["sae"]
-        del wandb_config["lm"]
-        wandb_run = wandb.init(
-            project=cfg.wandb.wandb_project,
-            config=wandb_config,
-            name=cfg.wandb.exp_name,
-            entity=cfg.wandb.wandb_entity,
+    sae: SAEConfig
+    """Configuration for the SAE model architecture and parameters"""
+
+    sae_name: str
+    """Name of the SAE model. Use as identifier for the SAE model in the database."""
+
+    sae_series: str
+    """Series of the SAE model. Use as identifier for the SAE model in the database."""
+
+    initializer: InitializerConfig
+    """Configuration for model initialization"""
+
+    trainer: TrainerConfig
+    """Configuration for training process"""
+
+    activation_factory: ActivationFactoryConfig
+    """Configuration for generating activations"""
+
+    wandb: WandbConfig
+    """Configuration for Weights & Biases logging"""
+
+    eval: bool = False
+    """Whether to run in evaluation mode"""
+
+    data_parallel_size: int = 1
+    """Size of data parallel mesh"""
+
+    model_parallel_size: int = 1
+    """Size of model parallel (tensor parallel) mesh"""
+
+    mongo: Optional[MongoDBConfig] = None
+    """Configuration for MongoDB"""
+
+
+def train_sae(settings: TrainSAESettings) -> None:
+    """Train a SAE model.
+
+    Args:
+        settings: Configuration settings for SAE training
+    """
+    device_mesh = (
+        init_device_mesh(
+            device_type="cuda",
+            mesh_shape=(settings.data_parallel_size, settings.model_parallel_size),
+            mesh_dim_names=("data", "model"),
+        )
+        if settings.data_parallel_size > 1 or settings.model_parallel_size > 1
+        else None
+    )
+    activation_factory = ActivationFactory(settings.activation_factory)
+    activations_stream = activation_factory.process()
+    initializer = Initializer(settings.initializer)
+    sae = initializer.initialize_sae_from_config(
+        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
+    )
+
+    wandb_logger = (
+        wandb.init(
+            project=settings.wandb.wandb_project,
+            config=settings.model_dump(),
+            name=settings.wandb.exp_name,
+            entity=settings.wandb.wandb_entity,
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),
         )
-        with open(os.path.join(cfg.exp_result_path, "eval_wandb_id.txt"), "w") as f:
-            f.write(wandb_run.id)
+        if settings.wandb.log_to_wandb and (device_mesh is not None and device_mesh.get_rank() == 0)
+        else None
+    )
+    if wandb_logger is not None:
+        wandb_logger.watch(sae, log="all")
 
-    result = run_evals(model, sae, activation_store, cfg, 0)
+    mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
 
-    # Print results in tabular format
-    if is_master():
-        for key, value in result.items():
-            print(f"{key}: {value}")
+    # TODO: implement eval_fn
+    eval_fn = (lambda x: None) if settings.eval else None
 
-    if cfg.wandb.log_to_wandb and is_master():
-        wandb.finish()
-
-    return sae
-
-
-def activation_generation_runner(cfg: ActivationGenerationConfig):
-    model = load_model(cfg.lm)
-
-    make_activation_dataset(model, cfg)
-
-
-def sample_feature_activations_runner(cfg: LanguageModelSAEAnalysisConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-
-    if cfg.sae.tp_size > 1:
-        plan = {
-            "encoder": ColwiseParallel(output_layouts=Replicate()),
-            "decoder": RowwiseParallel(output_layouts=Replicate()),
-        }
-        if cfg.sae.use_glu_encoder:
-            plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
-        sae = cast(SparseAutoEncoder, parallelize_module(sae, device_mesh=sae.device_mesh["tp"], parallelize_plan=plan))
-
-    # JumpReLU need SAE decoder weight, so we currently do not remove it
-    # sae.decoder.weight = None  # type: ignore[assignment]
-    # torch.cuda.empty_cache()
-
-    model = load_model(cfg.lm)
-    client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
-    if is_master():
-        client.create_dictionary(cfg.exp_name, cfg.exp_result_path, cfg.sae.d_sae, cfg.exp_series)
-
-    token_source = MappedTokenSource.from_config(model=model, cfg=cfg.dataset)
-
-    for chunk_id in range(cfg.n_sae_chunks):
-        result = sample_feature_activations(sae, model, token_source, cfg, chunk_id, cfg.n_sae_chunks)
-        for i in range(len(result["index"].cpu().numpy().tolist())):
-            client.update_feature(
-                cfg.exp_name,
-                result["index"][i].item(),
-                {
-                    "act_times": result["act_times"][i].item(),
-                    "max_feature_acts": result["max_feature_acts"][i].item(),
-                    "dataset": cfg.dataset.dataset_path,
-                    "analysis": [
-                        {
-                            "name": v["name"],
-                            "feature_acts": v["feature_acts"][i].cpu().float().numpy(),
-                            "context_ids": v["context_ids"][i].cpu().numpy(),
-                            "dataset_ids": v["dataset_ids"][i].cpu().numpy(),
-                        }
-                        for v in result["analysis"]
-                    ],
-                },
-                dictionary_series=cfg.exp_series,
-            )
-
-        del result
-        torch.cuda.empty_cache()
+    trainer = Trainer(settings.trainer)
+    trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+    sae.save_pretrained(
+        save_path=settings.trainer.exp_result_path,
+        sae_name=settings.sae_name,
+        sae_series=settings.sae_series,
+        mongo_client=mongo_client,
+    )
 
 
-@torch.no_grad()
-def features_to_logits_runner(cfg: FeaturesDecoderConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
+class AnalyzeSAESettings(BaseSettings):
+    sae: SAEConfig
+    """Configuration for the SAE model architecture and parameters"""
 
-    model = load_model(cfg.lm)
+    sae_name: str
+    """Name of the SAE model. Use as identifier for the SAE model in the database."""
 
-    result_dict = features_to_logits(sae, model, cfg)
+    sae_series: str
+    """Series of the SAE model. Use as identifier for the SAE model in the database."""
 
-    client = MongoClient(cfg.mongo.mongo_uri, cfg.mongo.mongo_db)
+    activation_factory: ActivationFactoryConfig
+    """Configuration for generating activations"""
 
-    for feature_index, logits in result_dict.items():
-        sorted_indeces = torch.argsort(logits)
-        top_negative_logits = logits[sorted_indeces[: cfg.top]].cpu().tolist()
-        top_positive_logits = logits[sorted_indeces[-cfg.top :]].cpu().tolist()
-        top_negative_ids = sorted_indeces[: cfg.top].tolist()
-        top_positive_ids = sorted_indeces[-cfg.top :].tolist()
-        top_negative_tokens = model.to_str_tokens(torch.tensor(top_negative_ids), prepend_bos=False)
-        top_positive_tokens = model.to_str_tokens(torch.tensor(top_positive_ids), prepend_bos=False)
-        counts, edges = torch.histogram(
-            logits.cpu(), bins=60, range=(-60.0, 60.0)
-        )  # Why logits.cpu():Could not run 'aten::histogram.bin_ct' with arguments from the 'CUDA' backend
-        client.update_feature(
-            cfg.exp_name,
-            int(feature_index),
-            {
-                "logits": {
-                    "top_negative": [
-                        {"token_id": id, "logit": logit, "token": token}
-                        for id, logit, token in zip(top_negative_ids, top_negative_logits, top_negative_tokens)
-                    ],
-                    "top_positive": [
-                        {"token_id": id, "logit": logit, "token": token}
-                        for id, logit, token in zip(top_positive_ids, top_positive_logits, top_positive_tokens)
-                    ],
-                    "histogram": {
-                        "counts": counts.cpu().tolist(),
-                        "edges": edges.cpu().tolist(),
-                    },
-                }
-            },
-            dictionary_series=cfg.exp_series,
-        )
+    analyzer: FeatureAnalyzerConfig
+    """Configuration for feature analysis"""
+
+    mongo: MongoDBConfig
+    """Configuration for the MongoDB database."""
 
 
-@torch.no_grad()
-def post_process_topk_to_jumprelu_runner(cfg: LanguageModelSAERunnerConfig):
-    sae = SparseAutoEncoder.from_config(cfg=cfg.sae)
-    model = load_model(cfg.lm)
+def analyze_sae(settings: AnalyzeSAESettings) -> None:
+    """Analyze a SAE model."""
+    mongo_client = MongoClient(settings.mongo)
+    activation_factory = ActivationFactory(settings.activation_factory)
 
-    activation_store = ActivationStore.from_config(model=model, cfg=cfg.act_store)
-    post_process_topk_to_jumprelu_for_inference(sae, activation_store, cfg)
+    sae = SparseAutoEncoder.from_config(settings.sae)
+
+    analyzer = FeatureAnalyzer(settings.analyzer)
+
+    activations = activation_factory.process()
+    result = analyzer.analyze_chunk(activations, sae=sae)
+
+    mongo_client.add_feature_analysis(
+        name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result
+    )
