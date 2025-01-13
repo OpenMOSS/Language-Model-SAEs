@@ -93,15 +93,13 @@ class Trainer:
                 )
             )
 
-        activation_in, activation_out = batch[sae.cfg.hook_point_in], batch[sae.cfg.hook_point_out]
         loss, (loss_data, aux_data) = sae.compute_loss(
-            x=activation_in,
-            label=activation_out,
+            batch,
             lp=self.cfg.lp,
             use_batch_norm_mse=self.cfg.use_batch_norm_mse,
             return_aux_data=True,
         )
-        loss_dict = {"loss": loss, "batch_size": activation_in.shape[0]} | loss_data | aux_data
+        loss_dict = {"loss": loss, "batch_size": batch[sae.cfg.hook_point_in].shape[0]} | loss_data | aux_data
         return loss_dict
 
     @torch.no_grad()
@@ -137,8 +135,6 @@ class Trainer:
             l2_norm_error = per_token_l2_loss.sqrt().mean()
             l2_norm_error_ratio = l2_norm_error / activation_out.norm(p=2, dim=-1).mean()
             explained_variance = 1 - per_token_l2_loss / total_variance
-            decoder_norm = sae.decoder_norm().mean()
-            encoder_norm = sae.encoder_norm().mean()
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.item(),
@@ -151,22 +147,13 @@ class Trainer:
                 "metrics/l2_norm_error": l2_norm_error.item(),
                 "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
                 # norm
-                "metrics/decoder_norm": decoder_norm.item(),
-                "metrics/encoder_norm": encoder_norm.item(),
-                "metrics/encoder_bias_norm": sae.encoder.bias.norm().item(),
                 "metrics/gradients_norm": log_info["grad_norm"].item(),
                 # sparsity
                 "sparsity/mean_passes_since_fired": log_info["n_forward_passes_since_fired"].mean().item(),
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
             }
-            if sae.cfg.use_decoder_bias:
-                wandb_log_dict["metrics/decoder_bias_norm"] = sae.decoder.bias.norm().item()
-            if sae.cfg.act_fn == "topk":
-                wandb_log_dict["sparsity/k"] = sae.current_k
-            else:
-                wandb_log_dict["sparsity/l1_coefficient"] = sae.current_l1_coefficient
-
+            wandb_log_dict.update(sae.log_statistics())
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
 
     def _save_checkpoint(self, sae: SparseAutoEncoder):
