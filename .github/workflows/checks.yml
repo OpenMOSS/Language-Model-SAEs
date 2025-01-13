@@ -46,15 +46,20 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: "true"
-      - name: Setup PDM
-        uses: pdm-project/setup-pdm@v4
-        # You are now able to use PDM in your workflow
-      - name: Install dependencies
-        run: pdm install
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install the project
+        run: uv sync --all-extras --dev
+
       - name: Type check
-        run: pdm run basedpyright
+        run: uv run basedpyright .
+
       - name: Unit tests
-        run: pdm run pytest ./tests
+        run: uv run pytest tests
 
   ruff:
     runs-on: ubuntu-latest
