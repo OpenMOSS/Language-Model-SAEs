@@ -24,7 +24,7 @@ class TestCalculateActivationNorm:
 
     def test_basic_functionality(self, mock_activation_stream):
         """Test basic functionality with default batch_num."""
-        result = calculate_activation_norm(mock_activation_stream)
+        result = calculate_activation_norm(mock_activation_stream, ["layer1", "layer2"])
 
         assert isinstance(result, dict)
         assert "layer1" in result
@@ -38,7 +38,7 @@ class TestCalculateActivationNorm:
 
     def test_custom_batch_num(self, mock_activation_stream):
         """Test with custom batch_num parameter."""
-        result = calculate_activation_norm(mock_activation_stream, batch_num=3)
+        result = calculate_activation_norm(mock_activation_stream, batch_num=3, hook_points=["layer1", "layer2"])
 
         # Should still give same results as we're averaging
         assert pytest.approx(result["layer1"], rel=1e-4) == 4.0
@@ -47,8 +47,8 @@ class TestCalculateActivationNorm:
     def test_empty_stream(self):
         """Test behavior with empty activation stream."""
         empty_stream = iter([])
-        with pytest.raises(StopIteration):
-            calculate_activation_norm(empty_stream)
+        with pytest.warns(UserWarning):
+            calculate_activation_norm(empty_stream, hook_points=[""])
 
     def test_single_batch(self):
         """Test with a single batch of activations."""
@@ -56,7 +56,7 @@ class TestCalculateActivationNorm:
         def single_batch_stream():
             yield {"single": torch.ones(2, 4)}  # norm will be 2.0
 
-        result = calculate_activation_norm(single_batch_stream(), batch_num=1)
+        result = calculate_activation_norm(single_batch_stream(), hook_points=["single", "single"], batch_num=1)
         assert pytest.approx(result["single"], rel=1e-4) == 2.0
 
     def test_zero_tensors(self):
@@ -66,7 +66,7 @@ class TestCalculateActivationNorm:
             for _ in range(10):
                 yield {"zeros": torch.zeros(2, 4)}
 
-        result = calculate_activation_norm(zero_stream())
+        result = calculate_activation_norm(zero_stream(), hook_points=["zeros"])
         assert result["zeros"] == 0.0
 
     def test_mixed_values(self):
@@ -76,7 +76,7 @@ class TestCalculateActivationNorm:
             for i in range(10):
                 yield {"mixed": torch.tensor([[1.0, -2.0], [3.0, -4.0], [3.0, -2.0], [9.0, -4.0]]) * (i + 1)}
 
-        result = calculate_activation_norm(mixed_stream(), batch_num=10)
+        result = calculate_activation_norm(mixed_stream(), hook_points=["mixed"], batch_num=10)
         assert (
             pytest.approx(result["mixed"], rel=1e-4) == ((math.sqrt(5) + 5 + math.sqrt(13) + math.sqrt(97)) / 4) * 5.5
         )
