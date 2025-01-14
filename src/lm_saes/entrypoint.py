@@ -182,12 +182,14 @@ def handle_runner(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         if args.type == CreateType.DATASET:
             from lm_saes.config import DatasetConfig
 
-            client.add_dataset(name=args.name, cfg=DatasetConfig.model_validate(args.config))
+            config = _load_config(args.config)
+            client.add_dataset(name=args.name, cfg=DatasetConfig.model_validate(config))
 
         elif args.type == CreateType.MODEL:
             from lm_saes.config import LanguageModelConfig
 
-            client.add_model(name=args.name, cfg=LanguageModelConfig.model_validate(args.config))
+            config = _load_config(args.config)
+            client.add_model(name=args.name, cfg=LanguageModelConfig.model_validate(config))
 
         elif args.type == CreateType.SAE:
             from lm_saes.config import SAEConfig
