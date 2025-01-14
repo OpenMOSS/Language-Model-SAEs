@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import Iterable
 
 import torch
@@ -121,17 +122,23 @@ def assert_tensor_consistency(tensor):
 
 
 def calculate_activation_norm(
-    activation_stream: Iterable[dict[str, torch.Tensor]], batch_num: int = 8
+    activation_stream: Iterable[dict[str, torch.Tensor]], hook_points: list[str], batch_num: int = 8
 ) -> dict[str, float]:
     activation_norm = {}
     stream_iter = iter(activation_stream)
+    hook_points = list(set(hook_points))
+    assert len(hook_points) > 0, "No hook points provided"
     while batch_num > 0:
-        batch = next(stream_iter)
-        for key, value in batch.items():
+        try:
+            batch = next(stream_iter)
+        except StopIteration:
+            warnings.warn(f"Activation stream ended prematurely. {batch_num} batches not processed.")
+            break
+        for key in hook_points:
             if key not in activation_norm:
-                activation_norm[key] = value.norm(p=2, dim=1)
+                activation_norm[key] = batch[key].norm(p=2, dim=1)
             else:
-                activation_norm[key] = torch.cat((activation_norm[key], value.norm(p=2, dim=1)), dim=0)
+                activation_norm[key] = torch.cat((activation_norm[key], batch[key].norm(p=2, dim=1)), dim=0)
         batch_num -= 1
     for key in activation_norm:
         activation_norm[key] = activation_norm[key].mean().item()

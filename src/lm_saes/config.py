@@ -57,7 +57,7 @@ class BaseSAEConfig(BaseModelConfig):
     act_fn: str = "relu"
     jump_relu_threshold: float = 0.0
     apply_decoder_bias_to_pre_encoder: bool = True
-    norm_activation: str = "token-wise"
+    norm_activation: str = "dataset-wise"
     sparsity_include_decoder_norm: bool = True
     top_k: int = 50
     sae_pretrained_name_or_path: Optional[str] = None
