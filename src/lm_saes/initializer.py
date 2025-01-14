@@ -159,7 +159,9 @@ class Initializer:
                     assert (
                         activation_stream is not None
                     ), "Activation iterator must be provided for dataset-wise normalization"
-                    activation_norm = calculate_activation_norm(activation_stream)
+                    activation_norm = calculate_activation_norm(
+                        activation_stream, [cfg.hook_point_in, cfg.hook_point_out]
+                    )
                 sae.set_dataset_average_activation_norm(activation_norm)
 
             if self.cfg.init_search:
