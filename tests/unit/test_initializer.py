@@ -34,6 +34,7 @@ def initializer_config() -> InitializerConfig:
 
 def test_initialize_sae_from_config(sae_config: SAEConfig, initializer_config: InitializerConfig):
     initializer = Initializer(initializer_config)
+    sae_config.norm_activation = "token-wise"
     sae = initializer.initialize_sae_from_config(sae_config)
     sae_config.norm_activation = "dataset-wise"
     sae = initializer.initialize_sae_from_config(sae_config, activation_norm={"in": 3.0, "out": 2.0})
@@ -54,12 +55,19 @@ def test_initialize_sae_from_config(sae_config: SAEConfig, initializer_config: I
 def test_initialize_search(
     mocker: MockerFixture, sae_config: SAEConfig, initializer_config: InitializerConfig, generator: torch.Generator
 ):
+    def stream_generator():
+        # Create 10 batches of activations
+        for _ in range(20):
+            yield {
+                "in": torch.ones(4, sae_config.d_model),  # norm will be sqrt(16)
+                "out": torch.ones(4, sae_config.d_model) * 2,  # norm will be sqrt(16) * 2
+            }
+
     sae_config.hook_point_out = sae_config.hook_point_in
     initializer_config.init_search = True
     initializer_config.l1_coefficient = 0.0008
     activation_stream_iter = mocker.Mock()
-    batch = torch.randn((16, sae_config.d_model), generator=generator)
-    activation_stream_iter.__iter__ = lambda x: iter([{"in": batch, "out": batch}])
+    activation_stream_iter = stream_generator()
     initializer = Initializer(initializer_config)
     sae = initializer.initialize_sae_from_config(sae_config, activation_stream=activation_stream_iter)
     assert torch.allclose(sae.decoder_norm(), sae.decoder_norm().mean(), atol=1e-4, rtol=1e-5)
