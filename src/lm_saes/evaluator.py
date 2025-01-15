@@ -59,7 +59,7 @@ class Evaluator:
         reconstructed = (
             log_info.pop("reconstructed")[useful_token_mask]
             if "reconstructed" in log_info
-            else sae.forward({sae.cfg.hook_point_in: activation_in})
+            else sae.forward(activation_in)
         )
 
         # 3. Compute sparsity metrics
@@ -158,18 +158,11 @@ class Evaluator:
         )
         reconstructed_activations: Tensor | None = None
         if isinstance(sae.cfg, SAEConfig):
-            reconstructed_activations = sae.forward(cache).to(
-                cache[sae.cfg.hook_point_out].dtype
-            )  # shape: (seq_len, d_model)
+            reconstructed_activations = sae.forward(cache[sae.cfg.hook_point_in])
 
         elif isinstance(sae.cfg, MixCoderConfig):
             assert isinstance(sae, MixCoder)
-            reconstructed_activations = sae.forward(
-                {
-                    sae.cfg.hook_point_in: cache[sae.cfg.hook_point_in],
-                    "tokens": input_ids,
-                }
-            ).to(cache[sae.cfg.hook_point_out].dtype)
+            reconstructed_activations = sae.forward(cache[sae.cfg.hook_point_in], tokens=input_ids)
 
         assert reconstructed_activations is not None
 
