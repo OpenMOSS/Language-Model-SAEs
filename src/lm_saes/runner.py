@@ -241,7 +241,7 @@ class TrainSAESettings(BaseSettings):
     activation_factory: ActivationFactoryConfig
     """Configuration for generating activations"""
 
-    wandb: WandbConfig
+    wandb: Optional[WandbConfig] = None
     """Configuration for Weights & Biases logging"""
 
     eval: bool = False
@@ -288,7 +288,7 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),
         )
-        if settings.wandb.log_to_wandb and (device_mesh is not None and device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
         else None
     )
     if wandb_logger is not None:

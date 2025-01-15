@@ -315,11 +315,9 @@ class FeatureAnalyzerConfig(BaseConfig):
 
 
 class WandbConfig(BaseConfig):
-    log_to_wandb: bool = True
     wandb_project: str = "gpt2-sae-training"
     exp_name: Optional[str] = None
     wandb_entity: Optional[str] = None
-    log_on_every_rank: bool = False
 
 
 class MongoDBConfig(BaseConfig):
