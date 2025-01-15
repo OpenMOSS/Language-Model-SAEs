@@ -384,12 +384,16 @@ class SparseAutoEncoder(HookedRootModule):
 
     def forward(
         self,
-        batch: dict[str, torch.Tensor],
+        x: Union[
+            Float[torch.Tensor, "batch d_model"],
+            Float[torch.Tensor, "batch seq_len d_model"],
+        ],
+        **kwargs,
     ) -> Union[
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
-        feature_acts = self.encode(batch[self.cfg.hook_point_in])
+        feature_acts = self.encode(x)
         reconstructed = self.decode(feature_acts)
         return reconstructed
 
