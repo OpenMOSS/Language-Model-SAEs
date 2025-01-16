@@ -474,7 +474,7 @@ class SparseAutoEncoder(HookedRootModule):
             "l_rec": l_rec,
         }
 
-        if not ("topk" in self.cfg.act_fn):
+        if "topk" not in self.cfg.act_fn:
             l_lp = torch.norm(feature_acts, p=lp, dim=-1)
             loss_dict["l_lp"] = l_lp
             assert self.current_l1_coefficient is not None
