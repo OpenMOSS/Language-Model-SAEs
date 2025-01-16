@@ -92,19 +92,31 @@ class SparseAutoEncoder(HookedRootModule):
             return decoder_norm
 
     def activation_function_factory(self, cfg: BaseSAEConfig) -> Callable[[torch.Tensor], torch.Tensor]:  # type: ignore
-        assert cfg.act_fn.lower() in ["relu", "topk", "jumprelu"], f"Not implemented activation function {cfg.act_fn}"
+        assert cfg.act_fn.lower() in ["relu", "topk", "jumprelu", "batchtopk"], f"Not implemented activation function {cfg.act_fn}"
         if cfg.act_fn.lower() == "relu":
-            return lambda x: torch.where(x > 0, 1, 0)
-        if cfg.act_fn.lower() == "jumprelu":
-            return lambda x: torch.where(x > cfg.jump_relu_threshold, 1, 0)
-        if cfg.act_fn.lower() == "topk":
+            return lambda x: x.gt(0).float()
+        elif cfg.act_fn.lower() == "jumprelu":
+            return lambda x: x.gt(cfg.jump_relu_threshold).float()
+        elif cfg.act_fn.lower() == "topk":
 
             def topk_activation(x: torch.Tensor):
                 x = torch.clamp(x, min=0.0)
                 k = x.shape[-1] - self.current_k + 1
                 k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
-                return torch.where(x >= k_th_value, 1, 0)
+                return x.ge(k_th_value).float()
 
+            return topk_activation
+        
+        elif cfg.act_fn.lower() == "batchtopk":
+            def topk_activation(x: torch.Tensor):
+                assert x.dim() == 2
+                batch_size = x.size(0)
+                
+                x = torch.clamp(x, min=0.0)
+                k = x.numel() - self.current_k * batch_size + 1
+                k_th_value, _ = torch.kthvalue(x.flatten(), k=k, dim=-1)
+                return x.ge(k_th_value).float()
+            
             return topk_activation
 
     def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> torch.Tensor:  # type: ignore
@@ -462,7 +474,7 @@ class SparseAutoEncoder(HookedRootModule):
             "l_rec": l_rec,
         }
 
-        if not self.cfg.act_fn == "topk":
+        if "topk" not in self.cfg.act_fn:
             l_lp = torch.norm(feature_acts, p=lp, dim=-1)
             loss_dict["l_lp"] = l_lp
             assert self.current_l1_coefficient is not None
@@ -522,7 +534,7 @@ class SparseAutoEncoder(HookedRootModule):
         }
         if self.cfg.use_decoder_bias:
             log_dict["metrics/decoder_bias_norm"] = self.decoder.bias.norm().item()
-        if self.cfg.act_fn == "topk":
+        if "topk" in self.cfg.act_fn:
             log_dict["sparsity/k"] = self.current_k
         else:
             log_dict["sparsity/l1_coefficient"] = self.current_l1_coefficient
