@@ -196,6 +196,11 @@ class SparseAutoEncoder(HookedRootModule):
         if self.device_mesh and self.device_mesh["model"].size(0) > 1:
             state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
 
+        # Add dataset_average_activation_norm to state dict
+        if self.dataset_average_activation_norm is not None:
+            for hook_point, value in self.dataset_average_activation_norm.items():
+                state_dict[f"dataset_average_activation_norm.{hook_point}"] = torch.tensor(value)
+
         # If sparsity_include_decoder_norm is False, we need to normalize the decoder weight before saving
         # We use a deepcopy to avoid modifying the original weight to avoid affecting the training progress
         if not self.cfg.sparsity_include_decoder_norm:
@@ -489,6 +494,15 @@ class SparseAutoEncoder(HookedRootModule):
             return loss, (loss_dict, aux_data)
         return loss
 
+    def _load_full_state_dict(self, state_dict: dict[str, torch.Tensor]) -> None:
+        # Extract and set dataset_average_activation_norm if present
+        norm_keys = [k for k in state_dict.keys() if k.startswith("dataset_average_activation_norm.")]
+        if norm_keys:
+            dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
+            self.set_dataset_average_activation_norm(dataset_norm)
+            state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
+        self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
+
     @classmethod
     def from_config(cls, cfg: SAEConfig) -> "SparseAutoEncoder":
         if cfg.sae_pretrained_name_or_path is None:
@@ -512,12 +526,16 @@ class SparseAutoEncoder(HookedRootModule):
                 raise FileNotFoundError(f"Pretrained model not found at {cfg.sae_pretrained_name_or_path}")
 
         if ckpt_path.endswith(".safetensors"):
-            state_dict = safe.load_file(ckpt_path, device=cfg.device)
+            state_dict: dict[str, torch.Tensor] = safe.load_file(ckpt_path, device=cfg.device)
         else:
-            state_dict = torch.load(ckpt_path, map_location=cfg.device)["sae"]
+            state_dict: dict[str, torch.Tensor] = torch.load(
+                ckpt_path,
+                map_location=cfg.device,
+                weights_only=True,
+            )["sae"]
 
         model = cls(cfg)
-        model.load_state_dict(state_dict, strict=cfg.strict_loading)
+        model._load_full_state_dict(state_dict)
         return model
 
     @classmethod
