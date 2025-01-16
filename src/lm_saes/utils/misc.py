@@ -89,7 +89,7 @@ def get_tensor_from_specific_rank(tensor, src=0):
     return tensor
 
 
-def all_gather_tensor(tensor, aggregate="none"):
+def all_reduce_tensor(tensor, aggregate="none"):
     _OP_MAP = {
         "sum": dist.ReduceOp.SUM,
         "mean": dist.ReduceOp.SUM,  # Use SUM for mean, but will need to divide by world size
