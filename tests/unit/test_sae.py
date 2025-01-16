@@ -3,9 +3,6 @@ import math
 import pytest
 import torch
 
-if not torch.cuda.is_available():
-    pytest.skip("CUDA device not available", allow_module_level=True)
-
 from lm_saes.config import SAEConfig
 from lm_saes.sae import SparseAutoEncoder
 
@@ -21,6 +18,7 @@ def sae_config() -> SAEConfig:
         dtype=torch.float32,
         act_fn="topk",
         jump_relu_threshold=2.0,
+        top_k=2,
     )
 
 
@@ -42,7 +40,7 @@ def sae(sae_config: SAEConfig, generator: torch.Generator) -> SparseAutoEncoder:
     )
     if sae_config.use_decoder_bias:
         sae.decoder.bias.data = torch.randn(
-            sae_config.d_sae, generator=generator, device=sae_config.device, dtype=sae_config.dtype
+            sae_config.d_model, generator=generator, device=sae_config.device, dtype=sae_config.dtype
         )
     if sae_config.use_glu_encoder:
         sae.encoder_glu.weight.data = torch.randn(
@@ -156,6 +154,20 @@ def test_compute_norm_factor(sae_config: SAEConfig, sae: SparseAutoEncoder):
     )
 
 
+def test_persistent_dataset_average_activation_norm(sae_config: SAEConfig, sae: SparseAutoEncoder):
+    sae.set_dataset_average_activation_norm({"in": 3.0, "out": 2.0})
+    assert sae.dataset_average_activation_norm == {"in": 3.0, "out": 2.0}
+    state_dict = sae._get_full_state_dict()
+    assert state_dict["dataset_average_activation_norm.in"] == 3.0
+    assert state_dict["dataset_average_activation_norm.out"] == 2.0
+
+    new_sae = SparseAutoEncoder(sae_config)
+    new_sae._load_full_state_dict(state_dict)
+    assert new_sae.cfg == sae.cfg
+    assert all(torch.allclose(p, q, atol=1e-4, rtol=1e-5) for p, q in zip(new_sae.parameters(), sae.parameters()))
+    assert new_sae.dataset_average_activation_norm == {"in": 3.0, "out": 2.0}
+
+
 def test_get_full_state_dict(sae_config: SAEConfig, sae: SparseAutoEncoder):
     sae_config.sparsity_include_decoder_norm = False
     state_dict = sae._get_full_state_dict()
@@ -205,3 +217,9 @@ def test_standardize_parameters_of_dataset_norm(sae_config: SAEConfig, sae: Spar
         assert torch.allclose(
             sae.decoder.bias.data, decoder_bias_data / math.sqrt(sae_config.d_model) * 2.0, atol=1e-4, rtol=1e-5
         )
+
+
+def test_forward(sae_config: SAEConfig, sae: SparseAutoEncoder):
+    sae.set_dataset_average_activation_norm({"in": 3.0, "out": 2.0})
+    output = sae.forward(torch.tensor([[1.0, 2.0]], device=sae_config.device, dtype=sae_config.dtype))
+    assert output.shape == (1, 2)
