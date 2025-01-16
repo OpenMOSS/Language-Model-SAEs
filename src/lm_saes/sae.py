@@ -96,14 +96,14 @@ class SparseAutoEncoder(HookedRootModule):
         if cfg.act_fn.lower() == "relu":
             return lambda x: x.gt(0).float()
         elif cfg.act_fn.lower() == "jumprelu":
-            return lambda x: (x > cfg.jump_relu_threshold).float()
+            return lambda x: x.gt(cfg.jump_relu_threshold).float()
         elif cfg.act_fn.lower() == "topk":
 
             def topk_activation(x: torch.Tensor):
                 x = torch.clamp(x, min=0.0)
                 k = x.shape[-1] - self.current_k + 1
                 k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
-                return (x >= k_th_value).float()
+                return x.ge(k_th_value).float()
 
             return topk_activation
         
@@ -115,7 +115,7 @@ class SparseAutoEncoder(HookedRootModule):
                 x = torch.clamp(x, min=0.0)
                 k = x.numel() - self.current_k * batch_size + 1
                 k_th_value, _ = torch.kthvalue(x.flatten(), k=k, dim=-1)
-                return (x >= k_th_value).float()
+                return x.ge(k_th_value).float()
             
             return topk_activation
 
