@@ -78,12 +78,14 @@ class Initializer:
                 for norm in search_range:
                     sae.set_decoder_to_fixed_norm(norm, force_exact=True)
                     sae.init_encoder_with_decoder_transpose()
+                    if sae.cfg.sae_type == "crosscoder":
+                        sae.initialize_with_same_weight_across_layers()
                     mse = sae.compute_loss(activation_batch)[1][0]["l_rec"].mean().item()
                     losses[norm] = mse
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm
 
-            if sae.cfg.act_fn != "topk":
+            if "topk" not in sae.cfg.act_fn:
                 assert self.cfg.l1_coefficient is not None
                 sae.set_current_l1_coefficient(self.cfg.l1_coefficient)
             best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
@@ -167,7 +169,7 @@ class Initializer:
                 sae.standardize_parameters_of_dataset_norm(activation_norm)
             if sae.cfg.sparsity_include_decoder_norm:
                 sae.transform_to_unit_decoder_norm()
-            if sae.cfg.act_fn == "topk":
+            if "topk" in sae.cfg.act_fn:
                 print(
                     "Converting topk activation to jumprelu for inference. Features are set independent to each other."
                 )
