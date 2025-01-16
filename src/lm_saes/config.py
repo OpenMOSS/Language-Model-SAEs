@@ -48,13 +48,14 @@ class BaseSAEConfig(BaseModelConfig):
     So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, MixCoderConfig, CrossCoderConfig, etc.
     """
 
+    sae_type: Literal["sae", "crosscoder", "mixcoder"]
     hook_point_in: str
     hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
     d_model: int
     expansion_factor: int
     use_decoder_bias: bool = True
     use_glu_encoder: bool = False
-    act_fn: str = "relu"
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk"] = "relu"
     jump_relu_threshold: float = 0.0
     apply_decoder_bias_to_pre_encoder: bool = True
     norm_activation: str = "dataset-wise"
@@ -94,10 +95,15 @@ class BaseSAEConfig(BaseModelConfig):
 
 
 class SAEConfig(BaseSAEConfig):
-    pass
+    sae_type: Literal["sae", "crosscoder", "mixcoder"] = 'sae'
+    
 
+class CrossCoderConfig(BaseSAEConfig):
+    sae_type: Literal["sae", "crosscoder", "mixcoder"] = 'crosscoder'
+    
 
 class MixCoderConfig(BaseSAEConfig):
+    sae_type: Literal["sae", "crosscoder", "mixcoder"] = 'mixcoder'
     d_single_modal: int
     d_shared: int
     n_modalities: int = 2
