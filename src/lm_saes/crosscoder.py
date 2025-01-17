@@ -20,24 +20,18 @@ class CrossCoder(SparseAutoEncoder):
     def __init__(self, cfg: BaseSAEConfig):
         super(CrossCoder, self).__init__(cfg)
 
-    def _decoder_norm(
-        self, 
-        decoder: torch.nn.Linear, 
-        keepdim: bool = False, 
-        local_only=True, 
-        aggregate="none"
-    ):
+    def _decoder_norm(self, decoder: torch.nn.Linear, keepdim: bool = False, local_only=True, aggregate="none"):
         decoder_norm = super()._decoder_norm(
             decoder=decoder,
             keepdim=keepdim,
         )
         if not local_only:
             decoder_norm = all_reduce_tensor(
-                decoder_norm, 
+                decoder_norm,
                 aggregate=aggregate,
             )
         return decoder_norm
-    
+
     @overload
     def encode(
         self,
@@ -110,7 +104,7 @@ class CrossCoder(SparseAutoEncoder):
 
         hidden_pre = all_reduce_tensor(hidden_pre, aggregate="sum")
         hidden_pre = self.hook_hidden_pre(hidden_pre)
-        
+
         if self.cfg.sparsity_include_decoder_norm:
             true_feature_acts = hidden_pre * self._decoder_norm(
                 decoder=self.decoder,
@@ -127,7 +121,7 @@ class CrossCoder(SparseAutoEncoder):
         if return_hidden_pre:
             return feature_acts, hidden_pre
         return feature_acts
-    
+
     @overload
     def compute_loss(
         self,
@@ -229,4 +223,3 @@ class CrossCoder(SparseAutoEncoder):
         self.encoder.bias.data = get_tensor_from_specific_rank(self.encoder.bias.data.clone(), src=0)
         self.decoder.weight.data = get_tensor_from_specific_rank(self.decoder.weight.data.clone(), src=0)
         self.decoder.bias.data = get_tensor_from_specific_rank(self.decoder.bias.data.clone(), src=0)
-

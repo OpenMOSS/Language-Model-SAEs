@@ -95,15 +95,15 @@ class BaseSAEConfig(BaseModelConfig):
 
 
 class SAEConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "mixcoder"] = 'sae'
-    
+    sae_type: Literal["sae", "crosscoder", "mixcoder"] = "sae"
+
 
 class CrossCoderConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "mixcoder"] = 'crosscoder'
-    
+    sae_type: Literal["sae", "crosscoder", "mixcoder"] = "crosscoder"
+
 
 class MixCoderConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "mixcoder"] = 'mixcoder'
+    sae_type: Literal["sae", "crosscoder", "mixcoder"] = "mixcoder"
     d_single_modal: int
     d_shared: int
     n_modalities: int = 2
