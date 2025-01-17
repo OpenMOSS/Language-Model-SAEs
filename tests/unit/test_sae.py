@@ -88,11 +88,28 @@ def test_set_norm(sae: SparseAutoEncoder):
 
 def test_sae_activate_fn(sae_config: SAEConfig, sae: SparseAutoEncoder):
     sae.current_k = 2
+    print(
+        sae.activation_function(
+            torch.tensor(
+                [[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]],
+                device=sae_config.device,
+                dtype=sae_config.dtype,
+            )
+        )
+    )
     assert torch.allclose(
         sae.activation_function(
-            torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]], device=sae_config.device, dtype=sae_config.dtype)
+            torch.tensor(
+                [[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [5.0, 6.0, 1.0, 2.0, 3.0, 4.0]],
+                device=sae_config.device,
+                dtype=sae_config.dtype,
+            )
         ).to(sae_config.device, sae_config.dtype),
-        torch.tensor([[0.0, 0.0, 0.0, 0.0, 1.0, 1.0]], device=sae_config.device, dtype=sae_config.dtype),
+        torch.tensor(
+            [[0.0, 0.0, 0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0]],
+            device=sae_config.device,
+            dtype=sae_config.dtype,
+        ),
         atol=1e-4,
         rtol=1e-5,
     )
