@@ -92,7 +92,12 @@ class SparseAutoEncoder(HookedRootModule):
             return decoder_norm
 
     def activation_function_factory(self, cfg: BaseSAEConfig) -> Callable[[torch.Tensor], torch.Tensor]:  # type: ignore
-        assert cfg.act_fn.lower() in ["relu", "topk", "jumprelu", "batchtopk"], f"Not implemented activation function {cfg.act_fn}"
+        assert cfg.act_fn.lower() in [
+            "relu",
+            "topk",
+            "jumprelu",
+            "batchtopk",
+        ], f"Not implemented activation function {cfg.act_fn}"
         if cfg.act_fn.lower() == "relu":
             return lambda x: x.gt(0).to(x.dtype)
         elif cfg.act_fn.lower() == "jumprelu":
@@ -106,17 +111,18 @@ class SparseAutoEncoder(HookedRootModule):
                 return x.ge(k_th_value).to(x.dtype)
 
             return topk_activation
-        
+
         elif cfg.act_fn.lower() == "batchtopk":
+
             def topk_activation(x: torch.Tensor):
                 assert x.dim() == 2
                 batch_size = x.size(0)
-                
+
                 x = torch.clamp(x, min=0.0)
                 k = x.numel() - self.current_k * batch_size + 1
                 k_th_value, _ = torch.kthvalue(x.flatten(), k=k, dim=-1)
                 return x.ge(k_th_value).to(x.dtype)
-            
+
             return topk_activation
 
     def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> torch.Tensor:  # type: ignore
