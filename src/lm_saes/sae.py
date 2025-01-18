@@ -91,7 +91,7 @@ class SparseAutoEncoder(HookedRootModule):
             decoder_norm = decoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return decoder_norm
 
-    def activation_function_factory(self, cfg: BaseSAEConfig) -> Callable[[torch.Tensor], torch.Tensor]:  # type: ignore
+    def activation_function_factory(self, cfg: BaseSAEConfig) -> Callable[[torch.Tensor], torch.Tensor]:
         assert cfg.act_fn.lower() in [
             "relu",
             "topk",
@@ -125,7 +125,9 @@ class SparseAutoEncoder(HookedRootModule):
 
             return topk_activation
 
-    def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> torch.Tensor:  # type: ignore
+        raise ValueError(f"Not implemented activation function {cfg.act_fn}")
+
+    def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> torch.Tensor:
         """Compute the normalization factor for the activation vectors.
         This should be called during forward pass.
         There are four modes for norm_activation:
@@ -155,6 +157,7 @@ class SparseAutoEncoder(HookedRootModule):
             )
         if self.cfg.norm_activation == "inference":
             return torch.tensor(1.0, device=x.device, dtype=x.dtype)
+        raise ValueError(f"Not implemented norm_activation {self.cfg.norm_activation}")
 
     @torch.no_grad()
     def _set_decoder_to_fixed_norm(self, decoder: torch.nn.Linear, value: float, force_exact: bool):
@@ -366,26 +369,51 @@ class SparseAutoEncoder(HookedRootModule):
                 Float[torch.Tensor, "batch seq_len d_sae"],
             ],
         ],
-    ]:  # should be overridden by subclasses
+    ]:
+        """Encode input tensor through the sparse autoencoder.
+
+        Args:
+            x: Input tensor of shape (batch, d_model) or (batch, seq_len, d_model)
+            return_hidden_pre: If True, also return the pre-activation hidden states
+
+        Returns:
+            If return_hidden_pre is False:
+                Feature activations tensor of shape (batch, d_sae) or (batch, seq_len, d_sae)
+            If return_hidden_pre is True:
+                Tuple of (feature_acts, hidden_pre) where both have shape (batch, d_sae) or (batch, seq_len, d_sae)
+        """
+        # Apply input normalization based on config
         input_norm_factor = self.compute_norm_factor(x, hook_point=self.cfg.hook_point_in)
         x = x * input_norm_factor
+
+        # Optionally subtract decoder bias before encoding
         if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
             # We need to convert decoder bias to a tensor before subtracting
             bias = self.decoder.bias.to_local() if isinstance(self.decoder.bias, DTensor) else self.decoder.bias
             x = x - bias
+
+        # Pass through encoder
         hidden_pre = self.encoder(x)
+        # Apply GLU if configured
         if self.cfg.use_glu_encoder:
             hidden_pre_glu = torch.sigmoid(self.encoder_glu(x))
             hidden_pre = hidden_pre * hidden_pre_glu
 
         hidden_pre = self.hook_hidden_pre(hidden_pre)
+
+        # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
-            true_feature_acts = hidden_pre * self._decoder_norm(decoder=self.decoder)
+            sparsity_scores = hidden_pre * self._decoder_norm(decoder=self.decoder)
         else:
-            true_feature_acts = hidden_pre
-        activation_mask = self.activation_function(true_feature_acts)
+            sparsity_scores = hidden_pre
+
+        # Apply activation function. The activation function here differs from a common activation function,
+        # since it computes a scaling of the input tensor, which is, suppose the common activation function
+        # is $f(x)$, then here it computes $f(x) / x$. For simple ReLU case, it computes a mask of 1s and 0s.
+        activation_mask = self.activation_function(sparsity_scores)
         feature_acts = hidden_pre * activation_mask
         feature_acts = self.hook_feature_acts(feature_acts)
+
         if return_hidden_pre:
             return feature_acts, hidden_pre
         return feature_acts

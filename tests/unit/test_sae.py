@@ -32,23 +32,30 @@ def generator(sae_config: SAEConfig) -> torch.Generator:
 @pytest.fixture
 def sae(sae_config: SAEConfig, generator: torch.Generator) -> SparseAutoEncoder:
     sae = SparseAutoEncoder(sae_config)
-    sae.encoder.weight.data = torch.randn(
-        sae_config.d_sae, sae_config.d_model, generator=generator, device=sae_config.device, dtype=sae_config.dtype
+    sae.encoder.weight.data = torch.tensor(
+        [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]],
+        requires_grad=True,
+        dtype=sae_config.dtype,
+        device=sae_config.device,
     )
-    sae.decoder.weight.data = torch.randn(
-        sae_config.d_model, sae_config.d_sae, generator=generator, device=sae_config.device, dtype=sae_config.dtype
+    sae.encoder.bias.data = torch.tensor(
+        [3.0, 2.0, 3.0, 4.0],
+        requires_grad=True,
+        dtype=sae_config.dtype,
+        device=sae_config.device,
     )
-    if sae_config.use_decoder_bias:
-        sae.decoder.bias.data = torch.randn(
-            sae_config.d_model, generator=generator, device=sae_config.device, dtype=sae_config.dtype
-        )
-    if sae_config.use_glu_encoder:
-        sae.encoder_glu.weight.data = torch.randn(
-            sae_config.d_sae, sae_config.d_model, generator=generator, device=sae_config.device, dtype=sae_config.dtype
-        )
-        sae.encoder_glu.bias.data = torch.randn(
-            sae_config.d_sae, generator=generator, device=sae_config.device, dtype=sae_config.dtype
-        )
+    sae.decoder.weight.data = torch.tensor(
+        [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]],
+        requires_grad=True,
+        dtype=sae_config.dtype,
+        device=sae_config.device,
+    )
+    sae.decoder.bias.data = torch.tensor(
+        [1.0, 2.0],
+        requires_grad=True,
+        dtype=sae_config.dtype,
+        device=sae_config.device,
+    )
     return sae
 
 
@@ -196,27 +203,8 @@ def test_get_full_state_dict(sae_config: SAEConfig, sae: SparseAutoEncoder):
 
 def test_standardize_parameters_of_dataset_norm(sae_config: SAEConfig, sae: SparseAutoEncoder):
     sae_config.norm_activation = "dataset-wise"
-    sae.encoder.bias.data = torch.tensor(
-        [[1.0, 2.0]],
-        requires_grad=True,
-        dtype=sae_config.dtype,
-        device=sae_config.device,
-    )
     encoder_bias_data = sae.encoder.bias.data.clone()
-    sae.decoder.weight.data = torch.tensor(
-        [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]],
-        requires_grad=True,
-        dtype=sae_config.dtype,
-        device=sae_config.device,
-    )
     decoder_weight_data = sae.decoder.weight.data.clone()
-    if sae_config.use_decoder_bias:
-        sae.decoder.bias.data = torch.tensor(
-            [[1.0, 2.0, 3.0, 4.0]],
-            requires_grad=True,
-            dtype=sae_config.dtype,
-            device=sae_config.device,
-        )
     decoder_bias_data = sae.decoder.bias.data.clone()
     sae.standardize_parameters_of_dataset_norm({"in": 3.0, "out": 2.0})
     assert sae.cfg.norm_activation == "inference"
@@ -237,6 +225,8 @@ def test_standardize_parameters_of_dataset_norm(sae_config: SAEConfig, sae: Spar
 
 
 def test_forward(sae_config: SAEConfig, sae: SparseAutoEncoder):
-    sae.set_dataset_average_activation_norm({"in": 3.0, "out": 2.0})
-    output = sae.forward(torch.tensor([[1.0, 2.0]], device=sae_config.device, dtype=sae_config.dtype))
-    assert output.shape == (1, 2)
+    sae.set_dataset_average_activation_norm(
+        {"in": 2.0 * math.sqrt(sae_config.d_model), "out": 1.0 * math.sqrt(sae_config.d_model)}
+    )
+    output = sae.forward(torch.tensor([[4.0, 4.0]], device=sae_config.device, dtype=sae_config.dtype))
+    assert torch.allclose(output, torch.tensor([[69.0, 146.0]], device=sae_config.device, dtype=sae_config.dtype))
