@@ -40,6 +40,7 @@ class CrossCoder(SparseAutoEncoder):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: Literal[False] = False,
+        **kwargs,
     ) -> Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]: ...
 
     @overload
@@ -50,6 +51,7 @@ class CrossCoder(SparseAutoEncoder):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: Literal[True],
+        **kwargs,
     ) -> tuple[
         Union[
             Float[torch.Tensor, "batch d_sae"],
@@ -68,6 +70,7 @@ class CrossCoder(SparseAutoEncoder):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: bool = False,
+        **kwargs,
     ) -> Union[
         Float[torch.Tensor, "batch d_sae"],
         Float[torch.Tensor, "batch seq_len d_sae"],
@@ -130,6 +133,7 @@ class CrossCoder(SparseAutoEncoder):
         use_batch_norm_mse: bool = False,
         lp: int = 1,
         return_aux_data: Literal[True] = True,
+        **kwargs,
     ) -> tuple[
         Float[torch.Tensor, " batch"],
         tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
@@ -143,6 +147,7 @@ class CrossCoder(SparseAutoEncoder):
         use_batch_norm_mse: bool = False,
         lp: int = 1,
         return_aux_data: Literal[False],
+        **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
 
     def compute_loss(
@@ -159,6 +164,7 @@ class CrossCoder(SparseAutoEncoder):
         use_batch_norm_mse: bool = False,
         lp: int = 1,
         return_aux_data: bool = True,
+        **kwargs,
     ) -> Union[
         Float[torch.Tensor, " batch"],
         tuple[
