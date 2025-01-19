@@ -104,13 +104,11 @@ class CrossCoderConfig(BaseSAEConfig):
 
 class MixCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "mixcoder"
-    d_single_modal: int
-    d_shared: int
-    n_modalities: int = 2
+    modalities: dict[str, int]
 
     @property
     def d_sae(self) -> int:
-        return self.d_single_modal * self.n_modalities + self.d_shared
+        return sum(self.modalities.values())
 
 
 class InitializerConfig(BaseConfig):
@@ -131,7 +129,7 @@ class TrainerConfig(BaseConfig):
     k_warmup_steps: int | float = 0.1
     use_batch_norm_mse: bool = True
 
-    lr: float = 0.0004
+    lr: float | dict[str, float] = 0.0004
     betas: Tuple[float, float] = (0.9, 0.999)
     lr_scheduler_name: Literal[
         "constant",

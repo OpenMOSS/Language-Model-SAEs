@@ -58,7 +58,17 @@ class Trainer:
         self.wandb_logger = wandb_logger
 
     def _initialize_optimizer(self, sae: SparseAutoEncoder):
-        optimizer = Adam(sae.parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
+        # TODO: check if this is correct
+        if isinstance(self.cfg.lr, float):
+            optimizer = Adam(sae.get_parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
+        else:
+            assert isinstance(self.cfg.lr, dict)
+            assert sae.cfg.sae_type == "mixcoder"
+            params = sae.get_parameters()
+            assert len(params) == len(self.cfg.lr)
+            for param_group in params:
+                param_group["lr"] = self.cfg.lr[param_group["modality"]]
+            optimizer = Adam(params, betas=self.cfg.betas)
         scheduler = get_scheduler(
             scheduler_name=self.cfg.lr_scheduler_name,
             optimizer=optimizer,
@@ -82,14 +92,13 @@ class Trainer:
             )
         elif self.k_warmup_steps > 0:
             assert self.cfg.initial_k is not None, "initial_k must be provided"
+            assert self.cfg.initial_k >= sae.cfg.top_k, "initial_k must be greater than or equal to top_k"
             sae.set_current_k(
-                math.ceil(
-                    max(
-                        1.0,
-                        self.cfg.initial_k
-                        + (1 - self.cfg.initial_k) / self.k_warmup_steps * self.cur_step,  # d_model / top_k
-                    )
-                    * sae.cfg.top_k
+                max(
+                    sae.cfg.top_k,
+                    math.ceil(
+                        self.cfg.initial_k + (sae.cfg.top_k - self.cfg.initial_k) / self.k_warmup_steps * self.cur_step,
+                    ),
                 )
             )
 
@@ -98,6 +107,7 @@ class Trainer:
             lp=self.cfg.lp,
             use_batch_norm_mse=self.cfg.use_batch_norm_mse,
             return_aux_data=True,
+            tokens=batch["tokens"],
         )
         loss_dict = {"loss": loss, "batch_size": batch[sae.cfg.hook_point_in].shape[0]} | loss_data | aux_data
         return loss_dict
@@ -189,6 +199,7 @@ class Trainer:
             self.optimizer.zero_grad()
             loss_dict = self._training_step(sae, batch)
             loss_dict["loss"].backward()
+            # TODO: add support for mixcoder to use different clip_grad_norm for each modality
             loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
                 sae.parameters(),
                 max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,

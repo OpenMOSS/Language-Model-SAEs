@@ -5,6 +5,7 @@ from typing import Iterable
 import torch
 import torch.distributed as dist
 from torch.distributed.nn.functional import all_reduce
+from transformers import PreTrainedTokenizerBase
 
 
 def is_master() -> bool:
@@ -143,3 +144,22 @@ def calculate_activation_norm(
     for key in activation_norm:
         activation_norm[key] = activation_norm[key].mean().item()
     return activation_norm
+
+
+def get_modality_indices(tokenizer: PreTrainedTokenizerBase, model_name: str) -> dict[str, torch.Tensor]:
+    modality_indices = {}
+    if model_name == "facebook/chameleon-7b":
+        for token_name, token_id in tokenizer.get_vocab().items():
+            if token_name.startswith("IMGIMG"):
+                modality_indices["image"] = (
+                    [token_id] if "image" not in modality_indices else modality_indices["image"] + [token_id]
+                )
+            else:
+                modality_indices["text"] = (
+                    [token_id] if "text" not in modality_indices else modality_indices["text"] + [token_id]
+                )
+    else:
+        raise ValueError(f"Unsupported model: {model_name}")
+    for modality in modality_indices:
+        modality_indices[modality] = torch.tensor(modality_indices[modality], dtype=torch.long)
+    return modality_indices
