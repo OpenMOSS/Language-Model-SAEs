@@ -6,6 +6,7 @@ from typing import Callable, Literal, Union, cast, overload
 
 import safetensors.torch as safe
 import torch
+from fsspec.spec import Any
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor
@@ -107,8 +108,9 @@ class SparseAutoEncoder(HookedRootModule):
             def topk_activation(x: torch.Tensor):
                 x = torch.clamp(x, min=0.0)
                 k = x.shape[-1] - self.current_k + 1
-                k_th_value, _ = torch.kthvalue(x, k=k, dim=-1, keepdim=True)
-                return x.ge(k_th_value).to(x.dtype)
+                k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
+                k_th_value = k_th_value.unsqueeze(dim=1)
+                return x.ge(k_th_value)
 
             return topk_activation
 
@@ -121,7 +123,7 @@ class SparseAutoEncoder(HookedRootModule):
                 x = torch.clamp(x, min=0.0)
                 k = x.numel() - self.current_k * batch_size + 1
                 k_th_value, _ = torch.kthvalue(x.flatten(), k=k, dim=-1)
-                return x.ge(k_th_value).to(x.dtype)
+                return x.ge(k_th_value)
 
             return topk_activation
 
@@ -325,6 +327,7 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: Literal[False] = False,
+        **kwargs,
     ) -> Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]: ...
 
     @overload
@@ -335,6 +338,7 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: Literal[True],
+        **kwargs,
     ) -> tuple[
         Union[
             Float[torch.Tensor, "batch d_sae"],
@@ -353,6 +357,7 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: bool = False,
+        **kwargs,
     ) -> Union[
         Float[torch.Tensor, "batch d_sae"],
         Float[torch.Tensor, "batch seq_len d_sae"],
@@ -396,6 +401,7 @@ class SparseAutoEncoder(HookedRootModule):
             Float[torch.Tensor, "batch d_sae"],
             Float[torch.Tensor, "batch seq_len d_sae"],
         ],
+        **kwargs,
     ) -> Union[
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
@@ -416,8 +422,8 @@ class SparseAutoEncoder(HookedRootModule):
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
-        feature_acts = self.encode(x)
-        reconstructed = self.decode(feature_acts)
+        feature_acts = self.encode(x, **kwargs)
+        reconstructed = self.decode(feature_acts, **kwargs)
         return reconstructed
 
     @overload
@@ -428,6 +434,7 @@ class SparseAutoEncoder(HookedRootModule):
         use_batch_norm_mse: bool = False,
         lp: int = 1,
         return_aux_data: Literal[True] = True,
+        **kwargs,
     ) -> tuple[
         Float[torch.Tensor, " batch"],
         tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
@@ -441,6 +448,7 @@ class SparseAutoEncoder(HookedRootModule):
         use_batch_norm_mse: bool = False,
         lp: int = 1,
         return_aux_data: Literal[False],
+        **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
 
     def compute_loss(
@@ -457,6 +465,7 @@ class SparseAutoEncoder(HookedRootModule):
         use_batch_norm_mse: bool = False,
         lp: int = 1,
         return_aux_data: bool = True,
+        **kwargs,
     ) -> Union[
         Float[torch.Tensor, " batch"],
         tuple[
@@ -466,8 +475,8 @@ class SparseAutoEncoder(HookedRootModule):
     ]:  # may be overridden by subclasses
         x: torch.Tensor = batch[self.cfg.hook_point_in]
         label: torch.Tensor = batch[self.cfg.hook_point_out]
-        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True)
-        reconstructed = self.decode(feature_acts)
+        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **kwargs)
+        reconstructed = self.decode(feature_acts, **kwargs)
         label_norm_factor: torch.Tensor = self.compute_norm_factor(label, hook_point=self.cfg.hook_point_out)
         label_normed = label * label_norm_factor
         l_rec = (reconstructed - label_normed).pow(2)
@@ -510,7 +519,7 @@ class SparseAutoEncoder(HookedRootModule):
         self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
 
     @classmethod
-    def from_config(cls, cfg: SAEConfig) -> "SparseAutoEncoder":
+    def from_config(cls, cfg: BaseSAEConfig) -> "SparseAutoEncoder":
         if cfg.sae_pretrained_name_or_path is None:
             return cls(cfg)
         path = parse_pretrained_name_or_path(cfg.sae_pretrained_name_or_path)
@@ -571,3 +580,17 @@ class SparseAutoEncoder(HookedRootModule):
     @torch.no_grad()
     def init_encoder_with_decoder_transpose(self):
         self._init_encoder_with_decoder_transpose(self.encoder, self.decoder)
+
+    @torch.no_grad()
+    def init_parameters(self, **kwargs):
+        torch.nn.init.kaiming_uniform_(self.encoder.weight)
+        torch.nn.init.kaiming_uniform_(self.decoder.weight)
+        torch.nn.init.zeros_(self.encoder.bias)
+        if self.cfg.use_decoder_bias:
+            torch.nn.init.zeros_(self.decoder.bias)
+        if self.cfg.use_glu_encoder:
+            torch.nn.init.kaiming_uniform_(self.encoder_glu.weight)
+            torch.nn.init.zeros_(self.encoder_glu.bias)
+
+    def get_parameters(self) -> list[dict[str, Any]]:
+        return [{"params": self.parameters()}]

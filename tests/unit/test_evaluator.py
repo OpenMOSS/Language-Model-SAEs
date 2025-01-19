@@ -49,6 +49,7 @@ def activation_stream(sae_config: SAEConfig) -> Iterable[dict[str, torch.Tensor]
                     (batch_size, sae_config.d_model), device=sae_config.device, dtype=sae_config.dtype
                 )
                 * (i + 1),
+                "tokens": torch.arange(start=1, end=5, device=sae_config.device, dtype=torch.int64),
             }
 
     return stream_generator()

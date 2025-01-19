@@ -6,8 +6,7 @@ from tqdm import tqdm
 from transformer_lens import HookedTransformer
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.config import EvalConfig, MixCoderConfig, SAEConfig
-from lm_saes.mixcoder import MixCoder
+from lm_saes.config import EvalConfig
 from lm_saes.sae import SparseAutoEncoder
 
 
@@ -55,11 +54,12 @@ class Evaluator:
         # 2. Get activations and compute reconstructions
         activation_in = activation_dict[sae.cfg.hook_point_in][useful_token_mask]
         activation_out = activation_dict[sae.cfg.hook_point_out][useful_token_mask]
-        feature_acts = sae.encode(activation_in)
+        tokens = activation_dict["tokens"][useful_token_mask]
+        feature_acts = sae.encode(activation_in, tokens=tokens)
         reconstructed = (
             log_info.pop("reconstructed")[useful_token_mask]
             if "reconstructed" in log_info
-            else sae.forward(activation_in)
+            else sae.forward(activation_in, tokens=tokens)
         )
 
         # 3. Compute sparsity metrics
@@ -156,15 +156,7 @@ class Evaluator:
             names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out],
             return_cache_object=False,
         )
-        reconstructed_activations: Tensor | None = None
-        if isinstance(sae.cfg, SAEConfig):
-            reconstructed_activations = sae.forward(cache[sae.cfg.hook_point_in])
-
-        elif isinstance(sae.cfg, MixCoderConfig):
-            assert isinstance(sae, MixCoder)
-            reconstructed_activations = sae.forward(cache[sae.cfg.hook_point_in], tokens=input_ids)
-
-        assert reconstructed_activations is not None
+        reconstructed_activations = sae.forward(cache[sae.cfg.hook_point_in], tokens=input_ids)
 
         def replace_hook(activations: Tensor, hook_point: str) -> Tensor:
             return torch.where(useful_token_mask, reconstructed_activations, activations)
