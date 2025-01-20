@@ -12,9 +12,9 @@ from torch.distributed.tensor.parallel import (
 )
 
 from lm_saes.config import BaseSAEConfig, InitializerConfig
+from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.sae import SparseAutoEncoder
-from lm_saes.crosscoder import CrossCoder
 from lm_saes.utils.misc import calculate_activation_norm, get_modality_indices
 
 
