@@ -12,6 +12,7 @@ from wandb.sdk.wandb_run import Run
 from lm_saes.config import TrainerConfig
 from lm_saes.optim import get_scheduler
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.utils.misc import all_reduce_tensor
 
 
 class Trainer:
@@ -133,6 +134,14 @@ class Trainer:
                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
             }
+            if sae.cfg.sae_type == 'crosscoder':
+                wandb_log_dict.update({
+                    "sparsity/overall_above_1e-1": (all_reduce_tensor(feature_sparsity, aggregate='max') > 1e-1).sum().item(),
+                    "sparsity/overall_above_1e-2": (all_reduce_tensor(feature_sparsity, aggregate='max') > 1e-2).sum().item(),
+                    "sparsity/overall_below_1e-5": (all_reduce_tensor(feature_sparsity, aggregate='max') < 1e-5).sum().item(),
+                    "sparsity/overall_below_1e-6": (all_reduce_tensor(feature_sparsity, aggregate='max') < 1e-6).sum().item(),
+                })
+
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
             log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
             log_info["n_frac_active_tokens"] = torch.zeros_like(log_info["n_frac_active_tokens"])

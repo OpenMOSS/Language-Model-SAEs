@@ -265,10 +265,10 @@ class ParallelCachedActivationLoader(BaseCachedActivationLoader):
                 done, futures = wait(futures, return_when=FIRST_COMPLETED)
                 pbar.set_postfix({"Active chunks": len(futures)})
                 # Process completed chunks in order
-                for future in tqdm(done, desc="Processing chunks", smoothing=0.001, leave=False):
+                for future in tqdm(done, desc="Processing chunks", smoothing=0.001, leave=False, disable=True):
                     chunk_data = future.result()
                     chunk_data = {
-                        k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in chunk_data.items()
+                        k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in chunk_data.items()
                     }
                     yield chunk_data
                     pbar.update(1)

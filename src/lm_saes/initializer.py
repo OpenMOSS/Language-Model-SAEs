@@ -14,6 +14,7 @@ from torch.distributed.tensor.parallel import (
 from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.mixcoder import MixCoder
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.crosscoder import CrossCoder
 from lm_saes.utils.misc import calculate_activation_norm, get_modality_indices
 
 
@@ -161,9 +162,11 @@ class Initializer:
             sae = SparseAutoEncoder.from_config(cfg)
         elif cfg.sae_type == "mixcoder":
             sae = MixCoder.from_config(cfg)
+        elif cfg.sae_type == "crosscoder":
+            sae = CrossCoder.from_config(cfg)
         else:
             # TODO: add support for different SAE config types, e.g. MixCoderConfig, CrossCoderConfig, etc.
-            pass
+            raise ValueError(f'SAE type {cfg.sae_type} not supported.')
         if self.cfg.state == "training":
             if cfg.sae_pretrained_name_or_path is None:
                 sae: SparseAutoEncoder = self.initialize_parameters(sae, mixcoder_settings=mixcoder_settings)

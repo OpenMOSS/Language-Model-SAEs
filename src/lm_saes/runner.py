@@ -5,6 +5,7 @@ from typing import Literal, Optional, TypeVar, overload
 import wandb
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory
@@ -15,12 +16,12 @@ from lm_saes.config import (
     ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
     ActivationWriterConfig,
+    BaseSAEConfig,
     DatasetConfig,
     FeatureAnalyzerConfig,
     InitializerConfig,
     LanguageModelConfig,
     MongoDBConfig,
-    SAEConfig,
     TrainerConfig,
     WandbConfig,
 )
@@ -223,7 +224,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
 class TrainSAESettings(BaseSettings):
     """Settings for training a Sparse Autoencoder (SAE)."""
 
-    sae: SAEConfig
+    sae: BaseSAEConfig
     """Configuration for the SAE model architecture and parameters"""
 
     sae_name: str
@@ -272,12 +273,15 @@ def train_sae(settings: TrainSAESettings) -> None:
         if settings.data_parallel_size > 1 or settings.model_parallel_size > 1
         else None
     )
+
     activation_factory = ActivationFactory(settings.activation_factory)
     activations_stream = activation_factory.process()
     initializer = Initializer(settings.initializer)
     sae = initializer.initialize_sae_from_config(
         settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
     )
+
+    log_to_wandb = settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
 
     wandb_logger = (
         wandb.init(
@@ -288,8 +292,7 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
-        else None
+        if log_to_wandb else None
     )
     if wandb_logger is not None:
         wandb_logger.watch(sae, log="all")
@@ -310,7 +313,7 @@ def train_sae(settings: TrainSAESettings) -> None:
 
 
 class AnalyzeSAESettings(BaseSettings):
-    sae: SAEConfig
+    sae: BaseSAEConfig
     """Configuration for the SAE model architecture and parameters"""
 
     sae_name: str

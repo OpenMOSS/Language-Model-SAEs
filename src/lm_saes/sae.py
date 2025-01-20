@@ -2,11 +2,10 @@ import math
 import os
 from importlib.metadata import version
 from pathlib import Path
-from typing import Callable, Literal, Union, cast, overload
+from typing import Callable, Literal, Union, cast, overload, Any
 
 import safetensors.torch as safe
 import torch
-from fsspec.spec import Any
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor

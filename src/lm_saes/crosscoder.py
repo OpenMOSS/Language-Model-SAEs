@@ -203,7 +203,10 @@ class CrossCoder(SparseAutoEncoder):
         }
 
         # l_l1: (batch,)
-        feature_acts = feature_acts * self.decoder_norm(local_only=False, aggregate="mean")
+        feature_acts = feature_acts * self._decoder_norm(
+            decoder=self.decoder,
+            local_only=True,
+        )
 
         if "topk" not in self.cfg.act_fn:
             l_lp = torch.norm(feature_acts, p=lp, dim=-1)
@@ -223,6 +226,10 @@ class CrossCoder(SparseAutoEncoder):
             )
 
         return loss
+
+    @torch.no_grad()
+    def log_statistics(self):
+        return {}
 
     def initialize_with_same_weight_across_layers(self):
         self.encoder.weight.data = get_tensor_from_specific_rank(self.encoder.weight.data.clone(), src=0)
