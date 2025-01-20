@@ -60,7 +60,9 @@ const FeatureCustomInterpretionArea = ({
 export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
   const [showCustomInput, setShowCustomInput] = useState<boolean>(false);
 
-  const [interpretation, setInterpretation] = useState<Interpretation | null>(feature.interpretation);
+  const [interpretation, setInterpretation] = useState<Interpretation | null>(
+    feature.interpretation || null
+  );
 
   const [validating, setValidating] = useState<boolean>(false);
 
