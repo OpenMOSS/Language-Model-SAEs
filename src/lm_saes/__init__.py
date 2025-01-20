@@ -6,6 +6,7 @@ from .config import (
     ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
     ActivationWriterConfig,
+    CrossCoderConfig,
     DatasetConfig,
     FeatureAnalyzerConfig,
     InitializerConfig,
@@ -29,6 +30,7 @@ from .runner import (
 __all__ = [
     "ActivationFactory",
     "ActivationWriter",
+    "CrossCoderConfig",
     "LanguageModelConfig",
     "DatasetConfig",
     "ActivationFactoryActivationsSource",
