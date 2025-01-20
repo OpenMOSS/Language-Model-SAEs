@@ -57,7 +57,7 @@ class BaseSAEConfig(BaseModelConfig):
     use_glu_encoder: bool = False
     act_fn: Literal["relu", "jumprelu", "topk", "batchtopk"] = "relu"
     jump_relu_threshold: float = 0.0
-    apply_decoder_bias_to_pre_encoder: bool = True
+    apply_decoder_bias_to_pre_encoder: bool = False
     norm_activation: str = "dataset-wise"
     sparsity_include_decoder_norm: bool = True
     top_k: int = 50
