@@ -86,7 +86,7 @@ class Trainer:
         sae: SparseAutoEncoder,
         batch: dict[str, Tensor],
     ) -> dict[str, Tensor]:
-        if (not sae.cfg.act_fn == "topk") and self.l1_coefficient_warmup_steps > 0:
+        if "topk" not in sae.cfg.act_fn and self.l1_coefficient_warmup_steps > 0:
             assert self.cfg.l1_coefficient is not None
             sae.set_current_l1_coefficient(
                 min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
