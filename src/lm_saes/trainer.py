@@ -7,12 +7,12 @@ import torch.optim.lr_scheduler as lr_scheduler
 from torch import Tensor
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
-from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import TrainerConfig
 from lm_saes.optim import get_scheduler
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.misc import all_reduce_tensor
+from wandb.sdk.wandb_run import Run
 
 
 class Trainer:
