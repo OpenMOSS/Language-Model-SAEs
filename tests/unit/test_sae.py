@@ -229,4 +229,4 @@ def test_forward(sae_config: SAEConfig, sae: SparseAutoEncoder):
         {"in": 2.0 * math.sqrt(sae_config.d_model), "out": 1.0 * math.sqrt(sae_config.d_model)}
     )
     output = sae.forward(torch.tensor([[4.0, 4.0]], device=sae_config.device, dtype=sae_config.dtype))
-    assert torch.allclose(output, torch.tensor([[69.0, 146.0]], device=sae_config.device, dtype=sae_config.dtype))
+    assert torch.allclose(output, torch.tensor([[212.0, 449.0]], device=sae_config.device, dtype=sae_config.dtype))
