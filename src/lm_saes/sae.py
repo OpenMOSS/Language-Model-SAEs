@@ -2,7 +2,7 @@ import math
 import os
 from importlib.metadata import version
 from pathlib import Path
-from typing import Callable, Literal, Union, cast, overload, Any
+from typing import Any, Callable, Literal, Union, cast, overload
 
 import safetensors.torch as safe
 import torch

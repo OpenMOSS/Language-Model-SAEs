@@ -4,10 +4,10 @@ import torch
 from torch import Tensor
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
-from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import EvalConfig
 from lm_saes.sae import SparseAutoEncoder
+from wandb.sdk.wandb_run import Run
 
 
 class Evaluator:

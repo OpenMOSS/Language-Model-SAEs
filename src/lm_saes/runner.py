@@ -2,12 +2,11 @@ import os
 from pathlib import Path
 from typing import Literal, Optional, TypeVar, overload
 
-import wandb
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 
+import wandb
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.activation.writer import ActivationWriter
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
@@ -281,8 +280,6 @@ def train_sae(settings: TrainSAESettings) -> None:
         settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
     )
 
-    log_to_wandb = settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
-
     wandb_logger = (
         wandb.init(
             project=settings.wandb.wandb_project,
@@ -292,7 +289,7 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),
         )
-        if log_to_wandb else None
+        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0) else None
     )
     if wandb_logger is not None:
         wandb_logger.watch(sae, log="all")
