@@ -116,7 +116,7 @@ class InitializerConfig(BaseConfig):
     init_decoder_norm: float | None = None
     init_encoder_norm: float | None = None
     init_encoder_with_decoder_transpose: bool = True
-    init_search: bool = False
+    init_search: bool = True
     state: Literal["training", "inference"] = "training"
     l1_coefficient: float | None = 0.00008
 
@@ -140,8 +140,8 @@ class TrainerConfig(BaseConfig):
         "exponentialwarmup",
     ] = "constantwithwarmup"
     lr_end_ratio: float = 1 / 32
-    lr_warm_up_steps: int | float = 0.1
-    lr_cool_down_steps: int | float = 0.1
+    lr_warm_up_steps: int | float = 5000
+    lr_cool_down_steps: int | float = 0.2
     clip_grad_norm: float = 0.0
     feature_sampling_window: int = 1000
     total_training_tokens: int = 300_000_000
