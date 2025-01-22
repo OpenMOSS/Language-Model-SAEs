@@ -216,7 +216,7 @@ class SequentialCachedActivationLoader(BaseCachedActivationLoader):
     """Sequential implementation of cached activation loader."""
 
     def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int) -> Iterator[dict[str, Any]]:
-        for chunk_idx in range(total_chunks):
+        for chunk_idx in tqdm(range(total_chunks), desc="Loading chunks", smoothing=0.001, miniters=1):
             chunk_data = self._load_chunk_for_hooks(chunk_idx, hook_chunks)
             chunk_data = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in chunk_data.items()}
             yield chunk_data
@@ -268,7 +268,8 @@ class ParallelCachedActivationLoader(BaseCachedActivationLoader):
                 for future in tqdm(done, desc="Processing chunks", smoothing=0.001, leave=False, disable=True):
                     chunk_data = future.result()
                     chunk_data = {
-                        k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in chunk_data.items()
+                        k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+                        for k, v in chunk_data.items()
                     }
                     yield chunk_data
                     pbar.update(1)
