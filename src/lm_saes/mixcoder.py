@@ -159,12 +159,8 @@ class MixCoder(SparseAutoEncoder):
         """
         return self.modality_index
 
-    def _get_modality_activation_mask(
+    def get_modality_token_mask(
         self,
-        activation: Union[
-            Float[torch.Tensor, "batch d_model"],
-            Float[torch.Tensor, "batch seq_len d_model"],
-        ],
         tokens: Union[
             Float[torch.Tensor, "batch d_model"],
             Float[torch.Tensor, "batch seq_len d_model"],
@@ -182,7 +178,7 @@ class MixCoder(SparseAutoEncoder):
             The activation of the specified modality. The shape is the same as the input activation.
         """
         activation_mask = torch.isin(tokens, self.modality_indices[modality])
-        return activation_mask.unsqueeze(1)
+        return activation_mask
 
     @overload
     def encode(
@@ -266,7 +262,7 @@ class MixCoder(SparseAutoEncoder):
             if modality == "shared":
                 # shared modality is not encoded directly but summed up during other modalities' encoding
                 continue
-            activation_mask = self._get_modality_activation_mask(x, tokens, modality)
+            activation_mask = self.get_modality_token_mask(tokens, modality).unsqueeze(1)
             if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
                 modality_bias = (
                     self.decoder[modality].bias.to_local()  # TODO: check if this is correct # type: ignore
