@@ -11,6 +11,7 @@ from .config import (
     FeatureAnalyzerConfig,
     InitializerConfig,
     LanguageModelConfig,
+    MixCoderConfig,
     MongoDBConfig,
     SAEConfig,
     TrainerConfig,
@@ -54,4 +55,5 @@ __all__ = [
     "FeatureAnalyzerConfig",
     "MongoDBConfig",
     "MongoClient",
+    "MixCoderConfig",
 ]
