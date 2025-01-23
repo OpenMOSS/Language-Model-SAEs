@@ -109,7 +109,6 @@ class SparseAutoEncoder(HookedRootModule):
                 k = x.shape[-1] - self.current_k + 1
                 k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
                 k_th_value = k_th_value.unsqueeze(dim=1)
-                print()
                 return x.ge(k_th_value)
 
             return topk_activation
