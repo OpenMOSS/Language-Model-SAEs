@@ -106,16 +106,14 @@ def test_encode_decode(mixcoder, config):
 
 def test_get_modality_activation_mask(mixcoder, config):
     """Test the _get_modality_activation method."""
-    batch_size = 8
-    x = torch.ones(batch_size, config.d_model)
     tokens = torch.tensor([1, 2, 3, 4, 5, 6, 7, 8])
 
     # Test text modality
-    text_activation_mask = mixcoder._get_modality_activation_mask(x, tokens, "text")
-    assert torch.all(text_activation_mask[0, :4] == 1)  # First 4 positions should be 1
-    assert torch.all(text_activation_mask[0, 4:] == 0)  # Last 4 positions should be 0
+    text_activation_mask = mixcoder.get_modality_token_mask(tokens, "text")
+    assert torch.all(text_activation_mask[:4] == 1)  # First 4 positions should be 1
+    assert torch.all(text_activation_mask[4:] == 0)  # Last 4 positions should be 0
 
     # Test image modality
-    image_activation_mask = mixcoder._get_modality_activation_mask(x, tokens, "image")
-    assert torch.all(image_activation_mask[1, :4] == 0)  # First 4 positions should be 0
-    assert torch.all(image_activation_mask[1, 4:] == 1)  # Last 4 positions should be 1
+    image_activation_mask = mixcoder.get_modality_token_mask(tokens, "image")
+    assert torch.all(image_activation_mask[:4] == 0)  # First 4 positions should be 0
+    assert torch.all(image_activation_mask[4:] == 1)  # Last 4 positions should be 1
