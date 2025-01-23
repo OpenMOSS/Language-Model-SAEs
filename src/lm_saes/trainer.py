@@ -273,7 +273,7 @@ class Trainer:
             activation_in, activation_out = batch[sae.cfg.hook_point_in], batch[sae.cfg.hook_point_out]
 
             if self.wandb_logger is not None:
-                self._log(sae, log_info, {"input": activation_in, "output": activation_out})
+                self._log(sae, log_info, {"input": activation_in, "output": activation_out, "tokens": batch["tokens"]})
 
             if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
                 eval_fn(sae)
