@@ -10,6 +10,7 @@ from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import TrainerConfig
+from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.misc import all_reduce_tensor
@@ -134,13 +135,23 @@ class Trainer:
                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
             }
-            if sae.cfg.sae_type == 'crosscoder':
-                wandb_log_dict.update({
-                    "sparsity/overall_above_1e-1": (all_reduce_tensor(feature_sparsity, aggregate='max') > 1e-1).sum().item(),
-                    "sparsity/overall_above_1e-2": (all_reduce_tensor(feature_sparsity, aggregate='max') > 1e-2).sum().item(),
-                    "sparsity/overall_below_1e-5": (all_reduce_tensor(feature_sparsity, aggregate='max') < 1e-5).sum().item(),
-                    "sparsity/overall_below_1e-6": (all_reduce_tensor(feature_sparsity, aggregate='max') < 1e-6).sum().item(),
-                })
+            if sae.cfg.sae_type == "crosscoder":
+                wandb_log_dict.update(
+                    {
+                        "sparsity/overall_above_1e-1": (all_reduce_tensor(feature_sparsity, aggregate="max") > 1e-1)
+                        .sum()
+                        .item(),
+                        "sparsity/overall_above_1e-2": (all_reduce_tensor(feature_sparsity, aggregate="max") > 1e-2)
+                        .sum()
+                        .item(),
+                        "sparsity/overall_below_1e-5": (all_reduce_tensor(feature_sparsity, aggregate="max") < 1e-5)
+                        .sum()
+                        .item(),
+                        "sparsity/overall_below_1e-6": (all_reduce_tensor(feature_sparsity, aggregate="max") < 1e-6)
+                        .sum()
+                        .item(),
+                    }
+                )
 
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
             log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
@@ -173,6 +184,19 @@ class Trainer:
                 "details/n_training_tokens": self.cur_tokens,
             }
             wandb_log_dict.update(sae.log_statistics())
+            if sae.cfg.sae_type == "mixcoder":
+                assert isinstance(sae, MixCoder)
+                for modality, (start, end) in sae.modality_index.items():
+                    wandb_log_dict.update(
+                        {
+                            f"metrics/{modality}_l0": (log_info["feature_acts"][:, start:end] > 0)
+                            .float()
+                            .sum(-1)
+                            .mean()
+                            .item(),
+                        }
+                    )
+
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
 
     def _save_checkpoint(self, sae: SparseAutoEncoder):
