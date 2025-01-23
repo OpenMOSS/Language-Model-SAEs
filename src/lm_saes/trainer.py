@@ -187,13 +187,26 @@ class Trainer:
             if sae.cfg.sae_type == "mixcoder":
                 assert isinstance(sae, MixCoder)
                 for modality, (start, end) in sae.modality_index.items():
+                    if modality == "shared":
+                        continue
+                    shared_start, shared_end = sae.modality_index["shared"]
+                    mask = sae.get_modality_token_mask(batch["tokens"], modality)
+                    token_num = mask.sum().item()
                     wandb_log_dict.update(
                         {
-                            f"metrics/{modality}_l0": (log_info["feature_acts"][:, start:end] > 0)
+                            f"l0_metrics/{modality}_l0": (log_info["feature_acts"][mask][:, start:end] > 0)
                             .float()
                             .sum(-1)
                             .mean()
                             .item(),
+                            f"l0_metrics/{modality}_shared_l0": (
+                                log_info["feature_acts"][mask][:, shared_start:shared_end] > 0
+                            )
+                            .float()
+                            .sum(-1)
+                            .mean()
+                            .item(),
+                            f"l0_metrics/{modality}_token_num": token_num,
                         }
                     )
 
