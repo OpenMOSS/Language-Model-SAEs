@@ -6,6 +6,7 @@ import wandb
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from torch.distributed.device_mesh import init_device_mesh
+from transformers import AutoTokenizer
 
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.activation.writer import ActivationWriter
@@ -256,6 +257,9 @@ class TrainSAESettings(BaseSettings):
     mongo: Optional[MongoDBConfig] = None
     """Configuration for MongoDB"""
 
+    model_name: Optional[str] = None
+    """Name of the tokenizer to load. Mixcoder requires a tokenizer to get the modality indices."""
+
 
 def train_sae(settings: TrainSAESettings) -> None:
     """Train a SAE model.
@@ -276,9 +280,24 @@ def train_sae(settings: TrainSAESettings) -> None:
     activation_factory = ActivationFactory(settings.activation_factory)
     activations_stream = activation_factory.process()
     initializer = Initializer(settings.initializer)
-    sae = initializer.initialize_sae_from_config(
-        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
-    )
+
+    if settings.sae.sae_type == "mixcoder":
+        assert settings.model_name is not None, "Model name is required for mixcoder SAE"
+        tokenizer = AutoTokenizer.from_pretrained(settings.model_name, trust_remote_code=True)
+        mixcoder_settings = {
+            "model_name": settings.model_name,
+            "tokenizer": tokenizer,
+        }
+        sae = initializer.initialize_sae_from_config(
+            settings.sae,
+            activation_stream=activations_stream,
+            device_mesh=device_mesh,
+            mixcoder_settings=mixcoder_settings,
+        )
+    else:
+        sae = initializer.initialize_sae_from_config(
+            settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
+        )
 
     wandb_logger = (
         wandb.init(
@@ -289,7 +308,8 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0) else None
+        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        else None
     )
     if wandb_logger is not None:
         wandb_logger.watch(sae, log="all")
