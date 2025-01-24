@@ -17,6 +17,7 @@ from lm_saes.config import (
     ActivationFactoryTarget,
     ActivationWriterConfig,
     BaseSAEConfig,
+    BufferShuffleConfig,
     DatasetConfig,
     FeatureAnalyzerConfig,
     InitializerConfig,
@@ -123,6 +124,9 @@ class GenerateActivationsSettings(BaseSettings):
 
     buffer_size: Optional[int] = None
     """Size of the buffer for activation generation"""
+    
+    buffer_shuffle_config: Optional[BufferShuffleConfig] = None
+    """"Manual seed and device of generator for generating randomperm in buffer"""
 
     total_tokens: Optional[int] = None
     """Optional total number of tokens to generate"""
@@ -198,6 +202,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
         model_batch_size=settings.model_batch_size,
         batch_size=settings.batch_size,
         buffer_size=settings.buffer_size,
+        buffer_shuffle_config=settings.buffer_shuffle_config,
     )
 
     # Configure activation writer
