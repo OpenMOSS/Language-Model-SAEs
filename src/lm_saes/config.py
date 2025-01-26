@@ -261,7 +261,7 @@ class ActivationFactoryConfig(BaseConfig):
         else None
     )
     """ Buffer size for online shuffling. If `None`, no shuffling will be performed. """
-    buffer_shuffle_config: Optional[BufferShuffleConfig] = None
+    buffer_shuffle: Optional[BufferShuffleConfig] = None
     """" Manual seed and device of generator for generating randomperm in buffer. """
     ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
