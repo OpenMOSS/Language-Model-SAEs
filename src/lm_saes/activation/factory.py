@@ -207,7 +207,7 @@ class ActivationFactory:
             """Create batchler for batched-activations-1d target."""
             assert cfg.batch_size is not None, "Batch size must be provided for outputting batched-activations-1d"
             return ActivationBatchler(
-                hook_points=cfg.hook_points, batch_size=cfg.batch_size, buffer_size=cfg.buffer_size, buffer_shuffle_config=cfg.buffer_shuffle_config
+                hook_points=cfg.hook_points, batch_size=cfg.batch_size, buffer_size=cfg.buffer_size, buffer_shuffle_config=cfg.buffer_shuffle
             )
 
         processors = [build_batchler()] if cfg.target >= ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D else []
