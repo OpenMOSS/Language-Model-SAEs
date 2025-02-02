@@ -38,3 +38,8 @@ def concat_dict_of_tensor(*dicts: dict[str, torch.Tensor], dim: int = 0) -> dict
         A dictionary of tensors concatenated along the specified dimension
     """
     return {k: torch.cat([d[k] for d in dicts], dim=dim) for k in dicts[0].keys()}
+
+def move_dict_of_tensor_to_device(tensor_dict: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
+    return {
+        k: v.to(device, non_blocking=True) for k, v in tensor_dict.items()
+    }
