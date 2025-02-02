@@ -4,7 +4,6 @@ from .processors import (
     BaseActivationProcessor,
     HuggingFaceDatasetLoader,
     PadAndTruncateTokensProcessor,
-    ParallelCachedActivationLoader,
     RawDatasetTokenProcessor,
     SequentialCachedActivationLoader,
 )
