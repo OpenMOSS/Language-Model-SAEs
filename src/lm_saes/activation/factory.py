@@ -9,10 +9,7 @@ from lm_saes.activation.processors.activation import (
     ActivationGenerator,
     ActivationTransformer,
 )
-from lm_saes.activation.processors.cached_activation import (
-    ParallelCachedActivationLoader,
-    SequentialCachedActivationLoader,
-)
+from lm_saes.activation.processors.cached_activation import SequentialCachedActivationLoader
 from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.activation.processors.huggingface import HuggingFaceDatasetLoader
 from lm_saes.activation.processors.token import (

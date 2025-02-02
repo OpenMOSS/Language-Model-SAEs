@@ -1,8 +1,5 @@
 from .activation import ActivationBatchler
-from .cached_activation import (
-    ParallelCachedActivationLoader,
-    SequentialCachedActivationLoader,
-)
+from .cached_activation import SequentialCachedActivationLoader
 from .core import BaseActivationProcessor
 from .huggingface import HuggingFaceDatasetLoader
 from .token import PadAndTruncateTokensProcessor, RawDatasetTokenProcessor
@@ -14,5 +11,4 @@ __all__ = [
     "PadAndTruncateTokensProcessor",
     "RawDatasetTokenProcessor",
     "SequentialCachedActivationLoader",
-    "ParallelCachedActivationLoader",
 ]
