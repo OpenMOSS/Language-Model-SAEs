@@ -25,10 +25,16 @@ class SparseAutoEncoder(HookedRootModule):
         self.current_k = cfg.top_k
         # should be initialized by Initializer and set by Trainer during training
         self.current_l1_coefficient = None
-        self.encoder = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
+        self.encoder = torch.nn.Linear(
+            cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype
+        )
         self.decoder = torch.nn.Linear(
             cfg.d_sae, cfg.d_model, bias=cfg.use_decoder_bias, device=cfg.device, dtype=cfg.dtype
         )
+        if cfg.act_fn.lower() == "jumprelu":
+            self.log_jumprelu_threshold = torch.nn.Parameter(
+                cfg.d_sae, device=cfg.device, dtype=cfg.dtype,
+            )
         if cfg.use_glu_encoder:
             self.encoder_glu = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
         self.activation_function: Callable[[torch.Tensor], torch.Tensor] = self.activation_function_factory(cfg)
@@ -101,15 +107,50 @@ class SparseAutoEncoder(HookedRootModule):
         if cfg.act_fn.lower() == "relu":
             return lambda x: x.gt(0).to(x.dtype)
         elif cfg.act_fn.lower() == "jumprelu":
-            return lambda x: x.gt(cfg.jump_relu_threshold).to(x.dtype)
+            
+            class STEFunction(torch.autograd.Function):
+                @staticmethod
+                def forward(ctx, input, log_jumprelu_threshold):
+                    jumprelu_threshold = log_jumprelu_threshold.exp()
+                    ctx.save_for_backward(input)
+                    ctx.save_for_backward(jumprelu_threshold)
+                    return input.gt(jumprelu_threshold).to(input.dtype)
+
+                @staticmethod
+                def backward(ctx, grad_output):
+                    input, jumprelu_threshold = ctx.saved_tensors
+                    grad_input_unscaled = input.gt(jumprelu_threshold).to(input.dtype)
+                    grad_input = grad_input_unscaled / torch.where(
+                        grad_input_unscaled.ne(0),
+                        grad_input_unscaled,
+                        1.
+                    )  # We do not want zero division here.
+                    #  We scale our grad with 1 / `input` is because this `activation_function_factory`
+                    #  actually returns a mask indicating which feature is fired instead of their final activation.
+                    #  So `grad_output` here should already been multiplied with `input`.
+                    
+                    grad_log_jumprelu_threshold_unscaled = torch.where(
+                        (input - jumprelu_threshold).abs() < self.cfg.jumprelu_threshold_grad_scale * 0.5,
+                        -jumprelu_threshold / self.cfg.jumprelu_threshold_grad_scale,
+                        0.,
+                    )  # I think grad_log_jumprelu_threshold should also be scaled here with 1 / `input`.
+                    #  But not implemented yet.
+                    
+                    return grad_input, grad_log_jumprelu_threshold
+                
+                
         elif cfg.act_fn.lower() == "topk":
 
-            def topk_activation(x: torch.Tensor):
+            def topk_activation(
+                x: Union[
+                    Float[torch.Tensor, "batch d_sae"],
+                    Float[torch.Tensor, "batch seq_len d_sae"],
+                ]
+            ):
                 x = torch.clamp(x, min=0.0)
                 k = x.shape[-1] - self.current_k + 1
                 k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
-                k_th_value = k_th_value.unsqueeze(dim=1)
-                print()
+                k_th_value = k_th_value.unsqueeze(dim=-1)
                 return x.ge(k_th_value)
 
             return topk_activation
@@ -121,9 +162,17 @@ class SparseAutoEncoder(HookedRootModule):
                 batch_size = x.size(0)
 
                 x = torch.clamp(x, min=0.0)
-                k = x.numel() - self.current_k * batch_size + 1
-                k_th_value, _ = torch.kthvalue(x.flatten(), k=k, dim=-1)
-                return x.ge(k_th_value)
+                
+                flattened_x = x.flatten()
+                non_zero_entries = flattened_x[flattened_x.gt(0)]
+                
+                if non_zero_entries.numel() < batch_size * self.current_k:
+                    return x.gt(0)
+                else:
+                    k = non_zero_entries.numel() - self.current_k + 1
+                    
+                    k_th_value, _ = torch.kthvalue(non_zero_entries, k=k, dim=-1)
+                    return x.ge(k_th_value)
 
             return topk_activation
 
