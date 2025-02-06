@@ -63,6 +63,9 @@ class BaseSAEConfig(BaseModelConfig):
     top_k: int = 50
     sae_pretrained_name_or_path: Optional[str] = None
     strict_loading: bool = True
+    
+    # anthropic jumprelu
+    jumprelu_threshold_grad_scale: float = 2.0
 
     @property
     def d_sae(self) -> int:
@@ -122,9 +125,11 @@ class InitializerConfig(BaseConfig):
 
 
 class TrainerConfig(BaseConfig):
-    lp: int = 1
     l1_coefficient: float | None = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
+    sparsity_loss_type: Literal["power", "tanh", None] = None
+    tanh_stretch_coefficient: float = 4.0
+    p: int = 1
     initial_k: int | float | None = None
     k_warmup_steps: int | float = 0.1
     use_batch_norm_mse: bool = True
@@ -140,8 +145,8 @@ class TrainerConfig(BaseConfig):
         "exponentialwarmup",
     ] = "constantwithwarmup"
     lr_end_ratio: float = 1 / 32
-    lr_warm_up_steps: int | float = 0.1
-    lr_cool_down_steps: int | float = 0.1
+    lr_warm_up_steps: int | float = 5000
+    lr_cool_down_steps: int | float = 0.2
     clip_grad_norm: float = 0.0
     feature_sampling_window: int = 1000
     total_training_tokens: int = 300_000_000

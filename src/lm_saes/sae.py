@@ -33,7 +33,7 @@ class SparseAutoEncoder(HookedRootModule):
         )
         if cfg.act_fn.lower() == "jumprelu":
             self.log_jumprelu_threshold = torch.nn.Parameter(
-                cfg.d_sae, device=cfg.device, dtype=cfg.dtype,
+                torch.ones(cfg.d_sae, device=cfg.device, dtype=cfg.dtype) * 0.1 # anthropic settings, wait to edit
             )
         if cfg.use_glu_encoder:
             self.encoder_glu = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
@@ -110,15 +110,28 @@ class SparseAutoEncoder(HookedRootModule):
             
             class STEFunction(torch.autograd.Function):
                 @staticmethod
-                def forward(ctx, input, log_jumprelu_threshold):
+                def forward(ctx, input: torch.Tensor, log_jumprelu_threshold: torch.Tensor):
                     jumprelu_threshold = log_jumprelu_threshold.exp()
-                    ctx.save_for_backward(input)
-                    ctx.save_for_backward(jumprelu_threshold)
+                    ctx.save_for_backward(input, jumprelu_threshold)
                     return input.gt(jumprelu_threshold).to(input.dtype)
 
                 @staticmethod
-                def backward(ctx, grad_output):
+                def backward(ctx, grad_output: torch.Tensor):
                     input, jumprelu_threshold = ctx.saved_tensors
+                    grad_input = torch.zeros_like(input)
+                    grad_log_jumprelu_threshold_unscaled = torch.where(
+                        (input - jumprelu_threshold).abs() < self.cfg.jumprelu_threshold_grad_scale * 0.5,
+                        -jumprelu_threshold / self.cfg.jumprelu_threshold_grad_scale,
+                        0.,
+                    )
+                    grad_log_jumprelu_threshold = grad_log_jumprelu_threshold_unscaled / torch.where(
+                        ((input - jumprelu_threshold).abs() < self.cfg.jumprelu_threshold_grad_scale * 0.5) * (input != 0.0),
+                        input,
+                        1.,
+                    ) * grad_output
+                    grad_log_jumprelu_threshold = grad_log_jumprelu_threshold.sum(dim=tuple(range(grad_log_jumprelu_threshold.ndim - 1)))
+                    
+                    '''
                     grad_input_unscaled = input.gt(jumprelu_threshold).to(input.dtype)
                     grad_input = grad_input_unscaled / torch.where(
                         grad_input_unscaled.ne(0),
@@ -128,16 +141,17 @@ class SparseAutoEncoder(HookedRootModule):
                     #  We scale our grad with 1 / `input` is because this `activation_function_factory`
                     #  actually returns a mask indicating which feature is fired instead of their final activation.
                     #  So `grad_output` here should already been multiplied with `input`.
-                    
                     grad_log_jumprelu_threshold_unscaled = torch.where(
                         (input - jumprelu_threshold).abs() < self.cfg.jumprelu_threshold_grad_scale * 0.5,
                         -jumprelu_threshold / self.cfg.jumprelu_threshold_grad_scale,
                         0.,
                     )  # I think grad_log_jumprelu_threshold should also be scaled here with 1 / `input`.
                     #  But not implemented yet.
+                    '''
                     
                     return grad_input, grad_log_jumprelu_threshold
-                
+            
+            return lambda x: STEFunction.apply(x, self.log_jumprelu_threshold)    
                 
         elif cfg.act_fn.lower() == "topk":
 
@@ -509,7 +523,9 @@ class SparseAutoEncoder(HookedRootModule):
         batch: dict[str, torch.Tensor],
         *,
         use_batch_norm_mse: bool = False,
-        lp: int = 1,
+        sparsity_loss_type: Literal["power", "tanh", None] = None,
+        tanh_stretch_coefficient: float = 4.0,
+        p: int = 1,
         return_aux_data: Literal[True] = True,
         **kwargs,
     ) -> tuple[
@@ -523,7 +539,9 @@ class SparseAutoEncoder(HookedRootModule):
         batch: dict[str, torch.Tensor],
         *,
         use_batch_norm_mse: bool = False,
-        lp: int = 1,
+        sparsity_loss_type: Literal["power", "tanh", None] = None,
+        tanh_stretch_coefficient: float = 4.0,
+        p: int = 1,
         return_aux_data: Literal[False],
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
@@ -540,7 +558,9 @@ class SparseAutoEncoder(HookedRootModule):
         ) = None,
         *,
         use_batch_norm_mse: bool = False,
-        lp: int = 1,
+        sparsity_loss_type: Literal["power", "tanh", None] = None,
+        tanh_stretch_coefficient: float = 4.0,
+        p: int = 1,
         return_aux_data: bool = True,
         **kwargs,
     ) -> Union[
@@ -550,8 +570,8 @@ class SparseAutoEncoder(HookedRootModule):
             tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
         ],
     ]:  # may be overridden by subclasses
-        x: torch.Tensor = batch[self.cfg.hook_point_in]
-        label: torch.Tensor = batch[self.cfg.hook_point_out]
+        x: torch.Tensor = batch[self.cfg.hook_point_in].to(self.cfg.dtype)
+        label: torch.Tensor = batch[self.cfg.hook_point_out].to(self.cfg.dtype)
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
         label_norm_factor: torch.Tensor = self.compute_norm_factor(label, hook_point=self.cfg.hook_point_out)
@@ -571,11 +591,16 @@ class SparseAutoEncoder(HookedRootModule):
             "l_rec": l_rec,
         }
 
-        if "topk" not in self.cfg.act_fn:
-            l_lp = torch.norm(feature_acts, p=lp, dim=-1)
-            loss_dict["l_lp"] = l_lp
+        if sparsity_loss_type == "power":
+            l_s = torch.norm(feature_acts, p=p, dim=-1)
+            loss_dict["l_s"] = l_s
             assert self.current_l1_coefficient is not None
-            loss = loss + self.current_l1_coefficient * l_lp.mean()
+            loss = loss + self.current_l1_coefficient * l_s.mean()
+        if sparsity_loss_type == "tanh":
+            l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self._decoder_norm(decoder=self.decoder))
+            loss_dict["l_s"] = l_s
+            assert self.current_l1_coefficient is not None
+            loss = loss + self.current_l1_coefficient * l_s.mean()
 
         if return_aux_data:
             aux_data = {
@@ -648,6 +673,8 @@ class SparseAutoEncoder(HookedRootModule):
             log_dict["sparsity/k"] = self.current_k
         else:
             log_dict["sparsity/l1_coefficient"] = self.current_l1_coefficient
+        if "jumprelu" in self.cfg.act_fn:
+            log_dict["metrics/mean_jumprelu_threshold"] = self.log_jumprelu_threshold.exp().mean().item()
         return log_dict
 
     @torch.no_grad()
