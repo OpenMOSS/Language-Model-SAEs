@@ -166,7 +166,7 @@ class Initializer:
             sae = CrossCoder.from_config(cfg)
         else:
             # TODO: add support for different SAE config types, e.g. MixCoderConfig, CrossCoderConfig, etc.
-            raise ValueError(f'SAE type {cfg.sae_type} not supported.')
+            raise ValueError(f"SAE type {cfg.sae_type} not supported.")
         if self.cfg.state == "training":
             if cfg.sae_pretrained_name_or_path is None:
                 sae: SparseAutoEncoder = self.initialize_parameters(sae, mixcoder_settings=mixcoder_settings)

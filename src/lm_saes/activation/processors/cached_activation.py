@@ -1,16 +1,16 @@
 import json
 import re
-from abc import abstractmethod
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Optional
+from typing import Any, Iterable, Iterator, Sequence
 
 import torch
 from safetensors.torch import load_file
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
+from lm_saes.utils.tensor_dict import move_dict_of_tensor_to_device
 
 
 @dataclass
@@ -64,21 +64,36 @@ class ChunkInfo:
         )
 
 
-class BaseCachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, Any]]]):
+def first_data_collate_fn(batch: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    return batch[0]
+
+
+class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, Any]]]):
     """Base class for cached activation loaders.
 
     Args:
         cache_dir: Root directory containing cached activations
         hook_points: List of hook point names to load
         device: Device to load tensors to
+        num_workers: Number of worker processes for data loading. Default is 4
+        prefetch_factor: Number of samples loaded in advance by each worker. Default is 8
     """
 
-    def __init__(self, cache_dir: str | Path, hook_points: list[str], device: str = "cpu"):
+    def __init__(
+        self,
+        cache_dir: str | Path,
+        hook_points: list[str],
+        device: str = "cpu",
+        num_workers: int = 0,
+        prefetch_factor: int | None = None,
+    ):
         self.cache_dir = Path(cache_dir)
         self.hook_points = hook_points
         self.device = device
+        self.num_workers = num_workers
+        self.prefetch_factor = prefetch_factor
 
-    def _load_chunk_for_hooks(self, chunk_idx: int, hook_chunks: dict[str, list[ChunkInfo]]) -> dict[str, Any]:
+    def load_chunk_for_hooks(self, chunk_idx: int, hook_chunks: dict[str, list[ChunkInfo]]) -> dict[str, Any]:
         """Load chunk data for all hook points at given index.
 
         Args:
@@ -163,18 +178,22 @@ class BaseCachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str
         else:
             raise ValueError(f"Invalid chunk file format: {chunk_path}. Expected .safetensors or .pt")
 
-    @abstractmethod
     def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int) -> Iterator[dict[str, Any]]:
-        """Process chunks and yield samples.
-
-        Args:
-            hook_chunks: Dictionary mapping hook points to their chunk info lists
-            total_chunks: Total number of chunks to process
-
-        Yields:
-            dict[str, Any]: Sample data containing activations, tokens, and meta
-        """
-        pass
+        cached_activation_dataset = CachedActivationDataset(
+            self,
+            hook_chunks,
+            total_chunks,
+        )
+        dataloader = DataLoader(
+            cached_activation_dataset,
+            batch_size=1,  # mandatory!
+            shuffle=False,  # mandatory!
+            num_workers=self.num_workers,
+            prefetch_factor=self.prefetch_factor,
+            pin_memory=True,  # mandatory!
+            collate_fn=first_data_collate_fn,
+        )
+        return iter(tqdm(dataloader, total=total_chunks, desc="Processing activation chunks"))
 
     def process(self, data: None = None, **kwargs) -> Iterable[dict[str, Any]]:
         """Load cached activations in a streaming fashion.
@@ -209,73 +228,30 @@ class BaseCachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str
                 "All hook points must have the same number of chunks."
             )
 
-        yield from self._process_chunks(hook_chunks, len(hook_chunks[self.hook_points[0]]))
+        stream = self._process_chunks(hook_chunks, len(hook_chunks[self.hook_points[0]]))
+        for chunk in stream:
+            yield move_dict_of_tensor_to_device(
+                chunk,
+                device=self.device,
+            )  # Use pin_memory to load data on cpu, then transfer them to cuda in the main process, as advised in https://discuss.pytorch.org/t/dataloader-multiprocessing-with-dataset-returning-a-cuda-tensor/151022/2.
+            # I wrote this utils function as I notice it is used multiple times in this repo. Do we need to apply it elsewhere?
 
 
-class SequentialCachedActivationLoader(BaseCachedActivationLoader):
-    """Sequential implementation of cached activation loader."""
-
-    def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int) -> Iterator[dict[str, Any]]:
-        for chunk_idx in tqdm(range(total_chunks), desc="Loading chunks", smoothing=0.001, miniters=1):
-            chunk_data = self._load_chunk_for_hooks(chunk_idx, hook_chunks)
-            chunk_data = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in chunk_data.items()}
-            yield chunk_data
-
-
-class ParallelCachedActivationLoader(BaseCachedActivationLoader):
-    """Parallel implementation of cached activation loader using ThreadPoolExecutor.
-
-    Args:
-        cache_dir: Root directory containing cached activations
-        hook_points: List of hook point names to load
-        device: Device to load tensors to
-        executor: ThreadPoolExecutor for parallel loading
-        max_active_chunks: Maximum number of chunks to load in parallel. Defaults to 2.
-    """
+class CachedActivationDataset(Dataset):
+    """Wrap the data loading process with torch dataset and loader for multiprocessing."""
 
     def __init__(
-        self,
-        cache_dir: str | Path,
-        hook_points: list[str],
-        device: str,
-        executor: Optional[ThreadPoolExecutor] = None,
-        max_active_chunks: int = 2,
+        self, activation_loader: CachedActivationLoader, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int
     ):
-        super().__init__(cache_dir, hook_points, device)
-        self.executor = executor or ThreadPoolExecutor(max_workers=max_active_chunks)
-        self._owned_executor = executor is None
-        self.max_active_chunks = max_active_chunks
+        self.activation_loader = activation_loader
+        self.hook_chunks = hook_chunks
+        self.total_chunks = total_chunks
 
-    def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int) -> Iterator[dict[str, Any]]:
-        futures = set()
-        next_chunk = 0
+    def __len__(self):
+        return self.total_chunks
 
-        pbar = tqdm(total=total_chunks, desc="Loading chunks", smoothing=0.001, miniters=1)
-
-        while next_chunk < total_chunks or futures:
-            # Submit new tasks up to max_active_chunks
-            while len(futures) < self.max_active_chunks and next_chunk < total_chunks:
-                future = self.executor.submit(self._load_chunk_for_hooks, next_chunk, hook_chunks)
-                futures.add(future)
-                pbar.set_postfix({"Active chunks": len(futures)})
-                next_chunk += 1
-
-            if futures:
-                # Wait for any task to complete
-                done, futures = wait(futures, return_when=FIRST_COMPLETED)
-                pbar.set_postfix({"Active chunks": len(futures)})
-                # Process completed chunks in order
-                for future in tqdm(done, desc="Processing chunks", smoothing=0.001, leave=False, disable=True):
-                    chunk_data = future.result()
-                    chunk_data = {
-                        k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v
-                        for k, v in chunk_data.items()
-                    }
-                    yield chunk_data
-                    pbar.update(1)
-
-        pbar.close()
-
-    def __del__(self) -> None:
-        if self._owned_executor:
-            self.executor.shutdown(wait=False, cancel_futures=True)
+    def __getitem__(self, chunk_idx):
+        return self.activation_loader.load_chunk_for_hooks(
+            chunk_idx,
+            self.hook_chunks,
+        )
