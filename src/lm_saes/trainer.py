@@ -10,6 +10,7 @@ from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import TrainerConfig
+from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.misc import all_reduce_tensor
@@ -183,6 +184,32 @@ class Trainer:
                 "details/n_training_tokens": self.cur_tokens,
             }
             wandb_log_dict.update(sae.log_statistics())
+            if sae.cfg.sae_type == "mixcoder":
+                assert isinstance(sae, MixCoder)
+                for modality, (start, end) in sae.modality_index.items():
+                    if modality == "shared":
+                        continue
+                    shared_start, shared_end = sae.modality_index["shared"]
+                    mask = sae.get_modality_token_mask(batch["tokens"], modality)
+                    token_num = mask.sum().item()
+                    wandb_log_dict.update(
+                        {
+                            f"l0_metrics/{modality}_l0": (log_info["feature_acts"][mask][:, start:end] > 0)
+                            .float()
+                            .sum(-1)
+                            .mean()
+                            .item(),
+                            f"l0_metrics/{modality}_shared_l0": (
+                                log_info["feature_acts"][mask][:, shared_start:shared_end] > 0
+                            )
+                            .float()
+                            .sum(-1)
+                            .mean()
+                            .item(),
+                            f"l0_metrics/{modality}_token_num": token_num,
+                        }
+                    )
+
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
 
     def _save_checkpoint(self, sae: SparseAutoEncoder):
@@ -246,7 +273,7 @@ class Trainer:
             activation_in, activation_out = batch[sae.cfg.hook_point_in], batch[sae.cfg.hook_point_out]
 
             if self.wandb_logger is not None:
-                self._log(sae, log_info, {"input": activation_in, "output": activation_out})
+                self._log(sae, log_info, {"input": activation_in, "output": activation_out, "tokens": batch["tokens"]})
 
             if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
                 eval_fn(sae)

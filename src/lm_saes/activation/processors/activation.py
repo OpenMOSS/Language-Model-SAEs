@@ -7,6 +7,7 @@ from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
+from lm_saes.config import BufferShuffleConfig
 
 
 @dataclass
@@ -23,6 +24,7 @@ class ActivationBuffer:
     """
 
     buffer: list[dict[str, Any]] = field(default_factory=list)
+    generator: torch.Generator = torch.Generator()  # Generator passed from ActivationBatchler
 
     def __len__(self) -> int:
         """Get the number of samples in the buffer.
@@ -41,7 +43,7 @@ class ActivationBuffer:
         Returns:
             ActivationBuffer: New buffer containing concatenated activations
         """
-        return ActivationBuffer(buffer=self.buffer + [activations])
+        return ActivationBuffer(buffer=self.buffer + [activations], generator=self.generator)
 
     def consume(self) -> dict[str, torch.Tensor | list[Any]]:
         """Consume the buffer and return the activations as a dictionary."""
@@ -68,7 +70,7 @@ class ActivationBuffer:
         data = self.consume()
         batch = {k: v[:batch_size] for k, v in data.items()}
         buffer = {k: v[batch_size:] for k, v in data.items()}
-        return batch, ActivationBuffer(buffer=[buffer])
+        return batch, ActivationBuffer(buffer=[buffer], generator=self.generator)
 
     def shuffle(self) -> "ActivationBuffer":
         """Randomly shuffle all samples in the buffer.
@@ -81,9 +83,11 @@ class ActivationBuffer:
             isinstance(data[k], torch.Tensor) for k in data.keys()
         ), "All data must be tensors to perform shuffling"
         data = cast(dict[str, torch.Tensor], data)
-        perm = torch.randperm(data[list(data.keys())[0]].shape[0])
+        
+        # Use the passed generator for shuffling
+        perm = torch.randperm(data[list(data.keys())[0]].shape[0], generator=self.generator, device=self.generator.device)
         buffer = {k: v[perm] for k, v in data.items()}
-        return ActivationBuffer(buffer=[buffer])
+        return ActivationBuffer(buffer=[buffer], generator=self.generator)
 
 
 class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]):
@@ -254,7 +258,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             data will be refilled into the buffer whenever the buffer is less than half full, and then re-shuffled.
     """
 
-    def __init__(self, hook_points: list[str], batch_size: int, buffer_size: Optional[int] = None):
+    def __init__(self, hook_points: list[str], batch_size: int, buffer_size: Optional[int] = None, buffer_shuffle_config: Optional[BufferShuffleConfig] = None):
         """Initialize the ActivationBatchler.
 
         Args:
@@ -265,6 +269,10 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
         self.hook_points = hook_points
         self.batch_size = batch_size
         self.buffer_size = buffer_size
+        self.perm_generator = torch.Generator()
+        if buffer_shuffle_config is not None:
+            self.perm_generator = torch.Generator(buffer_shuffle_config.generator_device)
+            self.perm_generator.manual_seed(buffer_shuffle_config.perm_seed)  # Set seed if provided
 
     def process(self, data: Iterable[dict[str, Any]], **kwargs) -> Iterable[dict[str, Any]]:
         """Process input data by batching activations.
@@ -283,7 +291,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
         Raises:
             AssertionError: If hook points are missing or tensors have invalid shapes
         """
-        buffer = ActivationBuffer()
+        buffer = ActivationBuffer(generator=self.perm_generator)
         pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1)
 
         for d in data:
