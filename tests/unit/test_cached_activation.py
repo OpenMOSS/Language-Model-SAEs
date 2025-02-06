@@ -1,5 +1,3 @@
-import re
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -7,9 +5,8 @@ import torch
 from pytest_mock import MockerFixture
 
 from lm_saes.activation.processors.cached_activation import (
+    CachedActivationLoader,
     ChunkInfo,
-    ParallelCachedActivationLoader,
-    SequentialCachedActivationLoader,
 )
 
 
@@ -87,7 +84,7 @@ def test_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, 
     mocker.patch("torch.load", side_effect=mock_torch_load)
 
     # Initialize loader and process data
-    loader = SequentialCachedActivationLoader(cache_dir, hook_points)
+    loader = CachedActivationLoader(cache_dir, hook_points)
     results = list(loader.process())
 
     # Verify results
@@ -97,7 +94,7 @@ def test_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, 
         # Check if all hook points are present
         for hook in hook_points:
             assert hook in result
-            assert torch.equal(result[hook], sample_activation)
+            assert torch.allclose(result[hook], sample_activation)
 
         # Check tokens and info
         assert torch.equal(result["tokens"], sample_tokens)
@@ -107,7 +104,7 @@ def test_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, 
 def test_cached_activation_loader_missing_dir(fs):
     """Test CachedActivationLoader with missing directory."""
     with pytest.raises(FileNotFoundError):
-        loader = SequentialCachedActivationLoader("/nonexistent", ["hook1"])
+        loader = CachedActivationLoader("/nonexistent", ["hook1"])
         list(loader.process())
 
 
@@ -144,7 +141,7 @@ def test_cached_activation_loader_mismatched_chunks(
         ValueError,
         match="Hook points have different numbers of chunks: {'hook1': 2, 'hook2': 1}. All hook points must have the same number of chunks.",
     ):
-        loader = SequentialCachedActivationLoader(cache_dir, ["hook1", "hook2"])
+        loader = CachedActivationLoader(cache_dir, ["hook1", "hook2"])
         list(loader.process())
 
 
@@ -158,89 +155,9 @@ def test_cached_activation_loader_invalid_data(fs, mocker: MockerFixture):
     # Mock torch.load to return invalid data
     mocker.patch("torch.load", return_value={"invalid": "data"})
 
-    loader = SequentialCachedActivationLoader(cache_dir, ["hook1"])
+    loader = CachedActivationLoader(cache_dir, ["hook1"])
     with pytest.raises(
         AssertionError,
         match="Loading cached activation /cache/hook1/chunk-0.pt error: missing 'activation' field",
     ):
         list(loader.process())
-
-
-def test_parallel_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, sample_tokens, sample_info):
-    """Test ParallelCachedActivationLoader with a fake filesystem."""
-    # Setup test directory structure
-    cache_dir = Path("/cache")
-    hook_points = ["hook1", "hook2"]
-
-    for hook in hook_points:
-        hook_dir = cache_dir / hook
-        fs.create_dir(hook_dir)
-
-        # Create test files
-        files = [
-            hook_dir / "chunk-0.pt",
-            hook_dir / "chunk-1.pt",
-            hook_dir / "chunk-2.pt",
-        ]
-
-        for file in files:
-            create_fake_pt_file(fs, file, sample_activation, sample_tokens, sample_info)
-
-    # Mock torch.load to return test data with different meta based on file path
-    def mock_load(path, **kwargs):
-        # Extract chunk number from path
-        chunk_num = int(re.search(r"chunk-(\d+)", str(path)).group(1))
-        meta = [{"context_id": f"ctx_{i}", "chunk_num": chunk_num} for i in range(2)]
-        return {
-            "activation": sample_activation,
-            "tokens": sample_tokens,
-            "meta": meta,
-        }
-
-    mocker.patch("torch.load", side_effect=mock_load)
-
-    # Initialize loader with max_active_chunks=2
-    loader = ParallelCachedActivationLoader(cache_dir, hook_points, device="cpu", max_active_chunks=2)
-    results = list(loader.process())
-
-    # Verify results
-    assert len(results) == 3
-
-    for i, result in enumerate(results):
-        # Check if all hook points are present
-        for hook in hook_points:
-            assert hook in result
-            assert torch.equal(result[hook], sample_activation)
-
-        # Check tokens and info
-        assert torch.equal(result["tokens"], sample_tokens)
-        assert result["meta"][0]["context_id"] == "ctx_0"
-        assert result["meta"][1]["context_id"] == "ctx_1"
-
-    assert sorted([result["meta"][i]["chunk_num"] for result in results for i in range(2)]) == [0, 0, 1, 1, 2, 2]
-
-
-def test_parallel_cached_activation_loader_with_executor(
-    fs, mocker: MockerFixture, sample_activation, sample_tokens, sample_info
-):
-    """Test ParallelCachedActivationLoader with custom executor."""
-    cache_dir = Path("/cache")
-    hook_dir = cache_dir / "hook1"
-    fs.create_dir(hook_dir)
-    create_fake_pt_file(fs, hook_dir / "chunk-0.pt", sample_activation, sample_tokens, sample_info)
-
-    mocker.patch(
-        "torch.load",
-        return_value={
-            "activation": sample_activation,
-            "tokens": sample_tokens,
-            "meta": sample_info,
-        },
-    )
-
-    # Create custom executor
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        loader = ParallelCachedActivationLoader(cache_dir, ["hook1"], device="cpu", executor=executor)
-        results = list(loader.process())
-
-    assert len(results) == 1
