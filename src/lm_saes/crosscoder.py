@@ -109,14 +109,14 @@ class CrossCoder(SparseAutoEncoder):
         hidden_pre = self.hook_hidden_pre(hidden_pre)
 
         if self.cfg.sparsity_include_decoder_norm:
-            true_feature_acts = hidden_pre * self._decoder_norm(
+            sparsity_scores = hidden_pre * self._decoder_norm(
                 decoder=self.decoder,
                 local_only=True,
             )
         else:
-            true_feature_acts = hidden_pre
+            sparsity_scores = hidden_pre
 
-        activation_mask = self.activation_function(true_feature_acts)
+        activation_mask = self.activation_function(sparsity_scores)
         feature_acts = hidden_pre * activation_mask
 
         feature_acts = self.hook_feature_acts(feature_acts)
@@ -195,7 +195,6 @@ class CrossCoder(SparseAutoEncoder):
             )
 
         l_rec = l_rec.mean()
-        l_rec = all_reduce_tensor(l_rec, aggregate="mean")
 
         loss = l_rec
         loss_dict = {
@@ -213,6 +212,8 @@ class CrossCoder(SparseAutoEncoder):
             loss_dict["l_lp"] = l_lp
             assert self.current_l1_coefficient is not None
             loss = loss + self.current_l1_coefficient * l_lp.mean()
+        
+        loss = all_reduce_tensor(loss, aggregate="mean")
 
         if return_aux_data:
             aux_data = {
@@ -229,7 +230,9 @@ class CrossCoder(SparseAutoEncoder):
 
     @torch.no_grad()
     def log_statistics(self):
-        return {}
+        return {
+            f'info/{k}': v for k, v in self.dataset_average_activation_norm.items()
+        }
 
     def initialize_with_same_weight_across_layers(self):
         self.encoder.weight.data = get_tensor_from_specific_rank(self.encoder.weight.data.clone(), src=0)
