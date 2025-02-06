@@ -201,7 +201,7 @@ class ActivationFactoryActivationsSource(ActivationFactorySource):
     """ The device to load the activations on. """
     num_workers: int = 4
     """ The number of workers to use for loading the activations. """
-    prefetch: int = 8
+    prefetch: Optional[int] = 8
     """ The number of chunks to prefetch."""
 
 
