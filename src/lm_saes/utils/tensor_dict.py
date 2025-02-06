@@ -1,4 +1,8 @@
+from typing import Any, TypeVar, overload
+
 import torch
+
+T = TypeVar("T")
 
 
 def sort_dict_of_tensor(
@@ -38,3 +42,27 @@ def concat_dict_of_tensor(*dicts: dict[str, torch.Tensor], dim: int = 0) -> dict
         A dictionary of tensors concatenated along the specified dimension
     """
     return {k: torch.cat([d[k] for d in dicts], dim=dim) for k in dicts[0].keys()}
+
+
+@overload
+def move_dict_of_tensor_to_device(
+    tensor_dict: dict[str, torch.Tensor], device: torch.device | str
+) -> dict[str, torch.Tensor]: ...
+
+
+@overload
+def move_dict_of_tensor_to_device(tensor_dict: dict[str, Any], device: torch.device | str) -> dict[str, Any]: ...
+
+
+def move_dict_of_tensor_to_device(tensor_dict: dict[str, Any], device: torch.device | str) -> dict[str, Any]:
+    """
+    Move tensors in a dictionary to specified device, leaving non-tensor values unchanged.
+
+    Args:
+        tensor_dict: Dictionary containing tensors and possibly other types
+        device: Target device to move tensors to
+
+    Returns:
+        Dictionary with tensors moved to specified device
+    """
+    return {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in tensor_dict.items()}

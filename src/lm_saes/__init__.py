@@ -18,6 +18,7 @@ from .config import (
     TrainerConfig,
     WandbConfig,
 )
+from .crosscoder import CrossCoder
 from .database import MongoClient
 from .resource_loaders import load_dataset, load_model
 from .runner import (
@@ -33,6 +34,7 @@ __all__ = [
     "ActivationFactory",
     "ActivationWriter",
     "CrossCoderConfig",
+    "CrossCoder",
     "LanguageModelConfig",
     "DatasetConfig",
     "ActivationFactoryActivationsSource",
