@@ -5,7 +5,6 @@ from .processors import (
     HuggingFaceDatasetLoader,
     PadAndTruncateTokensProcessor,
     RawDatasetTokenProcessor,
-    SequentialCachedActivationLoader,
 )
 from .writer import ActivationWriter
 
@@ -16,7 +15,5 @@ __all__ = [
     "HuggingFaceDatasetLoader",
     "PadAndTruncateTokensProcessor",
     "RawDatasetTokenProcessor",
-    "ParallelCachedActivationLoader",
-    "SequentialCachedActivationLoader",
     "ActivationWriter",
 ]

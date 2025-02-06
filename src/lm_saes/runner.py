@@ -289,7 +289,8 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0) else None
+        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        else None
     )
     if wandb_logger is not None:
         wandb_logger.watch(sae, log="all")
