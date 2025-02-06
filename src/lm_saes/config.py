@@ -116,7 +116,7 @@ class InitializerConfig(BaseConfig):
     init_decoder_norm: float | None = None
     init_encoder_norm: float | None = None
     init_encoder_with_decoder_transpose: bool = True
-    init_search: bool = False
+    init_search: bool = True
     state: Literal["training", "inference"] = "training"
     l1_coefficient: float | None = 0.00008
 
@@ -140,8 +140,8 @@ class TrainerConfig(BaseConfig):
         "exponentialwarmup",
     ] = "constantwithwarmup"
     lr_end_ratio: float = 1 / 32
-    lr_warm_up_steps: int | float = 0.1
-    lr_cool_down_steps: int | float = 0.1
+    lr_warm_up_steps: int | float = 5000
+    lr_cool_down_steps: int | float = 0.2
     clip_grad_norm: float = 0.0
     feature_sampling_window: int = 1000
     total_training_tokens: int = 300_000_000
@@ -231,6 +231,13 @@ class ActivationFactoryTarget(Enum):
         return self.stage <= other.stage
 
 
+class BufferShuffleConfig(BaseConfig):
+    perm_seed: int = 42
+    """ Perm seed for aligned permutation for generating activations. If `None`, will not use manual seed for Generator. """
+    generator_device: Optional[str]= None
+    """ The device to be assigned for the torch.Generator. If 'None', generator will be initialized on cpu as pytorch default. """
+    
+    
 class ActivationFactoryConfig(BaseConfig):
     sources: list[ActivationFactoryDatasetSource | ActivationFactoryActivationsSource]
     """ List of sources to use for activations. Can be a dataset or a path to activations. """
@@ -254,6 +261,8 @@ class ActivationFactoryConfig(BaseConfig):
         else None
     )
     """ Buffer size for online shuffling. If `None`, no shuffling will be performed. """
+    buffer_shuffle: Optional[BufferShuffleConfig] = None
+    """" Manual seed and device of generator for generating randomperm in buffer. """
     ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
 

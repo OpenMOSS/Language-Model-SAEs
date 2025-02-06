@@ -159,12 +159,8 @@ class MixCoder(SparseAutoEncoder):
         """
         return self.modality_index
 
-    def _get_modality_activation(
+    def get_modality_token_mask(
         self,
-        activation: Union[
-            Float[torch.Tensor, "batch d_model"],
-            Float[torch.Tensor, "batch seq_len d_model"],
-        ],
         tokens: Union[
             Float[torch.Tensor, "batch d_model"],
             Float[torch.Tensor, "batch seq_len d_model"],
@@ -182,7 +178,7 @@ class MixCoder(SparseAutoEncoder):
             The activation of the specified modality. The shape is the same as the input activation.
         """
         activation_mask = torch.isin(tokens, self.modality_indices[modality])
-        return activation_mask.unsqueeze(1) * activation
+        return activation_mask
 
     @overload
     def encode(
@@ -266,7 +262,7 @@ class MixCoder(SparseAutoEncoder):
             if modality == "shared":
                 # shared modality is not encoded directly but summed up during other modalities' encoding
                 continue
-            x_modality = self._get_modality_activation(x, tokens, modality)
+            activation_mask = self.get_modality_token_mask(tokens, modality).unsqueeze(1)
             if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
                 modality_bias = (
                     self.decoder[modality].bias.to_local()  # TODO: check if this is correct # type: ignore
@@ -278,15 +274,15 @@ class MixCoder(SparseAutoEncoder):
                     if isinstance(self.decoder["shared"].bias, DTensor)
                     else self.decoder["shared"].bias
                 )
-                x_modality = x_modality - modality_bias - shared_bias
+                x = x - modality_bias - shared_bias
 
-            hidden_pre_modality = self.encoder[modality](x_modality)
-            hidden_pre_shared = self.encoder["shared"](x_modality)
+            hidden_pre_modality = self.encoder[modality](x)
+            hidden_pre_shared = self.encoder["shared"](x)
 
             if self.cfg.use_glu_encoder:
-                hidden_pre_modality_glu = torch.sigmoid(self.encoder_glu[modality](x_modality))
+                hidden_pre_modality_glu = torch.sigmoid(self.encoder_glu[modality](x))
                 hidden_pre_modality = hidden_pre_modality * hidden_pre_modality_glu
-                hidden_pre_shared_glu = torch.sigmoid(self.encoder_glu["shared"](x_modality))
+                hidden_pre_shared_glu = torch.sigmoid(self.encoder_glu["shared"](x))
                 hidden_pre_shared = hidden_pre_shared * hidden_pre_shared_glu
 
             if self.cfg.sparsity_include_decoder_norm:
@@ -296,7 +292,9 @@ class MixCoder(SparseAutoEncoder):
                 true_feature_acts_modality = hidden_pre_modality
                 true_feature_acts_shared = hidden_pre_shared
 
-            true_feature_acts_concat = torch.cat([true_feature_acts_modality, true_feature_acts_shared], dim=1)
+            true_feature_acts_concat = (
+                torch.cat([true_feature_acts_modality, true_feature_acts_shared], dim=1) * activation_mask
+            )
             activation_mask_concat = self.activation_function(true_feature_acts_concat)
             feature_acts_concat = true_feature_acts_concat * activation_mask_concat
 
@@ -313,6 +311,7 @@ class MixCoder(SparseAutoEncoder):
 
         hidden_pre = self.hook_hidden_pre(hidden_pre)
         feature_acts = self.hook_feature_acts(feature_acts)
+        # assert torch.all((feature_acts > 0).sum(-1) <= self.current_k)
         if return_hidden_pre:
             return feature_acts, hidden_pre
         return feature_acts
