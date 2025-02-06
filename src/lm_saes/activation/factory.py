@@ -9,7 +9,7 @@ from lm_saes.activation.processors.activation import (
     ActivationGenerator,
     ActivationTransformer,
 )
-from lm_saes.activation.processors.cached_activation import SequentialCachedActivationLoader
+from lm_saes.activation.processors.cached_activation import CachedActivationLoader
 from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.activation.processors.huggingface import HuggingFaceDatasetLoader
 from lm_saes.activation.processors.token import (
@@ -120,19 +120,13 @@ class ActivationFactory:
         if cfg.target < ActivationFactoryTarget.ACTIVATIONS_2D:
             raise ValueError("Activations sources are only supported for target >= ACTIVATIONS_2D")
 
-        if activations_source.num_workers is None:
-            loader = SequentialCachedActivationLoader(
-                cache_dir=activations_source.path,
-                hook_points=cfg.hook_points,
-                device=activations_source.device,
-            )
-        else:
-            loader = ParallelCachedActivationLoader(
-                cache_dir=activations_source.path,
-                hook_points=cfg.hook_points,
-                device=activations_source.device,
-                max_active_chunks=activations_source.num_workers,
-            )
+        loader = CachedActivationLoader(
+            cache_dir=activations_source.path,
+            hook_points=cfg.hook_points,
+            device=activations_source.device,
+            num_workers=activations_source.num_workers,
+            prefetch_factor=activations_source.prefetch,
+        )
 
         processors = (
             [ActivationTransformer(hook_points=cfg.hook_points)]
