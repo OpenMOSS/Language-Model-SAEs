@@ -124,7 +124,7 @@ class GenerateActivationsSettings(BaseSettings):
 
     buffer_size: Optional[int] = None
     """Size of the buffer for activation generation"""
-    
+
     buffer_shuffle: Optional[BufferShuffleConfig] = None
     """"Manual seed and device of generator for generating randomperm in buffer"""
 
@@ -262,8 +262,14 @@ class TrainSAESettings(BaseSettings):
     mongo: Optional[MongoDBConfig] = None
     """Configuration for MongoDB"""
 
+    model: Optional[LanguageModelConfig] = None
+    """Configuration for the language model. Required if using dataset sources."""
+
     model_name: Optional[str] = None
     """Name of the tokenizer to load. Mixcoder requires a tokenizer to get the modality indices."""
+
+    datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
+    """Name to dataset config mapping. Required if using dataset sources."""
 
 
 def train_sae(settings: TrainSAESettings) -> None:
@@ -282,8 +288,48 @@ def train_sae(settings: TrainSAESettings) -> None:
         else None
     )
 
+    mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
+
+    # Load configurations
+    model_cfg = load_config(
+        config=settings.model,
+        name=settings.model_name,
+        mongo_client=mongo_client,
+        config_type="model",
+        required=False,
+    )
+
+    dataset_cfgs = (
+        {
+            dataset_name: load_config(
+                config=dataset_cfg,
+                name=dataset_name,
+                mongo_client=mongo_client,
+                config_type="dataset",
+            )
+            for dataset_name, dataset_cfg in settings.datasets.items()
+        }
+        if settings.datasets is not None
+        else None
+    )
+
+    # Load model and datasets
+    model = load_model(model_cfg) if model_cfg is not None else None
+    datasets = (
+        {
+            dataset_name: load_dataset(dataset_cfg, device_mesh=device_mesh)
+            for dataset_name, dataset_cfg in dataset_cfgs.items()
+        }
+        if dataset_cfgs is not None
+        else None
+    )
+
     activation_factory = ActivationFactory(settings.activation_factory)
-    activations_stream = activation_factory.process()
+    activations_stream = activation_factory.process(
+        model=model,
+        model_name=settings.model_name,
+        datasets=datasets,
+    )
     initializer = Initializer(settings.initializer)
 
     if settings.sae.sae_type == "mixcoder":
@@ -318,8 +364,6 @@ def train_sae(settings: TrainSAESettings) -> None:
     )
     if wandb_logger is not None:
         wandb_logger.watch(sae, log="all")
-
-    mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
 
     # TODO: implement eval_fn
     eval_fn = (lambda x: None) if settings.eval else None
