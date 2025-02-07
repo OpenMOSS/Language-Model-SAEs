@@ -60,6 +60,7 @@ class BaseSAEConfig(BaseModelConfig):
     apply_decoder_bias_to_pre_encoder: bool = False
     norm_activation: str = "dataset-wise"
     sparsity_include_decoder_norm: bool = True
+    force_unit_decoder_norm: bool = False
     top_k: int = 50
     sae_pretrained_name_or_path: Optional[str] = None
     strict_loading: bool = True
@@ -116,9 +117,14 @@ class MixCoderConfig(BaseSAEConfig):
 
 class InitializerConfig(BaseConfig):
     bias_init_method: str = "all_zero"
+    const_times_for_init_b_e: int = 10000
     init_decoder_norm: float | None = None
+    decoder_uniform_bound: float = 1.
     init_encoder_norm: float | None = None
+    encoder_uniform_bound: float = 1.
     init_encoder_with_decoder_transpose: bool = True
+    init_encoder_with_decoder_transpose_factor: float = 1.
+    init_log_jumprelu_threshold_value: float | None = None
     init_search: bool = False
     state: Literal["training", "inference"] = "training"
     l1_coefficient: float | None = 0.00008
