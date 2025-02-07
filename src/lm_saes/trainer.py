@@ -223,7 +223,7 @@ class Trainer:
             )
             self.optimizer.step()
             self.scheduler.step()
-            if not sae.cfg.sparsity_include_decoder_norm:
+            if sae.cfg.force_unit_decoder_norm:
                 sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
             log_info.update(loss_dict)
             proc_bar.set_description(f"loss: {log_info['loss'].item()}")
