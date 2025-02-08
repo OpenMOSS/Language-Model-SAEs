@@ -177,6 +177,8 @@ class MixCoder(SparseAutoEncoder):
         Returns:
             The activation of the specified modality. The shape is the same as the input activation.
         """
+        if modality == "shared":
+            return torch.ones_like(tokens, dtype=torch.bool)
         activation_mask = torch.isin(tokens, self.modality_indices[modality])
         return activation_mask
 
@@ -259,6 +261,7 @@ class MixCoder(SparseAutoEncoder):
         input_norm_factor = self.compute_norm_factor(x, hook_point=self.cfg.hook_point_in)
         x = x * input_norm_factor
         for modality, (start, end) in self.modality_index.items():
+            x_temp = x
             if modality == "shared":
                 # shared modality is not encoded directly but summed up during other modalities' encoding
                 continue
@@ -274,15 +277,15 @@ class MixCoder(SparseAutoEncoder):
                     if isinstance(self.decoder["shared"].bias, DTensor)
                     else self.decoder["shared"].bias
                 )
-                x = x - modality_bias - shared_bias
+                x_temp = x_temp - modality_bias - shared_bias  # TODO: fix bugs
 
-            hidden_pre_modality = self.encoder[modality](x)
-            hidden_pre_shared = self.encoder["shared"](x)
+            hidden_pre_modality = self.encoder[modality](x_temp)
+            hidden_pre_shared = self.encoder["shared"](x_temp)
 
             if self.cfg.use_glu_encoder:
-                hidden_pre_modality_glu = torch.sigmoid(self.encoder_glu[modality](x))
+                hidden_pre_modality_glu = torch.sigmoid(self.encoder_glu[modality](x_temp))
                 hidden_pre_modality = hidden_pre_modality * hidden_pre_modality_glu
-                hidden_pre_shared_glu = torch.sigmoid(self.encoder_glu["shared"](x))
+                hidden_pre_shared_glu = torch.sigmoid(self.encoder_glu["shared"](x_temp))
                 hidden_pre_shared = hidden_pre_shared * hidden_pre_shared_glu
 
             if self.cfg.sparsity_include_decoder_norm:
@@ -297,7 +300,6 @@ class MixCoder(SparseAutoEncoder):
             )
             activation_mask_concat = self.activation_function(true_feature_acts_concat)
             feature_acts_concat = true_feature_acts_concat * activation_mask_concat
-
             feature_acts_modality = feature_acts_concat[:, : self.cfg.modalities[modality]]
             feature_acts_shared = feature_acts_concat[:, self.cfg.modalities[modality] :]
             assert feature_acts_shared.shape[1] == self.cfg.modalities["shared"]
@@ -327,12 +329,15 @@ class MixCoder(SparseAutoEncoder):
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
+        assert "tokens" in kwargs
+        tokens = kwargs["tokens"]
         reconstructed = torch.zeros(
             feature_acts.shape[0], self.cfg.d_model, device=feature_acts.device, dtype=feature_acts.dtype
         )
-        for modality, (start, end) in self.modality_index.items():
+        for modality, (start, end) in self.modality_index.items():  # TODO: fix bias
+            activation_mask = self.get_modality_token_mask(tokens, modality).unsqueeze(1)
             feature_acts_modality = feature_acts[:, start:end]  # batch x d_modality
-            reconstructed_modality = self.decoder[modality](feature_acts_modality)  # batch x d_model
+            reconstructed_modality = self.decoder[modality](feature_acts_modality) * activation_mask  # batch x d_model
             reconstructed += reconstructed_modality
         reconstructed = self.hook_reconstructed(reconstructed)
         return reconstructed
@@ -367,3 +372,95 @@ class MixCoder(SparseAutoEncoder):
                 modality_params += list(self.encoder_glu[modality].parameters())
             params.append({"params": modality_params, "modality": modality})
         return params
+
+    @overload
+    def compute_loss(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        use_batch_norm_mse: bool = False,
+        lp: int = 1,
+        return_aux_data: Literal[True] = True,
+        **kwargs,
+    ) -> tuple[
+        Float[torch.Tensor, " batch"],
+        tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
+    ]: ...
+
+    @overload
+    def compute_loss(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        use_batch_norm_mse: bool = False,
+        lp: int = 1,
+        return_aux_data: Literal[False],
+        **kwargs,
+    ) -> Float[torch.Tensor, " batch"]: ...
+
+    def compute_loss(
+        self,
+        batch: dict[str, torch.Tensor],
+        label: (
+            Union[
+                Float[torch.Tensor, "batch d_model"],
+                Float[torch.Tensor, "batch seq_len d_model"],
+            ]
+            | None
+        ) = None,
+        *,
+        use_batch_norm_mse: bool = False,
+        lp: int = 1,
+        return_aux_data: bool = True,
+        **kwargs,
+    ) -> Union[
+        Float[torch.Tensor, " batch"],
+        tuple[
+            Float[torch.Tensor, " batch"],
+            tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
+        ],
+    ]:  # may be overridden by subclasses
+        assert "tokens" in kwargs
+        tokens = kwargs["tokens"]
+        x: torch.Tensor = batch[self.cfg.hook_point_in]
+        label: torch.Tensor = batch[self.cfg.hook_point_out]
+        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **kwargs)
+        reconstructed = self.decode(feature_acts, **kwargs)
+        label_norm_factor: torch.Tensor = self.compute_norm_factor(label, hook_point=self.cfg.hook_point_out)
+        label_normed = label * label_norm_factor
+        loss_list = []
+        loss_dict = {}
+        for modality, (start, end) in self.modality_index.items():
+            if modality == "shared":
+                continue
+            token_mask = self.get_modality_token_mask(tokens=tokens, modality=modality)
+            l_rec = (reconstructed[token_mask] - label_normed[token_mask]).pow(2)
+            if use_batch_norm_mse:
+                l_rec = (
+                    l_rec
+                    / (label_normed[token_mask] - label_normed[token_mask].mean(dim=0, keepdim=True))
+                    .pow(2)
+                    .sum(dim=-1, keepdim=True)
+                    .clamp(min=1e-8)
+                    .sqrt()
+                )
+            loss_list.append(l_rec)
+            loss_dict[f"{modality}_loss"] = l_rec.mean()
+        l_rec = torch.concat(loss_list)
+        loss = l_rec.mean()
+        loss_dict["l_rec"] = l_rec
+
+        if "topk" not in self.cfg.act_fn:
+            l_lp = torch.norm(feature_acts, p=lp, dim=-1)
+            loss_dict["l_lp"] = l_lp
+            assert self.current_l1_coefficient is not None
+            loss = loss + self.current_l1_coefficient * l_lp.mean()
+
+        if return_aux_data:
+            aux_data = {
+                "feature_acts": feature_acts,
+                "reconstructed": reconstructed / label_norm_factor,
+                "hidden_pre": hidden_pre,
+            }
+            return loss, (loss_dict, aux_data)
+        return loss
