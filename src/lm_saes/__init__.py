@@ -27,12 +27,14 @@ from .runner import (
     generate_activations,
     train_sae,
 )
+from .sae import SparseAutoEncoder
 
 __all__ = [
     "ActivationFactory",
     "ActivationWriter",
     "CrossCoderConfig",
     "CrossCoder",
+    "SparseAutoEncoder",
     "LanguageModelConfig",
     "DatasetConfig",
     "ActivationFactoryActivationsSource",

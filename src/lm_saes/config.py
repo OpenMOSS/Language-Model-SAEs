@@ -66,7 +66,7 @@ class BaseSAEConfig(BaseModelConfig):
     strict_loading: bool = True
     
     # anthropic jumprelu
-    jumprelu_threshold_grad_scale: float = 2.0
+    jumprelu_threshold_window: float = 2.0
 
     @property
     def d_sae(self) -> int:

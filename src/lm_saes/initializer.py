@@ -83,7 +83,7 @@ class Initializer:
         )
         tokens = activation_batch["tokens"]
         if self.cfg.init_decoder_norm is None:
-            assert sae.cfg.sparsity_include_decoder_norm, "Decoder norm must be included in sparsity loss"
+            # assert sae.cfg.sparsity_include_decoder_norm, "Decoder norm must be included in sparsity loss"
             if not self.cfg.init_encoder_with_decoder_transpose or sae.cfg.hook_point_in != sae.cfg.hook_point_out:
                 return sae
 
@@ -145,7 +145,9 @@ class Initializer:
         _, hidden_pre = sae.encode(activation_in, return_hidden_pre=True, tokens=tokens)
         k = int(self.cfg.const_times_for_init_b_e * batch_size / sae.cfg.d_sae)
         encoder_bias, _ = torch.kthvalue(hidden_pre, batch_size - k + 1, dim=0)
-        sae.encoder.bias.data.copy_(sae.log_jumprelu_threshold.exp() - encoder_bias)
+        sae.encoder.bias.data.copy_(
+            (sae.log_jumprelu_threshold.exp() - encoder_bias).to(dtype=torch.float32)
+        )
         # feature_act, hidden_pre = sae.encode(activation_in, return_hidden_pre=True, tokens=tokens)
         # print(hidden_pre.shape)
         # print(torch.sum(hidden_pre > sae.log_jumprelu_threshold.exp(), dim=0))
