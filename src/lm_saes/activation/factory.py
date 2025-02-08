@@ -124,6 +124,7 @@ class ActivationFactory:
             cache_dir=activations_source.path,
             hook_points=cfg.hook_points,
             device=activations_source.device,
+            override_dtype=activations_source.override_dtype,
             num_workers=activations_source.num_workers,
             prefetch_factor=activations_source.prefetch,
         )
