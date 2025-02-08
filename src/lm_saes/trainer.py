@@ -167,6 +167,7 @@ class Trainer:
                 "metrics/explained_variance_std": explained_variance.std().item(),
                 # sparsity
                 "metrics/l0": l0.item(),
+                "metrics/mean_feature_act": log_info["feature_acts"][log_info["feature_acts"].gt(0)].mean().item(),
                 "metrics/l2_norm_error": l2_norm_error.item(),
                 "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
                 # norm
