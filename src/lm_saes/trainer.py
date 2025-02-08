@@ -191,22 +191,29 @@ class Trainer:
                         continue
                     shared_start, shared_end = sae.modality_index["shared"]
                     mask = sae.get_modality_token_mask(batch["tokens"], modality)
+                    feature_acts_modality = log_info["feature_acts"][mask]
+                    reconstructed_modality = log_info["reconstructed"][mask]
+                    activation_out_modality = activation_out[mask]
+                    explained_variance_modality = 1 - (reconstructed_modality - activation_out_modality).pow(2).sum(
+                        dim=-1
+                    ) / (activation_out_modality - activation_out_modality.mean(0)).pow(2).sum(dim=-1)
                     token_num = mask.sum().item()
                     wandb_log_dict.update(
                         {
-                            f"l0_metrics/{modality}_l0": (log_info["feature_acts"][mask][:, start:end] > 0)
+                            f"mixcoder_metrics/{modality}_l0": (feature_acts_modality[:, start:end] > 0)
                             .float()
                             .sum(-1)
                             .mean()
                             .item(),
-                            f"l0_metrics/{modality}_shared_l0": (
-                                log_info["feature_acts"][mask][:, shared_start:shared_end] > 0
+                            f"mixcoder_metrics/{modality}_shared_l0": (
+                                feature_acts_modality[:, shared_start:shared_end] > 0
                             )
                             .float()
                             .sum(-1)
                             .mean()
                             .item(),
-                            f"l0_metrics/{modality}_token_num": token_num,
+                            f"mixcoder_metrics/{modality}_token_num": token_num,
+                            f"mixcoder_metrics/{modality}_ev": explained_variance_modality,
                         }
                     )
 
