@@ -218,6 +218,8 @@ class BaseCachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str
                 device=self.device,
             )  # Use pin_memory to load data on cpu, then transfer them to cuda in the main process, as advised in https://discuss.pytorch.org/t/dataloader-multiprocessing-with-dataset-returning-a-cuda-tensor/151022/2.
             # I wrote this utils function as I notice it is used multiple times in this repo. Do we need to apply it elsewhere?
+            
+            del chunk
         
         
 class DatasetWrapper(Dataset):  # We wrap the data loading process with torch dataset and loader for multiprocessing. Do we really need to declare this wrapper class here?
