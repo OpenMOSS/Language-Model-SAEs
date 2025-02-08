@@ -135,6 +135,7 @@ class TrainerConfig(BaseConfig):
     l1_coefficient_warmup_steps: int | float = 0.1
     sparsity_loss_type: Literal["power", "tanh", None] = None
     tanh_stretch_coefficient: float = 4.0
+    use_triton_kernel: bool = False
     p: int = 1
     initial_k: int | float | None = None
     k_warmup_steps: int | float = 0.1
@@ -210,6 +211,8 @@ class ActivationFactoryActivationsSource(ActivationFactorySource):
     """ The path to the cached activations. """
     device: str = "cpu"
     """ The device to load the activations on. """
+    override_dtype: Optional[torch.dtype] = None
+    """ We might want to convert presaved bf16 activations to fp32"""
     num_workers: int = 4
     """ The number of workers to use for loading the activations. """
     prefetch: Optional[int] = 8
