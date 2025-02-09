@@ -213,7 +213,7 @@ class Trainer:
                             .mean()
                             .item(),
                             f"mixcoder_metrics/{modality}_token_num": token_num,
-                            f"mixcoder_metrics/{modality}_ev": explained_variance_modality,
+                            f"mixcoder_metrics/{modality}_ev": explained_variance_modality.float().mean().item(),
                         }
                     )
 
