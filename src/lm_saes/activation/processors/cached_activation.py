@@ -2,7 +2,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any, Iterable, Iterator, Optional, Sequence
 
 import torch
 from safetensors.torch import load_file
@@ -84,12 +84,14 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         cache_dir: str | Path,
         hook_points: list[str],
         device: str = "cpu",
+        override_dtype: Optional[torch.dtype] = None,
         num_workers: int = 0,
         prefetch_factor: int | None = None,
     ):
         self.cache_dir = Path(cache_dir)
         self.hook_points = hook_points
         self.device = device
+        self.override_dtype = override_dtype
         self.num_workers = num_workers
         self.prefetch_factor = prefetch_factor
 
@@ -230,14 +232,19 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
 
         stream = self._process_chunks(hook_chunks, len(hook_chunks[self.hook_points[0]]))
         for chunk in stream:
-            yield move_dict_of_tensor_to_device(
+            activations = move_dict_of_tensor_to_device(
                 chunk,
                 device=self.device,
-            )  # Use pin_memory to load data on cpu, then transfer them to cuda in the main process, as advised in https://discuss.pytorch.org/t/dataloader-multiprocessing-with-dataset-returning-a-cuda-tensor/151022/2.
+            )
+            if self.override_dtype is not None:
+                activations = activations.to(self.override_dtype)
+            yield activations  # Use pin_memory to load data on cpu, then transfer them to cuda in the main process, as advised in https://discuss.pytorch.org/t/dataloader-multiprocessing-with-dataset-returning-a-cuda-tensor/151022/2.
             # I wrote this utils function as I notice it is used multiple times in this repo. Do we need to apply it elsewhere?
-        
-        
-class DatasetWrapper(Dataset):  # We wrap the data loading process with torch dataset and loader for multiprocessing. Do we really need to declare this wrapper class here?
+
+
+class CachedActivationDataset(Dataset):
+    """Wrap the data loading process with torch dataset and loader for multiprocessing."""
+
     def __init__(
         self, activation_loader: CachedActivationLoader, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int
     ):
