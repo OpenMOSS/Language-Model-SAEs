@@ -22,7 +22,6 @@ from lm_saes.config import (
     ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
 )
-from lm_saes.utils.concurrent import BackgroundGenerator
 
 
 class ActivationFactory:
@@ -124,6 +123,7 @@ class ActivationFactory:
             cache_dir=activations_source.path,
             hook_points=cfg.hook_points,
             device=activations_source.device,
+            dtype=activations_source.dtype,
             num_workers=activations_source.num_workers,
             prefetch_factor=activations_source.prefetch,
         )
@@ -148,9 +148,6 @@ class ActivationFactory:
             stream = loader.process()
             for processor in processors:
                 stream = processor.process(stream, ignore_token_ids=cfg.ignore_token_ids, model=model)
-
-            if activations_source.prefetch is not None:
-                stream = BackgroundGenerator(stream, max_prefetch=activations_source.prefetch)
 
             return stream
 

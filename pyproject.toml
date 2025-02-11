@@ -29,7 +29,7 @@ dependencies = [
     "pyyaml>=6.0.2",
     "tomlkit>=0.13.2",
     "torchvision>=0.20.1",
-    "pydantic-settings>=2.7.1",
+    "pydantic-settings>=2.7.1",   
 ]
 requires-python = "==3.12.*"
 readme = "README.md"
@@ -83,6 +83,9 @@ dev = [
     "typeguard>=4.4.1",
     "pyfakefs>=5.7.3",
     "mongomock>=4.3.0",
+]
+triton = [
+    "triton>=3.1.0",
 ]
 
 [tool.ruff]
