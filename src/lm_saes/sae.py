@@ -258,7 +258,7 @@ class SparseAutoEncoder(HookedRootModule):
             for hook_point, value in self.dataset_average_activation_norm.items():
                 state_dict[f"dataset_average_activation_norm.{hook_point}"] = torch.tensor(value)
 
-        # If sparsity_include_decoder_norm is False, we need to normalize the decoder weight before saving
+        # If force_unit_decoder_norm is True, we need to normalize the decoder weight before saving
         # We use a deepcopy to avoid modifying the original weight to avoid affecting the training progress
         if self.cfg.force_unit_decoder_norm:
             state_dict["decoder.weight"] = self.decoder.weight.data.clone()  # deepcopy
@@ -482,7 +482,7 @@ class SparseAutoEncoder(HookedRootModule):
         max_l0_in_batch = feature_acts.gt(0).to(feature_acts).sum(dim=-1).max()
         sparsity_threshold = self.cfg.d_sae * (1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel)
         if self.cfg.use_triton_kernel and max_l0_in_batch < sparsity_threshold:
-            feature_acts = decode_with_triton_spmm_kernel(feature_acts, self.decoder.weight)
+            reconstructed = decode_with_triton_spmm_kernel(feature_acts, self.decoder.weight)
         else:
             reconstructed = self.decoder(feature_acts)
         reconstructed = self.hook_reconstructed(reconstructed)

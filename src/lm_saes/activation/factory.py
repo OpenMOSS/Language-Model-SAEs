@@ -22,7 +22,6 @@ from lm_saes.config import (
     ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
 )
-from lm_saes.utils.concurrent import BackgroundGenerator
 
 
 class ActivationFactory:
