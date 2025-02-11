@@ -193,7 +193,7 @@ def test_persistent_dataset_average_activation_norm(sae_config: SAEConfig, sae: 
 
 
 def test_get_full_state_dict(sae_config: SAEConfig, sae: SparseAutoEncoder):
-    sae_config.sparsity_include_decoder_norm = False
+    sae_config.force_unit_decoder_norm = True
     state_dict = sae._get_full_state_dict()
     assert "decoder.weight" in state_dict
     assert not torch.allclose(state_dict["decoder.weight"], sae.decoder.weight.data, atol=1e-4, rtol=1e-5)
