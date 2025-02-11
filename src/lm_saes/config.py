@@ -207,12 +207,24 @@ class ActivationFactoryDatasetSource(ActivationFactorySource):
 
 
 class ActivationFactoryActivationsSource(ActivationFactorySource):
+    model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
+    
     type: str = "activations"
     path: str
     """ The path to the cached activations. """
     device: str = "cpu"
     """ The device to load the activations on. """
-    override_dtype: Optional[str] = None
+    dtype: Optional[Annotated[
+        torch.dtype,
+        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+        PlainSerializer(convert_torch_dtype_to_str),
+        WithJsonSchema(
+            {
+                "type": "string",
+            },
+            mode="serialization",
+        ),
+    ]] = None
     """ We might want to convert presaved bf16 activations to fp32"""
     num_workers: int = 4
     """ The number of workers to use for loading the activations. """
