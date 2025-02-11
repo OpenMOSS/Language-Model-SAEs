@@ -182,6 +182,39 @@ class Trainer:
                 wandb_log_dict.update({
                     "metrics/overall_l0": all_reduce_tensor(log_info["feature_acts"], aggregate='max').gt(0).float().sum(-1).mean()
                 })
+            elif sae.cfg.sae_type == "mixcoder":
+                assert isinstance(sae, MixCoder)
+                for modality, (start, end) in sae.modality_index.items():
+                    if modality == "shared":
+                        continue
+                    shared_start, shared_end = sae.modality_index["shared"]
+                    mask = sae.get_modality_token_mask(batch["tokens"], modality)
+                    feature_acts_modality = log_info["feature_acts"][mask]
+                    reconstructed_modality = log_info["reconstructed"][mask]
+                    activation_out_modality = activation_out[mask]
+                    explained_variance_modality = 1 - (reconstructed_modality - activation_out_modality).pow(2).sum(
+                        dim=-1
+                    ) / (activation_out_modality - activation_out_modality.mean(0)).pow(2).sum(dim=-1)
+                    token_num = mask.sum().item()
+                    wandb_log_dict.update(
+                        {
+                            f"mixcoder_metrics/{modality}_l0": (feature_acts_modality[:, start:end] > 0)
+                            .float()
+                            .sum(-1)
+                            .mean()
+                            .item(),
+                            f"mixcoder_metrics/{modality}_shared_l0": (
+                                feature_acts_modality[:, shared_start:shared_end] > 0
+                            )
+                            .float()
+                            .sum(-1)
+                            .mean()
+                            .item(),
+                            f"mixcoder_metrics/{modality}_token_num": token_num,
+                            f"mixcoder_metrics/{modality}_ev": explained_variance_modality.float().mean().item(),
+                        }
+                    )
+
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
 
     def _save_checkpoint(self, sae: SparseAutoEncoder):
