@@ -29,7 +29,6 @@ def triton_sparse_transpose_dense_matmul(
 
     K = sparse_indices.shape[1]
     A = dense.shape[0]
-    B = dense.shape[1]
     assert sparse_indices.shape[0] == A
 
     # COO-format and sorted
@@ -58,10 +57,9 @@ def triton_coo_sparse_dense_matmul(
 
     out = torch.zeros(N, B, device=dense.device, dtype=coo_values.dtype)
 
-    grid = lambda META: (
-        triton.cdiv(AK, META["BLOCK_SIZE_AK"]),
-        1,
-    )
+    def grid(META):
+        return triton.cdiv(AK, META["BLOCK_SIZE_AK"]), 1
+
     triton_sparse_transpose_dense_matmul_kernel[grid](
         coo_indices,
         coo_values,
@@ -391,39 +389,6 @@ def triton_sparse_dense_matmul_kernel(
 @torch.no_grad()
 def get_sparse_representation(x, pad_val=0):
     """
-    Extracts sparse indices and values from a batched dense tensor x.
-    
-    Args:
-        x (torch.Tensor): (B, d_sae) dense tensor with sparsity.
-        pad_val (int, optional): Value to use for padding (default: 0).
-        
-    Returns:
-        sparse_indices (torch.Tensor): (B, nnz_max) Tensor containing column indices of nonzero elements.
-        sparse_values (torch.Tensor): (B, nnz_max) Tensor containing corresponding nonzero values.
-        nnz_per_row (torch.Tensor): (B,) Number of nonzero elements per row.
-    """
-    B, d_sae = x.shape
-    
-    # Get nonzero indices
-    nonzero_idx = (x != 0).nonzero(as_tuple=True)  # Tuple of (batch_idx, col_idx)
-    batch_indices, col_indices = nonzero_idx
-    values = x[nonzero_idx]  # Extract corresponding values
-
-    # Compute number of nonzero entries per row
-    nnz_per_row = torch.bincount(batch_indices, minlength=B)
-    nnz_max = nnz_per_row.max().item()  # Find the max nnz across batch
-
-
-    # Create padded tensors
-    sparse_indices = torch.full((B, nnz_max), pad_val, dtype=torch.long, device=x.device)
-    sparse_values = torch.full((B, nnz_max), 0.0, dtype=x.dtype, device=x.device)
-
-    # Fill sparse representation efficiently
-    import torch
-
-@torch.no_grad()
-def get_sparse_representation(x, pad_val=0):
-    """
     Efficiently extracts sparse indices and values from a batched dense tensor x.
 
     Args:
@@ -508,9 +473,9 @@ def decode_with_triton_spmm_kernel(feature_acts: Float[torch.Tensor, "batch d_sa
 
 
 if __name__ == '__main__':
+
     import torch
     import torch.nn as nn
-    import time
     import triton
     import triton.language as tl
 

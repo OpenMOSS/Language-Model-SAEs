@@ -10,7 +10,6 @@ from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import TrainerConfig
-from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.misc import all_reduce_tensor
@@ -161,7 +160,7 @@ class Trainer:
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.item(),
-                **({"losses/sparsity_loss": log_info["l_s"].mean().item()} if log_info["l_s"] is not None else {}),
+                **({"losses/sparsity_loss": log_info["l_s"].mean().item()} if log_info.get("l_s", None) is not None else {}),
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
                 "metrics/explained_variance": explained_variance.mean().item(),

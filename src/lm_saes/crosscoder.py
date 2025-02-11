@@ -32,16 +32,16 @@ class CrossCoder(SparseAutoEncoder):
             )
         return decoder_norm
     
-    def activation_function_factory(self, cfg: BaseSAEConfig) -> Callable[[torch.Tensor], torch.Tensor]:
-        assert cfg.act_fn.lower() in [
+    def activation_function_factory(self) -> Callable[[torch.Tensor], torch.Tensor]:
+        assert self.cfg.act_fn.lower() in [
             "relu",
             "topk",
             "jumprelu",
             "batchtopk",
-        ], f"Not implemented activation function {cfg.act_fn}"
-        if cfg.act_fn.lower() == "relu":
+        ], f"Not implemented activation function {self.cfg.act_fn}"
+        if self.cfg.act_fn.lower() == "relu":
             return lambda x: x.gt(0).to(x.dtype)
-        elif cfg.act_fn.lower() == "jumprelu":
+        elif self.cfg.act_fn.lower() == "jumprelu":
             
             class STEFunction(torch.autograd.Function):
                 @staticmethod
@@ -52,7 +52,7 @@ class CrossCoder(SparseAutoEncoder):
                     return input.gt(jumprelu_threshold).to(input.dtype)
 
                 @staticmethod
-                def backward(ctx, grad_output: torch.Tensor):
+                def backward(ctx, grad_outputs: torch.Tensor):  # 
                     input, jumprelu_threshold = ctx.saved_tensors
                     grad_input = torch.zeros_like(input)
                     grad_log_jumprelu_threshold_unscaled = torch.where(
@@ -64,14 +64,14 @@ class CrossCoder(SparseAutoEncoder):
                         ((input - jumprelu_threshold).abs() < self.cfg.jumprelu_threshold_grad_scale * 0.5) * (input != 0.0),
                         input,
                         1.,
-                    ) * grad_output
+                    ) * grad_outputs
                     grad_log_jumprelu_threshold = grad_log_jumprelu_threshold.sum(dim=tuple(range(grad_log_jumprelu_threshold.ndim - 1)))
                     
                     return grad_input, grad_log_jumprelu_threshold
             
             return lambda x: STEFunction.apply(x, self.log_jumprelu_threshold)    
                 
-        elif cfg.act_fn.lower() == "topk":
+        elif self.cfg.act_fn.lower() == "topk":
 
             def topk_activation(
                 x: Union[
@@ -87,7 +87,7 @@ class CrossCoder(SparseAutoEncoder):
 
             return topk_activation
 
-        elif cfg.act_fn.lower() == "batchtopk":
+        elif self.cfg.act_fn.lower() == "batchtopk":
 
             def topk_activation(x: torch.Tensor):
                 assert x.dim() == 2
@@ -108,7 +108,7 @@ class CrossCoder(SparseAutoEncoder):
 
             return topk_activation
 
-        raise ValueError(f"Not implemented activation function {cfg.act_fn}")
+        raise ValueError(f"Not implemented activation function {self.cfg.act_fn}")
 
     @overload
     def encode(
