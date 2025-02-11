@@ -15,6 +15,7 @@ from lm_saes.database import MongoClient
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 
 from .config import BaseSAEConfig, SAEConfig
+from .kernels import decode_with_triton_spmm_kernel
 
 
 class SparseAutoEncoder(HookedRootModule):
@@ -466,7 +467,7 @@ class SparseAutoEncoder(HookedRootModule):
 
         if return_hidden_pre:
             return feature_acts, hidden_pre
-        return feature_acts
+        return feature_acts        
 
     def decode(
         self,
@@ -479,7 +480,12 @@ class SparseAutoEncoder(HookedRootModule):
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:  # may be overridden by subclasses
-        reconstructed = self.decoder(feature_acts)
+        max_l0_in_batch = feature_acts.gt(0).to(feature_acts).sum(dim=-1).max()
+        sparsity_threshold = self.cfg.d_sae * (1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel)
+        if self.cfg.use_triton_kernel and max_l0_in_batch < sparsity_threshold:
+            feature_acts = decode_with_triton_spmm_kernel(feature_acts, self.decoder.weight)
+        else:
+            reconstructed = self.decoder(feature_acts)
         reconstructed = self.hook_reconstructed(reconstructed)
 
         return reconstructed
