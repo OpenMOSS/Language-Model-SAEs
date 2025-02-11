@@ -91,13 +91,13 @@ def test_encode_decode(mixcoder, config):
     print(feature_acts)
 
     # Test decode
-    reconstructed = mixcoder.decode(feature_acts)
+    reconstructed = mixcoder.decode(feature_acts, tokens=tokens)
     assert reconstructed.shape == (batch_size, config.d_model)
 
-    reconstructed_text = mixcoder.decode(feature_acts_text)
+    reconstructed_text = mixcoder.decode(feature_acts_text, tokens=tokens_text)
     assert reconstructed_text.shape == (batch_size, config.d_model)
 
-    reconstructed_image = mixcoder.decode(feature_acts_image)
+    reconstructed_image = mixcoder.decode(feature_acts_image, tokens=tokens_image)
     assert reconstructed_image.shape == (batch_size, config.d_model)
 
     assert torch.allclose(reconstructed_text[:4, :], reconstructed[:4, :])
