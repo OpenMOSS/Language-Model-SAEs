@@ -261,10 +261,10 @@ class ActivationFactoryTarget(Enum):
 class BufferShuffleConfig(BaseConfig):
     perm_seed: int = 42
     """ Perm seed for aligned permutation for generating activations. If `None`, will not use manual seed for Generator. """
-    generator_device: Optional[str]= None
+    generator_device: Optional[str] = None
     """ The device to be assigned for the torch.Generator. If 'None', generator will be initialized on cpu as pytorch default. """
-    
-    
+
+
 class ActivationFactoryConfig(BaseConfig):
     sources: list[ActivationFactoryDatasetSource | ActivationFactoryActivationsSource]
     """ List of sources to use for activations. Can be a dataset or a path to activations. """

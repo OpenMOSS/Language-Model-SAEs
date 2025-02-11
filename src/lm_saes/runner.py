@@ -377,6 +377,9 @@ def train_sae(settings: TrainSAESettings) -> None:
         mongo_client=mongo_client,
     )
 
+    if wandb_logger is not None:
+        wandb_logger.finish()
+
 
 class AnalyzeSAESettings(BaseSettings):
     sae: BaseSAEConfig
