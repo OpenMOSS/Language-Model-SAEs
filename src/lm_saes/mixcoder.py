@@ -130,9 +130,9 @@ class MixCoder(SparseAutoEncoder):
         self.cfg.norm_activation = "inference"
 
     @torch.no_grad()
-    def init_encoder_with_decoder_transpose(self):
+    def init_encoder_with_decoder_transpose(self, factor: float = 1.):
         for modality in self.cfg.modalities.keys():
-            self._init_encoder_with_decoder_transpose(self.encoder[modality], self.decoder[modality])
+            self._init_encoder_with_decoder_transpose(self.encoder[modality], self.decoder[modality], factor)
 
     @torch.no_grad()
     def log_statistics(self):

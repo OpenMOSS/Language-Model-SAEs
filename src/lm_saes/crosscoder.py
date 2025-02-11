@@ -1,4 +1,4 @@
-from typing import Literal, Union, overload
+from typing import Callable, Literal, Union, cast, overload
 
 import torch
 from jaxtyping import Float
@@ -31,6 +31,56 @@ class CrossCoder(SparseAutoEncoder):
                 aggregate=aggregate,
             )
         return decoder_norm
+
+    def activation_function_factory(self) -> Callable[[torch.Tensor], torch.Tensor]:
+        assert self.cfg.act_fn.lower() in [
+            "relu",
+            "topk",
+            "jumprelu",
+            "batchtopk",
+        ], f"Not implemented activation function {self.cfg.act_fn}"
+        if self.cfg.act_fn.lower() == "jumprelu":
+
+            class STEFunction(torch.autograd.Function):
+                @staticmethod
+                def forward(ctx, input: torch.Tensor, log_jumprelu_threshold: torch.Tensor):
+                    jumprelu_threshold = log_jumprelu_threshold.exp()
+                    jumprelu_threshold = all_reduce_tensor(jumprelu_threshold, aggregate="sum")
+                    ctx.save_for_backward(input, jumprelu_threshold)
+                    return input.gt(jumprelu_threshold).to(input.dtype)
+
+                @staticmethod
+                def backward(ctx, *grad_outputs: torch.Tensor):
+                    assert len(grad_outputs) == 1
+                    grad_output = grad_outputs[0]
+
+                    input, jumprelu_threshold = ctx.saved_tensors
+                    grad_input = torch.zeros_like(input)
+                    grad_log_jumprelu_threshold_unscaled = torch.where(
+                        (input - jumprelu_threshold).abs() < self.cfg.jumprelu_threshold_window * 0.5,
+                        -jumprelu_threshold / self.cfg.jumprelu_threshold_window,
+                        0.0,
+                    )
+                    grad_log_jumprelu_threshold = (
+                        grad_log_jumprelu_threshold_unscaled
+                        / torch.where(
+                            ((input - jumprelu_threshold).abs() < self.cfg.jumprelu_threshold_window * 0.5)
+                            * (input != 0.0),
+                            input,
+                            1.0,
+                        )
+                        * grad_output
+                    )
+                    grad_log_jumprelu_threshold = grad_log_jumprelu_threshold.sum(
+                        dim=tuple(range(grad_log_jumprelu_threshold.ndim - 1))
+                    )
+
+                    return grad_input, grad_log_jumprelu_threshold
+
+            return lambda x: cast(torch.Tensor, STEFunction.apply(x, self.log_jumprelu_threshold))
+
+        else:
+            return super().activation_function_factory()
 
     @overload
     def encode(
@@ -109,14 +159,14 @@ class CrossCoder(SparseAutoEncoder):
         hidden_pre = self.hook_hidden_pre(hidden_pre)
 
         if self.cfg.sparsity_include_decoder_norm:
-            true_feature_acts = hidden_pre * self._decoder_norm(
+            sparsity_scores = hidden_pre * self._decoder_norm(
                 decoder=self.decoder,
                 local_only=True,
             )
         else:
-            true_feature_acts = hidden_pre
+            sparsity_scores = hidden_pre
 
-        activation_mask = self.activation_function(true_feature_acts)
+        activation_mask = self.activation_function(sparsity_scores)
         feature_acts = hidden_pre * activation_mask
 
         feature_acts = self.hook_feature_acts(feature_acts)
@@ -131,7 +181,9 @@ class CrossCoder(SparseAutoEncoder):
         batch: dict[str, torch.Tensor],
         *,
         use_batch_norm_mse: bool = False,
-        lp: int = 1,
+        sparsity_loss_type: Literal["power", "tanh", None] = None,
+        tanh_stretch_coefficient: float = 4.0,
+        p: int = 1,
         return_aux_data: Literal[True] = True,
         **kwargs,
     ) -> tuple[
@@ -145,7 +197,9 @@ class CrossCoder(SparseAutoEncoder):
         batch: dict[str, torch.Tensor],
         *,
         use_batch_norm_mse: bool = False,
-        lp: int = 1,
+        sparsity_loss_type: Literal["power", "tanh", None] = None,
+        tanh_stretch_coefficient: float = 4.0,
+        p: int = 1,
         return_aux_data: Literal[False],
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
@@ -162,7 +216,9 @@ class CrossCoder(SparseAutoEncoder):
         ) = None,
         *,
         use_batch_norm_mse: bool = False,
-        lp: int = 1,
+        sparsity_loss_type: Literal["power", "tanh", None] = None,
+        tanh_stretch_coefficient: float = 4.0,
+        p: int = 1,
         return_aux_data: bool = True,
         **kwargs,
     ) -> Union[
@@ -194,25 +250,31 @@ class CrossCoder(SparseAutoEncoder):
                 .sqrt()
             )
 
-        l_rec = l_rec.mean()
-        l_rec = all_reduce_tensor(l_rec, aggregate="mean")
+        l_rec = l_rec.sum(dim=-1).mean()
 
         loss = l_rec
         loss_dict = {
             "l_rec": l_rec,
         }
 
-        # l_l1: (batch,)
-        feature_acts = feature_acts * self._decoder_norm(
-            decoder=self.decoder,
-            local_only=True,
-        )
-
-        if "topk" not in self.cfg.act_fn:
-            l_lp = torch.norm(feature_acts, p=lp, dim=-1)
-            loss_dict["l_lp"] = l_lp
+        if sparsity_loss_type == "power":
+            l_s = torch.norm(feature_acts * self._decoder_norm(decoder=self.decoder), p=p, dim=-1)
+            loss_dict["l_s"] = self.current_l1_coefficient * l_s.mean()
             assert self.current_l1_coefficient is not None
-            loss = loss + self.current_l1_coefficient * l_lp.mean()
+            loss = loss + self.current_l1_coefficient * l_s.mean()
+        elif sparsity_loss_type == "tanh":
+            l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self._decoder_norm(decoder=self.decoder)).sum(
+                dim=-1
+            )
+            loss_dict["l_s"] = self.current_l1_coefficient * l_s.mean()
+            assert self.current_l1_coefficient is not None
+            loss = loss + self.current_l1_coefficient * l_s.mean()
+        elif sparsity_loss_type is None:
+            pass
+        else:
+            raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
+
+        loss = all_reduce_tensor(loss, aggregate="mean")
 
         if return_aux_data:
             aux_data = {
@@ -229,7 +291,8 @@ class CrossCoder(SparseAutoEncoder):
 
     @torch.no_grad()
     def log_statistics(self):
-        return {}
+        assert self.dataset_average_activation_norm is not None
+        return {f"info/{k}": v for k, v in self.dataset_average_activation_norm.items()}
 
     def initialize_with_same_weight_across_layers(self):
         self.encoder.weight.data = get_tensor_from_specific_rank(self.encoder.weight.data.clone(), src=0)
