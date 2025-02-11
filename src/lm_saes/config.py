@@ -64,6 +64,8 @@ class BaseSAEConfig(BaseModelConfig):
     top_k: int = 50
     sae_pretrained_name_or_path: Optional[str] = None
     strict_loading: bool = True
+    use_triton_kernel: bool = False
+    sparsity_threshold_for_triton_spmm_kernel: float = 0.99
     
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
@@ -135,7 +137,6 @@ class TrainerConfig(BaseConfig):
     l1_coefficient_warmup_steps: int | float = 0.1
     sparsity_loss_type: Literal["power", "tanh", None] = None
     tanh_stretch_coefficient: float = 4.0
-    use_triton_kernel: bool = False
     p: int = 1
     initial_k: int | float | None = None
     k_warmup_steps: int | float = 0.1
@@ -211,7 +212,7 @@ class ActivationFactoryActivationsSource(ActivationFactorySource):
     """ The path to the cached activations. """
     device: str = "cpu"
     """ The device to load the activations on. """
-    override_dtype: Optional[torch.dtype] = None
+    override_dtype: Optional[str] = None
     """ We might want to convert presaved bf16 activations to fp32"""
     num_workers: int = 4
     """ The number of workers to use for loading the activations. """
