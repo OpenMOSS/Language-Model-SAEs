@@ -434,7 +434,6 @@ class SparseAutoEncoder(HookedRootModule):
                 Tuple of (feature_acts, hidden_pre) where both have shape (batch, d_sae) or (batch, seq_len, d_sae)
         """
         # Apply input normalization based on config
-        x = x.to(self.cfg.dtype)
         input_norm_factor = self.compute_norm_factor(x, hook_point=self.cfg.hook_point_in)
         x = x * input_norm_factor
         # Optionally subtract decoder bias before encoding
