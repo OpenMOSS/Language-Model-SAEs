@@ -1194,6 +1194,9 @@ dev = [
     { name = "transformer-lens" },
     { name = "typeguard" },
 ]
+triton = [
+    { name = "triton" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1246,6 +1249,7 @@ dev = [
     { name = "transformer-lens", editable = "TransformerLens" },
     { name = "typeguard", specifier = ">=4.4.1" },
 ]
+triton = [{ name = "triton", specifier = ">=3.1.0" }]
 
 [[package]]
 name = "markdown-it-py"
