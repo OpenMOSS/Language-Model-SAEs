@@ -149,9 +149,6 @@ class ActivationFactory:
             for processor in processors:
                 stream = processor.process(stream, ignore_token_ids=cfg.ignore_token_ids, model=model)
 
-            # if activations_source.prefetch is not None:
-            #     stream = BackgroundGenerator(stream, max_prefetch=activations_source.prefetch)
-
             return stream
 
         return process_activations

@@ -243,18 +243,12 @@ class CrossCoder(SparseAutoEncoder):
                 .sqrt()
             )
 
-        l_rec = l_rec.mean()
+        l_rec = l_rec.sum(dim=-1).mean()
 
         loss = l_rec
         loss_dict = {
             "l_rec": l_rec,
         }
-
-        # l_l1: (batch,)
-        feature_acts = feature_acts * self._decoder_norm(
-            decoder=self.decoder,
-            local_only=True,
-        )
 
         if sparsity_loss_type == "power":
             l_s = torch.norm(feature_acts * self._decoder_norm(decoder=self.decoder), p=p, dim=-1)
