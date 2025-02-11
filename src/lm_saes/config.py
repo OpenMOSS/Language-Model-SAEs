@@ -178,11 +178,26 @@ class DatasetConfig(BaseConfig):
 
 
 class ActivationFactorySource(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     type: str
     """ The type of the source. Used to determine the source of activations in deserialization. """
     name: str
     sample_weights: float = 1.0
     """ The sample weights to use for the source. Will be used to randomly pull tokens from the source when multiple sources are present. """
+
+    dtype: Optional[
+        Annotated[
+            torch.dtype,
+            BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+            PlainSerializer(convert_torch_dtype_to_str),
+            WithJsonSchema(
+                {
+                    "type": "string",
+                },
+                mode="serialization",
+            ),
+        ]
+    ] = None
 
 
 class ActivationFactoryDatasetSource(ActivationFactorySource):
