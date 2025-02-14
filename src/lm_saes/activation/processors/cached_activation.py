@@ -237,7 +237,9 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 device=self.device,
             )
             if self.dtype is not None:
-                activations = {k: v.to(self.dtype) for k, v in activations.items()}
+                for k, v in activations.items():
+                    if k in self.hook_points:
+                        activations[k] = v.to(self.dtype)
             yield activations  # Use pin_memory to load data on cpu, then transfer them to cuda in the main process, as advised in https://discuss.pytorch.org/t/dataloader-multiprocessing-with-dataset-returning-a-cuda-tensor/151022/2.
             # I wrote this utils function as I notice it is used multiple times in this repo. Do we need to apply it elsewhere?
 
