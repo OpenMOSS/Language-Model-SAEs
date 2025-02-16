@@ -2,12 +2,12 @@ import os
 from pathlib import Path
 from typing import Literal, Optional, TypeVar, overload
 
+import wandb
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoTokenizer
 
-import wandb
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.activation.writer import ActivationWriter
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
