@@ -15,7 +15,7 @@ from transformer_lens import HookedTransformer
 
 from lm_saes.config import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient
-from lm_saes.resource_loaders import load_dataset, load_model, load_dataset_shard
+from lm_saes.resource_loaders import load_model, load_dataset_shard
 from lm_saes.sae import SparseAutoEncoder
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -45,7 +45,7 @@ def get_model(name: str) -> HookedTransformer:
 def get_dataset(name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
     cfg = client.get_dataset_cfg(name)
     assert cfg is not None, f"Dataset {name} not found"
-    if name not in dataset_cache:
+    if (name, shard_idx, n_shards) not in dataset_cache:
         dataset_cache[name, shard_idx, n_shards] = load_dataset_shard(cfg, shard_idx, n_shards)
     return dataset_cache[name, shard_idx, n_shards]
 
