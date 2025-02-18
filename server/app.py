@@ -14,7 +14,7 @@ from transformer_lens import HookedTransformer
 
 from lm_saes.config import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient
-from lm_saes.resource_loaders import load_dataset, load_model
+from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -28,7 +28,7 @@ sae_series = os.environ.get("SAE_SERIES", "default")
 
 sae_cache: dict[str, SparseAutoEncoder] = {}
 lm_cache: dict[str, HookedTransformer] = {}
-dataset_cache: dict[str, Dataset] = {}
+dataset_cache: dict[tuple[str, int, int], Dataset] = {}
 
 
 def get_model(name: str) -> HookedTransformer:
@@ -41,12 +41,12 @@ def get_model(name: str) -> HookedTransformer:
     return lm_cache[name]
 
 
-def get_dataset(name: str) -> Dataset:
+def get_dataset(name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
     cfg = client.get_dataset_cfg(name)
     assert cfg is not None, f"Dataset {name} not found"
-    if name not in dataset_cache:
-        dataset_cache[name] = load_dataset(cfg)[0]
-    return dataset_cache[name]
+    if (name, shard_idx, n_shards) not in dataset_cache:
+        dataset_cache[name, shard_idx, n_shards] = load_dataset_shard(cfg, shard_idx, n_shards)
+    return dataset_cache[name, shard_idx, n_shards]
 
 
 def get_sae(name: str) -> SparseAutoEncoder:
@@ -144,7 +144,11 @@ def get_feature(name: str, feature_index: str | int):
             dataset_name = sampling.dataset_name[i]
             model_name = sampling.model_name[i]
             model = get_model(model_name)
-            data = get_dataset(dataset_name)[context_idx]
+            data = get_dataset(
+                dataset_name,
+                sampling.shard_idx[i] if sampling.shard_idx is not None else 0,
+                sampling.n_shards[i] if sampling.n_shards is not None else 1,
+            )[context_idx]
             _, token_origins = model.to_tokens_with_origins(data)
 
             # Replace image_key with image_url
