@@ -131,7 +131,7 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
                         <span
                           className={cn("relative cursor-help", getAccentClassname(maxSegmentAct, maxFeatureAct, "bg"))}
                         >
-                          {segmentText}
+                          {segmentText.replaceAll("\n", "↵").replaceAll("\t", "→")}
                         </span>
                       </HoverCardTrigger>
                       <HoverCardContent>
