@@ -151,6 +151,9 @@ class GenerateActivationsSettings(BaseSettings):
 
     mongo: Optional[MongoDBConfig] = None
     """Configuration for the MongoDB database. If `None`, will not use the database."""
+    
+    ignore_token_ids: Optional[list[int]] = None
+    """ Tokens to ignore in the activations. """
 
     @model_validator(mode="after")
     def validate_cfg(self) -> "GenerateActivationsSettings":
@@ -203,6 +206,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
         batch_size=settings.batch_size,
         buffer_size=settings.buffer_size,
         buffer_shuffle=settings.buffer_shuffle,
+        ignore_token_ids=settings.ignore_token_ids
     )
 
     # Configure activation writer
@@ -369,6 +373,7 @@ def train_sae(settings: TrainSAESettings) -> None:
     eval_fn = (lambda x: None) if settings.eval else None
 
     trainer = Trainer(settings.trainer)
+    sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
     trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
     sae.save_pretrained(
         save_path=settings.trainer.exp_result_path,
