@@ -236,7 +236,7 @@ def triton_dense_dense_sparseout_matmul(
     assert dense2.stride(0) == 1, "dense2 must be contiguous along B"
 
     if K > 512:
-        # print("WARN - using naive matmul for large K")
+        print("WARN - using naive matmul for large K")
         # naive is more efficient for large K
         return (dense1 @ dense2).gather(1, at_indices)
 
@@ -378,7 +378,6 @@ def triton_sparse_dense_matmul_kernel(
     tl.store(out_ptr + pid * B + offsets_b, accum.to(sparse_values.dtype), mask=offsets_b < B)
 
 
-@torch.no_grad()
 def get_sparse_representation(x, pad_val=0):
     """
     Efficiently extracts sparse indices and values from a batched dense tensor x.
@@ -421,33 +420,37 @@ def get_sparse_representation(x, pad_val=0):
 
 class TritonDecoderAutograd(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, sparse_indices, sparse_values, decoder_weight):
-        ctx.save_for_backward(sparse_indices, sparse_values, decoder_weight)
+    def forward(ctx, feature_acts, decoder_weight, require_precise_feature_acts_grad: bool = True):
+        sparse_indices, sparse_values = get_sparse_representation(feature_acts)
+        ctx.save_for_backward(sparse_indices, sparse_values, decoder_weight, torch.tensor(require_precise_feature_acts_grad))
         return triton_sparse_dense_matmul(sparse_indices, sparse_values, decoder_weight.T)
 
     @staticmethod
     def backward(ctx, *grad_outputs, **args):
         assert len(grad_outputs) == 1, "grad_outputs must be a single tensor"
         grad_output = grad_outputs[0]
-        sparse_indices, sparse_values, decoder_weight = ctx.saved_tensors
+        sparse_indices, sparse_values, decoder_weight, require_precise_feature_acts_grad = ctx.saved_tensors
 
         assert grad_output.is_contiguous(), "grad_output must be contiguous; this is probably because the subsequent op was a .sum() or something like that, which returns a non contiguous gradient"
 
         decoder_grad = triton_sparse_transpose_dense_matmul(
-            sparse_indices, sparse_values, grad_output, N=decoder_weight.shape[1]
+            sparse_indices, sparse_values, grad_output, N=decoder_weight.size(1)
         ).T
+        
+        if require_precise_feature_acts_grad.item():
+            feature_acts_grad = grad_output @ decoder_weight
+        else:
+            feature_acts_grad_sparse = triton_dense_dense_sparseout_matmul(grad_output, decoder_weight, sparse_indices)  # batch_size, K
+            B, d_sae = sparse_indices.size(0), decoder_weight.size(1)
+            feature_acts_grad = torch.zeros(size=(B, d_sae)).to(sparse_values).scatter_(dim=1, index=sparse_indices, src=feature_acts_grad_sparse)
 
-        return (
-            None,
-            triton_dense_dense_sparseout_matmul(grad_output, decoder_weight, sparse_indices),
-            # decoder is contiguous when transposed so this is a matching layout
-            decoder_grad,
-            None,
-        )
+        # decoder is contiguous when transposed so this is a matching layout
+        return feature_acts_grad, decoder_grad, None
+            
 
 
 def decode_with_triton_spmm_kernel(
-    feature_acts: Float[torch.Tensor, "batch d_sae"], decoder_weight: Float[torch.Tensor, "d_model d_sae"]
+    feature_acts: Float[torch.Tensor, "batch d_sae"], decoder_weight: Float[torch.Tensor, "d_model d_sae"], require_precise_feature_acts_grad: bool
 ):
     """
     Perform sparse-dense matrix multiplication using Triton.
@@ -459,13 +462,7 @@ def decode_with_triton_spmm_kernel(
     Returns:
         output: (B, d_model) - The decoded output.
     """
-    # Convert dense feature_acts into sparse representation
-    sparse_indices, sparse_values = get_sparse_representation(feature_acts)
-
-    # Perform sparse-dense multiplication using Triton
-    output = TritonDecoderAutograd.apply(sparse_indices, sparse_values, decoder_weight.T.contiguous().T)
-
-    return output
+    return TritonDecoderAutograd.apply(feature_acts, decoder_weight.T.contiguous().T, require_precise_feature_acts_grad)
 
 
 if __name__ == "__main__":
@@ -474,69 +471,62 @@ if __name__ == "__main__":
     import triton
     import triton.language as tl
 
-    def test_triton_decoder_forward():
+    def test_triton_decoder(B, d_sae, d_model, sparsity=0.9, dtype=torch.float32, require_precise_feature_acts_grad=True):
         # Set parameters
-        B, d_sae, d_model = 4, 32, 16  # Batch size, input dim, output dim
-
-        # Create a random dense weight matrix (as in nn.Linear), size = (d_model, d_sae)
-        decoder = nn.Linear(d_sae, d_model, bias=False, dtype=torch.float32, device="cuda")
-
-        # Create a random sparse input matrix
-        dense_input = torch.randn((B, d_sae), dtype=torch.float32, device="cuda")
-
-        # Zero out some values to simulate sparsity (~70% sparsity)
-        dense_input[torch.rand_like(dense_input) < 0.7] = 0
-
-        # Run our Triton-based sparse-dense multiply
-        triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight)
-
-        # Compare against standard dense multiply (nn.Linear equivalent)
-        torch_output = decoder(dense_input)  # Equivalent to nn.Linear
-        assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
-        # Ensure outputs are numerically close
-        assert torch.allclose(triton_output, torch_output, atol=1e-4), "Mismatch between Triton and PyTorch outputs!"
-
-        print("✅ Triton forward pass matches nn.Linear!")
-
-    def test_triton_decoder_backward():
-        # Set parameters
-        B, d_sae, d_model = 4, 32, 16  # Batch size, input dim, output dim
 
         # Create a random dense weight matrix (as in nn.Linear)
-        decoder = nn.Linear(d_sae, d_model, bias=False, dtype=torch.float32, device="cuda")
+        decoder = nn.Linear(d_sae, d_model, bias=False, dtype=dtype, device="cuda")
 
         # Create a random sparse input matrix
-        dense_input = torch.randn((B, d_sae), dtype=torch.float32, device="cuda")
+        dense_input = torch.randn((B, d_sae), dtype=dtype, device="cuda")
 
-        # Zero out some values to simulate sparsity (~70% sparsity)
-        dense_input[torch.rand_like(dense_input) < 0.7] = 0
+        # Zero out some values to simulate sparsity
+        dense_input[torch.rand_like(dense_input) < sparsity] = 0
 
         # Enable gradient tracking
         decoder.weight.requires_grad_(True)
+        dense_input.requires_grad_(True)
+        
+        grad_output = torch.randn((B, d_model), dtype=dtype, device="cuda")
 
         # Run forward pass with Triton
-        triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight)
+        triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight, require_precise_feature_acts_grad)
         assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
-        # Run forward pass with PyTorch nn.Linear
-        torch_output = decoder(dense_input)
-
-        # Generate random gradient to propagate backward
-        grad_output = torch.randn_like(torch_output)
-
-        # Backpropagate
+        
         triton_output.backward(grad_output)
+        
+        triton_decoder_weight_grad, triton_dense_input_grad = decoder.weight.grad.clone(), dense_input.grad.clone()  # pyright: ignore
+        
+        decoder.weight.grad.zero_()  # pyright: ignore
+        dense_input.grad.zero_()  # pyright: ignore
+        
+        torch_output = decoder(dense_input)
         torch_output.backward(grad_output)
+        
+        torch_decoder_weight_grad, torch_dense_input_grad = decoder.weight.grad.clone(), dense_input.grad.clone()  # pyright: ignore
 
         # Compare gradients
         assert decoder.weight.grad is not None, "decoder.weight.grad is None"
         assert torch.allclose(
-            decoder.weight.grad, decoder.weight.grad, atol=1e-4
-        ), "Mismatch between Triton and PyTorch gradients!"
+            triton_output, torch_output, atol=1e-5
+        ), "Mismatch between Triton and PyTorch outputs!"
+        assert torch.allclose(
+            triton_decoder_weight_grad, torch_decoder_weight_grad, atol=1e-5
+        ), f"Mismatch between Triton and PyTorch gradients on decoder weights! {triton_decoder_weight_grad=}, {torch_decoder_weight_grad=}"
 
-        print("✅ Triton backward pass matches nn.Linear!")
+        if require_precise_feature_acts_grad:
+            assert torch.allclose(
+                triton_dense_input_grad, torch_dense_input_grad, atol=1e-5
+            ), f"Mismatch between Triton and PyTorch gradients on dense input! {triton_dense_input_grad=}, {torch_dense_input_grad=}"
+        else:
+            assert torch.allclose(
+                triton_dense_input_grad[dense_input.ne(0)], torch_dense_input_grad[dense_input.ne(0)], atol=1e-5
+            ), f"Mismatch between Triton and PyTorch gradients on dense input! {triton_dense_input_grad=}, {torch_dense_input_grad=}"
+
+        print("✅ Triton forward and backward pass matches nn.Linear!")
 
     # Ensure we have the Triton-based kernel
-    def benchmark_triton_vs_torch(B=32, d_sae=512, d_model=256, sparsity=0.7, warmup=5, iters=20):
+    def benchmark_triton_vs_torch(B=32, d_sae=512, d_model=256, sparsity=0.7, warmup=5, iters=20, dtype=torch.float32, require_precise_feature_acts_grad=True):
         """
         Benchmarks Triton-based sparse-dense multiplication vs PyTorch's nn.Linear.
 
@@ -549,10 +539,10 @@ if __name__ == "__main__":
         """
 
         # Create weight matrix similar to nn.Linear
-        decoder = nn.Linear(d_sae, d_model, bias=False, dtype=torch.float32, device="cuda")
+        decoder = nn.Linear(d_sae, d_model, bias=False, dtype=dtype, device="cuda")
 
         # Generate a dense input
-        dense_input = torch.randn((B, d_sae), dtype=torch.float32, device="cuda")
+        dense_input = torch.randn((B, d_sae), dtype=dtype, device="cuda")
 
         # Introduce sparsity
         dense_input[torch.rand_like(dense_input) < sparsity] = 0
@@ -603,7 +593,6 @@ if __name__ == "__main__":
         print(f"🚀 Speedup: {torch_time / triton_time:.2f}x")
 
     # Run test
-    test_triton_decoder_forward()
-    test_triton_decoder_backward()
+    test_triton_decoder(B=16, d_sae=4096, d_model=256, sparsity=0.9, require_precise_feature_acts_grad=False)
     # Run benchmark
-    benchmark_triton_vs_torch(B=8192, d_sae=4096 * 32, d_model=4096, sparsity=0.99, warmup=10, iters=100)
+    # benchmark_triton_vs_torch(B=8192, d_sae=4096 * 32, d_model=4096, sparsity=0.99, warmup=10, iters=10, require_precise_feature_acts_grad=False)
