@@ -26,8 +26,10 @@ from lm_saes.config import (
     TrainerConfig,
     WandbConfig,
 )
+from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient
 from lm_saes.initializer import Initializer
+from lm_saes.mixcoder import MixCoder
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.trainer import Trainer
@@ -406,7 +408,15 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     mongo_client = MongoClient(settings.mongo)
     activation_factory = ActivationFactory(settings.activation_factory)
 
-    sae = SparseAutoEncoder.from_config(settings.sae)
+    if settings.sae.sae_type == "sae":
+        sae = SparseAutoEncoder.from_config(settings.sae)
+    elif settings.sae.sae_type == "crosscoder":
+        sae = CrossCoder.from_config(settings.sae)
+    elif settings.sae.sae_type == "mixcoder":
+        sae = MixCoder.from_config(settings.sae)
+    else:
+        # TODO: add support for different SAE config types, e.g. MixCoderConfig, CrossCoderConfig, etc.
+        raise ValueError(f"SAE type {settings.sae.sae_type} not supported.")
 
     analyzer = FeatureAnalyzer(settings.analyzer)
 
