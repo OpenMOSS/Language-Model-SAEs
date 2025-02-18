@@ -88,7 +88,7 @@ async def oom_error_handler(request, exc):
 
 @app.get("/dictionaries")
 def list_dictionaries():
-    return client.list_saes(sae_series=sae_series)
+    return client.list_saes(sae_series=sae_series, has_analyses=True)
 
 
 @app.get("/images/{dataset_name}/{context_idx}/{image_idx}")
@@ -153,6 +153,16 @@ def get_feature(name: str, feature_index: str | int):
                 image_urls = [f"/images/{dataset_name}/{context_idx}/{i}" for i in range(len(data[image_key]))]
                 del data[image_key]
                 data["images"] = image_urls
+
+            token_origins = token_origins[: len(feature_acts)]
+            feature_acts = feature_acts[: len(token_origins)]
+
+            if "text" in data:
+                text_ranges = [
+                    origin["range"] for origin in token_origins if origin is not None and origin["key"] == "text"
+                ]
+                max_text_origin = max(text_ranges, key=lambda x: x[1])
+                data["text"] = data["text"][: max_text_origin[1]]
 
             samples.append(
                 {
