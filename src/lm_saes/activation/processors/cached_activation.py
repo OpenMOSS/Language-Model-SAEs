@@ -232,7 +232,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
 
         stream = self._process_chunks(hook_chunks, len(hook_chunks[self.hook_points[0]]))
         for chunk in stream:
-            activations = move_dict_of_tensor_to_device(
+            activations: dict[str, Any] = move_dict_of_tensor_to_device(
                 chunk,
                 device=self.device,
             )
