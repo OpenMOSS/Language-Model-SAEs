@@ -163,8 +163,17 @@ class MongoClient:
             )
         ]
 
-    def list_saes(self, sae_series: str | None = None) -> list[str]:
-        return [d["name"] for d in self.sae_collection.find({"series": sae_series} if sae_series is not None else {})]
+    def list_saes(self, sae_series: str | None = None, has_analyses: bool = False) -> list[str]:
+        sae_names = [
+            d["name"] for d in self.sae_collection.find({"series": sae_series} if sae_series is not None else {})
+        ]
+        if has_analyses:
+            sae_names = [
+                d["sae_name"]
+                for d in self.analysis_collection.find({"sae_series": sae_series} if sae_series is not None else {})
+            ]
+            sae_names = list(set(sae_names))
+        return sae_names
 
     def get_dataset(self, name: str) -> Optional[DatasetRecord]:
         dataset = self.dataset_collection.find_one({"name": name})

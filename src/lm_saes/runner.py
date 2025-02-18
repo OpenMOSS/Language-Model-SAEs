@@ -18,16 +18,20 @@ from lm_saes.config import (
     ActivationWriterConfig,
     BaseSAEConfig,
     BufferShuffleConfig,
+    CrossCoderConfig,
     DatasetConfig,
     FeatureAnalyzerConfig,
     InitializerConfig,
     LanguageModelConfig,
+    MixCoderConfig,
     MongoDBConfig,
     TrainerConfig,
     WandbConfig,
 )
+from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient
 from lm_saes.initializer import Initializer
+from lm_saes.mixcoder import MixCoder
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.trainer import Trainer
@@ -406,7 +410,12 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     mongo_client = MongoClient(settings.mongo)
     activation_factory = ActivationFactory(settings.activation_factory)
 
-    sae = SparseAutoEncoder.from_config(settings.sae)
+    if isinstance(settings.sae, MixCoderConfig):
+        sae = MixCoder.from_config(settings.sae)
+    elif isinstance(settings.sae, CrossCoderConfig):
+        sae = CrossCoder.from_config(settings.sae)
+    else:
+        sae = SparseAutoEncoder.from_config(settings.sae)
 
     analyzer = FeatureAnalyzer(settings.analyzer)
 

@@ -96,10 +96,11 @@ class MixCoder(SparseAutoEncoder):
 
     @torch.no_grad()
     def _load_full_state_dict(self, state_dict: dict[str, torch.Tensor]) -> None:
-        super()._load_full_state_dict(state_dict)
         modality_indices_keys = [k for k in state_dict.keys() if k.startswith("modality_indices.")]
         assert len(modality_indices_keys) == len(self.cfg.modalities) - 1  # shared modality is not included
         self.modality_indices = {key.split(".", 1)[1]: state_dict[key] for key in modality_indices_keys}
+        state_dict = {k: v for k, v in state_dict.items() if not k.startswith("modality_indices.")}
+        super()._load_full_state_dict(state_dict)
 
     @torch.no_grad()
     def transform_to_unit_decoder_norm(self):
@@ -130,7 +131,7 @@ class MixCoder(SparseAutoEncoder):
         self.cfg.norm_activation = "inference"
 
     @torch.no_grad()
-    def init_encoder_with_decoder_transpose(self, factor: float = 1.):
+    def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
         for modality in self.cfg.modalities.keys():
             self._init_encoder_with_decoder_transpose(self.encoder[modality], self.decoder[modality], factor)
 
@@ -256,8 +257,8 @@ class MixCoder(SparseAutoEncoder):
         """
         assert "tokens" in kwargs
         tokens = kwargs["tokens"]
-        feature_acts = torch.zeros(x.shape[0], self.cfg.d_sae, device=x.device, dtype=x.dtype)
-        hidden_pre = torch.zeros(x.shape[0], self.cfg.d_sae, device=x.device, dtype=x.dtype)
+        feature_acts = torch.zeros(*x.shape[:-1], self.cfg.d_sae, device=x.device, dtype=x.dtype)
+        hidden_pre = torch.zeros(*x.shape[:-1], self.cfg.d_sae, device=x.device, dtype=x.dtype)
         input_norm_factor = self.compute_norm_factor(x, hook_point=self.cfg.hook_point_in)
         x = x * input_norm_factor
         for modality, (start, end) in self.modality_index.items():
@@ -265,7 +266,7 @@ class MixCoder(SparseAutoEncoder):
             if modality == "shared":
                 # shared modality is not encoded directly but summed up during other modalities' encoding
                 continue
-            activation_mask = self.get_modality_token_mask(tokens, modality).unsqueeze(1)
+            activation_mask = self.get_modality_token_mask(tokens, modality).unsqueeze(-1)
             if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
                 modality_bias = (
                     self.decoder[modality].bias.to_local()  # TODO: check if this is correct # type: ignore
@@ -296,20 +297,23 @@ class MixCoder(SparseAutoEncoder):
                 true_feature_acts_shared = hidden_pre_shared
 
             true_feature_acts_concat = (
-                torch.cat([true_feature_acts_modality, true_feature_acts_shared], dim=1) * activation_mask
+                torch.cat([true_feature_acts_modality, true_feature_acts_shared], dim=-1) * activation_mask
             )
             activation_mask_concat = self.activation_function(true_feature_acts_concat)
             feature_acts_concat = true_feature_acts_concat * activation_mask_concat
-            feature_acts_modality = feature_acts_concat[:, : self.cfg.modalities[modality]]
-            feature_acts_shared = feature_acts_concat[:, self.cfg.modalities[modality] :]
-            assert feature_acts_shared.shape[1] == self.cfg.modalities["shared"]
+            feature_acts_modality = feature_acts_concat[..., : self.cfg.modalities[modality]]
+            feature_acts_shared = feature_acts_concat[..., self.cfg.modalities[modality] :]
+            assert (
+                feature_acts_shared.shape[-1] == self.cfg.modalities["shared"]
+            ), f"{feature_acts_shared.shape} does not match {self.cfg.modalities['shared']}. {feature_acts_concat.shape[-1]} != {self.cfg.modalities['shared']}."
 
-            feature_acts[:, start:end] += feature_acts_modality
-            hidden_pre[:, start:end] += hidden_pre_modality
+            print(feature_acts.shape, feature_acts[..., start:end].shape, feature_acts_modality.shape)
+            feature_acts[..., start:end] += feature_acts_modality
+            hidden_pre[..., start:end] += hidden_pre_modality
 
             shared_start, shared_end = self.modality_index["shared"]
-            feature_acts[:, shared_start:shared_end] += feature_acts_shared
-            hidden_pre[:, shared_start:shared_end] += hidden_pre_shared
+            feature_acts[..., shared_start:shared_end] += feature_acts_shared
+            hidden_pre[..., shared_start:shared_end] += hidden_pre_shared
 
         hidden_pre = self.hook_hidden_pre(hidden_pre)
         feature_acts = self.hook_feature_acts(feature_acts)
