@@ -307,7 +307,6 @@ class MixCoder(SparseAutoEncoder):
                 feature_acts_shared.shape[-1] == self.cfg.modalities["shared"]
             ), f"{feature_acts_shared.shape} does not match {self.cfg.modalities['shared']}. {feature_acts_concat.shape[-1]} != {self.cfg.modalities['shared']}."
 
-            print(feature_acts.shape, feature_acts[..., start:end].shape, feature_acts_modality.shape)
             feature_acts[..., start:end] += feature_acts_modality
             hidden_pre[..., start:end] += hidden_pre_modality
 
