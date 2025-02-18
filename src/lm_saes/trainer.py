@@ -137,14 +137,16 @@ class Trainer:
                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
             }
-            if sae.cfg.sae_type == 'crosscoder':
-                overall_act_freq_scores = all_reduce_tensor(feature_sparsity, aggregate='max')
-                wandb_log_dict.update({
-                    "sparsity/overall_above_1e-1": (overall_act_freq_scores > 1e-1).sum().item(),
-                    "sparsity/overall_above_1e-2": (overall_act_freq_scores > 1e-2).sum().item(),
-                    "sparsity/overall_below_1e-5": (overall_act_freq_scores < 1e-5).sum().item(),
-                    "sparsity/overall_below_1e-6": (overall_act_freq_scores < 1e-6).sum().item(),
-                })
+            if sae.cfg.sae_type == "crosscoder":
+                overall_act_freq_scores = all_reduce_tensor(feature_sparsity, aggregate="max")
+                wandb_log_dict.update(
+                    {
+                        "sparsity/overall_above_1e-1": (overall_act_freq_scores > 1e-1).sum().item(),
+                        "sparsity/overall_above_1e-2": (overall_act_freq_scores > 1e-2).sum().item(),
+                        "sparsity/overall_below_1e-5": (overall_act_freq_scores < 1e-5).sum().item(),
+                        "sparsity/overall_below_1e-6": (overall_act_freq_scores < 1e-6).sum().item(),
+                    }
+                )
 
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
             log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
@@ -161,7 +163,11 @@ class Trainer:
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.item(),
-                **({"losses/sparsity_loss": log_info["l_s"].mean().item()} if log_info.get("l_s", None) is not None else {}),
+                **(
+                    {"losses/sparsity_loss": log_info["l_s"].mean().item()}
+                    if log_info.get("l_s", None) is not None
+                    else {}
+                ),
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
                 "metrics/explained_variance": explained_variance.mean().item(),
@@ -179,10 +185,16 @@ class Trainer:
                 "details/n_training_tokens": self.cur_tokens,
             }
             wandb_log_dict.update(sae.log_statistics())
-            if sae.cfg.sae_type == 'crosscoder':
-                wandb_log_dict.update({
-                    "metrics/overall_l0": all_reduce_tensor(log_info["feature_acts"], aggregate='max').gt(0).float().sum(-1).mean()
-                })
+            if sae.cfg.sae_type == "crosscoder":
+                wandb_log_dict.update(
+                    {
+                        "metrics/overall_l0": all_reduce_tensor(log_info["feature_acts"], aggregate="max")
+                        .gt(0)
+                        .float()
+                        .sum(-1)
+                        .mean()
+                    }
+                )
             elif sae.cfg.sae_type == "mixcoder":
                 assert isinstance(sae, MixCoder)
                 for modality, (start, end) in sae.modality_index.items():
