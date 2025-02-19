@@ -367,7 +367,6 @@ class SparseAutoEncoder(HookedRootModule):
         # TODO: save dataset_average_activation_norm
         self.save_checkpoint(save_path)
         if self.device_mesh is None or self.device_mesh.get_rank() == 0:
-            self.cfg.save_hyperparameters(save_path)
             if mongo_client is not None:
                 assert (
                     sae_name is not None and sae_series is not None
@@ -489,8 +488,9 @@ class SparseAutoEncoder(HookedRootModule):
     ]:  # may be overridden by subclasses
         max_l0_in_batch = feature_acts.gt(0).to(feature_acts).sum(dim=-1).max()
         sparsity_threshold = self.cfg.d_sae * (1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel)
-        if self.cfg.use_triton_kernel and max_l0_in_batch < sparsity_threshold:
-            reconstructed = decode_with_triton_spmm_kernel(feature_acts, self.decoder.weight)
+        if self.cfg.use_triton_kernel and 0 < max_l0_in_batch < sparsity_threshold:  # triton kernel cannot handle empty feature_acts
+            require_precise_feature_acts_grad = "topk" not in self.cfg.act_fn 
+            reconstructed = decode_with_triton_spmm_kernel(feature_acts, self.decoder.weight, require_precise_feature_acts_grad)
         else:
             reconstructed = self.decoder(feature_acts)
         reconstructed = self.hook_reconstructed(reconstructed)
