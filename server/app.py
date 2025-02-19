@@ -5,7 +5,6 @@ import msgpack
 import numpy as np
 import plotly.graph_objects as go
 import torch
-from typing import Tuple
 from datasets import Dataset
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +14,7 @@ from transformer_lens import HookedTransformer
 
 from lm_saes.config import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient
-from lm_saes.resource_loaders import load_model, load_dataset_shard
+from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -29,7 +28,7 @@ sae_series = os.environ.get("SAE_SERIES", "default")
 
 sae_cache: dict[str, SparseAutoEncoder] = {}
 lm_cache: dict[str, HookedTransformer] = {}
-dataset_cache: dict[Tuple[str, int, int], Dataset] = {}
+dataset_cache: dict[tuple[str, int, int], Dataset] = {}
 
 
 def get_model(name: str) -> HookedTransformer:
@@ -145,7 +144,11 @@ def get_feature(name: str, feature_index: str | int):
             dataset_name = sampling.dataset_name[i]
             model_name = sampling.model_name[i]
             model = get_model(model_name)
-            data = get_dataset(dataset_name, sampling.shard_idx[i], sampling.n_shards[i])[context_idx]
+            data = get_dataset(
+                dataset_name,
+                sampling.shard_idx[i] if sampling.shard_idx is not None else 0,
+                sampling.n_shards[i] if sampling.n_shards is not None else 1,
+            )[context_idx]
             _, token_origins = model.to_tokens_with_origins(data)
 
             # Replace image_key with image_url
