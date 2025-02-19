@@ -418,18 +418,18 @@ def get_sparse_representation(x, pad_val=0):
     return sparse_indices, sparse_values
 
 
-class TritonDecoderAutograd(torch.autograd.Function):
+class TritonDecoderAutogradJumpReLU(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, feature_acts, decoder_weight, require_precise_feature_acts_grad: bool = True):
+    def forward(ctx, feature_acts, decoder_weight):
         sparse_indices, sparse_values = get_sparse_representation(feature_acts)
-        ctx.save_for_backward(sparse_indices, sparse_values, decoder_weight, torch.tensor(require_precise_feature_acts_grad))
+        ctx.save_for_backward(sparse_indices, sparse_values, decoder_weight)
         return triton_sparse_dense_matmul(sparse_indices, sparse_values, decoder_weight.T)
 
     @staticmethod
     def backward(ctx, *grad_outputs, **args):
         assert len(grad_outputs) == 1, "grad_outputs must be a single tensor"
         grad_output = grad_outputs[0]
-        sparse_indices, sparse_values, decoder_weight, require_precise_feature_acts_grad = ctx.saved_tensors
+        sparse_indices, sparse_values, decoder_weight = ctx.saved_tensors
 
         assert grad_output.is_contiguous(), "grad_output must be contiguous; this is probably because the subsequent op was a .sum() or something like that, which returns a non contiguous gradient"
 
@@ -437,15 +437,30 @@ class TritonDecoderAutograd(torch.autograd.Function):
             sparse_indices, sparse_values, grad_output, N=decoder_weight.size(1)
         ).T
         
-        if require_precise_feature_acts_grad.item():
-            feature_acts_grad = grad_output @ decoder_weight
-        else:
-            feature_acts_grad_sparse = triton_dense_dense_sparseout_matmul(grad_output, decoder_weight, sparse_indices)  # batch_size, K
-            B, d_sae = sparse_indices.size(0), decoder_weight.size(1)
-            feature_acts_grad = torch.zeros(size=(B, d_sae)).to(sparse_values).scatter_(dim=1, index=sparse_indices, src=feature_acts_grad_sparse)
-
         # decoder is contiguous when transposed so this is a matching layout
-        return feature_acts_grad, decoder_grad, None
+        return grad_output @ decoder_weight, decoder_grad
+    
+
+class TritonDecoderAutogradTopK(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, sparse_indices, sparse_values, decoder_weight):
+        ctx.save_for_backward(sparse_indices, sparse_values, decoder_weight)
+        return triton_sparse_dense_matmul(sparse_indices, sparse_values, decoder_weight.T)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs, **args):
+        assert len(grad_outputs) == 1, "grad_outputs must be a single tensor"
+        grad_output = grad_outputs[0]
+        sparse_indices, sparse_values, decoder_weight = ctx.saved_tensors
+
+        assert grad_output.is_contiguous(), "grad_output must be contiguous; this is probably because the subsequent op was a .sum() or something like that, which returns a non contiguous gradient"
+
+        decoder_grad = triton_sparse_transpose_dense_matmul(
+            sparse_indices, sparse_values, grad_output, N=decoder_weight.size(1)
+        ).T
+        
+        # decoder is contiguous when transposed so this is a matching layout
+        return None, triton_dense_dense_sparseout_matmul(grad_output, decoder_weight, sparse_indices), decoder_grad
             
 
 
@@ -462,7 +477,12 @@ def decode_with_triton_spmm_kernel(
     Returns:
         output: (B, d_model) - The decoded output.
     """
-    return TritonDecoderAutograd.apply(feature_acts, decoder_weight.T.contiguous().T, require_precise_feature_acts_grad)
+    if require_precise_feature_acts_grad:
+        output = TritonDecoderAutogradJumpReLU.apply(feature_acts, decoder_weight.T.contiguous().T)
+    else:
+        sparse_indices, sparse_values = get_sparse_representation(feature_acts)
+        output = TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.T.contiguous().T)
+    return output
 
 
 if __name__ == "__main__":
@@ -593,6 +613,6 @@ if __name__ == "__main__":
         print(f"🚀 Speedup: {torch_time / triton_time:.2f}x")
 
     # Run test
-    test_triton_decoder(B=16, d_sae=4096, d_model=256, sparsity=0.9, require_precise_feature_acts_grad=False)
+    test_triton_decoder(B=16, d_sae=4096, d_model=256, sparsity=0.9, require_precise_feature_acts_grad=True)
     # Run benchmark
-    # benchmark_triton_vs_torch(B=8192, d_sae=4096 * 32, d_model=4096, sparsity=0.99, warmup=10, iters=10, require_precise_feature_acts_grad=False)
+    benchmark_triton_vs_torch(B=8192, d_sae=4096 * 32, d_model=4096, sparsity=0.999, warmup=10, iters=10, require_precise_feature_acts_grad=True)
