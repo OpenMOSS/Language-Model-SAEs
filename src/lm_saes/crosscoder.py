@@ -292,7 +292,11 @@ class CrossCoder(SparseAutoEncoder):
     @torch.no_grad()
     def log_statistics(self):
         assert self.dataset_average_activation_norm is not None
-        return {f"info/{k}": v for k, v in self.dataset_average_activation_norm.items()}
+        log_dict = {
+            'metrics/mean_jumprelu_threshold': all_reduce_tensor(self.log_jumprelu_threshold.exp(), aggregate='sum'),
+            'metrics/current_l1_coefficient':self.current_l1_coefficient,
+        }
+        return log_dict
 
     def initialize_with_same_weight_across_layers(self):
         self.encoder.weight.data = get_tensor_from_specific_rank(self.encoder.weight.data.clone(), src=0)
