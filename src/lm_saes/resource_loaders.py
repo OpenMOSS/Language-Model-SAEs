@@ -26,6 +26,7 @@ def load_dataset_shard(
         dataset = datasets.load_from_disk(cfg.dataset_name_or_path)
     dataset = cast(datasets.Dataset, dataset)
     dataset = dataset.shard(num_shards=n_shards, index=shard_idx, contiguous=True)
+    dataset = dataset.with_format("torch")
     return dataset
 
 
