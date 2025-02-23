@@ -437,6 +437,7 @@ class MixCoder(SparseAutoEncoder):
             if modality == "shared":
                 continue
             token_mask = self.get_modality_token_mask(tokens=tokens, modality=modality)
+            token_num = token_mask.sum(dim=-1)
             l_rec = (reconstructed[token_mask] - label_normed[token_mask]).pow(2)
             if use_batch_norm_mse:
                 l_rec = (
@@ -447,8 +448,10 @@ class MixCoder(SparseAutoEncoder):
                     .clamp(min=1e-8)
                     .sqrt()
                 )
+            l_rec = l_rec * self.cfg.loss_weights[modality]
             loss_list.append(l_rec)
             loss_dict[f"{modality}_loss"] = l_rec.mean()
+            loss_dict[f"{modality}_token_num"] = token_num.item()
         l_rec = torch.concat(loss_list)
         loss = l_rec.mean()
         loss_dict["l_rec"] = l_rec

@@ -66,7 +66,7 @@ class BaseSAEConfig(BaseModelConfig):
     strict_loading: bool = True
     use_triton_kernel: bool = False
     sparsity_threshold_for_triton_spmm_kernel: float = 0.99
-    
+
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
 
@@ -111,6 +111,7 @@ class CrossCoderConfig(BaseSAEConfig):
 class MixCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "mixcoder"
     modalities: dict[str, int]
+    loss_weights: dict[str, float] = Field(default_factory=lambda: {"text": 1.0, "image": 1.0})
 
     @property
     def d_sae(self) -> int:
@@ -121,11 +122,11 @@ class InitializerConfig(BaseConfig):
     bias_init_method: str = "all_zero"
     const_times_for_init_b_e: int = 10000
     init_decoder_norm: float | None = None
-    decoder_uniform_bound: float = 1.
+    decoder_uniform_bound: float = 1.0
     init_encoder_norm: float | None = None
-    encoder_uniform_bound: float = 1.
+    encoder_uniform_bound: float = 1.0
     init_encoder_with_decoder_transpose: bool = True
-    init_encoder_with_decoder_transpose_factor: float = 1.
+    init_encoder_with_decoder_transpose_factor: float = 1.0
     init_log_jumprelu_threshold_value: float | None = None
     init_search: bool = False
     state: Literal["training", "inference"] = "training"
@@ -208,23 +209,25 @@ class ActivationFactoryDatasetSource(ActivationFactorySource):
 
 class ActivationFactoryActivationsSource(ActivationFactorySource):
     model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
-    
+
     type: str = "activations"
     path: str
     """ The path to the cached activations. """
     device: str = "cpu"
     """ The device to load the activations on. """
-    dtype: Optional[Annotated[
-        torch.dtype,
-        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
-        PlainSerializer(convert_torch_dtype_to_str),
-        WithJsonSchema(
-            {
-                "type": "string",
-            },
-            mode="serialization",
-        ),
-    ]] = None
+    dtype: Optional[
+        Annotated[
+            torch.dtype,
+            BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+            PlainSerializer(convert_torch_dtype_to_str),
+            WithJsonSchema(
+                {
+                    "type": "string",
+                },
+                mode="serialization",
+            ),
+        ]
+    ] = None
     """ We might want to convert presaved bf16 activations to fp32"""
     num_workers: int = 4
     """ The number of workers to use for loading the activations. """
