@@ -91,9 +91,9 @@ def list_dictionaries():
     return client.list_saes(sae_series=sae_series, has_analyses=True)
 
 
-@app.get("/images/{dataset_name}/{context_idx}/{image_idx}")
-def get_image(dataset_name: str, context_idx: int, image_idx: int):
-    dataset = get_dataset(dataset_name)
+@app.get("/images/{dataset_name}")
+def get_image(dataset_name: str, context_idx: int, image_idx: int, shard_idx: int = 0, n_shards: int = 1):
+    dataset = get_dataset(dataset_name, shard_idx, n_shards)
     data = dataset[int(context_idx)]
 
     image_key = "image" if "image" in data else "images" if "images" in data else None
@@ -144,17 +144,19 @@ def get_feature(name: str, feature_index: str | int):
             dataset_name = sampling.dataset_name[i]
             model_name = sampling.model_name[i]
             model = get_model(model_name)
-            data = get_dataset(
-                dataset_name,
-                sampling.shard_idx[i] if sampling.shard_idx is not None else 0,
-                sampling.n_shards[i] if sampling.n_shards is not None else 1,
-            )[context_idx]
+            shard_idx = sampling.shard_idx[i] if sampling.shard_idx is not None else 0
+            n_shards = sampling.n_shards[i] if sampling.n_shards is not None else 1
+            data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx]
+
             _, token_origins = model.to_tokens_with_origins(data)
 
             # Replace image_key with image_url
             image_key = "image" if "image" in data else "images" if "images" in data else None
             if image_key is not None:
-                image_urls = [f"/images/{dataset_name}/{context_idx}/{i}" for i in range(len(data[image_key]))]
+                image_urls = [
+                    f"/images/{dataset_name}?context_idx={context_idx}&shard_idx={shard_idx}&n_shards={n_shards}&image_idx={image_idx}"
+                    for image_idx in range(len(data[image_key]))
+                ]
                 del data[image_key]
                 data["images"] = image_urls
 

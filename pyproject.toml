@@ -83,6 +83,7 @@ dev = [
     "typeguard>=4.4.1",
     "pyfakefs>=5.7.3",
     "mongomock>=4.3.0",
+    "qwen-vl-utils>=0.0.10",
 ]
 triton = [
     "triton>=3.1.0",
