@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Literal, Optional, TypeVar, overload
+from typing import List, Literal, Optional, TypeVar, overload
 
 import wandb
 from pydantic import model_validator
@@ -156,7 +156,7 @@ class GenerateActivationsSettings(BaseSettings):
     mongo: Optional[MongoDBConfig] = None
     """Configuration for the MongoDB database. If `None`, will not use the database."""
     
-    ignore_token_ids: Optional[list[int]] = None
+    ignore_token_ids: Optional[List[int | None]] = None
     """ Tokens to ignore in the activations. """
 
     @model_validator(mode="after")
@@ -408,6 +408,9 @@ class AnalyzeSAESettings(BaseSettings):
 
     mongo: MongoDBConfig
     """Configuration for the MongoDB database."""
+    
+    ignore_token_ids: Optional[List[int | None]] = None,
+
 
 
 def analyze_sae(settings: AnalyzeSAESettings) -> None:
@@ -425,7 +428,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     analyzer = FeatureAnalyzer(settings.analyzer)
 
     activations = activation_factory.process()
-    result = analyzer.analyze_chunk(activations, sae=sae)
+    result = analyzer.analyze_chunk(activations, sae=sae, ignore_token_ids=settings.ignore_token_ids)
 
     mongo_client.add_feature_analysis(
         name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result

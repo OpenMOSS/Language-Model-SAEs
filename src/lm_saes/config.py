@@ -56,7 +56,6 @@ class BaseSAEConfig(BaseModelConfig):
     use_decoder_bias: bool = True
     use_glu_encoder: bool = False
     act_fn: Literal["relu", "jumprelu", "topk", "batchtopk"] = "relu"
-    jump_relu_threshold: float = 0.0
     apply_decoder_bias_to_pre_encoder: bool = False
     norm_activation: str = "dataset-wise"
     sparsity_include_decoder_norm: bool = True
@@ -106,6 +105,14 @@ class SAEConfig(BaseSAEConfig):
 
 class CrossCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "crosscoder"
+    use_shared_decoder: bool = False
+    d_shared_decoder: int = 0
+    shared_decoder_sparsity_factor: float = 0.1
+    
+    @property
+    def d_standard_decoder(self) -> int:
+        assert 0 <=  self.d_shared_decoder <= self.d_sae
+        return self.d_sae - self.d_shared_decoder
 
 
 class MixCoderConfig(BaseSAEConfig):

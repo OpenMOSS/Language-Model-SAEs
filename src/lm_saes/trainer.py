@@ -10,10 +10,10 @@ from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import TrainerConfig
+from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
 from lm_saes.sae import SparseAutoEncoder
-from lm_saes.utils.misc import all_reduce_tensor
 
 
 class Trainer:
@@ -137,16 +137,6 @@ class Trainer:
                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
             }
-            if sae.cfg.sae_type == "crosscoder":
-                overall_act_freq_scores = all_reduce_tensor(feature_sparsity, aggregate="max")
-                wandb_log_dict.update(
-                    {
-                        "sparsity/overall_above_1e-1": (overall_act_freq_scores > 1e-1).sum().item(),
-                        "sparsity/overall_above_1e-2": (overall_act_freq_scores > 1e-2).sum().item(),
-                        "sparsity/overall_below_1e-5": (overall_act_freq_scores < 1e-5).sum().item(),
-                        "sparsity/overall_below_1e-6": (overall_act_freq_scores < 1e-6).sum().item(),
-                    }
-                )
 
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
             log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
@@ -186,15 +176,12 @@ class Trainer:
             }
             wandb_log_dict.update(sae.log_statistics())
             if sae.cfg.sae_type == "crosscoder":
-                wandb_log_dict.update(
-                    {
-                        "metrics/overall_l0": all_reduce_tensor(log_info["feature_acts"], aggregate="max")
-                        .gt(0)
-                        .float()
-                        .sum(-1)
-                        .mean()
-                    }
-                )
+                assert isinstance(sae, CrossCoder)
+                if sae.cfg.use_shared_decoder:
+                    wandb_log_dict.update({
+                        'metrics/shared_l0': (log_info["shared_feature_acts"] > 0).float().sum(-1).mean().item()
+                    })
+                    
             elif sae.cfg.sae_type == "mixcoder":
                 assert isinstance(sae, MixCoder)
                 for modality, (start, end) in sae.modality_index.items():

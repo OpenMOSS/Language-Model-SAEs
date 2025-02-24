@@ -6,7 +6,7 @@ from torch.distributed.tensor import DTensor
 
 from .config import BaseSAEConfig
 from .sae import SparseAutoEncoder
-from .utils.misc import all_reduce_tensor, get_tensor_from_specific_rank
+from .utils.misc import all_reduce_tensor, get_tensor_from_specific_rank, is_tensor_consistent_on_all_process
 
 
 class CrossCoder(SparseAutoEncoder):
@@ -19,6 +19,15 @@ class CrossCoder(SparseAutoEncoder):
 
     def __init__(self, cfg: BaseSAEConfig):
         super(CrossCoder, self).__init__(cfg)
+        if cfg.use_shared_decoder:
+            del self.decoder
+            self.decoder = torch.nn.Linear(
+                cfg.d_standard_decoder, cfg.d_model, bias=cfg.use_decoder_bias, device=cfg.device, dtype=cfg.dtype
+            )
+            
+            self.shared_decoder = torch.nn.Linear(
+                cfg.d_shared_decoder, cfg.d_model, bias=False, device=cfg.device, dtype=cfg.dtype
+            )
 
     def _decoder_norm(self, decoder: torch.nn.Linear, keepdim: bool = False, local_only=True, aggregate="none"):
         decoder_norm = super()._decoder_norm(
@@ -159,10 +168,7 @@ class CrossCoder(SparseAutoEncoder):
         hidden_pre = self.hook_hidden_pre(hidden_pre)
 
         if self.cfg.sparsity_include_decoder_norm:
-            sparsity_scores = hidden_pre * self._decoder_norm(
-                decoder=self.decoder,
-                local_only=True,
-            )
+            sparsity_scores = hidden_pre * self._decoder_norm(decoder=self.decoder)
         else:
             sparsity_scores = hidden_pre
 
@@ -173,7 +179,30 @@ class CrossCoder(SparseAutoEncoder):
 
         if return_hidden_pre:
             return feature_acts, hidden_pre
-        return feature_acts
+        return feature_acts    
+    
+    def decode(
+        self,
+        feature_acts: Union[
+            Float[torch.Tensor, "batch d_sae"],
+            Float[torch.Tensor, "batch seq_len d_sae"],
+        ],
+        **kwargs,
+    ) -> Union[
+        Float[torch.Tensor, "batch d_model"],
+        Float[torch.Tensor, "batch seq_len d_model"],
+    ]:  # may be overridden by subclasses
+        if self.cfg.use_shared_decoder:
+            feature_acts_standard = feature_acts[..., :self.cfg.d_standard_decoder]
+            feature_acts_shared = feature_acts[..., self.cfg.d_standard_decoder:]
+            
+            reconstructed_standard = self._decode(feature_acts_standard, self.decoder)
+            reconstructed_shared = self._decode(feature_acts_shared, self.shared_decoder)
+            if not is_tensor_consistent_on_all_process(reconstructed_shared):  # for faster inference after crosscoder is loaded
+                reconstructed_shared = all_reduce_tensor(reconstructed_shared, aggregate="mean")
+            return reconstructed_standard + reconstructed_shared
+        else:
+            return self._decode(feature_acts, self.decoder)
 
     @overload
     def compute_loss(
@@ -256,16 +285,62 @@ class CrossCoder(SparseAutoEncoder):
         loss_dict = {
             "l_rec": l_rec,
         }
+        
+        if self.cfg.use_shared_decoder:
+            feature_acts_shared = feature_acts[..., self.cfg.d_standard_decoder:]
+            feature_acts_standard = feature_acts[..., :self.cfg.d_standard_decoder]
 
         if sparsity_loss_type == "power":
-            l_s = torch.norm(feature_acts * self._decoder_norm(decoder=self.decoder), p=p, dim=-1)
+            if self.cfg.use_shared_decoder:
+                l_s = torch.norm(
+                    feature_acts_standard * 
+                    self._decoder_norm(decoder=self.decoder),
+                    p=p, 
+                    dim=-1
+                ) + torch.norm(
+                    feature_acts_shared * 
+                    self._decoder_norm(
+                        decoder=self.shared_decoder, 
+                        local_only=False, 
+                        aggregate='mean'
+                    ),
+                    p=p,
+                    dim=-1,
+                ) * self.cfg.shared_decoder_sparsity_factor
+            else:
+                l_s = torch.norm(
+                    feature_acts * 
+                    self._decoder_norm(
+                        decoder=self.decoder
+                    ),
+                    p=p, 
+                    dim=-1
+                )
             loss_dict["l_s"] = self.current_l1_coefficient * l_s.mean()
             assert self.current_l1_coefficient is not None
             loss = loss + self.current_l1_coefficient * l_s.mean()
         elif sparsity_loss_type == "tanh":
-            l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self._decoder_norm(decoder=self.decoder)).sum(
-                dim=-1
-            )
+            
+            if self.cfg.use_shared_decoder:
+                l_s = torch.tanh(
+                    tanh_stretch_coefficient * 
+                    feature_acts_standard * 
+                    self._decoder_norm(decoder=self.decoder)
+                ).sum(dim=-1) + torch.tanh(
+                    tanh_stretch_coefficient *
+                    feature_acts_shared * 
+                    self._decoder_norm(
+                        decoder=self.shared_decoder, 
+                        local_only=False, 
+                        aggregate='mean'
+                    )
+                ).sum(dim=-1) * self.cfg.shared_decoder_sparsity_factor
+            else:
+                l_s = torch.tanh(
+                    tanh_stretch_coefficient * 
+                    feature_acts * 
+                    self._decoder_norm(decoder=self.decoder)
+                ).sum(dim=-1)
             loss_dict["l_s"] = self.current_l1_coefficient * l_s.mean()
             assert self.current_l1_coefficient is not None
             loss = loss + self.current_l1_coefficient * l_s.mean()
@@ -282,6 +357,8 @@ class CrossCoder(SparseAutoEncoder):
                 "reconstructed": reconstructed / label_norm_factor,
                 "hidden_pre": hidden_pre,
             }
+            if self.cfg.use_shared_decoder:
+                aux_data["shared_feature_acts"] = feature_acts_shared
             return loss, (
                 loss_dict,
                 aux_data,
@@ -296,7 +373,27 @@ class CrossCoder(SparseAutoEncoder):
             'metrics/mean_jumprelu_threshold': all_reduce_tensor(self.log_jumprelu_threshold.exp(), aggregate='sum'),
             'metrics/current_l1_coefficient':self.current_l1_coefficient,
         }
+        if self.cfg.use_shared_decoder:
+            log_dict['metrics/mean_shared_decoder_norm'] = self._decoder_norm(
+                decoder=self.shared_decoder, 
+                local_only=False, 
+                aggregate='mean'
+            )
         return log_dict
+    
+    @torch.no_grad()
+    def _init_encoder_with_decoder_transpose(
+        self, encoder: torch.nn.Linear, decoder: torch.nn.Linear, factor: float = 1.0
+    ):
+        encoder.weight.data = decoder.weight.data.T.clone().contiguous() * factor
+    
+    @torch.no_grad()
+    def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
+        if not self.cfg.use_shared_decoder:
+            self._init_encoder_with_decoder_transpose(self.encoder, self.decoder, factor)
+        else:
+            self.encoder.weight.data[:self.cfg.d_standard_decoder] = self.decoder.weight.data.T.clone().contiguous() * factor
+            self.encoder.weight.data[self.cfg.d_standard_decoder:] = self.shared_decoder.weight.data.T.clone().contiguous() * factor
 
     def initialize_with_same_weight_across_layers(self):
         self.encoder.weight.data = get_tensor_from_specific_rank(self.encoder.weight.data.clone(), src=0)

@@ -1,4 +1,4 @@
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, List, Mapping, Optional
 
 import torch
 from einops import rearrange, repeat
@@ -122,6 +122,7 @@ class FeatureAnalyzer:
         self,
         activation_stream: Iterable[dict[str, Any]],
         sae: SparseAutoEncoder,
+        ignore_token_ids: Optional[List[int]] = None,
     ) -> list[dict[str, Any]]:
         """Analyze feature activations for a chunk of the SAE.
 
@@ -140,6 +141,9 @@ class FeatureAnalyzer:
             - Sampled activations with metadata
         """
         n_training_tokens = 0
+        
+        if ignore_token_ids is None:
+            ignore_token_ids = []
 
         # Progress tracking
         pbar = tqdm(
@@ -158,9 +162,15 @@ class FeatureAnalyzer:
         for batch in activation_stream:
             # Reshape meta to zip outer dimensions to inner
             meta = {k: [m[k] for m in batch["meta"]] for k in batch["meta"][0].keys()}
+            
+            mask = torch.ones_like(batch["tokens"], dtype=torch.bool)
+            for token_id in ignore_token_ids:
+                mask &= batch["tokens"] != token_id
 
             # Get feature activations from SAE
             feature_acts = sae.encode(batch[sae.cfg.hook_point_in], tokens=batch["tokens"])
+            feature_acts[~mask] = 0.0
+            
             # Update activation statistics
             act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
             max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
@@ -170,9 +180,10 @@ class FeatureAnalyzer:
                 k: torch.tensor(mapper.encode(k, v), device=sae.cfg.device, dtype=torch.int32) for k, v in meta.items()
             }
             sample_result = self._process_batch(feature_acts, discrete_meta, sample_result, max_feature_acts)
+            
 
             # Update progress
-            n_tokens_current = batch["tokens"].numel()
+            n_tokens_current = mask.int().sum().item()
             n_training_tokens += n_tokens_current
             pbar.update(n_tokens_current)
 

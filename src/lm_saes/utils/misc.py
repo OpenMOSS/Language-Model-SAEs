@@ -107,7 +107,7 @@ def all_reduce_tensor(tensor, aggregate="none"):
     return tensor
 
 
-def assert_tensor_consistency(tensor):
+def is_tensor_consistent_on_all_process(tensor):
     flat_tensor = tensor.flatten()
 
     local_checksum = flat_tensor.sum().item()
@@ -119,7 +119,7 @@ def assert_tensor_consistency(tensor):
     expected_checksum = local_checksum * world_size
 
     # Step 5: Assert that the checksums match across all ranks
-    assert checksum_tensor.item() == expected_checksum, "Inconsistent tensor data across ranks. Checksum mismatch."
+    return checksum_tensor.item() == expected_checksum
 
 
 def calculate_activation_norm(
