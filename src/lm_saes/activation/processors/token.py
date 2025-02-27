@@ -1,9 +1,9 @@
-from typing import Any, Iterable, Optional, cast
+from typing import Any, Iterable, Optional
 
 import torch
-from transformer_lens import HookedTransformer
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
+from lm_saes.backend.language_model import LanguageModel
 
 
 def pad_and_truncate_tokens(
@@ -49,21 +49,19 @@ class RawDatasetTokenProcessor(BaseActivationProcessor[Iterable[dict[str, Any]],
     def __init__(self, prepend_bos: bool | None = None):
         self.prepend_bos = prepend_bos
 
-    def process(
-        self, data: Iterable[dict[str, Any]], *, model: HookedTransformer, **kwargs
-    ) -> Iterable[dict[str, Any]]:
+    def process(self, data: Iterable[dict[str, Any]], *, model: LanguageModel, **kwargs) -> Iterable[dict[str, Any]]:
         """Process raw data into tokens.
 
         Args:
             data: Iterable of dictionaries containing raw data (e.g. text and images)
-            model: HookedTransformer model to use for producing tokens
+            model: model to use for producing tokens
             **kwargs: Additional keyword arguments. Not used by this processor.
 
         Yields:
             dict: Processed token data with optional info field
         """
         for d in data:
-            tokens = model.to_tokens_with_origins(d, tokens_only=True, prepend_bos=self.prepend_bos)
+            tokens = model.to_tokens(d, prepend_bos=self.prepend_bos)
             ret = {"tokens": tokens[0]}
             if "meta" in d:
                 ret = ret | {"meta": d["meta"]}
@@ -89,7 +87,7 @@ class PadAndTruncateTokensProcessor(BaseActivationProcessor[Iterable[dict[str, A
         data: Iterable[dict[str, Any]],
         *,
         pad_token_id: Optional[int] = None,
-        model: Optional[HookedTransformer] = None,
+        model: Optional[LanguageModel] = None,
         **kwargs,
     ) -> Iterable[dict[str, Any]]:
         """Process tokens by padding or truncating to desired sequence length.
@@ -99,7 +97,7 @@ class PadAndTruncateTokensProcessor(BaseActivationProcessor[Iterable[dict[str, A
             pad_token_id (int, optional): The token ID to use for padding. Defaults to None.
                 If not specified, the pad_token_id will be inferred from the model's tokenizer.
                 If neither is provided, the pad_token_id will be 0.
-            model (HookedTransformer, optional): The model to use for padding. Defaults to None.
+            model (LanguageModel, optional): The model to use for padding. Defaults to None.
                 If provided, the pad_token_id will be inferred from the model's tokenizer.
             **kwargs: Additional keyword arguments. Not used by this processor.
 
@@ -111,9 +109,7 @@ class PadAndTruncateTokensProcessor(BaseActivationProcessor[Iterable[dict[str, A
         # Infer pad_token_id if not provided
         if pad_token_id is None:
             if model is not None:
-                tokenizer = model.tokenizer
-                assert tokenizer is not None, "model must have a tokenizer"
-                pad_token_id = cast(int, tokenizer.pad_token_id)
+                pad_token_id = model.pad_token_id
             else:
                 pad_token_id = 0
 

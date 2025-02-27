@@ -2,7 +2,6 @@ from typing import Any, Iterable, Iterator, Optional, Sequence
 
 import numpy as np
 from datasets import Dataset
-from transformer_lens import HookedTransformer
 
 from lm_saes.activation.processors.activation import (
     ActivationBatchler,
@@ -16,6 +15,7 @@ from lm_saes.activation.processors.token import (
     PadAndTruncateTokensProcessor,
     RawDatasetTokenProcessor,
 )
+from lm_saes.backend.language_model import LanguageModel
 from lm_saes.config import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
@@ -92,7 +92,7 @@ class ActivationFactory:
             """
             datasets: dict[str, tuple[Dataset, Optional[dict[str, Any]]]] | None = kwargs.get("datasets")
             assert datasets is not None, "`datasets` must be provided for dataset sources"
-            model: HookedTransformer | None = kwargs.get("model")
+            model: LanguageModel | None = kwargs.get("model")
             assert model is not None, "`model` must be provided for dataset sources"
             model_name: str | None = kwargs.get("model_name")
             assert model_name is not None, "`model_name` must be provided for dataset sources"
@@ -143,7 +143,7 @@ class ActivationFactory:
             Returns:
                 Stream of processed data
             """
-            model: HookedTransformer | None = kwargs.get("model")
+            model: LanguageModel | None = kwargs.get("model")
 
             stream = loader.process()
             for processor in processors:
@@ -195,7 +195,10 @@ class ActivationFactory:
             """Create batchler for batched-activations-1d target."""
             assert cfg.batch_size is not None, "Batch size must be provided for outputting batched-activations-1d"
             return ActivationBatchler(
-                hook_points=cfg.hook_points, batch_size=cfg.batch_size, buffer_size=cfg.buffer_size, buffer_shuffle_config=cfg.buffer_shuffle
+                hook_points=cfg.hook_points,
+                batch_size=cfg.batch_size,
+                buffer_size=cfg.buffer_size,
+                buffer_shuffle_config=cfg.buffer_shuffle,
             )
 
         processors = [build_batchler()] if cfg.target >= ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D else []

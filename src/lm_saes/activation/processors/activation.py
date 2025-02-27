@@ -4,9 +4,9 @@ from typing import Any, Iterable, Optional, cast
 
 import torch
 from tqdm import tqdm
-from transformer_lens import HookedTransformer
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
+from lm_saes.backend.language_model import LanguageModel
 from lm_saes.config import BufferShuffleConfig
 
 
@@ -83,9 +83,11 @@ class ActivationBuffer:
             isinstance(data[k], torch.Tensor) for k in data.keys()
         ), "All data must be tensors to perform shuffling"
         data = cast(dict[str, torch.Tensor], data)
-        
+
         # Use the passed generator for shuffling
-        perm = torch.randperm(data[list(data.keys())[0]].shape[0], generator=self.generator, device=self.generator.device)
+        perm = torch.randperm(
+            data[list(data.keys())[0]].shape[0], generator=self.generator, device=self.generator.device
+        )
         buffer = {k: v[perm] for k, v in data.items()}
         return ActivationBuffer(buffer=[buffer], generator=self.generator)
 
@@ -129,7 +131,7 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
         self,
         data: Iterable[dict[str, Any]],
         *,
-        model: HookedTransformer,
+        model: LanguageModel,
         model_name: str,
         **kwargs,
     ) -> Iterable[dict[str, Any]]:
@@ -137,7 +139,7 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
 
         Args:
             data (Iterable[dict[str, Any]]): Input data containing tokens to process
-            model (HookedTransformer): Model to extract activations from
+            model (LanguageModel): Model to extract activations from
             model_name (str): Name of the model. Save to metadata.
             **kwargs: Additional keyword arguments. Not used by this processor.
 
@@ -150,16 +152,16 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
         for d in self.batched(data):
             assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
             tokens = d["tokens"]
-            _, cache = model.run_with_cache_until(tokens, names_filter=self.hook_points, until=self.hook_points[-1])
+            activations = model.to_activations_from_tokens(tokens, self.hook_points)
+            assert activations[self.hook_points[0]].shape[:-1] == tokens.shape
+            ret = {k: activations[k] for k in self.hook_points}
             # TODO: Further organize this
             if len(tokens.shape) == 1:
-                ret = {k: cache[k][0] for k in self.hook_points}
                 if "meta" in d:
                     ret = ret | {"meta": d["meta"] | {"model_name": model_name}}
                 else:
                     ret = ret | {"meta": {"model_name": model_name}}
             else:
-                ret = {k: cache[k] for k in self.hook_points}
                 if "meta" in d:
                     ret = ret | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
                 else:
@@ -188,7 +190,7 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
         data: Iterable[dict[str, Any]],
         *,
         ignore_token_ids: Optional[list[int]] = None,
-        model: Optional[HookedTransformer] = None,
+        model: Optional[LanguageModel] = None,
         **kwargs,
     ) -> Iterable[dict[str, Any]]:
         """Process activations by filtering out specified token types.
@@ -207,18 +209,17 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
                 - Original tokens as "tokens"
                 - Original info field if present in input
         """
-        if ignore_token_ids is None and model is None:
+        if ignore_token_ids is None:
             warnings.warn(
-                "Both ignore_token_ids and model are not provided. No tokens (including pad tokens) will be filtered out. If this is intentional, set ignore_token_ids explicitly to an empty list to avoid this warning.",
+                "ignore_token_ids are not provided. No tokens (including pad tokens) will be filtered out. If this is intentional, set ignore_token_ids explicitly to an empty list to avoid this warning.",
                 UserWarning,
                 stacklevel=2,
             )
         if ignore_token_ids is None and model is not None:
-            assert model.tokenizer is not None, "Tokenizer is required to obtain ignore_token_ids"
             ignore_token_ids = [
-                cast(int, model.tokenizer.eos_token_id),
-                cast(int, model.tokenizer.pad_token_id),
-                cast(int, model.tokenizer.bos_token_id),
+                model.eos_token_id,
+                model.pad_token_id,
+                model.bos_token_id,
             ]
         if ignore_token_ids is None:
             ignore_token_ids = []
@@ -258,7 +259,13 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             data will be refilled into the buffer whenever the buffer is less than half full, and then re-shuffled.
     """
 
-    def __init__(self, hook_points: list[str], batch_size: int, buffer_size: Optional[int] = None, buffer_shuffle_config: Optional[BufferShuffleConfig] = None):
+    def __init__(
+        self,
+        hook_points: list[str],
+        batch_size: int,
+        buffer_size: Optional[int] = None,
+        buffer_shuffle_config: Optional[BufferShuffleConfig] = None,
+    ):
         """Initialize the ActivationBatchler.
 
         Args:
