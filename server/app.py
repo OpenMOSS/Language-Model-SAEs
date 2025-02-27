@@ -10,8 +10,8 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from torchvision import transforms
-from transformer_lens import HookedTransformer
 
+from lm_saes.backend import LanguageModel
 from lm_saes.config import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset_shard, load_model
@@ -27,11 +27,11 @@ client = MongoClient(MongoDBConfig())
 sae_series = os.environ.get("SAE_SERIES", "default")
 
 sae_cache: dict[str, SparseAutoEncoder] = {}
-lm_cache: dict[str, HookedTransformer] = {}
+lm_cache: dict[str, LanguageModel] = {}
 dataset_cache: dict[tuple[str, int, int], Dataset] = {}
 
 
-def get_model(name: str) -> HookedTransformer:
+def get_model(name: str) -> LanguageModel:
     cfg = client.get_model_cfg(name)
     if cfg is None:
         raise ValueError(f"Model {name} not found")
@@ -148,7 +148,7 @@ def get_feature(name: str, feature_index: str | int):
             n_shards = sampling.n_shards[i] if sampling.n_shards is not None else 1
             data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx]
 
-            _, token_origins = model.to_tokens_with_origins(data)
+            origins = model.trace(data)[0]
 
             # Replace image_key with image_url
             image_key = "image" if "image" in data else "images" if "images" in data else None
@@ -160,20 +160,18 @@ def get_feature(name: str, feature_index: str | int):
                 del data[image_key]
                 data["images"] = image_urls
 
-            token_origins = token_origins[: len(feature_acts)]
-            feature_acts = feature_acts[: len(token_origins)]
+            origins = origins[: len(feature_acts)]
+            feature_acts = feature_acts[: len(origins)]
 
             if "text" in data:
-                text_ranges = [
-                    origin["range"] for origin in token_origins if origin is not None and origin["key"] == "text"
-                ]
+                text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
                 max_text_origin = max(text_ranges, key=lambda x: x[1])
                 data["text"] = data["text"][: max_text_origin[1]]
 
             samples.append(
                 {
                     **data,
-                    "origins": token_origins,
+                    "origins": origins,
                     "feature_acts": feature_acts,
                 }
             )
