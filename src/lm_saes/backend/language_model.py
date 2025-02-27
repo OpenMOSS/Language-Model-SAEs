@@ -11,11 +11,12 @@ from lm_saes.config import LanguageModelConfig
 
 class LanguageModel(ABC):
     @abstractmethod
-    def to_tokens(self, raw: dict[str, Any]) -> torch.Tensor:
+    def to_tokens(self, raw: dict[str, Any], prepend_bos: bool | None = None) -> torch.Tensor:
         """Convert raw data to tokens.
 
         Args:
             raw (dict[str, Any]): The raw data to convert to tokens. May contain keys like "text", "images", "videos", etc.
+            prepend_bos (bool | None, optional): Whether to prepend the beginning-of-sequence token. Defaults to None.
 
         Returns:
             torch.Tensor: The tokens. Shape: (batch_size, n_tokens)
@@ -54,6 +55,24 @@ class LanguageModel(ABC):
         Args:
             tokens (torch.Tensor): The tokens. Shape: (batch_size, n_tokens)
         """
+        pass
+
+    @property
+    @abstractmethod
+    def eos_token_id(self) -> int:
+        """The ID of the end-of-sequence token."""
+        pass
+
+    @property
+    @abstractmethod
+    def bos_token_id(self) -> int:
+        """The ID of the beginning-of-sequence token."""
+        pass
+
+    @property
+    @abstractmethod
+    def pad_token_id(self) -> int:
+        """The ID of the padding token."""
         pass
 
 
