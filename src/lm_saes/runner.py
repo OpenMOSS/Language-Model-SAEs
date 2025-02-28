@@ -155,7 +155,7 @@ class GenerateActivationsSettings(BaseSettings):
 
     mongo: Optional[MongoDBConfig] = None
     """Configuration for the MongoDB database. If `None`, will not use the database."""
-    
+
     ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
 
@@ -210,7 +210,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
         batch_size=settings.batch_size,
         buffer_size=settings.buffer_size,
         buffer_shuffle=settings.buffer_shuffle,
-        ignore_token_ids=settings.ignore_token_ids
+        ignore_token_ids=settings.ignore_token_ids,
     )
 
     # Configure activation writer
@@ -365,7 +365,7 @@ def train_sae(settings: TrainSAESettings) -> None:
             name=settings.wandb.exp_name,
             entity=settings.wandb.wandb_entity,
             settings=wandb.Settings(x_disable_stats=True),
-            mode=os.getenv("WANDB_MODE", "online"),
+            mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
         if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
         else None
