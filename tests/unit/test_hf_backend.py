@@ -3,14 +3,14 @@ from typing import Any
 import pytest
 import torch
 
-from lm_saes.backend.language_model import Qwen_LanguageModel, Qwen_VL_LanguageModel
+from lm_saes.backend.language_model import QwenLanguageModel, QwenVLLanguageModel
 from lm_saes.config import LanguageModelConfig
 
 if not torch.cuda.is_available():
     pytest.skip("CUDA is not available", allow_module_level=True)
 
 
-class Test_Qwen_VL_LanguageModel:
+class TestQwenVLLanguageModel:
     @pytest.fixture
     def language_model_config(self) -> LanguageModelConfig:
         return LanguageModelConfig(
@@ -37,7 +37,7 @@ class Test_Qwen_VL_LanguageModel:
         }
 
     def test_to_activations(self, language_model_config: LanguageModelConfig, multi_image_input: dict[str, Any]):
-        hf_language_model = Qwen_VL_LanguageModel(language_model_config)
+        hf_language_model = QwenVLLanguageModel(language_model_config)
         hf_language_model.model.eval()
         hook_points = [f"blocks.{i}.hook_resid_post" for i in range(28)]
         activations = hf_language_model.to_activations(multi_image_input, hook_points)
@@ -61,13 +61,13 @@ class Test_Qwen_VL_LanguageModel:
             assert torch.allclose(input=activations[key], other=activations_from_model[key], atol=1e-3)
 
     def test_trace(self, language_model_config: LanguageModelConfig, single_image_input: dict[str, Any]):
-        hf_language_model = Qwen_VL_LanguageModel(language_model_config)
+        hf_language_model = QwenVLLanguageModel(language_model_config)
         hf_language_model.model.eval()
         trace = hf_language_model.trace(single_image_input)
         assert trace[2][6] == (21, 14, 42, 28)
 
 
-class Test_Qwen_LanguageModel:
+class TestQwenLanguageModel:
     @pytest.fixture
     def language_model_config(self) -> LanguageModelConfig:
         return LanguageModelConfig(
@@ -85,13 +85,13 @@ class Test_Qwen_LanguageModel:
 
     def test_to_activations(self, language_model_config: LanguageModelConfig, raw_input: dict[str, Any]):
         hook_points = [f"blocks.{i}.hook_resid_post" for i in range(28)]
-        hf_language_model = Qwen_LanguageModel(language_model_config)
+        hf_language_model = QwenLanguageModel(language_model_config)
         hf_language_model.model.eval()
         activations = hf_language_model.to_activations(raw_input, hook_points)
         assert len(activations) == 28
 
     def test_trace(self, language_model_config: LanguageModelConfig, raw_input: dict[str, Any]):
-        hf_language_model = Qwen_LanguageModel(language_model_config)
+        hf_language_model = QwenLanguageModel(language_model_config)
         hf_language_model.model.eval()
         trace = hf_language_model.trace(raw_input)
         print(trace)
