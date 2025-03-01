@@ -11,10 +11,6 @@ from lm_saes.activation.processors.activation import (
 from lm_saes.activation.processors.cached_activation import CachedActivationLoader
 from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.activation.processors.huggingface import HuggingFaceDatasetLoader
-from lm_saes.activation.processors.token import (
-    PadAndTruncateTokensProcessor,
-    RawDatasetTokenProcessor,
-)
 from lm_saes.backend.language_model import LanguageModel
 from lm_saes.config import (
     ActivationFactoryActivationsSource,
@@ -62,12 +58,6 @@ class ActivationFactory:
         processors_optional: Sequence[
             BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]] | None
         ] = [
-            RawDatasetTokenProcessor(prepend_bos=dataset_source.prepend_bos)
-            if cfg.target >= ActivationFactoryTarget.TOKENS
-            else None,
-            PadAndTruncateTokensProcessor(seq_len=cfg.context_size)
-            if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
-            else None,
             ActivationGenerator(hook_points=cfg.hook_points, batch_size=cfg.model_batch_size)
             if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
             else None,

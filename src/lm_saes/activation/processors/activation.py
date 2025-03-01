@@ -1,3 +1,4 @@
+import itertools
 import warnings
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, cast
@@ -108,24 +109,14 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
             should be divisible by the original batch size.
     """
 
-    def __init__(self, hook_points: list[str], batch_size: Optional[int] = None):
+    def __init__(self, hook_points: list[str], batch_size: int):
         self.hook_points = hook_points
         self.batch_size = batch_size
 
     def batched(self, data: Iterable[dict[str, Any]]) -> Iterable[dict[str, Any]]:
-        if self.batch_size is None:
-            yield from data
-            return
-        buffer = ActivationBuffer()
-        for d in data:
-            if len(d["tokens"].shape) == 1:
-                d = {k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else [v] for k, v in d.items()}
-            buffer = buffer.cat(d)
-            if len(buffer) >= self.batch_size:
-                yield buffer.consume()
-                buffer = ActivationBuffer()
-        if len(buffer) > 0:
-            yield buffer.consume()
+        for d in itertools.batched(data, self.batch_size):
+            keys = d[0].keys()
+            yield {k: [dd[k] for dd in d] for k in keys}
 
     def process(
         self,
@@ -150,23 +141,13 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
                 - Original info field if present in input
         """
         for d in self.batched(data):
-            assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
-            tokens = d["tokens"]
-            activations = model.to_activations_from_tokens(tokens, self.hook_points)
-            assert activations[self.hook_points[0]].shape[:-1] == tokens.shape
+            activations = model.to_activations(d, self.hook_points)
             ret = {k: activations[k] for k in self.hook_points}
-            # TODO: Further organize this
-            if len(tokens.shape) == 1:
-                if "meta" in d:
-                    ret = ret | {"meta": d["meta"] | {"model_name": model_name}}
-                else:
-                    ret = ret | {"meta": {"model_name": model_name}}
+            if "meta" in d:
+                ret = ret | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
             else:
-                if "meta" in d:
-                    ret = ret | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
-                else:
-                    ret = ret | {"meta": [{"model_name": model_name} for _ in range(tokens.shape[0])]}
-            ret = ret | {"tokens": tokens}
+                ret = ret | {"meta": [{"model_name": model_name} for _ in range(len(d["text"]))]}
+            # TODO: Use tokens as intermediates if TransformerLensLanguageModel is used
             yield ret
 
 

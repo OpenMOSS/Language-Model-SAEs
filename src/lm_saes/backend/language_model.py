@@ -54,19 +54,6 @@ def _get_layer_indices_from_hook_points(hook_points: list[str]) -> list[int]:
 
 class LanguageModel(ABC):
     @abstractmethod
-    def to_tokens(self, raw: dict[str, Any], prepend_bos: bool | None = None) -> torch.Tensor:
-        """Convert raw data to tokens.
-
-        Args:
-            raw (dict[str, Any]): The raw data to convert to tokens. May contain keys like "text", "images", "videos", etc.
-            prepend_bos (bool | None, optional): Whether to prepend the beginning-of-sequence token. Defaults to None.
-
-        Returns:
-            torch.Tensor: The tokens. Shape: (batch_size, n_tokens)
-        """
-        pass
-
-    @abstractmethod
     def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
         """Trace how raw data is eventually aligned with tokens.
 
@@ -88,15 +75,6 @@ class LanguageModel(ABC):
 
         Returns:
             dict[str, torch.Tensor]: The activations. Shape: (batch_size, n_tokens, n_activations)
-        """
-        pass
-
-    @abstractmethod
-    def to_activations_from_tokens(self, tokens: torch.Tensor, hook_points: list[str]) -> dict[str, torch.Tensor]:
-        """Convert tokens to activations.
-
-        Args:
-            tokens (torch.Tensor): The tokens. Shape: (batch_size, n_tokens)
         """
         pass
 
