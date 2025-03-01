@@ -50,9 +50,9 @@ class ActivationFactory:
     ):
         loader = HuggingFaceDatasetLoader(
             batch_size=1,
-            num_workers=4,
             with_info=True,
             show_progress=True,
+            num_workers=cfg.num_workers,
         )
 
         processors_optional: Sequence[

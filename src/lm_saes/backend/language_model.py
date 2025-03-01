@@ -105,7 +105,7 @@ class HuggingFaceLanguageModel(LanguageModel):
         )
 
 
-class Qwen_VL_LanguageModel(HuggingFaceLanguageModel):
+class QwenVLLanguageModel(HuggingFaceLanguageModel):
     def __init__(self, cfg: LanguageModelConfig):
         super().__init__(cfg)
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
@@ -136,12 +136,6 @@ class Qwen_VL_LanguageModel(HuggingFaceLanguageModel):
     @property
     def pad_token_id(self) -> int | None:
         return self.tokenizer.pad_token_id
-
-    def to_tokens(self, raw: dict[str, Any], prepend_bos: bool | None = None) -> torch.Tensor:  # type: ignore
-        pass
-
-    def to_activations_from_tokens(self, tokens: torch.Tensor) -> dict[str, torch.Tensor]:  # type: ignore
-        pass
 
     def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
         assert self.tokenizer is not None, "tokenizer must be initialized"
@@ -225,6 +219,7 @@ class Qwen_VL_LanguageModel(HuggingFaceLanguageModel):
         activations = {
             hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
         }
+        activations["tokens"] = inputs["input_ids"]
         return activations
 
     def process_raw_data(self, raw: dict[str, Any]) -> tuple[BatchFeature, dict[str, Any]]:
@@ -254,7 +249,7 @@ class Qwen_VL_LanguageModel(HuggingFaceLanguageModel):
         return inputs, processed_raw
 
 
-class Qwen_LanguageModel(HuggingFaceLanguageModel):
+class QwenLanguageModel(HuggingFaceLanguageModel):
     def __init__(self, cfg: LanguageModelConfig):
         super().__init__(cfg)
         # hidden_size is 3584 for Qwen2.5-7B
@@ -292,6 +287,7 @@ class Qwen_LanguageModel(HuggingFaceLanguageModel):
         activations = {
             hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
         }
+        activations["tokens"] = inputs["input_ids"]
         return activations
 
     def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
@@ -303,9 +299,3 @@ class Qwen_LanguageModel(HuggingFaceLanguageModel):
         return [
             _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
         ]
-
-    def to_activations_from_tokens(self, tokens: torch.Tensor, hook_points: list[str]) -> dict[str, torch.Tensor]:  # type: ignore
-        pass
-
-    def to_tokens(self, raw: dict[str, Any], prepend_bos: bool | None = None) -> torch.Tensor:  # type: ignore
-        pass

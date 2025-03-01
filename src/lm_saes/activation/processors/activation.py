@@ -142,13 +142,12 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
         """
         for d in self.batched(data):
             activations = model.to_activations(d, self.hook_points)
-            ret = {k: activations[k] for k in self.hook_points}
             if "meta" in d:
-                ret = ret | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
+                activations = activations | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
             else:
-                ret = ret | {"meta": [{"model_name": model_name} for _ in range(len(d["text"]))]}
+                activations = activations | {"meta": [{"model_name": model_name} for _ in range(len(d["text"]))]}
             # TODO: Use tokens as intermediates if TransformerLensLanguageModel is used
-            yield ret
+            yield activations
 
 
 class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]):
@@ -197,16 +196,18 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
                 stacklevel=2,
             )
         if ignore_token_ids is None and model is not None:
-            ignore_token_ids = [
+            ignore_token_ids_optional = [
                 model.eos_token_id,
                 model.pad_token_id,
                 model.bos_token_id,
             ]
+            ignore_token_ids = [token_id for token_id in ignore_token_ids_optional if token_id is not None]
         if ignore_token_ids is None:
             ignore_token_ids = []
         for d in data:
             assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
             tokens = d["tokens"]
+            print(tokens)
             mask = torch.ones_like(tokens, dtype=torch.bool)
             for token_id in ignore_token_ids:
                 mask &= tokens != token_id
