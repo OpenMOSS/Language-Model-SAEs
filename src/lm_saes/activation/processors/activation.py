@@ -80,9 +80,9 @@ class ActivationBuffer:
             ActivationBuffer: New buffer with shuffled samples
         """
         data = self.consume()
-        assert all(isinstance(data[k], torch.Tensor) for k in data.keys()), (
-            "All data must be tensors to perform shuffling"
-        )
+        assert all(
+            isinstance(data[k], torch.Tensor) for k in data.keys()
+        ), "All data must be tensors to perform shuffling"
         data = cast(dict[str, torch.Tensor], data)
 
         # Use the passed generator for shuffling
@@ -189,7 +189,7 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
                 - Original tokens as "tokens"
                 - Original info field if present in input
         """
-        if ignore_token_ids is None:
+        if ignore_token_ids is None and model is None:
             warnings.warn(
                 "ignore_token_ids are not provided. No tokens (including pad tokens) will be filtered out. If this is intentional, set ignore_token_ids explicitly to an empty list to avoid this warning.",
                 UserWarning,
@@ -207,7 +207,6 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
         for d in data:
             assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
             tokens = d["tokens"]
-            print(tokens)
             mask = torch.ones_like(tokens, dtype=torch.bool)
             for token_id in ignore_token_ids:
                 mask &= tokens != token_id
@@ -290,9 +289,9 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             ), "All hook points must be present and be 2D tensors"
 
             # Validate input: ensure all tensors have consistent shapes
-            assert all(d[k].shape == d[self.hook_points[0]].shape for k in self.hook_points), (
-                "All tensors must have the same shape"
-            )
+            assert all(
+                d[k].shape == d[self.hook_points[0]].shape for k in self.hook_points
+            ), "All tensors must have the same shape"
 
             # Add new data to buffer
             buffer = buffer.cat({k: v for k, v in d.items() if k in self.hook_points or k == "tokens"})
