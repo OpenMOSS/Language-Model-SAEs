@@ -80,9 +80,9 @@ class ActivationBuffer:
             ActivationBuffer: New buffer with shuffled samples
         """
         data = self.consume()
-        assert all(
-            isinstance(data[k], torch.Tensor) for k in data.keys()
-        ), "All data must be tensors to perform shuffling"
+        assert all(isinstance(data[k], torch.Tensor) for k in data.keys()), (
+            "All data must be tensors to perform shuffling"
+        )
         data = cast(dict[str, torch.Tensor], data)
 
         # Use the passed generator for shuffling
@@ -290,9 +290,9 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             ), "All hook points must be present and be 2D tensors"
 
             # Validate input: ensure all tensors have consistent shapes
-            assert all(
-                d[k].shape == d[self.hook_points[0]].shape for k in self.hook_points
-            ), "All tensors must have the same shape"
+            assert all(d[k].shape == d[self.hook_points[0]].shape for k in self.hook_points), (
+                "All tensors must have the same shape"
+            )
 
             # Add new data to buffer
             buffer = buffer.cat({k: v for k, v in d.items() if k in self.hook_points or k == "tokens"})
