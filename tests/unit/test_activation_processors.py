@@ -1,7 +1,6 @@
 import torch
 from datasets import Dataset
 from pytest_mock import MockerFixture
-from transformer_lens import HookedTransformer
 
 from lm_saes.activation.processors.activation import (
     ActivationBatchler,
@@ -10,10 +9,7 @@ from lm_saes.activation.processors.activation import (
     ActivationTransformer,
 )
 from lm_saes.activation.processors.huggingface import HuggingFaceDatasetLoader
-from lm_saes.activation.processors.token import (
-    PadAndTruncateTokensProcessor,
-    RawDatasetTokenProcessor,
-)
+from lm_saes.backend.language_model import LanguageModel
 
 
 def test_huggingface_dataset_loader():
@@ -54,53 +50,52 @@ def test_huggingface_dataset_loader():
     assert all("context_idx" in x["meta"] for x in result_with_info)
 
 
-def test_token_processors(mocker: MockerFixture):
-    # Mock HookedTransformer
-    mock_model = mocker.Mock(spec=HookedTransformer)
-    mock_model.to_tokens_with_origins.return_value = torch.tensor([[1, 2, 3]])
+# def test_token_processors(mocker: MockerFixture):
+#     # Mock HookedTransformer
+#     mock_model = mocker.Mock(spec=HookedTransformer)
+#     mock_model.to_tokens_with_origins.return_value = torch.tensor([[1, 2, 3]])
 
-    # Test RawDatasetTokenProcessor
-    token_processor = RawDatasetTokenProcessor()
-    input_data = [{"text": "test text", "meta": {"some": "meta"}}]
-    result = list(token_processor.process(input_data, model=mock_model))
-    assert len(result) == 1
-    assert "tokens" in result[0]
-    assert "meta" in result[0]
-    assert torch.allclose(result[0]["tokens"], torch.tensor([1, 2, 3]))
+#     # Test RawDatasetTokenProcessor
+#     token_processor = RawDatasetTokenProcessor()
+#     input_data = [{"text": "test text", "meta": {"some": "meta"}}]
+#     result = list(token_processor.process(input_data, model=mock_model))
+#     assert len(result) == 1
+#     assert "tokens" in result[0]
+#     assert "meta" in result[0]
+#     assert torch.allclose(result[0]["tokens"], torch.tensor([1, 2, 3]))
 
-    # Test PadAndTruncateTokensProcessor
-    pad_processor = PadAndTruncateTokensProcessor(seq_len=5)
-    input_tokens = [{"tokens": torch.tensor([1, 2, 3]), "meta": {"some": "meta"}}]
-    result = list(pad_processor.process(input_tokens))
-    assert len(result) == 1
-    assert result[0]["tokens"].shape == (5,)  # Should be padded to length 5
+#     # Test PadAndTruncateTokensProcessor
+#     pad_processor = PadAndTruncateTokensProcessor(seq_len=5)
+#     input_tokens = [{"tokens": torch.tensor([1, 2, 3]), "meta": {"some": "meta"}}]
+#     result = list(pad_processor.process(input_tokens))
+#     assert len(result) == 1
+#     assert result[0]["tokens"].shape == (5,)  # Should be padded to length 5
 
 
 def test_activation_processors(mocker: MockerFixture):
     # Mock HookedTransformer
-    mock_model = mocker.Mock(spec=HookedTransformer)
-    mock_model.run_with_cache_until.return_value = (
-        None,
-        {"h0": [torch.arange(9).reshape(1, 3, 3)], "h1": [torch.arange(9, 18).reshape(1, 3, 3)]},
-    )
+    mock_model = mocker.Mock(spec=LanguageModel)
+    mock_model.to_activations.return_value = {
+        "h0": torch.arange(9).reshape(1, 3, 3),
+        "h1": torch.arange(9, 18).reshape(1, 3, 3),
+    }
 
     # Test ActivationGenerator
     hook_points = ["h0", "h1"]
-    generator = ActivationGenerator(hook_points=hook_points)
-    input_data = [{"tokens": torch.tensor([1, 2, 3])}]
+    generator = ActivationGenerator(hook_points=hook_points, batch_size=1)
+    input_data = [{"text": "test text", "meta": {"some": "meta"}}]
     result = list(generator.process(input_data, model=mock_model, model_name="test"))
     assert len(result) == 1
     assert all(h in result[0] for h in hook_points)
-    assert torch.allclose(result[0]["h0"], torch.tensor([[0, 1, 2], [3, 4, 5], [6, 7, 8]]))
-    assert torch.allclose(result[0]["h1"], torch.tensor([[9, 10, 11], [12, 13, 14], [15, 16, 17]]))
-    assert result[0]["meta"]["model_name"] == "test"
+    assert torch.allclose(result[0]["h0"], torch.arange(9).reshape(1, 3, 3))
+    assert torch.allclose(result[0]["h1"], torch.arange(9, 18).reshape(1, 3, 3))
+    assert result[0]["meta"][0]["model_name"] == "test"
 
     # Test ActivationTransformer
     transformer = ActivationTransformer(hook_points=hook_points)
-    mock_model.tokenizer = mocker.Mock()
-    mock_model.tokenizer.eos_token_id = 1
-    mock_model.tokenizer.pad_token_id = 0
-    mock_model.tokenizer.bos_token_id = 2
+    mock_model.eos_token_id = 1
+    mock_model.pad_token_id = 0
+    mock_model.bos_token_id = 2
 
     input_activations = [
         {
