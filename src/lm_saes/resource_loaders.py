@@ -1,10 +1,21 @@
 from typing import Any, Optional, cast
 
 import datasets
+import torch
 from torch.distributed.device_mesh import DeviceMesh
 
-from lm_saes.backend.language_model import LanguageModel
+from lm_saes.backend.language_model import LanguageModel, QwenVLLanguageModel
 from lm_saes.config import DatasetConfig, LanguageModelConfig
+
+
+def dataset_transform(data):
+    if "image" in data:
+        # Rename image to images
+        data["images"] = data["image"]
+        del data["image"]
+
+        data["images"] = [[torch.tensor(image) for image in images] for images in data["images"]]
+    return data
 
 
 def load_dataset_shard(
@@ -18,7 +29,7 @@ def load_dataset_shard(
         dataset = datasets.load_from_disk(cfg.dataset_name_or_path)
     dataset = cast(datasets.Dataset, dataset)
     dataset = dataset.shard(num_shards=n_shards, index=shard_idx, contiguous=True)
-    dataset = dataset.with_format("torch")
+    dataset.set_transform(dataset_transform)
     return dataset
 
 
@@ -48,9 +59,12 @@ def load_dataset(
     else:
         shard = dataset
         shard_metadata = None
-    shard = shard.with_format("torch")
+    shard.set_transform(dataset_transform)
     return shard, shard_metadata
 
 
 def load_model(cfg: LanguageModelConfig) -> LanguageModel:
-    raise NotImplementedError
+    if cfg.model_name.startswith("Qwen/Qwen2.5-VL"):
+        return QwenVLLanguageModel(cfg)
+    else:
+        raise NotImplementedError(f"Model {cfg.model_name} not supported")

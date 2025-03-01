@@ -13,7 +13,6 @@ from pydantic import (
     PlainSerializer,
     WithJsonSchema,
 )
-from transformer_lens.loading_from_pretrained import get_official_model_name
 
 from .utils.huggingface import parse_pretrained_name_or_path
 from .utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str
@@ -299,7 +298,7 @@ class ActivationFactoryConfig(BaseConfig):
 
 
 class LanguageModelConfig(BaseModelConfig):
-    model_name: Annotated[str, BeforeValidator(lambda v: get_official_model_name(v))] = "gpt2"
+    model_name: str = "gpt2"
     """ The name of the model to use. """
     model_from_pretrained_path: Optional[str] = None
     """ The path to the pretrained model. If `None`, will use the model from HuggingFace. """
