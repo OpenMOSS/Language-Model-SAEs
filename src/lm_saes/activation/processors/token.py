@@ -61,7 +61,8 @@ class RawDatasetTokenProcessor(BaseActivationProcessor[Iterable[dict[str, Any]],
             dict: Processed token data with optional info field
         """
         for d in data:
-            tokens = model.to_tokens(d, prepend_bos=self.prepend_bos)
+            # TODO: support TransformerLens backend
+            tokens = model.to_tokens(d, prepend_bos=self.prepend_bos)  # type: ignore
             ret = {"tokens": tokens[0]}
             if "meta" in d:
                 ret = ret | {"meta": d["meta"]}
@@ -115,6 +116,7 @@ class PadAndTruncateTokensProcessor(BaseActivationProcessor[Iterable[dict[str, A
 
         for d in data:
             assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
+            assert pad_token_id is not None, "pad_token_id must be provided"
             tokens = pad_and_truncate_tokens(d["tokens"], seq_len=self.seq_len, pad_token_id=pad_token_id)
             ret = {"tokens": tokens}
             if "meta" in d:
