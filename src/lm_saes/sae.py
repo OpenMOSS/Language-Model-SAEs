@@ -488,9 +488,13 @@ class SparseAutoEncoder(HookedRootModule):
     ]:  # may be overridden by subclasses
         max_l0_in_batch = feature_acts.gt(0).to(feature_acts).sum(dim=-1).max()
         sparsity_threshold = self.cfg.d_sae * (1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel)
-        if self.cfg.use_triton_kernel and 0 < max_l0_in_batch < sparsity_threshold:  # triton kernel cannot handle empty feature_acts
-            require_precise_feature_acts_grad = "topk" not in self.cfg.act_fn 
-            reconstructed = decode_with_triton_spmm_kernel(feature_acts, self.decoder.weight, require_precise_feature_acts_grad)
+        if (
+            self.cfg.use_triton_kernel and 0 < max_l0_in_batch < sparsity_threshold
+        ):  # triton kernel cannot handle empty feature_acts
+            require_precise_feature_acts_grad = "topk" not in self.cfg.act_fn
+            reconstructed = decode_with_triton_spmm_kernel(
+                feature_acts, self.decoder.weight, require_precise_feature_acts_grad
+            )
         else:
             reconstructed = self.decoder(feature_acts)
         reconstructed = self.hook_reconstructed(reconstructed)
@@ -586,6 +590,7 @@ class SparseAutoEncoder(HookedRootModule):
             "l_rec": l_rec,
         }
 
+        assert self.current_l1_coefficient is not None, "current_l1_coefficient is not initialized"
         if sparsity_loss_type == "power":
             l_s = torch.norm(feature_acts * self._decoder_norm(decoder=self.decoder), p=p, dim=-1)
             loss_dict["l_s"] = self.current_l1_coefficient * l_s.mean()

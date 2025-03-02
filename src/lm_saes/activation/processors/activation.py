@@ -118,6 +118,7 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
             keys = d[0].keys()
             yield {k: [dd[k] for dd in d] for k in keys}
 
+    @torch.no_grad()
     def process(
         self,
         data: Iterable[dict[str, Any]],
