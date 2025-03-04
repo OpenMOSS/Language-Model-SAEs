@@ -110,6 +110,7 @@ class CrossCoderConfig(BaseSAEConfig):
 class MixCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "mixcoder"
     modalities: dict[str, int]
+    loss_weights: dict[str, float]
 
     @property
     def d_sae(self) -> int:

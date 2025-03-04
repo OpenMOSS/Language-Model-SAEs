@@ -158,6 +158,17 @@ def get_modality_indices(tokenizer: PreTrainedTokenizerBase, model_name: str) ->
                 modality_indices["text"] = (
                     [token_id] if "text" not in modality_indices else modality_indices["text"] + [token_id]
                 )
+
+    elif model_name == "Qwen/Qwen2.5-VL-7B-Instruct":
+        for token_name, token_id in tokenizer.get_vocab().items():
+            if token_name == "<|image_pad|>":
+                modality_indices["image"] = [token_id]
+            elif token_name == "<|vision_start|>" or token_name == "<|vision_end|>":
+                continue
+            else:
+                modality_indices["text"] = (
+                    [token_id] if "text" not in modality_indices else modality_indices["text"] + [token_id]
+                )
     else:
         raise ValueError(f"Unsupported model: {model_name}")
     for modality in modality_indices:

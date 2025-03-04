@@ -7,13 +7,13 @@ import torch.optim.lr_scheduler as lr_scheduler
 from torch import Tensor
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
-from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import TrainerConfig
 from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.misc import all_reduce_tensor
+from wandb.sdk.wandb_run import Run
 
 
 class Trainer:
@@ -225,6 +225,7 @@ class Trainer:
                             .item(),
                             f"mixcoder_metrics/{modality}_token_num": token_num,
                             f"mixcoder_metrics/{modality}_ev": explained_variance_modality.float().mean().item(),
+                            f"mixcoder_metrics/{modality}_loss": log_info[f"{modality}_loss"].float().mean().item(),
                         }
                     )
 
@@ -262,6 +263,9 @@ class Trainer:
             sae.train()
             self.optimizer.zero_grad()
             loss_dict = self._training_step(sae, batch)
+            if sae.cfg.sae_type == "mixcoder":
+                if loss_dict["text_token_num"] <= 200 or loss_dict["image_token_num"] <= 100:
+                    continue
             loss_dict["loss"].backward()
             # TODO: add support for mixcoder to use different clip_grad_norm for each modality
             loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
