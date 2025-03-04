@@ -420,12 +420,16 @@ class MixCoder(SparseAutoEncoder):
 
         x: torch.Tensor = batch[self.cfg.hook_point_in]
         label: torch.Tensor = batch[self.cfg.hook_point_out]
-        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **kwargs)
-        reconstructed = self.decode(feature_acts, **kwargs)
+
+        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, modalities=modalities, **kwargs)
+        reconstructed = self.decode(feature_acts, modalities=modalities, **kwargs)
+
         label_norm_factor: torch.Tensor = self.compute_norm_factor(label, hook_point=self.cfg.hook_point_out)
         label_normed = label * label_norm_factor
+
         loss_list = []
         loss_dict = {}
+
         for modality, (start, end) in self.modality_index.items():
             if modality == "shared":
                 continue
@@ -445,6 +449,7 @@ class MixCoder(SparseAutoEncoder):
             loss_list.append(l_rec)
             loss_dict[f"{modality}_loss"] = l_rec.mean()
             loss_dict[f"{modality}_token_num"] = token_num.item()
+
         l_rec = torch.concat(loss_list)
         loss = l_rec.mean()
         loss_dict["l_rec"] = l_rec
@@ -462,4 +467,5 @@ class MixCoder(SparseAutoEncoder):
                 "hidden_pre": hidden_pre,
             }
             return loss, (loss_dict, aux_data)
+
         return loss
