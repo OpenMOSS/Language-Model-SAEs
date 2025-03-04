@@ -4,7 +4,7 @@ import datasets
 import torch
 from torch.distributed.device_mesh import DeviceMesh
 
-from lm_saes.backend.language_model import LanguageModel, QwenVLLanguageModel
+from lm_saes.backend.language_model import LanguageModel, QwenLanguageModel, QwenVLLanguageModel
 from lm_saes.config import DatasetConfig, LanguageModelConfig
 
 
@@ -66,5 +66,7 @@ def load_dataset(
 def load_model(cfg: LanguageModelConfig) -> LanguageModel:
     if cfg.model_name.startswith("Qwen/Qwen2.5-VL"):
         return QwenVLLanguageModel(cfg)
+    if cfg.model_name.startswith("Qwen/Qwen2.5-7B"):
+        return QwenLanguageModel(cfg)
     else:
         raise NotImplementedError(f"Model {cfg.model_name} not supported")
