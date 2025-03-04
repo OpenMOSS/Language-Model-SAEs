@@ -146,31 +146,31 @@ def calculate_activation_norm(
     return activation_norm
 
 
-def get_modality_indices(tokenizer: PreTrainedTokenizerBase, model_name: str) -> dict[str, torch.Tensor]:
-    modality_indices = {}
+def get_modality_tokens(tokenizer: PreTrainedTokenizerBase, model_name: str) -> dict[str, torch.Tensor]:
+    modality_tokens = {}
     if model_name == "facebook/chameleon-7b":
         for token_name, token_id in tokenizer.get_vocab().items():
             if token_name.startswith("IMGIMG"):
-                modality_indices["image"] = (
-                    [token_id] if "image" not in modality_indices else modality_indices["image"] + [token_id]
+                modality_tokens["image"] = (
+                    [token_id] if "image" not in modality_tokens else modality_tokens["image"] + [token_id]
                 )
             else:
-                modality_indices["text"] = (
-                    [token_id] if "text" not in modality_indices else modality_indices["text"] + [token_id]
+                modality_tokens["text"] = (
+                    [token_id] if "text" not in modality_tokens else modality_tokens["text"] + [token_id]
                 )
 
     elif model_name == "Qwen/Qwen2.5-VL-7B-Instruct":
         for token_name, token_id in tokenizer.get_vocab().items():
             if token_name == "<|image_pad|>":
-                modality_indices["image"] = [token_id]
+                modality_tokens["image"] = [token_id]
             elif token_name == "<|vision_start|>" or token_name == "<|vision_end|>":
                 continue
             else:
-                modality_indices["text"] = (
-                    [token_id] if "text" not in modality_indices else modality_indices["text"] + [token_id]
+                modality_tokens["text"] = (
+                    [token_id] if "text" not in modality_tokens else modality_tokens["text"] + [token_id]
                 )
     else:
         raise ValueError(f"Unsupported model: {model_name}")
-    for modality in modality_indices:
-        modality_indices[modality] = torch.tensor(modality_indices[modality], dtype=torch.long)
-    return modality_indices
+    for modality in modality_tokens:
+        modality_tokens[modality] = torch.tensor(modality_tokens[modality], dtype=torch.long)
+    return modality_tokens
