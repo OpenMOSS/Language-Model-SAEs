@@ -111,7 +111,6 @@ class Trainer:
             p=self.cfg.p,
             use_batch_norm_mse=self.cfg.use_batch_norm_mse,
             return_aux_data=True,
-            tokens=batch["tokens"],
         )
         loss_dict = {"loss": loss, "batch_size": batch[sae.cfg.hook_point_in].shape[0]} | loss_data | aux_data
         return loss_dict

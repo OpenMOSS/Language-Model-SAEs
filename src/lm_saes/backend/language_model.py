@@ -243,7 +243,9 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
             text=processed_raw["text"],
             images=images,
             return_tensors="pt",
+            max_length=2048,
             padding=True,
+            truncation=True,
         )
 
         return inputs, processed_raw

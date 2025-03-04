@@ -115,6 +115,15 @@ class MixCoderConfig(BaseSAEConfig):
     def d_sae(self) -> int:
         return sum(self.modalities.values())
 
+    @property
+    def modality_names(self) -> list[str]:
+        return [k for k in self.modalities.keys() if k != "shared"]
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        if "shared" in self.modalities:
+            assert list(self.modalities.keys())[-1] == "shared", "Shared modality must be the last modality"
+
 
 class InitializerConfig(BaseConfig):
     bias_init_method: str = "all_zero"

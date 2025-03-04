@@ -1,4 +1,4 @@
-from typing import Any, Iterable, Iterator, Optional, Sequence
+from typing import Any, Callable, Iterable, Iterator, Optional, Sequence
 
 import numpy as np
 from datasets import Dataset
@@ -33,36 +33,40 @@ class ActivationFactory:
     3. Post-aggregation processor: Process the aggregated data through a final processor.
     """
 
-    def __init__(self, cfg: ActivationFactoryConfig):
+    def __init__(
+        self,
+        cfg: ActivationFactoryConfig,
+        before_aggregation_interceptor: Callable[[dict[str, Any], int], dict[str, Any]] | None = None,
+    ):
         """Initialize the factory with the given configuration.
 
         Args:
             cfg: Configuration object specifying data sources, processing pipeline and output format
         """
         self.cfg = cfg
-        self.pre_aggregation_processors = self.build_pre_aggregation_processors(cfg)
-        self.post_aggregation_processor = self.build_post_aggregation_processor(cfg)
-        self.aggregator = self.build_aggregator(cfg)
+        self.pre_aggregation_processors = self.build_pre_aggregation_processors()
+        self.post_aggregation_processor = self.build_post_aggregation_processor()
+        self.aggregator = self.build_aggregator()
+        self.before_aggregation_interceptor = before_aggregation_interceptor
 
-    @staticmethod
     def _build_pre_aggregation_dataset_source_processors(
-        cfg: ActivationFactoryConfig, dataset_source: ActivationFactoryDatasetSource
+        self, dataset_source: ActivationFactoryDatasetSource, source_idx: int
     ):
         loader = HuggingFaceDatasetLoader(
             batch_size=1,
             with_info=True,
             show_progress=True,
-            num_workers=cfg.num_workers,
+            num_workers=self.cfg.num_workers,
         )
 
         processors_optional: Sequence[
             BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]] | None
         ] = [
-            ActivationGenerator(hook_points=cfg.hook_points, batch_size=cfg.model_batch_size)
-            if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
+            ActivationGenerator(hook_points=self.cfg.hook_points, batch_size=self.cfg.model_batch_size)
+            if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
             else None,
-            ActivationTransformer(hook_points=cfg.hook_points)
-            if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
+            ActivationTransformer(hook_points=self.cfg.hook_points)
+            if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
             else None,
         ]
 
@@ -95,23 +99,30 @@ class ActivationFactory:
 
             for processor in processors:
                 stream = processor.process(
-                    stream, model=model, model_name=model_name, ignore_token_ids=cfg.ignore_token_ids
+                    stream, model=model, model_name=model_name, ignore_token_ids=self.cfg.ignore_token_ids
                 )
+
+            if self.before_aggregation_interceptor is not None:
+                before_aggregation_interceptor = self.before_aggregation_interceptor  # capture the function
+
+                def interceptor(x: dict[str, Any]):
+                    return before_aggregation_interceptor(x, source_idx)
+
+                stream = map(interceptor, stream)
 
             return stream
 
         return process_dataset
 
-    @staticmethod
     def _build_pre_aggregation_activations_source_processors(
-        cfg: ActivationFactoryConfig, activations_source: ActivationFactoryActivationsSource
+        self, activations_source: ActivationFactoryActivationsSource, source_idx: int
     ):
-        if cfg.target < ActivationFactoryTarget.ACTIVATIONS_2D:
+        if self.cfg.target < ActivationFactoryTarget.ACTIVATIONS_2D:
             raise ValueError("Activations sources are only supported for target >= ACTIVATIONS_2D")
 
         loader = CachedActivationLoader(
             cache_dir=activations_source.path,
-            hook_points=cfg.hook_points,
+            hook_points=self.cfg.hook_points,
             device=activations_source.device,
             dtype=activations_source.dtype,
             num_workers=activations_source.num_workers,
@@ -119,8 +130,8 @@ class ActivationFactory:
         )
 
         processors = (
-            [ActivationTransformer(hook_points=cfg.hook_points)]
-            if cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
+            [ActivationTransformer(hook_points=self.cfg.hook_points)]
+            if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
             else []
         )
 
@@ -137,41 +148,33 @@ class ActivationFactory:
 
             stream = loader.process()
             for processor in processors:
-                stream = processor.process(stream, ignore_token_ids=cfg.ignore_token_ids, model=model)
+                stream = processor.process(stream, ignore_token_ids=self.cfg.ignore_token_ids, model=model)
 
             return stream
 
         return process_activations
 
-    @staticmethod
-    def build_pre_aggregation_processors(cfg: ActivationFactoryConfig):
+    def build_pre_aggregation_processors(self):
         """Build processors that run before aggregation for each data source.
-
-        Args:
-            cfg: Factory configuration object
 
         Returns:
             List of callables that process data from each source
         """
         # Split sources by type
-        dataset_sources = [source for source in cfg.sources if isinstance(source, ActivationFactoryDatasetSource)]
+        dataset_sources = [source for source in self.cfg.sources if isinstance(source, ActivationFactoryDatasetSource)]
         activations_sources = [
-            source for source in cfg.sources if isinstance(source, ActivationFactoryActivationsSource)
+            source for source in self.cfg.sources if isinstance(source, ActivationFactoryActivationsSource)
         ]
 
         pre_aggregation_processors = [
-            ActivationFactory._build_pre_aggregation_dataset_source_processors(cfg, source)
-            for source in dataset_sources
+            self._build_pre_aggregation_dataset_source_processors(source, i) for i, source in enumerate(dataset_sources)
         ] + [
-            ActivationFactory._build_pre_aggregation_activations_source_processors(cfg, source)
-            for source in activations_sources
+            self._build_pre_aggregation_activations_source_processors(source, i + len(dataset_sources))
+            for i, source in enumerate(activations_sources)
         ]
         return pre_aggregation_processors
 
-    @staticmethod
-    def build_post_aggregation_processor(
-        cfg: ActivationFactoryConfig,
-    ):
+    def build_post_aggregation_processor(self):
         """Build processor that runs after aggregation.
 
         Args:
@@ -183,15 +186,15 @@ class ActivationFactory:
 
         def build_batchler():
             """Create batchler for batched-activations-1d target."""
-            assert cfg.batch_size is not None, "Batch size must be provided for outputting batched-activations-1d"
+            assert self.cfg.batch_size is not None, "Batch size must be provided for outputting batched-activations-1d"
             return ActivationBatchler(
-                hook_points=cfg.hook_points,
-                batch_size=cfg.batch_size,
-                buffer_size=cfg.buffer_size,
-                buffer_shuffle_config=cfg.buffer_shuffle,
+                hook_points=self.cfg.hook_points,
+                batch_size=self.cfg.batch_size,
+                buffer_size=self.cfg.buffer_size,
+                buffer_shuffle_config=self.cfg.buffer_shuffle,
             )
 
-        processors = [build_batchler()] if cfg.target >= ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D else []
+        processors = [build_batchler()] if self.cfg.target >= ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D else []
 
         def process_activations(activations: Iterable[dict[str, Any]], **kwargs: Any):
             """Process aggregated activations through post-processors.
@@ -209,19 +212,13 @@ class ActivationFactory:
 
         return process_activations
 
-    @staticmethod
-    def build_aggregator(
-        cfg: ActivationFactoryConfig,
-    ):
+    def build_aggregator(self):
         """Build function to aggregate data from multiple sources.
-
-        Args:
-            cfg: Factory configuration object
 
         Returns:
             Callable that aggregates data streams. Currently is a simple weighted random sampler.
         """
-        source_sample_weights = np.array([source.sample_weights for source in cfg.sources])
+        source_sample_weights = np.array([source.sample_weights for source in self.cfg.sources])
 
         def aggregate(activations: list[Iterable[dict[str, Any]]], **kwargs: Any) -> Iterable[dict[str, Any]]:
             """Aggregate multiple activation streams by sampling based on weights.
@@ -233,7 +230,7 @@ class ActivationFactory:
             Yields:
                 Sampled activation data with source info
             """
-            ran_out_of_samples = np.zeros(len(cfg.sources), dtype=bool)
+            ran_out_of_samples = np.zeros(len(self.cfg.sources), dtype=bool)
             activations: list[Iterator[dict[str, Any]]] = [iter(activation) for activation in activations]
             # Mask out sources run out of samples
             weights = source_sample_weights[~ran_out_of_samples]
