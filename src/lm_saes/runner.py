@@ -2,11 +2,11 @@ import os
 from pathlib import Path
 from typing import Literal, Optional, TypeVar, overload
 
+import torch
 import wandb
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from torch.distributed.device_mesh import init_device_mesh
-from transformers import AutoTokenizer
 
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.activation.writer import ActivationWriter
@@ -35,6 +35,7 @@ from lm_saes.mixcoder import MixCoder
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.trainer import Trainer
+from lm_saes.utils.misc import get_modality_tokens
 
 T = TypeVar("T")
 
@@ -120,7 +121,7 @@ class GenerateActivationsSettings(BaseSettings):
     target: ActivationFactoryTarget = ActivationFactoryTarget.ACTIVATIONS_2D
     """Target type for activation generation"""
 
-    model_batch_size: Optional[int] = None
+    model_batch_size: int = 1
     """Batch size for model forward"""
 
     batch_size: Optional[int] = None
@@ -332,7 +333,52 @@ def train_sae(settings: TrainSAESettings) -> None:
         else None
     )
 
-    activation_factory = ActivationFactory(settings.activation_factory)
+    if isinstance(settings.sae, MixCoderConfig):
+        modality_names = settings.sae.modality_names
+        if "text" in modality_names:  # Multimodal mixcoder SAE
+            from transformers import AutoTokenizer
+
+            assert (
+                settings.model_name is not None
+            ), "Model name is required for multimodal mixcoder SAE for inferring text/image tokens"
+            tokenizer = AutoTokenizer.from_pretrained(settings.model_name, trust_remote_code=True)
+            modality_tokens = get_modality_tokens(tokenizer, settings.model_name)
+
+            assert list(sorted(modality_tokens.keys())) == list(
+                sorted(modality_names)
+            ), "Modality names must match the keys of modality_tokens"
+
+            def activation_interceptor(
+                activations: dict[str, torch.Tensor], source_idx: int
+            ) -> dict[str, torch.Tensor]:
+                assert (
+                    "tokens" in activations
+                ), "Tokens are required for multimodal mixcoder SAE for inferring text/image tokens"
+                modalities = torch.zeros_like(activations["tokens"], dtype=torch.int)
+                for i, modality in enumerate(modality_names):
+                    mask = torch.isin(activations["tokens"], modality_tokens[modality])
+                    modalities[mask] = i
+                activations = activations | {"modalities": modalities}
+                return activations
+        else:  # Multi-lingual mixcoder SAE
+            assert [
+                source.name for source in settings.activation_factory.sources
+            ] == modality_names, "Modality names must match the names of the activation sources"
+
+            def activation_interceptor(
+                activations: dict[str, torch.Tensor], source_idx: int
+            ) -> dict[str, torch.Tensor]:
+                assert "tokens" in activations, "Tokens are required for inferring shape of activations"
+                modalities = torch.ones_like(activations["tokens"], dtype=torch.int) * source_idx
+                activations = activations | {"modalities": modalities}
+                return activations
+
+        activation_factory = ActivationFactory(
+            settings.activation_factory, before_aggregation_interceptor=activation_interceptor
+        )
+    else:
+        activation_factory = ActivationFactory(settings.activation_factory)
+
     activations_stream = activation_factory.process(
         model=model,
         model_name=settings.model_name,
@@ -340,23 +386,27 @@ def train_sae(settings: TrainSAESettings) -> None:
     )
     initializer = Initializer(settings.initializer)
 
-    if settings.sae.sae_type == "mixcoder":
-        assert settings.model_name is not None, "Model name is required for mixcoder SAE"
-        tokenizer = AutoTokenizer.from_pretrained(settings.model_name, trust_remote_code=True)
-        mixcoder_settings = {
-            "model_name": settings.model_name,
-            "tokenizer": tokenizer,
-        }
-        sae = initializer.initialize_sae_from_config(
-            settings.sae,
-            activation_stream=activations_stream,
-            device_mesh=device_mesh,
-            mixcoder_settings=mixcoder_settings,
-        )
-    else:
-        sae = initializer.initialize_sae_from_config(
-            settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
-        )
+    # if settings.sae.sae_type == "mixcoder":
+    #     assert settings.model_name is not None, "Model name is required for mixcoder SAE"
+    #     tokenizer = AutoTokenizer.from_pretrained(settings.model_name, trust_remote_code=True)
+    #     mixcoder_settings = {
+    #         "model_name": settings.model_name,
+    #         "tokenizer": tokenizer,
+    #     }
+    #     sae = initializer.initialize_sae_from_config(
+    #         settings.sae,
+    #         activation_stream=activations_stream,
+    #         device_mesh=device_mesh,
+    #         mixcoder_settings=mixcoder_settings,
+    #     )
+    # else:
+    #     sae = initializer.initialize_sae_from_config(
+    #         settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
+    #     )
+
+    sae = initializer.initialize_sae_from_config(
+        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
+    )
 
     wandb_logger = (
         wandb.init(

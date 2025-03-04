@@ -109,9 +109,10 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
             should be divisible by the original batch size.
     """
 
-    def __init__(self, hook_points: list[str], batch_size: int):
+    def __init__(self, hook_points: list[str], batch_size: int, seq_len: Optional[int] = None):
         self.hook_points = hook_points
         self.batch_size = batch_size
+        self.seq_len = seq_len
 
     def batched(self, data: Iterable[dict[str, Any]]) -> Iterable[dict[str, Any]]:
         for d in itertools.batched(data, self.batch_size):
