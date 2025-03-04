@@ -2,7 +2,7 @@ import math
 from typing import Literal, MutableMapping, Union, cast, overload
 
 import torch
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from torch import nn
 from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookPoint
@@ -21,7 +21,6 @@ class MixCoder(SparseAutoEncoder):
 
         Attributes:
             modality_index (dict[str, tuple[int, int]]): Maps modality names to their index ranges in the feature space
-            modality_indices (dict[str, torch.Tensor]): Maps modality names to their token indices
             encoder (MutableMapping[str, nn.Linear]): Dictionary of encoders for each modality
             decoder (MutableMapping[str, nn.Linear]): Dictionary of decoders for each modality
             encoder_glu (MutableMapping[str, nn.Linear]): Optional GLU gates for encoders
@@ -36,13 +35,13 @@ class MixCoder(SparseAutoEncoder):
         # initialize new encoder and decoder
         self.cfg = cfg
         self.modality_index = {}
-        self.modality_indices = {}
         self.encoder = cast(MutableMapping[str, nn.Linear], nn.ModuleDict())
         self.decoder = cast(MutableMapping[str, nn.Linear], nn.ModuleDict())
         self.encoder_glu = cast(MutableMapping[str, nn.Linear], nn.ModuleDict())
         self.hook_hidden_pre = HookPoint()
         self.hook_feature_acts = HookPoint()
         self.hook_reconstructed = HookPoint()
+
         for modality, d_modality in cfg.modalities.items():
             self.encoder[modality] = nn.Linear(cfg.d_model, d_modality, bias=True, device=cfg.device, dtype=cfg.dtype)
             self.decoder[modality] = nn.Linear(
@@ -83,9 +82,6 @@ class MixCoder(SparseAutoEncoder):
             for hook_point, value in self.dataset_average_activation_norm.items():
                 state_dict[f"dataset_average_activation_norm.{hook_point}"] = torch.tensor(value)
 
-        for modality, indices in self.modality_indices.items():
-            state_dict[f"modality_indices.{modality}"] = indices
-
         if not self.cfg.sparsity_include_decoder_norm:
             for modality in self.cfg.modalities.keys():
                 state_dict[f"decoder.{modality}.weight"] = self.decoder[modality].weight.data.clone()
@@ -96,9 +92,6 @@ class MixCoder(SparseAutoEncoder):
 
     @torch.no_grad()
     def _load_full_state_dict(self, state_dict: dict[str, torch.Tensor]) -> None:
-        modality_indices_keys = [k for k in state_dict.keys() if k.startswith("modality_indices.")]
-        assert len(modality_indices_keys) == len(self.cfg.modalities) - 1  # shared modality is not included
-        self.modality_indices = {key.split(".", 1)[1]: state_dict[key] for key in modality_indices_keys}
         state_dict = {k: v for k, v in state_dict.items() if not k.startswith("modality_indices.")}
         super()._load_full_state_dict(state_dict)
 
@@ -162,10 +155,7 @@ class MixCoder(SparseAutoEncoder):
 
     def get_modality_token_mask(
         self,
-        tokens: Union[
-            Float[torch.Tensor, "batch d_model"],
-            Float[torch.Tensor, "batch seq_len d_model"],
-        ],
+        modality_indices: Union[Int[torch.Tensor, "batch d_model"], Int[torch.Tensor, "batch seq_len d_model"]],
         modality: str,
     ) -> Union[Float[torch.Tensor, "batch d_model"], Float[torch.Tensor, "batch seq_len d_model"]]:
         """Get the activation of a specific modality.
@@ -179,9 +169,9 @@ class MixCoder(SparseAutoEncoder):
             The activation of the specified modality. The shape is the same as the input activation.
         """
         if modality == "shared":
-            return torch.ones_like(tokens, dtype=torch.bool)
-        activation_mask = torch.isin(tokens, self.modality_indices[modality])
-        return activation_mask
+            return torch.ones_like(modality_indices, dtype=torch.bool)
+        index = self.cfg.modality_names.index(modality)
+        return modality_indices == index
 
     @overload
     def encode(
@@ -255,8 +245,9 @@ class MixCoder(SparseAutoEncoder):
         Returns:
             Either feature activations alone, or tuple of (feature_acts, hidden_pre) if return_hidden_pre=True
         """
-        assert "tokens" in kwargs
-        tokens = kwargs["tokens"]
+        assert "modalities" in kwargs
+        modalities = kwargs["modalities"]
+
         feature_acts = torch.zeros(*x.shape[:-1], self.cfg.d_sae, device=x.device, dtype=x.dtype)
         hidden_pre = torch.zeros(*x.shape[:-1], self.cfg.d_sae, device=x.device, dtype=x.dtype)
         input_norm_factor = self.compute_norm_factor(x, hook_point=self.cfg.hook_point_in)
@@ -266,7 +257,7 @@ class MixCoder(SparseAutoEncoder):
             if modality == "shared":
                 # shared modality is not encoded directly but summed up during other modalities' encoding
                 continue
-            activation_mask = self.get_modality_token_mask(tokens, modality).unsqueeze(-1)
+            activation_mask = self.get_modality_token_mask(modality_indices=modalities, modality=modality).unsqueeze(-1)
             if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
                 modality_bias = (
                     self.decoder[modality].bias.to_local()  # TODO: check if this is correct # type: ignore
@@ -332,13 +323,14 @@ class MixCoder(SparseAutoEncoder):
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
-        assert "tokens" in kwargs
-        tokens = kwargs["tokens"]
+        assert "modalities" in kwargs
+        modalities = kwargs["modalities"]
+
         reconstructed = torch.zeros(
             feature_acts.shape[0], self.cfg.d_model, device=feature_acts.device, dtype=feature_acts.dtype
         )
         for modality, (start, end) in self.modality_index.items():  # TODO: fix bias
-            activation_mask = self.get_modality_token_mask(tokens, modality).unsqueeze(1)
+            activation_mask = self.get_modality_token_mask(modality_indices=modalities, modality=modality).unsqueeze(-1)
             feature_acts_modality = feature_acts[:, start:end]  # batch x d_modality
             reconstructed_modality = self.decoder[modality](feature_acts_modality) * activation_mask  # batch x d_model
             reconstructed += reconstructed_modality
@@ -347,8 +339,8 @@ class MixCoder(SparseAutoEncoder):
 
     @torch.no_grad()
     def init_parameters(self, **kwargs):
-        assert "modality_indices" in kwargs
-        modality_indices: dict[str, torch.Tensor] = kwargs["modality_indices"]
+        # assert "modality_indices" in kwargs
+        # modality_indices: dict[str, torch.Tensor] = kwargs["modality_indices"]
         for modality in self.cfg.modalities.keys():
             torch.nn.init.kaiming_uniform_(self.encoder[modality].weight)
             torch.nn.init.kaiming_uniform_(self.decoder[modality].weight)
@@ -359,8 +351,8 @@ class MixCoder(SparseAutoEncoder):
                 torch.nn.init.kaiming_uniform_(self.encoder_glu[modality].weight)
                 torch.nn.init.zeros_(self.encoder_glu[modality].bias)
 
-        for modality, indices in modality_indices.items():
-            self.modality_indices[modality] = indices.to(self.cfg.device)
+        # for modality, indices in modality_indices.items():
+        #     self.modality_indices[modality] = indices.to(self.cfg.device)
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
@@ -423,8 +415,9 @@ class MixCoder(SparseAutoEncoder):
             tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
         ],
     ]:  # may be overridden by subclasses
-        assert "tokens" in kwargs
-        tokens = kwargs["tokens"]
+        assert "modalities" in batch
+        modalities = batch["modalities"]
+
         x: torch.Tensor = batch[self.cfg.hook_point_in]
         label: torch.Tensor = batch[self.cfg.hook_point_out]
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **kwargs)
@@ -436,7 +429,7 @@ class MixCoder(SparseAutoEncoder):
         for modality, (start, end) in self.modality_index.items():
             if modality == "shared":
                 continue
-            token_mask = self.get_modality_token_mask(tokens=tokens, modality=modality)
+            token_mask = self.get_modality_token_mask(modality_indices=modalities, modality=modality)
             token_num = token_mask.sum(dim=-1)
             l_rec = (reconstructed[token_mask] - label_normed[token_mask]).pow(2)
             if use_batch_norm_mse:
