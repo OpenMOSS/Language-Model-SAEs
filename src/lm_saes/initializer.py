@@ -79,7 +79,6 @@ class Initializer:
             activation_batch[sae.cfg.hook_point_in],
             activation_batch[sae.cfg.hook_point_out],
         )
-        tokens = activation_batch["tokens"]
         if self.cfg.init_decoder_norm is None:
             # assert sae.cfg.sparsity_include_decoder_norm, "Decoder norm must be included in sparsity loss"
             if not self.cfg.init_encoder_with_decoder_transpose or sae.cfg.hook_point_in != sae.cfg.hook_point_out:
@@ -93,7 +92,7 @@ class Initializer:
                     sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
                     if isinstance(sae, CrossCoder):
                         sae.initialize_with_same_weight_across_layers()
-                    mse = sae.compute_loss(activation_batch, tokens=tokens)[1][0]["l_rec"].mean().item()
+                    mse = sae.compute_loss(activation_batch)[1][0]["l_rec"].mean().item()
                     losses[norm] = mse
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm

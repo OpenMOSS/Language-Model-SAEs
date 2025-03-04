@@ -150,6 +150,14 @@ class ActivationFactory:
             for processor in processors:
                 stream = processor.process(stream, ignore_token_ids=self.cfg.ignore_token_ids, model=model)
 
+            if self.before_aggregation_interceptor is not None:
+                before_aggregation_interceptor = self.before_aggregation_interceptor  # capture the function
+
+                def interceptor(x: dict[str, Any]):
+                    return before_aggregation_interceptor(x, source_idx)
+
+                stream = map(interceptor, stream)
+
             return stream
 
         return process_activations
