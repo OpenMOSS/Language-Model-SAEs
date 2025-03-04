@@ -164,9 +164,6 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
         hook_points (list[str]): List of hook point names to process activations from
     """
 
-    def __init__(self, hook_points: list[str]):
-        self.hook_points = hook_points
-
     def process(
         self,
         data: Iterable[dict[str, Any]],
@@ -212,8 +209,7 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
             mask = torch.ones_like(tokens, dtype=torch.bool)
             for token_id in ignore_token_ids:
                 mask &= tokens != token_id
-            activations = {k: d[k][mask] for k in self.hook_points}
-            activations = activations | {"tokens": tokens[mask]}
+            activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}
             if "meta" in d:
                 activations = activations | {"meta": d["meta"]}
             yield activations
@@ -244,7 +240,6 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
 
     def __init__(
         self,
-        hook_points: list[str],
         batch_size: int,
         buffer_size: Optional[int] = None,
         buffer_shuffle_config: Optional[BufferShuffleConfig] = None,
@@ -256,7 +251,6 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             batch_size (int): Number of samples per batch
             buffer_size (Optional[int], optional): Size of buffer for online shuffling. Defaults to None.
         """
-        self.hook_points = hook_points
         self.batch_size = batch_size
         self.buffer_size = buffer_size
         self.perm_generator = torch.Generator()
@@ -264,7 +258,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             self.perm_generator = torch.Generator(buffer_shuffle_config.generator_device)
             self.perm_generator.manual_seed(buffer_shuffle_config.perm_seed)  # Set seed if provided
 
-    def process(self, data: Iterable[dict[str, Any]], **kwargs) -> Iterable[dict[str, Any]]:
+    def process(self, data: Iterable[dict[str, Any]], **kwargs) -> Iterable[dict[str, torch.Tensor]]:
         """Process input data by batching activations.
 
         Takes an iterable of activation dictionaries and yields batches of activations.
@@ -285,18 +279,16 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
         pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1)
 
         for d in data:
-            # Validate input: ensure all hook points exist and are 2D tensors
-            assert all(
-                (k in d and isinstance(d[k], torch.Tensor) and len(d[k].shape) == 2) for k in self.hook_points
-            ), "All hook points must be present and be 2D tensors"
+            # Drop all non-tensor fields
+            d = {k: v for k, v in d.items() if isinstance(v, torch.Tensor)}
 
             # Validate input: ensure all tensors have consistent shapes
             assert all(
-                d[k].shape == d[self.hook_points[0]].shape for k in self.hook_points
-            ), "All tensors must have the same shape"
+                d[k].shape[0] == d[next(iter(d.keys()))].shape[0] for k in d.keys()
+            ), "All tensors must have the same batch size"
 
             # Add new data to buffer
-            buffer = buffer.cat({k: v for k, v in d.items() if k in self.hook_points or k == "tokens"})
+            buffer = buffer.cat(d)
             pbar.update(len(buffer) - pbar.n)
 
             if self.buffer_size is not None:
@@ -310,18 +302,18 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
                         # Perhaps this is a bug with basedpyright
                         batch, buffer = cast(ActivationBuffer, buffer).yield_batch(self.batch_size)
                         pbar.update(len(buffer) - pbar.n)
-                        yield batch
+                        yield cast(dict[str, torch.Tensor], batch)
             else:
                 # If no buffer size specified, yield complete batches as they become available
                 while len(buffer) >= self.batch_size:
                     # The same issue as above
                     batch, buffer = cast(ActivationBuffer, buffer).yield_batch(self.batch_size)
                     pbar.update(len(buffer) - pbar.n)
-                    yield batch
+                    yield cast(dict[str, torch.Tensor], batch)
 
         # Yield any remaining samples in batches
         while len(buffer) > 0:
             batch, buffer = buffer.yield_batch(self.batch_size)
             pbar.update(len(buffer) - pbar.n)
-            yield batch
+            yield cast(dict[str, torch.Tensor], batch)
         pbar.close()
