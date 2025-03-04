@@ -65,9 +65,7 @@ class ActivationFactory:
             ActivationGenerator(hook_points=self.cfg.hook_points, batch_size=self.cfg.model_batch_size)
             if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
             else None,
-            ActivationTransformer(hook_points=self.cfg.hook_points)
-            if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
-            else None,
+            ActivationTransformer() if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D else None,
         ]
 
         # Create processors up to required stage
@@ -129,11 +127,7 @@ class ActivationFactory:
             prefetch_factor=activations_source.prefetch,
         )
 
-        processors = (
-            [ActivationTransformer(hook_points=self.cfg.hook_points)]
-            if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D
-            else []
-        )
+        processors = [ActivationTransformer()] if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D else []
 
         def process_activations(**kwargs: Any):
             """Process a single activations source through the pipeline.
@@ -196,7 +190,6 @@ class ActivationFactory:
             """Create batchler for batched-activations-1d target."""
             assert self.cfg.batch_size is not None, "Batch size must be provided for outputting batched-activations-1d"
             return ActivationBatchler(
-                hook_points=self.cfg.hook_points,
                 batch_size=self.cfg.batch_size,
                 buffer_size=self.cfg.buffer_size,
                 buffer_shuffle_config=self.cfg.buffer_shuffle,
