@@ -200,7 +200,7 @@ class Trainer:
                     if modality == "shared":
                         continue
                     shared_start, shared_end = sae.modality_index["shared"]
-                    mask = sae.get_modality_token_mask(batch["tokens"], modality)
+                    mask = sae.get_modality_token_mask(batch["modality_indices"], modality)
                     feature_acts_modality = log_info["feature_acts"][mask]
                     reconstructed_modality = log_info["reconstructed"][mask]
                     activation_out_modality = activation_out[mask]
@@ -263,10 +263,14 @@ class Trainer:
             self.optimizer.zero_grad()
             loss_dict = self._training_step(sae, batch)
             if sae.cfg.sae_type == "mixcoder":
+                flag = False
                 for k, v in loss_dict.items():
                     if "token_num" in k:
                         if v <= 200:
-                            continue
+                            flag = True
+                            break
+                if flag:
+                    continue
             loss_dict["loss"].backward()
             # TODO: add support for mixcoder to use different clip_grad_norm for each modality
             loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
@@ -295,7 +299,16 @@ class Trainer:
             activation_in, activation_out = batch[sae.cfg.hook_point_in], batch[sae.cfg.hook_point_out]
 
             if self.wandb_logger is not None:
-                self._log(sae, log_info, {"input": activation_in, "output": activation_out, "tokens": batch["tokens"]})
+                self._log(
+                    sae,
+                    log_info,
+                    {
+                        "input": activation_in,
+                        "output": activation_out,
+                        "tokens": batch["tokens"],
+                        "modality_indices": batch["modalities"],
+                    },
+                )
 
             if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
                 eval_fn(sae)

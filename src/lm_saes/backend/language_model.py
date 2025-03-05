@@ -121,6 +121,7 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
             cache_dir=cfg.cache_dir,
             local_files_only=cfg.local_files_only,
             padding_side="left",
+            max_pixels=1800 * 28 * 28,
         )
         self.tokenizer = self.processor.tokenizer
         self.model.eval()
