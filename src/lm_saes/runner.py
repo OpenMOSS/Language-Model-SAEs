@@ -343,7 +343,8 @@ def train_sae(settings: TrainSAESettings) -> None:
             ), "Model cfg is required for multimodal mixcoder SAE for inferring text/image tokens"
             tokenizer = AutoTokenizer.from_pretrained(model_cfg.model_name, trust_remote_code=True)
             modality_tokens = get_modality_tokens(tokenizer, model_cfg.model_name)
-
+            for modality in modality_tokens.keys():
+                modality_tokens[modality] = modality_tokens[modality].to(settings.sae.device)
             assert list(sorted(modality_tokens.keys())) == list(
                 sorted(modality_names)
             ), "Modality names must match the keys of modality_tokens"
