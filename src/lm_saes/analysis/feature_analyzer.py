@@ -5,6 +5,7 @@ from einops import rearrange, repeat
 from tqdm import tqdm
 
 from lm_saes.config import FeatureAnalyzerConfig
+from lm_saes.mixcoder import MixCoder
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
@@ -160,7 +161,10 @@ class FeatureAnalyzer:
             meta = {k: [m[k] for m in batch["meta"]] for k in batch["meta"][0].keys()}
 
             # Get feature activations from SAE
-            feature_acts = sae.encode(batch[sae.cfg.hook_point_in], tokens=batch["tokens"])
+            if isinstance(sae, MixCoder):
+                feature_acts = sae.encode(batch[sae.cfg.hook_point_in], modalities=batch["modalities"])
+            else:
+                feature_acts = sae.encode(batch[sae.cfg.hook_point_in])
             # Update activation statistics
             act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
             max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
