@@ -155,6 +155,19 @@ class FeatureAnalyzer:
         max_feature_acts = torch.zeros((sae.cfg.d_sae,), dtype=sae.cfg.dtype, device=sae.cfg.device)
         mapper = KeyedDiscreteMapper()
 
+        if isinstance(sae, MixCoder):
+            act_times_modalities = {
+                k: torch.zeros((sae.cfg.d_sae,), dtype=torch.long, device=sae.cfg.device)
+                for k in sae.cfg.modality_names
+            }
+            max_feature_acts_modalities = {
+                k: torch.zeros((sae.cfg.d_sae,), dtype=sae.cfg.dtype, device=sae.cfg.device)
+                for k in sae.cfg.modality_names
+            }
+        else:
+            act_times_modalities = None
+            max_feature_acts_modalities = None
+
         # Process activation batches
         for batch in activation_stream:
             # Reshape meta to zip outer dimensions to inner
@@ -165,9 +178,19 @@ class FeatureAnalyzer:
                 feature_acts = sae.encode(batch[sae.cfg.hook_point_in], modalities=batch["modalities"])
             else:
                 feature_acts = sae.encode(batch[sae.cfg.hook_point_in])
+
             # Update activation statistics
             act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
             max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
+
+            if isinstance(sae, MixCoder):
+                assert act_times_modalities is not None and max_feature_acts_modalities is not None
+                for i, k in enumerate(sae.cfg.modality_names):
+                    feature_acts_modality = feature_acts * (batch["modalities"] == i).long()
+                    act_times_modalities[k] += feature_acts_modality.gt(0.0).sum(dim=[0, 1])
+                    max_feature_acts_modalities[k] = torch.max(
+                        max_feature_acts_modalities[k], feature_acts_modality.max(dim=0).values.max(dim=0).values
+                    )
 
             # TODO: Filter out meta that is not string
             discrete_meta = {
@@ -193,8 +216,44 @@ class FeatureAnalyzer:
         }
 
         # Format final per-feature results
-        return [
-            {
+        return self._format_analysis_results(
+            sae=sae,
+            act_times=act_times,
+            max_feature_acts=max_feature_acts,
+            sample_result=sample_result,
+            mapper=mapper,
+            act_times_modalities=act_times_modalities,
+            max_feature_acts_modalities=max_feature_acts_modalities,
+        )
+
+    def _format_analysis_results(
+        self,
+        sae: SparseAutoEncoder,
+        act_times: torch.Tensor,
+        max_feature_acts: torch.Tensor,
+        sample_result: dict[str, dict[str, torch.Tensor]],
+        mapper: KeyedDiscreteMapper,
+        act_times_modalities: dict[str, torch.Tensor] | None = None,
+        max_feature_acts_modalities: dict[str, torch.Tensor] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Format the analysis results into the final per-feature format.
+
+        Args:
+            sae: The sparse autoencoder model
+            act_times: Tensor of activation times for each feature
+            max_feature_acts: Tensor of maximum activation values for each feature
+            sample_result: Dictionary of sampling results
+            mapper: MetaMapper for encoding/decoding metadata
+            act_times_modalities: Optional dictionary of activation times per modality (for MixCoder)
+            max_feature_acts_modalities: Optional dictionary of maximum activation values per modality (for MixCoder)
+
+        Returns:
+            List of dictionaries containing per-feature analysis results
+        """
+        results = []
+
+        for i in range(sae.cfg.d_sae):
+            feature_result = {
                 "act_times": act_times[i].item(),
                 "max_feature_acts": max_feature_acts[i].item(),
                 "samplings": [
@@ -207,5 +266,18 @@ class FeatureAnalyzer:
                     for k, v in sample_result.items()
                 ],
             }
-            for i in range(sae.cfg.d_sae)
-        ]
+
+            # Add modality-specific metrics for MixCoder
+            if (
+                isinstance(sae, MixCoder)
+                and act_times_modalities is not None
+                and max_feature_acts_modalities is not None
+            ):
+                feature_result["act_times_modalities"] = {k: v[i].item() for k, v in act_times_modalities.items()}
+                feature_result["max_feature_acts_modalities"] = {
+                    k: v[i].item() for k, v in max_feature_acts_modalities.items()
+                }
+
+            results.append(feature_result)
+
+        return results
