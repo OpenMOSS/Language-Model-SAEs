@@ -58,6 +58,8 @@ export const FeatureSchema = z.object({
   featureActivationHistogram: z.any().nullish(),
   actTimes: z.number(),
   maxFeatureAct: z.number(),
+  actTimesModalities: z.record(z.string(), z.number()).nullish(),
+  maxFeatureActsModalities: z.record(z.string(), z.number()).nullish(),
   sampleGroups: z.array(
     z.object({
       analysisName: z.string(),
