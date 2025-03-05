@@ -94,7 +94,24 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
           <span>
             #{feature.featureIndex}{" "}
             <span className="font-medium">
-              (Activation Times = <span className="font-bold">{feature.actTimes}</span>)
+              (Activation Times ={" "}
+              <span className="font-bold">
+                {feature.actTimes}
+                {feature.actTimesModalities &&
+                  ` = ${Object.entries(feature.actTimesModalities)
+                    .map(([modality, actTime]) => `${actTime} (${modality})`)
+                    .join(" + ")}`}
+              </span>
+            </span>
+            <span className="font-medium">
+              (Max Activation ={" "}
+              <span className="font-bold">
+                {feature.maxFeatureAct}
+                {feature.maxFeatureActsModalities &&
+                  ` = max(${Object.entries(feature.maxFeatureActsModalities)
+                    .map(([modality, maxFeatureAct]) => `${maxFeatureAct} (${modality})`)
+                    .join(", ")})`}
+              </span>
             </span>
           </span>
           <Button onClick={() => setShowCustomInput((prev) => !prev)}>
