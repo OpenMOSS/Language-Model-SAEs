@@ -244,7 +244,7 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
             images=images,
             return_tensors="pt",
             max_length=2048,
-            padding=True,
+            padding="max_length",
             truncation=True,
         )
 
@@ -293,7 +293,7 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
         return activations
 
     def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
-        inputs = self.tokenizer(raw["text"], return_tensors="pt", padding=True)
+        inputs = self.tokenizer(raw["text"], return_tensors="pt", max_length=2048, padding="max_length")
         input_ids = inputs["input_ids"]
         batch_str_tokens = [
             self.tokenizer.batch_decode(input_id, clean_up_tokenization_spaces=False) for input_id in input_ids

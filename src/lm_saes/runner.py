@@ -3,11 +3,11 @@ from pathlib import Path
 from typing import Literal, Optional, TypeVar, overload
 
 import torch
-import wandb
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from torch.distributed.device_mesh import init_device_mesh
 
+import wandb
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.activation.writer import ActivationWriter
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
@@ -470,6 +470,8 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
             ), "Model cfg is required for multimodal mixcoder SAE for inferring text/image tokens"
             tokenizer = AutoTokenizer.from_pretrained(model_cfg.model_name, trust_remote_code=True)
             modality_tokens = get_modality_tokens(tokenizer, model_cfg.model_name)
+            for modality in modality_tokens.keys():
+                modality_tokens[modality] = modality_tokens[modality].to(settings.sae.device)
 
             assert list(sorted(modality_tokens.keys())) == list(
                 sorted(modality_names)

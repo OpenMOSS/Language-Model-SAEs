@@ -263,8 +263,10 @@ class Trainer:
             self.optimizer.zero_grad()
             loss_dict = self._training_step(sae, batch)
             if sae.cfg.sae_type == "mixcoder":
-                if loss_dict["text_token_num"] <= 200 or loss_dict["image_token_num"] <= 100:
-                    continue
+                for k, v in loss_dict.items():
+                    if "token_num" in k:
+                        if v <= 200:
+                            continue
             loss_dict["loss"].backward()
             # TODO: add support for mixcoder to use different clip_grad_norm for each modality
             loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
