@@ -186,7 +186,7 @@ class FeatureAnalyzer:
             if isinstance(sae, MixCoder):
                 assert act_times_modalities is not None and max_feature_acts_modalities is not None
                 for i, k in enumerate(sae.cfg.modality_names):
-                    feature_acts_modality = feature_acts * (batch["modalities"] == i).long()
+                    feature_acts_modality = feature_acts * (batch["modalities"] == i).long().unsqueeze(-1)
                     act_times_modalities[k] += feature_acts_modality.gt(0.0).sum(dim=[0, 1])
                     max_feature_acts_modalities[k] = torch.max(
                         max_feature_acts_modalities[k], feature_acts_modality.max(dim=0).values.max(dim=0).values
