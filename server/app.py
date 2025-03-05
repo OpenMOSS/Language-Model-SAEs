@@ -146,9 +146,10 @@ def get_feature(name: str, feature_index: str | int):
             model = get_model(model_name)
             shard_idx = sampling.shard_idx[i] if sampling.shard_idx is not None else 0
             n_shards = sampling.n_shards[i] if sampling.n_shards is not None else 1
+
             data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx]
 
-            origins = model.trace(data)[0]
+            origins = model.trace({k: [v] for k, v in data.items()})[0]
 
             # Replace image_key with image_url
             image_key = "image" if "image" in data else "images" if "images" in data else None
