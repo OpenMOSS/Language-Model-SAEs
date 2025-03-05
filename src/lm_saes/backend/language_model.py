@@ -284,7 +284,9 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
 
     def to_activations(self, raw: dict[str, Any], hook_points: list[str]) -> dict[str, torch.Tensor]:
         layer_indices = _get_layer_indices_from_hook_points(hook_points)
-        inputs = self.tokenizer(raw["text"], return_tensors="pt", padding=True).to(self.device)
+        inputs = self.tokenizer(
+            raw["text"], return_tensors="pt", padding="max_length", max_length=2048, truncation=True
+        ).to(self.device)
         outputs = self.model(**inputs, output_hidden_states=True)
         activations = {
             hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
@@ -293,7 +295,9 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
         return activations
 
     def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
-        inputs = self.tokenizer(raw["text"], return_tensors="pt", max_length=2048, padding="max_length")
+        inputs = self.tokenizer(
+            raw["text"], return_tensors="pt", padding="max_length", max_length=2048, truncation=True
+        )
         input_ids = inputs["input_ids"]
         batch_str_tokens = [
             self.tokenizer.batch_decode(input_id, clean_up_tokenization_spaces=False) for input_id in input_ids
