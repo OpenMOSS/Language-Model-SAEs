@@ -30,7 +30,7 @@ def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optiona
 
         if pos != -1:
             # Found a match, store position and update curr_pos
-            token_positions.append((pos, pos + len(token)))
+            token_positions.append({"key": "text", "range": (pos, pos + len(token))})
             curr_pos = pos + len(token)
         else:
             # No match found. This is only allowed if the token is a special token
@@ -139,13 +139,13 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
         return self.tokenizer.pad_token_id
 
     def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
+        # raw["text"]: list[str]
+        # raw["images"]: list[list[torch.Tensor]]
         assert self.tokenizer is not None, "tokenizer must be initialized"
         assert self.processor is not None, "processor must be initialized"
-        inputs, processed_raw = self.process_raw_data(raw)
+        inputs, _ = self.process_raw_data(raw)
         input_ids = inputs["input_ids"]
-        # print(inputs["image_grid_thw"].shape)
-        resized_shape = inputs["image_grid_thw"][:, 1:] * 14  # torch.Size([batch_size, 2])
-        batch_str_tokens = [
+        batch_str_tokens: list[list[str]] = [
             self.tokenizer.batch_decode(input_id, clean_up_tokenization_spaces=False) for input_id in input_ids
         ]
 
@@ -160,57 +160,62 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
             _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
         ]
 
-        if "images" in raw:
+        if "images" in raw and raw["images"] is not None:
+            assert "image_grid_thw" in inputs
             assert "pixel_values" in inputs
-            start_id_list = []
-            end_id_list = []
-            for i, (str_tokens, images, resized_shape) in enumerate(
-                zip(batch_str_tokens, raw["images"], resized_shape)
-            ):
+            resized_shape_list = (inputs["image_grid_thw"][:, 1:] * 14).tolist()
+            for str_tokens, images in zip(batch_str_tokens, raw["images"]):
                 # str_tokens: list[str], tokens for each text in the batch
-                # images: tensor, [1, 3, height, width]
-                # resized_shape: [batch_size, 2]
+                # images: list[torch.Tensor], images for each text in the batch
+                # resized_shape: [total_image_number, 2]
                 # token_positions: list[Any], positions of the tokens in the input text
-
-                # find the start and end of the image tokens of this text
                 start_id_list = [id for id, str_token in enumerate(str_tokens) if str_token == "<|vision_start|>"]
                 end_id_list = [id for id, str_token in enumerate(str_tokens) if str_token == "<|vision_end|>"]
-
                 assert len(start_id_list) == len(end_id_list)
-                assert len(start_id_list) == 1, "only one image is supported"
-                assert images.shape[0] == 1, "only one image is supported"
+                images_num = len(start_id_list)  # number of images in this text
+                resized_shapes = resized_shape_list[:images_num]  # get the resized shapes for images in this text
+                resized_shape_list = resized_shape_list[images_num:]
 
-                start_id = start_id_list[0]
-                end_id = end_id_list[0]
-                resized_height, resized_width = int(resized_shape[0]), int(resized_shape[1])
-                original_height, original_width = images.shape[2], images.shape[3]
-                image_token_num = end_id - start_id - 1
-                assert image_token_num == resized_shape[0] * resized_shape[1] / 14 / 14 / 4
+                for i, (start_id, end_id, image, resized_shape) in enumerate(
+                    zip(start_id_list, end_id_list, images, resized_shapes)
+                ):
+                    resized_height, resized_width = int(resized_shape[0]), int(resized_shape[1])
+                    original_height, original_width = image.shape[-2], image.shape[-1]
+                    image_token_num = end_id - start_id - 1
+                    assert image_token_num == resized_height * resized_width / 14 / 14 / 4
 
-                split_height = split_number(original_height, resized_height / 28)
-                split_width = split_number(original_width, resized_width / 28)
-                prefix_sum_height = [0] + list(accumulate(split_height))
-                prefix_sum_width = [0] + list(accumulate(split_width))
+                    split_height = split_number(original_height, resized_height / 28)
+                    split_width = split_number(original_width, resized_width / 28)
 
-                grid_coords = [
-                    (
-                        id // (resized_width // 28),
-                        id % (resized_width // 28),
-                    )
-                    for id in range(image_token_num)
-                ]
+                    prefix_sum_height = [0] + list(accumulate(split_height))
+                    prefix_sum_width = [0] + list(accumulate(split_width))
 
-                original_coords = [
-                    (
-                        prefix_sum_height[grid_coords[id][0]],
-                        prefix_sum_width[grid_coords[id][1]],
-                        prefix_sum_height[grid_coords[id][0] + 1],
-                        prefix_sum_width[grid_coords[id][1] + 1],
-                    )
-                    for id in range(image_token_num)
-                ]
-                batch_token_positions[i][start_id + 1 : end_id] = original_coords
+                    prefix_sum_height = [i / original_height for i in prefix_sum_height]
+                    prefix_sum_width = [i / original_width for i in prefix_sum_width]
+                    grid_coords = [
+                        (
+                            id // (resized_width // 28),
+                            id % (resized_width // 28),
+                        )
+                        for id in range(image_token_num)
+                    ]
+                    original_coords = [
+                        (
+                            prefix_sum_width[grid_coords[id][1]],
+                            prefix_sum_height[grid_coords[id][0]],
+                            prefix_sum_width[grid_coords[id][1] + 1],
+                            prefix_sum_height[grid_coords[id][0] + 1],
+                        )
+                        for id in range(image_token_num)
+                    ]
 
+                    batch_token_positions[i][start_id + 1 : end_id] = original_coords
+                    for j in range(len(original_coords)):
+                        batch_token_positions[i][start_id + 1 + j] = {
+                            "key": "image",
+                            "rect": original_coords[j],
+                            "image_index": i,
+                        }
         return batch_token_positions
 
     def to_activations(self, raw: dict[str, Any], hook_points: list[str]) -> dict[str, torch.Tensor]:
@@ -223,7 +228,9 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
         activations["tokens"] = inputs["input_ids"]
         return activations
 
-    def process_raw_data(self, raw: dict[str, Any]) -> tuple[BatchFeature, dict[str, Any]]:
+    def process_raw_data(
+        self, raw: dict[str, Any], padding: str | bool = "max_length"
+    ) -> tuple[BatchFeature, dict[str, Any]]:
         # raw is a dict with keys "text", "images", "videos", etc.
         IMAGE_PAD_TOKEN: str = raw.get("image_pad_token", "<image>")
         inputs = cast(BatchFeature, {})
@@ -232,20 +239,18 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
         # use process_vision_info to resize images
         assert self.processor is not None, "processor must be initialized"
         if "images" in raw:
-            images = raw["images"] if isinstance(raw["images"], list) else list(raw["images"])
-        else:
-            images = None
-        processed_raw["images"] = images
+            processed_raw["images"] = raw["images"]
+
         processed_raw["text"] = [
             text.replace(IMAGE_PAD_TOKEN, f"<|vision_start|>{self.processor.image_token}<|vision_end|>")
             for text in raw["text"]
         ]
         inputs: BatchFeature = self.processor(
             text=processed_raw["text"],
-            images=images,
+            images=raw.get("images", None),
             return_tensors="pt",
-            max_length=2048,
-            padding="max_length",
+            max_length=self.cfg.max_length,
+            padding=padding,
             truncation=True,
         )
 
@@ -286,7 +291,7 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
     def to_activations(self, raw: dict[str, Any], hook_points: list[str]) -> dict[str, torch.Tensor]:
         layer_indices = _get_layer_indices_from_hook_points(hook_points)
         inputs = self.tokenizer(
-            raw["text"], return_tensors="pt", padding="max_length", max_length=2048, truncation=True
+            raw["text"], return_tensors="pt", padding="max_length", max_length=self.cfg.max_length, truncation=True
         ).to(self.device)
         outputs = self.model(**inputs, output_hidden_states=True)
         activations = {
@@ -297,7 +302,7 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
 
     def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
         inputs = self.tokenizer(
-            raw["text"], return_tensors="pt", padding="max_length", max_length=2048, truncation=True
+            raw["text"], return_tensors="pt", padding="max_length", max_length=self.cfg.max_length, truncation=True
         )
         input_ids = inputs["input_ids"]
         batch_str_tokens = [

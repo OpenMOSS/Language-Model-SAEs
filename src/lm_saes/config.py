@@ -320,6 +320,8 @@ class LanguageModelConfig(BaseModelConfig):
     """ The dimension of the model. """
     local_files_only: bool = False
     """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
+    max_length: int = 2048
+    """ The maximum length of the input. """
 
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):

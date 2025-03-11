@@ -20,6 +20,7 @@ from .config import (
 )
 from .crosscoder import CrossCoder
 from .database import MongoClient
+from .mixcoder import MixCoder
 from .resource_loaders import load_dataset, load_model
 from .runner import (
     AnalyzeSAESettings,
@@ -62,4 +63,5 @@ __all__ = [
     "MongoDBConfig",
     "MongoClient",
     "MixCoderConfig",
+    "MixCoder",
 ]
