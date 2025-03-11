@@ -482,6 +482,7 @@ def decode_with_triton_spmm_kernel(
     else:
         sparse_indices, sparse_values = get_sparse_representation(feature_acts)
         output = TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.T.contiguous().T)
+    assert isinstance(output, torch.Tensor)
     return output
 
 

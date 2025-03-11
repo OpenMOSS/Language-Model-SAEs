@@ -9,7 +9,7 @@ from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.config import TrainerConfig
+from lm_saes.config import CrossCoderConfig, TrainerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
@@ -153,11 +153,15 @@ class Trainer:
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.item(),
-                **(
+                **((
                     {"losses/sparsity_loss": log_info["l_s"].mean().item()}
                     if log_info.get("l_s", None) is not None
                     else {}
-                ),
+                ) | (
+                    {"losses/shared_sparsity_loss": log_info["l_s_shared"].mean().item()}
+                    if log_info.get("l_s_shared", None) is not None
+                    else {}
+                )),
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
                 "metrics/explained_variance": explained_variance.mean().item(),
@@ -177,6 +181,7 @@ class Trainer:
             wandb_log_dict.update(sae.log_statistics())
             if sae.cfg.sae_type == "crosscoder":
                 assert isinstance(sae, CrossCoder)
+                assert isinstance(sae.cfg, CrossCoderConfig)
                 if sae.cfg.use_shared_decoder:
                     wandb_log_dict.update({
                         'metrics/shared_l0': (log_info["shared_feature_acts"] > 0).float().sum(-1).mean().item()

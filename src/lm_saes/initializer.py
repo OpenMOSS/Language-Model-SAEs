@@ -15,7 +15,7 @@ from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.sae import SparseAutoEncoder
-from lm_saes.utils.misc import calculate_activation_norm, get_modality_indices
+from lm_saes.utils.misc import all_reduce_tensor, calculate_activation_norm, get_modality_indices
 
 
 class Initializer:
@@ -30,8 +30,12 @@ class Initializer:
 
         if sae.cfg.sae_type == "mixcoder":
             assert mixcoder_settings is not None
-            assert "model_name" in mixcoder_settings and "tokenizer" in mixcoder_settings
-            modality_indices = get_modality_indices(mixcoder_settings["tokenizer"], mixcoder_settings["model_name"])
+            # assert "model_name" in mixcoder_settings and "tokenizer" in mixcoder_settings
+            if mixcoder_settings.get("modality_indices", None) is None:
+                modality_indices = get_modality_indices(mixcoder_settings["tokenizer"], mixcoder_settings["model_name"])
+            else:
+                modality_indices = {k: torch.tensor(v, device=sae.cfg.device) for k, v in mixcoder_settings["modality_indices"].items()}
+                
             sae.init_parameters(modality_indices=modality_indices)
 
         else:
@@ -97,8 +101,10 @@ class Initializer:
                     )
                     if sae.cfg.sae_type == "crosscoder":
                         sae.initialize_with_same_weight_across_layers()
-                    mse = sae.compute_loss(activation_batch, tokens=tokens)[1][0]["l_rec"].mean().item()
-                    losses[norm] = mse
+                    mse = sae.compute_loss(activation_batch, tokens=tokens)[1][0]["l_rec"].mean()
+                    if sae.cfg.sae_type == "crosscoder":
+                        mse = all_reduce_tensor(mse, aggregate="mean")
+                    losses[norm] = mse.item()
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm
 
@@ -155,23 +161,6 @@ class Initializer:
         # exit()
         return sae
 
-    @torch.no_grad()
-    def initialize_jump_relu_threshold(self, sae: SparseAutoEncoder, activation_batch: Dict[str, Tensor]):
-        # TODO: add support for MixCoder
-        if sae.cfg.sae_type == "mixcoder":
-            warnings.warn("MixCoder is not supported for jump_relu_threshold initialization.")
-            return sae
-
-        activation_in = activation_batch[sae.cfg.hook_point_in]
-        tokens = activation_batch["tokens"]
-        batch_size = activation_in.size(0)
-        _, hidden_pre = sae.encode(activation_in, return_hidden_pre=True, tokens=tokens)
-        hidden_pre = torch.clamp(hidden_pre, min=0.0)
-        hidden_pre = hidden_pre.flatten()
-        threshold = hidden_pre.topk(k=batch_size * sae.cfg.top_k).values[-1]
-        sae.cfg.jump_relu_threshold = threshold.item()
-        return sae
-
     def initialize_sae_from_config(
         self,
         cfg: BaseSAEConfig,
@@ -226,18 +215,6 @@ class Initializer:
                 sae.standardize_parameters_of_dataset_norm(activation_norm)
             if sae.cfg.sparsity_include_decoder_norm:
                 sae.transform_to_unit_decoder_norm()
-            if "topk" in sae.cfg.act_fn:
-                print(
-                    "Converting topk activation to jumprelu for inference. Features are set independent to each other."
-                )
-                if sae.cfg.jump_relu_threshold is None:
-                    assert (
-                        activation_stream is not None
-                    ), "Activation iterator must be provided for jump_relu_threshold initialization"
-                    activation_batch = next(iter(activation_stream))
-                    self.initialize_jump_relu_threshold(sae, activation_batch)
-                if cfg.sae_type != "mixcoder":  # TODO: add support for MixCoder
-                    sae.cfg.act_fn = "jumprelu"
 
         sae = self.initialize_tensor_parallel(sae, device_mesh)
         return sae

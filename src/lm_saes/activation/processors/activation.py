@@ -187,7 +187,7 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
         self,
         data: Iterable[dict[str, Any]],
         *,
-        ignore_token_ids: Optional[list[int]] = None,
+        ignore_token_ids: Optional[list[int | None]] = None,
         model: Optional[HookedTransformer] = None,
         **kwargs,
     ) -> Iterable[dict[str, Any]]:

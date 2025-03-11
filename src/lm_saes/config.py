@@ -118,6 +118,7 @@ class CrossCoderConfig(BaseSAEConfig):
 class MixCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "mixcoder"
     modalities: dict[str, int]
+    modality_indices: Optional[dict[str, list[int]]] = None
 
     @property
     def d_sae(self) -> int:
@@ -297,7 +298,7 @@ class ActivationFactoryConfig(BaseConfig):
     """ Buffer size for online shuffling. If `None`, no shuffling will be performed. """
     buffer_shuffle: Optional[BufferShuffleConfig] = None
     """" Manual seed and device of generator for generating randomperm in buffer. """
-    ignore_token_ids: Optional[list[int]] = None
+    ignore_token_ids: Optional[list[int | None]] = None
     """ Tokens to ignore in the activations. """
 
 

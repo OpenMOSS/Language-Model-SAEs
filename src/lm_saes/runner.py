@@ -342,10 +342,13 @@ def train_sae(settings: TrainSAESettings) -> None:
 
     if settings.sae.sae_type == "mixcoder":
         assert settings.model_name is not None, "Model name is required for mixcoder SAE"
+        assert isinstance(settings.sae, MixCoderConfig)
         tokenizer = AutoTokenizer.from_pretrained(settings.model_name, trust_remote_code=True)
         mixcoder_settings = {
             "model_name": settings.model_name,
             "tokenizer": tokenizer,
+        } if settings.sae.modality_indices is None else {
+            "modality_indices": settings.sae.modality_indices
         }
         sae = initializer.initialize_sae_from_config(
             settings.sae,
@@ -409,7 +412,7 @@ class AnalyzeSAESettings(BaseSettings):
     mongo: MongoDBConfig
     """Configuration for the MongoDB database."""
     
-    ignore_token_ids: Optional[List[int | None]] = None,
+    ignore_token_ids: Optional[List[int | None]] = None
 
 
 

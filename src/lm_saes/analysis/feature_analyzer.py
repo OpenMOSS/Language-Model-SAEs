@@ -122,7 +122,7 @@ class FeatureAnalyzer:
         self,
         activation_stream: Iterable[dict[str, Any]],
         sae: SparseAutoEncoder,
-        ignore_token_ids: Optional[List[int]] = None,
+        ignore_token_ids: Optional[List[int | None]] = None,
     ) -> list[dict[str, Any]]:
         """Analyze feature activations for a chunk of the SAE.
 
