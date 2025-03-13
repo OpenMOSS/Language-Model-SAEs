@@ -96,7 +96,7 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
       }
     }
   }
-  
+
   // Process image highlights
   const imageHighlights = sample.origins
     .map((origin, index) => ({
@@ -151,8 +151,6 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
                   </span>
                 );
               })}
-
-              
             </div>
             <div className="flex flex-col gap-2">
               <div className="text-sm font-bold">Top 10 Image Highlights:</div>
@@ -162,9 +160,7 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
                 .slice(0, 10)
                 .map((highlight, index) => {
                   return (
-                    <div key={index}>
-                      [{highlight.origin.rect.map((n) => (n * 100).toFixed(1) + "%").join(", ")}]
-                    </div>
+                    <div key={index}>[{highlight.origin.rect.map((n) => (n * 100).toFixed(1) + "%").join(", ")}]</div>
                   );
                 })}
             </div>
@@ -189,44 +185,44 @@ export const FeatureActivationSample = ({ sample, sampleName, maxFeatureAct }: F
               const fullImageUrl = `${import.meta.env.VITE_BACKEND_URL}${imageUrl}`;
               return (
                 <div key={imgIndex} className="relative">
-                  {(showImageHighlights || showImageGrid) && imageHighlights
-                    .filter((highlight) => highlight.origin.imageIndex === imgIndex)
-                    .map((highlight, index) => {
-                      const [x1, y1, x2, y2] = highlight.origin.rect;
-                      const left = x1;
-                      const top = y1;
-                      const width = x2 - x1;
-                      const height = y2 - y1;
-                      return (
-                        <HoverCard key={index}>
-                          <HoverCardTrigger>
-                            <div
-                              className={cn(
-                                "absolute cursor-help bg-opacity-30",
-                                showImageHighlights && getAccentClassname(highlight.featureAct, maxFeatureAct, "bg"),
-                                showImageGrid && "border-[1px] border-gray-500",
-                                showImageHighlights && highlight.featureAct > 0 && "border-2 border-orange-500",
-                              )}
-                              style={{
-                                left: `${left * 100}%`,
-                                top: `${top * 100}%`,
-                                width: `${width * 100}%`,
-                                height: `${height * 100}%`,
-                              }}
-                            />
-                          </HoverCardTrigger>
-                          <HoverCardContent>
-                            <TokenInfo
-                              featureAct={highlight.featureAct}
-                              maxFeatureAct={maxFeatureAct}
-                              origin={highlight.origin}
-                            />
-                          </HoverCardContent>
-                        </HoverCard>
-                      );
-                    })}
+                  {(showImageHighlights || showImageGrid) &&
+                    imageHighlights
+                      .filter((highlight) => highlight.origin.imageIndex === imgIndex)
+                      .map((highlight, index) => {
+                        const [x1, y1, x2, y2] = highlight.origin.rect;
+                        const left = x1;
+                        const top = y1;
+                        const width = x2 - x1;
+                        const height = y2 - y1;
+                        return (
+                          <HoverCard key={index}>
+                            <HoverCardTrigger>
+                              <div
+                                className={cn(
+                                  "absolute cursor-help bg-opacity-30",
+                                  showImageHighlights && getAccentClassname(highlight.featureAct, maxFeatureAct, "bg"),
+                                  showImageGrid && "border-[1px] border-gray-500",
+                                  showImageHighlights && highlight.featureAct > 0 && "border-2 border-orange-500"
+                                )}
+                                style={{
+                                  left: `${left * 100}%`,
+                                  top: `${top * 100}%`,
+                                  width: `${width * 100}%`,
+                                  height: `${height * 100}%`,
+                                }}
+                              />
+                            </HoverCardTrigger>
+                            <HoverCardContent>
+                              <TokenInfo
+                                featureAct={highlight.featureAct}
+                                maxFeatureAct={maxFeatureAct}
+                                origin={highlight.origin}
+                              />
+                            </HoverCardContent>
+                          </HoverCard>
+                        );
+                      })}
                   <img src={fullImageUrl} alt="" className="max-w-[500px] h-auto" />
-                  
                 </div>
               );
             })}

@@ -38,6 +38,7 @@ class FeatureAnalysis(BaseModel):
     name: str
     act_times: int
     max_feature_acts: float
+    n_analyzed_tokens: Optional[int] = None
     act_times_modalities: Optional[dict[str, float]] = None
     max_feature_acts_modalities: Optional[dict[str, float]] = None
     samplings: list[FeatureAnalysisSampling]

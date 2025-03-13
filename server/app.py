@@ -192,6 +192,7 @@ def get_feature(name: str, feature_index: str | int):
                     "dictionary_name": feature.sae_name,
                     "act_times": feature.analyses[0].act_times,
                     "max_feature_act": feature.analyses[0].max_feature_acts,
+                    "n_analyzed_tokens": feature.analyses[0].n_analyzed_tokens,
                     "sample_groups": sample_groups,
                 }
             )
