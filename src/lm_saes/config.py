@@ -372,7 +372,7 @@ class FeatureAnalyzerConfig(BaseConfig):
     sample_weight_exponent: float = 2.0
     """ Exponent for weighting samples by activation value """
 
-    ignore_token_ids: Optional[list[int | None]] = None
+    ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
 
     subsamples: dict[str, dict[str, int | float]] = Field(
