@@ -87,32 +87,53 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
 
   const [showCustomInput, setShowCustomInput] = useState<boolean>(false);
 
+  const activationTimesSpan = feature.nAnalyzedTokens ? (
+    <span className="font-medium">
+      (Activation Times ={" "}
+      <span className="font-bold">
+        {feature.actTimes}
+        {feature.actTimesModalities &&
+          ` = ${Object.entries(feature.actTimesModalities)
+            .map(([modality, actTime]) => `${actTime} (${modality})`)
+            .join(" + ")}`}
+        )
+      </span>
+    </span>
+  ) : (
+    <span className="font-medium">
+      (Activation Frequency ={" "}
+      <span className="font-bold">
+        {(feature.actTimes / feature.nAnalyzedTokens!).toFixed(3)}
+        {feature.actTimesModalities &&
+          ` = ${Object.entries(feature.actTimesModalities)
+            .map(([modality, actTime]) => `${(actTime / feature.nAnalyzedTokens!).toFixed(3)} (${modality})`)
+            .join(" + ")}`}
+        )
+      </span>
+    </span>
+  );
+
+  const maxActivationSpan = (
+    <span className="font-medium">
+      (Max Activation ={" "}
+      <span className="font-bold">
+        {feature.maxFeatureAct}
+        {feature.maxFeatureActsModalities &&
+          ` = max(${Object.entries(feature.maxFeatureActsModalities)
+            .map(([modality, maxFeatureAct]) => `${maxFeatureAct} (${modality})`)
+            .join(", ")})`}
+        )
+      </span>
+    </span>
+  );
+
   return (
     <Card id="Interp." className="container">
       <CardHeader>
         <CardTitle className="flex justify-between items-center text-xl">
           <span>
-            #{feature.featureIndex}{" "}
-            <span className="font-medium">
-              (Activation Times ={" "}
-              <span className="font-bold">
-                {feature.actTimes}
-                {feature.actTimesModalities &&
-                  ` = ${Object.entries(feature.actTimesModalities)
-                    .map(([modality, actTime]) => `${actTime} (${modality})`)
-                    .join(" + ")}`})
-              </span>
-            </span>
-            <span className="font-medium">
-              (Max Activation ={" "}
-              <span className="font-bold">
-                {feature.maxFeatureAct}
-                {feature.maxFeatureActsModalities &&
-                  ` = max(${Object.entries(feature.maxFeatureActsModalities)
-                    .map(([modality, maxFeatureAct]) => `${maxFeatureAct} (${modality})`)
-                    .join(", ")})`})
-              </span>
-            </span>
+            #{feature.featureIndex} {activationTimesSpan}
+            {maxActivationSpan}
           </span>
           <Button onClick={() => setShowCustomInput((prev) => !prev)}>
             {showCustomInput ? "Hide Custom Input" : "Try Custom Input"}
