@@ -100,7 +100,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                 {feature.actTimesModalities &&
                   ` = ${Object.entries(feature.actTimesModalities)
                     .map(([modality, actTime]) => `${actTime} (${modality})`)
-                    .join(" + ")}`}
+                    .join(" + ")}`})
               </span>
             </span>
             <span className="font-medium">
@@ -110,7 +110,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                 {feature.maxFeatureActsModalities &&
                   ` = max(${Object.entries(feature.maxFeatureActsModalities)
                     .map(([modality, maxFeatureAct]) => `${maxFeatureAct} (${modality})`)
-                    .join(", ")})`}
+                    .join(", ")})`})
               </span>
             </span>
           </span>
