@@ -1,4 +1,5 @@
-from typing import Any, Iterable, Mapping
+import warnings
+from typing import Any, Iterable, Mapping, Optional, cast
 
 import torch
 from einops import rearrange, repeat
@@ -118,6 +119,27 @@ class FeatureAnalyzer:
 
         return sample_result
 
+    def compute_ignore_token_masks(
+        self, tokens: torch.Tensor, ignore_token_ids: Optional[list[int]] = None
+    ) -> torch.Tensor:
+        """Compute ignore token masks for the given tokens.
+
+        Args:
+            tokens: The tokens to compute the ignore token masks for
+            ignore_token_ids: The token IDs to ignore
+        """
+        if ignore_token_ids is None:
+            warnings.warn(
+                "ignore_token_ids are not provided. No tokens (including pad tokens) will be filtered out. If this is intentional, set ignore_token_ids explicitly to an empty list to avoid this warning.",
+                UserWarning,
+                stacklevel=2,
+            )
+            ignore_token_ids = []
+        mask = torch.ones_like(tokens, dtype=torch.bool)
+        for token_id in ignore_token_ids:
+            mask &= tokens != token_id
+        return mask
+
     @torch.no_grad()
     def analyze_chunk(
         self,
@@ -140,7 +162,7 @@ class FeatureAnalyzer:
             - Activation counts and maximums
             - Sampled activations with metadata
         """
-        n_training_tokens = 0
+        n_tokens = n_analyzed_tokens = 0
 
         # Progress tracking
         pbar = tqdm(
@@ -179,6 +201,10 @@ class FeatureAnalyzer:
             else:
                 feature_acts = sae.encode(batch[sae.cfg.hook_point_in])
 
+            # Compute ignore token masks
+            ignore_token_masks = self.compute_ignore_token_masks(batch["tokens"], self.cfg.ignore_token_ids)
+            feature_acts *= ignore_token_masks.unsqueeze(-1)
+
             # Update activation statistics
             act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
             max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
@@ -200,10 +226,11 @@ class FeatureAnalyzer:
 
             # Update progress
             n_tokens_current = batch["tokens"].numel()
-            n_training_tokens += n_tokens_current
+            n_tokens += n_tokens_current
+            n_analyzed_tokens += cast(int, ignore_token_masks.int().sum().item())
             pbar.update(n_tokens_current)
 
-            if n_training_tokens >= self.cfg.total_analyzing_tokens:
+            if n_tokens >= self.cfg.total_analyzing_tokens:
                 break
 
         pbar.close()
@@ -219,6 +246,7 @@ class FeatureAnalyzer:
         return self._format_analysis_results(
             sae=sae,
             act_times=act_times,
+            n_analyzed_tokens=n_analyzed_tokens,
             max_feature_acts=max_feature_acts,
             sample_result=sample_result,
             mapper=mapper,
@@ -230,6 +258,7 @@ class FeatureAnalyzer:
         self,
         sae: SparseAutoEncoder,
         act_times: torch.Tensor,
+        n_analyzed_tokens: int,
         max_feature_acts: torch.Tensor,
         sample_result: dict[str, dict[str, torch.Tensor]],
         mapper: KeyedDiscreteMapper,
@@ -241,6 +270,7 @@ class FeatureAnalyzer:
         Args:
             sae: The sparse autoencoder model
             act_times: Tensor of activation times for each feature
+            n_analyzed_tokens: Number of tokens analyzed
             max_feature_acts: Tensor of maximum activation values for each feature
             sample_result: Dictionary of sampling results
             mapper: MetaMapper for encoding/decoding metadata
@@ -255,6 +285,7 @@ class FeatureAnalyzer:
         for i in range(sae.cfg.d_sae):
             feature_result = {
                 "act_times": act_times[i].item(),
+                "n_analyzed_tokens": n_analyzed_tokens,
                 "max_feature_acts": max_feature_acts[i].item(),
                 "samplings": [
                     {
