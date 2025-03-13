@@ -1,9 +1,11 @@
 import re
+import warnings
 from abc import ABC, abstractmethod
 from itertools import accumulate
 from typing import Any, Optional, cast
 
 import torch
+from transformer_lens import HookedTransformer
 from transformers import (
     AutoModelForCausalLM,
     AutoProcessor,
@@ -95,6 +97,55 @@ class LanguageModel(ABC):
     def pad_token_id(self) -> int | None:
         """The ID of the padding token."""
         pass
+
+
+class TransformerLensLanguageModel(LanguageModel):
+    def __init__(self, cfg: LanguageModelConfig):
+        self.cfg = cfg
+        self.device = (
+            torch.device(f"cuda:{torch.cuda.current_device()}") if cfg.device == "cuda" else torch.device(cfg.device)
+        )
+        self.model = HookedTransformer.from_pretrained(
+            cfg.model_name,
+            cache_dir=cfg.cache_dir,
+            local_files_only=cfg.local_files_only,
+        )
+
+    @property
+    def tokenizer(self) -> Any:
+        return self.model.tokenizer
+
+    @property
+    def eos_token_id(self) -> int | None:
+        return self.tokenizer.eos_token_id
+
+    @property
+    def bos_token_id(self) -> int | None:
+        return self.tokenizer.bos_token_id
+
+    @property
+    def pad_token_id(self) -> int | None:
+        return self.tokenizer.pad_token_id
+
+    def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
+        if any(key in ["images", "videos"] for key in raw):
+            warnings.warn(
+                "Tracing with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
+            )
+        tokens = self.model.to_tokens(raw["text"], prepend_bos=True)
+        batch_str_tokens = [self.tokenizer.batch_decode(token, clean_up_tokenization_spaces=False) for token in tokens]
+        return [
+            _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
+        ]
+
+    def to_activations(self, raw: dict[str, Any], hook_points: list[str]) -> dict[str, torch.Tensor]:
+        if any(key in ["images", "videos"] for key in raw):
+            warnings.warn(
+                "Activations with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
+            )
+        tokens = self.model.to_tokens(raw["text"], prepend_bos=True)
+        _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
+        return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
 
 
 class HuggingFaceLanguageModel(LanguageModel):

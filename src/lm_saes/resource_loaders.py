@@ -1,10 +1,15 @@
-from typing import Any, Optional, cast
+from typing import Any, Literal, Optional, cast
 
 import datasets
 import torch
 from torch.distributed.device_mesh import DeviceMesh
 
-from lm_saes.backend.language_model import LanguageModel, QwenLanguageModel, QwenVLLanguageModel
+from lm_saes.backend.language_model import (
+    LanguageModel,
+    QwenLanguageModel,
+    QwenVLLanguageModel,
+    TransformerLensLanguageModel,
+)
 from lm_saes.config import DatasetConfig, LanguageModelConfig
 
 
@@ -63,10 +68,24 @@ def load_dataset(
     return shard, shard_metadata
 
 
+def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_lens"]:
+    if model_name.startswith("Qwen/Qwen2.5-VL"):
+        return "huggingface"
+    if model_name.startswith("Qwen/Qwen2.5-7B"):
+        return "huggingface"
+    return "transformer_lens"
+
+
 def load_model(cfg: LanguageModelConfig) -> LanguageModel:
-    if cfg.model_name.startswith("Qwen/Qwen2.5-VL"):
-        return QwenVLLanguageModel(cfg)
-    if cfg.model_name.startswith("Qwen/Qwen2.5-7B"):
-        return QwenLanguageModel(cfg)
+    backend = infer_model_backend(cfg.model_name) if cfg.backend == "auto" else cfg.backend
+    if backend == "huggingface":
+        if cfg.model_name.startswith("Qwen/Qwen2.5-VL"):
+            return QwenVLLanguageModel(cfg)
+        elif cfg.model_name.startswith("Qwen/Qwen2.5-7B"):
+            return QwenLanguageModel(cfg)
+        else:
+            raise NotImplementedError(f"Model {cfg.model_name} not supported in HuggingFace backend.")
+    elif backend == "transformer_lens":
+        return TransformerLensLanguageModel(cfg)
     else:
-        raise NotImplementedError(f"Model {cfg.model_name} not supported")
+        raise NotImplementedError(f"Backend {backend} not supported.")

@@ -322,6 +322,8 @@ class LanguageModelConfig(BaseModelConfig):
     """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
     max_length: int = 2048
     """ The maximum length of the input. """
+    backend: Literal["huggingface", "transformer_lens", "auto"] = "auto"
+    """ The backend to use for the language model. """
 
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
