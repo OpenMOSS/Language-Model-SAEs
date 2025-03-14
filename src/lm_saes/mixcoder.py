@@ -269,7 +269,7 @@ class MixCoder(SparseAutoEncoder):
                     if isinstance(self.decoder["shared"].bias, DTensor)
                     else self.decoder["shared"].bias
                 )
-                x_temp = x_temp - modality_bias - shared_bias  # TODO: fix bugs
+                x_temp = x - modality_bias - shared_bias  # TODO: fix bugs
 
             hidden_pre_modality = self.encoder[modality](x_temp)
             hidden_pre_shared = self.encoder["shared"](x_temp)
