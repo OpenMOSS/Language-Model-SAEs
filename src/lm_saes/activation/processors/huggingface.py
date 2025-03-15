@@ -40,11 +40,19 @@ class HuggingFaceDatasetLoader(BaseActivationProcessor[Dataset, Iterable[dict[st
             (batch, info) where info contains context indices for each sample in the batch.
     """
 
-    def __init__(self, batch_size: int, num_workers: int = 0, with_info: bool = False, show_progress: bool = True):
+    def __init__(
+        self,
+        batch_size: int,
+        num_workers: int = 0,
+        with_info: bool = False,
+        show_progress: bool = True,
+        pin_memory: bool = True,
+    ):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.with_info = with_info
         self.show_progress = show_progress
+        self.pin_memory = pin_memory
 
     def process(
         self,
@@ -73,7 +81,7 @@ class HuggingFaceDatasetLoader(BaseActivationProcessor[Dataset, Iterable[dict[st
                 cast(torch.utils.data.Dataset, data),
                 batch_size=self.batch_size,
                 shuffle=False,
-                pin_memory=True,
+                pin_memory=self.pin_memory,
                 collate_fn=identity_collate_fn,
                 num_workers=self.num_workers,
             ),

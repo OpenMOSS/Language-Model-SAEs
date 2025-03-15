@@ -87,6 +87,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         dtype: Optional[torch.dtype] = None,
         num_workers: int = 0,
         prefetch_factor: int | None = None,
+        pin_memory: bool = True,
     ):
         self.cache_dir = Path(cache_dir)
         self.hook_points = hook_points
@@ -94,6 +95,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         self.dtype = dtype
         self.num_workers = num_workers
         self.prefetch_factor = prefetch_factor
+        self.pin_memory = pin_memory
 
     def load_chunk_for_hooks(self, chunk_idx: int, hook_chunks: dict[str, list[ChunkInfo]]) -> dict[str, Any]:
         """Load chunk data for all hook points at given index.
@@ -192,7 +194,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             shuffle=False,  # mandatory!
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
-            pin_memory=True,  # mandatory!
+            pin_memory=self.pin_memory,  # mandatory!
             collate_fn=first_data_collate_fn,
         )
         return iter(tqdm(dataloader, total=total_chunks, desc="Processing activation chunks"))
@@ -240,15 +242,17 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 for k, v in activations.items():
                     if k in self.hook_points:
                         activations[k] = v.to(self.dtype)
-            
+
             while activations["tokens"].ndim >= 3:
+
                 def flatten(x: torch.Tensor | list[list[Any]]) -> torch.Tensor | list[Any]:
                     if isinstance(x, torch.Tensor):
                         return x.flatten(start_dim=0, end_dim=1)
                     else:
                         return [a for b in x for a in b]
+
                 activations = {k: flatten(v) for k, v in activations.items()}
-                
+
             yield activations  # Use pin_memory to load data on cpu, then transfer them to cuda in the main process, as advised in https://discuss.pytorch.org/t/dataloader-multiprocessing-with-dataset-returning-a-cuda-tensor/151022/2.
             # I wrote this utils function as I notice it is used multiple times in this repo. Do we need to apply it elsewhere?
 

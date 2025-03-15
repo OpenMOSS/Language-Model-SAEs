@@ -57,6 +57,7 @@ class ActivationFactory:
             with_info=True,
             show_progress=True,
             num_workers=self.cfg.num_workers,
+            pin_memory=self.cfg.pin_memory,
         )
 
         processors_optional: Sequence[
@@ -125,6 +126,7 @@ class ActivationFactory:
             dtype=activations_source.dtype,
             num_workers=activations_source.num_workers,
             prefetch_factor=activations_source.prefetch,
+            pin_memory=self.cfg.pin_memory,
         )
 
         processors = [ActivationTransformer()] if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D else []
