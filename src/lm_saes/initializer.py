@@ -1,5 +1,5 @@
 import warnings
-from typing import Any, Dict, Iterable, List
+from typing import Dict, Iterable, List
 
 import torch
 from torch import Tensor
@@ -23,23 +23,16 @@ class Initializer:
         self.cfg = cfg
 
     @torch.no_grad()
-    def initialize_parameters(self, sae: SparseAutoEncoder, mixcoder_settings: dict[str, Any] | None = None):
+    def initialize_parameters(self, sae: SparseAutoEncoder):
         """Initialize the parameters of the SAE.
         Only used when the state is "training" to initialize sae.
         """
 
-        if sae.cfg.sae_type == "mixcoder":
-            # assert mixcoder_settings is not None
-            # assert "model_name" in mixcoder_settings and "tokenizer" in mixcoder_settings
-            # modality_indices = get_modality_indices(mixcoder_settings["tokenizer"], mixcoder_settings["model_name"])
-            # sae.init_parameters(modality_indices=modality_indices)
-            sae.init_parameters()
-        else:
-            sae.init_parameters(
-                encoder_uniform_bound=self.cfg.encoder_uniform_bound,
-                decoder_uniform_bound=self.cfg.decoder_uniform_bound,
-                init_log_jumprelu_threshold_value=self.cfg.init_log_jumprelu_threshold_value,
-            )
+        sae.init_parameters(
+            encoder_uniform_bound=self.cfg.encoder_uniform_bound,
+            decoder_uniform_bound=self.cfg.decoder_uniform_bound,
+            init_log_jumprelu_threshold_value=self.cfg.init_log_jumprelu_threshold_value,
+        )
 
         if self.cfg.init_decoder_norm:
             sae.set_decoder_to_fixed_norm(self.cfg.init_decoder_norm, force_exact=True)
@@ -169,7 +162,6 @@ class Initializer:
         activation_stream: Iterable[dict[str, Tensor]] | None = None,
         activation_norm: dict[str, float] | None = None,
         device_mesh: DeviceMesh | None = None,
-        mixcoder_settings: dict[str, Any] | None = None,
     ):
         """
         Initialize the SAE from the SAE config.
@@ -191,7 +183,7 @@ class Initializer:
             raise ValueError(f"SAE type {cfg.sae_type} not supported.")
         if self.cfg.state == "training":
             if cfg.sae_pretrained_name_or_path is None:
-                sae: SparseAutoEncoder = self.initialize_parameters(sae, mixcoder_settings=mixcoder_settings)
+                sae: SparseAutoEncoder = self.initialize_parameters(sae)
             if sae.cfg.norm_activation == "dataset-wise":
                 if activation_norm is None:
                     assert (

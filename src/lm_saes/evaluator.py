@@ -4,10 +4,11 @@ import torch
 from torch import Tensor
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
-from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import EvalConfig
+from lm_saes.mixcoder import MixCoder
 from lm_saes.sae import SparseAutoEncoder
+from wandb.sdk.wandb_run import Run
 
 
 class Evaluator:
@@ -207,3 +208,23 @@ class Evaluator:
             if self.cur_tokens > self.cfg.total_eval_tokens:
                 break
         self.process_metrics(wandb_logger)
+
+
+@torch.no_grad()
+def evaluate_mixcoder(mixcoder: MixCoder, data: dict[str, Tensor]) -> dict[str, float]:
+    feature_acts = mixcoder.encode(
+        data[mixcoder.cfg.hook_point_in], return_hidden_pre=False, modalities=data["modalities"]
+    )
+    log_dict = {}
+
+    for modality_focus, _ in mixcoder.modality_index.items():
+        if modality_focus == "shared":
+            continue
+        modality_token_mask = mixcoder.get_modality_token_mask(data["modalities"], modality_focus)
+        modality_feature_acts = feature_acts[modality_token_mask]
+        total_nonzero = modality_feature_acts.nonzero().shape[0]
+        for modality, position in mixcoder.modality_index.items():
+            modality_nonzero = modality_feature_acts[:, position[0] : position[1]].nonzero().shape[0]
+            log_dict[f"{modality_focus}_token_{modality}_area_nonzero"] = modality_nonzero / total_nonzero
+
+    return log_dict
