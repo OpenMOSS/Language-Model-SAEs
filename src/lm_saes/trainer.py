@@ -9,6 +9,7 @@ from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 
 from lm_saes.config import TrainerConfig
+from lm_saes.evaluator import evaluate_mixcoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
 from lm_saes.sae import SparseAutoEncoder
@@ -119,7 +120,7 @@ class Trainer:
     def _log(self, sae: SparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
         assert self.optimizer is not None, "Optimizer must be initialized"
         assert self.wandb_logger is not None, "Wandb logger must be provided"
-        activation_out = batch["output"]
+        activation_out = batch[sae.cfg.hook_point_out]
         did_fire = (log_info["feature_acts"] > 0).float().sum(0) > 0
         log_info["n_forward_passes_since_fired"] += 1
         log_info["n_forward_passes_since_fired"][did_fire] = 0
@@ -196,11 +197,13 @@ class Trainer:
                 )
             elif sae.cfg.sae_type == "mixcoder":
                 assert isinstance(sae, MixCoder)
+                mixcoder_log_dict = evaluate_mixcoder(sae, batch)
+                wandb_log_dict.update({f"mixcoder_metrics/{key}": value for key, value in mixcoder_log_dict.items()})
                 for modality, (start, end) in sae.modality_index.items():
                     if modality == "shared":
                         continue
                     shared_start, shared_end = sae.modality_index["shared"]
-                    mask = sae.get_modality_token_mask(batch["modality_indices"], modality)
+                    mask = sae.get_modality_token_mask(batch["modalities"], modality)
                     feature_acts_modality = log_info["feature_acts"][mask]
                     reconstructed_modality = log_info["reconstructed"][mask]
                     activation_out_modality = activation_out[mask]
@@ -283,32 +286,8 @@ class Trainer:
                 sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
             log_info.update(loss_dict)
             proc_bar.set_description(f"loss: {log_info['loss'].item()}")
-            """
-            log_info is a dict with the following keys:
-            - act_freq_scores: Tensor[d_sae]
-            - n_forward_passes_since_fired: Tensor[d_sae]
-            - n_frac_active_tokens: Tensor[1]
-            - loss: Tensor[1]
-            - l_rec: Tensor[batch_size]
-            - l_s: Tensor[batch_size] | None
-            - feature_acts: Tensor[batch_size, d_sae]
-            - reconstructed: Tensor[batch_size, d_sae]
-            - hidden_pre: Tensor[batch_size, d_sae]
-            """
-
-            activation_in, activation_out = batch[sae.cfg.hook_point_in], batch[sae.cfg.hook_point_out]
-
             if self.wandb_logger is not None:
-                self._log(
-                    sae,
-                    log_info,
-                    {
-                        "input": activation_in,
-                        "output": activation_out,
-                        "tokens": batch["tokens"],
-                        "modality_indices": batch["modalities"],
-                    },
-                )
+                self._log(sae, log_info, batch)
 
             if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
                 eval_fn(sae)

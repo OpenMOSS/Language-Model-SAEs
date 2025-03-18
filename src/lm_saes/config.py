@@ -110,6 +110,7 @@ class CrossCoderConfig(BaseSAEConfig):
 class MixCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "mixcoder"
     modalities: dict[str, int]
+    penalty_coefficient: dict[str, float]
     loss_weights: dict[str, float]
 
     @property
@@ -124,6 +125,15 @@ class MixCoderConfig(BaseSAEConfig):
         super().model_post_init(__context)
         if "shared" in self.modalities:
             assert list(self.modalities.keys())[-1] == "shared", "Shared modality must be the last modality"
+
+    def penalty_coefficient_post_init(self, __context):
+        super().model_post_init(__context)
+        for modality in self.modalities.keys():
+            assert self.penalty_coefficient[modality] >= 1, "Penalty coefficient must be greater than or equal to 1"
+
+    def activation_function_post_init(self, __context):
+        super().model_post_init(__context)
+        assert self.act_fn == "jumprelu", "Only jumprelu is supported for MixCoder"
 
 
 class InitializerConfig(BaseConfig):
