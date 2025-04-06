@@ -105,10 +105,28 @@ class TransformerLensLanguageModel(LanguageModel):
         self.device = (
             torch.device(f"cuda:{torch.cuda.current_device()}") if cfg.device == "cuda" else torch.device(cfg.device)
         )
-        self.model = HookedTransformer.from_pretrained(
-            cfg.model_name,
+        hf_model = AutoModelForCausalLM.from_pretrained(
+            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
             cache_dir=cfg.cache_dir,
             local_files_only=cfg.local_files_only,
+            torch_dtype=cfg.dtype,
+        )
+        hf_tokenizer = AutoTokenizer.from_pretrained(
+            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
+            trust_remote_code=True,
+            use_fast=True,
+            add_bos_token=True,
+            local_files_only=cfg.local_files_only,
+        )
+        self.model = HookedTransformer.from_pretrained(
+            cfg.model_name,
+            use_flash_attn=cfg.use_flash_attn,
+            device=self.device,
+            cache_dir=cfg.cache_dir,
+            hf_model=hf_model,
+            hf_config=hf_model.config,
+            tokenizer=hf_tokenizer,
+            dtype=cfg.dtype,  # type: ignore ; issue with transformer_lens
         )
 
     @property
