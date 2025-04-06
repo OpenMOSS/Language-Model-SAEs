@@ -7,6 +7,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 from torch import Tensor
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
+from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import TrainerConfig
 from lm_saes.evaluator import evaluate_mixcoder
@@ -14,7 +15,6 @@ from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.misc import all_reduce_tensor
-from wandb.sdk.wandb_run import Run
 
 
 class Trainer:
@@ -154,7 +154,7 @@ class Trainer:
 
         if (self.cur_step + 1) % self.cfg.log_frequency == 0:
             l0 = (log_info["feature_acts"] > 0).float().sum(-1).mean()
-            l_rec = log_info["l_rec"].mean()
+            l_rec = log_info["l_rec"].sum(dim=-1).mean()
             per_token_l2_loss = (log_info["reconstructed"] - activation_out).pow(2).sum(dim=-1)
             total_variance = (activation_out - activation_out.mean(0)).pow(2).sum(dim=-1)
             l2_norm_error = per_token_l2_loss.sqrt().mean()
@@ -230,6 +230,8 @@ class Trainer:
                             f"mixcoder_metrics/{modality}_loss": log_info[f"{modality}_loss"].float().mean().item(),
                         }
                     )
+
+            print({"step": self.cur_step + 1, **wandb_log_dict})
 
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
 

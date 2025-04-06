@@ -3,11 +3,11 @@ from pathlib import Path
 from typing import Literal, Optional, TypeVar, overload
 
 import torch
+import wandb
 from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-import wandb
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.activation.writer import ActivationWriter
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
@@ -97,8 +97,6 @@ def load_config(
 
 class GenerateActivationsSettings(BaseSettings):
     """Settings for activation generation."""
-
-    model_config = SettingsConfigDict(cli_parse_args=True, cli_kebab_case=True)
 
     model: Optional[LanguageModelConfig] = None
     """Configuration for loading the language model. If `None`, will read from the database."""
