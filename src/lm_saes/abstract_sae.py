@@ -1,3 +1,4 @@
+import math
 import os
 from abc import ABC, abstractmethod
 from importlib.metadata import version
@@ -90,11 +91,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def __init__(self, cfg: BaseSAEConfig):
         super(AbstractSparseAutoEncoder, self).__init__()
         self.cfg = cfg
+
         # should be set by Trainer during training
         self.current_k = cfg.top_k
+
         # if cfg.norm_activation == "dataset-wise", the dataset average activation norm should be
         # calculated by the initializer before training starts and set by standardize_parameters_of_dataset_activation_scaling
         self.dataset_average_activation_norm: dict[str, float] | None = None
+
         self.device_mesh: DeviceMesh | None = None
 
         self.activation_function: Callable[[torch.Tensor], torch.Tensor] = self.activation_function_factory()
@@ -233,7 +237,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             ],
         ],
     ]:
-        """Encode input tensor through the sparse autoencoder."""
+        """Encode input tensor through the sparse autoencoder.
+        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
+        """
         raise NotImplementedError("Subclasses must implement this method")
 
     def decode(
@@ -261,10 +267,49 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
-        """Forward pass through the autoencoder."""
+        """Forward pass through the autoencoder.
+        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
+        """
         feature_acts = self.encode(x, **kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
         return reconstructed
+
+    def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> torch.Tensor:
+        """Compute the normalization factor for the activation vectors.
+        This should be called during forward pass.
+        There are four modes for norm_activation:
+        - "token-wise": normalize by the token-wise norm calculated with the input x
+        - "batch-wise": normalize by the batch-wise norm calculated with the input x
+        - "dataset-wise": normalize by the dataset-wise norm initialized by the Initializer with sae.set_dataset_average_activation_norm method
+        - "inference": no normalization, the weights are already normalized by the Initializer with sae.standardize_parameters_of_dataset_norm method
+        """
+        assert self.cfg.norm_activation in [
+            "token-wise",
+            "batch-wise",
+            "dataset-wise",
+            "inference",
+        ], f"Not implemented norm_activation {self.cfg.norm_activation}"
+        if self.cfg.norm_activation == "token-wise":
+            return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True)
+        if self.cfg.norm_activation == "batch-wise":
+            return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True).mean(dim=-2, keepdim=True)
+        if self.cfg.norm_activation == "dataset-wise":
+            assert (
+                self.dataset_average_activation_norm is not None
+            ), "dataset_average_activation_norm must be provided from Initializer"
+            return torch.tensor(
+                math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point],
+                device=x.device,
+                dtype=x.dtype,
+            )
+        if self.cfg.norm_activation == "inference":
+            return torch.tensor(1.0, device=x.device, dtype=x.dtype)
+        raise ValueError(f"Not implemented norm_activation {self.cfg.norm_activation}")
+
+    @abstractmethod
+    def normalize_activations(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Normalize the input activations. Should be called before calling `encode` or `forward`."""
+        raise NotImplementedError("Subclasses must implement this method")
 
     @overload
     def compute_loss(
@@ -275,6 +320,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         sparsity_loss_type: Literal["power", "tanh", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
+        l1_coefficient: float = 1.0,
         return_aux_data: Literal[True] = True,
         **kwargs,
     ) -> tuple[
@@ -291,6 +337,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         sparsity_loss_type: Literal["power", "tanh", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
+        l1_coefficient: float = 1.0,
         return_aux_data: Literal[False],
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
@@ -310,6 +357,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         sparsity_loss_type: Literal["power", "tanh", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
+        l1_coefficient: float = 1.0,
         return_aux_data: bool = True,
         **kwargs,
     ) -> Union[
@@ -319,8 +367,41 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
         ],
     ]:
-        """Compute the loss for the autoencoder."""
-        raise NotImplementedError("Subclasses must implement this method")
+        """Compute the loss for the autoencoder.
+        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
+        """
+        x, label = batch[self.cfg.hook_point_in], batch[self.cfg.hook_point_out]
+        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **kwargs)
+        reconstructed = self.decode(feature_acts, **kwargs)
+        l_rec = (reconstructed - label).pow(2)
+        if use_batch_norm_mse:
+            l_rec = (
+                l_rec
+                / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+            )
+        loss = l_rec.sum(dim=-1).mean()
+        loss_dict = {
+            "l_rec": l_rec,
+        }
+
+        if sparsity_loss_type is not None:
+            if sparsity_loss_type == "power":
+                l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
+            elif sparsity_loss_type == "tanh":
+                l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
+            else:
+                raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
+            loss_dict["l_s"] = l1_coefficient * l_s.mean()
+            loss = loss + l1_coefficient * l_s.mean()
+
+        if return_aux_data:
+            aux_data = {
+                "feature_acts": feature_acts,
+                "reconstructed": reconstructed,
+                "hidden_pre": hidden_pre,
+            }
+            return loss, (loss_dict, aux_data)
+        return loss
 
     @torch.no_grad()
     def init_encoder_with_decoder_transpose(self, factor: float = 1.0):

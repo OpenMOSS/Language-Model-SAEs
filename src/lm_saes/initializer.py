@@ -123,10 +123,10 @@ class Initializer:
         """
         This function is used to initialize the encoder bias for constant fire times.
         """
-        activation_in = activation_batch[sae.cfg.hook_point_in]
-        tokens = activation_batch["tokens"]
-        batch_size = activation_in.size(0)
-        _, hidden_pre = sae.encode(activation_in, return_hidden_pre=True, tokens=tokens)
+        batch = sae.normalize_activations(activation_batch)
+        _, hidden_pre = sae.encode(batch[sae.cfg.hook_point_in], return_hidden_pre=True, tokens=batch["tokens"])
+
+        batch_size = batch[sae.cfg.hook_point_in].size(0)
         k = int(self.cfg.const_times_for_init_b_e * batch_size / sae.cfg.d_sae)
         encoder_bias, _ = torch.kthvalue(hidden_pre, batch_size - k + 1, dim=0)
         assert isinstance(sae.activation_function, JumpReLU)
@@ -142,13 +142,11 @@ class Initializer:
             warnings.warn("MixCoder is not supported for jump_relu_threshold initialization.")
             return sae
 
-        activation_in = activation_batch[sae.cfg.hook_point_in]
-        tokens = activation_batch["tokens"]
-        batch_size = activation_in.size(0)
-        _, hidden_pre = sae.encode(activation_in, return_hidden_pre=True, tokens=tokens)
+        batch = sae.normalize_activations(activation_batch)
+        _, hidden_pre = sae.encode(batch[sae.cfg.hook_point_in], return_hidden_pre=True, tokens=batch["tokens"])
         hidden_pre = torch.clamp(hidden_pre, min=0.0)
         hidden_pre = hidden_pre.flatten()
-        threshold = hidden_pre.topk(k=batch_size * sae.cfg.top_k).values[-1]
+        threshold = hidden_pre.topk(k=batch[sae.cfg.hook_point_in].size(0) * sae.cfg.top_k).values[-1]
         sae.cfg.jump_relu_threshold = threshold.item()
         return sae
 

@@ -116,32 +116,26 @@ class MixCoder(SparseAutoEncoder):
             Float[torch.Tensor, " batch"],
             tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
         ],
-    ]:  # may be overridden by subclasses
-        assert "modalities" in batch
-        modalities = batch["modalities"]
-
-        x: torch.Tensor = batch[self.cfg.hook_point_in].to(self.cfg.dtype)
-        label: torch.Tensor = batch[self.cfg.hook_point_out].to(self.cfg.dtype)
+    ]:
+        x, label = batch[self.cfg.hook_point_in], batch[self.cfg.hook_point_out]
 
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
 
-        label_norm_factor: torch.Tensor = self.compute_norm_factor(label, hook_point=self.cfg.hook_point_out)
-        label_normed = label * label_norm_factor
-
+        loss_list = []
         loss_list = []
         loss_dict = {}
 
         for modality, (start, end) in self.modality_index.items():
             if modality == "shared":
                 continue
-            token_mask = self.get_modality_token_mask(modality_indices=modalities, modality=modality)
+            token_mask = self.get_modality_token_mask(modality_indices=batch["modalities"], modality=modality)
             token_num = token_mask.sum(dim=-1)
-            l_rec = (reconstructed[token_mask] - label_normed[token_mask]).pow(2)
+            l_rec = (reconstructed[token_mask] - label[token_mask]).pow(2)
             if use_batch_norm_mse:
                 l_rec = (
                     l_rec
-                    / (label_normed[token_mask] - label_normed[token_mask].mean(dim=0, keepdim=True))
+                    / (label[token_mask] - label[token_mask].mean(dim=0, keepdim=True))
                     .pow(2)
                     .sum(dim=-1, keepdim=True)
                     .clamp(min=1e-8)
@@ -161,28 +155,24 @@ class MixCoder(SparseAutoEncoder):
         for modality, (start, end) in self.modality_index.items():
             if modality == "shared":
                 continue
-            token_mask = self.get_modality_token_mask(modality_indices=modalities, modality=modality)
+            token_mask = self.get_modality_token_mask(modality_indices=batch["modalities"], modality=modality)
             penalty_feature_acts[token_mask] = feature_acts[token_mask] * self._get_penalty_mask(
-                feature_acts[0], modality
+                feature_acts[token_mask], modality
             )
-        if sparsity_loss_type == "power":
-            l_s = torch.norm(penalty_feature_acts * self.decoder_norm(), p=p, dim=-1)
-            assert isinstance(l_s, torch.Tensor)
+        if sparsity_loss_type is not None:
+            if sparsity_loss_type == "power":
+                l_s = torch.norm(penalty_feature_acts * self.decoder_norm(), p=p, dim=-1)
+            elif sparsity_loss_type == "tanh":
+                l_s = torch.tanh(tanh_stretch_coefficient * penalty_feature_acts * self.decoder_norm()).sum(dim=-1)
+            else:
+                raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
             loss_dict["l_s"] = l1_coefficient * l_s.mean()
             loss = loss + l1_coefficient * l_s.mean()
-        elif sparsity_loss_type == "tanh":
-            l_s = torch.tanh(tanh_stretch_coefficient * penalty_feature_acts * self.decoder_norm()).sum(dim=-1)
-            loss_dict["l_s"] = l1_coefficient * l_s.mean()
-            loss = loss + l1_coefficient * l_s.mean()
-        elif sparsity_loss_type is None:
-            pass
-        else:
-            raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
 
         if return_aux_data:
             aux_data = {
                 "feature_acts": feature_acts,
-                "reconstructed": reconstructed / label_norm_factor,
+                "reconstructed": reconstructed,
                 "hidden_pre": hidden_pre,
             }
             return loss, (loss_dict, aux_data)
