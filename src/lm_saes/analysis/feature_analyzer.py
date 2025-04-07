@@ -195,6 +195,8 @@ class FeatureAnalyzer:
             # Reshape meta to zip outer dimensions to inner
             meta = {k: [m[k] for m in batch["meta"]] for k in batch["meta"][0].keys()}
 
+            batch = sae.normalize_activations(batch)
+
             # Get feature activations from SAE
             if isinstance(sae, MixCoder):
                 feature_acts = sae.encode(batch[sae.cfg.hook_point_in], modalities=batch["modalities"])
