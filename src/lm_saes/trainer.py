@@ -262,9 +262,15 @@ class Trainer:
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001)
         for batch in activation_stream:
             proc_bar.update(1)
+
+            batch = sae.normalize_activations(batch)
+
             sae.train()
+
             self.optimizer.zero_grad()
+
             loss_dict = self._training_step(sae, batch)
+
             if sae.cfg.sae_type == "mixcoder":
                 flag = False
                 for k, v in loss_dict.items():
@@ -274,18 +280,23 @@ class Trainer:
                             break
                 if flag:
                     continue
+
             loss_dict["loss"].backward()
             # TODO: add support for mixcoder to use different clip_grad_norm for each modality
             loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
                 sae.parameters(),
                 max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
             )
+
             self.optimizer.step()
             self.scheduler.step()
+
             if sae.cfg.force_unit_decoder_norm:
                 sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
+
             log_info.update(loss_dict)
             proc_bar.set_description(f"loss: {log_info['loss'].item()}")
+
             if self.wandb_logger is not None:
                 self._log(sae, log_info, batch)
 

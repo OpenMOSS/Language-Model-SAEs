@@ -15,34 +15,32 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def __init__(self, cfg: BaseSAEConfig):
         super(SparseAutoEncoder, self).__init__(cfg)
         self.cfg = cfg
-        # should be set by Trainer during training
-        self.current_k = cfg.top_k
+
         self.encoder = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
         self.decoder = torch.nn.Linear(
             cfg.d_sae, cfg.d_model, bias=cfg.use_decoder_bias, device=cfg.device, dtype=cfg.dtype
         )
         if cfg.use_glu_encoder:
             self.encoder_glu = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
+
         self.hook_hidden_pre = HookPoint()
         self.hook_feature_acts = HookPoint()
         self.hook_reconstructed = HookPoint()
-        # if cfg.norm_activation == "dataset-wise", the dataset average activation norm should be
-        # calculated by the initializer before training starts and set by standardize_parameters_of_dataset_activation_scaling
-        self.dataset_average_activation_norm: dict[str, float] | None = None
 
-    @torch.no_grad()
-    def set_dataset_average_activation_norm(self, dataset_average_activation_norm: dict[str, float]):
-        """Set the dataset average activation norm for training or inference.
-        dataset_average_activation_norm is set by the Initializer and only used when cfg.norm_activation == "dataset-wise".
+    @override
+    def normalize_activations(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Normalize the input activations.
+        This should be called before calling `encode` or `compute_loss`.
         """
-        self.dataset_average_activation_norm = dataset_average_activation_norm
-
-    @torch.no_grad()
-    def set_current_k(self, current_k: int):
-        """Set the current k for topk activation function.
-        This should be set by the Trainer during training.
-        """
-        self.current_k = current_k
+        input_norm_factor = self.compute_norm_factor(batch[self.cfg.hook_point_in], hook_point=self.cfg.hook_point_in)
+        output_norm_factor = self.compute_norm_factor(
+            batch[self.cfg.hook_point_out], hook_point=self.cfg.hook_point_out
+        )
+        return {
+            **batch,
+            self.cfg.hook_point_in: batch[self.cfg.hook_point_in] * input_norm_factor,
+            self.cfg.hook_point_out: batch[self.cfg.hook_point_out] * output_norm_factor,
+        }
 
     @override
     def encoder_norm(self, keepdim: bool = False):
@@ -90,38 +88,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             )
             decoder_bias_norm = decoder_bias_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
             return decoder_bias_norm
-
-    def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> torch.Tensor:
-        """Compute the normalization factor for the activation vectors.
-        This should be called during forward pass.
-        There are four modes for norm_activation:
-        - "token-wise": normalize by the token-wise norm calculated with the input x
-        - "batch-wise": normalize by the batch-wise norm calculated with the input x
-        - "dataset-wise": normalize by the dataset-wise norm initialized by the Initializer with sae.set_dataset_average_activation_norm method
-        - "inference": no normalization, the weights are already normalized by the Initializer with sae.standardize_parameters_of_dataset_norm method
-        """
-        assert self.cfg.norm_activation in [
-            "token-wise",
-            "batch-wise",
-            "dataset-wise",
-            "inference",
-        ], f"Not implemented norm_activation {self.cfg.norm_activation}"
-        if self.cfg.norm_activation == "token-wise":
-            return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True)
-        if self.cfg.norm_activation == "batch-wise":
-            return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True).mean(dim=-2, keepdim=True)
-        if self.cfg.norm_activation == "dataset-wise":
-            assert (
-                self.dataset_average_activation_norm is not None
-            ), "dataset_average_activation_norm must be provided from Initializer"
-            return torch.tensor(
-                math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point],
-                device=x.device,
-                dtype=x.dtype,
-            )
-        if self.cfg.norm_activation == "inference":
-            return torch.tensor(1.0, device=x.device, dtype=x.dtype)
-        raise ValueError(f"Not implemented norm_activation {self.cfg.norm_activation}")
 
     @torch.no_grad()
     def _set_decoder_to_fixed_norm(self, decoder: torch.nn.Linear, value: float, force_exact: bool):
@@ -306,14 +272,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             If return_hidden_pre is True:
                 Tuple of (feature_acts, hidden_pre) where both have shape (batch, d_sae) or (batch, seq_len, d_sae)
         """
-        # Apply input normalization based on config
-        input_norm_factor = self.compute_norm_factor(x, hook_point=self.cfg.hook_point_in)
-        x = x * input_norm_factor
         # Optionally subtract decoder bias before encoding
         if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
-            # We need to convert decoder bias to a tensor before subtracting
-            bias = self.decoder.bias.to_local() if isinstance(self.decoder.bias, DTensor) else self.decoder.bias
-            x = x - bias
+            x = x - self.decoder.bias
 
         # Pass through encoder
         hidden_pre = self.encoder(x)
@@ -334,8 +295,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         # since it computes a scaling of the input tensor, which is, suppose the common activation function
         # is $f(x)$, then here it computes $f(x) / x$. For simple ReLU case, it computes a mask of 1s and 0s.
         activation_mask = self.activation_function(sparsity_scores)
-        feature_acts = hidden_pre * activation_mask
-        feature_acts = self.hook_feature_acts(feature_acts)
+        feature_acts = self.hook_feature_acts(hidden_pre * activation_mask)
 
         if return_hidden_pre:
             return feature_acts, hidden_pre
@@ -381,105 +341,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         feature_acts = self.encode(x, **kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
         return reconstructed
-
-    @overload
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: Literal[True] = True,
-        **kwargs,
-    ) -> tuple[
-        Float[torch.Tensor, " batch"],
-        tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
-    ]: ...
-
-    @overload
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: Literal[False],
-        **kwargs,
-    ) -> Float[torch.Tensor, " batch"]: ...
-
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        label: (
-            Union[
-                Float[torch.Tensor, "batch d_model"],
-                Float[torch.Tensor, "batch seq_len d_model"],
-            ]
-            | None
-        ) = None,
-        *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: bool = True,
-        **kwargs,
-    ) -> Union[
-        Float[torch.Tensor, " batch"],
-        tuple[
-            Float[torch.Tensor, " batch"],
-            tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
-        ],
-    ]:  # may be overridden by subclasses
-        x: torch.Tensor = batch[self.cfg.hook_point_in].to(self.cfg.dtype)
-        label: torch.Tensor = batch[self.cfg.hook_point_out].to(self.cfg.dtype)
-        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **kwargs)
-        reconstructed = self.decode(feature_acts, **kwargs)
-        label_norm_factor: torch.Tensor = self.compute_norm_factor(label, hook_point=self.cfg.hook_point_out)
-        label_normed = label * label_norm_factor
-        l_rec = (reconstructed - label_normed).pow(2)
-        if use_batch_norm_mse:
-            l_rec = (
-                l_rec
-                / (label_normed - label_normed.mean(dim=0, keepdim=True))
-                .pow(2)
-                .sum(dim=-1, keepdim=True)
-                .clamp(min=1e-8)
-                .sqrt()
-            )
-        loss = l_rec.sum(dim=-1).mean()
-        loss_dict = {
-            "l_rec": l_rec,
-        }
-
-        if sparsity_loss_type == "power":
-            l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
-            loss_dict["l_s"] = l1_coefficient * l_s.mean()
-            loss = loss + l1_coefficient * l_s.mean()
-        elif sparsity_loss_type == "tanh":
-            l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
-            loss_dict["l_s"] = l1_coefficient * l_s.mean()
-            loss = loss + l1_coefficient * l_s.mean()
-        elif sparsity_loss_type is None:
-            pass
-        else:
-            raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
-
-        if return_aux_data:
-            aux_data = {
-                "feature_acts": feature_acts,
-                "reconstructed": reconstructed / label_norm_factor,
-                "hidden_pre": hidden_pre,
-            }
-            return loss, (loss_dict, aux_data)
-        return loss
 
     def load_full_state_dict(self, state_dict: dict[str, torch.Tensor]) -> None:
         # Extract and set dataset_average_activation_norm if present
