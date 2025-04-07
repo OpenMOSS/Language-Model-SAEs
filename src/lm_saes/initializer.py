@@ -11,6 +11,7 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
+from lm_saes.abstract_sae import JumpReLU
 from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
@@ -90,9 +91,6 @@ class Initializer:
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm
 
-            if "topk" not in sae.cfg.act_fn:
-                assert self.cfg.l1_coefficient is not None
-                sae.set_current_l1_coefficient(self.cfg.l1_coefficient)
             best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
             best_norm_fine_grained = grid_search_best_init_norm(
                 torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
@@ -131,12 +129,10 @@ class Initializer:
         _, hidden_pre = sae.encode(activation_in, return_hidden_pre=True, tokens=tokens)
         k = int(self.cfg.const_times_for_init_b_e * batch_size / sae.cfg.d_sae)
         encoder_bias, _ = torch.kthvalue(hidden_pre, batch_size - k + 1, dim=0)
-        sae.encoder.bias.data.copy_((sae.log_jumprelu_threshold.exp() - encoder_bias).to(dtype=torch.float32))
-        # feature_act, hidden_pre = sae.encode(activation_in, return_hidden_pre=True, tokens=tokens)
-        # print(hidden_pre.shape)
-        # print(torch.sum(hidden_pre > sae.log_jumprelu_threshold.exp(), dim=0))
-        # print(torch.sum(feature_act > 0, dim=0))
-        # exit()
+        assert isinstance(sae.activation_function, JumpReLU)
+        sae.encoder.bias.data.copy_(
+            (sae.activation_function.log_jumprelu_threshold.exp() - encoder_bias).to(dtype=torch.float32)
+        )
         return sae
 
     @torch.no_grad()

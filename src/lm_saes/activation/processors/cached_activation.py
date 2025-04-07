@@ -115,7 +115,6 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             assert isinstance(data, dict), f"Loading cached activation {chunk.path} error: returned {type(data)}"
             assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
             assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
-
             chunk_data[hook] = data["activation"]
 
             # Store tokens and info from first hook point only
@@ -240,15 +239,17 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 for k, v in activations.items():
                     if k in self.hook_points:
                         activations[k] = v.to(self.dtype)
-            
+
             while activations["tokens"].ndim >= 3:
+
                 def flatten(x: torch.Tensor | list[list[Any]]) -> torch.Tensor | list[Any]:
                     if isinstance(x, torch.Tensor):
                         return x.flatten(start_dim=0, end_dim=1)
                     else:
                         return [a for b in x for a in b]
+
                 activations = {k: flatten(v) for k, v in activations.items()}
-                
+
             yield activations  # Use pin_memory to load data on cpu, then transfer them to cuda in the main process, as advised in https://discuss.pytorch.org/t/dataloader-multiprocessing-with-dataset-returning-a-cuda-tensor/151022/2.
             # I wrote this utils function as I notice it is used multiple times in this repo. Do we need to apply it elsewhere?
 
