@@ -88,12 +88,7 @@ class Trainer:
         sae: SparseAutoEncoder,
         batch: dict[str, Tensor],
     ) -> dict[str, Tensor]:
-        if "topk" not in sae.cfg.act_fn and self.l1_coefficient_warmup_steps > 0:
-            assert self.cfg.l1_coefficient is not None
-            sae.set_current_l1_coefficient(
-                min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
-            )
-        elif "topk" in sae.cfg.act_fn and self.k_warmup_steps > 0:
+        if "topk" in sae.cfg.act_fn and self.k_warmup_steps > 0:
             assert self.cfg.initial_k is not None, "initial_k must be provided"
             assert self.cfg.initial_k >= sae.cfg.top_k, "initial_k must be greater than or equal to top_k"
             sae.set_current_k(
@@ -112,6 +107,9 @@ class Trainer:
             p=self.cfg.p,
             use_batch_norm_mse=self.cfg.use_batch_norm_mse,
             return_aux_data=True,
+            l1_coefficient=min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
+            if self.cfg.l1_coefficient
+            else 1.0,
         )
         loss_dict = {"loss": loss, "batch_size": batch[sae.cfg.hook_point_in].shape[0]} | loss_data | aux_data
         return loss_dict

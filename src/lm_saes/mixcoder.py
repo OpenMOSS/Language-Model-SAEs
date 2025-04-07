@@ -107,6 +107,7 @@ class MixCoder(SparseAutoEncoder):
         sparsity_loss_type: Literal["power", "tanh", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
+        l1_coefficient: float = 1.0,
         return_aux_data: bool = True,
         **kwargs,
     ) -> Union[
@@ -165,18 +166,14 @@ class MixCoder(SparseAutoEncoder):
                 feature_acts[0], modality
             )
         if sparsity_loss_type == "power":
-            l_s = torch.norm(penalty_feature_acts * self._decoder_norm(decoder=self.decoder), p=p, dim=-1)
+            l_s = torch.norm(penalty_feature_acts * self.decoder_norm(), p=p, dim=-1)
             assert isinstance(l_s, torch.Tensor)
-            loss_dict["l_s"] = self.current_l1_coefficient * l_s.mean()
-            assert self.current_l1_coefficient is not None
-            loss = loss + self.current_l1_coefficient * l_s.mean()
+            loss_dict["l_s"] = l1_coefficient * l_s.mean()
+            loss = loss + l1_coefficient * l_s.mean()
         elif sparsity_loss_type == "tanh":
-            l_s = torch.tanh(
-                tanh_stretch_coefficient * penalty_feature_acts * self._decoder_norm(decoder=self.decoder)
-            ).sum(dim=-1)
-            loss_dict["l_s"] = self.current_l1_coefficient * l_s.mean()
-            assert self.current_l1_coefficient is not None
-            loss = loss + self.current_l1_coefficient * l_s.mean()
+            l_s = torch.tanh(tanh_stretch_coefficient * penalty_feature_acts * self.decoder_norm()).sum(dim=-1)
+            loss_dict["l_s"] = l1_coefficient * l_s.mean()
+            loss = loss + l1_coefficient * l_s.mean()
         elif sparsity_loss_type is None:
             pass
         else:
