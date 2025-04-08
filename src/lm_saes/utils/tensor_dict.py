@@ -66,3 +66,10 @@ def move_dict_of_tensor_to_device(tensor_dict: dict[str, Any], device: torch.dev
         Dictionary with tensors moved to specified device
     """
     return {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in tensor_dict.items()}
+
+
+def batch_size(tensor_dict: dict[str, torch.Tensor]) -> int:
+    """
+    Get the batch size of a dictionary of tensors.
+    """
+    return len(tensor_dict[list(tensor_dict.keys())[0]])

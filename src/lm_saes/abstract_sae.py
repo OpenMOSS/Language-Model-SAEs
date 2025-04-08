@@ -117,21 +117,25 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """
         self.current_k = current_k
 
+    @abstractmethod
     @torch.no_grad()
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
         """Set the decoder to a fixed norm."""
         raise NotImplementedError("Subclasses must implement this method")
 
+    @abstractmethod
     @torch.no_grad()
     def set_encoder_to_fixed_norm(self, value: float):
         """Set the encoder to a fixed norm."""
         raise NotImplementedError("Subclasses must implement this method")
 
+    @abstractmethod
     @torch.no_grad()
     def transform_to_unit_decoder_norm(self):
         """Transform the model to have unit decoder norm."""
         raise NotImplementedError("Subclasses must implement this method")
 
+    @abstractmethod
     @torch.no_grad()
     def standardize_parameters_of_dataset_norm(self, dataset_average_activation_norm: dict[str, float] | None):
         """Standardize the parameters of the model to account for dataset_norm during inference."""
@@ -215,6 +219,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         ],
     ]: ...
 
+    @abstractmethod
     def encode(
         self,
         x: Union[
@@ -242,6 +247,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """
         raise NotImplementedError("Subclasses must implement this method")
 
+    @abstractmethod
     def decode(
         self,
         feature_acts: Union[
@@ -311,98 +317,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Normalize the input activations. Should be called before calling `encode` or `forward`."""
         raise NotImplementedError("Subclasses must implement this method")
 
-    @overload
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: Literal[True] = True,
-        **kwargs,
-    ) -> tuple[
-        Float[torch.Tensor, " batch"],
-        tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
-    ]: ...
-
-    @overload
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: Literal[False],
-        **kwargs,
-    ) -> Float[torch.Tensor, " batch"]: ...
-
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        label: (
-            Union[
-                Float[torch.Tensor, "batch d_model"],
-                Float[torch.Tensor, "batch seq_len d_model"],
-            ]
-            | None
-        ) = None,
-        *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: bool = True,
-        **kwargs,
-    ) -> Union[
-        Float[torch.Tensor, " batch"],
-        tuple[
-            Float[torch.Tensor, " batch"],
-            tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
-        ],
-    ]:
-        """Compute the loss for the autoencoder.
-        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
-        """
-        x, label = batch[self.cfg.hook_point_in], batch[self.cfg.hook_point_out]
-        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **kwargs)
-        reconstructed = self.decode(feature_acts, **kwargs)
-        l_rec = (reconstructed - label).pow(2)
-        if use_batch_norm_mse:
-            l_rec = (
-                l_rec
-                / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
-            )
-        loss = l_rec.sum(dim=-1).mean()
-        loss_dict = {
-            "l_rec": l_rec,
-        }
-
-        if sparsity_loss_type is not None:
-            if sparsity_loss_type == "power":
-                l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
-            elif sparsity_loss_type == "tanh":
-                l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
-            else:
-                raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
-            loss_dict["l_s"] = l1_coefficient * l_s.mean()
-            loss = loss + l1_coefficient * l_s.mean()
-
-        if return_aux_data:
-            aux_data = {
-                "feature_acts": feature_acts,
-                "reconstructed": reconstructed,
-                "hidden_pre": hidden_pre,
-            }
-            return loss, (loss_dict, aux_data)
-        return loss
-
+    @abstractmethod
     @torch.no_grad()
     def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
         """Initialize the encoder with the transpose of the decoder."""
@@ -552,3 +467,108 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         if self.cfg.act_fn.lower() == "jumprelu":
             assert isinstance(self.activation_function, JumpReLU)
             self.activation_function.log_jumprelu_threshold.data.fill_(kwargs["init_log_jumprelu_threshold_value"])
+
+    @overload
+    def compute_loss(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        use_batch_norm_mse: bool = False,
+        sparsity_loss_type: Literal["power", "tanh", None] = None,
+        tanh_stretch_coefficient: float = 4.0,
+        p: int = 1,
+        l1_coefficient: float = 1.0,
+        return_aux_data: Literal[True] = True,
+        **kwargs,
+    ) -> tuple[
+        Float[torch.Tensor, " batch"],
+        tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
+    ]: ...
+
+    @overload
+    def compute_loss(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        use_batch_norm_mse: bool = False,
+        sparsity_loss_type: Literal["power", "tanh", None] = None,
+        tanh_stretch_coefficient: float = 4.0,
+        p: int = 1,
+        l1_coefficient: float = 1.0,
+        return_aux_data: Literal[False],
+        **kwargs,
+    ) -> Float[torch.Tensor, " batch"]: ...
+
+    def compute_loss(
+        self,
+        batch: dict[str, torch.Tensor],
+        label: (
+            Union[
+                Float[torch.Tensor, "batch d_model"],
+                Float[torch.Tensor, "batch seq_len d_model"],
+            ]
+            | None
+        ) = None,
+        *,
+        use_batch_norm_mse: bool = False,
+        sparsity_loss_type: Literal["power", "tanh", None] = None,
+        tanh_stretch_coefficient: float = 4.0,
+        p: int = 1,
+        l1_coefficient: float = 1.0,
+        return_aux_data: bool = True,
+        **kwargs,
+    ) -> Union[
+        Float[torch.Tensor, " batch"],
+        tuple[
+            Float[torch.Tensor, " batch"],
+            tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
+        ],
+    ]:
+        """Compute the loss for the autoencoder.
+        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
+        """
+        x, encoder_kwargs = self.prepare_input(batch)
+        label = self.prepare_label(batch, **kwargs)
+        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
+        reconstructed = self.decode(feature_acts, **kwargs)
+        l_rec = (reconstructed - label).pow(2)
+        if use_batch_norm_mse:
+            l_rec = (
+                l_rec
+                / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+            )
+        loss = l_rec.sum(dim=-1).mean()
+        loss_dict = {
+            "l_rec": l_rec,
+        }
+
+        if sparsity_loss_type is not None:
+            if sparsity_loss_type == "power":
+                l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
+            elif sparsity_loss_type == "tanh":
+                l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
+            else:
+                raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
+            loss_dict["l_s"] = l1_coefficient * l_s.mean()
+            loss = loss + l1_coefficient * l_s.mean()
+
+        if return_aux_data:
+            aux_data = {
+                "feature_acts": feature_acts,
+                "reconstructed": reconstructed,
+                "hidden_pre": hidden_pre,
+            }
+            return loss, (loss_dict, aux_data)
+        return loss
+
+    @abstractmethod
+    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Prepare the input for the encoder.
+        Returns a tuple of (input, kwargs) where kwargs is a dictionary of additional arguments for the encoder computation.
+        """
+        raise NotImplementedError("Subclasses must implement this method")
+
+    @abstractmethod
+    def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
+        """Prepare the label for the loss computation."""
+        raise NotImplementedError("Subclasses must implement this method")

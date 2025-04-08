@@ -5,9 +5,9 @@ import torch
 from einops import rearrange, repeat
 from tqdm import tqdm
 
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.mixcoder import MixCoder
-from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
@@ -144,7 +144,7 @@ class FeatureAnalyzer:
     def analyze_chunk(
         self,
         activation_stream: Iterable[dict[str, Any]],
-        sae: SparseAutoEncoder,
+        sae: AbstractSparseAutoEncoder,
     ) -> list[dict[str, Any]]:
         """Analyze feature activations for a chunk of the SAE.
 
@@ -198,10 +198,8 @@ class FeatureAnalyzer:
             batch = sae.normalize_activations(batch)
 
             # Get feature activations from SAE
-            if isinstance(sae, MixCoder):
-                feature_acts = sae.encode(batch[sae.cfg.hook_point_in], modalities=batch["modalities"])
-            else:
-                feature_acts = sae.encode(batch[sae.cfg.hook_point_in])
+            x, kwargs = sae.prepare_input(batch)
+            feature_acts: torch.Tensor = sae.encode(x, **kwargs)
 
             # Compute ignore token masks
             ignore_token_masks = self.compute_ignore_token_masks(batch["tokens"], self.cfg.ignore_token_ids)
@@ -258,7 +256,7 @@ class FeatureAnalyzer:
 
     def _format_analysis_results(
         self,
-        sae: SparseAutoEncoder,
+        sae: AbstractSparseAutoEncoder,
         act_times: torch.Tensor,
         n_analyzed_tokens: int,
         max_feature_acts: torch.Tensor,

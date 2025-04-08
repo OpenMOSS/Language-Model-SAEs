@@ -1,5 +1,5 @@
 import math
-from typing import Literal, Union, cast, overload, override
+from typing import Any, Literal, Union, cast, overload, override
 
 import torch
 from jaxtyping import Float
@@ -7,12 +7,12 @@ from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tenso
 from transformer_lens.hook_points import HookPoint
 
 from .abstract_sae import AbstractSparseAutoEncoder
-from .config import BaseSAEConfig, SAEConfig
+from .config import SAEConfig
 from .kernels import decode_with_triton_spmm_kernel
 
 
 class SparseAutoEncoder(AbstractSparseAutoEncoder):
-    def __init__(self, cfg: BaseSAEConfig):
+    def __init__(self, cfg: SAEConfig):
         super(SparseAutoEncoder, self).__init__(cfg)
         self.cfg = cfg
 
@@ -386,3 +386,11 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         if self.cfg.use_glu_encoder:
             torch.nn.init.kaiming_uniform_(self.encoder_glu.weight)
             torch.nn.init.zeros_(self.encoder_glu.bias)
+
+    @override
+    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
+        return batch[self.cfg.hook_point_in], {}
+
+    @override
+    def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
+        return batch[self.cfg.hook_point_out]
