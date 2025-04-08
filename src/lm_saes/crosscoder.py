@@ -38,6 +38,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     def init_parameters(self, **kwargs) -> None:
         """Initialize the weights of the model."""
+        super().init_parameters(**kwargs)
         # Initialize a single head's weights
         W_E_per_head = torch.empty(
             self.cfg.d_model, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype
@@ -126,11 +127,16 @@ class CrossCoder(AbstractSparseAutoEncoder):
         )
 
         # Sum across heads and add bias
-        accumulated_hidden_pre = einops.einsum(hidden_pre, "n_heads d_sae -> d_sae")
+        accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
+        accumulated_hidden_pre = einops.repeat(
+            accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
+        )
 
         # Apply activation function
         feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
 
+        if return_hidden_pre:
+            return feature_acts, accumulated_hidden_pre
         return feature_acts
 
     @override
@@ -153,9 +159,12 @@ class CrossCoder(AbstractSparseAutoEncoder):
         Returns:
             Decoded tensor of shape (n_heads, d_model).
         """
-        return (
-            einops.einsum(feature_acts, self.W_D, "... d_sae, n_heads d_sae d_model -> ... n_heads d_model") + self.b_D
+
+        reconstructed = (
+            einops.einsum(feature_acts, self.W_D, "... n_heads d_sae, n_heads d_sae d_model -> ... n_heads d_model")
+            + self.b_D
         )
+        return reconstructed
 
     @override
     def decoder_norm(self, keepdim: bool = False) -> torch.Tensor:
@@ -183,10 +192,8 @@ class CrossCoder(AbstractSparseAutoEncoder):
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
         if force_exact:
             self.W_D.data *= value / self.decoder_norm(keepdim=True)
-            self.b_D.data *= value / self.decoder_bias_norm()
         else:
             self.W_D.data *= value / torch.clamp(self.decoder_norm(keepdim=True), min=value)
-            self.b_D.data *= value / torch.clamp(self.decoder_bias_norm(), min=value)
 
     @override
     def set_encoder_to_fixed_norm(self, value: float):
@@ -228,3 +235,8 @@ class CrossCoder(AbstractSparseAutoEncoder):
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         return self.prepare_input(batch)[0]
+
+    @override
+    @torch.no_grad()
+    def transform_to_unit_decoder_norm(self):
+        raise NotImplementedError("Transform to unit decoder norm is not supported for CrossCoder")

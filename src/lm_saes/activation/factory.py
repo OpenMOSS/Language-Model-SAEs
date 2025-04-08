@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Optional, Sequence
 
 import numpy as np
@@ -118,9 +119,14 @@ class ActivationFactory:
         if self.cfg.target < ActivationFactoryTarget.ACTIVATIONS_2D:
             raise ValueError("Activations sources are only supported for target >= ACTIVATIONS_2D")
 
+        cache_dirs = (
+            activations_source.path
+            if isinstance(activations_source.path, dict)
+            else {hook_point: Path(activations_source.path) / hook_point for hook_point in self.cfg.hook_points}
+        )
+
         loader = CachedActivationLoader(
-            cache_dir=activations_source.path,
-            hook_points=self.cfg.hook_points,
+            cache_dirs=cache_dirs,
             device=activations_source.device,
             dtype=activations_source.dtype,
             num_workers=activations_source.num_workers,

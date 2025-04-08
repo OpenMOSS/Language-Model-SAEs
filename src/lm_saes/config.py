@@ -169,7 +169,6 @@ class InitializerConfig(BaseConfig):
     init_log_jumprelu_threshold_value: float | None = None
     init_search: bool = False
     state: Literal["training", "inference"] = "training"
-    l1_coefficient: float | None = 0.00008
 
 
 class TrainerConfig(BaseConfig):
@@ -250,7 +249,7 @@ class ActivationFactoryActivationsSource(ActivationFactorySource):
     model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
 
     type: str = "activations"
-    path: str
+    path: str | dict[str, Path]
     """ The path to the cached activations. """
     device: str = "cpu"
     """ The device to load the activations on. """
