@@ -312,10 +312,16 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             return torch.tensor(1.0, device=x.device, dtype=x.dtype)
         raise ValueError(f"Not implemented norm_activation {self.cfg.norm_activation}")
 
-    @abstractmethod
     def normalize_activations(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        """Normalize the input activations. Should be called before calling `encode` or `forward`."""
-        raise NotImplementedError("Subclasses must implement this method")
+        """Normalize the input activations.
+        This should be called before calling `encode` or `compute_loss`.
+        """
+
+        def normalize_hook_point(hook_point: str, original_tensor: torch.Tensor):
+            input_norm_factor = self.compute_norm_factor(original_tensor, hook_point=hook_point)
+            return original_tensor * input_norm_factor
+
+        return {k: normalize_hook_point(k, v) if k in self.cfg.associated_hook_points else v for k, v in batch.items()}
 
     @abstractmethod
     @torch.no_grad()

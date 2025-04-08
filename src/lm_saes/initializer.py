@@ -11,12 +11,13 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
-from lm_saes.abstract_sae import JumpReLU
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder, JumpReLU
 from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.misc import calculate_activation_norm
+from lm_saes.utils.tensor_dict import batch_size
 
 
 class Initializer:
@@ -24,7 +25,7 @@ class Initializer:
         self.cfg = cfg
 
     @torch.no_grad()
-    def initialize_parameters(self, sae: SparseAutoEncoder):
+    def initialize_parameters(self, sae: AbstractSparseAutoEncoder):
         """Initialize the parameters of the SAE.
         Only used when the state is "training" to initialize sae.
         """
@@ -47,10 +48,16 @@ class Initializer:
         return sae
 
     @torch.no_grad()
-    def initialize_tensor_parallel(self, sae: SparseAutoEncoder, device_mesh: DeviceMesh | None = None):
+    def initialize_tensor_parallel(self, sae: AbstractSparseAutoEncoder, device_mesh: DeviceMesh | None = None):
         if not device_mesh or device_mesh["model"].size(0) == 1:
             return sae
-        if sae.cfg.sae_type == "sae":
+
+        if isinstance(sae, MixCoder):
+            # TODO: add support for MixCoder
+            warnings.warn("MixCoder is not supported for tensor parallel initialization.")
+            return sae
+
+        if isinstance(sae, SparseAutoEncoder):
             sae.device_mesh = device_mesh
             plan = {
                 "encoder": ColwiseParallel(output_layouts=Replicate()),
@@ -60,19 +67,16 @@ class Initializer:
                 plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
             sae = parallelize_module(sae, device_mesh=device_mesh["model"], parallelize_plan=plan)  # type: ignore
 
-        elif sae.cfg.sae_type == "mixcoder":
-            warnings.warn("MixCoder is not supported for tensor parallel initialization.")
         return sae
 
     @torch.no_grad()
-    def initialization_search(self, sae: SparseAutoEncoder, activation_batch: Dict[str, Tensor]):
+    def initialization_search(self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor]):
         """
         This function is used to search for the best initialization norm for the SAE decoder.
         """
         batch = sae.normalize_activations(activation_batch)
         if self.cfg.init_decoder_norm is None:
-            # assert sae.cfg.sparsity_include_decoder_norm, "Decoder norm must be included in sparsity loss"
-            if not self.cfg.init_encoder_with_decoder_transpose or sae.cfg.hook_point_in != sae.cfg.hook_point_out:
+            if not self.cfg.init_encoder_with_decoder_transpose:
                 return sae
 
             def grid_search_best_init_norm(search_range: List[float]) -> float:
@@ -81,8 +85,6 @@ class Initializer:
                 for norm in search_range:
                     sae.set_decoder_to_fixed_norm(norm, force_exact=True)
                     sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
-                    if isinstance(sae, CrossCoder):
-                        sae.initialize_with_same_weight_across_layers()
                     mse = sae.compute_loss(activation_batch)[1][0]["l_rec"].mean().item()
                     losses[norm] = mse
                 best_norm = min(losses, key=losses.get)  # type: ignore
@@ -99,6 +101,9 @@ class Initializer:
 
         if self.cfg.bias_init_method == "geometric_median" and sae.cfg.sae_type != "mixcoder":
             # TODO: add support for MixCoder
+            assert isinstance(
+                sae, SparseAutoEncoder
+            ), "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
             sae.decoder.bias.data = (
                 sae.compute_norm_factor(batch[sae.cfg.hook_point_out], hook_point=sae.cfg.hook_point_out)
                 * batch[sae.cfg.hook_point_out]
@@ -118,16 +123,20 @@ class Initializer:
         return sae
 
     @torch.no_grad()
-    def initialize_encoder_bias_for_const_fire_times(self, sae: SparseAutoEncoder, activation_batch: Dict[str, Tensor]):
+    def initialize_encoder_bias_for_const_fire_times(
+        self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor]
+    ):
         """
         This function is used to initialize the encoder bias for constant fire times.
         """
+        assert isinstance(
+            sae, SparseAutoEncoder
+        ), "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
         batch = sae.normalize_activations(activation_batch)
-        _, hidden_pre = sae.encode(batch[sae.cfg.hook_point_in], return_hidden_pre=True, tokens=batch["tokens"])
-
-        batch_size = batch[sae.cfg.hook_point_in].size(0)
-        k = int(self.cfg.const_times_for_init_b_e * batch_size / sae.cfg.d_sae)
-        encoder_bias, _ = torch.kthvalue(hidden_pre, batch_size - k + 1, dim=0)
+        x, kwargs = sae.prepare_input(batch)
+        _, hidden_pre = sae.encode(x, **kwargs, return_hidden_pre=True)
+        k = int(self.cfg.const_times_for_init_b_e * batch_size(batch) / sae.cfg.d_sae)
+        encoder_bias, _ = torch.kthvalue(hidden_pre, batch_size(batch) - k + 1, dim=0)
         assert isinstance(sae.activation_function, JumpReLU)
         sae.encoder.bias.data.copy_(
             (sae.activation_function.log_jumprelu_threshold.exp() - encoder_bias).to(dtype=torch.float32)
@@ -135,17 +144,18 @@ class Initializer:
         return sae
 
     @torch.no_grad()
-    def initialize_jump_relu_threshold(self, sae: SparseAutoEncoder, activation_batch: Dict[str, Tensor]):
+    def initialize_jump_relu_threshold(self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor]):
         # TODO: add support for MixCoder
         if sae.cfg.sae_type == "mixcoder":
             warnings.warn("MixCoder is not supported for jump_relu_threshold initialization.")
             return sae
 
         batch = sae.normalize_activations(activation_batch)
-        _, hidden_pre = sae.encode(batch[sae.cfg.hook_point_in], return_hidden_pre=True, tokens=batch["tokens"])
+        x, kwargs = sae.prepare_input(batch)
+        _, hidden_pre = sae.encode(x, **kwargs, return_hidden_pre=True)
         hidden_pre = torch.clamp(hidden_pre, min=0.0)
         hidden_pre = hidden_pre.flatten()
-        threshold = hidden_pre.topk(k=batch[sae.cfg.hook_point_in].size(0) * sae.cfg.top_k).values[-1]
+        threshold = hidden_pre.topk(k=batch_size(batch) * sae.cfg.top_k).values[-1]
         sae.cfg.jump_relu_threshold = threshold.item()
         return sae
 
@@ -164,27 +174,24 @@ class Initializer:
             activation_norm (dict[str, float] | None): The activation normalization. Used for dataset-wise normalization when self.cfg.norm_activation is "dataset-wise".
             device_mesh (DeviceMesh | None): The device mesh.
         """
-        sae = None  # type: ignore
         if cfg.sae_type == "sae":
-            sae = SparseAutoEncoder.from_config(cfg)
+            sae: AbstractSparseAutoEncoder = SparseAutoEncoder.from_config(cfg)
         elif cfg.sae_type == "mixcoder":
-            sae = MixCoder.from_config(cfg)
+            sae: AbstractSparseAutoEncoder = MixCoder.from_config(cfg)
         elif cfg.sae_type == "crosscoder":
-            sae = CrossCoder.from_config(cfg)
+            sae: AbstractSparseAutoEncoder = CrossCoder.from_config(cfg)
         else:
             # TODO: add support for different SAE config types, e.g. MixCoderConfig, CrossCoderConfig, etc.
             raise ValueError(f"SAE type {cfg.sae_type} not supported.")
         if self.cfg.state == "training":
             if cfg.sae_pretrained_name_or_path is None:
-                sae: SparseAutoEncoder = self.initialize_parameters(sae)
+                sae = self.initialize_parameters(sae)
             if sae.cfg.norm_activation == "dataset-wise":
                 if activation_norm is None:
                     assert (
                         activation_stream is not None
                     ), "Activation iterator must be provided for dataset-wise normalization"
-                    activation_norm = calculate_activation_norm(
-                        activation_stream, [cfg.hook_point_in, cfg.hook_point_out]
-                    )
+                    activation_norm = calculate_activation_norm(activation_stream, cfg.associated_hook_points)
                 sae.set_dataset_average_activation_norm(activation_norm)
 
             if self.cfg.bias_init_method == "init_b_e_for_const_fire_times":
