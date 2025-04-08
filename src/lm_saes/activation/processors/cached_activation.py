@@ -2,7 +2,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Optional, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence
 
 import torch
 from safetensors.torch import load_file
@@ -81,15 +81,13 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
 
     def __init__(
         self,
-        cache_dir: str | Path,
-        hook_points: list[str],
+        cache_dirs: Mapping[str, str | Path],
         device: str = "cpu",
         dtype: Optional[torch.dtype] = None,
         num_workers: int = 0,
         prefetch_factor: int | None = None,
     ):
-        self.cache_dir = Path(cache_dir)
-        self.hook_points = hook_points
+        self.cache_dirs = {k: Path(v) for k, v in cache_dirs.items()}
         self.device = device
         self.dtype = dtype
         self.num_workers = num_workers
@@ -107,7 +105,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         """
         chunk_data = {}
 
-        for hook in self.hook_points:
+        for hook in self.cache_dirs.keys():
             chunk = hook_chunks[hook][chunk_idx]
             data: dict[str, Any] = self._load_chunk(chunk.path)
 
@@ -118,7 +116,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             chunk_data[hook] = data["activation"]
 
             # Store tokens and info from first hook point only
-            if hook == self.hook_points[0]:
+            if hook == list(self.cache_dirs.keys())[0]:
                 chunk_data["tokens"] = data["tokens"]
                 if "meta" in data:
                     chunk_data["meta"] = data["meta"]
@@ -145,7 +143,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         Raises:
             FileNotFoundError: If hook point directory doesn't exist
         """
-        hook_dir = self.cache_dir / hook_point
+        hook_dir = self.cache_dirs[hook_point]
         if not hook_dir.exists():
             raise FileNotFoundError(f"Hook point directory not found: {hook_dir}")
 
@@ -219,7 +217,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             AssertionError: If loaded data doesn't match expected format
         """
         # Get sorted chunks for each hook point
-        hook_chunks = {hook: self._get_sorted_chunks(hook) for hook in self.hook_points}
+        hook_chunks = {hook: self._get_sorted_chunks(hook) for hook in self.cache_dirs.keys()}
 
         # Verify all hook points have same number of chunks
         chunk_counts = {hook: len(chunks) for hook, chunks in hook_chunks.items()}
@@ -229,7 +227,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 "All hook points must have the same number of chunks."
             )
 
-        stream = self._process_chunks(hook_chunks, len(hook_chunks[self.hook_points[0]]))
+        stream = self._process_chunks(hook_chunks, len(hook_chunks[list(self.cache_dirs.keys())[0]]))
         for chunk in stream:
             activations: dict[str, Any] = move_dict_of_tensor_to_device(
                 chunk,
@@ -237,7 +235,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             )
             if self.dtype is not None:
                 for k, v in activations.items():
-                    if k in self.hook_points:
+                    if k in self.cache_dirs.keys():
                         activations[k] = v.to(self.dtype)
 
             while activations["tokens"].ndim >= 3:

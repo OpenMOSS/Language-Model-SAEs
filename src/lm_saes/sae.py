@@ -138,6 +138,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         encoder.weight.data = encoder.weight.data * decoder_norm[:, None]
         encoder.bias.data = encoder.bias.data * decoder_norm
 
+    @override
     @torch.no_grad()
     def transform_to_unit_decoder_norm(self):
         self._transform_to_unit_decoder_norm(self.encoder, self.decoder)

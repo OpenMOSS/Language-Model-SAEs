@@ -416,7 +416,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             "metrics/decoder_norm": self.decoder_norm().mean().item(),
         }
         if self.cfg.use_decoder_bias:
-            log_dict["metrics/decoder_bias_norm"] = self.decoder_bias_norm().item()
+            log_dict["metrics/decoder_bias_norm"] = self.decoder_bias_norm().mean().item()
         if "topk" in self.cfg.act_fn:
             log_dict["sparsity/k"] = self.current_k
         if isinstance(self.activation_function, JumpReLU):
