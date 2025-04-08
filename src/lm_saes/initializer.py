@@ -69,10 +69,7 @@ class Initializer:
         """
         This function is used to search for the best initialization norm for the SAE decoder.
         """
-        activation_in, activation_out = (
-            activation_batch[sae.cfg.hook_point_in],
-            activation_batch[sae.cfg.hook_point_out],
-        )
+        batch = sae.normalize_activations(activation_batch)
         if self.cfg.init_decoder_norm is None:
             # assert sae.cfg.sparsity_include_decoder_norm, "Decoder norm must be included in sparsity loss"
             if not self.cfg.init_encoder_with_decoder_transpose or sae.cfg.hook_point_in != sae.cfg.hook_point_out:
@@ -103,12 +100,14 @@ class Initializer:
         if self.cfg.bias_init_method == "geometric_median" and sae.cfg.sae_type != "mixcoder":
             # TODO: add support for MixCoder
             sae.decoder.bias.data = (
-                sae.compute_norm_factor(activation_out, hook_point=sae.cfg.hook_point_out) * activation_out
+                sae.compute_norm_factor(batch[sae.cfg.hook_point_out], hook_point=sae.cfg.hook_point_out)
+                * batch[sae.cfg.hook_point_out]
             ).mean(0)
 
             if not sae.cfg.apply_decoder_bias_to_pre_encoder:
                 normalized_input = (
-                    sae.compute_norm_factor(activation_in, hook_point=sae.cfg.hook_point_in) * activation_in
+                    sae.compute_norm_factor(batch[sae.cfg.hook_point_in], hook_point=sae.cfg.hook_point_in)
+                    * batch[sae.cfg.hook_point_in]
                 )
                 normalized_median = normalized_input.mean(0)
                 sae.encoder.bias.data = -normalized_median @ sae.encoder.weight.data.T
