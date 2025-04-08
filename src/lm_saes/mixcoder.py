@@ -1,4 +1,4 @@
-from typing import Literal, Union, overload
+from typing import Any, Literal, Union, overload, override
 
 import torch
 from jaxtyping import Float, Int
@@ -183,3 +183,7 @@ class MixCoder(SparseAutoEncoder):
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
         cfg = MixCoderConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
         return cls.from_config(cfg)
+
+    @override
+    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
+        return batch[self.cfg.hook_point_in], {"modalities": batch["modalities"]}

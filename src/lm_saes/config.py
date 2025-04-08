@@ -48,8 +48,6 @@ class BaseSAEConfig(BaseModelConfig):
     """
 
     sae_type: Literal["sae", "crosscoder", "mixcoder"]
-    hook_point_in: str
-    hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
     d_model: int
     expansion_factor: int
     use_decoder_bias: bool = True
@@ -101,14 +99,18 @@ class BaseSAEConfig(BaseModelConfig):
 
 class SAEConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "sae"
+    hook_point_in: str
+    hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
 
 
 class CrossCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "crosscoder"
 
 
-class MixCoderConfig(BaseSAEConfig):
+class MixCoderConfig(SAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "mixcoder"
+    hook_point_in: str
+    hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
     modalities: dict[str, int]
     penalty_coefficient: dict[str, float]
     loss_weights: dict[str, float]
