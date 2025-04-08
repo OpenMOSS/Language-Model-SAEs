@@ -1,5 +1,5 @@
 import math
-from typing import Any, Literal, Union, cast, overload, override
+from typing import Any, Literal, Union, overload, override
 
 import torch
 from jaxtyping import Float
@@ -93,6 +93,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         else:
             decoder.weight.data *= value / torch.clamp(decoder_norm, min=value)
 
+    @override
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
         self._set_decoder_to_fixed_norm(self.decoder, value, force_exact)
 
@@ -114,16 +115,10 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def set_encoder_to_fixed_norm(self, value: float):
         self._set_encoder_to_fixed_norm(self.encoder, value)
 
+    @override
     @torch.no_grad()
     def full_state_dict(self):  # should be overridden by subclasses
-        state_dict = self.state_dict()
-        if self.device_mesh and self.device_mesh["model"].size(0) > 1:
-            state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
-
-        # Add dataset_average_activation_norm to state dict
-        if self.dataset_average_activation_norm is not None:
-            for hook_point, value in self.dataset_average_activation_norm.items():
-                state_dict[f"dataset_average_activation_norm.{hook_point}"] = torch.tensor(value)
+        state_dict = super().full_state_dict()
 
         # If force_unit_decoder_norm is True, we need to normalize the decoder weight before saving
         # We use a deepcopy to avoid modifying the original weight to avoid affecting the training progress
@@ -132,7 +127,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             decoder_norm = torch.norm(state_dict["decoder.weight"], p=2, dim=0, keepdim=True)
             state_dict["decoder.weight"] = state_dict["decoder.weight"] / decoder_norm
 
-        return cast(dict[str, torch.Tensor], state_dict)
+        return state_dict
 
     @staticmethod
     @torch.no_grad()
@@ -327,15 +322,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         reconstructed = self.decode(feature_acts, **kwargs)
         return reconstructed
 
-    def load_full_state_dict(self, state_dict: dict[str, torch.Tensor]) -> None:
-        # Extract and set dataset_average_activation_norm if present
-        norm_keys = [k for k in state_dict.keys() if k.startswith("dataset_average_activation_norm.")]
-        if norm_keys:
-            dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
-            self.set_dataset_average_activation_norm(dataset_norm)
-            state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
-        self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
-
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
         cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
@@ -347,6 +333,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     ):
         encoder.weight.data = decoder.weight.data.T.clone().contiguous() * factor
 
+    @override
     @torch.no_grad()
     def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
         self._init_encoder_with_decoder_transpose(self.encoder, self.decoder, factor)

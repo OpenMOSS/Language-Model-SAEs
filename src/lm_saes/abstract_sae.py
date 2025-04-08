@@ -9,6 +9,7 @@ import safetensors.torch as safe
 import torch
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.database import MongoClient
@@ -141,10 +142,18 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Standardize the parameters of the model to account for dataset_norm during inference."""
         raise NotImplementedError("Subclasses must implement this method")
 
-    @abstractmethod
-    def full_state_dict(self) -> dict[str, torch.Tensor]:
-        """Get the full state dict of the model."""
-        raise NotImplementedError("Subclasses must implement this method")
+    @torch.no_grad()
+    def full_state_dict(self):  # should be overridden by subclasses
+        state_dict = self.state_dict()
+        if self.device_mesh and self.device_mesh["model"].size(0) > 1:
+            state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
+
+        # Add dataset_average_activation_norm to state dict
+        if self.dataset_average_activation_norm is not None:
+            for hook_point, value in self.dataset_average_activation_norm.items():
+                state_dict[f"dataset_average_activation_norm.{hook_point}"] = torch.tensor(value)
+
+        return cast(dict[str, torch.Tensor], state_dict)
 
     @torch.no_grad()
     def save_checkpoint(self, ckpt_path: Path | str) -> None:
@@ -333,10 +342,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Get the parameters of the model for optimization."""
         return [{"params": self.parameters()}]
 
-    @abstractmethod
     def load_full_state_dict(self, state_dict: dict[str, torch.Tensor]) -> None:
-        """Load the full state dict of the model."""
-        raise NotImplementedError("Subclasses must implement this method")
+        # Extract and set dataset_average_activation_norm if present
+        norm_keys = [k for k in state_dict.keys() if k.startswith("dataset_average_activation_norm.")]
+        if norm_keys:
+            dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
+            self.set_dataset_average_activation_norm(dataset_norm)
+            state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
+        self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
 
     @classmethod
     def from_config(cls, cfg: BaseSAEConfig) -> Self:
