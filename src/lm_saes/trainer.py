@@ -14,7 +14,6 @@ from lm_saes.config import TrainerConfig
 from lm_saes.evaluator import evaluate_mixcoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
-from lm_saes.utils.misc import all_reduce_tensor
 from lm_saes.utils.tensor_dict import batch_size
 
 
@@ -123,10 +122,12 @@ class Trainer:
         assert self.optimizer is not None, "Optimizer must be initialized"
         assert self.wandb_logger is not None, "Wandb logger must be provided"
         label = sae.prepare_label(batch)
-        did_fire = (log_info["feature_acts"] > 0).float().sum(0) > 0
+        act_freq_scores = (log_info["feature_acts"] > 0).float().sum(0)
+        if sae.cfg.sae_type == "crosscoder":
+            act_freq_scores = act_freq_scores.max(dim=0).values
         log_info["n_forward_passes_since_fired"] += 1
-        log_info["n_forward_passes_since_fired"][did_fire] = 0
-        log_info["act_freq_scores"] += (log_info["feature_acts"].abs() > 0).float().sum(0)
+        log_info["n_forward_passes_since_fired"][act_freq_scores > 0] = 0
+        log_info["act_freq_scores"] += act_freq_scores
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
@@ -139,17 +140,6 @@ class Trainer:
                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
             }
-            if sae.cfg.sae_type == "crosscoder":
-                overall_act_freq_scores = all_reduce_tensor(feature_sparsity, aggregate="max")
-                wandb_log_dict.update(
-                    {
-                        "sparsity/overall_above_1e-1": (overall_act_freq_scores > 1e-1).sum().item(),
-                        "sparsity/overall_above_1e-2": (overall_act_freq_scores > 1e-2).sum().item(),
-                        "sparsity/overall_below_1e-5": (overall_act_freq_scores < 1e-5).sum().item(),
-                        "sparsity/overall_below_1e-6": (overall_act_freq_scores < 1e-6).sum().item(),
-                    }
-                )
-
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
             log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
             log_info["n_frac_active_tokens"] = torch.zeros_like(log_info["n_frac_active_tokens"])
@@ -187,17 +177,7 @@ class Trainer:
                 "details/n_training_tokens": self.cur_tokens,
             }
             wandb_log_dict.update(sae.log_statistics())
-            if sae.cfg.sae_type == "crosscoder":
-                wandb_log_dict.update(
-                    {
-                        "metrics/overall_l0": all_reduce_tensor(log_info["feature_acts"], aggregate="max")
-                        .gt(0)
-                        .float()
-                        .sum(-1)
-                        .mean()
-                    }
-                )
-            elif sae.cfg.sae_type == "mixcoder":
+            if sae.cfg.sae_type == "mixcoder":
                 assert isinstance(sae, MixCoder)
                 mixcoder_log_dict = evaluate_mixcoder(sae, batch)
                 wandb_log_dict.update({f"mixcoder_metrics/{key}": value for key, value in mixcoder_log_dict.items()})
