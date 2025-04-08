@@ -9,12 +9,13 @@ from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
 from lm_saes.evaluator import evaluate_mixcoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
-from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.misc import all_reduce_tensor
+from lm_saes.utils.tensor_dict import batch_size
 
 
 class Trainer:
@@ -33,10 +34,13 @@ class Trainer:
         self.wandb_logger: Run | None = None
 
     def _initialize_trainer(
-        self, sae: SparseAutoEncoder, activation_stream: Iterable[dict[str, Tensor]], wandb_logger: Run | None = None
+        self,
+        sae: AbstractSparseAutoEncoder,
+        activation_stream: Iterable[dict[str, Tensor]],
+        wandb_logger: Run | None = None,
     ):
-        batch_size = next(iter(activation_stream))[sae.cfg.hook_point_in].shape[0]
-        self.total_training_steps = self.cfg.total_training_tokens // batch_size
+        bs = batch_size(next(iter(activation_stream)))
+        self.total_training_steps = self.cfg.total_training_tokens // bs
 
         def calculate_warmup_steps(warmup_steps: float | int) -> int:
             if isinstance(warmup_steps, float):
@@ -55,12 +59,12 @@ class Trainer:
                 )[1:]
             elif self.cfg.check_point_save_mode == "log":
                 self.checkpoint_thresholds = [
-                    math.ceil(2 ** (i / self.cfg.n_checkpoints * math.log2(self.total_training_steps))) * batch_size
+                    math.ceil(2 ** (i / self.cfg.n_checkpoints * math.log2(self.total_training_steps))) * bs
                     for i in range(1, self.cfg.n_checkpoints)
                 ]
         self.wandb_logger = wandb_logger
 
-    def _initialize_optimizer(self, sae: SparseAutoEncoder):
+    def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
         # TODO: check if this is correct
         if isinstance(self.cfg.lr, float):
             optimizer = Adam(sae.get_parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
@@ -85,7 +89,7 @@ class Trainer:
 
     def _training_step(
         self,
-        sae: SparseAutoEncoder,
+        sae: AbstractSparseAutoEncoder,
         batch: dict[str, Tensor],
     ) -> dict[str, Tensor]:
         if "topk" in sae.cfg.act_fn and self.k_warmup_steps > 0:
@@ -111,14 +115,14 @@ class Trainer:
             if self.cfg.l1_coefficient
             else 1.0,
         )
-        loss_dict = {"loss": loss, "batch_size": batch[sae.cfg.hook_point_in].shape[0]} | loss_data | aux_data
+        loss_dict = {"loss": loss, "batch_size": batch_size(batch)} | loss_data | aux_data
         return loss_dict
 
     @torch.no_grad()
-    def _log(self, sae: SparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
+    def _log(self, sae: AbstractSparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
         assert self.optimizer is not None, "Optimizer must be initialized"
         assert self.wandb_logger is not None, "Wandb logger must be provided"
-        activation_out = batch[sae.cfg.hook_point_out]
+        label = sae.prepare_label(batch)
         did_fire = (log_info["feature_acts"] > 0).float().sum(0) > 0
         log_info["n_forward_passes_since_fired"] += 1
         log_info["n_forward_passes_since_fired"][did_fire] = 0
@@ -153,10 +157,10 @@ class Trainer:
         if (self.cur_step + 1) % self.cfg.log_frequency == 0:
             l0 = (log_info["feature_acts"] > 0).float().sum(-1).mean()
             l_rec = log_info["l_rec"].sum(dim=-1).mean()
-            per_token_l2_loss = (log_info["reconstructed"] - activation_out).pow(2).sum(dim=-1)
-            total_variance = (activation_out - activation_out.mean(0)).pow(2).sum(dim=-1)
+            per_token_l2_loss = (log_info["reconstructed"] - label).pow(2).sum(dim=-1)
+            total_variance = (label - label.mean(0)).pow(2).sum(dim=-1)
             l2_norm_error = per_token_l2_loss.sqrt().mean()
-            l2_norm_error_ratio = l2_norm_error / activation_out.norm(p=2, dim=-1).mean()
+            l2_norm_error_ratio = l2_norm_error / label.norm(p=2, dim=-1).mean()
             explained_variance = 1 - per_token_l2_loss / total_variance
             wandb_log_dict = {
                 # losses
@@ -204,10 +208,10 @@ class Trainer:
                     mask = sae.get_modality_token_mask(batch["modalities"], modality)
                     feature_acts_modality = log_info["feature_acts"][mask]
                     reconstructed_modality = log_info["reconstructed"][mask]
-                    activation_out_modality = activation_out[mask]
-                    explained_variance_modality = 1 - (reconstructed_modality - activation_out_modality).pow(2).sum(
-                        dim=-1
-                    ) / (activation_out_modality - activation_out_modality.mean(0)).pow(2).sum(dim=-1)
+                    label_modality = label[mask]
+                    explained_variance_modality = 1 - (reconstructed_modality - label_modality).pow(2).sum(dim=-1) / (
+                        label_modality - label_modality.mean(0)
+                    ).pow(2).sum(dim=-1)
                     token_num = mask.sum().item()
                     wandb_log_dict.update(
                         {
@@ -233,7 +237,7 @@ class Trainer:
 
             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
 
-    def _save_checkpoint(self, sae: SparseAutoEncoder):
+    def _save_checkpoint(self, sae: AbstractSparseAutoEncoder):
         if len(self.checkpoint_thresholds) > 0 and self.cur_tokens >= self.checkpoint_thresholds[0]:
             path = os.path.join(
                 self.cfg.exp_result_path,
@@ -245,9 +249,9 @@ class Trainer:
 
     def fit(
         self,
-        sae: SparseAutoEncoder,
+        sae: AbstractSparseAutoEncoder,
         activation_stream: Iterable[dict[str, Tensor]],
-        eval_fn: Callable[[SparseAutoEncoder], None] | None = None,
+        eval_fn: Callable[[AbstractSparseAutoEncoder], None] | None = None,
         wandb_logger: Run | None = None,
     ):
         self._initialize_trainer(sae, activation_stream, wandb_logger)
@@ -306,6 +310,6 @@ class Trainer:
             self._save_checkpoint(sae)
 
             self.cur_step += 1
-            self.cur_tokens += batch[sae.cfg.hook_point_in].shape[0]
+            self.cur_tokens += batch_size(batch)
             if self.cur_tokens >= self.cfg.total_training_tokens:
                 break
