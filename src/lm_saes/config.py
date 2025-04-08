@@ -1,5 +1,6 @@
 import json
 import os
+from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Tuple
@@ -40,7 +41,7 @@ class BaseModelConfig(BaseModel):
     ] = Field(default=torch.bfloat16, exclude=True, validate_default=False)
 
 
-class BaseSAEConfig(BaseModelConfig):
+class BaseSAEConfig(BaseModelConfig, ABC):
     """
     Base class for SAE configs.
     Initializer will initialize SAE based on config type.
@@ -51,7 +52,6 @@ class BaseSAEConfig(BaseModelConfig):
     d_model: int
     expansion_factor: int
     use_decoder_bias: bool = True
-    use_glu_encoder: bool = False
     act_fn: Literal["relu", "jumprelu", "topk", "batchtopk"] = "relu"
     jump_relu_threshold: float = 0.0
     apply_decoder_bias_to_pre_encoder: bool = False
@@ -96,15 +96,34 @@ class BaseSAEConfig(BaseModelConfig):
         with open(os.path.join(sae_path, "config.json"), "w") as f:
             json.dump(d, f, indent=4)
 
+    @property
+    @abstractmethod
+    def associated_hook_points(self) -> list[str]:
+        pass
+
 
 class SAEConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "sae"
     hook_point_in: str
     hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
+    use_glu_encoder: bool = False
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return [self.hook_point_in, self.hook_point_out]
 
 
 class CrossCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "crosscoder"
+    hook_points: list[str]
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return self.hook_points
+
+    @property
+    def n_heads(self) -> int:
+        return len(self.hook_points)
 
 
 class MixCoderConfig(SAEConfig):

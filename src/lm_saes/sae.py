@@ -28,21 +28,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         self.hook_reconstructed = HookPoint()
 
     @override
-    def normalize_activations(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        """Normalize the input activations.
-        This should be called before calling `encode` or `compute_loss`.
-        """
-        input_norm_factor = self.compute_norm_factor(batch[self.cfg.hook_point_in], hook_point=self.cfg.hook_point_in)
-        output_norm_factor = self.compute_norm_factor(
-            batch[self.cfg.hook_point_out], hook_point=self.cfg.hook_point_out
-        )
-        return {
-            **batch,
-            self.cfg.hook_point_in: batch[self.cfg.hook_point_in] * input_norm_factor,
-            self.cfg.hook_point_out: batch[self.cfg.hook_point_out] * output_norm_factor,
-        }
-
-    @override
     def encoder_norm(self, keepdim: bool = False):
         """Compute the norm of the encoder weight."""
         if not isinstance(self.encoder.weight, DTensor):
