@@ -14,6 +14,7 @@ from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.database import MongoClient
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
+from lm_saes.utils.misc import is_primary_rank
 
 from .config import BaseSAEConfig
 
@@ -188,7 +189,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     ) -> None:
         # TODO: save dataset_average_activation_norm
         self.save_checkpoint(save_path)
-        if self.device_mesh is None or self.device_mesh.get_rank() == 0:
+        if is_primary_rank(self.device_mesh):
             if mongo_client is not None:
                 assert (
                     sae_name is not None and sae_series is not None
