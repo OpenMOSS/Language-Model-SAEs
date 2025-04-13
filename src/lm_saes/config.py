@@ -16,7 +16,10 @@ from pydantic import (
 )
 
 from .utils.huggingface import parse_pretrained_name_or_path
-from .utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str
+from .utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
+)
 
 
 class BaseConfig(BaseModel):
@@ -207,10 +210,6 @@ class TrainerConfig(BaseConfig):
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
-        if self.exp_result_path.exists():
-            raise ValueError(
-                f"Checkpoints for experiment {self.exp_result_path} already exist. Consider changing the experiment name."
-            )
         self.exp_result_path.mkdir(parents=True, exist_ok=True)
         self.exp_result_path.joinpath("checkpoints").mkdir(parents=True, exist_ok=True)
         assert self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
