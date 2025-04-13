@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import FeatureAnalyzerConfig
+from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
@@ -297,6 +298,9 @@ class FeatureAnalyzer:
                     for k, v in sample_result.items()
                 ],
             }
+
+            if isinstance(sae, CrossCoder):
+                feature_result["decoder_norms"] = sae.decoder_norm()[:, i].tolist()
 
             # Add modality-specific metrics for MixCoder
             if (

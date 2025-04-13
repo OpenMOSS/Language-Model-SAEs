@@ -4,12 +4,24 @@ from typing import Iterable
 
 import torch
 import torch.distributed as dist
+from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.nn.functional import all_reduce
 from transformers import PreTrainedTokenizerBase
 
 
 def is_master() -> bool:
     return not dist.is_initialized() or dist.get_rank() == 0
+
+
+def is_primary_rank(device_mesh: DeviceMesh | None) -> bool:
+    if device_mesh is None:
+        return True
+    coord = device_mesh.get_coordinate()
+    mesh_dim_names = device_mesh.mesh_dim_names
+    if coord is None or mesh_dim_names is None:
+        return False
+    coord = [c for i, c in enumerate(coord) if "sweep" not in mesh_dim_names or i != mesh_dim_names.index("sweep")]
+    return all(c == 0 for c in coord)
 
 
 def print_once(
