@@ -146,6 +146,32 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
 
           <FeatureInterpretation feature={feature} />
 
+          {feature.decoderNorms && (
+            <div id="DecoderNorms" className="flex flex-col w-full gap-4">
+              <p className="font-bold">Decoder Norms</p>
+              <Plot
+                data={[
+                  {
+                    x: Array.from({ length: feature.decoderNorms.length }, (_, i) => i),
+                    y: feature.decoderNorms,
+                    type: "bar",
+                    marker: { color: "#636EFA" },
+                    hovertemplate: "Index: %{x}<br>Norm: %{y}<extra></extra>",
+                  },
+                ]}
+                layout={{
+                  xaxis: { title: "Output Feature Index" },
+                  yaxis: { title: "Norm" },
+                  bargap: 0.2,
+                  margin: { t: 0, b: 40 },
+                  showlegend: false,
+                  height: 300,
+                }}
+                config={{ responsive: true }}
+              />
+            </div>
+          )}
+
           {feature.featureActivationHistogram && (
             <div id="Histogram" className="flex flex-col w-full gap-4">
               <p className="font-bold">Activation Histogram</p>

@@ -5,9 +5,11 @@ import einops
 import torch
 import torch.nn as nn
 from jaxtyping import Float
+from torch.distributed.device_mesh import DeviceMesh
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import CrossCoderConfig
+from lm_saes.utils.distributed import distribute_tensor_on_dim
 
 
 class CrossCoder(AbstractSparseAutoEncoder):
@@ -121,6 +123,9 @@ class CrossCoder(AbstractSparseAutoEncoder):
         Returns:
             Encoded tensor of shape (n_heads, d_sae).
         """
+        if self.device_mesh is not None:
+            x = distribute_tensor_on_dim(x, self.device_mesh, {})
+
         # Apply encoding per head
         hidden_pre = (
             einops.einsum(x, self.W_E, "... n_heads d_model, n_heads d_model d_sae -> ... n_heads d_sae") + self.b_E
@@ -240,3 +245,15 @@ class CrossCoder(AbstractSparseAutoEncoder):
     @torch.no_grad()
     def transform_to_unit_decoder_norm(self):
         raise NotImplementedError("Transform to unit decoder norm is not supported for CrossCoder")
+
+    @override
+    def tensor_parallel(self, device_mesh: DeviceMesh):
+        super().tensor_parallel(device_mesh)
+        W_E = distribute_tensor_on_dim(self.W_E, device_mesh, {"sae": 2})
+        self.register_parameter("W_E", nn.Parameter(W_E))
+        W_D = distribute_tensor_on_dim(self.W_D, device_mesh, {"sae": 1})
+        self.register_parameter("W_D", nn.Parameter(W_D))
+        b_E = distribute_tensor_on_dim(self.b_E, device_mesh, {"sae": 1})
+        self.register_parameter("b_E", nn.Parameter(b_E))
+        b_D = distribute_tensor_on_dim(self.b_D, device_mesh, {})
+        self.register_parameter("b_D", nn.Parameter(b_D))

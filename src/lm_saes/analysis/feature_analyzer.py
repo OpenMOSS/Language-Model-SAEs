@@ -3,6 +3,8 @@ from typing import Any, Iterable, Mapping, Optional, cast
 
 import torch
 from einops import rearrange, repeat
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
@@ -146,6 +148,7 @@ class FeatureAnalyzer:
         self,
         activation_stream: Iterable[dict[str, Any]],
         sae: AbstractSparseAutoEncoder,
+        device_mesh: DeviceMesh | None = None,
     ) -> list[dict[str, Any]]:
         """Analyze feature activations for a chunk of the SAE.
 
@@ -172,19 +175,23 @@ class FeatureAnalyzer:
             smoothing=0.01,
         )
 
+        if device_mesh is not None and device_mesh.mesh_dim_names is not None and "sae" in device_mesh.mesh_dim_names:
+            d_sae_local = sae.cfg.d_sae // device_mesh["sae"].size()
+        else:
+            d_sae_local = sae.cfg.d_sae
+
         # Initialize tracking variables
         sample_result = {k: None for k in self.cfg.subsamples.keys()}
-        act_times = torch.zeros((sae.cfg.d_sae,), dtype=torch.long, device=sae.cfg.device)
-        max_feature_acts = torch.zeros((sae.cfg.d_sae,), dtype=sae.cfg.dtype, device=sae.cfg.device)
+        act_times = torch.zeros((d_sae_local,), dtype=torch.long, device=sae.cfg.device)
+        max_feature_acts = torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
         mapper = KeyedDiscreteMapper()
 
         if isinstance(sae, MixCoder):
             act_times_modalities = {
-                k: torch.zeros((sae.cfg.d_sae,), dtype=torch.long, device=sae.cfg.device)
-                for k in sae.cfg.modality_names
+                k: torch.zeros((d_sae_local,), dtype=torch.long, device=sae.cfg.device) for k in sae.cfg.modality_names
             }
             max_feature_acts_modalities = {
-                k: torch.zeros((sae.cfg.d_sae,), dtype=sae.cfg.dtype, device=sae.cfg.device)
+                k: torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
                 for k in sae.cfg.modality_names
             }
         else:
@@ -201,10 +208,17 @@ class FeatureAnalyzer:
             # Get feature activations from SAE
             x, kwargs = sae.prepare_input(batch)
             feature_acts: torch.Tensor = sae.encode(x, **kwargs)
+            if isinstance(feature_acts, DTensor):
+                feature_acts = feature_acts.to_local()
+            if isinstance(sae, CrossCoder):
+                feature_acts = feature_acts.max(dim=-2).values
+            assert (
+                feature_acts.shape == (batch["tokens"].shape[0], batch["tokens"].shape[1], d_sae_local)
+            ), f"feature_acts.shape: {feature_acts.shape}, expected: {(batch['tokens'].shape[0], batch['tokens'].shape[1], d_sae_local)}"
 
             # Compute ignore token masks
             ignore_token_masks = self.compute_ignore_token_masks(batch["tokens"], self.cfg.ignore_token_ids)
-            feature_acts *= ignore_token_masks.unsqueeze(-1)
+            feature_acts *= repeat(ignore_token_masks, "batch_size n_ctx -> batch_size n_ctx 1")
 
             # Update activation statistics
             act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
@@ -283,7 +297,7 @@ class FeatureAnalyzer:
         """
         results = []
 
-        for i in range(sae.cfg.d_sae):
+        for i in range(len(act_times)):
             feature_result = {
                 "act_times": act_times[i].item(),
                 "n_analyzed_tokens": n_analyzed_tokens,
@@ -300,7 +314,13 @@ class FeatureAnalyzer:
             }
 
             if isinstance(sae, CrossCoder):
-                feature_result["decoder_norms"] = sae.decoder_norm()[:, i].tolist()
+                decoder_norms = sae.decoder_norm()
+                if isinstance(decoder_norms, DTensor):
+                    decoder_norms = decoder_norms.to_local()
+                assert (
+                    decoder_norms.shape[-1] == len(act_times)
+                ), f"decoder_norms.shape: {decoder_norms.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
+                feature_result["decoder_norms"] = decoder_norms[:, i].tolist()
 
             # Add modality-specific metrics for MixCoder
             if (

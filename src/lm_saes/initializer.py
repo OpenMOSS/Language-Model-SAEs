@@ -49,7 +49,7 @@ class Initializer:
 
     @torch.no_grad()
     def initialize_tensor_parallel(self, sae: AbstractSparseAutoEncoder, device_mesh: DeviceMesh | None = None):
-        if not device_mesh or device_mesh["model"].size(0) == 1:
+        if not device_mesh:
             return sae
 
         if isinstance(sae, MixCoder):
@@ -58,6 +58,8 @@ class Initializer:
             return sae
 
         if isinstance(sae, SparseAutoEncoder):
+            if device_mesh["model"].size(0) == 1:
+                return sae
             sae.device_mesh = device_mesh
             plan = {
                 "encoder": ColwiseParallel(output_layouts=Replicate()),
@@ -66,6 +68,11 @@ class Initializer:
             if sae.cfg.use_glu_encoder:
                 plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
             sae = parallelize_module(sae, device_mesh=device_mesh["model"], parallelize_plan=plan)  # type: ignore
+
+        elif isinstance(sae, CrossCoder):
+            if device_mesh["model"].size(0) == 1:
+                return sae
+            sae.tensor_parallel(device_mesh)
 
         return sae
 

@@ -8,11 +8,13 @@ from typing import Any, Callable, Literal, Self, Union, cast, overload
 import safetensors.torch as safe
 import torch
 from jaxtyping import Float
+from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.database import MongoClient
+from lm_saes.utils.distributed import distribute_tensor_on_dim
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.misc import is_primary_rank
 
@@ -73,14 +75,21 @@ class JumpReLU(torch.nn.Module):
         shape: tuple[int, ...],
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
+        device_mesh: DeviceMesh | None = None,
     ):
         super(JumpReLU, self).__init__()
         self.jumprelu_threshold_window = jumprelu_threshold_window
         self.shape = shape
+        self.device_mesh = device_mesh
         self.log_jumprelu_threshold = torch.nn.Parameter(torch.empty(shape, device=device, dtype=dtype))
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return cast(torch.Tensor, STEFunction.apply(input, self.log_jumprelu_threshold, self.jumprelu_threshold_window))
+
+    def tensor_parallel(self, device_mesh: DeviceMesh):
+        self.device_mesh = device_mesh
+        log_jumprelu_threshold = distribute_tensor_on_dim(self.log_jumprelu_threshold, device_mesh, {"sae": 0})
+        self.register_parameter("log_jumprelu_threshold", nn.Parameter(log_jumprelu_threshold))
 
 
 class AbstractSparseAutoEncoder(HookedRootModule, ABC):
@@ -592,3 +601,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         """Prepare the label for the loss computation."""
         raise NotImplementedError("Subclasses must implement this method")
+
+    def tensor_parallel(self, device_mesh: DeviceMesh):
+        self.device_mesh = device_mesh
+        if isinstance(self.activation_function, JumpReLU):
+            self.activation_function.tensor_parallel(device_mesh)
