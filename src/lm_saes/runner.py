@@ -1,4 +1,5 @@
 import os
+import warnings
 from pathlib import Path
 from typing import Any, Iterable, Literal, Optional, TypeVar, cast, overload
 
@@ -671,9 +672,23 @@ class AnalyzeSAESettings(BaseSettings):
     mongo: MongoDBConfig
     """Configuration for the MongoDB database."""
 
+    sae_parallel_size: int = 1
+    """Size of SAE parallel (tensor parallel) mesh"""
+
 
 def analyze_sae(settings: AnalyzeSAESettings) -> None:
     """Analyze a SAE model."""
+
+    device_mesh = (
+        init_device_mesh(
+            device_type="cuda",
+            mesh_shape=(settings.sae_parallel_size,),
+            mesh_dim_names=("sae",),
+        )
+        if settings.sae_parallel_size > 1
+        else None
+    )
+
     mongo_client = MongoClient(settings.mongo)
 
     model_cfg = load_config(
@@ -739,10 +754,28 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     else:
         sae = SparseAutoEncoder.from_config(settings.sae)
 
+    if device_mesh is not None:
+        sae.tensor_parallel(device_mesh)
+
     analyzer = FeatureAnalyzer(settings.analyzer)
 
+    def rebatch_activations(activations: Iterable[dict[str, torch.Tensor]]):
+        n_ctx = None
+        for activation in activations:
+            batch_size = activation["tokens"].size(0)
+            if n_ctx is None:
+                n_ctx = activation["tokens"].size(1)
+            if n_ctx is not None and activation["tokens"].size(1) != n_ctx:
+                warnings.warn(f"Context size mismatch: {n_ctx} != {activation['tokens'].size(1)}. Skipping batch.")
+                continue
+            for i in range(4):
+                start = i * batch_size // 4
+                end = (i + 1) * batch_size // 4
+                yield {k: v[start:end] for k, v in activation.items()}
+
     activations = activation_factory.process()
-    result = analyzer.analyze_chunk(activations, sae=sae)
+    activations = rebatch_activations(activations)
+    result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
 
     mongo_client.add_feature_analysis(
         name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result

@@ -56,6 +56,7 @@ export const FeatureSchema = z.object({
   featureIndex: z.number(),
   dictionaryName: z.string(),
   featureActivationHistogram: z.any().nullish(),
+  decoderNorms: z.array(z.number()).nullish(),
   actTimes: z.number(),
   maxFeatureAct: z.number(),
   nAnalyzedTokens: z.number().nullish(),
