@@ -777,6 +777,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     activations = rebatch_activations(activations)
     result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
 
+    start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("sae") * len(result)
     mongo_client.add_feature_analysis(
-        name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result
+        name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result, start_idx=start_idx
     )
