@@ -300,11 +300,11 @@ class MongoClient:
             return None
         return LanguageModelConfig.model_validate(model["cfg"])
 
-    def add_feature_analysis(self, name: str, sae_name: str, sae_series: str, analysis: list[dict]):
+    def add_feature_analysis(self, name: str, sae_name: str, sae_series: str, analysis: list[dict], start_idx: int = 0):
         operations = []
         for i, feature_analysis in enumerate(analysis):
             update_operation = pymongo.UpdateOne(
-                {"sae_name": sae_name, "sae_series": sae_series, "index": i},
+                {"sae_name": sae_name, "sae_series": sae_series, "index": start_idx + i},
                 {"$push": {"analyses": feature_analysis | {"name": name}}},
                 upsert=True,
             )
