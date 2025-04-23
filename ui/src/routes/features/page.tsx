@@ -167,7 +167,7 @@ export const FeaturesPage = () => {
         {featureState.loading && loadingRandomFeature && <div>Loading Random Living Feature...</div>}
         {featureState.error && <div className="text-red-500 font-bold">Error: {featureState.error.message}</div>}
         {!featureState.loading && featureState.value && (
-          <div className="flex gap-12">
+          <div className="flex gap-12 w-full">
             <FeatureCard feature={featureState.value} />
             <SectionNavigator sections={sections} />
           </div>
