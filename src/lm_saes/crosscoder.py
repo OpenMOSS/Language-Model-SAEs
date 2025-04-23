@@ -38,6 +38,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
         self.W_D = nn.Parameter(torch.empty(cfg.n_heads, cfg.d_sae, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
         self.b_D = nn.Parameter(torch.empty(cfg.n_heads, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
 
+    @torch.no_grad()
     def init_parameters(self, **kwargs) -> None:
         """Initialize the weights of the model."""
         super().init_parameters(**kwargs)
@@ -54,12 +55,10 @@ class CrossCoder(AbstractSparseAutoEncoder):
         W_D = einops.repeat(W_D_per_head, "d_sae d_model -> n_heads d_sae d_model", n_heads=self.cfg.n_heads)
 
         # Assign to parameters
-        self.W_E.data.copy_(W_E)
-        self.W_D.data.copy_(W_D)
-        self.b_E.data.copy_(torch.zeros(self.cfg.n_heads, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype))
-        self.b_D.data.copy_(
-            torch.zeros(self.cfg.n_heads, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype)
-        )
+        self.W_E.copy_(W_E)
+        self.W_D.copy_(W_D)
+        self.b_E.copy_(torch.zeros(self.cfg.n_heads, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype))
+        self.b_D.copy_(torch.zeros(self.cfg.n_heads, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype))
 
     @overload
     def encode(
@@ -194,17 +193,20 @@ class CrossCoder(AbstractSparseAutoEncoder):
         return torch.norm(self.b_D, dim=-1, keepdim=True)
 
     @override
+    @torch.no_grad()
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
         if force_exact:
-            self.W_D.data *= value / self.decoder_norm(keepdim=True)
+            self.W_D.mul_(value / self.decoder_norm(keepdim=True))
         else:
-            self.W_D.data *= value / torch.clamp(self.decoder_norm(keepdim=True), min=value)
+            self.W_D.mul_(value / torch.clamp(self.decoder_norm(keepdim=True), min=value))
 
     @override
+    @torch.no_grad()
     def set_encoder_to_fixed_norm(self, value: float):
-        self.W_E.data *= value / self.encoder_norm(keepdim=True)
+        self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
     @override
+    @torch.no_grad()
     def standardize_parameters_of_dataset_norm(self, dataset_average_activation_norm: dict[str, float] | None):
         """
         Standardize the parameters of the model to account for dataset_norm during inference.
@@ -222,16 +224,17 @@ class CrossCoder(AbstractSparseAutoEncoder):
             dtype=self.cfg.dtype,
             device=self.cfg.device,
         )
-        self.b_E.data = self.b_E.data / norm_factors.view(self.cfg.n_heads, 1)
-        self.b_D.data = self.b_D.data / norm_factors.view(self.cfg.n_heads, 1)
+        self.b_E.div_(norm_factors.view(self.cfg.n_heads, 1))
+        self.b_D.div_(norm_factors.view(self.cfg.n_heads, 1))
         self.cfg.norm_activation = "inference"
 
     @override
+    @torch.no_grad()
     def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
-        self.W_E.data = (
-            einops.rearrange(self.W_D.data, "n_heads d_sae d_model -> n_heads d_model d_sae").clone().contiguous()
-            * factor
+        transposed_decoder = (
+            einops.rearrange(self.W_D, "n_heads d_sae d_model -> n_heads d_model d_sae").clone().contiguous() * factor
         )
+        self.W_E.copy_(transposed_decoder)
 
     @override
     def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
