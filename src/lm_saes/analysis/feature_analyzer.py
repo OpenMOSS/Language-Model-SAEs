@@ -175,8 +175,8 @@ class FeatureAnalyzer:
             smoothing=0.01,
         )
 
-        if device_mesh is not None and device_mesh.mesh_dim_names is not None and "sae" in device_mesh.mesh_dim_names:
-            d_sae_local = sae.cfg.d_sae // device_mesh["sae"].size()
+        if device_mesh is not None and device_mesh.mesh_dim_names is not None and "model" in device_mesh.mesh_dim_names:
+            d_sae_local = sae.cfg.d_sae // device_mesh["model"].size()
         else:
             d_sae_local = sae.cfg.d_sae
 

@@ -185,7 +185,7 @@ class MongoClient:
             return None
         return DatasetRecord.model_validate(dataset)
 
-    def get_feature(self, sae_name: str, sae_series: str, index: int) -> Optional[FeatureRecord]:
+    def get_feature(self, sae_name: str, sae_series: str | None, index: int) -> Optional[FeatureRecord]:
         feature = self.feature_collection.find_one({"sae_name": sae_name, "sae_series": sae_series, "index": index})
         if feature is None:
             return None
@@ -325,3 +325,32 @@ class MongoClient:
         self.feature_collection.delete_many({"sae_name": sae_name, "sae_series": sae_series})
         self.analysis_collection.delete_many({"sae_name": sae_name, "sae_series": sae_series})
         self.sae_collection.delete_one({"name": sae_name, "series": sae_series})
+
+    def update_feature(self, sae_name: str, feature_index: int, update_data: dict, sae_series: str | None = None):
+        """Update a feature with additional data.
+
+        Args:
+            sae_name: Name of the SAE
+            feature_index: Index of the feature to update
+            update_data: Dictionary with data to update
+            sae_series: Optional series of the SAE
+
+        Returns:
+            Result of the update operation
+
+        Raises:
+            ValueError: If the feature doesn't exist
+        """
+        # Ensure we have a non-None sae_series
+        if sae_series is None:
+            raise ValueError("sae_series cannot be None")
+
+        feature = self.get_feature(sae_name, sae_series, feature_index)
+        if feature is None:
+            raise ValueError(f"Feature {feature_index} not found for SAE {sae_name}/{sae_series}")
+
+        result = self.feature_collection.update_one(
+            {"sae_name": sae_name, "sae_series": sae_series, "index": feature_index}, {"$set": update_data}
+        )
+
+        return result
