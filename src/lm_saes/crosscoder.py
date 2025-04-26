@@ -6,10 +6,11 @@ import torch
 import torch.nn as nn
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import CrossCoderConfig
-from lm_saes.utils.distributed import distribute_tensor_on_dim
+from lm_saes.utils.distributed import distribute_tensor_on_dim, placements_from_dim_map
 
 
 class CrossCoder(AbstractSparseAutoEncoder):
@@ -129,7 +130,6 @@ class CrossCoder(AbstractSparseAutoEncoder):
         hidden_pre = (
             einops.einsum(x, self.W_E, "... n_heads d_model, n_heads d_model d_sae -> ... n_heads d_sae") + self.b_E
         )
-
         # Sum across heads and add bias
         accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
         accumulated_hidden_pre = einops.repeat(
@@ -177,7 +177,15 @@ class CrossCoder(AbstractSparseAutoEncoder):
         Returns:
             Norm of decoder weights of shape (n_heads, d_sae).
         """
-        return torch.norm(self.W_D, dim=-1, keepdim=keepdim)
+        if not isinstance(self.W_D, DTensor):
+            return torch.norm(self.W_D, dim=-1, keepdim=keepdim)
+        else:
+            assert self.device_mesh is not None
+            return DTensor.from_local(
+                torch.norm(self.W_D.to_local(), dim=-1, keepdim=keepdim),
+                device_mesh=self.device_mesh,
+                placements=placements_from_dim_map({"model": 1}, self.device_mesh),
+            )
 
     @override
     def encoder_norm(self, keepdim: bool = False) -> torch.Tensor:
@@ -252,11 +260,11 @@ class CrossCoder(AbstractSparseAutoEncoder):
     @override
     def tensor_parallel(self, device_mesh: DeviceMesh):
         super().tensor_parallel(device_mesh)
-        W_E = distribute_tensor_on_dim(self.W_E, device_mesh, {"sae": 2})
+        W_E = distribute_tensor_on_dim(self.W_E, device_mesh, {"model": 2})
         self.register_parameter("W_E", nn.Parameter(W_E))
-        W_D = distribute_tensor_on_dim(self.W_D, device_mesh, {"sae": 1})
+        W_D = distribute_tensor_on_dim(self.W_D, device_mesh, {"model": 1})
         self.register_parameter("W_D", nn.Parameter(W_D))
-        b_E = distribute_tensor_on_dim(self.b_E, device_mesh, {"sae": 1})
+        b_E = distribute_tensor_on_dim(self.b_E, device_mesh, {"model": 1})
         self.register_parameter("b_E", nn.Parameter(b_E))
         b_D = distribute_tensor_on_dim(self.b_D, device_mesh, {})
         self.register_parameter("b_D", nn.Parameter(b_D))

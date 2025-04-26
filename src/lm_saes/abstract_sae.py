@@ -88,7 +88,7 @@ class JumpReLU(torch.nn.Module):
 
     def tensor_parallel(self, device_mesh: DeviceMesh):
         self.device_mesh = device_mesh
-        log_jumprelu_threshold = distribute_tensor_on_dim(self.log_jumprelu_threshold, device_mesh, {"sae": 0})
+        log_jumprelu_threshold = distribute_tensor_on_dim(self.log_jumprelu_threshold, device_mesh, {"model": 0})
         self.register_parameter("log_jumprelu_threshold", nn.Parameter(log_jumprelu_threshold))
 
 
@@ -411,6 +411,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Compute the norm of the decoder."""
         raise NotImplementedError("Subclasses must implement this method")
 
+    def decoder_norm_full(self, keepdim: bool = False) -> torch.Tensor:
+        """Compute the full norm of the decoder."""
+        decoder_norm = self.decoder_norm(keepdim=keepdim)
+        if not isinstance(decoder_norm, DTensor):
+            return decoder_norm
+        else:
+            return decoder_norm.full_tensor()
+
     @abstractmethod
     def decoder_bias_norm(self) -> torch.Tensor:
         """Compute the norm of the decoder bias."""
@@ -560,6 +568,16 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         label = self.prepare_label(batch, **kwargs)
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
+
+        if self.device_mesh is not None:
+            assert (
+                isinstance(reconstructed, DTensor)
+                and isinstance(feature_acts, DTensor)
+                and isinstance(hidden_pre, DTensor)
+            )
+            reconstructed = reconstructed.full_tensor()
+            feature_acts = feature_acts.full_tensor()
+            hidden_pre = hidden_pre.full_tensor()
         l_rec = (reconstructed - label).pow(2)
         if use_batch_norm_mse:
             l_rec = (
@@ -573,9 +591,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
         if sparsity_loss_type is not None:
             if sparsity_loss_type == "power":
-                l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
+                l_s = torch.norm(feature_acts * self.decoder_norm_full(), p=p, dim=-1)
             elif sparsity_loss_type == "tanh":
-                l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
+                l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm_full()).sum(dim=-1)
             else:
                 raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
             loss_dict["l_s"] = l1_coefficient * l_s.mean()

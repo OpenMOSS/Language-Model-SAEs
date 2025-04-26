@@ -1,17 +1,23 @@
 import os
 import warnings
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Literal, Optional, TypeVar, cast, overload
 
 import torch
 import torch.distributed as dist
 import wandb
+from datasets import Dataset
 from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.activation.writer import ActivationWriter
+from lm_saes.analysis.auto_interp import (
+    AutoInterpConfig,
+    FeatureInterpreter,
+)
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
 from lm_saes.config import (
     ActivationFactoryConfig,
@@ -34,7 +40,7 @@ from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient
 from lm_saes.initializer import Initializer
 from lm_saes.mixcoder import MixCoder
-from lm_saes.resource_loaders import load_dataset, load_model
+from lm_saes.resource_loaders import load_dataset, load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.trainer import Trainer
 from lm_saes.utils.misc import get_modality_tokens, is_primary_rank
@@ -336,7 +342,7 @@ def train_sae(settings: TrainSAESettings) -> None:
     if isinstance(settings.sae, MixCoderConfig):
         modality_names = settings.sae.modality_names
         if "text" in modality_names:  # Multimodal mixcoder SAE
-            from transformers import AutoTokenizer
+            from transformers.models.auto.tokenization_auto import AutoTokenizer
 
             assert (
                 model_cfg is not None
@@ -535,7 +541,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
                 for item in settings.items
             ), "All items must have the same modality names"
             if "text" in modality_names:  # Multimodal mixcoder SAE
-                from transformers import AutoTokenizer
+                from transformers.models.auto.tokenization_auto import AutoTokenizer
 
                 assert (
                     model_cfg is not None
@@ -672,8 +678,8 @@ class AnalyzeSAESettings(BaseSettings):
     mongo: MongoDBConfig
     """Configuration for the MongoDB database."""
 
-    sae_parallel_size: int = 1
-    """Size of SAE parallel (tensor parallel) mesh"""
+    model_parallel_size: int = 1
+    """Size of model parallel (tensor parallel) mesh"""
 
 
 def analyze_sae(settings: AnalyzeSAESettings) -> None:
@@ -682,10 +688,10 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     device_mesh = (
         init_device_mesh(
             device_type="cuda",
-            mesh_shape=(settings.sae_parallel_size,),
-            mesh_dim_names=("sae",),
+            mesh_shape=(settings.model_parallel_size,),
+            mesh_dim_names=("model",),
         )
-        if settings.sae_parallel_size > 1
+        if settings.model_parallel_size > 1
         else None
     )
 
@@ -702,7 +708,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     if isinstance(settings.sae, MixCoderConfig):
         modality_names = settings.sae.modality_names
         if "text" in modality_names:  # Multimodal mixcoder SAE
-            from transformers import AutoTokenizer
+            from transformers.models.auto.tokenization_auto import AutoTokenizer
 
             assert (
                 model_cfg is not None
@@ -777,7 +783,133 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     activations = rebatch_activations(activations)
     result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
 
-    start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("sae") * len(result)
+    start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
     mongo_client.add_feature_analysis(
         name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result, start_idx=start_idx
     )
+
+
+class AutoInterpSettings(BaseSettings):
+    """Settings for automatic interpretation of SAE features."""
+
+    sae: BaseSAEConfig
+    """Configuration for the SAE model architecture and parameters"""
+
+    sae_name: str
+    """Name of the SAE model to interpret. Use as identifier for the SAE model in the database."""
+
+    sae_series: str
+    """Series of the SAE model to interpret. Use as identifier for the SAE model in the database."""
+
+    model: LanguageModelConfig
+    """Configuration for the language model used to generate activations."""
+
+    model_name: str
+    """Name of the model to load."""
+
+    dataset_name: str
+    """Name of the dataset to use for non-activating examples."""
+
+    auto_interp: AutoInterpConfig
+    """Configuration for the auto-interpretation process."""
+
+    mongo: MongoDBConfig
+    """Configuration for the MongoDB database."""
+
+    features: Optional[list[int]] = None
+    """List of specific feature indices to interpret. If None, will interpret all features."""
+
+    feature_range: Optional[list[int]] = None
+    """Range of feature indices to interpret [start, end]. If None, will interpret all features."""
+
+    top_k_features: Optional[int] = None
+    """Number of top activating features to interpret. If None, will use the features or feature_range."""
+
+    analysis_name: str = "default"
+    """Name of the analysis to use for interpretation."""
+
+
+def auto_interp(settings: AutoInterpSettings) -> None:
+    """Automatically interpret SAE features using LLMs.
+
+    Args:
+        settings: Configuration settings for auto-interpretation
+    """
+    # Set up MongoDB client
+    mongo_client = MongoClient(settings.mongo)
+
+    # Determine which features to interpret
+    if settings.top_k_features:
+        # Get top k most frequently activating features
+        act_times = mongo_client.get_feature_act_times(settings.sae_name, settings.sae_series, settings.analysis_name)
+        if not act_times:
+            raise ValueError(f"No feature activation times found for {settings.sae_name}/{settings.sae_series}")
+        sorted_features = sorted(act_times.items(), key=lambda x: x[1], reverse=True)
+        feature_indices = [idx for idx, _ in sorted_features[: settings.top_k_features]]
+    elif settings.feature_range:
+        # Use feature range
+        feature_indices = list(range(settings.feature_range[0], settings.feature_range[1] + 1))
+    elif settings.features:
+        # Use specific features
+        feature_indices = settings.features
+    else:
+        # Use all features (be careful, this could be a lot!)
+        max_feature_acts = mongo_client.get_max_feature_acts(
+            settings.sae_name, settings.sae_series, settings.analysis_name
+        )
+        if not max_feature_acts:
+            raise ValueError(f"No feature activations found for {settings.sae_name}/{settings.sae_series}")
+        feature_indices = list(max_feature_acts.keys())
+
+    # Load resources
+    print(f"Loading SAE model: {settings.sae_name}/{settings.sae_series}")
+    if isinstance(settings.sae, MixCoderConfig):
+        sae = MixCoder.from_config(settings.sae)
+    elif isinstance(settings.sae, CrossCoderConfig):
+        sae = CrossCoder.from_config(settings.sae)
+    else:
+        sae = SparseAutoEncoder.from_config(settings.sae)
+
+    print(f"Loading language model: {settings.model_name}")
+    model = load_model(settings.model)
+
+    # Load the dataset for non-activating examples
+    @lru_cache(maxsize=None)
+    def get_dataset(dataset_name: str, shard_idx: int, n_shards: int) -> Dataset:
+        dataset_cfg = mongo_client.get_dataset_cfg(dataset_name)
+        assert dataset_cfg is not None, f"Dataset {dataset_name} not found"
+        dataset = load_dataset_shard(dataset_cfg, shard_idx, n_shards)
+        return dataset
+
+    # Create the interpreter
+    interpreter = FeatureInterpreter(settings.auto_interp, mongo_client)
+
+    # Call interpret_feature with all features at once
+    print(f"Interpreting {len(feature_indices)} features...")
+    results = interpreter.interpret_feature(
+        sae_name=settings.sae_name,
+        sae_series=settings.sae_series,
+        feature_indices=feature_indices,
+        model=model,
+        sae=sae,
+        datasets=get_dataset,
+        dataset_name=settings.dataset_name,
+        analysis_name=settings.analysis_name,
+    )
+
+    # Save results to database
+    print("Saving results to database...")
+    for feature_idx, result in results.items():
+        interpretation = {
+            "text": result["explanation"],
+            "validation": [
+                {"method": eval_result["method"], "passed": eval_result["passed"], "detail": eval_result}
+                for eval_result in result["evaluations"]
+            ],
+            "detail": result["explanation_details"],
+        }
+
+        mongo_client.update_feature(
+            settings.sae_name, feature_idx, {"interpretation": interpretation}, settings.sae_series
+        )
+    print(f"Completed interpreting {len(results)} features")
