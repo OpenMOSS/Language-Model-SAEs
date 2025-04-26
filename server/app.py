@@ -205,12 +205,7 @@ def get_feature(name: str, feature_index: str | int):
 
         Returns:
             dict: Processed sample data
-        """
-        # Default shard values if None
-        shard_idx = 0 if shard_idx is None else shard_idx
-        n_shards = 1 if n_shards is None else n_shards
-
-        # Get model and dataset
+        """  # Get model and dataset
         model = get_model(model_name)
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx]
 
@@ -258,8 +253,8 @@ def get_feature(name: str, feature_index: str | int):
                 sampling.context_idx,
                 sampling.dataset_name,
                 sampling.model_name,
-                sampling.shard_idx if sampling.shard_idx is not None else [None] * len(sampling.feature_acts),
-                sampling.n_shards if sampling.n_shards is not None else [None] * len(sampling.feature_acts),
+                sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts),
+                sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts),
             )
         ]
 
