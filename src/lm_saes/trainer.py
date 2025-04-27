@@ -14,6 +14,7 @@ from lm_saes.config import TrainerConfig
 from lm_saes.evaluator import evaluate_mixcoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
+from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
 
 
@@ -243,7 +244,7 @@ class Trainer:
             "n_forward_passes_since_fired": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
             "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
         }
-        proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001)
+        proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
         for batch in activation_stream:
             proc_bar.update(1)
 
