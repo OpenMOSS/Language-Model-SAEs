@@ -276,7 +276,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             AssertionError: If hook points are missing or tensors have invalid shapes
         """
         buffer = ActivationBuffer(generator=self.perm_generator)
-        pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1)
+        pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1, disable=True)
 
         for d in data:
             # Drop all non-tensor fields
