@@ -155,8 +155,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     @torch.no_grad()
     def full_state_dict(self):  # should be overridden by subclasses
         state_dict = self.state_dict()
-        if self.device_mesh and self.device_mesh["model"].size(0) > 1:
-            state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
+        state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
 
         # Add dataset_average_activation_norm to state dict
         if self.dataset_average_activation_norm is not None:
@@ -178,7 +177,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         if os.path.isdir(ckpt_path):
             ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
         state_dict = self.full_state_dict()
-        if self.device_mesh is None or self.device_mesh.get_rank() == 0:
+        if self.device_mesh is None or is_primary_rank(self.device_mesh):
             if Path(ckpt_path).suffix == ".safetensors":
                 safe.save_file(state_dict, ckpt_path, {"version": version("lm-saes")})
             elif Path(ckpt_path).suffix == ".pt":
@@ -196,7 +195,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         sae_series: str | None = None,
         mongo_client: MongoClient | None = None,
     ) -> None:
-        # TODO: save dataset_average_activation_norm
         self.save_checkpoint(save_path)
         if is_primary_rank(self.device_mesh):
             if mongo_client is not None:
@@ -578,6 +576,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             reconstructed = reconstructed.full_tensor()
             feature_acts = feature_acts.full_tensor()
             hidden_pre = hidden_pre.full_tensor()
+        if isinstance(label, DTensor):
+            label = label.full_tensor()
         l_rec = (reconstructed - label).pow(2)
         if use_batch_norm_mse:
             l_rec = (
