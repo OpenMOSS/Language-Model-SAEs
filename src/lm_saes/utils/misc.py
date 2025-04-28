@@ -1,6 +1,6 @@
 import os
 import warnings
-from typing import Iterable
+from typing import Iterable, cast
 
 import torch
 import torch.distributed as dist
@@ -135,11 +135,15 @@ def assert_tensor_consistency(tensor):
 
 
 def calculate_activation_norm(
-    activation_stream: Iterable[dict[str, torch.Tensor]], hook_points: list[str], batch_num: int = 8
+    activation_stream: Iterable[dict[str, torch.Tensor]],
+    hook_points: list[str],
+    batch_num: int = 8,
+    device_mesh: DeviceMesh | None = None,
 ) -> dict[str, float]:
     activation_norm = {}
     stream_iter = iter(activation_stream)
-    hook_points = list(set(hook_points))
+    if device_mesh is not None and "head" in cast(tuple[str, ...], device_mesh.mesh_dim_names):
+        hook_points = [hook_points[device_mesh.get_local_rank("head")]]
     assert len(hook_points) > 0, "No hook points provided"
     while batch_num > 0:
         try:
@@ -155,6 +159,10 @@ def calculate_activation_norm(
         batch_num -= 1
     for key in activation_norm:
         activation_norm[key] = activation_norm[key].mean().item()
+    if device_mesh is not None and "head" in cast(tuple[str, ...], device_mesh.mesh_dim_names):
+        object_list = [None] * device_mesh.get_group("head").size()
+        dist.all_gather_object(object_list, activation_norm, group=device_mesh.get_group("head"))
+        activation_norm = {k: v for d in cast(list[dict[str, float]], object_list) for k, v in d.items()}
     return activation_norm
 
 

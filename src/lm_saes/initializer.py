@@ -1,7 +1,9 @@
+import os
 import warnings
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, cast
 
 import torch
+import torch.distributed as dist
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Replicate
@@ -70,18 +72,32 @@ class Initializer:
             sae = parallelize_module(sae, device_mesh=device_mesh["model"], parallelize_plan=plan)  # type: ignore
 
         elif isinstance(sae, CrossCoder):
-            if device_mesh["model"].size(0) == 1:
-                return sae
             sae.tensor_parallel(device_mesh)
 
         return sae
 
     @torch.no_grad()
-    def initialization_search(self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor]):
+    def initialization_search(
+        self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor], device_mesh: DeviceMesh | None = None
+    ):
         """
         This function is used to search for the best initialization norm for the SAE decoder.
         """
         batch = sae.normalize_activations(activation_batch)
+
+        if (
+            isinstance(sae, CrossCoder)
+            and device_mesh is not None
+            and "head" in cast(tuple[str, ...], device_mesh.mesh_dim_names)
+        ):
+            object_list = [None] * device_mesh.get_group("head").size()
+            dist.all_gather_object(object_list, activation_batch, group=device_mesh.get_group("head"))
+            activation_batch = {
+                k: v.to(torch.device("cuda", int(os.environ["LOCAL_RANK"]))) if isinstance(v, Tensor) else v
+                for d in cast(list[dict[str, Tensor]], object_list)
+                for k, v in d.items()
+            }
+
         if self.cfg.init_decoder_norm is None:
             if not self.cfg.init_encoder_with_decoder_transpose:
                 return sae
@@ -199,7 +215,10 @@ class Initializer:
                     assert (
                         activation_stream is not None
                     ), "Activation iterator must be provided for dataset-wise normalization"
-                    activation_norm = calculate_activation_norm(activation_stream, cfg.associated_hook_points)
+
+                    activation_norm = calculate_activation_norm(
+                        activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
+                    )
                 sae.set_dataset_average_activation_norm(activation_norm)
 
             if self.cfg.bias_init_method == "init_b_e_for_const_fire_times":
@@ -212,7 +231,7 @@ class Initializer:
             if self.cfg.init_search:
                 assert activation_stream is not None, "Activation iterator must be provided for initialization search"
                 activation_batch = next(iter(activation_stream))  # type: ignore
-                sae = self.initialization_search(sae, activation_batch)
+                sae = self.initialization_search(sae, activation_batch, device_mesh=device_mesh)
 
         elif self.cfg.state == "inference":
             if sae.cfg.norm_activation == "dataset-wise":
