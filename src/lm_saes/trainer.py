@@ -5,6 +5,7 @@ from typing import Callable, Iterable
 import torch
 import torch.optim.lr_scheduler as lr_scheduler
 from torch import Tensor
+from torch.distributed.tensor import DTensor
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
@@ -120,9 +121,11 @@ class Trainer:
 
     @torch.no_grad()
     def _log(self, sae: AbstractSparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
+        # TODO: add full distributed support
         assert self.optimizer is not None, "Optimizer must be initialized"
-        assert self.wandb_logger is not None, "Wandb logger must be provided"
         label = sae.prepare_label(batch)
+        if isinstance(label, DTensor):
+            label = label.full_tensor()
         act_freq_scores = (log_info["feature_acts"] > 0).float().sum(0)
         if sae.cfg.sae_type == "crosscoder":
             act_freq_scores = act_freq_scores.max(dim=0).values
@@ -141,7 +144,8 @@ class Trainer:
                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
             }
-            self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
+            if self.wandb_logger is not None:
+                self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
             log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
             log_info["n_frac_active_tokens"] = torch.zeros_like(log_info["n_frac_active_tokens"])
 
@@ -213,10 +217,11 @@ class Trainer:
                             f"mixcoder_metrics/{modality}_loss": log_info[f"{modality}_loss"].float().mean().item(),
                         }
                     )
+            if is_primary_rank(sae.device_mesh):
+                print({"step": self.cur_step + 1, **wandb_log_dict})
 
-            print({"step": self.cur_step + 1, **wandb_log_dict})
-
-            self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
+            if self.wandb_logger is not None:
+                self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
 
     def _save_checkpoint(self, sae: AbstractSparseAutoEncoder):
         if len(self.checkpoint_thresholds) > 0 and self.cur_tokens >= self.checkpoint_thresholds[0]:
@@ -282,8 +287,7 @@ class Trainer:
             log_info.update(loss_dict)
             proc_bar.set_description(f"loss: {log_info['loss'].item()}")
 
-            if self.wandb_logger is not None:
-                self._log(sae, log_info, batch)
+            self._log(sae, log_info, batch)
 
             if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
                 eval_fn(sae)

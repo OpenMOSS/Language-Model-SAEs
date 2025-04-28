@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
+from lm_saes.utils.misc import is_master
 from lm_saes.utils.tensor_dict import move_dict_of_tensor_to_device
 
 
@@ -192,7 +193,14 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             pin_memory=True,  # mandatory!
             collate_fn=first_data_collate_fn,
         )
-        return iter(tqdm(dataloader, total=total_chunks, desc="Processing activation chunks"))
+        return iter(
+            tqdm(
+                dataloader,
+                total=total_chunks,
+                desc="Processing activation chunks",
+                disable=not is_master(),
+            )
+        )
 
     def process(self, data: None = None, **kwargs) -> Iterable[dict[str, Any]]:
         """Load cached activations in a streaming fashion.

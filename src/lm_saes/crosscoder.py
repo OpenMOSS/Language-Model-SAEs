@@ -1,5 +1,5 @@
 import math
-from typing import Any, Literal, Union, overload, override
+from typing import Any, Literal, Union, cast, overload, override
 
 import einops
 import torch
@@ -123,7 +123,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
         Returns:
             Encoded tensor of shape (n_heads, d_sae).
         """
-        if self.device_mesh is not None:
+        if self.device_mesh is not None and not isinstance(x, DTensor):
             x = distribute_tensor_on_dim(x, self.device_mesh, {})
 
         # Apply encoding per head
@@ -184,7 +184,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
             return DTensor.from_local(
                 torch.norm(self.W_D.to_local(), dim=-1, keepdim=keepdim),
                 device_mesh=self.device_mesh,
-                placements=placements_from_dim_map({"model": 1}, self.device_mesh),
+                placements=placements_from_dim_map({"head": 0, "model": 1}, self.device_mesh),
             )
 
     @override
@@ -246,7 +246,16 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     @override
     def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
-        return torch.stack([batch[hook_point] for hook_point in self.cfg.hook_points], dim=-2), {}
+        if self.device_mesh is None or "head" not in cast(tuple[str, ...], self.device_mesh.mesh_dim_names):
+            return torch.stack([batch[hook_point] for hook_point in self.cfg.hook_points], dim=-2), {}
+        else:
+            local_activations = batch[self.cfg.hook_points[self.device_mesh.get_local_rank("head")]]
+            local_activations = einops.rearrange(local_activations, "... d_model -> ... 1 d_model")
+            return DTensor.from_local(
+                local_activations,
+                device_mesh=self.device_mesh,
+                placements=placements_from_dim_map({"head": -2}, self.device_mesh),
+            ), {}
 
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
@@ -260,11 +269,11 @@ class CrossCoder(AbstractSparseAutoEncoder):
     @override
     def tensor_parallel(self, device_mesh: DeviceMesh):
         super().tensor_parallel(device_mesh)
-        W_E = distribute_tensor_on_dim(self.W_E, device_mesh, {"model": 2})
+        W_E = distribute_tensor_on_dim(self.W_E, device_mesh, {"head": 0, "model": 2})
         self.register_parameter("W_E", nn.Parameter(W_E))
-        W_D = distribute_tensor_on_dim(self.W_D, device_mesh, {"model": 1})
+        W_D = distribute_tensor_on_dim(self.W_D, device_mesh, {"head": 0, "model": 1})
         self.register_parameter("W_D", nn.Parameter(W_D))
-        b_E = distribute_tensor_on_dim(self.b_E, device_mesh, {"model": 1})
+        b_E = distribute_tensor_on_dim(self.b_E, device_mesh, {"head": 0, "model": 1})
         self.register_parameter("b_E", nn.Parameter(b_E))
-        b_D = distribute_tensor_on_dim(self.b_D, device_mesh, {})
+        b_D = distribute_tensor_on_dim(self.b_D, device_mesh, {"head": 0})
         self.register_parameter("b_D", nn.Parameter(b_D))
