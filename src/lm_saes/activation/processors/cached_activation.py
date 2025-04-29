@@ -122,13 +122,13 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 if "meta" in data:
                     chunk_data["meta"] = data["meta"]
             else:
-                assert torch.allclose(
-                    data["tokens"], chunk_data["tokens"]
-                ), f"Loading cached activation {chunk.path} error: tokens mismatch"
+                assert torch.allclose(data["tokens"], chunk_data["tokens"]), (
+                    f"Loading cached activation {chunk.path} error: tokens mismatch"
+                )
                 if "meta" in data:
-                    assert (
-                        data["meta"] == chunk_data["meta"]
-                    ), f"Loading cached activation {chunk.path} error: info mismatch"
+                    assert data["meta"] == chunk_data["meta"], (
+                        f"Loading cached activation {chunk.path} error: info mismatch"
+                    )
 
         return chunk_data
 

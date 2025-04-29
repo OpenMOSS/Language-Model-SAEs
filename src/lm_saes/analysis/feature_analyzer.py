@@ -212,9 +212,9 @@ class FeatureAnalyzer:
                 feature_acts = feature_acts.to_local()
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.max(dim=-2).values
-            assert (
-                feature_acts.shape == (batch["tokens"].shape[0], batch["tokens"].shape[1], d_sae_local)
-            ), f"feature_acts.shape: {feature_acts.shape}, expected: {(batch['tokens'].shape[0], batch['tokens'].shape[1], d_sae_local)}"
+            assert feature_acts.shape == (batch["tokens"].shape[0], batch["tokens"].shape[1], d_sae_local), (
+                f"feature_acts.shape: {feature_acts.shape}, expected: {(batch['tokens'].shape[0], batch['tokens'].shape[1], d_sae_local)}"
+            )
 
             # Compute ignore token masks
             ignore_token_masks = self.compute_ignore_token_masks(batch["tokens"], self.cfg.ignore_token_ids)
@@ -317,9 +317,9 @@ class FeatureAnalyzer:
                 decoder_norms = sae.decoder_norm()
                 if isinstance(decoder_norms, DTensor):
                     decoder_norms = decoder_norms.to_local()
-                assert (
-                    decoder_norms.shape[-1] == len(act_times)
-                ), f"decoder_norms.shape: {decoder_norms.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
+                assert decoder_norms.shape[-1] == len(act_times), (
+                    f"decoder_norms.shape: {decoder_norms.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
+                )
                 feature_result["decoder_norms"] = decoder_norms[:, i].tolist()
 
             # Add modality-specific metrics for MixCoder

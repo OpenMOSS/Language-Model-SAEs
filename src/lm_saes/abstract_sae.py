@@ -198,9 +198,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         self.save_checkpoint(save_path)
         if is_primary_rank(self.device_mesh):
             if mongo_client is not None:
-                assert (
-                    sae_name is not None and sae_series is not None
-                ), "sae_name and sae_series must be provided when saving to MongoDB"
+                assert sae_name is not None and sae_series is not None, (
+                    "sae_name and sae_series must be provided when saving to MongoDB"
+                )
                 mongo_client.create_sae(
                     name=sae_name, series=sae_series, path=str(Path(save_path).absolute()), cfg=self.cfg
                 )
@@ -317,9 +317,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         if self.cfg.norm_activation == "batch-wise":
             return math.sqrt(self.cfg.d_model) / torch.norm(x, 2, dim=-1, keepdim=True).mean(dim=-2, keepdim=True)
         if self.cfg.norm_activation == "dataset-wise":
-            assert (
-                self.dataset_average_activation_norm is not None
-            ), "dataset_average_activation_norm must be provided from Initializer"
+            assert self.dataset_average_activation_norm is not None, (
+                "dataset_average_activation_norm must be provided from Initializer"
+            )
             return torch.tensor(
                 math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point],
                 device=x.device,
