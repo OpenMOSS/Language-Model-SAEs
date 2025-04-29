@@ -431,15 +431,17 @@ class TritonDecoderAutogradJumpReLU(torch.autograd.Function):
         grad_output = grad_outputs[0]
         sparse_indices, sparse_values, decoder_weight = ctx.saved_tensors
 
-        assert grad_output.is_contiguous(), "grad_output must be contiguous; this is probably because the subsequent op was a .sum() or something like that, which returns a non contiguous gradient"
+        assert grad_output.is_contiguous(), (
+            "grad_output must be contiguous; this is probably because the subsequent op was a .sum() or something like that, which returns a non contiguous gradient"
+        )
 
         decoder_grad = triton_sparse_transpose_dense_matmul(
             sparse_indices, sparse_values, grad_output, N=decoder_weight.size(1)
         ).T
-        
+
         # decoder is contiguous when transposed so this is a matching layout
         return grad_output @ decoder_weight, decoder_grad
-    
+
 
 class TritonDecoderAutogradTopK(torch.autograd.Function):
     @staticmethod
@@ -453,19 +455,22 @@ class TritonDecoderAutogradTopK(torch.autograd.Function):
         grad_output = grad_outputs[0]
         sparse_indices, sparse_values, decoder_weight = ctx.saved_tensors
 
-        assert grad_output.is_contiguous(), "grad_output must be contiguous; this is probably because the subsequent op was a .sum() or something like that, which returns a non contiguous gradient"
+        assert grad_output.is_contiguous(), (
+            "grad_output must be contiguous; this is probably because the subsequent op was a .sum() or something like that, which returns a non contiguous gradient"
+        )
 
         decoder_grad = triton_sparse_transpose_dense_matmul(
             sparse_indices, sparse_values, grad_output, N=decoder_weight.size(1)
         ).T
-        
+
         # decoder is contiguous when transposed so this is a matching layout
         return None, triton_dense_dense_sparseout_matmul(grad_output, decoder_weight, sparse_indices), decoder_grad
-            
 
 
 def decode_with_triton_spmm_kernel(
-    feature_acts: Float[torch.Tensor, "batch d_sae"], decoder_weight: Float[torch.Tensor, "d_model d_sae"], require_precise_feature_acts_grad: bool
+    feature_acts: Float[torch.Tensor, "batch d_sae"],
+    decoder_weight: Float[torch.Tensor, "d_model d_sae"],
+    require_precise_feature_acts_grad: bool,
 ):
     """
     Perform sparse-dense matrix multiplication using Triton.
@@ -491,7 +496,9 @@ if __name__ == "__main__":
     import triton
     import triton.language as tl
 
-    def test_triton_decoder(B, d_sae, d_model, sparsity=0.9, dtype=torch.float32, require_precise_feature_acts_grad=True):
+    def test_triton_decoder(
+        B, d_sae, d_model, sparsity=0.9, dtype=torch.float32, require_precise_feature_acts_grad=True
+    ):
         # Set parameters
 
         # Create a random dense weight matrix (as in nn.Linear)
@@ -506,47 +513,56 @@ if __name__ == "__main__":
         # Enable gradient tracking
         decoder.weight.requires_grad_(True)
         dense_input.requires_grad_(True)
-        
+
         grad_output = torch.randn((B, d_model), dtype=dtype, device="cuda")
 
         # Run forward pass with Triton
         triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight, require_precise_feature_acts_grad)
         assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
-        
+
         triton_output.backward(grad_output)
-        
+
         triton_decoder_weight_grad, triton_dense_input_grad = decoder.weight.grad.clone(), dense_input.grad.clone()  # pyright: ignore
-        
+
         decoder.weight.grad.zero_()  # pyright: ignore
         dense_input.grad.zero_()  # pyright: ignore
-        
+
         torch_output = decoder(dense_input)
         torch_output.backward(grad_output)
-        
+
         torch_decoder_weight_grad, torch_dense_input_grad = decoder.weight.grad.clone(), dense_input.grad.clone()  # pyright: ignore
 
         # Compare gradients
         assert decoder.weight.grad is not None, "decoder.weight.grad is None"
-        assert torch.allclose(
-            triton_output, torch_output, atol=1e-5
-        ), "Mismatch between Triton and PyTorch outputs!"
-        assert torch.allclose(
-            triton_decoder_weight_grad, torch_decoder_weight_grad, atol=1e-5
-        ), f"Mismatch between Triton and PyTorch gradients on decoder weights! {triton_decoder_weight_grad=}, {torch_decoder_weight_grad=}"
+        assert torch.allclose(triton_output, torch_output, atol=1e-5), "Mismatch between Triton and PyTorch outputs!"
+        assert torch.allclose(triton_decoder_weight_grad, torch_decoder_weight_grad, atol=1e-5), (
+            f"Mismatch between Triton and PyTorch gradients on decoder weights! {triton_decoder_weight_grad=}, {torch_decoder_weight_grad=}"
+        )
 
         if require_precise_feature_acts_grad:
-            assert torch.allclose(
-                triton_dense_input_grad, torch_dense_input_grad, atol=1e-5
-            ), f"Mismatch between Triton and PyTorch gradients on dense input! {triton_dense_input_grad=}, {torch_dense_input_grad=}"
+            assert torch.allclose(triton_dense_input_grad, torch_dense_input_grad, atol=1e-5), (
+                f"Mismatch between Triton and PyTorch gradients on dense input! {triton_dense_input_grad=}, {torch_dense_input_grad=}"
+            )
         else:
             assert torch.allclose(
                 triton_dense_input_grad[dense_input.ne(0)], torch_dense_input_grad[dense_input.ne(0)], atol=1e-5
-            ), f"Mismatch between Triton and PyTorch gradients on dense input! {triton_dense_input_grad=}, {torch_dense_input_grad=}"
+            ), (
+                f"Mismatch between Triton and PyTorch gradients on dense input! {triton_dense_input_grad=}, {torch_dense_input_grad=}"
+            )
 
         print("✅ Triton forward and backward pass matches nn.Linear!")
 
     # Ensure we have the Triton-based kernel
-    def benchmark_triton_vs_torch(B=32, d_sae=512, d_model=256, sparsity=0.7, warmup=5, iters=20, dtype=torch.float32, require_precise_feature_acts_grad=True):
+    def benchmark_triton_vs_torch(
+        B=32,
+        d_sae=512,
+        d_model=256,
+        sparsity=0.7,
+        warmup=5,
+        iters=20,
+        dtype=torch.float32,
+        require_precise_feature_acts_grad=True,
+    ):
         """
         Benchmarks Triton-based sparse-dense multiplication vs PyTorch's nn.Linear.
 
@@ -570,7 +586,9 @@ if __name__ == "__main__":
         # Warmup runs (to eliminate startup overhead)
         for _ in range(warmup):
             torch_output = decoder(dense_input)
-            triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight, require_precise_feature_acts_grad)
+            triton_output = decode_with_triton_spmm_kernel(
+                dense_input, decoder.weight, require_precise_feature_acts_grad
+            )
             assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
             grad_output = torch.randn_like(triton_output)
             triton_output.backward(grad_output)
@@ -598,7 +616,9 @@ if __name__ == "__main__":
 
         start_triton.record()  # type: ignore
         for _ in range(iters):
-            triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight, require_precise_feature_acts_grad)
+            triton_output = decode_with_triton_spmm_kernel(
+                dense_input, decoder.weight, require_precise_feature_acts_grad
+            )
             assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
             grad_output = torch.randn_like(triton_output)
             triton_output.backward(grad_output)
@@ -615,4 +635,12 @@ if __name__ == "__main__":
     # Run test
     test_triton_decoder(B=16, d_sae=4096, d_model=256, sparsity=0.9, require_precise_feature_acts_grad=True)
     # Run benchmark
-    benchmark_triton_vs_torch(B=8192, d_sae=4096 * 32, d_model=4096, sparsity=0.999, warmup=10, iters=10, require_precise_feature_acts_grad=True)
+    benchmark_triton_vs_torch(
+        B=8192,
+        d_sae=4096 * 32,
+        d_model=4096,
+        sparsity=0.999,
+        warmup=10,
+        iters=10,
+        require_precise_feature_acts_grad=True,
+    )

@@ -27,9 +27,9 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
         # Assertions
         assert cfg.sparsity_include_decoder_norm, "Sparsity should include decoder norm in CrossCoder"
-        assert (
-            not cfg.apply_decoder_bias_to_pre_encoder
-        ), "Decoder bias should not be applied to pre-encoder in CrossCoder"
+        assert not cfg.apply_decoder_bias_to_pre_encoder, (
+            "Decoder bias should not be applied to pre-encoder in CrossCoder"
+        )
         assert cfg.use_decoder_bias, "Decoder bias should be used in CrossCoder"
         assert not cfg.use_triton_kernel, "Triton kernel is not supported in CrossCoder"
 
