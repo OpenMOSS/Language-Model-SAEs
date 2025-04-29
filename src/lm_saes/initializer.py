@@ -125,9 +125,9 @@ class Initializer:
 
         if self.cfg.bias_init_method == "geometric_median" and sae.cfg.sae_type != "mixcoder":
             # TODO: add support for MixCoder
-            assert isinstance(
-                sae, SparseAutoEncoder
-            ), "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
+            assert isinstance(sae, SparseAutoEncoder), (
+                "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
+            )
             sae.decoder.bias.data = (
                 sae.compute_norm_factor(batch[sae.cfg.hook_point_out], hook_point=sae.cfg.hook_point_out)
                 * batch[sae.cfg.hook_point_out]
@@ -153,9 +153,9 @@ class Initializer:
         """
         This function is used to initialize the encoder bias for constant fire times.
         """
-        assert isinstance(
-            sae, SparseAutoEncoder
-        ), "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
+        assert isinstance(sae, SparseAutoEncoder), (
+            "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
+        )
         batch = sae.normalize_activations(activation_batch)
         x, kwargs = sae.prepare_input(batch)
         _, hidden_pre = sae.encode(x, **kwargs, return_hidden_pre=True)
@@ -212,9 +212,9 @@ class Initializer:
                 sae = self.initialize_parameters(sae)
             if sae.cfg.norm_activation == "dataset-wise":
                 if activation_norm is None:
-                    assert (
-                        activation_stream is not None
-                    ), "Activation iterator must be provided for dataset-wise normalization"
+                    assert activation_stream is not None, (
+                        "Activation iterator must be provided for dataset-wise normalization"
+                    )
 
                     activation_norm = calculate_activation_norm(
                         activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
@@ -222,9 +222,9 @@ class Initializer:
                 sae.set_dataset_average_activation_norm(activation_norm)
 
             if self.cfg.bias_init_method == "init_b_e_for_const_fire_times":
-                assert (
-                    activation_stream is not None
-                ), "Activation iterator must be provided for encoder bias initialization"
+                assert activation_stream is not None, (
+                    "Activation iterator must be provided for encoder bias initialization"
+                )
                 activation_batch = next(iter(activation_stream))
                 sae = self.initialize_encoder_bias_for_const_fire_times(sae, activation_batch)
 
@@ -243,9 +243,9 @@ class Initializer:
                     "Converting topk activation to jumprelu for inference. Features are set independent to each other."
                 )
                 if sae.cfg.jump_relu_threshold is None:
-                    assert (
-                        activation_stream is not None
-                    ), "Activation iterator must be provided for jump_relu_threshold initialization"
+                    assert activation_stream is not None, (
+                        "Activation iterator must be provided for jump_relu_threshold initialization"
+                    )
                     activation_batch = next(iter(activation_stream))
                     self.initialize_jump_relu_threshold(sae, activation_batch)
                 if cfg.sae_type != "mixcoder":  # TODO: add support for MixCoder
