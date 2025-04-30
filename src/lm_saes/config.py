@@ -276,11 +276,9 @@ class ActivationFactoryTarget(Enum):
     TOKENS = "tokens"
     """ Output non-padded and non-truncated tokens. """
     ACTIVATIONS_2D = "activations-2d"
-    """ Output activations in `(seq_len, d_model)` shape. Tokens are padded and truncated to the same length. """
+    """ Output activations in `(batch_size, seq_len, d_model)` shape. Tokens are padded and truncated to the same length. """
     ACTIVATIONS_1D = "activations-1d"
     """ Output activations in `(n_filtered_tokens, d_model)` shape. Tokens are filtered in this stage. """
-    BATCHED_ACTIVATIONS_1D = "batched-activations-1d"
-    """ Output batched activations in `(batch_size, d_model)` shape. Tokens may be shuffled in this stage. """
 
     @property
     def stage(self) -> int:
@@ -288,7 +286,6 @@ class ActivationFactoryTarget(Enum):
             ActivationFactoryTarget.TOKENS: 0,
             ActivationFactoryTarget.ACTIVATIONS_2D: 1,
             ActivationFactoryTarget.ACTIVATIONS_1D: 2,
-            ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D: 3,
         }[self]
 
     def __lt__(self, other: "ActivationFactoryTarget") -> bool:
@@ -320,13 +317,13 @@ class ActivationFactoryConfig(BaseConfig):
     """ The batch size to use for generating activations. """
     batch_size: Optional[int] = Field(
         default_factory=lambda validated_model: 64
-        if validated_model["target"] == ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D
+        if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
         else None
     )
-    """ The batch size to use for outputting `batched-activations-1d`. """
+    """ The batch size to use for outputting `activations-1d`. """
     buffer_size: Optional[int] = Field(
         default_factory=lambda validated_model: 500_000
-        if validated_model["target"] == ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D
+        if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
         else None
     )
     """ Buffer size for online shuffling. If `None`, no shuffling will be performed. """
