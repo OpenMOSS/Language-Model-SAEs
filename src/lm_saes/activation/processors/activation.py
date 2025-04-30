@@ -109,10 +109,10 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
             should be divisible by the original batch size.
     """
 
-    def __init__(self, hook_points: list[str], batch_size: int, seq_len: Optional[int] = None):
+    def __init__(self, hook_points: list[str], batch_size: int, n_context: Optional[int] = None):
         self.hook_points = hook_points
         self.batch_size = batch_size
-        self.seq_len = seq_len
+        self.n_context = n_context
 
     def batched(self, data: Iterable[dict[str, Any]]) -> Iterable[dict[str, Any]]:
         for d in itertools.batched(data, self.batch_size):
@@ -143,12 +143,11 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
                 - Original info field if present in input
         """
         for d in self.batched(data):
-            activations = model.to_activations(d, self.hook_points)
+            activations = model.to_activations(d, self.hook_points, n_context=self.n_context)
             if "meta" in d:
                 activations = activations | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
             else:
                 activations = activations | {"meta": [{"model_name": model_name} for _ in range(len(d["text"]))]}
-            # TODO: Use tokens as intermediates if TransformerLensLanguageModel is used
             yield activations
 
 
