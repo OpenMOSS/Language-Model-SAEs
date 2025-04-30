@@ -195,15 +195,15 @@ class ActivationFactory:
         """
 
         def build_batchler():
-            """Create batchler for batched-activations-1d target."""
-            assert self.cfg.batch_size is not None, "Batch size must be provided for outputting batched-activations-1d"
+            """Create batchler for batched activations."""
+            assert self.cfg.batch_size is not None, "Batch size must be provided for outputting batched activations"
             return ActivationBatchler(
                 batch_size=self.cfg.batch_size,
                 buffer_size=self.cfg.buffer_size,
                 buffer_shuffle_config=self.cfg.buffer_shuffle,
             )
 
-        processors = [build_batchler()] if self.cfg.target >= ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D else []
+        processors = [build_batchler()] if self.cfg.batch_size is not None else []
 
         def process_activations(activations: Iterable[dict[str, Any]], **kwargs: Any):
             """Process aggregated activations through post-processors.

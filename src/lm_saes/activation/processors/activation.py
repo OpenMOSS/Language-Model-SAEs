@@ -208,9 +208,7 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
             mask = torch.ones_like(tokens, dtype=torch.bool)
             for token_id in ignore_token_ids:
                 mask &= tokens != token_id
-            activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}
-            if "meta" in d:
-                activations = activations | {"meta": d["meta"]}
+            activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
             yield activations
 
 
@@ -278,12 +276,9 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
         pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1, disable=True)
 
         for d in data:
-            # Drop all non-tensor fields
-            d = {k: v for k, v in d.items() if isinstance(v, torch.Tensor)}
-
-            # Validate input: ensure all tensors have consistent shapes
-            assert all(d[k].shape[0] == d[next(iter(d.keys()))].shape[0] for k in d.keys()), (
-                "All tensors must have the same batch size"
+            # Validate input: ensure all tensors and lists have consistent shapes
+            assert all(len(d[k]) == len(d[next(iter(d.keys()))]) for k in d.keys()), (
+                "All tensors and lists must have the same batch size"
             )
 
             # Add new data to buffer
