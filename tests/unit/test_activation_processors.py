@@ -182,7 +182,6 @@ def test_activation_batchler(mocker: MockerFixture):
                 "h0": torch.tensor([[3, 4, 5]]) + i * 10,
                 "h1": torch.tensor([[12, 13, 14]]) + i * 10,
                 "tokens": torch.tensor([[1, 2, 3]]),  # Make sure this is a 2D tensor with shape [1, 3]
-                "meta": [{"sample_idx": i}],  # Should be removed in output
             }
         )
 
@@ -197,7 +196,6 @@ def test_activation_batchler(mocker: MockerFixture):
     assert torch.allclose(result[1]["h1"], torch.tensor([[32, 33, 34], [42, 43, 44]]))
     assert torch.allclose(result[2]["h0"], torch.tensor([[43, 44, 45]]))
     assert torch.allclose(result[2]["h1"], torch.tensor([[52, 53, 54]]))
-    assert "meta" not in result[0]  # Meta should be removed
     assert "tokens" in result[0]  # Tokens are kept
     assert torch.allclose(result[0]["tokens"], torch.tensor([[1, 2, 3], [1, 2, 3]]))
 

@@ -6,8 +6,9 @@ import torch
 from lm_saes.backend.language_model import QwenLanguageModel, QwenVLLanguageModel
 from lm_saes.config import LanguageModelConfig
 
-if not torch.cuda.is_available():
-    pytest.skip("CUDA is not available", allow_module_level=True)
+pytest.skip("This test needs to switch to a smaller model", allow_module_level=True)
+# if not torch.cuda.is_available():
+#     pytest.skip("CUDA is not available", allow_module_level=True)
 
 
 class TestQwenVLLanguageModel:

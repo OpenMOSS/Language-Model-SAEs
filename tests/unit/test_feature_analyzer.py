@@ -154,9 +154,10 @@ def test_analyze_chunk_no_sampling(
     )
 
     # Create mock activation stream
+    activations_in = torch.randn(2, 2, 10)
     activation_stream = [
         {
-            "activations_in": torch.randn(2, 2, 10),  # (batch_size, context_size, d_model)
+            "activations_in": activations_in,  # (batch_size, context_size, d_model)
             "tokens": torch.randint(0, 1000, (2, 2)),  # (batch_size, context_size)
             "meta": [
                 {
@@ -170,6 +171,9 @@ def test_analyze_chunk_no_sampling(
             ],
         },
     ]
+
+    mock_sae.normalize_activations.return_value = activation_stream[0]
+    mock_sae.prepare_input.return_value = (activations_in, {})
 
     # Run analysis
     results = feature_analyzer.analyze_chunk(activation_stream, mock_sae)
