@@ -117,6 +117,7 @@ docstring-code-line-length = "dynamic"
 ignore = [".venv/", "examples", "TransformerLens", "tests", "exp"]
 typeCheckingMode = "standard"
 reportRedeclaration = false
+reportPrivateImportUsage = false
 
 [tool.uv]
 package = true
