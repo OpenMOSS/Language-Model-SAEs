@@ -51,13 +51,13 @@ def basic_config() -> ActivationFactoryConfig:
                 sample_weights=1.0,
             )
         ],
-        target=ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D,
+        target=ActivationFactoryTarget.ACTIVATIONS_1D,
         hook_points=["h0", "h1"],
         context_size=4,
-        batch_size=2,
-        buffer_size=None,
         num_workers=0,
         model_batch_size=1,
+        batch_size=None,
+        buffer_size=None,
     )
 
 
@@ -91,14 +91,12 @@ def test_activation_factory_activations_1d_target(
     mock_model: LanguageModel,
     mock_dataset: Dataset,
 ):
-    basic_config.target = ActivationFactoryTarget.ACTIVATIONS_1D
     factory = ActivationFactory(basic_config)
 
     result = list(factory.process(model=mock_model, model_name="test", datasets={"test_dataset": (mock_dataset, None)}))
 
     assert len(result) == 3  # One for each input text
     assert all(h in result[0] for h in basic_config.hook_points)
-    assert result[0]["meta"][0]["dataset_name"] == "test_dataset"
     assert result[0]["h0"].shape == (1, 3)
     assert torch.allclose(result[0]["h0"], torch.arange(6, 9).reshape(1, 3))
 
@@ -108,6 +106,7 @@ def test_activation_factory_batched_activations_1d_target(
     mock_model: LanguageModel,
     mock_dataset: Dataset,
 ):
+    basic_config.batch_size = 2
     factory = ActivationFactory(basic_config)
 
     result = list(factory.process(model=mock_model, model_name="test", datasets={"test_dataset": (mock_dataset, None)}))
@@ -120,6 +119,34 @@ def test_activation_factory_batched_activations_1d_target(
     assert torch.allclose(result[0]["h0"], torch.tensor([[6, 7, 8], [6, 7, 8]]))
     assert torch.allclose(result[1]["h0"], torch.tensor([[6, 7, 8]]))
     assert "meta" not in result[0]  # Info is removed for batched activations
+
+
+def test_activation_factory_batched_activations_2d_target(
+    basic_config: ActivationFactoryConfig,
+    mock_model: LanguageModel,
+    mock_dataset: Dataset,
+):
+    basic_config.target = ActivationFactoryTarget.ACTIVATIONS_2D
+    basic_config.batch_size = 2
+    factory = ActivationFactory(basic_config)
+
+    result = list(factory.process(model=mock_model, model_name="test", datasets={"test_dataset": (mock_dataset, None)}))
+
+    assert len(result) == 2  # [2, 1] samples
+    assert all(h in result[0] for h in basic_config.hook_points)
+    assert result[0]["meta"][0]["dataset_name"] == "test_dataset"
+    assert result[0]["h0"].shape == (2, 3, 3)
+    assert torch.allclose(
+        result[0]["h0"],
+        torch.stack(
+            [
+                torch.arange(9).reshape(3, 3),
+                torch.arange(9).reshape(3, 3),
+            ]
+        ),
+    )
+    assert result[1]["h0"].shape == (1, 3, 3)
+    assert torch.allclose(result[1]["h0"], torch.arange(9).reshape(1, 3, 3))
 
 
 def test_activation_factory_multiple_sources(
