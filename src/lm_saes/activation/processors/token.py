@@ -4,35 +4,7 @@ import torch
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.backend.language_model import LanguageModel
-
-
-def pad_and_truncate_tokens(
-    tokens: torch.Tensor,
-    seq_len: int,
-    pad_token_id: int = 0,
-) -> torch.Tensor:
-    """Pad tokens to desired sequence length.
-
-    Args:
-        tokens: Input tokens tensor or list of token tensors to pad
-        seq_len: Desired sequence length after padding
-        pad_token_id: Token ID to use for padding (default: 0)
-
-    Returns:
-        torch.Tensor: Padded token tensor with shape (batch_size, seq_len)
-    """
-    if tokens.size(-1) > seq_len:
-        return tokens[..., :seq_len]
-
-    pad_len = seq_len - tokens.size(-1)
-
-    padding = torch.full(
-        (*tokens.shape[:-1], pad_len),
-        pad_token_id,
-        dtype=torch.long,
-        device=tokens.device,
-    )
-    return torch.cat([tokens, padding], dim=-1)
+from lm_saes.utils.misc import pad_and_truncate_tokens
 
 
 class RawDatasetTokenProcessor(BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]):

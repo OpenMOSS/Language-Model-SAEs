@@ -314,8 +314,8 @@ class ActivationFactoryConfig(BaseConfig):
     """ The hook points to capture activations from. """
     num_workers: int = 4
     """ The number of workers to use for loading the dataset. """
-    context_size: int = 128
-    """ The context size to use for generating activations. All tokens will be padded or truncated to this size. """
+    context_size: Optional[int] = None
+    """ The context size to use for generating activations. All tokens will be padded or truncated to this size. If `None`, will not pad or truncate tokens. This may lead to some error when re-batching activations of different context sizes."""
     model_batch_size: int = 1
     """ The batch size to use for generating activations. """
     batch_size: Optional[int] = Field(
