@@ -23,9 +23,11 @@ from .database import MongoClient
 from .mixcoder import MixCoder
 from .resource_loaders import load_dataset, load_model
 from .runner import (
+    AnalyzeCrossCoderSettings,
     AnalyzeSAESettings,
     GenerateActivationsSettings,
     TrainSAESettings,
+    analyze_crosscoder,
     analyze_sae,
     generate_activations,
     train_sae,
@@ -64,4 +66,6 @@ __all__ = [
     "MongoClient",
     "MixCoderConfig",
     "MixCoder",
+    "AnalyzeCrossCoderSettings",
+    "analyze_crosscoder",
 ]
