@@ -384,11 +384,24 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
     def pad_token_id(self) -> int | None:
         return self.tokenizer.pad_token_id
 
-    def to_activations(self, raw: dict[str, Any], hook_points: list[str]) -> dict[str, torch.Tensor]:
+    def to_activations(
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
+    ) -> dict[str, torch.Tensor]:
         layer_indices = _get_layer_indices_from_hook_points(hook_points)
         inputs = self.tokenizer(
-            raw["text"], return_tensors="pt", padding="max_length", max_length=self.cfg.max_length, truncation=True
+            raw["text"],
+            return_tensors="pt",
+            padding="max_length",
+            max_length=self.cfg.max_length,
+            truncation=True,
         ).to(self.device)
+        if n_context is not None:
+            assert self.pad_token_id is not None, (
+                "Pad token ID must be set for QwenLanguageModel when n_context is provided"
+            )
+            inputs["input_ids"] = pad_and_truncate_tokens(
+                inputs["input_ids"], n_context, pad_token_id=self.pad_token_id
+            )
         outputs = self.model(**inputs, output_hidden_states=True)
         activations = {
             hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
@@ -396,11 +409,16 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
         activations["tokens"] = inputs["input_ids"]
         return activations
 
-    def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         inputs = self.tokenizer(
             raw["text"], return_tensors="pt", padding="max_length", max_length=self.cfg.max_length, truncation=True
         )
         input_ids = inputs["input_ids"]
+        if n_context is not None:
+            assert self.pad_token_id is not None, (
+                "Pad token ID must be set for QwenLanguageModel when n_context is provided"
+            )
+            input_ids = pad_and_truncate_tokens(input_ids, n_context, pad_token_id=self.pad_token_id)
         batch_str_tokens = [
             self.tokenizer.batch_decode(input_id, clean_up_tokenization_spaces=False) for input_id in input_ids
         ]
