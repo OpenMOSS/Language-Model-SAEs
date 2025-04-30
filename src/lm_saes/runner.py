@@ -1,5 +1,4 @@
 import os
-import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Literal, Optional, TypeVar, cast, overload
@@ -907,22 +906,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
 
     analyzer = FeatureAnalyzer(settings.analyzer)
 
-    def rebatch_activations(activations: Iterable[dict[str, torch.Tensor]]):
-        n_ctx = None
-        for activation in activations:
-            batch_size = activation["tokens"].size(0)
-            if n_ctx is None:
-                n_ctx = activation["tokens"].size(1)
-            if n_ctx is not None and activation["tokens"].size(1) != n_ctx:
-                warnings.warn(f"Context size mismatch: {n_ctx} != {activation['tokens'].size(1)}. Skipping batch.")
-                continue
-            for i in range(4):
-                start = i * batch_size // 4
-                end = (i + 1) * batch_size // 4
-                yield {k: v[start:end] for k, v in activation.items()}
-
     activations = activation_factory.process()
-    activations = rebatch_activations(activations)
     result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
 
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
@@ -978,22 +962,7 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
 
     analyzer = FeatureAnalyzer(settings.analyzer)
 
-    def rebatch_activations(activations: Iterable[dict[str, torch.Tensor]]):
-        n_ctx = None
-        for activation in activations:
-            batch_size = activation["tokens"].size(0)
-            if n_ctx is None:
-                n_ctx = activation["tokens"].size(1)
-            if n_ctx is not None and activation["tokens"].size(1) != n_ctx:
-                warnings.warn(f"Context size mismatch: {n_ctx} != {activation['tokens'].size(1)}. Skipping batch.")
-                continue
-            for i in range(4):
-                start = i * batch_size // 4
-                end = (i + 1) * batch_size // 4
-                yield {k: v[start:end] for k, v in activation.items()}
-
     activations = activation_factory.process()
-    activations = rebatch_activations(activations)
     result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
 
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
