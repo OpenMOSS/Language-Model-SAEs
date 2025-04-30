@@ -12,6 +12,8 @@ from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
+from lm_saes.utils.distributed import distribute_tensor_on_dim, placements_from_dim_map
+from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
 
@@ -173,6 +175,7 @@ class FeatureAnalyzer:
             total=self.cfg.total_analyzing_tokens,
             desc="Analyzing SAE",
             smoothing=0.01,
+            disable=not is_primary_rank(device_mesh),
         )
 
         if device_mesh is not None and device_mesh.mesh_dim_names is not None and "model" in device_mesh.mesh_dim_names:
@@ -209,7 +212,16 @@ class FeatureAnalyzer:
             x, kwargs = sae.prepare_input(batch)
             feature_acts: torch.Tensor = sae.encode(x, **kwargs)
             if isinstance(feature_acts, DTensor):
-                feature_acts = feature_acts.to_local()
+                assert device_mesh is not None, "Device mesh is required for DTensor feature activations"
+                if device_mesh is not feature_acts.device_mesh:
+                    feature_acts = distribute_tensor_on_dim(
+                        feature_acts.full_tensor(), device_mesh, {"model": -1}
+                    ).to_local()  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                    # TODO: Remove this once redistributing across device meshes is supported
+                else:
+                    feature_acts = feature_acts.redistribute(
+                        placements=placements_from_dim_map({"model": -1}, device_mesh)
+                    ).to_local()
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.max(dim=-2).values
             assert feature_acts.shape == (batch["tokens"].shape[0], batch["tokens"].shape[1], d_sae_local), (
@@ -267,6 +279,7 @@ class FeatureAnalyzer:
             mapper=mapper,
             act_times_modalities=act_times_modalities,
             max_feature_acts_modalities=max_feature_acts_modalities,
+            device_mesh=device_mesh,
         )
 
     def _format_analysis_results(
@@ -279,6 +292,7 @@ class FeatureAnalyzer:
         mapper: KeyedDiscreteMapper,
         act_times_modalities: dict[str, torch.Tensor] | None = None,
         max_feature_acts_modalities: dict[str, torch.Tensor] | None = None,
+        device_mesh: DeviceMesh | None = None,
     ) -> list[dict[str, Any]]:
         """Format the analysis results into the final per-feature format.
 
@@ -316,7 +330,16 @@ class FeatureAnalyzer:
             if isinstance(sae, CrossCoder):
                 decoder_norms = sae.decoder_norm()
                 if isinstance(decoder_norms, DTensor):
-                    decoder_norms = decoder_norms.to_local()
+                    assert device_mesh is not None, "Device mesh is required for DTensor decoder norms"
+                    if decoder_norms.device_mesh is not device_mesh:
+                        decoder_norms = distribute_tensor_on_dim(
+                            decoder_norms.full_tensor(), device_mesh, {"model": -1}
+                        ).to_local()  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                        # TODO: Remove this once redistributing across device meshes is supported
+                    else:
+                        decoder_norms = decoder_norms.redistribute(
+                            placements=placements_from_dim_map({"model": -1}, device_mesh)
+                        ).to_local()
                 assert decoder_norms.shape[-1] == len(act_times), (
                     f"decoder_norms.shape: {decoder_norms.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
                 )

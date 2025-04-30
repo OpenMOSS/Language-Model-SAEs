@@ -931,6 +931,77 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     )
 
 
+class AnalyzeCrossCoderSettings(BaseSettings):
+    sae: CrossCoderConfig
+    """Configuration for the CrossCoder model architecture and parameters"""
+
+    sae_name: str
+    """Name of the SAE model. Use as identifier for the SAE model in the database."""
+
+    sae_series: str
+    """Series of the SAE model. Use as identifier for the SAE model in the database."""
+
+    activation_factories: list[ActivationFactoryConfig]
+    """Configuration for generating activations"""
+
+    analyzer: FeatureAnalyzerConfig
+    """Configuration for feature analysis"""
+
+    mongo: MongoDBConfig
+    """Configuration for the MongoDB database."""
+
+
+def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
+    """Analyze a CrossCoder model."""
+
+    parallel_size = len(settings.activation_factories)
+    assert parallel_size == settings.sae.n_heads, "Number of activation factories must match the number of heads"
+
+    crosscoder_device_mesh = init_device_mesh(
+        device_type="cuda",
+        mesh_shape=(parallel_size,),
+        mesh_dim_names=("head",),
+    )
+
+    device_mesh = init_device_mesh(
+        device_type="cuda",
+        mesh_shape=(parallel_size,),
+        mesh_dim_names=("model",),
+    )
+
+    mongo_client = MongoClient(settings.mongo)
+
+    activation_factory = ActivationFactory(settings.activation_factories[crosscoder_device_mesh.get_local_rank("head")])
+
+    sae = CrossCoder.from_config(settings.sae)
+    sae.tensor_parallel(crosscoder_device_mesh)
+
+    analyzer = FeatureAnalyzer(settings.analyzer)
+
+    def rebatch_activations(activations: Iterable[dict[str, torch.Tensor]]):
+        n_ctx = None
+        for activation in activations:
+            batch_size = activation["tokens"].size(0)
+            if n_ctx is None:
+                n_ctx = activation["tokens"].size(1)
+            if n_ctx is not None and activation["tokens"].size(1) != n_ctx:
+                warnings.warn(f"Context size mismatch: {n_ctx} != {activation['tokens'].size(1)}. Skipping batch.")
+                continue
+            for i in range(4):
+                start = i * batch_size // 4
+                end = (i + 1) * batch_size // 4
+                yield {k: v[start:end] for k, v in activation.items()}
+
+    activations = activation_factory.process()
+    activations = rebatch_activations(activations)
+    result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
+
+    start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
+    mongo_client.add_feature_analysis(
+        name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result, start_idx=start_idx
+    )
+
+
 class AutoInterpSettings(BaseSettings):
     """Settings for automatic interpretation of SAE features."""
 
