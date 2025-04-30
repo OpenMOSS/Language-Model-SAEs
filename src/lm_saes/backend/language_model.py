@@ -15,6 +15,7 @@ from transformers import (
 )
 
 from lm_saes.config import LanguageModelConfig
+from lm_saes.utils.misc import pad_and_truncate_tokens
 
 
 def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optional[tuple[int, int]]]:
@@ -56,7 +57,7 @@ def _get_layer_indices_from_hook_points(hook_points: list[str]) -> list[int]:
 
 class LanguageModel(ABC):
     @abstractmethod
-    def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         """Trace how raw data is eventually aligned with tokens.
 
         Args:
@@ -68,7 +69,9 @@ class LanguageModel(ABC):
         pass
 
     @abstractmethod
-    def to_activations(self, raw: dict[str, Any], hook_points: list[str]) -> dict[str, torch.Tensor]:
+    def to_activations(
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
+    ) -> dict[str, torch.Tensor]:
         """Convert raw data to activations.
 
         Args:
@@ -145,23 +148,35 @@ class TransformerLensLanguageModel(LanguageModel):
     def pad_token_id(self) -> int | None:
         return self.tokenizer.pad_token_id
 
-    def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
                 "Tracing with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
         tokens = self.model.to_tokens(raw["text"], prepend_bos=True)
+        if n_context is not None:
+            assert self.pad_token_id is not None, (
+                "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
+            )
+            tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
         batch_str_tokens = [self.tokenizer.batch_decode(token, clean_up_tokenization_spaces=False) for token in tokens]
         return [
             _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
         ]
 
-    def to_activations(self, raw: dict[str, Any], hook_points: list[str]) -> dict[str, torch.Tensor]:
+    def to_activations(
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
+    ) -> dict[str, torch.Tensor]:
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
                 "Activations with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
         tokens = self.model.to_tokens(raw["text"], prepend_bos=True)
+        if n_context is not None:
+            assert self.pad_token_id is not None, (
+                "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
+            )
+            tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
         _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
         return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
 
@@ -207,13 +222,16 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
     def pad_token_id(self) -> int | None:
         return self.tokenizer.pad_token_id
 
-    def trace(self, raw: dict[str, Any]) -> list[list[Any]]:
-        # raw["text"]: list[str]
-        # raw["images"]: list[list[torch.Tensor]]
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         assert self.tokenizer is not None, "tokenizer must be initialized"
         assert self.processor is not None, "processor must be initialized"
         inputs, _ = self.process_raw_data(raw)
         input_ids = inputs["input_ids"]
+        if n_context is not None:
+            assert self.pad_token_id is not None, (
+                "Pad token ID must be set for QwenVLLanguageModel when n_context is provided"
+            )
+            input_ids = pad_and_truncate_tokens(input_ids, n_context, pad_token_id=self.pad_token_id)
         batch_str_tokens: list[list[str]] = [
             self.tokenizer.batch_decode(input_id, clean_up_tokenization_spaces=False) for input_id in input_ids
         ]
@@ -287,9 +305,18 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
                         }
         return batch_token_positions
 
-    def to_activations(self, raw: dict[str, Any], hook_points: list[str]) -> dict[str, torch.Tensor]:
+    def to_activations(
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
+    ) -> dict[str, torch.Tensor]:
         layer_indices = _get_layer_indices_from_hook_points(hook_points)
         inputs = self.process_raw_data(raw)[0].to(self.device)
+        if n_context is not None:
+            assert self.pad_token_id is not None, (
+                "Pad token ID must be set for QwenVLLanguageModel when n_context is provided"
+            )
+            inputs["input_ids"] = pad_and_truncate_tokens(
+                inputs["input_ids"], n_context, pad_token_id=self.pad_token_id
+            )
         outputs = self.model(**inputs, output_hidden_states=True)
         activations = {
             hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)

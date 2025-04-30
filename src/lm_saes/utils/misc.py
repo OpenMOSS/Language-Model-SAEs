@@ -194,3 +194,32 @@ def get_modality_tokens(tokenizer: PreTrainedTokenizerBase, model_name: str) -> 
     for modality in modality_tokens:
         modality_tokens[modality] = torch.tensor(modality_tokens[modality], dtype=torch.long)
     return modality_tokens
+
+
+def pad_and_truncate_tokens(
+    tokens: torch.Tensor,
+    seq_len: int,
+    pad_token_id: int = 0,
+) -> torch.Tensor:
+    """Pad tokens to desired sequence length.
+
+    Args:
+        tokens: Input tokens tensor or list of token tensors to pad
+        seq_len: Desired sequence length after padding
+        pad_token_id: Token ID to use for padding (default: 0)
+
+    Returns:
+        torch.Tensor: Padded token tensor with shape (batch_size, seq_len)
+    """
+    if tokens.size(-1) > seq_len:
+        return tokens[..., :seq_len]
+
+    pad_len = seq_len - tokens.size(-1)
+
+    padding = torch.full(
+        (*tokens.shape[:-1], pad_len),
+        pad_token_id,
+        dtype=torch.long,
+        device=tokens.device,
+    )
+    return torch.cat([tokens, padding], dim=-1)

@@ -63,7 +63,9 @@ class ActivationFactory:
         processors_optional: Sequence[
             BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]] | None
         ] = [
-            ActivationGenerator(hook_points=self.cfg.hook_points, batch_size=self.cfg.model_batch_size)
+            ActivationGenerator(
+                hook_points=self.cfg.hook_points, batch_size=self.cfg.model_batch_size, n_context=self.cfg.context_size
+            )
             if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_2D
             else None,
             ActivationTransformer() if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D else None,
