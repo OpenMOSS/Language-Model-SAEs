@@ -49,35 +49,25 @@ def test_huggingface_dataset_loader():
     assert all("meta" in x for x in result_with_info)
     assert all("context_idx" in x["meta"] for x in result_with_info)
 
-
-# def test_token_processors(mocker: MockerFixture):
-#     # Mock HookedTransformer
-#     mock_model = mocker.Mock(spec=HookedTransformer)
-#     mock_model.to_tokens_with_origins.return_value = torch.tensor([[1, 2, 3]])
-
-#     # Test RawDatasetTokenProcessor
-#     token_processor = RawDatasetTokenProcessor()
-#     input_data = [{"text": "test text", "meta": {"some": "meta"}}]
-#     result = list(token_processor.process(input_data, model=mock_model))
-#     assert len(result) == 1
-#     assert "tokens" in result[0]
-#     assert "meta" in result[0]
-#     assert torch.allclose(result[0]["tokens"], torch.tensor([1, 2, 3]))
-
-#     # Test PadAndTruncateTokensProcessor
-#     pad_processor = PadAndTruncateTokensProcessor(seq_len=5)
-#     input_tokens = [{"tokens": torch.tensor([1, 2, 3]), "meta": {"some": "meta"}}]
-#     result = list(pad_processor.process(input_tokens))
-#     assert len(result) == 1
-#     assert result[0]["tokens"].shape == (5,)  # Should be padded to length 5
+    # Test with metadata
+    metadata = {"source": "test_source", "split": "test_split"}
+    loader_with_info = HuggingFaceDatasetLoader(batch_size=2, with_info=True)
+    result_with_info = list(loader_with_info.process(dataset, metadata=metadata))
+    assert len(result_with_info) == 4
+    assert all("meta" in x for x in result_with_info)
+    assert all("source" in x["meta"] for x in result_with_info)
+    assert all("split" in x["meta"] for x in result_with_info)
+    assert all(x["meta"]["source"] == "test_source" for x in result_with_info)
+    assert all(x["meta"]["split"] == "test_split" for x in result_with_info)
 
 
 def test_activation_processors(mocker: MockerFixture):
-    # Mock HookedTransformer
+    # Mock LanguageModel
     mock_model = mocker.Mock(spec=LanguageModel)
     mock_model.to_activations.return_value = {
         "h0": torch.arange(9).reshape(1, 3, 3),
         "h1": torch.arange(9, 18).reshape(1, 3, 3),
+        "tokens": torch.tensor([[1, 2, 3]]),
     }
 
     # Test ActivationGenerator
@@ -92,7 +82,7 @@ def test_activation_processors(mocker: MockerFixture):
     assert result[0]["meta"][0]["model_name"] == "test"
 
     # Test ActivationTransformer
-    transformer = ActivationTransformer(hook_points=hook_points)
+    transformer = ActivationTransformer()
     mock_model.eos_token_id = 1
     mock_model.pad_token_id = 0
     mock_model.bos_token_id = 2
@@ -109,6 +99,22 @@ def test_activation_processors(mocker: MockerFixture):
     assert all(h in result[0] for h in hook_points)
     assert torch.allclose(result[0]["h0"], torch.tensor([[3, 4, 5]]))
     assert torch.allclose(result[0]["h1"], torch.tensor([[12, 13, 14]]))
+
+    # Test ActivationTransformer with ignore_token_ids
+    transformer_with_ignore = ActivationTransformer()
+    input_activations = [
+        {
+            "tokens": torch.tensor([1, 3, 2]),
+            "h0": torch.arange(9).reshape(3, 3),
+            "h1": torch.arange(9, 18).reshape(3, 3),
+        }
+    ]
+    result = list(transformer_with_ignore.process(input_activations, ignore_token_ids=[3]))
+    assert len(result) == 1
+    assert all(h in result[0] for h in hook_points)
+    # Now we should only have the activations for tokens 1 and 2, not 3
+    assert torch.allclose(result[0]["h0"], torch.tensor([[0, 1, 2], [6, 7, 8]]))
+    assert torch.allclose(result[0]["h1"], torch.tensor([[9, 10, 11], [15, 16, 17]]))
 
 
 def test_activation_buffer(mocker: MockerFixture):
@@ -133,7 +139,7 @@ def test_activation_buffer(mocker: MockerFixture):
     assert torch.allclose(buffer.buffer[0]["h0"], torch.tensor([[6, 7, 8]]))
     assert torch.allclose(buffer.buffer[0]["h1"], torch.tensor([[15, 16, 17]]))
 
-    # Test concat
+    # Test concatenation
     buffer = buffer.cat(activations)
     assert len(buffer) == 4
     assert torch.allclose(buffer.buffer[0]["h0"], torch.tensor([[6, 7, 8]]))
@@ -160,10 +166,14 @@ def test_activation_buffer(mocker: MockerFixture):
     assert torch.allclose(buffer.buffer[0]["h0"], torch.tensor([[3, 4, 5], [0, 1, 2], [6, 7, 8]]))
     assert torch.allclose(buffer.buffer[0]["h1"], torch.tensor([[12, 13, 14], [9, 10, 11], [15, 16, 17]]))
 
+    # Test with various generator seeds
+    buffer = ActivationBuffer(buffer=[activations])
+    buffer.generator.manual_seed(42)
+    shuffled_buffer = buffer.shuffle()
+    assert len(shuffled_buffer) == 3
+
 
 def test_activation_batchler(mocker: MockerFixture):
-    hook_points = ["h0", "h1"]
-
     # Create input data
     input_data = []
     for i in range(5):  # 5 samples
@@ -171,37 +181,59 @@ def test_activation_batchler(mocker: MockerFixture):
             {
                 "h0": torch.tensor([[3, 4, 5]]) + i * 10,
                 "h1": torch.tensor([[12, 13, 14]]) + i * 10,
-                "tokens": torch.tensor([1, 2, 3]),  # Should be removed in output
+                "tokens": torch.tensor([[1, 2, 3]]),  # Make sure this is a 2D tensor with shape [1, 3]
+                "meta": [{"sample_idx": i}],  # Should be removed in output
             }
         )
 
     # Test non-shuffled batchler
-    batchler = ActivationBatchler(hook_points=hook_points, batch_size=2)
+    batchler = ActivationBatchler(batch_size=2)
     result = list(batchler.process(input_data))
     assert len(result) == 3  # Should create 2 full batches and 1 partial batch
-    assert all(h in result[0] for h in hook_points)
+    assert "h0" in result[0] and "h1" in result[0]
     assert torch.allclose(result[0]["h0"], torch.tensor([[3, 4, 5], [13, 14, 15]]))
     assert torch.allclose(result[0]["h1"], torch.tensor([[12, 13, 14], [22, 23, 24]]))
     assert torch.allclose(result[1]["h0"], torch.tensor([[23, 24, 25], [33, 34, 35]]))
     assert torch.allclose(result[1]["h1"], torch.tensor([[32, 33, 34], [42, 43, 44]]))
     assert torch.allclose(result[2]["h0"], torch.tensor([[43, 44, 45]]))
     assert torch.allclose(result[2]["h1"], torch.tensor([[52, 53, 54]]))
+    assert "meta" not in result[0]  # Meta should be removed
+    assert "tokens" in result[0]  # Tokens are kept
+    assert torch.allclose(result[0]["tokens"], torch.tensor([[1, 2, 3], [1, 2, 3]]))
 
     # Mock shuffle
     mocker.patch("torch.randperm", return_value=torch.tensor([1, 0, 2]))
 
-    # Test shuffled batchler
-    batchler = ActivationBatchler(hook_points=hook_points, batch_size=2, buffer_size=3)
+    # Test shuffled batchler with buffer_size
+    batchler = ActivationBatchler(batch_size=2, buffer_size=3)
     # In buffer size 3 and batch size 2, the batchler should first read in 3 samples, shuffle them, and yield a batch of 2,
     # so the first batch will contain the 2rd and 1st samples. Then it should read in the remaining 2 samples, shuffle them,
     # and yield all data in two batches, which respectively contain the 4th and 3rd samples and the 5th sample.
 
     result = list(batchler.process(input_data))
     assert len(result) == 3  # Should create 2 full batches and 1 partial batch
-    assert all(h in result[0] for h in hook_points)
+    assert "h0" in result[0] and "h1" in result[0]
     assert torch.allclose(result[0]["h0"], torch.tensor([[13, 14, 15], [3, 4, 5]]))
     assert torch.allclose(result[0]["h1"], torch.tensor([[22, 23, 24], [12, 13, 14]]))
     assert torch.allclose(result[1]["h0"], torch.tensor([[33, 34, 35], [23, 24, 25]]))
     assert torch.allclose(result[1]["h1"], torch.tensor([[42, 43, 44], [32, 33, 34]]))
     assert torch.allclose(result[2]["h0"], torch.tensor([[43, 44, 45]]))
     assert torch.allclose(result[2]["h1"], torch.tensor([[52, 53, 54]]))
+    # Verify tokens are kept and shuffled correctly
+    assert "tokens" in result[0]
+    assert torch.allclose(result[0]["tokens"], torch.tensor([[1, 2, 3], [1, 2, 3]]))
+
+    # Test with buffer_shuffle_config
+    from lm_saes.config import BufferShuffleConfig
+
+    buffer_shuffle_config = BufferShuffleConfig(enabled=True, method="full", perm_seed=42, generator_device="cpu")
+
+    batchler = ActivationBatchler(batch_size=2, buffer_size=3, buffer_shuffle_config=buffer_shuffle_config)
+
+    # Mock shuffle
+    mocker.patch("torch.randperm", return_value=torch.tensor([2, 0, 1]))
+
+    result = list(batchler.process(input_data))
+    assert len(result) == 3
+    assert "h0" in result[0] and "h1" in result[0]
+    assert "tokens" in result[0]  # Tokens should be present

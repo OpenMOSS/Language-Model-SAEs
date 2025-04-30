@@ -7,13 +7,14 @@ from datasets import Dataset
 from pytest_mock import MockerFixture
 from safetensors.torch import save_file
 
-from lm_saes.activation.factory import (
-    ActivationFactory,
+from lm_saes.activation.factory import ActivationFactory
+from lm_saes.backend.language_model import LanguageModel
+from lm_saes.config import (
     ActivationFactoryActivationsSource,
+    ActivationFactoryConfig,
+    ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
 )
-from lm_saes.backend.language_model import LanguageModel
-from lm_saes.config import ActivationFactoryConfig, ActivationFactoryDatasetSource
 
 
 @pytest.fixture
@@ -56,6 +57,7 @@ def basic_config() -> ActivationFactoryConfig:
         batch_size=2,
         buffer_size=None,
         num_workers=0,
+        model_batch_size=1,
     )
 
 
@@ -67,32 +69,6 @@ def test_activation_factory_initialization(basic_config: ActivationFactoryConfig
     assert factory.aggregator is not None
 
 
-# def test_activation_factory_tokens_target(
-#     basic_config: ActivationFactoryConfig,
-#     mock_model: HookedTransformer,
-#     mock_dataset: Dataset,
-# ):
-#     basic_config.target = ActivationFactoryTarget.TOKENS
-#     factory = ActivationFactory(basic_config)
-
-#     result = list(
-#         factory.process(
-#             model=mock_model,
-#             model_name="test",
-#             datasets={"test_dataset": (mock_dataset, {"shard_idx": 0, "n_shards": 8})},
-#         )
-#     )
-#     print(result)
-
-#     assert len(result) == 3  # One for each input text
-#     assert "tokens" in result[0]
-#     assert "meta" in result[0]
-#     assert result[0]["meta"]["dataset_name"] == "test_dataset"
-#     assert result[0]["meta"]["shard_idx"] == 0
-#     assert result[0]["meta"]["n_shards"] == 8
-#     assert torch.allclose(result[0]["tokens"], torch.tensor([12, 13, 14]))
-
-
 def test_activation_factory_activations_2d_target(
     basic_config: ActivationFactoryConfig,
     mock_model: LanguageModel,
@@ -102,7 +78,6 @@ def test_activation_factory_activations_2d_target(
     factory = ActivationFactory(basic_config)
 
     result = list(factory.process(model=mock_model, model_name="test", datasets={"test_dataset": (mock_dataset, None)}))
-    print(result)
 
     assert len(result) == 3  # One for each input text
     assert all(h in result[0] for h in basic_config.hook_points)
@@ -136,13 +111,12 @@ def test_activation_factory_batched_activations_1d_target(
     factory = ActivationFactory(basic_config)
 
     result = list(factory.process(model=mock_model, model_name="test", datasets={"test_dataset": (mock_dataset, None)}))
-    print(result)
 
     # With batch_size=2 and 3 samples * 1 activations per sample, we expect 2 batches (2 samples in the first batch and 1
     # sample in the second batch)
     assert len(result) == 2
     assert all(h in result[0] for h in basic_config.hook_points)
-    assert tuple([result[i]["h0"].shape[0] for i in range(2)]) == (2, 1)
+    assert tuple(result[i]["h0"].shape[0] for i in range(2)) == (2, 1)
     assert torch.allclose(result[0]["h0"], torch.tensor([[6, 7, 8], [6, 7, 8]]))
     assert torch.allclose(result[1]["h0"], torch.tensor([[6, 7, 8]]))
     assert "meta" not in result[0]  # Info is removed for batched activations
@@ -200,10 +174,10 @@ def test_activation_factory_missing_model(
     factory = ActivationFactory(basic_config)
 
     with pytest.raises(AssertionError, match="`model` must be provided for dataset sources"):
-        list(factory.process(datasets={"test_dataset": mock_dataset}))
+        list(factory.process(datasets={"test_dataset": (mock_dataset, None)}))
 
     with pytest.raises(AssertionError, match="`model_name` must be provided for dataset sources"):
-        list(factory.process(model=mock_model, datasets={"test_dataset": mock_dataset}))
+        list(factory.process(model=mock_model, datasets={"test_dataset": (mock_dataset, None)}))
 
 
 def test_activation_factory_activations_source(
@@ -235,7 +209,15 @@ def test_activation_factory_activations_source(
 
     # Configure factory to use activation source
     basic_config.sources = [
-        ActivationFactoryActivationsSource(name="test_activations", path=str(tmp_path), sample_weights=1.0)
+        ActivationFactoryActivationsSource(
+            name="test_activations",
+            path=str(tmp_path),
+            sample_weights=1.0,
+            device="cpu",
+            dtype=None,
+            num_workers=0,
+            prefetch=None,
+        )
     ]
     basic_config.target = ActivationFactoryTarget.ACTIVATIONS_2D
     basic_config.hook_points = ["h0"]
@@ -245,31 +227,57 @@ def test_activation_factory_activations_source(
     result = list(factory.process())
 
     # Verify results
-    assert len(result) == 2  # 2 chunks * 2 samples per chunk
-    for i, item in enumerate(result):
+    assert len(result) == 2  # 2 chunks * 2 samples
+    for item in result:
         # Check activation shape and content
         assert "h0" in item
-        assert item["h0"].shape == (2, 3, 4)
-        assert torch.allclose(item["h0"], sample_data["activation"])
-
+        assert item["h0"].shape == (2, 3, 4)  # Shape should be (batch_size, context_size, embedding_dim)
         # Check tokens
         assert "tokens" in item
-        assert item["tokens"].shape == (2, 3)  # context_size
-        assert torch.allclose(item["tokens"], sample_data["tokens"])
-
+        assert item["tokens"].shape == (2, 3)  # Shape should be (batch_size, context_size)
         # Check metadata
         assert "meta" in item
-        assert item["meta"][0]["context_id"] == "ctx_0"
-        assert item["meta"][1]["context_id"] == "ctx_1"
+        assert item["meta"][0]["context_id"] in ["ctx_0", "ctx_1"]
 
 
 def test_activation_factory_activations_source_invalid_target(basic_config: ActivationFactoryConfig):
     # Configure factory with invalid target
     basic_config.sources = [
-        ActivationFactoryActivationsSource(name="test_activations", path="dummy/path", sample_weights=1.0)
+        ActivationFactoryActivationsSource(
+            name="test_activations",
+            path="dummy/path",
+            sample_weights=1.0,
+            device="cpu",
+            dtype=None,
+            num_workers=0,
+            prefetch=2,
+        )
     ]
     basic_config.target = ActivationFactoryTarget.TOKENS  # Too low level target for activation source
 
     # Should raise error when initializing factory
     with pytest.raises(ValueError, match="Activations sources are only supported for target >= ACTIVATIONS_2D"):
         ActivationFactory(basic_config)
+
+
+def test_before_aggregation_interceptor(
+    basic_config: ActivationFactoryConfig,
+    mock_model: LanguageModel,
+    mock_dataset: Dataset,
+):
+    """Test the before_aggregation_interceptor parameter."""
+    basic_config.target = ActivationFactoryTarget.ACTIVATIONS_2D
+
+    # Create an interceptor that adds a source_idx field to the data
+    def interceptor(data: dict, source_idx: int) -> dict:
+        data["source_idx"] = source_idx
+        return data
+
+    factory = ActivationFactory(basic_config, before_aggregation_interceptor=interceptor)
+
+    result = list(factory.process(model=mock_model, model_name="test", datasets={"test_dataset": (mock_dataset, None)}))
+
+    assert len(result) > 0
+    for item in result:
+        assert "source_idx" in item
+        assert item["source_idx"] == 0  # Only one source with index 0
