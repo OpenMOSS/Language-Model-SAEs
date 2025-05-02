@@ -5,6 +5,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Callable, Literal, Self, Union, cast, overload
 
+import einops
 import safetensors.torch as safe
 import torch
 from jaxtyping import Float
@@ -546,8 +547,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         ) = None,
         *,
         use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", None] = None,
+        sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
+        frequency_scale=0.01,
         p: int = 1,
         l1_coefficient: float = 1.0,
         return_aux_data: bool = True,
@@ -594,6 +596,13 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 l_s = torch.norm(feature_acts * self.decoder_norm_full(), p=p, dim=-1)
             elif sparsity_loss_type == "tanh":
                 l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm_full()).sum(dim=-1)
+            elif sparsity_loss_type == "tanh-quad":
+                approx_frequency = einops.reduce(
+                    torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm_full()),
+                    "... d_sae -> d_sae",
+                    "mean",
+                )
+                l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
             else:
                 raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
             loss_dict["l_s"] = l1_coefficient * l_s.mean()
