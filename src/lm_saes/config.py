@@ -177,7 +177,7 @@ class InitializerConfig(BaseConfig):
 class TrainerConfig(BaseConfig):
     l1_coefficient: float | None = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
-    sparsity_loss_type: Literal["power", "tanh", None] = None
+    sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None
     tanh_stretch_coefficient: float = 4.0
     p: int = 1
     initial_k: int | float | None = None
