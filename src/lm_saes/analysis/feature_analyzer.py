@@ -12,7 +12,7 @@ from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import distribute_tensor_on_dim, placements_from_dim_map
+from lm_saes.utils.distributed import placements_from_dim_map
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
@@ -214,14 +214,13 @@ class FeatureAnalyzer:
             if isinstance(feature_acts, DTensor):
                 assert device_mesh is not None, "Device mesh is required for DTensor feature activations"
                 if device_mesh is not feature_acts.device_mesh:
-                    feature_acts = distribute_tensor_on_dim(
-                        feature_acts.full_tensor(), device_mesh, {"model": -1}
-                    ).to_local()  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                    feature_acts = DTensor.from_local(
+                        feature_acts.full_tensor(), device_mesh, run_check=True
+                    )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
                     # TODO: Remove this once redistributing across device meshes is supported
-                else:
-                    feature_acts = feature_acts.redistribute(
-                        placements=placements_from_dim_map({"model": -1}, device_mesh)
-                    ).to_local()
+                feature_acts = feature_acts.redistribute(
+                    placements=placements_from_dim_map({"model": -1}, device_mesh)
+                ).to_local()
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.max(dim=-2).values
             assert feature_acts.shape == (batch["tokens"].shape[0], batch["tokens"].shape[1], d_sae_local), (
@@ -332,14 +331,14 @@ class FeatureAnalyzer:
                 if isinstance(decoder_norms, DTensor):
                     assert device_mesh is not None, "Device mesh is required for DTensor decoder norms"
                     if decoder_norms.device_mesh is not device_mesh:
-                        decoder_norms = distribute_tensor_on_dim(
-                            decoder_norms.full_tensor(), device_mesh, {"model": -1}
-                        ).to_local()  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                        decoder_norms = DTensor.from_local(
+                            decoder_norms.full_tensor(), device_mesh, run_check=True
+                        )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
                         # TODO: Remove this once redistributing across device meshes is supported
-                    else:
-                        decoder_norms = decoder_norms.redistribute(
-                            placements=placements_from_dim_map({"model": -1}, device_mesh)
-                        ).to_local()
+
+                    decoder_norms = decoder_norms.redistribute(
+                        placements=placements_from_dim_map({"model": -1}, device_mesh)
+                    ).to_local()
                 assert decoder_norms.shape[-1] == len(act_times), (
                     f"decoder_norms.shape: {decoder_norms.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
                 )
