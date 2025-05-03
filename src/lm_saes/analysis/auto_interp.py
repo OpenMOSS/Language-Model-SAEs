@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import torch
 from datasets import Dataset
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend.language_model import LanguageModel
@@ -38,6 +38,36 @@ class ScorerType(str, Enum):
     FUZZING = "fuzzing"
     GENERATION = "generation"
     SIMULATION = "simulation"
+
+
+class Step(BaseModel):
+    """A step in the chain-of-thought process."""
+
+    thought: str
+    """The thought of the step."""
+
+    output: str
+    """The output of the step."""
+
+
+class AutoInterpExplanation(BaseModel):
+    """The result of an auto-interpretation of a SAE feature."""
+
+    steps: list[Step]
+    """The steps of the chain-of-thought process."""
+
+    final_explanation: str
+    """The explanation of the feature."""
+
+
+class AutoInterpEvaluation(BaseModel):
+    """The result of an auto-interpretation of a SAE feature."""
+
+    steps: list[Step]
+    """The steps of the chain-of-thought process."""
+
+    evaluation_results: list[bool]
+    """The evaluation results for each example. Should be a list of YES/NO values."""
 
 
 class AutoInterpConfig(BaseConfig):
@@ -316,12 +346,7 @@ class FeatureInterpreter:
         """Set up OpenAI client for explanation generation and evaluation."""
         try:
             import openai
-
-            if self.cfg.openai_api_key:
-                openai.api_key = self.cfg.openai_api_key
-            if self.cfg.openai_base_url:
-                openai.base_url = self.cfg.openai_base_url
-            self.explainer_client = openai.Client()
+            self.explainer_client = openai.Client(base_url=self.cfg.openai_base_url, api_key=self.cfg.openai_api_key)
         except ImportError:
             raise ImportError("OpenAI package not installed. Please install it with `uv add openai`.")
 
@@ -363,7 +388,7 @@ class FeatureInterpreter:
         )
         return activating_examples, non_activating_examples
 
-    def _generate_explanation_prompt(self, activating_examples: list[TokenizedSample]) -> str:
+    def _generate_explanation_prompt(self, activating_examples: list[TokenizedSample]) -> tuple[str, str]:
         """Generate a prompt for explanation generation.
 
         Args:
@@ -372,13 +397,20 @@ class FeatureInterpreter:
         Returns:
             Prompt string for the LLM
         """
-        prompt = "I'll show you examples where a particular feature in a neural network activates. "
-        prompt += "Your task is to explain what this feature detects based on the patterns.\n\n"
+        system_prompt = """We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. The activating words in each document are indicated with << ... >>. We will give you a list of documents on which the feature activates, in order from most strongly activating to least strongly activating. Look at the parts of the document the feature activates for and summarize in a single sentence what the feature is activating on. Try not to be overly specific in your explanation. Note that some features will activate only on specific words or substrings, but others will activate on most/all words in a sentence provided that sentence contains some particular concept. Your explanation should cover most or all activating words (for example, don't give an explanation which is specific to a single word if all words in a sentence cause the feature to activate). Pay attention to things like the capitalization and punctuation of the activating words or concepts, if that seems relevant. Keep the explanation as short and simple as possible, limited to 20 words or less. Omit punctuation and formatting. You should avoid giving long lists of words."""
 
-        # Add highlighted examples
-        prompt += "Here are examples where the feature activates. "
-        prompt += "The activating parts are highlighted with << >> delimiters:\n\n"
+        if self.cfg.include_cot:
+            system_prompt += "\n\nTo explain this feature, please follow these steps:\n\n"
+            system_prompt += "Step 1: List a couple activating and contextual tokens you find interesting. "
+            system_prompt += "Search for patterns in these tokens, if there are any. Don't list more than 5 tokens.\n\n"
+            system_prompt += "Step 2: Write down general shared features of the text examples.\n\n"
+            system_prompt += 'Step 3: Write a concise explanation of what this feature detects. Your response should be in the form "This feature activates on...".'
+        else:
+            system_prompt += '\nYour response should be in the form "This feature activates on...".'
 
+        system_prompt += """ Some examples: "This neuron activates on the word 'knows' in rhetorical questions", and "This neuron activates on verbs related to decision-making and preferences", and "This neuron activates on the substring 'Ent' at the start of words", and "This neuron activates on text about government economic policy"."""
+
+        user_prompt = "The activating documents are given below:\n\n"
         # Select a random subset of examples to show
         examples_to_show = random.sample(
             activating_examples, min(self.cfg.n_activating_examples, len(activating_examples))
@@ -386,19 +418,9 @@ class FeatureInterpreter:
 
         for i, example in enumerate(examples_to_show, 1):
             highlighted = example.display_highlighted(self.cfg.activation_threshold)
-            prompt += f"Example {i}: {highlighted}\n\n"
+            user_prompt += f"Example {i}: {highlighted}\n\n"
 
-        # Add chain of thought if configured
-        if self.cfg.include_cot:
-            prompt += "To explain this feature, please follow these steps:\n\n"
-            prompt += "Step 1: List a couple activating and contextual tokens you find interesting. "
-            prompt += "Search for patterns in these tokens, if there are any. Don't list more than 5 tokens.\n\n"
-            prompt += "Step 2: Write down general shared features of the text examples.\n\n"
-            prompt += "Step 3: Write a concise explanation of what this feature detects.\n\n"
-        else:
-            prompt += "Based on these examples, what does this feature detect? Be concise but precise.\n"
-
-        return prompt
+        return system_prompt, user_prompt
 
     def generate_explanation(self, activating_examples: list[TokenizedSample]) -> dict[str, Any]:
         """Generate an explanation for a feature based on activating examples.
@@ -409,20 +431,21 @@ class FeatureInterpreter:
         Returns:
             Dictionary with explanation and metadata
         """
-        prompt = self._generate_explanation_prompt(activating_examples)
+        system_prompt, user_prompt = self._generate_explanation_prompt(activating_examples)
 
-        response = self.explainer_client.chat.completions.create(
+        response = self.explainer_client.beta.chat.completions.parse(
             model=self.cfg.openai_model,
             messages=[
-                {"role": "system", "content": "You are an expert neural network interpreter."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
             ],
+            response_format=AutoInterpExplanation,
         )
-        explanation = response.choices[0].message.content
+        explanation = response.choices[0].message.parsed
+        assert explanation is not None, "No explanation returned from OpenAI"
+        return {"user_prompt": user_prompt, "system_prompt": system_prompt, "response": explanation}
 
-        return {"prompt": prompt, "response": explanation}
-
-    def _generate_detection_prompt(self, explanation: str, examples: list[TokenizedSample]) -> str:
+    def _generate_detection_prompt(self, explanation: AutoInterpExplanation, examples: list[TokenizedSample]) -> tuple[str, str]:
         """Generate a prompt for detection evaluation.
 
         Args:
@@ -432,22 +455,17 @@ class FeatureInterpreter:
         Returns:
             Prompt string for the LLM
         """
-        prompt = "You're evaluating an explanation for a feature in a neural network. "
-        prompt += "The explanation is:\n\n"
-        prompt += f'"{explanation}"\n\n'
-        prompt += "I will show you some text examples. For each example, determine if the feature described above "
-        prompt += "is present (YES) or absent (NO) in the example.\n\n"
+        system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. You will be given a short explanation of what this feature activates for, and then be shown {len(examples)} example sequences in random order. You will have to return a boolean list of the examples where you think the feature should activate at least once, on ANY of the words or substrings in the document, true if it does, false if it doesn't. Try not to be overly specific in your interpretation of the explanation."""
+        user_prompt = f"Here is the explanation:\n\n{explanation.final_explanation}\n\nHere are the examples:\n\n"
 
         for i, example in enumerate(examples, 1):
-            prompt += f"Example {i}: {example.display_plain()}\n"
+            user_prompt += f"Example {i}: {example.display_plain()}\n"
 
-        prompt += "\nFor each example, answer only YES or NO, separated by commas: "
-
-        return prompt
+        return system_prompt, user_prompt
 
     def evaluate_explanation_detection(
         self,
-        explanation: str,
+        explanation: AutoInterpExplanation,
         activating_examples: list[TokenizedSample],
         non_activating_examples: list[TokenizedSample],
     ) -> dict[str, Any]:
@@ -470,7 +488,7 @@ class FeatureInterpreter:
 
         # Mix and shuffle examples
         all_examples = test_activating + test_non_activating
-        if not all_examples:
+        if len(all_examples) < self.cfg.detection_n_examples:
             return {
                 "method": "detection",
                 "prompt": "",
@@ -493,32 +511,25 @@ class FeatureInterpreter:
         ground_truth = [1 if ex in test_activating else 0 for ex in all_examples]
 
         # Generate prompt
-        prompt = self._generate_detection_prompt(explanation, all_examples)
+        system_prompt, user_prompt = self._generate_detection_prompt(explanation, all_examples)
 
         # Get response from OpenAI
-        response = self.explainer_client.chat.completions.create(
+        response = self.explainer_client.beta.chat.completions.parse(
             model=self.cfg.openai_model,
             messages=[
-                {"role": "system", "content": "You are an expert neural network interpreter."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
             ],
+            response_format=AutoInterpEvaluation,
         )
-        detection_response = response.choices[0].message.content
-
-        # Parse response (YES/NO for each example)
-        predictions = []
-        if detection_response:
-            for resp in detection_response.strip().split(","):
-                resp = resp.strip().upper()
-                if "YES" in resp:
-                    predictions.append(1)
-                else:
-                    predictions.append(0)
+        detection_response = response.choices[0].message.parsed
+        assert detection_response is not None, "No detection response returned from OpenAI"
+        predictions = detection_response.evaluation_results
 
         # Pad predictions if needed
         predictions = predictions[: len(ground_truth)]
         if len(predictions) < len(ground_truth):
-            predictions.extend([0] * (len(ground_truth) - len(predictions)))
+            predictions.extend([False] * (len(ground_truth) - len(predictions)))
 
         # Calculate metrics
         tp = sum(1 for gt, pred in zip(ground_truth, predictions) if gt == 1 and pred == 1)
@@ -534,7 +545,7 @@ class FeatureInterpreter:
 
         return {
             "method": "detection",
-            "prompt": prompt,
+            "prompt": user_prompt,
             "response": detection_response,
             "ground_truth": ground_truth,
             "predictions": predictions,
@@ -550,9 +561,9 @@ class FeatureInterpreter:
 
     def _generate_fuzzing_prompt(
         self,
-        explanation: str,
+        explanation: AutoInterpExplanation,
         examples: list[tuple[TokenizedSample, bool]],  # (sample, is_correctly_marked)
-    ) -> str:
+    ) -> tuple[str, str]:
         """Generate a prompt for fuzzing evaluation.
 
         Args:
@@ -562,20 +573,14 @@ class FeatureInterpreter:
         Returns:
             Prompt string for the LLM
         """
-        prompt = "You're evaluating an explanation for a feature in a neural network. "
-        prompt += "The explanation is:\n\n"
-        prompt += f'"{explanation}"\n\n'
-        prompt += "I will show you some text examples with <<highlighted>> parts. "
-        prompt += "For each example, determine if the highlighted parts CORRECTLY correspond to "
-        prompt += "the feature described in the explanation (CORRECT) or not (INCORRECT).\n\n"
+        system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. You will be given a short explanation of what this feature activates for, and then be shown {len(examples)} example sequences in random order. In each example, text segments highlighted with << >> are presented as activating the feature as described in the explanation. You will have to return a boolean list of the examples where you think the highlighted parts CORRECTLY correspond to the explanation, true if they do, false if they don't. Try not to be overly specific in your interpretation of the explanation."""
+        user_prompt = f"Here is the explanation:\n\n{explanation.final_explanation}\n\nHere are the examples:\n\n"
 
         for i, (example, _) in enumerate(examples, 1):
             highlighted = example.display_highlighted(self.cfg.activation_threshold)
-            prompt += f"Example {i}: {highlighted}\n"
+            user_prompt += f"Example {i}: {highlighted}\n"
 
-        prompt += "\nFor each example, answer only CORRECT or INCORRECT, separated by commas: "
-
-        return prompt
+        return system_prompt, user_prompt
 
     def _create_incorrectly_marked_example(self, sample: TokenizedSample) -> TokenizedSample:
         """Create an incorrectly marked version of an example.
@@ -605,7 +610,7 @@ class FeatureInterpreter:
         return highlight_random_tokens(sample, n_to_highlight)
 
     def evaluate_explanation_fuzzing(
-        self, explanation: str, activating_examples: List[TokenizedSample]
+        self, explanation: AutoInterpExplanation, activating_examples: List[TokenizedSample]
     ) -> Dict[str, Any]:
         """Evaluate an explanation using the fuzzing method.
 
@@ -657,28 +662,21 @@ class FeatureInterpreter:
         random.shuffle(examples_with_labels)
 
         # Generate prompt
-        prompt = self._generate_fuzzing_prompt(explanation, examples_with_labels)
+        system_prompt, user_prompt = self._generate_fuzzing_prompt(explanation, examples_with_labels)
 
         # Get response from OpenAI
-        response = self.explainer_client.chat.completions.create(
+        response = self.explainer_client.beta.chat.completions.parse(
             model=self.cfg.openai_model,
             messages=[
-                {"role": "system", "content": "You are an expert neural network interpreter."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
             ],
+            response_format=AutoInterpEvaluation,
         )
-        fuzzing_response = response.choices[0].message.content
-
+        fuzzing_response = response.choices[0].message.parsed
+        assert fuzzing_response is not None, "No fuzzing response returned from OpenAI"
         # Parse response (CORRECT/INCORRECT for each example)
-        predictions = []
-        if fuzzing_response:
-            for resp in fuzzing_response.strip().split(","):
-                resp = resp.strip().upper()
-                if "CORRECT" in resp:
-                    predictions.append(True)
-                else:
-                    predictions.append(False)
-
+        predictions = fuzzing_response.evaluation_results
         # Pad predictions if needed
         predictions = predictions[: len(examples_with_labels)]
         if len(predictions) < len(examples_with_labels):
@@ -701,7 +699,7 @@ class FeatureInterpreter:
 
         return {
             "method": "fuzzing",
-            "prompt": prompt,
+            "prompt": user_prompt,
             "response": fuzzing_response,
             "ground_truth": ground_truth,
             "predictions": predictions,
@@ -768,7 +766,7 @@ class FeatureInterpreter:
 
                 # Generate explanation for the feature
                 explanation_result = self.generate_explanation(activating_examples)
-                explanation = explanation_result["response"]
+                explanation: AutoInterpExplanation = explanation_result["response"]
 
                 # Evaluate explanation
                 evaluation_results = []
@@ -789,7 +787,7 @@ class FeatureInterpreter:
                     "sae_name": sae_name,
                     "sae_series": sae_series,
                     "analysis_name": analysis_name,
-                    "explanation": explanation,
+                    "explanation": explanation.final_explanation,
                     "explanation_details": explanation_result,
                     "evaluations": evaluation_results,
                     "passed": any(eval_result["passed"] for eval_result in evaluation_results),
