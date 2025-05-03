@@ -256,6 +256,7 @@ class Trainer:
             batch = sae.normalize_activations(batch)
 
             sae.train()
+            sae.compile(fullgraph=True)
 
             self.optimizer.zero_grad()
 
