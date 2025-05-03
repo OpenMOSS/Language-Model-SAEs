@@ -246,10 +246,22 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     @override
     def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
+        def pad_to_d_model(x: torch.Tensor) -> torch.Tensor:
+            if x.shape[-1] > self.cfg.d_model:
+                raise ValueError(f"Input tensor has {x.shape[-1]} dimensions, but expected {self.cfg.d_model}.")
+            elif x.shape[-1] < self.cfg.d_model:
+                zero_padding = torch.zeros(
+                    *x.shape[:-1], self.cfg.d_model - x.shape[-1], device=x.device, dtype=x.dtype
+                )
+                return torch.cat([x, zero_padding], dim=-1)
+            else:
+                return x
+
         if self.device_mesh is None or "head" not in cast(tuple[str, ...], self.device_mesh.mesh_dim_names):
-            return torch.stack([batch[hook_point] for hook_point in self.cfg.hook_points], dim=-2), {}
+            return torch.stack([pad_to_d_model(batch[hook_point]) for hook_point in self.cfg.hook_points], dim=-2), {}
         else:
             local_activations = batch[self.cfg.hook_points[self.device_mesh.get_local_rank("head")]]
+            local_activations = pad_to_d_model(local_activations)
             local_activations = einops.rearrange(local_activations, "... d_model -> ... 1 d_model")
             return DTensor.from_local(
                 local_activations,
