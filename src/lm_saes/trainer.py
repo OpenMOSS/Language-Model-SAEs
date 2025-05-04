@@ -88,6 +88,7 @@ class Trainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
+    @torch.compile
     def _training_step(
         self,
         sae: AbstractSparseAutoEncoder,
@@ -256,7 +257,6 @@ class Trainer:
             batch = sae.normalize_activations(batch)
 
             sae.train()
-            sae.compile(fullgraph=True)
 
             self.optimizer.zero_grad()
 
