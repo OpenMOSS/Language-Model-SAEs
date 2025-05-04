@@ -313,7 +313,8 @@ class MongoClient:
         if operations:
             self.feature_collection.bulk_write(operations)
 
-        self.analysis_collection.insert_one({"name": name, "sae_name": sae_name, "sae_series": sae_series})
+        if start_idx == 0:
+            self.analysis_collection.insert_one({"name": name, "sae_name": sae_name, "sae_series": sae_series})
 
     def remove_feature_analysis(self, name: str, sae_name: str, sae_series: str):
         self.feature_collection.update_many(
