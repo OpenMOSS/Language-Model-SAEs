@@ -101,7 +101,6 @@ class Initializer:
         if self.cfg.init_decoder_norm is None:
             if not self.cfg.init_encoder_with_decoder_transpose:
                 return sae
-            print("Decoder bias:", sae.b_D)
 
             def grid_search_best_init_norm(search_range: List[float]) -> float:
                 losses: Dict[float, float] = {}
