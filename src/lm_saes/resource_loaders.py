@@ -71,9 +71,10 @@ def load_dataset(
 def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_lens"]:
     if model_name.startswith("Qwen/Qwen2.5-VL"):
         return "huggingface"
-    if model_name.startswith("Qwen/Qwen2.5-7B"):
+    elif model_name.startswith("Qwen/Qwen2.5"):
         return "huggingface"
-    return "transformer_lens"
+    else:
+        return "transformer_lens"
 
 
 def load_model(cfg: LanguageModelConfig) -> LanguageModel:
@@ -81,7 +82,7 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
     if backend == "huggingface":
         if cfg.model_name.startswith("Qwen/Qwen2.5-VL"):
             return QwenVLLanguageModel(cfg)
-        elif cfg.model_name.startswith("Qwen/Qwen2.5-7B"):
+        elif cfg.model_name.startswith("Qwen/Qwen2.5"):
             return QwenLanguageModel(cfg)
         else:
             raise NotImplementedError(f"Model {cfg.model_name} not supported in HuggingFace backend.")

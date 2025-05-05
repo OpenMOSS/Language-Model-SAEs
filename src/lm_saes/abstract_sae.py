@@ -549,7 +549,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
-        frequency_scale=0.01,
+        frequency_scale: float = 0.01,
         p: int = 1,
         l1_coefficient: float = 1.0,
         return_aux_data: bool = True,
