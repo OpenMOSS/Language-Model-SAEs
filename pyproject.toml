@@ -31,6 +31,8 @@ dependencies = [
     "torchvision>=0.20.1",
     "pydantic-settings>=2.7.1",
     "qwen-vl-utils>=0.0.10",
+    "flash-attn>=2.7.4.post1; (sys_platform == 'win32' or sys_platform == 'linux')",
+    "triton>=3.1.0; (sys_platform == 'win32' or sys_platform == 'linux')",
 ]
 requires-python = "==3.12.*"
 readme = "README.md"
@@ -85,7 +87,6 @@ dev = [
     "pyfakefs>=5.7.3",
     "mongomock>=4.3.0",
     "qwen-vl-utils>=0.0.10",
-    "flash-attn>=2.7.4.post1",
     "tabulate>=0.9.0",
 ]
 triton = [
