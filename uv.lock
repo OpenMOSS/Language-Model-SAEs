@@ -100,7 +100,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "idna" },
     { name = "sniffio" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "python_full_version == '3.12.*'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/95/7d/4c1bd541d4dffa1b52bd83fb8527089e097a106fc90b467a7313b105f840/anyio-4.9.0.tar.gz", hash = "sha256:673c0c244e15788651a4ff38710fea9675823028a6f08a5eda409e0c9840a028", size = 190949 }
 wheels = [
@@ -1205,6 +1205,7 @@ dependencies = [
     { name = "datasets" },
     { name = "einops" },
     { name = "fastapi" },
+    { name = "flash-attn", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "jaxtyping" },
     { name = "matplotlib" },
     { name = "msgpack" },
@@ -1227,6 +1228,7 @@ dependencies = [
     { name = "tqdm" },
     { name = "transformer-lens" },
     { name = "transformers" },
+    { name = "triton", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "uvicorn" },
     { name = "wandb" },
 ]
@@ -1234,7 +1236,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
-    { name = "flash-attn" },
     { name = "ipykernel" },
     { name = "ipywidgets" },
     { name = "jupyter" },
@@ -1264,6 +1265,7 @@ requires-dist = [
     { name = "datasets", specifier = ">=3.0.2" },
     { name = "einops", specifier = ">=0.8.0" },
     { name = "fastapi", specifier = ">=0.115.4" },
+    { name = "flash-attn", marker = "sys_platform == 'linux' or sys_platform == 'win32'", specifier = ">=2.7.4.post1" },
     { name = "jaxtyping", specifier = ">=0.2.34" },
     { name = "matplotlib", specifier = ">=3.9.2" },
     { name = "msgpack", specifier = ">=1.1.0" },
@@ -1286,6 +1288,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.66.5" },
     { name = "transformer-lens", editable = "TransformerLens" },
     { name = "transformers", specifier = ">=4.46.0" },
+    { name = "triton", marker = "sys_platform == 'linux' or sys_platform == 'win32'", specifier = ">=3.1.0" },
     { name = "uvicorn", specifier = ">=0.32.0" },
     { name = "wandb", specifier = ">=0.18.5" },
 ]
@@ -1293,7 +1296,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "basedpyright", specifier = ">=1.21.0" },
-    { name = "flash-attn", specifier = ">=2.7.4.post1" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "ipywidgets", specifier = ">=8.1.5" },
     { name = "jupyter", specifier = ">=1.1.1" },
@@ -1808,7 +1810,7 @@ name = "pandas"
 version = "2.2.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "python_full_version == '3.12.*'" },
     { name = "python-dateutil" },
     { name = "pytz" },
     { name = "tzdata" },
@@ -2284,7 +2286,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
     { name = "rpds-py" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "python_full_version == '3.12.*'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2f/db/98b5c277be99dd18bfd91dd04e1b759cad18d1a338188c936e92f921c7e2/referencing-0.36.2.tar.gz", hash = "sha256:df2e89862cd09deabbdba16944cc3f10feb6b3e6f18e902f7cc25609a34775aa", size = 74744 }
 wheels = [
@@ -2749,8 +2751,8 @@ dependencies = [
     { name = "nvidia-nccl-cu12", marker = "platform_machine == 'x86_64' and platform_system == 'Linux'" },
     { name = "nvidia-nvjitlink-cu12", marker = "platform_machine == 'x86_64' and platform_system == 'Linux'" },
     { name = "nvidia-nvtx-cu12", marker = "platform_machine == 'x86_64' and platform_system == 'Linux'" },
-    { name = "setuptools" },
-    { name = "sympy" },
+    { name = "setuptools", marker = "python_full_version == '3.12.*'" },
+    { name = "sympy", marker = "python_full_version == '3.12.*'" },
     { name = "triton", marker = "platform_machine == 'x86_64' and platform_system == 'Linux'" },
     { name = "typing-extensions" },
 ]
@@ -2829,7 +2831,7 @@ dependencies = [
     { name = "einops" },
     { name = "fancy-einsum" },
     { name = "jaxtyping" },
-    { name = "numpy" },
+    { name = "numpy", marker = "python_full_version == '3.12.*'" },
     { name = "pandas" },
     { name = "rich" },
     { name = "sentencepiece" },
@@ -3006,7 +3008,7 @@ dependencies = [
     { name = "docker-pycreds" },
     { name = "gitpython" },
     { name = "platformdirs" },
-    { name = "protobuf" },
+    { name = "protobuf", marker = "python_full_version == '3.12.*'" },
     { name = "psutil" },
     { name = "pydantic" },
     { name = "pyyaml" },
