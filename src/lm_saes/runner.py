@@ -934,7 +934,7 @@ class AnalyzeCrossCoderSettings(BaseSettings):
     mongo: MongoDBConfig
     """Configuration for the MongoDB database."""
 
-
+@torch.no_grad()
 def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
     """Analyze a CrossCoder model."""
 
@@ -989,9 +989,6 @@ class AutoInterpSettings(BaseSettings):
     model_name: str
     """Name of the model to load."""
 
-    dataset_name: str
-    """Name of the dataset to use for non-activating examples."""
-
     auto_interp: AutoInterpConfig
     """Configuration for the auto-interpretation process."""
 
@@ -1045,12 +1042,6 @@ def auto_interp(settings: AutoInterpSettings) -> None:
 
     # Load resources
     print(f"Loading SAE model: {settings.sae_name}/{settings.sae_series}")
-    if isinstance(settings.sae, MixCoderConfig):
-        sae = MixCoder.from_config(settings.sae)
-    elif isinstance(settings.sae, CrossCoderConfig):
-        sae = CrossCoder.from_config(settings.sae)
-    else:
-        sae = SparseAutoEncoder.from_config(settings.sae)
 
     print(f"Loading language model: {settings.model_name}")
     model = load_model(settings.model)
@@ -1073,25 +1064,29 @@ def auto_interp(settings: AutoInterpSettings) -> None:
         sae_series=settings.sae_series,
         feature_indices=feature_indices,
         model=model,
-        sae=sae,
+        sae=settings.sae,
         datasets=get_dataset,
-        dataset_name=settings.dataset_name,
         analysis_name=settings.analysis_name,
     )
 
     # Save results to database
     print("Saving results to database...")
-    for feature_idx, result in results.items():
+    total_results = 0
+    for result in results:
+        feature_idx = result["feature_index"]
+        total_results += 1
         interpretation = {
             "text": result["explanation"],
             "validation": [
                 {"method": eval_result["method"], "passed": eval_result["passed"], "detail": eval_result}
                 for eval_result in result["evaluations"]
             ],
+            "complexity": result["complexity"],
+            "consistency": result["consistency"],
             "detail": result["explanation_details"],
         }
 
         mongo_client.update_feature(
             settings.sae_name, feature_idx, {"interpretation": interpretation}, settings.sae_series
         )
-    print(f"Completed interpreting {len(results)} features")
+    print(f"Completed interpreting {total_results} features")
