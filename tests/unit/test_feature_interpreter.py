@@ -17,7 +17,7 @@ from lm_saes.backend.language_model import LanguageModel
 from lm_saes.database import MongoClient, FeatureAnalysis, FeatureAnalysisSampling, FeatureRecord
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 
-
+# @pytest.mark.skip()
 class TestTokenizedSample:
     @pytest.fixture
     def sample_text(self):
@@ -165,7 +165,7 @@ class TestFeatureInterpreter:
         for k, v in explanation.items():
             print(f"{k}:\n{v}\n\n")
 
-
+    # @pytest.mark.skip()
     def test_evaluate_explanation_detection(
         self, activating_samples, non_activating_samples, mock_explanation, mock_evaluation, mocker
     ):
@@ -193,13 +193,13 @@ class TestFeatureInterpreter:
         for k, v in result.items():
             print(f"{k}:\n{v}\n\n")
 
-
+    # @pytest.mark.skip()
     def test_create_incorrectly_marked_example(self, sample_tokenized_sample: TokenizedSample):
         threshold = self.feature_interpreter.cfg.activation_threshold
         incorrectly_marked_example = self.feature_interpreter._create_incorrectly_marked_example(sample_tokenized_sample)
         assert all([origin.activation < threshold * sample_tokenized_sample.max_activation for origin, marked in zip(sample_tokenized_sample.segments, incorrectly_marked_example.segments) if marked.activation > 0])
 
-
+    # @pytest.mark.skip()
     def test_evaluate_explanation_fuzzing(self, activating_samples, mock_explanation, mock_evaluation, mocker):
         explanation: AutoInterpExplanation = (
             self.feature_interpreter.generate_explanation(activating_samples)["response"]
@@ -224,7 +224,7 @@ class TestFeatureInterpreter:
         for k, v in result.items():
             print(f"{k}:\n{v}\n\n")
 
-
+# @pytest.mark.skip()
 class TestGenerateExamples:
     
     @pytest.fixture
@@ -249,11 +249,17 @@ class TestGenerateExamples:
         mock.name = "test_analysis"
         mock.max_feature_acts = 0.7
         mock.samplings = [FeatureAnalysisSampling(
-            name="test_sampling",
+            name="top_activations",
             dataset_name=["test_dataset"],
             context_idx=[0],
             model_name=["test_model"],
             feature_acts=[[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]],
+        ), FeatureAnalysisSampling(
+            name="non_activating",
+            dataset_name=["test_dataset"],
+            context_idx=[0],
+            model_name=["test_model"],
+            feature_acts=[[0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]],
         )]
         return mock
 
@@ -294,30 +300,16 @@ class TestGenerateExamples:
         assert isinstance(activating_examples[0], TokenizedSample)
 
 
-    @pytest.fixture
-    def sae(self, mocker):
-        mock = mocker.MagicMock()
-        mock.cfg.associated_hook_points = ["hook_point"]
-        mock.cfg.d_sae = 10
-        mock.normalize_activations = lambda x: x
-        mock.prepare_input = lambda x: (x["hook_point"], {})
-        def encode(x, **kwargs):
-            batch_size, seq_len, dim = x.shape
-            return torch.randn(batch_size, seq_len, mock.cfg.d_sae)
-        mock.encode = encode
-        return mock
-
-    def test_generate_non_activating_examples(self, model, datasets, mongo_client, feature_analysis, sae):
+    def test_generate_non_activating_examples(self, model, datasets, mongo_client, feature_analysis):
         non_activating_examples = generate_non_activating_examples(
             feature_index=0,
             model=model,
-            sae=sae,
-            dataset=datasets("test_dataset", 0, 1),
+            datasets=datasets,
             mongo_client=mongo_client,
             sae_name="test",
             sae_series="test",
             analysis_name="test_analysis",
             n=1,
-            threshold=1000,
         )
         assert len(non_activating_examples) == 1
+        assert isinstance(non_activating_examples[0], TokenizedSample)

@@ -13,7 +13,7 @@ It includes:
 import random
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Generator, List, Literal, Optional
 
 import torch
 from datasets import Dataset
@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend.language_model import LanguageModel
-from lm_saes.config import BaseConfig
+from lm_saes.config import BaseConfig, BaseSAEConfig
 from lm_saes.database import MongoClient
 
 
@@ -59,6 +59,12 @@ class AutoInterpExplanation(BaseModel):
     final_explanation: str
     """The explanation of the feature."""
 
+    activation_consistency: Literal[1, 2, 3, 4, 5]
+    """The consistency of the feature."""
+
+    complexity: Literal[1, 2, 3, 4, 5]
+    """The complexity of the feature."""
+
 
 class AutoInterpEvaluation(BaseModel):
     """The result of an auto-interpretation of a SAE feature."""
@@ -83,6 +89,7 @@ class AutoInterpConfig(BaseConfig):
     n_activating_examples: int = 7
     n_non_activating_examples: int = 20
     activation_threshold: float = 0.7  # Threshold relative to max activation for highlighting tokens
+    max_length: int = 50
 
     # Scoring settings
     scorer_type: List[ScorerType] = Field(default_factory=lambda: [ScorerType.DETECTION, ScorerType.FUZZING])
@@ -97,8 +104,6 @@ class AutoInterpConfig(BaseConfig):
 
     # Prompting settings
     include_cot: bool = True  # Whether to use chain-of-thought prompting
-    include_top_logits: bool = True  # Whether to include top promoted tokens
-    max_logits_to_show: int = 10  # Max number of top logits to show in the prompt
 
 
 @dataclass
@@ -160,9 +165,6 @@ class TokenizedSample:
                 positions.add(origin["range"][0])
                 positions.add(origin["range"][1])
 
-        positions.add(0)
-        positions.add(len(text))
-
         sorted_positions = sorted(positions)
         segments = []
         for i in range(len(sorted_positions) - 1):
@@ -186,6 +188,7 @@ def generate_activating_examples(
     sae_series: str | None,
     analysis_name: str = "default",
     n: int = 10,
+    max_length: int = 50,
 ) -> list[TokenizedSample]:
     """Generate examples where a feature strongly activates using database records.
 
@@ -225,26 +228,26 @@ def generate_activating_examples(
             sampling.feature_acts,
         )
     ):
-        try:
-            dataset = datasets(dataset_name, shard_idx, n_shards)
-            data = dataset[context_idx]
+        dataset = datasets(dataset_name, shard_idx, n_shards)
+        data = dataset[context_idx]
 
-            # Process the sample using model's trace method
-            origins = model.trace({k: [v] for k, v in data.items()})[0]
+        # Process the sample using model's trace method
+        origins = model.trace({k: [v] for k, v in data.items()})[0]
 
-            # Create TokenizedExample using the trace information
-            sample = TokenizedSample.construct(
-                text=data["text"],
-                activations=feature_acts,
-                origins=origins,
-                max_activation=analysis.max_feature_acts,
-            )
+        max_act_pos = torch.argmax(torch.tensor(feature_acts)).item()
 
-            samples.append(sample)
+        left_end = max(0, max_act_pos - max_length // 2)
+        right_end = min(len(origins), max_act_pos + max_length // 2)
 
-        except Exception as e:
-            print(f"Error processing example {i} from sampling: {e}")
-            continue
+        # Create TokenizedExample using the trace information
+        sample = TokenizedSample.construct(
+            text=data["text"],
+            activations=feature_acts[left_end:right_end],
+            origins=origins[left_end:right_end],
+            max_activation=analysis.max_feature_acts,
+        )
+
+        samples.append(sample)
 
         if len(samples) >= n:
             break
@@ -255,30 +258,31 @@ def generate_activating_examples(
 def generate_non_activating_examples(
     feature_index: int,
     model: LanguageModel,
-    sae: AbstractSparseAutoEncoder,
-    dataset: Dataset,
+    datasets: Callable[[str, int, int], Dataset],
     mongo_client: MongoClient,
     sae_name: str,
     sae_series: str | None,
     analysis_name: str = "default",
-    max_length: int = 1024,
-    n: int = 20,
-    threshold: float = 0.3,
+    n: int = 10,
+    max_length: int = 50,
 ) -> list[TokenizedSample]:
     """Generate examples where a feature doesn't activate much.
 
     Args:
-        feature_index: Index of the feature
-        max_feature_acts: Maximum activation value for the feature
+        feature_index: Index of the feature to analyze
         model: Language model to use
         sae: SAE model to use
-        dataset: Dataset to sample from
-        max_length: Maximum sequence length
-        n: Number of examples to generate
+        mongo_client: MongoDB client to fetch examples
+        sae_name: Name of the SAE
+        sae_series: Series of the SAE
+        analysis_name: Name of the analysis
+        n: Maximum number of examples to generate
 
     Returns:
-        List of non-activating examples
+        List of TokenizedExample with low activation for the feature
     """
+
+    samples: list[TokenizedSample] = []
 
     # Get feature information from MongoDB
     feature = mongo_client.get_feature(sae_name, sae_series, feature_index)
@@ -290,35 +294,38 @@ def generate_non_activating_examples(
     if not analysis:
         raise ValueError(f"Analysis {analysis_name} not found for feature {feature_index}")
 
-    samples: list[TokenizedSample] = []
-    hook_points = sae.cfg.associated_hook_points
-    for i in range(len(dataset)):
-        idx = random.randint(0, len(dataset) - 1)
-        data = dataset[idx]
+    # Get examples from each sampling
+    sampling = analysis.samplings[-1]
+    assert sampling.name == "non_activating", f"Sampling {sampling.name} is not non_activating"
+    for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts) in enumerate(
+        zip(
+            sampling.dataset_name,
+            sampling.shard_idx if sampling.shard_idx else [0] * len(sampling.dataset_name),
+            sampling.n_shards if sampling.n_shards else [1] * len(sampling.dataset_name),
+            sampling.context_idx,
+            sampling.feature_acts,
+        )
+    ):
+        try:
+            dataset = datasets(dataset_name, shard_idx, n_shards)
+            data = dataset[context_idx]
 
-        # Get activations for this sample
-        with torch.no_grad():
-            # Get model activations
-            batch = model.to_activations({k: [v] for k, v in data.items()}, hook_points)
-            batch = sae.normalize_activations(batch)
+            # Process the sample using model's trace method
+            origins = model.trace({k: [v] for k, v in data.items()})[0]
 
-            # Encode with SAE
-            x, kwargs = sae.prepare_input(batch)
+            # Create TokenizedExample using the trace information
+            sample = TokenizedSample.construct(
+                text=data["text"],
+                activations=feature_acts[:max_length],
+                origins=origins[:max_length],
+                max_activation=analysis.max_feature_acts,
+            )
 
-            # Use SAE to encode activations
-            feature_acts = sae.encode(x, **kwargs)
+            samples.append(sample)
 
-            # Check if this feature doesn't activate much
-            if feature_acts[0, :, feature_index].max().item() < threshold * analysis.max_feature_acts:
-                # This is a good non-activating example
-                origins = model.trace({k: [v] for k, v in data.items()})[0]
-                sample = TokenizedSample.construct(
-                    text=data["text"],
-                    activations=feature_acts[0, :, feature_index].tolist(),
-                    origins=origins,
-                    max_activation=analysis.max_feature_acts,
-                )
-                samples.append(sample)
+        except Exception as e:
+            print(f"Error processing example {i} from sampling non-activating: {e}")
+            continue
 
         if len(samples) >= n:
             break
@@ -354,14 +361,12 @@ class FeatureInterpreter:
         self,
         feature_index: int,
         model: LanguageModel,
-        sae: AbstractSparseAutoEncoder,
         datasets: Callable[[str, int, int], Dataset],
-        dataset_name: str,
         mongo_client: MongoClient,
         sae_name: str,
         sae_series: str | None,
         analysis_name: str = "default",
-        max_length: int = 1024,
+        max_length: int = 50,
     ) -> tuple[list[TokenizedSample], list[TokenizedSample]]:
         """Get activating and non-activating examples for a feature."""
         activating_examples = generate_activating_examples(
@@ -372,19 +377,17 @@ class FeatureInterpreter:
             sae_name=sae_name,
             sae_series=sae_series,
             analysis_name=analysis_name,
+            max_length=max_length,
         )
         non_activating_examples = generate_non_activating_examples(
             feature_index=feature_index,
             model=model,
-            sae=sae,
-            dataset=datasets(dataset_name, 0, 1),
+            datasets=datasets,
             mongo_client=mongo_client,
             sae_name=sae_name,
             sae_series=sae_series,
             analysis_name=analysis_name,
             max_length=max_length,
-            n=self.cfg.n_non_activating_examples,
-            threshold=self.cfg.activation_threshold,
         )
         return activating_examples, non_activating_examples
 
@@ -397,24 +400,64 @@ class FeatureInterpreter:
         Returns:
             Prompt string for the LLM
         """
-        system_prompt = """We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. The activating words in each document are indicated with << ... >>. We will give you a list of documents on which the feature activates, in order from most strongly activating to least strongly activating. Look at the parts of the document the feature activates for and summarize in a single sentence what the feature is activating on. Try not to be overly specific in your explanation. Note that some features will activate only on specific words or substrings, but others will activate on most/all words in a sentence provided that sentence contains some particular concept. Your explanation should cover most or all activating words (for example, don't give an explanation which is specific to a single word if all words in a sentence cause the feature to activate). Pay attention to things like the capitalization and punctuation of the activating words or concepts, if that seems relevant. Keep the explanation as short and simple as possible, limited to 20 words or less. Omit punctuation and formatting. You should avoid giving long lists of words."""
-
+        cot_prompt = ""
         if self.cfg.include_cot:
-            system_prompt += "\n\nTo explain this feature, please follow these steps:\n\n"
-            system_prompt += "Step 1: List a couple activating and contextual tokens you find interesting. "
-            system_prompt += "Search for patterns in these tokens, if there are any. Don't list more than 5 tokens.\n\n"
-            system_prompt += "Step 2: Write down general shared features of the text examples.\n\n"
-            system_prompt += 'Step 3: Write a concise explanation of what this feature detects. Your response should be in the form "This feature activates on...".'
-        else:
-            system_prompt += '\nYour response should be in the form "This feature activates on...".'
+            cot_prompt += "\n\nTo explain this feature, please follow these steps:\n"
+            cot_prompt += "Step 1: List a couple activating and contextual tokens you find interesting. "
+            cot_prompt += "Search for patterns in these tokens, if there are any. Don't list more than 5 tokens.\n"
+            cot_prompt += "Step 2: Write down general shared features of the text examples.\n"
+            cot_prompt += "Step 3: Write a concise explanation of what this feature detects.\n"
 
-        system_prompt += """ Some examples: "This neuron activates on the word 'knows' in rhetorical questions", and "This neuron activates on verbs related to decision-making and preferences", and "This neuron activates on the substring 'Ent' at the start of words", and "This neuron activates on text about government economic policy"."""
+        examples_prompt = """Some examples:
+
+The feature activates on the word 'knows' in rhetorical questions.
+Activation Consistency: 5
+Complexity: 4
+
+The feature activates on verbs related to decision-making and preferences.
+Activation Consistency: 4
+Complexity: 4
+
+The feature activates on the substring 'Ent' at the start of words
+Activation Consistency: 5
+Complexity: 1
+
+The feature activates on text about government economic policy
+Activation Consistency: 3
+Complexity: 5
+"""
+        system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. The activating words in each document are indicated with << ... >>. We will give you a list of documents on which the feature activates, in order from most strongly activating to least strongly activating.
+
+Your task is to:
+
+First, Summarize the Activation: Look at the parts of the document the feature activates for and summarize in a single sentence what the feature is activating on. Try not to be overly specific in your explanation. Note that some features will activate only on specific words or substrings, but others will activate on most/all words in a sentence provided that sentence contains some particular concept. Your explanation should cover most or all activating words (for example, don't give an explanation which is specific to a single word if all words in a sentence cause the feature to activate). Pay attention to things like the capitalization and punctuation of the activating words or concepts, if that seems relevant. Keep the explanation as short and simple as possible, limited to 20 words or less. Omit punctuation and formatting. You should avoid giving long lists of words.{cot_prompt}
+
+Second, Assess Activation Consistency: Based on your summary and the provided examples, evaluate the consistency of the feature's activation. Return your assessment as a single integer from the following scale:
+
+5: Clear pattern with no deviating examples
+4: Clear pattern with one or two deviating examples
+3: Clear overall pattern but quite a few examples not fitting that pattern
+2: Broad consistent theme but lacking structure
+1: No discernible pattern
+
+Third, Assess Feature Complexity: Based on your summary and the nature of the activation, evaluate the complexity of the feature. Return your assessment as a single integer from the following scale:
+
+5: Rich feature firing on diverse contexts with an interesting unifying theme, e.g., “feelings of togetherness”
+4: Feature relating to high-level semantic structure, e.g., “return statements in code”
+3: Moderate complexity, such as a phrase, category, or tracking sentence structure, e.g., “website URLs”
+2: Single word or token feature but including multiple languages or spelling, e.g., “mentions of dog”
+1: Single token feature, e.g., “the token ‘(‘”
+
+Your final output should first provide the summary sentence in the form "This feature activates on...", then on a new line the Activation Consistency score in the form "Activation Consistency: X", and on another new line the Complexity score in the form "Complexity: X".
+
+{examples_prompt}
+"""
+
+
 
         user_prompt = "The activating documents are given below:\n\n"
-        # Select a random subset of examples to show
-        examples_to_show = random.sample(
-            activating_examples, min(self.cfg.n_activating_examples, len(activating_examples))
-        )
+        # Select a subset of examples to show
+        examples_to_show = activating_examples[:self.cfg.n_activating_examples]
 
         for i, example in enumerate(examples_to_show, 1):
             highlighted = example.display_highlighted(self.cfg.activation_threshold)
@@ -545,7 +588,7 @@ class FeatureInterpreter:
 
         return {
             "method": "detection",
-            "prompt": user_prompt,
+            "prompt": system_prompt + "\n\n" + user_prompt,
             "response": detection_response,
             "ground_truth": ground_truth,
             "predictions": predictions,
@@ -719,12 +762,10 @@ class FeatureInterpreter:
         sae_series: str,
         feature_indices: List[int],
         model: LanguageModel,
-        sae: AbstractSparseAutoEncoder,
+        sae: BaseSAEConfig,
         datasets: Callable[[str, int, int], Dataset],
-        dataset_name: str,
         analysis_name: str = "default",
-        max_length: int = 1024,
-    ) -> Dict[int, Dict[str, Any]]:
+    ) -> Generator[Dict[str, Any], None, None]:
         """Generate and evaluate explanations for multiple features.
 
         Args:
@@ -744,63 +785,53 @@ class FeatureInterpreter:
 
         # Determine hook points based on SAE configuration
         hook_points = []
-        layer = getattr(sae.cfg, "layer", 0)
+        layer = getattr(sae, "layer", 0)
         hook_points.append(f"blocks.{layer}.hook_resid_post")
 
         results = {}
         for feature_idx in feature_indices:
-            try:
-                # Generate activating examples from the database
-                activating_examples, non_activating_examples = self.get_feature_examples(
-                    feature_index=feature_idx,
-                    model=model,
-                    sae=sae,
-                    datasets=datasets,
-                    dataset_name=dataset_name,
-                    mongo_client=self.mongo_client,
-                    sae_name=sae_name,
-                    sae_series=sae_series,
-                    analysis_name=analysis_name,
-                    max_length=max_length,
+            # Generate activating examples from the database
+            activating_examples, non_activating_examples = self.get_feature_examples(
+                feature_index=feature_idx,
+                model=model,
+                datasets=datasets,
+                mongo_client=self.mongo_client,
+                sae_name=sae_name,
+                sae_series=sae_series,
+                analysis_name=analysis_name,
+                max_length=self.cfg.max_length,
+            )
+
+            # Generate explanation for the feature
+            explanation_result = self.generate_explanation(activating_examples)
+            explanation: AutoInterpExplanation = explanation_result["response"]
+            print(explanation.final_explanation + "\n\n")
+            # Evaluate explanation
+            evaluation_results = []
+
+            if ScorerType.DETECTION in self.cfg.scorer_type:
+                detection_result = self.evaluate_explanation_detection(
+                    explanation, activating_examples, non_activating_examples
                 )
+                evaluation_results.append(detection_result)
 
-                # Generate explanation for the feature
-                explanation_result = self.generate_explanation(activating_examples)
-                explanation: AutoInterpExplanation = explanation_result["response"]
+            if ScorerType.FUZZING in self.cfg.scorer_type:
+                fuzzing_result = self.evaluate_explanation_fuzzing(explanation, activating_examples)
+                evaluation_results.append(fuzzing_result)
 
-                # Evaluate explanation
-                evaluation_results = []
 
-                if ScorerType.DETECTION in self.cfg.scorer_type:
-                    detection_result = self.evaluate_explanation_detection(
-                        explanation, activating_examples, non_activating_examples
-                    )
-                    evaluation_results.append(detection_result)
-
-                if ScorerType.FUZZING in self.cfg.scorer_type:
-                    fuzzing_result = self.evaluate_explanation_fuzzing(explanation, activating_examples)
-                    evaluation_results.append(fuzzing_result)
-
-                # Store results
-                results[feature_idx] = {
-                    "feature_index": feature_idx,
-                    "sae_name": sae_name,
-                    "sae_series": sae_series,
-                    "analysis_name": analysis_name,
-                    "explanation": explanation.final_explanation,
-                    "explanation_details": explanation_result,
-                    "evaluations": evaluation_results,
-                    "passed": any(eval_result["passed"] for eval_result in evaluation_results),
-                }
-            except Exception as e:
-                # Log error and continue with next feature
-                print(f"Error interpreting feature {feature_idx}: {e}")
-                results[feature_idx] = {
-                    "feature_index": feature_idx,
-                    "sae_name": sae_name,
-                    "sae_series": sae_series,
-                    "analysis_name": analysis_name,
-                    "error": str(e),
-                }
-
-        return results
+            yield {
+                "feature_index": feature_idx,
+                "sae_name": sae_name,
+                "sae_series": sae_series,
+                "analysis_name": analysis_name,
+                "explanation": explanation.final_explanation,
+                "complexity": explanation.complexity,
+                "consistency": explanation.activation_consistency,
+                "explanation_details": {k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in explanation_result.items()},
+                "evaluations": [
+                    {k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in eval_result.items()}
+                    for eval_result in evaluation_results
+                ],
+                "passed": any(eval_result["passed"] for eval_result in evaluation_results),
+            }
