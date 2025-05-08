@@ -895,14 +895,11 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
         activation_factory = ActivationFactory(settings.activation_factory)
 
     if isinstance(settings.sae, MixCoderConfig):
-        sae = MixCoder.from_config(settings.sae)
+        sae = MixCoder.from_config(settings.sae, device_mesh=device_mesh)
     elif isinstance(settings.sae, CrossCoderConfig):
-        sae = CrossCoder.from_config(settings.sae)
+        sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
     else:
-        sae = SparseAutoEncoder.from_config(settings.sae)
-
-    if device_mesh is not None:
-        sae.tensor_parallel(device_mesh)
+        sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
 
     analyzer = FeatureAnalyzer(settings.analyzer)
 
@@ -931,8 +928,12 @@ class AnalyzeCrossCoderSettings(BaseSettings):
     analyzer: FeatureAnalyzerConfig
     """Configuration for feature analysis"""
 
+    feature_analysis_name: str = "default"
+    """Name of the feature analysis."""
+
     mongo: MongoDBConfig
     """Configuration for the MongoDB database."""
+
 
 @torch.no_grad()
 def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
@@ -957,8 +958,7 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
 
     activation_factory = ActivationFactory(settings.activation_factories[crosscoder_device_mesh.get_local_rank("head")])
 
-    sae = CrossCoder.from_config(settings.sae)
-    sae.tensor_parallel(crosscoder_device_mesh)
+    sae = CrossCoder.from_config(settings.sae, device_mesh=crosscoder_device_mesh)
 
     analyzer = FeatureAnalyzer(settings.analyzer)
 
@@ -967,7 +967,11 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
 
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
     mongo_client.add_feature_analysis(
-        name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result, start_idx=start_idx
+        name=settings.feature_analysis_name,
+        sae_name=settings.sae_name,
+        sae_series=settings.sae_series,
+        analysis=result,
+        start_idx=start_idx,
     )
 
 

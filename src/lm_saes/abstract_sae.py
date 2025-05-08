@@ -97,7 +97,10 @@ class JumpReLU(torch.nn.Module):
         self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
     ) -> None:
         self.device_mesh = device_mesh
-        self.register_parameter("log_jumprelu_threshold", nn.Parameter(state_dict[f"{prefix}log_jumprelu_threshold"]))
+        self.register_parameter(
+            "log_jumprelu_threshold",
+            nn.Parameter(state_dict[f"{prefix}log_jumprelu_threshold"].to(self.log_jumprelu_threshold.dtype)),
+        )
 
 
 class AbstractSparseAutoEncoder(HookedRootModule, ABC):
@@ -419,14 +422,13 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         for i, dim_size in enumerate(shape)
                     )
 
-                with safe_open(ckpt_path, device=cfg.device, framework="pt") as f:
+                with safe_open(ckpt_path, device=int(os.environ["LOCAL_RANK"]), framework="pt") as f:
 
                     def load_tensor(key: str) -> DTensor:
                         tensor_slice = f.get_slice(key)
                         shape = tensor_slice.get_shape()
                         indices = get_indices(shape, cls.dim_maps()[key], device_mesh)
-                        local_tensor = tensor_slice[indices]
-                        print(key, indices, local_tensor.shape, device_mesh)
+                        local_tensor = tensor_slice[indices].to(cfg.dtype)
                         return DTensor.from_local(
                             local_tensor,
                             device_mesh=device_mesh,
