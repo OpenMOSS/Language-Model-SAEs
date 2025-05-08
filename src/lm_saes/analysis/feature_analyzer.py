@@ -361,6 +361,57 @@ class FeatureAnalyzer:
         """
         results = []
 
+        if isinstance(sae, CrossCoder):
+            decoder_norms = sae.decoder_norm()
+            if isinstance(decoder_norms, DTensor):
+                assert device_mesh is not None, "Device mesh is required for DTensor decoder norms"
+                if decoder_norms.device_mesh is not device_mesh:
+                    decoder_norms = DTensor.from_local(
+                        decoder_norms.full_tensor(), device_mesh, run_check=True
+                    )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                    # TODO: Remove this once redistributing across device meshes is supported
+
+                decoder_norms = decoder_norms.redistribute(
+                    placements=placements_from_dim_map({"model": -1}, device_mesh)
+                ).to_local()
+            assert decoder_norms.shape[-1] == len(act_times), (
+                f"decoder_norms.shape: {decoder_norms.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
+            )
+
+            decoder_similarity_matrices = sae.decoder_similarity_matrices()
+            if isinstance(decoder_similarity_matrices, DTensor):
+                assert device_mesh is not None, "Device mesh is required for DTensor decoder similarity matrices"
+                if decoder_similarity_matrices.device_mesh is not device_mesh:
+                    decoder_similarity_matrices = DTensor.from_local(
+                        decoder_similarity_matrices.full_tensor(), device_mesh, run_check=True
+                    )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                    # TODO: Remove this once redistributing across device meshes is supported
+
+                decoder_similarity_matrices = decoder_similarity_matrices.redistribute(
+                    placements=placements_from_dim_map({"model": 0}, device_mesh)
+                ).to_local()
+            assert decoder_similarity_matrices.shape[0] == len(act_times), (
+                f"decoder_similarity_matrices.shape: {decoder_similarity_matrices.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
+            )
+
+            decoder_inner_product_matrices = sae.decoder_inner_product_matrices()
+            if isinstance(decoder_inner_product_matrices, DTensor):
+                assert device_mesh is not None, "Device mesh is required for DTensor decoder inner product matrices"
+                if decoder_inner_product_matrices.device_mesh is not device_mesh:
+                    decoder_inner_product_matrices = DTensor.from_local(
+                        decoder_inner_product_matrices.full_tensor(), device_mesh, run_check=True
+                    )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                    # TODO: Remove this once redistributing across device meshes is supported
+
+                decoder_inner_product_matrices = decoder_inner_product_matrices.redistribute(
+                    placements=placements_from_dim_map({"model": 0}, device_mesh)
+                ).to_local()
+            assert decoder_inner_product_matrices.shape[0] == len(act_times), (
+                f"decoder_inner_product_matrices.shape: {decoder_inner_product_matrices.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
+            )
+        else:
+            decoder_norms, decoder_similarity_matrices, decoder_inner_product_matrices = None, None, None
+
         for i in range(len(act_times)):
             feature_result = {
                 "act_times": act_times[i].item(),
@@ -377,22 +428,7 @@ class FeatureAnalyzer:
                 ],
             }
 
-            if isinstance(sae, CrossCoder):
-                decoder_norms = sae.decoder_norm()
-                if isinstance(decoder_norms, DTensor):
-                    assert device_mesh is not None, "Device mesh is required for DTensor decoder norms"
-                    if decoder_norms.device_mesh is not device_mesh:
-                        decoder_norms = DTensor.from_local(
-                            decoder_norms.full_tensor(), device_mesh, run_check=True
-                        )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
-                        # TODO: Remove this once redistributing across device meshes is supported
-
-                    decoder_norms = decoder_norms.redistribute(
-                        placements=placements_from_dim_map({"model": -1}, device_mesh)
-                    ).to_local()
-                assert decoder_norms.shape[-1] == len(act_times), (
-                    f"decoder_norms.shape: {decoder_norms.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
-                )
+            if decoder_norms is not None:
                 feature_result["decoder_norms"] = decoder_norms[:, i].tolist()
 
             # Add modality-specific metrics for MixCoder

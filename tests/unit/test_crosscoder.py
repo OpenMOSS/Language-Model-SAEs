@@ -541,3 +541,75 @@ def test_torch_compile(crosscoder: CrossCoder):
             pytest.skip(f"torch.compile failed with error: {e}")
         else:
             raise e
+
+
+def test_decoder_inner_product_matrices(crosscoder: CrossCoder):
+    """Test calculation of decoder inner product matrices."""
+    # Get the inner product matrices
+    inner_product_matrices = crosscoder.decoder_inner_product_matrices()
+
+    # Expected shape: (d_sae, n_heads, n_heads)
+    assert inner_product_matrices.shape == (crosscoder.cfg.d_sae, crosscoder.cfg.n_heads, crosscoder.cfg.n_heads)
+
+    # For each feature dimension, calculate the expected inner product between heads
+    # For feature 0:
+    # Head 0: [1.0, 0.5]
+    # Head 1: [0.5, 0.0]
+    # Inner product = 1.0*0.5 + 0.5*0.0 = 0.5
+    expected_feature0 = torch.tensor(
+        [
+            [1.0 * 1.0 + 0.5 * 0.5, 1.0 * 0.5 + 0.5 * 0.0],  # Head 0 with Heads [0,1]
+            [0.5 * 1.0 + 0.0 * 0.5, 0.5 * 0.5 + 0.0 * 0.0],  # Head 1 with Heads [0,1]
+        ],
+        device=crosscoder.cfg.device,
+        dtype=crosscoder.cfg.dtype,
+    )
+
+    # For feature 1:
+    # Head 0: [0.5, 1.0]
+    # Head 1: [1.0, 0.5]
+    # Inner product = 0.5*1.0 + 1.0*0.5 = 1.0
+    expected_feature1 = torch.tensor(
+        [
+            [0.5 * 0.5 + 1.0 * 1.0, 0.5 * 1.0 + 1.0 * 0.5],  # Head 0 with Heads [0,1]
+            [1.0 * 0.5 + 0.5 * 1.0, 1.0 * 1.0 + 0.5 * 0.5],  # Head 1 with Heads [0,1]
+        ],
+        device=crosscoder.cfg.device,
+        dtype=crosscoder.cfg.dtype,
+    )
+
+    # Check the first two features (others follow similar pattern)
+    assert torch.allclose(inner_product_matrices[0], expected_feature0, atol=1e-6)
+    assert torch.allclose(inner_product_matrices[1], expected_feature1, atol=1e-6)
+
+
+def test_decoder_similarity_matrices(crosscoder: CrossCoder):
+    """Test calculation of decoder similarity matrices."""
+    # Get the similarity matrices
+    similarity_matrices = crosscoder.decoder_similarity_matrices()
+
+    # Expected shape: (d_sae, n_heads, n_heads)
+    assert similarity_matrices.shape == (crosscoder.cfg.d_sae, crosscoder.cfg.n_heads, crosscoder.cfg.n_heads)
+
+    # Get the inner product matrices and decoder norms
+    inner_product_matrices = crosscoder.decoder_inner_product_matrices()
+    decoder_norms = crosscoder.decoder_norm()
+
+    # Calculate expected similarity matrices manually
+    # For each feature dimension, similarity = inner_product / (norm_i * norm_j)
+    expected_similarity = inner_product_matrices.clone()
+    for i in range(crosscoder.cfg.n_heads):
+        for j in range(crosscoder.cfg.n_heads):
+            expected_similarity[:, i, j] /= decoder_norms[i] * decoder_norms[j]
+
+    # Check that the similarity matrices match our manual calculation
+    assert torch.allclose(similarity_matrices, expected_similarity, atol=1e-6)
+
+    # Check that diagonal elements are 1.0 (self-similarity)
+    for i in range(crosscoder.cfg.n_heads):
+        assert torch.allclose(similarity_matrices[:, i, i], torch.ones_like(similarity_matrices[:, i, i]), atol=1e-6)
+
+    # Check that matrices are symmetric
+    for i in range(crosscoder.cfg.n_heads):
+        for j in range(crosscoder.cfg.n_heads):
+            assert torch.allclose(similarity_matrices[:, i, j], similarity_matrices[:, j, i], atol=1e-6)
