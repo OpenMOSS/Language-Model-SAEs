@@ -288,7 +288,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     @classmethod
     def dim_maps(cls) -> dict[str, dict[str, int]]:
-        return {
+        return super().dim_maps() | {
             "W_E": {"head": 0, "model": 2},
             "W_D": {"head": 0, "model": 1},
             "b_E": {"head": 0, "model": 1},
@@ -301,7 +301,10 @@ class CrossCoder(AbstractSparseAutoEncoder):
     ) -> None:
         super().load_distributed_state_dict(state_dict, device_mesh, prefix)
         for name in ["W_E", "W_D", "b_E", "b_D"]:
-            self.register_parameter(name, nn.Parameter(state_dict[f"{prefix}{name}"]))
+            self.register_parameter(
+                name,
+                nn.Parameter(state_dict[f"{prefix}{name}"].to(getattr(self, name).dtype)),
+            )
 
     @torch.no_grad()
     def decoder_inner_product_matrices(self) -> Float[torch.Tensor, "d_sae n_head n_head"]:
