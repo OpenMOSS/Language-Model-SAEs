@@ -281,11 +281,36 @@ class CrossCoder(AbstractSparseAutoEncoder):
     @override
     def tensor_parallel(self, device_mesh: DeviceMesh):
         super().tensor_parallel(device_mesh)
-        W_E = distribute_tensor_on_dim(self.W_E, device_mesh, {"head": 0, "model": 2})
-        self.register_parameter("W_E", nn.Parameter(W_E))
-        W_D = distribute_tensor_on_dim(self.W_D, device_mesh, {"head": 0, "model": 1})
-        self.register_parameter("W_D", nn.Parameter(W_D))
-        b_E = distribute_tensor_on_dim(self.b_E, device_mesh, {"head": 0, "model": 1})
-        self.register_parameter("b_E", nn.Parameter(b_E))
-        b_D = distribute_tensor_on_dim(self.b_D, device_mesh, {"head": 0})
-        self.register_parameter("b_D", nn.Parameter(b_D))
+        for name in ["W_E", "W_D", "b_E", "b_D"]:
+            param = getattr(self, name)
+            distributed_param = distribute_tensor_on_dim(param, device_mesh, self.dim_maps()[name])
+            self.register_parameter(name, nn.Parameter(distributed_param))
+
+    @classmethod
+    def dim_maps(cls) -> dict[str, dict[str, int]]:
+        return {
+            "W_E": {"head": 0, "model": 2},
+            "W_D": {"head": 0, "model": 1},
+            "b_E": {"head": 0, "model": 1},
+            "b_D": {"head": 0},
+        }
+
+    @override
+    def load_distributed_state_dict(
+        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
+    ) -> None:
+        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
+        for name in ["W_E", "W_D", "b_E", "b_D"]:
+            self.register_parameter(name, nn.Parameter(state_dict[f"{prefix}{name}"]))
+
+    @torch.no_grad()
+    def decoder_inner_product_matrices(self) -> Float[torch.Tensor, "d_sae n_head n_head"]:
+        inner_product_matrices = einops.einsum(self.W_D, self.W_D, "i d_sae d_model, j d_sae d_model -> d_sae i j")
+        return inner_product_matrices
+
+    @torch.no_grad()
+    def decoder_similarity_matrices(self) -> Float[torch.Tensor, "d_sae n_head n_head"]:
+        inner_product_matrices = self.decoder_inner_product_matrices()
+        decoder_norms = self.decoder_norm()
+        decoder_norm_products = einops.einsum(decoder_norms, decoder_norms, "i d_sae, j d_sae -> d_sae i j")
+        return inner_product_matrices / decoder_norm_products
