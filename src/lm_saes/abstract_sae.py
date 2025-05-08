@@ -405,11 +405,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
                     def get_slice(mesh_dim_name: str, dim_size: int) -> slice:
                         assert device_mesh.mesh_dim_names is not None
+
                         if mesh_dim_name not in device_mesh.mesh_dim_names:
                             return slice(None)
                         else:
+                            assert dim_size % device_mesh.get_group(mesh_dim_name).size() == 0
+                            step = dim_size // device_mesh.get_group(mesh_dim_name).size()
                             local_rank = device_mesh.get_local_rank(mesh_dim_name)
-                            return slice(local_rank * dim_size, (local_rank + 1) * dim_size)
+                            return slice(local_rank * step, (local_rank + 1) * step)
 
                     return tuple(
                         slice(None) if i not in reverse_dim_map else get_slice(reverse_dim_map[i], dim_size)
@@ -423,6 +426,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         shape = tensor_slice.get_shape()
                         indices = get_indices(shape, cls.dim_maps()[key], device_mesh)
                         local_tensor = tensor_slice[indices]
+                        print(key, indices, local_tensor.shape, device_mesh)
                         return DTensor.from_local(
                             local_tensor,
                             device_mesh=device_mesh,
