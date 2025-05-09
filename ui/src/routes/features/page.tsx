@@ -23,11 +23,27 @@ export const FeaturesPage = () => {
 
   const [selectedDictionary, setSelectedDictionary] = useState<string | null>(null);
 
+  const [analysesState, fetchAnalyses] = useAsyncFn(async (dictionary: string) => {
+    if (!dictionary) return [];
+
+    return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/analyses`)
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+        return res;
+      })
+      .then(async (res) => await res.json())
+      .then((res) => z.array(z.string()).parse(res));
+  });
+
+  const [selectedAnalysis, setSelectedAnalysis] = useState<string>("default");
+
   const [featureIndex, setFeatureIndex] = useState<number>(0);
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
 
   const [featureState, fetchFeature] = useAsyncFn(
-    async (dictionary: string | null, featureIndex: number | string = "random") => {
+    async (dictionary: string | null, featureIndex: number | string = "random", analysisName: string = "default") => {
       if (!dictionary) {
         alert("Please select a dictionary first");
         return;
@@ -36,7 +52,9 @@ export const FeaturesPage = () => {
       setLoadingRandomFeature(featureIndex === "random");
 
       const feature = await fetch(
-        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}`,
+        `${
+          import.meta.env.VITE_BACKEND_URL
+        }/dictionaries/${dictionary}/features/${featureIndex}?feature_analysis_name=${analysisName}`,
         {
           method: "GET",
           headers: {
@@ -64,6 +82,7 @@ export const FeaturesPage = () => {
       setSearchParams({
         dictionary,
         featureIndex: feature.featureIndex.toString(),
+        analysis: analysisName,
       });
       return feature;
     }
@@ -72,26 +91,56 @@ export const FeaturesPage = () => {
   useMount(async () => {
     await fetchDictionaries();
     if (searchParams.get("dictionary")) {
-      setSelectedDictionary(searchParams.get("dictionary"));
-    }
-    if (searchParams.get("featureIndex")) {
-      setFeatureIndex(parseInt(searchParams.get("featureIndex")!));
-      fetchFeature(searchParams.get("dictionary"), searchParams.get("featureIndex")!);
+      const dict = searchParams.get("dictionary")!;
+      setSelectedDictionary(dict);
+
+      await fetchAnalyses(dict);
+
+      const analysisParam = searchParams.get("analysis");
+      if (analysisParam) {
+        setSelectedAnalysis(analysisParam);
+      }
+
+      if (searchParams.get("featureIndex")) {
+        setFeatureIndex(parseInt(searchParams.get("featureIndex")!));
+        fetchFeature(dict, searchParams.get("featureIndex")!, analysisParam || "default");
+      }
     }
   });
 
   useEffect(() => {
     if (dictionariesState.value && selectedDictionary === null) {
       setSelectedDictionary(dictionariesState.value[0]);
-      fetchFeature(dictionariesState.value[0]);
+      fetchAnalyses(dictionariesState.value[0]);
+      fetchFeature(dictionariesState.value[0], "random", "default");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dictionariesState.value]);
+
+  useEffect(() => {
+    if (selectedDictionary) {
+      fetchAnalyses(selectedDictionary);
+      setSelectedAnalysis("default");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDictionary]);
 
   const sections = [
     {
       title: "Histogram",
       id: "Histogram",
+    },
+    {
+      title: "Decoder Norms",
+      id: "DecoderNorms",
+    },
+    {
+      title: "Similarity Matrix",
+      id: "DecoderSimilarityMatrix",
+    },
+    {
+      title: "Inner Product Matrix",
+      id: "DecoderInnerProductMatrix",
     },
     {
       title: "Logits",
@@ -112,7 +161,9 @@ export const FeaturesPage = () => {
           <Select
             disabled={dictionariesState.loading || featureState.loading}
             value={selectedDictionary || undefined}
-            onValueChange={setSelectedDictionary}
+            onValueChange={(value) => {
+              setSelectedDictionary(value);
+            }}
           >
             <SelectTrigger className="bg-white">
               <SelectValue placeholder="Select a dictionary" />
@@ -128,12 +179,40 @@ export const FeaturesPage = () => {
           <Button
             disabled={dictionariesState.loading || featureState.loading}
             onClick={async () => {
-              await fetchFeature(selectedDictionary);
+              await fetchFeature(selectedDictionary, "random", selectedAnalysis);
             }}
           >
             Go
           </Button>
           <span className="font-bold"></span>
+
+          <span className="font-bold justify-self-end">Select analysis:</span>
+          <Select
+            disabled={analysesState.loading || !selectedDictionary || featureState.loading}
+            value={selectedAnalysis}
+            onValueChange={setSelectedAnalysis}
+          >
+            <SelectTrigger className="bg-white">
+              <SelectValue placeholder="Select an analysis" />
+            </SelectTrigger>
+            <SelectContent>
+              {analysesState.value?.map((analysis, i) => (
+                <SelectItem key={i} value={analysis}>
+                  {analysis}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            disabled={analysesState.loading || !selectedDictionary || featureState.loading}
+            onClick={async () => {
+              await fetchFeature(selectedDictionary, featureIndex, selectedAnalysis);
+            }}
+          >
+            Apply
+          </Button>
+          <span className="font-bold"></span>
+
           <span className="font-bold justify-self-end">Choose a specific feature:</span>
           <Input
             disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
@@ -145,14 +224,14 @@ export const FeaturesPage = () => {
           />
           <Button
             disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
-            onClick={async () => await fetchFeature(selectedDictionary, featureIndex)}
+            onClick={async () => await fetchFeature(selectedDictionary, featureIndex, selectedAnalysis)}
           >
             Go
           </Button>
           <Button
             disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
             onClick={async () => {
-              await fetchFeature(selectedDictionary);
+              await fetchFeature(selectedDictionary, "random", selectedAnalysis);
             }}
           >
             Show Random Feature

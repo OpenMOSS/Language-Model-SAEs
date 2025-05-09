@@ -82,6 +82,8 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
       const [, proportion] = analysisName.split("-");
       const percentage = parseFloat(proportion) * 100;
       return `Subsample ${percentage}%`;
+    } else {
+      return analysisName;
     }
   };
 
@@ -169,6 +171,76 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                 }}
                 config={{ responsive: true }}
               />
+            </div>
+          )}
+
+          {(feature.decoderSimilarityMatrix || feature.decoderInnerProductMatrix) && (
+            <div className="flex flex-col w-full gap-4">
+              <div className="flex justify-between gap-4">
+                {feature.decoderSimilarityMatrix && (
+                  <div id="DecoderSimilarityMatrix" className="flex flex-col w-1/2 gap-2">
+                    <p className="font-bold">Decoder Similarity Matrix</p>
+                    <Plot
+                      data={[
+                        {
+                          z: feature.decoderSimilarityMatrix,
+                          type: "heatmap",
+                          colorscale: "Viridis",
+                          hovertemplate: "Row: %{y}<br>Column: %{x}<br>Value: %{z}<extra></extra>",
+                        },
+                      ]}
+                      layout={{
+                        xaxis: {
+                          title: "Head Index",
+                          scaleanchor: "y",
+                          scaleratio: 1,
+                          constrain: "domain",
+                        },
+                        yaxis: {
+                          title: "Head Index",
+                          constrain: "domain",
+                        },
+                        margin: { t: 10, b: 50, l: 60, r: 10 },
+                        height: 400,
+                        width: 400,
+                      }}
+                      config={{ responsive: true }}
+                    />
+                  </div>
+                )}
+
+                {feature.decoderInnerProductMatrix && (
+                  <div id="DecoderInnerProductMatrix" className="flex flex-col w-1/2 gap-2">
+                    <p className="font-bold">Decoder Inner Product Matrix</p>
+                    <Plot
+                      data={[
+                        {
+                          z: feature.decoderInnerProductMatrix,
+                          type: "heatmap",
+                          colorscale: "Viridis",
+                          hovertemplate: "Row: %{y}<br>Column: %{x}<br>Value: %{z}<extra></extra>",
+                        },
+                      ]}
+                      layout={{
+                        xaxis: {
+                          title: "Head Index",
+                          scaleanchor: "y",
+                          scaleratio: 1,
+                          constrain: "domain",
+                        },
+                        yaxis: {
+                          title: "Head Index",
+                          constrain: "domain",
+                        },
+                        margin: { t: 10, b: 50, l: 60, r: 10 },
+                        height: 400,
+                        width: 400,
+                      }}
+                      config={{ responsive: true }}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
