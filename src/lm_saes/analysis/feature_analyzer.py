@@ -39,10 +39,10 @@ class FeatureAnalyzer:
 
     def _process_batch(
         self,
-        feature_acts: torch.Tensor, # [batch_size, context_size, d_sae]
+        feature_acts: torch.Tensor,  # [batch_size, context_size, d_sae]
         discrete_meta: dict[str, torch.Tensor],
         sample_result: Mapping[str, dict[str, torch.Tensor] | None],
-        max_feature_acts: torch.Tensor, # [d_sae]
+        max_feature_acts: torch.Tensor,  # [d_sae]
     ) -> Mapping[str, dict[str, torch.Tensor] | None]:
         """Process a batch of activations to update sampling results.
 
@@ -63,8 +63,10 @@ class FeatureAnalyzer:
         """
         # Compute exponential lottery ticket values for sampling if enabled
         if self.cfg.enable_sampling:
-            weights = feature_acts.clamp(min=0.0).pow(self.cfg.sample_weight_exponent).max(dim=1).values # [batch_size, d_sae]
-            elt = torch.rand_like(weights).log() / weights # [batch_size, d_sae]
+            weights = (
+                feature_acts.clamp(min=0.0).pow(self.cfg.sample_weight_exponent).max(dim=1).values
+            )  # [batch_size, d_sae]
+            elt = torch.rand_like(weights).log() / weights  # [batch_size, d_sae]
             elt[weights == 0.0] = -torch.inf
         else:
             elt = feature_acts.clamp(min=0.0).max(dim=1).values
@@ -126,7 +128,7 @@ class FeatureAnalyzer:
 
     def _sample_non_activating_examples(
         self,
-        feature_acts: torch.Tensor, # [batch_size, context_size, d_sae]
+        feature_acts: torch.Tensor,  # [batch_size, context_size, d_sae]
         discrete_meta: dict[str, torch.Tensor],
         sample_result: Mapping[str, dict[str, torch.Tensor] | None],
         max_feature_acts: torch.Tensor,
@@ -138,26 +140,31 @@ class FeatureAnalyzer:
             discrete_meta: Metadata tensors like dataset/context IDs
             sample_result: Current sampling results to update
         """
-        feature_acts = feature_acts[:, :self.cfg.non_activating_subsample["max_length"], :]
+        feature_acts = feature_acts[:, : self.cfg.non_activating_subsample["max_length"], :]
         sample_result_cur = sample_result.get("non_activating", None)
-        if sample_result_cur is not None and all(sample_result_cur["elt"].min(dim=-1).values > -torch.inf): # [n_samples, d_sae]
+        if sample_result_cur is not None and all(
+            sample_result_cur["elt"].min(dim=-1).values > -torch.inf
+        ):  # [n_samples, d_sae]
             return sample_result
 
-        elt = feature_acts.clamp(min=0.0).max(dim=1).values # [batch_size, d_sae]
-        elt[feature_acts.max(dim=1).values > max_feature_acts.unsqueeze(0) * self.cfg.non_activating_subsample["threshold"]] = -torch.inf
+        elt = feature_acts.clamp(min=0.0).max(dim=1).values  # [batch_size, d_sae]
+        elt[
+            feature_acts.max(dim=1).values
+            > max_feature_acts.unsqueeze(0) * self.cfg.non_activating_subsample["threshold"]
+        ] = -torch.inf
 
         batch_data = {
-                "elt": elt,
-                "feature_acts": rearrange(
-                    feature_acts,
-                    "batch_size context_size d_sae -> batch_size d_sae context_size",
-                ),
-                **{
-                    k: repeat(
-                        v,
-                        "batch_size -> batch_size d_sae",
-                        d_sae=feature_acts.size(-1),
-                    )
+            "elt": elt,
+            "feature_acts": rearrange(
+                feature_acts,
+                "batch_size context_size d_sae -> batch_size d_sae context_size",
+            ),
+            **{
+                k: repeat(
+                    v,
+                    "batch_size -> batch_size d_sae",
+                    d_sae=feature_acts.size(-1),
+                )
                 for k, v in discrete_meta.items()
             },
         }
@@ -167,12 +174,11 @@ class FeatureAnalyzer:
             sample_result_cur = concat_dict_of_tensor(sample_result_cur, batch_data)
         sample_result_cur = sort_dict_of_tensor(sample_result_cur, sort_dim=0, sort_key="elt", descending=True)
         sample_result_cur = {
-            k: v[:self.cfg.non_activating_subsample["n_samples"]] for k, v in sample_result_cur.items()
+            k: v[: self.cfg.non_activating_subsample["n_samples"]] for k, v in sample_result_cur.items()
         }
         sample_result = {**sample_result, "non_activating": sample_result_cur}
-        
-        return sample_result
 
+        return sample_result
 
     def compute_ignore_token_masks(
         self, tokens: torch.Tensor, ignore_token_ids: Optional[list[int]] = None
@@ -299,7 +305,9 @@ class FeatureAnalyzer:
                 k: torch.tensor(mapper.encode(k, v), device=sae.cfg.device, dtype=torch.int32) for k, v in meta.items()
             }
             sample_result = self._process_batch(feature_acts, discrete_meta, sample_result, max_feature_acts)
-            sample_result = self._sample_non_activating_examples(feature_acts, discrete_meta, sample_result, max_feature_acts)
+            sample_result = self._sample_non_activating_examples(
+                feature_acts, discrete_meta, sample_result, max_feature_acts
+            )
 
             # Update progress
             n_tokens_current = batch["tokens"].numel()
@@ -428,8 +436,15 @@ class FeatureAnalyzer:
                 ],
             }
 
-            if decoder_norms is not None:
+            if isinstance(sae, CrossCoder):
+                assert (
+                    decoder_norms is not None
+                    and decoder_similarity_matrices is not None
+                    and decoder_inner_product_matrices is not None
+                )
                 feature_result["decoder_norms"] = decoder_norms[:, i].tolist()
+                feature_result["decoder_similarity_matrix"] = decoder_similarity_matrices[i, :, :].tolist()
+                feature_result["decoder_inner_product_matrix"] = decoder_inner_product_matrices[i, :, :].tolist()
 
             # Add modality-specific metrics for MixCoder
             if (
