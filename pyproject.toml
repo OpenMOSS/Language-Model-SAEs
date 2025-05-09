@@ -8,11 +8,11 @@ dependencies = [
     "einops>=0.8.0",
     "fastapi>=0.115.4",
     "matplotlib>=3.9.2",
-    "numpy>=2.1.2",
+    "numpy<2.0.0",
     "pandas>=2.2.3",
     "pymongo>=4.10.1",
     "tensorboardX>=2.6.2.2",
-    "torch>=2.5.0",
+    # PyTorch has been moved to platform-specific dependency groups (default, cpu, cuda, npu)
     "tqdm>=4.66.5",
     "transformer-lens",
     "uvicorn>=0.32.0",
@@ -28,13 +28,12 @@ dependencies = [
     "argparse>=1.4.0",
     "pyyaml>=6.0.2",
     "tomlkit>=0.13.2",
-    "torchvision>=0.20.1",
+    # torchvision has been moved to platform-specific dependency groups (default, cpu, cuda, npu)
     "pydantic-settings>=2.7.1",
     "qwen-vl-utils>=0.0.10",
-    "flash-attn>=2.7.4.post1; (sys_platform == 'win32' or sys_platform == 'linux')",
     "triton>=3.1.0; (sys_platform == 'win32' or sys_platform == 'linux')",
 ]
-requires-python = "==3.12.*"
+requires-python = "==3.11.*"
 readme = "README.md"
 
 [[project.authors]]
@@ -92,6 +91,35 @@ dev = [
 triton = [
     "triton>=3.1.0",
 ]
+flash-attn = [
+    "flash-attn>=2.7.4.post1; (sys_platform == 'win32' or sys_platform == 'linux')",
+]
+
+[project.optional-dependencies]
+# Default PyTorch for macOS (with MPS acceleration)
+default = [
+    "torch>=2.5.0",
+    "torchvision>=0.20.1",
+]
+# NPU variant of PyTorch (for Huawei Ascend hardware)
+npu = [
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+    "torch-npu==2.5.1",
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "torch-cpu", extra = "npu" },
+]
+torchvision = [
+    { index = "torch-cpu", extra = "npu" },
+]
+
+[[tool.uv.index]]
+name = "torch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 exclude = [".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints", ".mypy_cache", ".nox", ".pants.d", ".pyenv", ".pytest_cache", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv", ".vscode", "__pypackages__", "_build", "buck-out", "build", "dist", "node_modules", "site-packages", "venv", "TransformerLens", "ui"]
