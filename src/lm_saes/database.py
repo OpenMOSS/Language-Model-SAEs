@@ -52,6 +52,7 @@ class FeatureRecord(BaseModel):
     sae_series: str
     index: int
     analyses: list[FeatureAnalysis] = []
+    interpretation: Optional[dict[str, Any]] = None
 
 
 class AnalysisRecord(BaseModel):
