@@ -10,19 +10,23 @@ It includes:
    - Fuzzing: Having LLMs identify correctly marked activating tokens
 """
 
+from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
+from functools import partial
 import random
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Generator, List, Literal, Optional
+from typing import Any, Callable, Generator, Literal, Optional
 
 import torch
 from datasets import Dataset
 from pydantic import BaseModel, Field
+from tqdm import tqdm
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend.language_model import LanguageModel
 from lm_saes.config import BaseConfig, BaseSAEConfig
-from lm_saes.database import MongoClient
+from lm_saes.database import FeatureRecord, MongoClient, FeatureAnalysis
+import asyncio
+
 
 
 class ExplainerType(str, Enum):
@@ -92,7 +96,7 @@ class AutoInterpConfig(BaseConfig):
     max_length: int = 50
 
     # Scoring settings
-    scorer_type: List[ScorerType] = Field(default_factory=lambda: [ScorerType.DETECTION, ScorerType.FUZZING])
+    scorer_type: list[ScorerType] = Field(default_factory=lambda: [ScorerType.DETECTION, ScorerType.FUZZING])
 
     # Detection settings
     detection_n_examples: int = 5  # Number of examples to show for detection
@@ -118,7 +122,7 @@ class Segment:
 
     def display(self, abs_threshold: float) -> str:
         """Display the segment as a string with whether it's highlighted."""
-        if self.activation >= abs_threshold:
+        if self.activation > abs_threshold:
             return f"<<{self.text}>>"
         else:
             return self.text
@@ -166,56 +170,48 @@ class TokenizedSample:
                 positions.add(origin["range"][1])
 
         sorted_positions = sorted(positions)
+
         segments = []
         for i in range(len(sorted_positions) - 1):
             start, end = sorted_positions[i], sorted_positions[i + 1]
-            segment_activation = max(
-                act
-                for origin, act in zip(origins, activations)
-                if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
-            )
+            try:
+                segment_activation = max(
+                    act
+                    for origin, act in zip(origins, activations)
+                    if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
+                )
+            except Exception as e:
+                print(f"Error processing segment: start={start}, end={end}, segment={text[start:end]}\n\n")
+                continue
             segments.append(Segment(text[start:end], segment_activation))
 
         return TokenizedSample(segments, max_activation)
 
 
+
 def generate_activating_examples(
-    feature_index: int,
+    feature: FeatureRecord,
     model: LanguageModel,
     datasets: Callable[[str, int, int], Dataset],
-    mongo_client: MongoClient,
-    sae_name: str,
-    sae_series: str | None,
-    analysis_name: str = "default",
+    analysis: FeatureAnalysis,
     n: int = 10,
     max_length: int = 50,
 ) -> list[TokenizedSample]:
     """Generate examples where a feature strongly activates using database records.
 
     Args:
-        feature_index: Index of the feature to analyze
+        feature: FeatureRecord to analyze
         model: Language model to use
-        sae: SAE model to use
-        mongo_client: MongoDB client to fetch examples
-        sae_name: Name of the SAE
-        sae_series: Series of the SAE
-        analysis_name: Name of the analysis
+        datasets: Callable to fetch datasets
+        analysis: FeatureAnalysis to use
         n: Maximum number of examples to generate
+        max_length: Maximum length of examples to generate
 
     Returns:
         List of TokenizedExample with high activation for the feature
     """
     samples: list[TokenizedSample] = []
-
-    # Get feature information from MongoDB
-    feature = mongo_client.get_feature(sae_name, sae_series, feature_index)
-    if not feature:
-        raise ValueError(f"Feature {feature_index} not found for SAE {sae_name}/{sae_series}")
-
-    # Find the analysis by name
-    analysis = next((a for a in feature.analyses if a.name == analysis_name), None)
-    if not analysis:
-        raise ValueError(f"Analysis {analysis_name} not found for feature {feature_index}")
+    error_prefix = f"Error processing activating examples of feature {feature.index}: "
 
     # Get examples from each sampling
     sampling = analysis.samplings[0]
@@ -228,75 +224,66 @@ def generate_activating_examples(
             sampling.feature_acts,
         )
     ):
-        dataset = datasets(dataset_name, shard_idx, n_shards)
-        data = dataset[context_idx]
+        try:
+            dataset = datasets(dataset_name, shard_idx, n_shards)
+            data = dataset[context_idx]
 
-        # Process the sample using model's trace method
-        origins = model.trace({k: [v] for k, v in data.items()})[0]
+            # Process the sample using model's trace method
+            origins = model.trace({k: [v] for k, v in data.items()})[0]
 
-        max_act_pos = torch.argmax(torch.tensor(feature_acts)).item()
+            max_act_pos = torch.argmax(torch.tensor(feature_acts)).item()
 
-        left_end = max(0, max_act_pos - max_length // 2)
-        right_end = min(len(origins), max_act_pos + max_length // 2)
+            left_end = max(0, max_act_pos - max_length // 2)
+            right_end = min(len(origins), max_act_pos + max_length // 2)
 
-        # Create TokenizedExample using the trace information
-        sample = TokenizedSample.construct(
-            text=data["text"],
-            activations=feature_acts[left_end:right_end],
-            origins=origins[left_end:right_end],
-            max_activation=analysis.max_feature_acts,
-        )
+            # Create TokenizedExample using the trace information
+            sample = TokenizedSample.construct(
+                text=data["text"],
+                activations=feature_acts[left_end:right_end],
+                origins=origins[left_end:right_end],
+                max_activation=analysis.max_feature_acts,
+            )
 
-        samples.append(sample)
+            samples.append(sample)
+
+        except Exception as e:
+            print(f"{error_prefix} {e}")
+            continue
 
         if len(samples) >= n:
             break
+        
 
     return samples
 
 
 def generate_non_activating_examples(
-    feature_index: int,
+    feature: FeatureRecord,
     model: LanguageModel,
     datasets: Callable[[str, int, int], Dataset],
-    mongo_client: MongoClient,
-    sae_name: str,
-    sae_series: str | None,
-    analysis_name: str = "default",
+    analysis: FeatureAnalysis,
     n: int = 10,
     max_length: int = 50,
 ) -> list[TokenizedSample]:
     """Generate examples where a feature doesn't activate much.
 
     Args:
-        feature_index: Index of the feature to analyze
+        feature: FeatureRecord to analyze
         model: Language model to use
-        sae: SAE model to use
-        mongo_client: MongoDB client to fetch examples
-        sae_name: Name of the SAE
-        sae_series: Series of the SAE
-        analysis_name: Name of the analysis
+        datasets: Callable to fetch datasets
+        analysis: FeatureAnalysis to use
         n: Maximum number of examples to generate
+        max_length: Maximum length of examples to generate
 
     Returns:
         List of TokenizedExample with low activation for the feature
     """
-
+    
     samples: list[TokenizedSample] = []
-
-    # Get feature information from MongoDB
-    feature = mongo_client.get_feature(sae_name, sae_series, feature_index)
-    if not feature:
-        raise ValueError(f"Feature {feature_index} not found for SAE {sae_name}/{sae_series}")
-
-    # Find the analysis by name
-    analysis = next((a for a in feature.analyses if a.name == analysis_name), None)
-    if not analysis:
-        raise ValueError(f"Analysis {analysis_name} not found for feature {feature_index}")
-
-    # Get examples from each sampling
+    error_prefix = f"Error processing non-activating examples of feature {feature.index}:"
+    
     sampling = analysis.samplings[-1]
-    assert sampling.name == "non_activating", f"Sampling {sampling.name} is not non_activating"
+    assert sampling.name == "non_activating", f"{error_prefix} Sampling {sampling.name} is not non_activating"
     for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts) in enumerate(
         zip(
             sampling.dataset_name,
@@ -324,7 +311,7 @@ def generate_non_activating_examples(
             samples.append(sample)
 
         except Exception as e:
-            print(f"Error processing example {i} from sampling non-activating: {e}")
+            print(f"{error_prefix} {e}")
             continue
 
         if len(samples) >= n:
@@ -336,7 +323,7 @@ def generate_non_activating_examples(
 class FeatureInterpreter:
     """A class for generating and evaluating explanations for SAE features."""
 
-    def __init__(self, cfg: AutoInterpConfig, mongo_client: Optional[MongoClient] = None):
+    def __init__(self, cfg: AutoInterpConfig, mongo_client: MongoClient):
         """Initialize the feature interpreter.
 
         Args:
@@ -359,34 +346,34 @@ class FeatureInterpreter:
 
     def get_feature_examples(
         self,
-        feature_index: int,
+        feature: FeatureRecord,
         model: LanguageModel,
         datasets: Callable[[str, int, int], Dataset],
-        mongo_client: MongoClient,
-        sae_name: str,
-        sae_series: str | None,
         analysis_name: str = "default",
         max_length: int = 50,
     ) -> tuple[list[TokenizedSample], list[TokenizedSample]]:
         """Get activating and non-activating examples for a feature."""
+        mongo_client = self.mongo_client
+        analysis = next((a for a in feature.analyses if a.name == analysis_name), None)
+        if not analysis:
+            raise ValueError(f"Analysis {analysis_name} not found for feature {feature.index}")
+
+        if analysis.max_feature_acts == 0:
+            raise ValueError(f"Feature {feature.index} has no activation. Skipping interpretation.")
+
+        # Get examples from each sampling
         activating_examples = generate_activating_examples(
-            feature_index=feature_index,
+            feature=feature,
             model=model,
             datasets=datasets,
-            mongo_client=mongo_client,
-            sae_name=sae_name,
-            sae_series=sae_series,
-            analysis_name=analysis_name,
+            analysis=analysis,
             max_length=max_length,
         )
         non_activating_examples = generate_non_activating_examples(
-            feature_index=feature_index,
+            feature=feature,
             model=model,
             datasets=datasets,
-            mongo_client=mongo_client,
-            sae_name=sae_name,
-            sae_series=sae_series,
-            analysis_name=analysis_name,
+            analysis=analysis,
             max_length=max_length,
         )
         return activating_examples, non_activating_examples
@@ -485,7 +472,7 @@ Your final output should first provide the summary sentence in the form "This fe
             response_format=AutoInterpExplanation,
         )
         explanation = response.choices[0].message.parsed
-        assert explanation is not None, "No explanation returned from OpenAI"
+        assert explanation is not None,f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
         return {"user_prompt": user_prompt, "system_prompt": system_prompt, "response": explanation}
 
     def _generate_detection_prompt(self, explanation: AutoInterpExplanation, examples: list[TokenizedSample]) -> tuple[str, str]:
@@ -566,7 +553,7 @@ Your final output should first provide the summary sentence in the form "This fe
             response_format=AutoInterpEvaluation,
         )
         detection_response = response.choices[0].message.parsed
-        assert detection_response is not None, "No detection response returned from OpenAI"
+        assert detection_response is not None, f"No detection response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
         predictions = detection_response.evaluation_results
 
         # Pad predictions if needed
@@ -636,7 +623,7 @@ Your final output should first provide the summary sentence in the form "This fe
         """
         # Count how many tokens would be highlighted in the correct example
         threshold = self.cfg.activation_threshold
-        n_highlighted = sum(1 for seg in sample.segments if seg.activation >= threshold * sample.max_activation)
+        n_highlighted = sum(1 for seg in sample.segments if seg.activation > threshold * sample.max_activation)
 
         def highlight_random_tokens(sample: TokenizedSample, n_highlighted: int) -> TokenizedSample:
             non_activating_indices = [
@@ -653,8 +640,8 @@ Your final output should first provide the summary sentence in the form "This fe
         return highlight_random_tokens(sample, n_to_highlight)
 
     def evaluate_explanation_fuzzing(
-        self, explanation: AutoInterpExplanation, activating_examples: List[TokenizedSample]
-    ) -> Dict[str, Any]:
+        self, explanation: AutoInterpExplanation, activating_examples: list[TokenizedSample]
+    ) -> dict[str, Any]:
         """Evaluate an explanation using the fuzzing method.
 
         Args:
@@ -717,7 +704,7 @@ Your final output should first provide the summary sentence in the form "This fe
             response_format=AutoInterpEvaluation,
         )
         fuzzing_response = response.choices[0].message.parsed
-        assert fuzzing_response is not None, "No fuzzing response returned from OpenAI"
+        assert fuzzing_response is not None, f"No fuzzing response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
         # Parse response (CORRECT/INCORRECT for each example)
         predictions = fuzzing_response.evaluation_results
         # Pad predictions if needed
@@ -756,82 +743,99 @@ Your final output should first provide the summary sentence in the form "This fe
             "passed": balanced_accuracy >= 0.7,  # Arbitrary threshold for passing
         }
 
-    def interpret_feature(
+
+    def interpret_single_feature(
         self,
-        sae_name: str,
-        sae_series: str,
-        feature_indices: List[int],
+        feature: FeatureRecord,
         model: LanguageModel,
-        sae: BaseSAEConfig,
         datasets: Callable[[str, int, int], Dataset],
         analysis_name: str = "default",
-    ) -> Generator[Dict[str, Any], None, None]:
+    ) -> dict[str, Any]:
         """Generate and evaluate explanations for multiple features.
 
         Args:
-            sae_name: Name of the SAE
-            sae_series: Series of the SAE
-            feature_indices: List of feature indices to interpret
+            feature: Feature to interpret
             model: Language model to use for generating activations
-            sae: SAE model to use for encoding
-            dataset: Dataset to sample non-activating examples from
+            datasets: Dataset to sample non-activating examples from
             analysis_name: Name of the analysis to use
 
         Returns:
             Dictionary mapping feature indices to their interpretation results
         """
-        if not self.mongo_client:
-            raise ValueError("MongoDB client not provided.")
+        
 
-        # Determine hook points based on SAE configuration
-        hook_points = []
-        layer = getattr(sae, "layer", 0)
-        hook_points.append(f"blocks.{layer}.hook_resid_post")
+        activating_examples, non_activating_examples = self.get_feature_examples(
+            feature=feature,
+            model=model,
+            datasets=datasets,
+            analysis_name=analysis_name,
+            max_length=self.cfg.max_length,
+        )
 
-        results = {}
-        for feature_idx in feature_indices:
-            # Generate activating examples from the database
-            activating_examples, non_activating_examples = self.get_feature_examples(
-                feature_index=feature_idx,
-                model=model,
-                datasets=datasets,
-                mongo_client=self.mongo_client,
-                sae_name=sae_name,
-                sae_series=sae_series,
-                analysis_name=analysis_name,
-                max_length=self.cfg.max_length,
+        # Generate explanation for the feature
+        explanation_result = self.generate_explanation(activating_examples)
+        explanation: AutoInterpExplanation = explanation_result["response"]
+        # print(f"Explanation for feature {feature.index}:\n{explanation.final_explanation}\n\n")
+        # Evaluate explanation
+        evaluation_results = []
+
+        if ScorerType.DETECTION in self.cfg.scorer_type:
+            detection_result = self.evaluate_explanation_detection(
+                explanation, activating_examples, non_activating_examples
             )
+            # print(f"Detection result for feature {feature.index}:\n{detection_result}\n\n")
+            evaluation_results.append(detection_result)
 
-            # Generate explanation for the feature
-            explanation_result = self.generate_explanation(activating_examples)
-            explanation: AutoInterpExplanation = explanation_result["response"]
-            print(explanation.final_explanation + "\n\n")
-            # Evaluate explanation
-            evaluation_results = []
-
-            if ScorerType.DETECTION in self.cfg.scorer_type:
-                detection_result = self.evaluate_explanation_detection(
-                    explanation, activating_examples, non_activating_examples
-                )
-                evaluation_results.append(detection_result)
-
-            if ScorerType.FUZZING in self.cfg.scorer_type:
-                fuzzing_result = self.evaluate_explanation_fuzzing(explanation, activating_examples)
-                evaluation_results.append(fuzzing_result)
+        if ScorerType.FUZZING in self.cfg.scorer_type:
+            fuzzing_result = self.evaluate_explanation_fuzzing(explanation, activating_examples)
+            # print(f"Fuzzing result for feature {feature.index}:\n{fuzzing_result}\n\n")
+            evaluation_results.append(fuzzing_result)
 
 
-            yield {
-                "feature_index": feature_idx,
-                "sae_name": sae_name,
-                "sae_series": sae_series,
-                "analysis_name": analysis_name,
-                "explanation": explanation.final_explanation,
-                "complexity": explanation.complexity,
-                "consistency": explanation.activation_consistency,
-                "explanation_details": {k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in explanation_result.items()},
-                "evaluations": [
-                    {k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in eval_result.items()}
-                    for eval_result in evaluation_results
-                ],
-                "passed": any(eval_result["passed"] for eval_result in evaluation_results),
-            }
+        return {
+            "analysis_name": analysis_name,
+            "explanation": explanation.final_explanation,
+            "complexity": explanation.complexity,
+            "consistency": explanation.activation_consistency,
+            "explanation_details": {k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in explanation_result.items()},
+            "evaluations": [
+                {k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in eval_result.items()}
+                for eval_result in evaluation_results
+            ],
+            "passed": any(eval_result["passed"] for eval_result in evaluation_results),
+        }
+
+    def interpret_features(
+        self,
+        sae_name: str,
+        sae_series: str,
+        feature_indices: list[int],
+        model: LanguageModel,
+        datasets: Callable[[str, int, int], Dataset],
+        analysis_name: str = "default",
+        max_workers: int = 10,
+    ) -> Generator[dict[str, Any], None, None]:
+        """Generate and evaluate explanations for multiple features.
+
+        Args:
+            sae_name: Name of the SAE
+            sae_series: Series of the SAE
+            feature_indices: Indices of the features to interpret
+            model: Language model to use for generating activations
+            datasets: Dataset to sample non-activating examples from
+            analysis_name: Name of the analysis to use
+
+        Returns:
+            Dictionary mapping feature indices to their interpretation results
+        """
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_feature = {executor.submit(self.interpret_single_feature, feature, model, datasets, analysis_name) :feature for feature_index in feature_indices if (feature := self.mongo_client.get_feature(sae_name, sae_series, feature_index)) is not None and feature.interpretation is None}
+            for future in as_completed(future_to_feature):
+                feature = future_to_feature[future]
+                try:
+                    yield future.result() | {"feature_index": feature.index, "sae_name": sae_name, "sae_series": sae_series}
+                except Exception as e:
+                    print(f"Error interpreting feature {feature.index}: {e}")
+
+
+

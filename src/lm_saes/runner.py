@@ -43,6 +43,7 @@ from lm_saes.resource_loaders import load_dataset, load_dataset_shard, load_mode
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.trainer import Trainer
 from lm_saes.utils.misc import get_modality_tokens, is_primary_rank
+from tqdm import tqdm
 
 T = TypeVar("T")
 
@@ -978,8 +979,6 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
 class AutoInterpSettings(BaseSettings):
     """Settings for automatic interpretation of SAE features."""
 
-    sae: BaseSAEConfig
-    """Configuration for the SAE model architecture and parameters"""
 
     sae_name: str
     """Name of the SAE model to interpret. Use as identifier for the SAE model in the database."""
@@ -1011,6 +1010,8 @@ class AutoInterpSettings(BaseSettings):
     analysis_name: str = "default"
     """Name of the analysis to use for interpretation."""
 
+    max_workers: int = 10
+    """Maximum number of workers to use for interpretation."""
 
 def auto_interp(settings: AutoInterpSettings) -> None:
     """Automatically interpret SAE features using LLMs.
@@ -1063,22 +1064,17 @@ def auto_interp(settings: AutoInterpSettings) -> None:
 
     # Call interpret_feature with all features at once
     print(f"Interpreting {len(feature_indices)} features...")
-    results = interpreter.interpret_feature(
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        feature_indices=feature_indices,
-        model=model,
-        sae=settings.sae,
-        datasets=get_dataset,
-        analysis_name=settings.analysis_name,
-    )
-
-    # Save results to database
-    print("Saving results to database...")
-    total_results = 0
-    for result in results:
-        feature_idx = result["feature_index"]
-        total_results += 1
+    total_interpreted = 0
+    proc_bar = tqdm(total=len(feature_indices), desc=f"Interpreting")
+    for result in interpreter.interpret_features(
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            feature_indices=feature_indices,
+            model=model,
+            datasets=get_dataset,
+            analysis_name=settings.analysis_name,
+            max_workers=settings.max_workers,
+        ):
         interpretation = {
             "text": result["explanation"],
             "validation": [
@@ -1088,9 +1084,14 @@ def auto_interp(settings: AutoInterpSettings) -> None:
             "complexity": result["complexity"],
             "consistency": result["consistency"],
             "detail": result["explanation_details"],
+            "passed": result["passed"],
         }
-
+        print(f"Updating feature {result['feature_index']}\nExplanation: {interpretation['text']}\nComplexity: {interpretation['complexity']}\nConsistency: {interpretation['consistency']}\nPassed: {interpretation['passed']}\n\n")
         mongo_client.update_feature(
-            settings.sae_name, feature_idx, {"interpretation": interpretation}, settings.sae_series
+            settings.sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
         )
-    print(f"Completed interpreting {total_results} features")
+        total_interpreted += 1
+        proc_bar.update(1)
+        proc_bar.set_postfix(feature_index=result["feature_index"])
+    proc_bar.close()
+    print(f"Completed interpreting {total_interpreted} features")
