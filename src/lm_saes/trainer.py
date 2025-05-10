@@ -88,7 +88,6 @@ class Trainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
-    @torch.compile
     def _training_step(
         self,
         sae: AbstractSparseAutoEncoder,

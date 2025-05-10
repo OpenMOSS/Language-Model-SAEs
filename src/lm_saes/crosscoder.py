@@ -1,5 +1,5 @@
 import math
-from typing import Any, Literal, Union, cast, overload, override
+from typing import Any, Literal, Union, cast, overload
 
 import einops
 import torch
@@ -7,6 +7,7 @@ import torch.nn as nn
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+from typing_extensions import override
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import CrossCoderConfig
