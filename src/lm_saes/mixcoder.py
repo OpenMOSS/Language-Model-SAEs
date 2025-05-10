@@ -1,7 +1,8 @@
-from typing import Any, Literal, Union, overload, override
+from typing import Any, Literal, Union, overload
 
 import torch
 from jaxtyping import Float, Int
+from typing_extensions import override
 
 from lm_saes.config import MixCoderConfig
 from lm_saes.sae import SparseAutoEncoder

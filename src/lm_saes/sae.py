@@ -1,10 +1,11 @@
 import math
-from typing import Any, Literal, Union, overload, override
+from typing import Any, Literal, Union, overload
 
 import torch
 from jaxtyping import Float
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor
 from transformer_lens.hook_points import HookPoint
+from typing_extensions import override
 
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import SAEConfig
