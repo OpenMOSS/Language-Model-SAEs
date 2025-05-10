@@ -12,8 +12,8 @@ dependencies = [
     "pandas>=2.2.3",
     "pymongo>=4.10.1",
     "tensorboardX>=2.6.2.2",
-    # PyTorch has been moved to platform-specific dependency groups (default, cpu, cuda, npu)
-    "tqdm>=4.66.5",
+    "torch>=2.5.0",
+    "torchvision>=0.20.1",
     "transformer-lens",
     "uvicorn>=0.32.0",
     "wandb>=0.18.5",
@@ -28,10 +28,10 @@ dependencies = [
     "argparse>=1.4.0",
     "pyyaml>=6.0.2",
     "tomlkit>=0.13.2",
-    # torchvision has been moved to platform-specific dependency groups (default, cpu, cuda, npu)
     "pydantic-settings>=2.7.1",
     "qwen-vl-utils>=0.0.10",
     "triton>=3.1.0; (sys_platform == 'win32' or sys_platform == 'linux')",
+    "typing-extensions>=4.13.2",
 ]
 requires-python = "==3.11.*"
 readme = "README.md"
@@ -96,11 +96,6 @@ flash-attn = [
 ]
 
 [project.optional-dependencies]
-# Default PyTorch for macOS (with MPS acceleration)
-default = [
-    "torch>=2.5.0",
-    "torchvision>=0.20.1",
-]
 # NPU variant of PyTorch (for Huawei Ascend hardware)
 npu = [
     "torch==2.5.1",
