@@ -10,6 +10,7 @@ from datasets import Dataset
 from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
+from tqdm import tqdm
 
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.activation.writer import ActivationWriter
@@ -43,7 +44,6 @@ from lm_saes.resource_loaders import load_dataset, load_dataset_shard, load_mode
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.trainer import Trainer
 from lm_saes.utils.misc import get_modality_tokens, is_primary_rank
-from tqdm import tqdm
 
 T = TypeVar("T")
 
@@ -166,6 +166,9 @@ class GenerateActivationsSettings(BaseSettings):
     ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
 
+    device_type: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+
     @model_validator(mode="after")
     def validate_cfg(self) -> "GenerateActivationsSettings":
         if self.mongo is not None:
@@ -179,7 +182,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
     # Initialize device mesh
     device_mesh = (
         init_device_mesh(
-            device_type="cuda",
+            device_type=settings.device_type,
             mesh_shape=(int(os.environ.get("WORLD_SIZE", 1)), 1),
             mesh_dim_names=("data", "model"),
         )
@@ -286,6 +289,9 @@ class TrainSAESettings(BaseSettings):
     datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
     """Name to dataset config mapping. Required if using dataset sources."""
 
+    device_type: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+
 
 def train_sae(settings: TrainSAESettings) -> None:
     """Train a SAE model.
@@ -295,7 +301,7 @@ def train_sae(settings: TrainSAESettings) -> None:
     """
     device_mesh = (
         init_device_mesh(
-            device_type="cuda",
+            device_type=settings.device_type,
             mesh_shape=(settings.data_parallel_size, settings.model_parallel_size),
             mesh_dim_names=("data", "model"),
         )
@@ -474,6 +480,9 @@ class TrainCrossCoderSettings(BaseSettings):
     datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
     """Name to dataset config mapping. Required if using dataset sources."""
 
+    device_type: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+
 
 def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     """Train a CrossCoder.
@@ -487,7 +496,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     )
 
     device_mesh = init_device_mesh(
-        device_type="cuda",
+        device_type=settings.device_type,
         mesh_shape=(settings.sae.n_heads, settings.data_parallel_size, settings.model_parallel_size),
         mesh_dim_names=("head", "data", "model"),
     )
@@ -623,6 +632,9 @@ class SweepSAESettings(BaseSettings):
     datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
     """Name to dataset config mapping. Required if using dataset sources."""
 
+    device_type: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+
 
 def sweep_sae(settings: SweepSAESettings) -> None:
     """Sweep experiments for training SAE models.
@@ -634,7 +646,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
     n_sweeps = len(settings.items)
 
     device_mesh = init_device_mesh(
-        device_type="cuda",
+        device_type=settings.device_type,
         mesh_shape=(n_sweeps, settings.data_parallel_size, settings.model_parallel_size),
         mesh_dim_names=("sweep", "data", "model"),
     )
@@ -823,13 +835,16 @@ class AnalyzeSAESettings(BaseSettings):
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
 
+    device_type: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+
 
 def analyze_sae(settings: AnalyzeSAESettings) -> None:
     """Analyze a SAE model."""
 
     device_mesh = (
         init_device_mesh(
-            device_type="cuda",
+            device_type=settings.device_type,
             mesh_shape=(settings.model_parallel_size,),
             mesh_dim_names=("model",),
         )
@@ -935,6 +950,9 @@ class AnalyzeCrossCoderSettings(BaseSettings):
     mongo: MongoDBConfig
     """Configuration for the MongoDB database."""
 
+    device_type: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+
 
 @torch.no_grad()
 def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
@@ -944,13 +962,13 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
     assert parallel_size == settings.sae.n_heads, "Number of activation factories must match the number of heads"
 
     crosscoder_device_mesh = init_device_mesh(
-        device_type="cuda",
+        device_type=settings.device_type,
         mesh_shape=(parallel_size,),
         mesh_dim_names=("head",),
     )
 
     device_mesh = init_device_mesh(
-        device_type="cuda",
+        device_type=settings.device_type,
         mesh_shape=(parallel_size,),
         mesh_dim_names=("model",),
     )
@@ -978,7 +996,6 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
 
 class AutoInterpSettings(BaseSettings):
     """Settings for automatic interpretation of SAE features."""
-
 
     sae_name: str
     """Name of the SAE model to interpret. Use as identifier for the SAE model in the database."""
@@ -1012,6 +1029,7 @@ class AutoInterpSettings(BaseSettings):
 
     max_workers: int = 10
     """Maximum number of workers to use for interpretation."""
+
 
 def auto_interp(settings: AutoInterpSettings) -> None:
     """Automatically interpret SAE features using LLMs.
@@ -1065,16 +1083,16 @@ def auto_interp(settings: AutoInterpSettings) -> None:
     # Call interpret_feature with all features at once
     print(f"Interpreting {len(feature_indices)} features...")
     total_interpreted = 0
-    proc_bar = tqdm(total=len(feature_indices), desc=f"Interpreting")
+    proc_bar = tqdm(total=len(feature_indices), desc="Interpreting")
     for result in interpreter.interpret_features(
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            feature_indices=feature_indices,
-            model=model,
-            datasets=get_dataset,
-            analysis_name=settings.analysis_name,
-            max_workers=settings.max_workers,
-        ):
+        sae_name=settings.sae_name,
+        sae_series=settings.sae_series,
+        feature_indices=feature_indices,
+        model=model,
+        datasets=get_dataset,
+        analysis_name=settings.analysis_name,
+        max_workers=settings.max_workers,
+    ):
         interpretation = {
             "text": result["explanation"],
             "validation": [
@@ -1086,7 +1104,9 @@ def auto_interp(settings: AutoInterpSettings) -> None:
             "detail": result["explanation_details"],
             "passed": result["passed"],
         }
-        print(f"Updating feature {result['feature_index']}\nExplanation: {interpretation['text']}\nComplexity: {interpretation['complexity']}\nConsistency: {interpretation['consistency']}\nPassed: {interpretation['passed']}\n\n")
+        print(
+            f"Updating feature {result['feature_index']}\nExplanation: {interpretation['text']}\nComplexity: {interpretation['complexity']}\nConsistency: {interpretation['consistency']}\nPassed: {interpretation['passed']}\n\n"
+        )
         mongo_client.update_feature(
             settings.sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
         )
