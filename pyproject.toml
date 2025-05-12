@@ -32,6 +32,7 @@ dependencies = [
     "qwen-vl-utils>=0.0.10",
     "triton>=3.1.0; (sys_platform == 'win32' or sys_platform == 'linux')",
     "typing-extensions>=4.13.2",
+    "more-itertools>=10.7.0",
 ]
 requires-python = "==3.11.*"
 readme = "README.md"
