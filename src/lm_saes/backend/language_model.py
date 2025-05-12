@@ -105,9 +105,13 @@ class LanguageModel(ABC):
 class TransformerLensLanguageModel(LanguageModel):
     def __init__(self, cfg: LanguageModelConfig):
         self.cfg = cfg
-        self.device = (
-            torch.device(f"cuda:{torch.cuda.current_device()}") if cfg.device == "cuda" else torch.device(cfg.device)
-        )
+        if cfg.device == "cuda":
+            self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
+        elif cfg.device == "npu":
+            self.device = torch.device(f"npu:{torch.npu.current_device()}")
+        else:
+            self.device = torch.device(cfg.device)
+
         hf_model = AutoModelForCausalLM.from_pretrained(
             (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
             cache_dir=cfg.cache_dir,

@@ -1,9 +1,9 @@
-import itertools
 import warnings
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, cast
 
 import torch
+from more_itertools import batched
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
@@ -115,7 +115,7 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
         self.n_context = n_context
 
     def batched(self, data: Iterable[dict[str, Any]]) -> Iterable[dict[str, Any]]:
-        for d in itertools.batched(data, self.batch_size):
+        for d in batched(data, self.batch_size):
             keys = d[0].keys()
             yield {k: [dd[k] for dd in d] for k in keys}
 
