@@ -22,14 +22,21 @@ from .crosscoder import CrossCoder
 from .database import MongoClient
 from .mixcoder import MixCoder
 from .resource_loaders import load_dataset, load_model
-from .runner import (
+from .runners import (
     AnalyzeCrossCoderSettings,
     AnalyzeSAESettings,
+    AutoInterpSettings,
     GenerateActivationsSettings,
+    SweepingItem,
+    SweepSAESettings,
+    TrainCrossCoderSettings,
     TrainSAESettings,
     analyze_crosscoder,
     analyze_sae,
+    auto_interp,
     generate_activations,
+    sweep_sae,
+    train_crosscoder,
     train_sae,
 )
 from .sae import SparseAutoEncoder
@@ -68,4 +75,11 @@ __all__ = [
     "MixCoder",
     "AnalyzeCrossCoderSettings",
     "analyze_crosscoder",
+    "AutoInterpSettings",
+    "SweepingItem",
+    "SweepSAESettings",
+    "TrainCrossCoderSettings",
+    "auto_interp",
+    "sweep_sae",
+    "train_crosscoder",
 ]
