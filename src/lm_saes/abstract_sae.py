@@ -621,8 +621,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 reconstructed = reconstructed.full_tensor()
                 feature_acts = feature_acts.full_tensor()
                 hidden_pre = hidden_pre.full_tensor()
-            if isinstance(label, DTensor):
-                label = label.full_tensor()
+                if isinstance(label, DTensor):
+                    label = label.full_tensor()
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
