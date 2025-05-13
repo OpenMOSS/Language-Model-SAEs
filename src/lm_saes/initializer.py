@@ -1,9 +1,7 @@
-import os
 import warnings
-from typing import Dict, Iterable, List, cast
+from typing import Dict, Iterable, List
 
 import torch
-import torch.distributed as dist
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Replicate
@@ -77,26 +75,11 @@ class Initializer:
         return sae
 
     @torch.no_grad()
-    def initialization_search(
-        self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor], device_mesh: DeviceMesh | None = None
-    ):
+    def initialization_search(self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor]):
         """
         This function is used to search for the best initialization norm for the SAE decoder.
         """
         batch = sae.normalize_activations(activation_batch)
-
-        if (
-            isinstance(sae, CrossCoder)
-            and device_mesh is not None
-            and "head" in cast(tuple[str, ...], device_mesh.mesh_dim_names)
-        ):
-            object_list = [None] * device_mesh.get_group("head").size()
-            dist.all_gather_object(object_list, activation_batch, group=device_mesh.get_group("head"))
-            activation_batch = {
-                k: v.to(torch.device("cuda", int(os.environ["LOCAL_RANK"]))) if isinstance(v, Tensor) else v
-                for d in cast(list[dict[str, Tensor]], object_list)
-                for k, v in d.items()
-            }
 
         if self.cfg.init_decoder_norm is None:
             if not self.cfg.init_encoder_with_decoder_transpose:
@@ -198,11 +181,11 @@ class Initializer:
             device_mesh (DeviceMesh | None): The device mesh.
         """
         if cfg.sae_type == "sae":
-            sae: AbstractSparseAutoEncoder = SparseAutoEncoder.from_config(cfg)
+            sae: AbstractSparseAutoEncoder = SparseAutoEncoder.from_config(cfg, device_mesh=device_mesh)
         elif cfg.sae_type == "mixcoder":
-            sae: AbstractSparseAutoEncoder = MixCoder.from_config(cfg)
+            sae: AbstractSparseAutoEncoder = MixCoder.from_config(cfg, device_mesh=device_mesh)
         elif cfg.sae_type == "crosscoder":
-            sae: AbstractSparseAutoEncoder = CrossCoder.from_config(cfg)
+            sae: AbstractSparseAutoEncoder = CrossCoder.from_config(cfg, device_mesh=device_mesh)
         else:
             # TODO: add support for different SAE config types, e.g. MixCoderConfig, CrossCoderConfig, etc.
             raise ValueError(f"SAE type {cfg.sae_type} not supported.")
@@ -230,7 +213,7 @@ class Initializer:
             if self.cfg.init_search:
                 assert activation_stream is not None, "Activation iterator must be provided for initialization search"
                 activation_batch = next(iter(activation_stream))  # type: ignore
-                sae = self.initialization_search(sae, activation_batch, device_mesh=device_mesh)
+                sae = self.initialization_search(sae, activation_batch)
 
         elif self.cfg.state == "inference":
             if sae.cfg.norm_activation == "dataset-wise":

@@ -16,7 +16,11 @@ from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.database import MongoClient
-from lm_saes.utils.distributed import distribute_tensor_on_dim, placements_from_dim_map
+from lm_saes.utils.distributed import (
+    distribute_tensor_on_dim,
+    local_slices_from_dim_map,
+    placements_from_dim_map,
+)
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.misc import is_primary_rank
 
@@ -377,7 +381,11 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     @classmethod
     def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None) -> Self:
         if cfg.sae_pretrained_name_or_path is None:
-            return cls(cfg)
+            model = cls(cfg)
+            if device_mesh is not None:
+                model.tensor_parallel(device_mesh=device_mesh)
+            return model
+
         path = parse_pretrained_name_or_path(cfg.sae_pretrained_name_or_path)
         if path.endswith(".pt") or path.endswith(".safetensors"):
             ckpt_path = path
@@ -400,34 +408,12 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             if device_mesh is None:
                 state_dict: dict[str, torch.Tensor] = safe.load_file(ckpt_path, device=cfg.device)
             else:
-
-                def get_indices(
-                    shape: tuple[int, ...], dim_map: dict[str, int], device_mesh: DeviceMesh
-                ) -> tuple[slice, ...]:
-                    reverse_dim_map = {v: k for k, v in dim_map.items()}
-
-                    def get_slice(mesh_dim_name: str, dim_size: int) -> slice:
-                        assert device_mesh.mesh_dim_names is not None
-
-                        if mesh_dim_name not in device_mesh.mesh_dim_names:
-                            return slice(None)
-                        else:
-                            assert dim_size % device_mesh.get_group(mesh_dim_name).size() == 0
-                            step = dim_size // device_mesh.get_group(mesh_dim_name).size()
-                            local_rank = device_mesh.get_local_rank(mesh_dim_name)
-                            return slice(local_rank * step, (local_rank + 1) * step)
-
-                    return tuple(
-                        slice(None) if i not in reverse_dim_map else get_slice(reverse_dim_map[i], dim_size)
-                        for i, dim_size in enumerate(shape)
-                    )
-
                 with safe_open(ckpt_path, device=int(os.environ["LOCAL_RANK"]), framework="pt") as f:
 
                     def load_tensor(key: str) -> DTensor:
                         tensor_slice = f.get_slice(key)
                         shape = tensor_slice.get_shape()
-                        indices = get_indices(shape, cls.dim_maps()[key], device_mesh)
+                        indices = local_slices_from_dim_map(shape, cls.dim_maps()[key], device_mesh)
                         local_tensor = tensor_slice[indices].to(cfg.dtype)
                         return DTensor.from_local(
                             local_tensor,

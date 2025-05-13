@@ -3,6 +3,7 @@ from typing import Any, Literal, Union, cast, overload
 
 import einops
 import torch
+import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
@@ -11,7 +12,12 @@ from typing_extensions import override
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import CrossCoderConfig
-from lm_saes.utils.distributed import distribute_tensor_on_dim, placements_from_dim_map
+from lm_saes.utils.distributed import (
+    distribute_tensor_on_dim,
+    local_slices_from_dim_map,
+    placements_from_dim_map,
+)
+from lm_saes.utils.misc import get_slice_length
 
 
 class CrossCoder(AbstractSparseAutoEncoder):
@@ -53,14 +59,48 @@ class CrossCoder(AbstractSparseAutoEncoder):
         ).uniform_(-kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"])
 
         # Repeat for all heads
-        W_E = einops.repeat(W_E_per_head, "d_model d_sae -> n_heads d_model d_sae", n_heads=self.cfg.n_heads)
-        W_D = einops.repeat(W_D_per_head, "d_sae d_model -> n_heads d_sae d_model", n_heads=self.cfg.n_heads)
+        if self.device_mesh is None:
+            W_E = einops.repeat(W_E_per_head, "d_model d_sae -> n_heads d_model d_sae", n_heads=self.cfg.n_heads)
+            W_D = einops.repeat(W_D_per_head, "d_sae d_model -> n_heads d_sae d_model", n_heads=self.cfg.n_heads)
+            b_E = torch.zeros(self.cfg.n_heads, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype)
+            b_D = torch.zeros(self.cfg.n_heads, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype)
+        else:
+            W_E_slices = local_slices_from_dim_map(
+                (self.cfg.n_heads, self.cfg.d_model, self.cfg.d_sae), self.dim_maps()["W_E"], self.device_mesh
+            )
+            W_D_slices = local_slices_from_dim_map(
+                (self.cfg.n_heads, self.cfg.d_sae, self.cfg.d_model), self.dim_maps()["W_E"], self.device_mesh
+            )
+            W_E_head_repeats = get_slice_length(W_E_slices[0], self.cfg.n_heads)
+            W_D_head_repeats = get_slice_length(W_D_slices[0], self.cfg.n_heads)
+            W_E_local = einops.repeat(W_E_per_head, "d_model d_sae -> n_heads d_model d_sae", n_heads=W_E_head_repeats)
+            W_D_local = einops.repeat(W_D_per_head, "d_sae d_model -> n_heads d_sae d_model", n_heads=W_D_head_repeats)
+            W_E = DTensor.from_local(
+                W_E_local, self.device_mesh, placements_from_dim_map(self.dim_maps()["W_E"], self.device_mesh)
+            )
+            W_D = DTensor.from_local(
+                W_D_local, self.device_mesh, placements_from_dim_map(self.dim_maps()["W_D"], self.device_mesh)
+            )
+            b_E = torch.distributed.tensor.zeros(
+                self.cfg.n_heads,
+                self.cfg.d_sae,
+                device_mesh=self.device_mesh,
+                placements=placements_from_dim_map(self.dim_maps()["b_E"], self.device_mesh),
+                dtype=self.cfg.dtype,
+            )
+            b_D = torch.distributed.tensor.zeros(
+                self.cfg.n_heads,
+                self.cfg.d_model,
+                device_mesh=self.device_mesh,
+                placements=placements_from_dim_map(self.dim_maps()["b_D"], self.device_mesh),
+                dtype=self.cfg.dtype,
+            )
 
         # Assign to parameters
         self.W_E.copy_(W_E)
         self.W_D.copy_(W_D)
-        self.b_E.copy_(torch.zeros(self.cfg.n_heads, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype))
-        self.b_D.copy_(torch.zeros(self.cfg.n_heads, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype))
+        self.b_E.copy_(b_E)
+        self.b_D.copy_(b_D)
 
     @overload
     def encode(
