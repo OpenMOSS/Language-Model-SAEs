@@ -18,6 +18,7 @@ from lm_saes.utils.distributed import (
     placements_from_dim_map,
 )
 from lm_saes.utils.misc import get_slice_length
+from lm_saes.utils.timer import timer
 
 
 class CrossCoder(AbstractSparseAutoEncoder):
@@ -65,36 +66,41 @@ class CrossCoder(AbstractSparseAutoEncoder):
             b_E = torch.zeros(self.cfg.n_heads, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype)
             b_D = torch.zeros(self.cfg.n_heads, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype)
         else:
-            W_E_slices = local_slices_from_dim_map(
-                (self.cfg.n_heads, self.cfg.d_model, self.cfg.d_sae), self.dim_maps()["W_E"], self.device_mesh
-            )
-            W_D_slices = local_slices_from_dim_map(
-                (self.cfg.n_heads, self.cfg.d_sae, self.cfg.d_model), self.dim_maps()["W_E"], self.device_mesh
-            )
-            W_E_head_repeats = get_slice_length(W_E_slices[0], self.cfg.n_heads)
-            W_D_head_repeats = get_slice_length(W_D_slices[0], self.cfg.n_heads)
-            W_E_local = einops.repeat(W_E_per_head, "d_model d_sae -> n_heads d_model d_sae", n_heads=W_E_head_repeats)
-            W_D_local = einops.repeat(W_D_per_head, "d_sae d_model -> n_heads d_sae d_model", n_heads=W_D_head_repeats)
-            W_E = DTensor.from_local(
-                W_E_local, self.device_mesh, placements_from_dim_map(self.dim_maps()["W_E"], self.device_mesh)
-            )
-            W_D = DTensor.from_local(
-                W_D_local, self.device_mesh, placements_from_dim_map(self.dim_maps()["W_D"], self.device_mesh)
-            )
-            b_E = torch.distributed.tensor.zeros(
-                self.cfg.n_heads,
-                self.cfg.d_sae,
-                device_mesh=self.device_mesh,
-                placements=placements_from_dim_map(self.dim_maps()["b_E"], self.device_mesh),
-                dtype=self.cfg.dtype,
-            )
-            b_D = torch.distributed.tensor.zeros(
-                self.cfg.n_heads,
-                self.cfg.d_model,
-                device_mesh=self.device_mesh,
-                placements=placements_from_dim_map(self.dim_maps()["b_D"], self.device_mesh),
-                dtype=self.cfg.dtype,
-            )
+            with timer.time("init_parameters_distributed"):
+                W_E_slices = local_slices_from_dim_map(
+                    (self.cfg.n_heads, self.cfg.d_model, self.cfg.d_sae), self.dim_maps()["W_E"], self.device_mesh
+                )
+                W_D_slices = local_slices_from_dim_map(
+                    (self.cfg.n_heads, self.cfg.d_sae, self.cfg.d_model), self.dim_maps()["W_E"], self.device_mesh
+                )
+                W_E_head_repeats = get_slice_length(W_E_slices[0], self.cfg.n_heads)
+                W_D_head_repeats = get_slice_length(W_D_slices[0], self.cfg.n_heads)
+                W_E_local = einops.repeat(
+                    W_E_per_head, "d_model d_sae -> n_heads d_model d_sae", n_heads=W_E_head_repeats
+                )
+                W_D_local = einops.repeat(
+                    W_D_per_head, "d_sae d_model -> n_heads d_sae d_model", n_heads=W_D_head_repeats
+                )
+                W_E = DTensor.from_local(
+                    W_E_local, self.device_mesh, placements_from_dim_map(self.dim_maps()["W_E"], self.device_mesh)
+                )
+                W_D = DTensor.from_local(
+                    W_D_local, self.device_mesh, placements_from_dim_map(self.dim_maps()["W_D"], self.device_mesh)
+                )
+                b_E = torch.distributed.tensor.zeros(
+                    self.cfg.n_heads,
+                    self.cfg.d_sae,
+                    device_mesh=self.device_mesh,
+                    placements=placements_from_dim_map(self.dim_maps()["b_E"], self.device_mesh),
+                    dtype=self.cfg.dtype,
+                )
+                b_D = torch.distributed.tensor.zeros(
+                    self.cfg.n_heads,
+                    self.cfg.d_model,
+                    device_mesh=self.device_mesh,
+                    placements=placements_from_dim_map(self.dim_maps()["b_D"], self.device_mesh),
+                    dtype=self.cfg.dtype,
+                )
 
         # Assign to parameters
         self.W_E.copy_(W_E)
@@ -134,6 +140,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
     ]: ...
 
     @override
+    @timer.time("encode")
     def encode(
         self,
         x: Union[
@@ -165,26 +172,32 @@ class CrossCoder(AbstractSparseAutoEncoder):
             Encoded tensor of shape (n_heads, d_sae).
         """
         if self.device_mesh is not None and not isinstance(x, DTensor):
-            x = distribute_tensor_on_dim(x, self.device_mesh, {})
+            with timer.time("encode_distribute_tensor"):
+                x = distribute_tensor_on_dim(x, self.device_mesh, {})
 
         # Apply encoding per head
-        hidden_pre = (
-            einops.einsum(x, self.W_E, "... n_heads d_model, n_heads d_model d_sae -> ... n_heads d_sae") + self.b_E
-        )
-        # Sum across heads and add bias
-        accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
-        accumulated_hidden_pre = einops.repeat(
-            accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
-        )
+        with timer.time("encode_computation"):
+            # Apply encoding per head
+            hidden_pre = (
+                einops.einsum(x, self.W_E, "... n_heads d_model, n_heads d_model d_sae -> ... n_heads d_sae") + self.b_E
+            )
+            # Sum across heads and add bias
+            accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
+            accumulated_hidden_pre = einops.repeat(
+                accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
+            )
 
-        # Apply activation function
-        feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
+            # Apply activation function
+            feature_acts = accumulated_hidden_pre * self.activation_function(
+                accumulated_hidden_pre * self.decoder_norm()
+            )
 
         if return_hidden_pre:
             return feature_acts, accumulated_hidden_pre
         return feature_acts
 
     @override
+    @timer.time("decode")
     def decode(
         self,
         feature_acts: Union[
@@ -204,7 +217,6 @@ class CrossCoder(AbstractSparseAutoEncoder):
         Returns:
             Decoded tensor of shape (n_heads, d_model).
         """
-
         reconstructed = (
             einops.einsum(feature_acts, self.W_D, "... n_heads d_sae, n_heads d_sae d_model -> ... n_heads d_model")
             + self.b_D
@@ -218,17 +230,19 @@ class CrossCoder(AbstractSparseAutoEncoder):
         Returns:
             Norm of decoder weights of shape (n_heads, d_sae).
         """
-        if not isinstance(self.W_D, DTensor):
-            return torch.norm(self.W_D, dim=-1, keepdim=keepdim)
-        else:
-            assert self.device_mesh is not None
-            return DTensor.from_local(
-                torch.norm(self.W_D.to_local(), dim=-1, keepdim=keepdim),
-                device_mesh=self.device_mesh,
-                placements=placements_from_dim_map({"head": 0, "model": 1}, self.device_mesh),
-            )
+        with timer.time("decoder_norm_computation"):
+            if not isinstance(self.W_D, DTensor):
+                return torch.norm(self.W_D, dim=-1, keepdim=keepdim)
+            else:
+                assert self.device_mesh is not None
+                return DTensor.from_local(
+                    torch.norm(self.W_D.to_local(), dim=-1, keepdim=keepdim),
+                    device_mesh=self.device_mesh,
+                    placements=placements_from_dim_map({"head": 0, "model": 1}, self.device_mesh),
+                )
 
     @override
+    @timer.time("encoder_norm")
     def encoder_norm(self, keepdim: bool = False) -> torch.Tensor:
         """Calculate the norm of the encoder weights.
 
@@ -238,10 +252,12 @@ class CrossCoder(AbstractSparseAutoEncoder):
         return torch.norm(self.W_E, dim=-2, keepdim=keepdim)
 
     @override
+    @timer.time("decoder_bias_norm")
     def decoder_bias_norm(self) -> torch.Tensor:
         return torch.norm(self.b_D, dim=-1, keepdim=True)
 
     @override
+    @timer.time("set_decoder_to_fixed_norm")
     @torch.no_grad()
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
         if force_exact:
@@ -250,11 +266,13 @@ class CrossCoder(AbstractSparseAutoEncoder):
             self.W_D.mul_(value / torch.clamp(self.decoder_norm(keepdim=True), min=value))
 
     @override
+    @timer.time("set_encoder_to_fixed_norm")
     @torch.no_grad()
     def set_encoder_to_fixed_norm(self, value: float):
         self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
     @override
+    @timer.time("standardize_parameters_of_dataset_norm")
     @torch.no_grad()
     def standardize_parameters_of_dataset_norm(self, dataset_average_activation_norm: dict[str, float] | None):
         """
@@ -278,6 +296,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
         self.cfg.norm_activation = "inference"
 
     @override
+    @timer.time("init_encoder_with_decoder_transpose")
     @torch.no_grad()
     def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
         transposed_decoder = (
@@ -286,6 +305,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
         self.W_E.copy_(transposed_decoder)
 
     @override
+    @timer.time("prepare_input")
     def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
         def pad_to_d_model(x: torch.Tensor) -> torch.Tensor:
             if x.shape[-1] > self.cfg.d_model:
@@ -311,6 +331,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
             ), {}
 
     @override
+    @timer.time("prepare_label")
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         return self.prepare_input(batch)[0]
 
@@ -320,6 +341,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
         raise NotImplementedError("Transform to unit decoder norm is not supported for CrossCoder")
 
     @override
+    @timer.time("tensor_parallel")
     def tensor_parallel(self, device_mesh: DeviceMesh):
         super().tensor_parallel(device_mesh)
         for name in ["W_E", "W_D", "b_E", "b_D"]:
@@ -337,6 +359,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
         }
 
     @override
+    @timer.time("load_distributed_state_dict")
     def load_distributed_state_dict(
         self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
     ) -> None:
@@ -348,11 +371,14 @@ class CrossCoder(AbstractSparseAutoEncoder):
             )
 
     @torch.no_grad()
+    @timer.time("decoder_inner_product_matrices")
     def decoder_inner_product_matrices(self) -> Float[torch.Tensor, "d_sae n_head n_head"]:
+        inner_product_matrices = einops.einsum(self.W_D, self.W_D, "i d_sae d_model, j d_sae d_model -> d_sae i j")
         inner_product_matrices = einops.einsum(self.W_D, self.W_D, "i d_sae d_model, j d_sae d_model -> d_sae i j")
         return inner_product_matrices
 
     @torch.no_grad()
+    @timer.time("decoder_similarity_matrices")
     def decoder_similarity_matrices(self) -> Float[torch.Tensor, "d_sae n_head n_head"]:
         inner_product_matrices = self.decoder_inner_product_matrices()
         decoder_norms = self.decoder_norm()

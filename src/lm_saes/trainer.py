@@ -17,6 +17,7 @@ from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
+from lm_saes.utils.timer import timer
 
 
 class Trainer:
@@ -34,6 +35,7 @@ class Trainer:
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
 
+    @timer.time("initialize_trainer")
     def _initialize_trainer(
         self,
         sae: AbstractSparseAutoEncoder,
@@ -65,6 +67,7 @@ class Trainer:
                 ]
         self.wandb_logger = wandb_logger
 
+    @timer.time("initialize_optimizer")
     def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
         # TODO: check if this is correct
         if isinstance(self.cfg.lr, float):
@@ -88,6 +91,7 @@ class Trainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
+    @timer.time("training_step")
     def _training_step(
         self,
         sae: AbstractSparseAutoEncoder,
@@ -120,6 +124,7 @@ class Trainer:
         return loss_dict
 
     @torch.no_grad()
+    @timer.time("log")
     def _log(self, sae: AbstractSparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
         # TODO: add full distributed support
         assert self.optimizer is not None, "Optimizer must be initialized"
@@ -181,6 +186,13 @@ class Trainer:
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
             }
+
+            # Add timer information
+            timer_data = {f"time/{name}": time_value for name, time_value in timer.get_all_timers().items()}
+            timer_avg_data = {f"time_avg/{name}": avg_time for name, avg_time in timer.get_all_average_times().items()}
+            wandb_log_dict.update(timer_data)
+            wandb_log_dict.update(timer_avg_data)
+
             wandb_log_dict.update(sae.log_statistics())
             if sae.cfg.sae_type == "mixcoder":
                 assert isinstance(sae, MixCoder)
@@ -220,8 +232,14 @@ class Trainer:
             if is_primary_rank(sae.device_mesh):
                 print({"step": self.cur_step + 1, **wandb_log_dict})
 
+                # Print timer summary
+                print("\nTimer Summary:")
+                print(timer.summary())
+
             if self.wandb_logger is not None:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
+
+    timer.time("save_checkpoint")
 
     def _save_checkpoint(self, sae: AbstractSparseAutoEncoder):
         if len(self.checkpoint_thresholds) > 0 and self.cur_tokens >= self.checkpoint_thresholds[0]:
@@ -240,6 +258,9 @@ class Trainer:
         eval_fn: Callable[[AbstractSparseAutoEncoder], None] | None = None,
         wandb_logger: Run | None = None,
     ):
+        # Reset timer at the start of training
+        timer.reset()
+
         self._initialize_trainer(sae, activation_stream, wandb_logger)
         self._initialize_optimizer(sae)
         assert self.optimizer is not None
@@ -251,50 +272,58 @@ class Trainer:
         }
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
         for batch in activation_stream:
-            proc_bar.update(1)
+            with timer.time("training_iteration"):
+                proc_bar.update(1)
 
-            batch = sae.normalize_activations(batch)
+                batch = sae.normalize_activations(batch)
 
-            sae.train()
+                sae.train()
 
-            self.optimizer.zero_grad()
+                self.optimizer.zero_grad()
 
-            loss_dict = self._training_step(sae, batch)
+                loss_dict = self._training_step(sae, batch)
 
-            if sae.cfg.sae_type == "mixcoder":
-                flag = False
-                for k, v in loss_dict.items():
-                    if "token_num" in k:
-                        if v <= 200:
-                            flag = True
-                            break
-                if flag:
-                    continue
+                if sae.cfg.sae_type == "mixcoder":
+                    flag = False
+                    for k, v in loss_dict.items():
+                        if "token_num" in k:
+                            if v <= 200:
+                                flag = True
+                                break
+                    if flag:
+                        continue
 
-            loss_dict["loss"].backward()
-            # TODO: add support for mixcoder to use different clip_grad_norm for each modality
-            loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
-                sae.parameters(),
-                max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
-            )
+                with timer.time("backward"):
+                    loss_dict["loss"].backward()
 
-            self.optimizer.step()
-            self.scheduler.step()
+                with timer.time("clip_grad_norm"):
+                    # TODO: add support for mixcoder to use different clip_grad_norm for each modality
+                    loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
+                        sae.parameters(),
+                        max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
+                    )
 
-            if sae.cfg.force_unit_decoder_norm:
-                sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
+                with timer.time("optimizer_step"):
+                    self.optimizer.step()
 
-            log_info.update(loss_dict)
-            proc_bar.set_description(f"loss: {log_info['loss'].item()}")
+                with timer.time("scheduler_step"):
+                    self.scheduler.step()
 
-            self._log(sae, log_info, batch)
+                if sae.cfg.force_unit_decoder_norm:
+                    sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
 
-            if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
-                eval_fn(sae)
+                log_info.update(loss_dict)
+                proc_bar.set_description(f"loss: {log_info['loss'].item()}")
 
-            self._save_checkpoint(sae)
+                self._log(sae, log_info, batch)
 
-            self.cur_step += 1
-            self.cur_tokens += batch_size(batch)
-            if self.cur_tokens >= self.cfg.total_training_tokens:
-                break
+                if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
+                    with timer.time("evaluation"):
+                        eval_fn(sae)
+
+                self._save_checkpoint(sae)
+
+                self.cur_step += 1
+                self.cur_tokens += batch_size(batch)
+                if self.cur_tokens >= self.cfg.total_training_tokens:
+                    break
