@@ -23,6 +23,7 @@ from lm_saes.utils.distributed import (
 )
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.misc import is_primary_rank
+from lm_saes.utils.timer import timer
 
 from .config import BaseSAEConfig
 
@@ -344,6 +345,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             return torch.tensor(1.0, device=x.device, dtype=x.dtype)
         raise ValueError(f"Not implemented norm_activation {self.cfg.norm_activation}")
 
+    @timer.time("normalize_activations")
     def normalize_activations(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Normalize the input activations.
         This should be called before calling `encode` or `compute_loss`.
@@ -573,6 +575,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
 
+    @timer.time("compute_loss")
     def compute_loss(
         self,
         batch: dict[str, torch.Tensor],
@@ -604,47 +607,52 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """
         x, encoder_kwargs = self.prepare_input(batch)
         label = self.prepare_label(batch, **kwargs)
+
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
 
         if self.device_mesh is not None:
-            assert (
-                isinstance(reconstructed, DTensor)
-                and isinstance(feature_acts, DTensor)
-                and isinstance(hidden_pre, DTensor)
-            )
-            reconstructed = reconstructed.full_tensor()
-            feature_acts = feature_acts.full_tensor()
-            hidden_pre = hidden_pre.full_tensor()
-        if isinstance(label, DTensor):
-            label = label.full_tensor()
-        l_rec = (reconstructed - label).pow(2)
-        if use_batch_norm_mse:
-            l_rec = (
-                l_rec
-                / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
-            )
-        loss = l_rec.sum(dim=-1).mean()
-        loss_dict = {
-            "l_rec": l_rec,
-        }
-
-        if sparsity_loss_type is not None:
-            if sparsity_loss_type == "power":
-                l_s = torch.norm(feature_acts * self.decoder_norm_full(), p=p, dim=-1)
-            elif sparsity_loss_type == "tanh":
-                l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm_full()).sum(dim=-1)
-            elif sparsity_loss_type == "tanh-quad":
-                approx_frequency = einops.reduce(
-                    torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm_full()),
-                    "... d_sae -> d_sae",
-                    "mean",
+            with timer.time("tensor_gather"):
+                assert (
+                    isinstance(reconstructed, DTensor)
+                    and isinstance(feature_acts, DTensor)
+                    and isinstance(hidden_pre, DTensor)
                 )
-                l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
-            else:
-                raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
-            loss_dict["l_s"] = l1_coefficient * l_s.mean()
-            loss = loss + l1_coefficient * l_s.mean()
+                reconstructed = reconstructed.full_tensor()
+                feature_acts = feature_acts.full_tensor()
+                hidden_pre = hidden_pre.full_tensor()
+            if isinstance(label, DTensor):
+                label = label.full_tensor()
+
+        with timer.time("loss_calculation"):
+            l_rec = (reconstructed - label).pow(2)
+            if use_batch_norm_mse:
+                l_rec = (
+                    l_rec
+                    / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+                )
+            loss = l_rec.sum(dim=-1).mean()
+            loss_dict = {
+                "l_rec": l_rec,
+            }
+
+            if sparsity_loss_type is not None:
+                with timer.time("sparsity_loss_calculation"):
+                    if sparsity_loss_type == "power":
+                        l_s = torch.norm(feature_acts * self.decoder_norm_full(), p=p, dim=-1)
+                    elif sparsity_loss_type == "tanh":
+                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm_full()).sum(dim=-1)
+                    elif sparsity_loss_type == "tanh-quad":
+                        approx_frequency = einops.reduce(
+                            torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm_full()),
+                            "... d_sae -> d_sae",
+                            "mean",
+                        )
+                        l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
+                    else:
+                        raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
+                    loss_dict["l_s"] = l1_coefficient * l_s.mean()
+                    loss = loss + l1_coefficient * l_s.mean()
 
         if return_aux_data:
             aux_data = {
