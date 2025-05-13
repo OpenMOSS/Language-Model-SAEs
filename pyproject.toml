@@ -30,7 +30,6 @@ dependencies = [
     "tomlkit>=0.13.2",
     "pydantic-settings>=2.7.1",
     "qwen-vl-utils>=0.0.10",
-    "triton>=3.1.0; (sys_platform == 'win32' or sys_platform == 'linux')",
     "typing-extensions>=4.13.2",
     "more-itertools>=10.7.0",
     "json-repair>=0.44.1",
@@ -97,9 +96,13 @@ flash-attn = [
 
 [project.optional-dependencies]
 # NPU variant of PyTorch (for Huawei Ascend hardware)
-default = ["torch==2.5.1", "torchvision==0.20.1"]
-npu = ["torch==2.5.1", "torchvision==0.20.1", "torch-npu==2.5.1"]
+default = ["torch==2.6.0", "torchvision>=0.20.1"]
 
+npu = [
+    "torch==2.6.0",
+    "torchvision>=0.20.1",
+    "torch-npu==2.6.0rc1",
+]
 
 [tool.uv.sources]
 torch = [{ index = "torch-cpu", extra = "npu" }]
