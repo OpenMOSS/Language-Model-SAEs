@@ -173,24 +173,20 @@ class CrossCoder(AbstractSparseAutoEncoder):
         """
         if self.device_mesh is not None and not isinstance(x, DTensor):
             with timer.time("encode_distribute_tensor"):
-                x = distribute_tensor_on_dim(x, self.device_mesh, {})
+                x = distribute_tensor_on_dim(x, self.device_mesh, {"head": 0})
 
         # Apply encoding per head
-        with timer.time("encode_computation"):
-            # Apply encoding per head
-            hidden_pre = (
-                einops.einsum(x, self.W_E, "... n_heads d_model, n_heads d_model d_sae -> ... n_heads d_sae") + self.b_E
-            )
-            # Sum across heads and add bias
-            accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
-            accumulated_hidden_pre = einops.repeat(
-                accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
-            )
+        hidden_pre = (
+            einops.einsum(x, self.W_E, "... n_heads d_model, n_heads d_model d_sae -> ... n_heads d_sae") + self.b_E
+        )
+        # Sum across heads and add bias
+        accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
+        accumulated_hidden_pre = einops.repeat(
+            accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
+        )
 
-            # Apply activation function
-            feature_acts = accumulated_hidden_pre * self.activation_function(
-                accumulated_hidden_pre * self.decoder_norm()
-            )
+        # Apply activation function
+        feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
 
         if return_hidden_pre:
             return feature_acts, accumulated_hidden_pre
