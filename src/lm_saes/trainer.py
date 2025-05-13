@@ -232,15 +232,14 @@ class Trainer:
             if is_primary_rank(sae.device_mesh):
                 print({"step": self.cur_step + 1, **wandb_log_dict})
 
-                # Print timer summary
-                print("\nTimer Summary:")
-                print(timer.summary())
+                if timer.enabled:
+                    print("\nTimer Summary:")
+                    print(timer.summary())
 
             if self.wandb_logger is not None:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
 
-    timer.time("save_checkpoint")
-
+    @timer.time("save_checkpoint")
     def _save_checkpoint(self, sae: AbstractSparseAutoEncoder):
         if len(self.checkpoint_thresholds) > 0 and self.cur_tokens >= self.checkpoint_thresholds[0]:
             path = os.path.join(
