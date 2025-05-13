@@ -223,3 +223,9 @@ def pad_and_truncate_tokens(
         device=tokens.device,
     )
     return torch.cat([tokens, padding], dim=-1)
+
+
+def get_slice_length(s: slice, length: int):
+    start, stop, step = s.indices(length)
+    length = (stop - start + step - 1) // step
+    return length
