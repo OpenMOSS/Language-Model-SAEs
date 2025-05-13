@@ -9,7 +9,6 @@ from typing_extensions import override
 
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import SAEConfig
-from .kernels import decode_with_triton_spmm_kernel
 
 
 class SparseAutoEncoder(AbstractSparseAutoEncoder):
@@ -299,6 +298,8 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         if (
             self.cfg.use_triton_kernel and 0 < max_l0_in_batch < sparsity_threshold
         ):  # triton kernel cannot handle empty feature_acts
+            from .kernels import decode_with_triton_spmm_kernel
+
             require_precise_feature_acts_grad = "topk" not in self.cfg.act_fn
             reconstructed = decode_with_triton_spmm_kernel(
                 feature_acts, self.decoder.weight, require_precise_feature_acts_grad
