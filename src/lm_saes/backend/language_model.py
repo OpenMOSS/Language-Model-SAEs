@@ -18,6 +18,47 @@ from lm_saes.config import LanguageModelConfig
 from lm_saes.utils.misc import pad_and_truncate_tokens
 
 
+def get_input_with_manually_prepended_bos(tokenizer, input):
+    """
+    Manually prepends the bos token to the input.
+
+    Args:
+        tokenizer (AutoTokenizer): The tokenizer to use for prepending the bos token.
+        input (Union[str, List[str]]): The input to prepend the bos token to.
+
+    Returns:
+        Union[str, List[str]]: The input with the bos token manually prepended.
+    """
+    if isinstance(input, str):
+        input = tokenizer.bos_token + input
+    else:
+        input = [tokenizer.bos_token + string for string in input]
+    return input
+
+
+def to_tokens(tokenizer, text, max_length, device="cpu"):
+    tokenizer_prepends_bos = len(tokenizer.encode("")) > 0
+    text = text if not tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
+    tokens = tokenizer(
+                text,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+            )["input_ids"]
+    return tokens.to(device)
+
+
+def set_tokens(tokenizer):
+    if tokenizer.eos_token is None:
+        tokenizer.eos_token = "<|endoftext|>"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.bos_token is None:
+        tokenizer.bos_token = tokenizer.eos_token
+    return tokenizer
+
+
 def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optional[tuple[int, int]]]:
     """Match the tokens to the input text, returning a list of tuples of the form (start_idx, end_idx) for each token."""
     # Initialize list to store token positions
@@ -117,7 +158,7 @@ class TransformerLensLanguageModel(LanguageModel):
             cache_dir=cfg.cache_dir,
             local_files_only=cfg.local_files_only,
             torch_dtype=cfg.dtype,
-        )
+        ) if cfg.load_ckpt else None
         hf_tokenizer = AutoTokenizer.from_pretrained(
             (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
             trust_remote_code=True,
@@ -125,6 +166,7 @@ class TransformerLensLanguageModel(LanguageModel):
             add_bos_token=True,
             local_files_only=cfg.local_files_only,
         )
+        self.tokenizer = set_tokens(hf_tokenizer)
         self.model = HookedTransformer.from_pretrained(
             cfg.model_name,
             use_flash_attn=cfg.use_flash_attn,
@@ -134,11 +176,7 @@ class TransformerLensLanguageModel(LanguageModel):
             hf_config=hf_model.config,
             tokenizer=hf_tokenizer,
             dtype=cfg.dtype,  # type: ignore ; issue with transformer_lens
-        )
-
-    @property
-    def tokenizer(self) -> Any:
-        return self.model.tokenizer
+        ) if hf_model else None
 
     @property
     def eos_token_id(self) -> int | None:
@@ -157,7 +195,7 @@ class TransformerLensLanguageModel(LanguageModel):
             warnings.warn(
                 "Tracing with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
-        tokens = self.model.to_tokens(raw["text"], prepend_bos=True)
+        tokens = to_tokens(self.tokenizer, raw["text"], max_length=self.cfg.max_length, device=self.cfg.device)
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
@@ -171,6 +209,7 @@ class TransformerLensLanguageModel(LanguageModel):
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
     ) -> dict[str, torch.Tensor]:
+        assert self.model is not None
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
                 "Activations with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."

@@ -11,7 +11,6 @@ It includes:
 """
 
 from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
-from functools import partial
 import random
 from dataclasses import dataclass
 from enum import Enum
@@ -26,6 +25,9 @@ from lm_saes.backend.language_model import LanguageModel
 from lm_saes.config import BaseConfig, BaseSAEConfig
 from lm_saes.database import FeatureRecord, MongoClient, FeatureAnalysis
 import asyncio
+from threading import Lock 
+lock = Lock()
+
 
 
 
@@ -181,10 +183,10 @@ class TokenizedSample:
                     if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
                 )
             except Exception as e:
-                print(f"Error processing segment: start={start}, end={end}, segment={text[start:end]}\n\n")
+                print(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\ntext={text}\n")
                 continue
             segments.append(Segment(text[start:end], segment_activation))
-
+        
         return TokenizedSample(segments, max_activation)
 
 
@@ -229,7 +231,9 @@ def generate_activating_examples(
             data = dataset[context_idx]
 
             # Process the sample using model's trace method
+            lock.acquire()
             origins = model.trace({k: [v] for k, v in data.items()})[0]
+            lock.release()
 
             max_act_pos = torch.argmax(torch.tensor(feature_acts)).item()
 
@@ -243,7 +247,6 @@ def generate_activating_examples(
                 origins=origins[left_end:right_end],
                 max_activation=analysis.max_feature_acts,
             )
-
             samples.append(sample)
 
         except Exception as e:
@@ -298,7 +301,9 @@ def generate_non_activating_examples(
             data = dataset[context_idx]
 
             # Process the sample using model's trace method
+            lock.acquire()
             origins = model.trace({k: [v] for k, v in data.items()})[0]
+            lock.release()
 
             # Create TokenizedExample using the trace information
             sample = TokenizedSample.construct(
