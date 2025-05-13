@@ -350,6 +350,7 @@ class LanguageModelConfig(BaseModelConfig):
     """ The maximum length of the input. """
     backend: Literal["huggingface", "transformer_lens", "auto"] = "auto"
     """ The backend to use for the language model. """
+    load_ckpt: bool = True
 
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
