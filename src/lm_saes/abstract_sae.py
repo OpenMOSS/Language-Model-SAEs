@@ -611,19 +611,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
 
-        if self.device_mesh is not None:
-            with timer.time("tensor_gather"):
-                assert (
-                    isinstance(reconstructed, DTensor)
-                    and isinstance(feature_acts, DTensor)
-                    and isinstance(hidden_pre, DTensor)
-                )
-                reconstructed = reconstructed.full_tensor()
-                feature_acts = feature_acts.full_tensor()
-                hidden_pre = hidden_pre.full_tensor()
-                if isinstance(label, DTensor):
-                    label = label.full_tensor()
-
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
             if use_batch_norm_mse:
@@ -631,28 +618,37 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     l_rec
                     / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
                 )
-            loss = l_rec.sum(dim=-1).mean()
+            l_rec = l_rec.sum(dim=-1).mean()
+            if isinstance(l_rec, DTensor):
+                l_rec = l_rec.full_tensor()
             loss_dict = {
                 "l_rec": l_rec,
             }
+            loss = l_rec
 
             if sparsity_loss_type is not None:
                 with timer.time("sparsity_loss_calculation"):
                     if sparsity_loss_type == "power":
-                        l_s = torch.norm(feature_acts * self.decoder_norm_full(), p=p, dim=-1)
+                        l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
                     elif sparsity_loss_type == "tanh":
-                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm_full()).sum(dim=-1)
+                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
                     elif sparsity_loss_type == "tanh-quad":
                         approx_frequency = einops.reduce(
-                            torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm_full()),
+                            torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()),
                             "... d_sae -> d_sae",
                             "mean",
                         )
                         l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
                     else:
                         raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
-                    loss_dict["l_s"] = l1_coefficient * l_s.mean()
-                    loss = loss + l1_coefficient * l_s.mean()
+                    l_s = l_s.mean()
+                    if isinstance(l_s, DTensor):
+                        l_s = l_s.full_tensor()
+                    l_s = l1_coefficient * l_s
+                    # WARNING: Some DTensor bugs make if l1_coefficient * l_s goes before full_tensor, the result will be constantly 0 and backward will throw some nonsense error. If no full_tensor is performed before backward, the gradient seems to be correct (though the value is an incorrect 0).
+                    # This can be constantly reproduced but I cannot construct a minimal example. All the examples I tried results in the correct value. (but the backward error exists in these minimal examples)
+                    loss_dict["l_s"] = l_s
+                    loss = loss + l_s
 
         if return_aux_data:
             aux_data = {

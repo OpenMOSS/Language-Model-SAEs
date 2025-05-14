@@ -129,11 +129,16 @@ class Trainer:
         # TODO: add full distributed support
         assert self.optimizer is not None, "Optimizer must be initialized"
         label = sae.prepare_label(batch)
-        if isinstance(label, DTensor):
-            label = label.full_tensor()
         act_freq_scores = (log_info["feature_acts"] > 0).float().sum(0)
         if sae.cfg.sae_type == "crosscoder":
-            act_freq_scores = act_freq_scores.max(dim=0).values
+            if not isinstance(act_freq_scores, DTensor):
+                act_freq_scores = act_freq_scores.amax(dim=0)
+            else:
+                # Operator aten.amax.default does not have a sharding strategy registered.
+                act_freq_scores = act_freq_scores.full_tensor().amax(dim=0)
+        if isinstance(act_freq_scores, DTensor):
+            act_freq_scores = act_freq_scores.full_tensor()
+
         log_info["n_forward_passes_since_fired"] += 1
         log_info["n_forward_passes_since_fired"][act_freq_scores > 0] = 0
         log_info["act_freq_scores"] += act_freq_scores
@@ -155,32 +160,51 @@ class Trainer:
             log_info["n_frac_active_tokens"] = torch.zeros_like(log_info["n_frac_active_tokens"])
 
         if (self.cur_step + 1) % self.cfg.log_frequency == 0:
-            l0 = (log_info["feature_acts"] > 0).float().sum(-1).mean()
+            feature_acts = log_info["feature_acts"]
+            if isinstance(feature_acts, DTensor):
+                feature_acts = feature_acts.full_tensor()
+            mean_feature_act = feature_acts[feature_acts.gt(0)].mean()
+            l0 = (feature_acts > 0).float().sum(-1).mean()
+
             l_rec = log_info["l_rec"].sum(dim=-1).mean()
+            if isinstance(l_rec, DTensor):
+                l_rec = l_rec.full_tensor()
+
+            l_s = log_info["l_s"].mean()
+            if isinstance(l_s, DTensor):
+                l_s = l_s.full_tensor()
+
             per_token_l2_loss = (log_info["reconstructed"] - label).pow(2).sum(dim=-1)
             total_variance = (label - label.mean(0)).pow(2).sum(dim=-1)
             l2_norm_error = per_token_l2_loss.sqrt().mean()
             l2_norm_error_ratio = l2_norm_error / label.norm(p=2, dim=-1).mean()
             explained_variance = 1 - per_token_l2_loss / total_variance
+            if isinstance(explained_variance, DTensor):
+                explained_variance = explained_variance.full_tensor()
+            if isinstance(l2_norm_error, DTensor):
+                l2_norm_error = l2_norm_error.full_tensor()
+            if isinstance(l2_norm_error_ratio, DTensor):
+                l2_norm_error_ratio = l2_norm_error_ratio.full_tensor()
+
+            grad_norm = log_info["grad_norm"]
+            if isinstance(grad_norm, DTensor):
+                grad_norm = grad_norm.full_tensor()
+
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.item(),
-                **(
-                    {"losses/sparsity_loss": log_info["l_s"].mean().item()}
-                    if log_info.get("l_s", None) is not None
-                    else {}
-                ),
+                **({"losses/sparsity_loss": l_s.item()} if log_info.get("l_s", None) is not None else {}),
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
                 "metrics/explained_variance": explained_variance.mean().item(),
                 "metrics/explained_variance_std": explained_variance.std().item(),
                 # sparsity
                 "metrics/l0": l0.item(),
-                "metrics/mean_feature_act": log_info["feature_acts"][log_info["feature_acts"].gt(0)].mean().item(),
+                "metrics/mean_feature_act": mean_feature_act.item(),
                 "metrics/l2_norm_error": l2_norm_error.item(),
                 "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
                 # norm
-                "metrics/gradients_norm": log_info["grad_norm"].item(),
+                "metrics/gradients_norm": grad_norm.item(),
                 # sparsity
                 "sparsity/mean_passes_since_fired": log_info["n_forward_passes_since_fired"].mean().item(),
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
