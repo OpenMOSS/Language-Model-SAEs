@@ -420,6 +420,7 @@ class FeatureAnalyzerConfig(BaseConfig):
         - `n_samples`: Number of samples to keep
     """
 
+
 class WandbConfig(BaseConfig):
     wandb_project: str = "gpt2-sae-training"
     exp_name: Optional[str] = None

@@ -3,11 +3,12 @@ import os
 from abc import ABC, abstractmethod
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any, Callable, Literal, Self, Union, cast, overload
+from typing import Any, Callable, Literal, Optional, Self, Union, cast, overload
 
 import einops
 import safetensors.torch as safe
 import torch
+import torch.distributed.tensor
 from jaxtyping import Float
 from safetensors import safe_open
 from torch import nn
@@ -88,7 +89,17 @@ class JumpReLU(torch.nn.Module):
         self.jumprelu_threshold_window = jumprelu_threshold_window
         self.shape = shape
         self.device_mesh = device_mesh
-        self.log_jumprelu_threshold = torch.nn.Parameter(torch.empty(shape, device=device, dtype=dtype))
+        if device_mesh is None:
+            self.log_jumprelu_threshold = torch.nn.Parameter(torch.empty(shape, device=device, dtype=dtype))
+        else:
+            self.log_jumprelu_threshold = torch.nn.Parameter(
+                torch.distributed.tensor.empty(
+                    shape,
+                    dtype=dtype,
+                    device_mesh=device_mesh,
+                    placements=placements_from_dim_map(self.dim_maps()["log_jumprelu_threshold"], device_mesh),
+                )
+            )
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return cast(torch.Tensor, STEFunction.apply(input, self.log_jumprelu_threshold, self.jumprelu_threshold_window))
@@ -107,6 +118,11 @@ class JumpReLU(torch.nn.Module):
             nn.Parameter(state_dict[f"{prefix}log_jumprelu_threshold"].to(self.log_jumprelu_threshold.dtype)),
         )
 
+    def dim_maps(self) -> dict[str, dict[str, int]]:
+        return {
+            "log_jumprelu_threshold": {"model": 0},
+        }
+
 
 class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     """Abstract base class for sparse autoencoder models.
@@ -115,7 +131,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     Concrete implementations should inherit from this class and implement the required methods.
     """
 
-    def __init__(self, cfg: BaseSAEConfig):
+    def __init__(self, cfg: BaseSAEConfig, device_mesh: Optional[DeviceMesh] = None):
         super(AbstractSparseAutoEncoder, self).__init__()
         self.cfg = cfg
 
@@ -126,9 +142,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         # calculated by the initializer before training starts and set by standardize_parameters_of_dataset_activation_scaling
         self.dataset_average_activation_norm: dict[str, float] | None = None
 
-        self.device_mesh: DeviceMesh | None = None
+        self.device_mesh: DeviceMesh | None = device_mesh
 
-        self.activation_function: Callable[[torch.Tensor], torch.Tensor] = self.activation_function_factory()
+        self.activation_function: Callable[[torch.Tensor], torch.Tensor] = self.activation_function_factory(device_mesh)
 
     @torch.no_grad()
     def set_dataset_average_activation_norm(self, dataset_average_activation_norm: dict[str, float]):
@@ -382,10 +398,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
     @classmethod
     def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None) -> Self:
+        model = cls(cfg, device_mesh)
         if cfg.sae_pretrained_name_or_path is None:
-            model = cls(cfg)
-            if device_mesh is not None:
-                model.tensor_parallel(device_mesh=device_mesh)
             return model
 
         path = parse_pretrained_name_or_path(cfg.sae_pretrained_name_or_path)
@@ -415,15 +429,15 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     def load_tensor(key: str) -> DTensor:
                         tensor_slice = f.get_slice(key)
                         shape = tensor_slice.get_shape()
-                        indices = local_slices_from_dim_map(shape, cls.dim_maps()[key], device_mesh)
+                        indices = local_slices_from_dim_map(shape, model.dim_maps()[key], device_mesh)
                         local_tensor = tensor_slice[indices].to(cfg.dtype)
                         return DTensor.from_local(
                             local_tensor,
                             device_mesh=device_mesh,
-                            placements=placements_from_dim_map(cls.dim_maps()[key], device_mesh),
+                            placements=placements_from_dim_map(model.dim_maps()[key], device_mesh),
                         )
 
-                    state_dict = {k: load_tensor(k) if k in cls.dim_maps() else f.get_tensor(k) for k in f.keys()}
+                    state_dict = {k: load_tensor(k) if k in model.dim_maps() else f.get_tensor(k) for k in f.keys()}
         else:
             state_dict: dict[str, torch.Tensor] = torch.load(
                 ckpt_path,
@@ -431,7 +445,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 weights_only=True,
             )["sae"]
 
-        model = cls(cfg)
         model.load_full_state_dict(state_dict, device_mesh)
         return model
 
@@ -482,7 +495,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             )
         return log_dict
 
-    def activation_function_factory(self) -> Callable[[torch.Tensor], torch.Tensor]:
+    def activation_function_factory(
+        self, device_mesh: DeviceMesh | None = None
+    ) -> Callable[[torch.Tensor], torch.Tensor]:
         assert self.cfg.act_fn.lower() in [
             "relu",
             "topk",
@@ -497,6 +512,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 (self.cfg.d_sae,),
                 self.cfg.device,
                 self.cfg.dtype,
+                device_mesh,
             )
 
         elif self.cfg.act_fn.lower() == "topk":
@@ -676,12 +692,12 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         if isinstance(self.activation_function, JumpReLU):
             self.activation_function.tensor_parallel(device_mesh)
 
-    @classmethod
-    def dim_maps(cls) -> dict[str, dict[str, int]]:
+    def dim_maps(self) -> dict[str, dict[str, int]]:
         """Get the dimension maps for the model."""
-        return {
-            "activation_function.log_jumprelu_threshold": {"model": 0},
-        }
+        if isinstance(self.activation_function, JumpReLU):
+            return {f"activation_function.{k}": v for k, v in self.activation_function.dim_maps().items()}
+        else:
+            return {}
 
     def load_distributed_state_dict(
         self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
