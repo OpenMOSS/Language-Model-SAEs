@@ -265,8 +265,8 @@ class Trainer:
                         }
                     )
             elif isinstance(sae, CrossCoder):
-                assert explained_variance.ndim == 2 and explained_variance.shape[1] == len(batch.keys())
-                for i, k in enumerate(batch.keys()):
+                assert explained_variance.ndim == 2 and explained_variance.shape[1] == len(sae.cfg.hook_points)
+                for i, k in enumerate(sae.cfg.hook_points):
                     wandb_log_dict.update(
                         {
                             f"crosscoder_metrics/{k}/explained_variance": explained_variance[:, i].mean().item(),
