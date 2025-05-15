@@ -11,22 +11,24 @@ It includes:
 """
 
 from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
+import time
+import json_repair
 import random
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Generator, Literal, Optional
+from typing import Any, Callable, Dict, Generator, Literal, Optional
 
 import torch
 from datasets import Dataset
 from pydantic import BaseModel, Field
-from tqdm import tqdm
+from tqdm import TMonitor, tqdm
 
 from lm_saes.backend.language_model import LanguageModel
 from lm_saes.config import BaseConfig, BaseSAEConfig
 from lm_saes.database import FeatureRecord, MongoClient, FeatureAnalysis
 import asyncio
-from threading import Lock 
-lock = Lock()
+# from threading import Lock 
+# lock = Lock()
 
 
 
@@ -52,8 +54,19 @@ class Step(BaseModel):
     thought: str
     """The thought of the step."""
 
-    output: str
-    """The output of the step."""
+    # output: str
+    # """The output of the step."""
+
+Step_Schema = {
+    "type":"object",
+    "properties":{
+        "thought":{
+            "type":"string",
+            "description":"The thought of the step."
+        },
+    }
+}
+
 
 
 class AutoInterpExplanation(BaseModel):
@@ -71,7 +84,27 @@ class AutoInterpExplanation(BaseModel):
     complexity: Literal[1, 2, 3, 4, 5]
     """The complexity of the feature."""
 
-
+AutoInterpExplanation_Schema = {
+    "type":"object",
+    "properties":{
+        "steps":{
+            "type":"array",
+            "items":Step_Schema
+        },
+        "final_explanation":{
+            "type":"string",
+            "description":"The explanation of the feature, in the form of 'This feature activates on... '"
+        },
+        "activation_consistency":{
+            "type":"integer",
+            "description":"The consistency of the feature, on a scale of 1 to 5."
+        },
+        "complexity":{
+            "type":"integer",
+            "description":"The complexity of the feature, on a scale of 1 to 5."
+        }
+    }
+}
 class AutoInterpEvaluation(BaseModel):
     """The result of an auto-interpretation of a SAE feature."""
 
@@ -81,7 +114,22 @@ class AutoInterpEvaluation(BaseModel):
     evaluation_results: list[bool]
     """The evaluation results for each example. Should be a list of YES/NO values."""
 
-
+AutoInterpEvaluation_Schema = {
+    "type":"object",
+    "properties":{
+        "steps":{
+            "type":"array",
+            "items":Step_Schema
+        },
+        "evaluation_results":{
+            "type":"array",
+            "items":{
+                "type":"boolean"
+            },
+            "description":"The evaluation results for each example. Should be a list of True/False values."
+        }
+    }
+}
 class AutoInterpConfig(BaseConfig):
     """Configuration for automatic interpretation of SAE features."""
 
@@ -183,7 +231,7 @@ class TokenizedSample:
                     if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
                 )
             except Exception as e:
-                print(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\ntext={text}\n")
+                print(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\rorigins={origins}\n")
                 continue
             segments.append(Segment(text[start:end], segment_activation))
         
@@ -231,9 +279,9 @@ def generate_activating_examples(
             data = dataset[context_idx]
 
             # Process the sample using model's trace method
-            lock.acquire()
+            # lock.acquire()
             origins = model.trace({k: [v] for k, v in data.items()})[0]
-            lock.release()
+            # lock.release()
 
             max_act_pos = torch.argmax(torch.tensor(feature_acts)).item()
 
@@ -301,9 +349,9 @@ def generate_non_activating_examples(
             data = dataset[context_idx]
 
             # Process the sample using model's trace method
-            lock.acquire()
+            # lock.acquire()
             origins = model.trace({k: [v] for k, v in data.items()})[0]
-            lock.release()
+            # lock.release()
 
             # Create TokenizedExample using the trace information
             sample = TokenizedSample.construct(
@@ -402,21 +450,27 @@ class FeatureInterpreter:
 
         examples_prompt = """Some examples:
 
-The feature activates on the word 'knows' in rhetorical questions.
-Activation Consistency: 5
-Complexity: 4
+{
+    "steps": ["Activating token: <<knows>>. Contextual tokens: Who, ?. Pattern: <<knows>> is consistently activated, often found in sentences starting with interrogative words like 'Who' and ending with a question mark.", "Shared features include consistent activation on the word 'knows'. The surrounding text always forms a question. The questions do not seem to expect a literal answer, suggesting they are rhetorical.", "This feature activates on the word knows in rhetorical questions"],
+    "final_explanation": "The feature activates on the word 'knows' in rhetorical questions.",
+    "activation_consistency": 5,
+    "complexity": 4
+}
 
-The feature activates on verbs related to decision-making and preferences.
-Activation Consistency: 4
-Complexity: 4
+{
+    "steps": ["Activating tokens: <<Entwickler>>, <<Enterprise>>, <<Entertainment>>, <<Entity>>, <<Entrance>>. Pattern: All activating instances are on words that begin with the specific substring 'Ent'. The activation is on the 'Ent' portion itself.", "The shared feature across all examples is the presence of words starting with the capitalized substring 'Ent'. The feature appears to be case-sensitive and position-specific (start of the word). No other contextual or semantic patterns are observed."],
+    "final_explanation": "The feature activates on the substring 'Ent' at the start of words",
+    "activation_consistency": 5,
+    "complexity": 1
+}
 
-The feature activates on the substring 'Ent' at the start of words
-Activation Consistency: 5
-Complexity: 1
+{
+    "steps": ["Activating tokens: <<budget deficit>>, <<interest rates>>, <<fiscal stimulus>>, <<trade policy>>, <<unemployment benefits>>. Pattern: Activations highlight phrases and concepts central to economic discussions and government actions.","The examples consistently involve discussions of economic indicators, government spending, financial regulation, or international trade agreements. While most activations clearly relate to economic policies enacted or debated by governmental bodies, some activations might be on broader economic news or expert commentary where the direct link to a specific government policy is less explicit, or on related but not identical topics like corporate financial health in response to policy."],
+    "final_explanation": "The feature activates on text about government economic policy",
+    "activation_consistency": 3,
+    "complexity": 5
+}
 
-The feature activates on text about government economic policy
-Activation Consistency: 3
-Complexity: 5
 """
         system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. The activating words in each document are indicated with << ... >>. We will give you a list of documents on which the feature activates, in order from most strongly activating to least strongly activating.
 
@@ -440,7 +494,7 @@ Third, Assess Feature Complexity: Based on your summary and the nature of the ac
 2: Single word or token feature but including multiple languages or spelling, e.g., “mentions of dog”
 1: Single token feature, e.g., “the token ‘(‘”
 
-Your final output should first provide the summary sentence in the form "This feature activates on...", then on a new line the Activation Consistency score in the form "Activation Consistency: X", and on another new line the Complexity score in the form "Complexity: X".
+Your output should be a JSON object that has the following fields: `steps`, `final_explanation`, `activation_consistency`, `complexity`. `steps` should be an array of strings with a length not exceeding 3, each representing a step in the chain-of-thought process. `final_explanation` should be a string in the form of 'This feature activates on... '. `activation_consistency` should be an integer between 1 and 5, representing the consistency of the feature. `complexity` should be an integer between 1 and 5, representing the complexity of the feature.
 
 {examples_prompt}
 """
@@ -467,20 +521,24 @@ Your final output should first provide the summary sentence in the form "This fe
             Dictionary with explanation and metadata
         """
         system_prompt, user_prompt = self._generate_explanation_prompt(activating_examples)
-
-        response = self.explainer_client.beta.chat.completions.parse(
+        start_time = time.time()
+        response = self.explainer_client.chat.completions.create(
             model=self.cfg.openai_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_format=AutoInterpExplanation,
+            response_format={
+                'type': 'json_object'
+            },
         )
-        explanation = response.choices[0].message.parsed
-        assert explanation is not None,f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
-        return {"user_prompt": user_prompt, "system_prompt": system_prompt, "response": explanation}
+        
+        assert response.choices[0].message.content is not None,f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
+        explanation = json_repair.loads(response.choices[0].message.content)
+        response_time = time.time() - start_time
+        return {"user_prompt": user_prompt, "system_prompt": system_prompt, "response": explanation, "time": response_time}
 
-    def _generate_detection_prompt(self, explanation: AutoInterpExplanation, examples: list[TokenizedSample]) -> tuple[str, str]:
+    def _generate_detection_prompt(self, explanation: dict[str, Any], examples: list[TokenizedSample]) -> tuple[str, str]:
         """Generate a prompt for detection evaluation.
 
         Args:
@@ -491,7 +549,10 @@ Your final output should first provide the summary sentence in the form "This fe
             Prompt string for the LLM
         """
         system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. You will be given a short explanation of what this feature activates for, and then be shown {len(examples)} example sequences in random order. You will have to return a boolean list of the examples where you think the feature should activate at least once, on ANY of the words or substrings in the document, true if it does, false if it doesn't. Try not to be overly specific in your interpretation of the explanation."""
-        user_prompt = f"Here is the explanation:\n\n{explanation.final_explanation}\n\nHere are the examples:\n\n"
+        system_prompt += f"""
+Your output should be a JSON object that has the following fields: `steps`, `evaluation_results`. `steps` should be an array of strings, each representing a step in the chain-of-thought process within 50 words. `evaluation_results` should be an array of booleans, each representing whether the feature should activate on the corresponding example.
+"""
+        user_prompt = f"Here is the explanation:\n\n{explanation['final_explanation']}\n\nHere are the examples:\n\n"
 
         for i, example in enumerate(examples, 1):
             user_prompt += f"Example {i}: {example.display_plain()}\n"
@@ -500,7 +561,7 @@ Your final output should first provide the summary sentence in the form "This fe
 
     def evaluate_explanation_detection(
         self,
-        explanation: AutoInterpExplanation,
+        explanation: dict[str, Any],
         activating_examples: list[TokenizedSample],
         non_activating_examples: list[TokenizedSample],
     ) -> dict[str, Any]:
@@ -549,17 +610,22 @@ Your final output should first provide the summary sentence in the form "This fe
         system_prompt, user_prompt = self._generate_detection_prompt(explanation, all_examples)
 
         # Get response from OpenAI
-        response = self.explainer_client.beta.chat.completions.parse(
+        start_time = time.time()
+        response = self.explainer_client.chat.completions.create(
             model=self.cfg.openai_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_format=AutoInterpEvaluation,
+            response_format={
+                'type': 'json_object'
+            },
         )
-        detection_response = response.choices[0].message.parsed
-        assert detection_response is not None, f"No detection response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
-        predictions = detection_response.evaluation_results
+        assert response.choices[0].message.content is not None, f"No detection response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
+        detection_response: dict[str, Any] = json_repair.loads(response.choices[0].message.content) # type: ignore
+        # print(f"Detection for feature :\n{detection_response}\n\n")
+        predictions: list[bool] = detection_response["evaluation_results"]
+        response_time = time.time() - start_time
 
         # Pad predictions if needed
         predictions = predictions[: len(ground_truth)]
@@ -592,11 +658,12 @@ Your final output should first provide the summary sentence in the form "This fe
                 "balanced_accuracy": balanced_accuracy,
             },
             "passed": balanced_accuracy >= 0.7,  # Arbitrary threshold for passing
+            "time": response_time
         }
 
     def _generate_fuzzing_prompt(
         self,
-        explanation: AutoInterpExplanation,
+        explanation: dict[str, Any],
         examples: list[tuple[TokenizedSample, bool]],  # (sample, is_correctly_marked)
     ) -> tuple[str, str]:
         """Generate a prompt for fuzzing evaluation.
@@ -606,10 +673,13 @@ Your final output should first provide the summary sentence in the form "This fe
             examples: List of tuples (example, is_correctly_marked)
 
         Returns:
-            Prompt string for the LLM
+            Prompt string for the LLM   
         """
         system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. You will be given a short explanation of what this feature activates for, and then be shown {len(examples)} example sequences in random order. In each example, text segments highlighted with << >> are presented as activating the feature as described in the explanation. You will have to return a boolean list of the examples where you think the highlighted parts CORRECTLY correspond to the explanation, true if they do, false if they don't. Try not to be overly specific in your interpretation of the explanation."""
-        user_prompt = f"Here is the explanation:\n\n{explanation.final_explanation}\n\nHere are the examples:\n\n"
+        system_prompt += f"""
+Your output should be a JSON object that has the following fields: `steps`, `evaluation_results`. `steps` should be an array of strings, each representing a step in the chain-of-thought process within 50 words. `evaluation_results` should be an array of booleans, each representing whether the feature should activate on the corresponding example.
+"""
+        user_prompt = f"Here is the explanation:\n\n{explanation['final_explanation']}\n\nHere are the examples:\n\n"
 
         for i, (example, _) in enumerate(examples, 1):
             highlighted = example.display_highlighted(self.cfg.activation_threshold)
@@ -645,7 +715,7 @@ Your final output should first provide the summary sentence in the form "This fe
         return highlight_random_tokens(sample, n_to_highlight)
 
     def evaluate_explanation_fuzzing(
-        self, explanation: AutoInterpExplanation, activating_examples: list[TokenizedSample]
+        self, explanation: dict[str, Any], activating_examples: list[TokenizedSample]
     ) -> dict[str, Any]:
         """Evaluate an explanation using the fuzzing method.
 
@@ -700,18 +770,23 @@ Your final output should first provide the summary sentence in the form "This fe
         system_prompt, user_prompt = self._generate_fuzzing_prompt(explanation, examples_with_labels)
 
         # Get response from OpenAI
-        response = self.explainer_client.beta.chat.completions.parse(
+        start_time = time.time()
+        response = self.explainer_client.chat.completions.create(
             model=self.cfg.openai_model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "user", "content": user_prompt},   
             ],
-            response_format=AutoInterpEvaluation,
+            response_format={
+                'type': 'json_object'
+            },
         )
-        fuzzing_response = response.choices[0].message.parsed
-        assert fuzzing_response is not None, f"No fuzzing response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
+        assert response.choices[0].message.content is not None, f"No fuzzing response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
+        fuzzing_response :dict[str, Any] = json_repair.loads(response.choices[0].message.content) # type: ignore
+        # print(f"Fuzzing for feature :\n{fuzzing_response}\n\n")
         # Parse response (CORRECT/INCORRECT for each example)
-        predictions = fuzzing_response.evaluation_results
+        predictions: list[bool] = fuzzing_response["evaluation_results"]
+        response_time = time.time() - start_time
         # Pad predictions if needed
         predictions = predictions[: len(examples_with_labels)]
         if len(predictions) < len(examples_with_labels):
@@ -746,6 +821,7 @@ Your final output should first provide the summary sentence in the form "This fe
                 "balanced_accuracy": balanced_accuracy,
             },
             "passed": balanced_accuracy >= 0.7,  # Arbitrary threshold for passing
+            "time": response_time
         }
 
 
@@ -768,6 +844,8 @@ Your final output should first provide the summary sentence in the form "This fe
             Dictionary mapping feature indices to their interpretation results
         """
         
+        start_time = time.time()
+        response_time = 0
 
         activating_examples, non_activating_examples = self.get_feature_examples(
             feature=feature,
@@ -779,8 +857,9 @@ Your final output should first provide the summary sentence in the form "This fe
 
         # Generate explanation for the feature
         explanation_result = self.generate_explanation(activating_examples)
-        explanation: AutoInterpExplanation = explanation_result["response"]
-        # print(f"Explanation for feature {feature.index}:\n{explanation.final_explanation}\n\n")
+        explanation: dict[str, Any] = explanation_result["response"]
+        response_time += explanation_result["time"]
+        # print(f"Explanation for feature {feature.index}:\n{explanation}\n\n")
         # Evaluate explanation
         evaluation_results = []
 
@@ -790,24 +869,31 @@ Your final output should first provide the summary sentence in the form "This fe
             )
             # print(f"Detection result for feature {feature.index}:\n{detection_result}\n\n")
             evaluation_results.append(detection_result)
+            response_time += detection_result["time"]
 
         if ScorerType.FUZZING in self.cfg.scorer_type:
             fuzzing_result = self.evaluate_explanation_fuzzing(explanation, activating_examples)
             # print(f"Fuzzing result for feature {feature.index}:\n{fuzzing_result}\n\n")
             evaluation_results.append(fuzzing_result)
+            response_time += fuzzing_result["time"]
 
+        total_time = time.time() - start_time
 
         return {
             "analysis_name": analysis_name,
-            "explanation": explanation.final_explanation,
-            "complexity": explanation.complexity,
-            "consistency": explanation.activation_consistency,
+            "explanation": explanation["final_explanation"],
+            "complexity": explanation["complexity"],
+            "consistency": explanation["activation_consistency"],
             "explanation_details": {k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in explanation_result.items()},
             "evaluations": [
                 {k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in eval_result.items()}
                 for eval_result in evaluation_results
             ],
             "passed": any(eval_result["passed"] for eval_result in evaluation_results),
+            "time": {
+                "total": total_time,
+                "response": response_time,
+            }
         }
 
     def interpret_features(
@@ -818,7 +904,6 @@ Your final output should first provide the summary sentence in the form "This fe
         model: LanguageModel,
         datasets: Callable[[str, int, int], Dataset],
         analysis_name: str = "default",
-        max_workers: int = 10,
     ) -> Generator[dict[str, Any], None, None]:
         """Generate and evaluate explanations for multiple features.
 
@@ -833,14 +918,11 @@ Your final output should first provide the summary sentence in the form "This fe
         Returns:
             Dictionary mapping feature indices to their interpretation results
         """
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_feature = {executor.submit(self.interpret_single_feature, feature, model, datasets, analysis_name) :feature for feature_index in feature_indices if (feature := self.mongo_client.get_feature(sae_name, sae_series, feature_index)) is not None and feature.interpretation is None}
-            for future in as_completed(future_to_feature):
-                feature = future_to_feature[future]
-                try:
-                    yield future.result() | {"feature_index": feature.index, "sae_name": sae_name, "sae_series": sae_series}
-                except Exception as e:
-                    print(f"Error interpreting feature {feature.index}: {e}")
+
+        for feature_index in feature_indices:
+            feature = self.mongo_client.get_feature(sae_name, sae_series, feature_index)
+            if feature is not None and feature.interpretation is None:
+                yield {"feature_index": feature.index, "sae_name": sae_name, "sae_series": sae_series} | self.interpret_single_feature(feature, model, datasets, analysis_name)
 
 
 
