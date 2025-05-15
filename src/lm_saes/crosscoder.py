@@ -12,11 +12,7 @@ from typing_extensions import override
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import CrossCoderConfig
-from lm_saes.utils.distributed import (
-    distribute_tensor_on_dim,
-    local_slices_from_dim_map,
-    placements_from_dim_map,
-)
+from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import get_slice_length
 from lm_saes.utils.timer import timer
 
@@ -59,7 +55,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
                     cfg.d_sae,
                     dtype=cfg.dtype,
                     device_mesh=device_mesh,
-                    placements=placements_from_dim_map(self.dim_maps()["W_E"], device_mesh),
+                    placements=self.dim_maps()["W_E"].placements(device_mesh),
                 )
             )
             self.b_E = nn.Parameter(
@@ -68,7 +64,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
                     cfg.d_sae,
                     dtype=cfg.dtype,
                     device_mesh=device_mesh,
-                    placements=placements_from_dim_map(self.dim_maps()["b_E"], device_mesh),
+                    placements=self.dim_maps()["b_E"].placements(device_mesh),
                 )
             )
             self.W_D = nn.Parameter(
@@ -78,7 +74,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
                     cfg.d_model,
                     dtype=cfg.dtype,
                     device_mesh=device_mesh,
-                    placements=placements_from_dim_map(self.dim_maps()["W_D"], device_mesh),
+                    placements=self.dim_maps()["W_D"].placements(device_mesh),
                 )
             )
             self.b_D = nn.Parameter(
@@ -87,7 +83,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
                     cfg.d_model,
                     dtype=cfg.dtype,
                     device_mesh=device_mesh,
-                    placements=placements_from_dim_map(self.dim_maps()["b_D"], device_mesh),
+                    placements=self.dim_maps()["b_D"].placements(device_mesh),
                 )
             )
 
@@ -111,11 +107,11 @@ class CrossCoder(AbstractSparseAutoEncoder):
             b_D = torch.zeros(self.cfg.n_heads, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype)
         else:
             with timer.time("init_parameters_distributed"):
-                W_E_slices = local_slices_from_dim_map(
-                    (self.cfg.n_heads, self.cfg.d_model, self.cfg.d_sae), self.dim_maps()["W_E"], self.device_mesh
+                W_E_slices = self.dim_maps()["W_E"].local_slices(
+                    (self.cfg.n_heads, self.cfg.d_model, self.cfg.d_sae), self.device_mesh
                 )
-                W_D_slices = local_slices_from_dim_map(
-                    (self.cfg.n_heads, self.cfg.d_sae, self.cfg.d_model), self.dim_maps()["W_E"], self.device_mesh
+                W_D_slices = self.dim_maps()["W_D"].local_slices(
+                    (self.cfg.n_heads, self.cfg.d_sae, self.cfg.d_model), self.device_mesh
                 )
                 W_E_head_repeats = get_slice_length(W_E_slices[0], self.cfg.n_heads)
                 W_D_head_repeats = get_slice_length(W_D_slices[0], self.cfg.n_heads)
@@ -126,23 +122,23 @@ class CrossCoder(AbstractSparseAutoEncoder):
                     W_D_per_head, "d_sae d_model -> n_heads d_sae d_model", n_heads=W_D_head_repeats
                 )
                 W_E = DTensor.from_local(
-                    W_E_local, self.device_mesh, placements_from_dim_map(self.dim_maps()["W_E"], self.device_mesh)
+                    W_E_local, self.device_mesh, self.dim_maps()["W_E"].placements(self.device_mesh)
                 )
                 W_D = DTensor.from_local(
-                    W_D_local, self.device_mesh, placements_from_dim_map(self.dim_maps()["W_D"], self.device_mesh)
+                    W_D_local, self.device_mesh, self.dim_maps()["W_D"].placements(self.device_mesh)
                 )
                 b_E = torch.distributed.tensor.zeros(
                     self.cfg.n_heads,
                     self.cfg.d_sae,
                     device_mesh=self.device_mesh,
-                    placements=placements_from_dim_map(self.dim_maps()["b_E"], self.device_mesh),
+                    placements=self.dim_maps()["b_E"].placements(self.device_mesh),
                     dtype=self.cfg.dtype,
                 )
                 b_D = torch.distributed.tensor.zeros(
                     self.cfg.n_heads,
                     self.cfg.d_model,
                     device_mesh=self.device_mesh,
-                    placements=placements_from_dim_map(self.dim_maps()["b_D"], self.device_mesh),
+                    placements=self.dim_maps()["b_D"].placements(self.device_mesh),
                     dtype=self.cfg.dtype,
                 )
 
@@ -217,7 +213,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
         """
         if self.device_mesh is not None and not isinstance(x, DTensor):
             with timer.time("encode_distribute_tensor"):
-                x = distribute_tensor_on_dim(x, self.device_mesh, {"head": 0})
+                x = DimMap({"head": 0}).distribute(x, self.device_mesh)
 
         # Apply encoding per head
         hidden_pre = (
@@ -229,8 +225,9 @@ class CrossCoder(AbstractSparseAutoEncoder):
             accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
         )
         if isinstance(accumulated_hidden_pre, DTensor):
+            dim_map = DimMap({"head": -2, "model": -1})
             accumulated_hidden_pre = accumulated_hidden_pre.redistribute(
-                placements=placements_from_dim_map({"head": -2, "model": -1}, accumulated_hidden_pre.device_mesh)
+                placements=dim_map.placements(accumulated_hidden_pre.device_mesh)
             )
 
         # Apply activation function
@@ -282,7 +279,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 return DTensor.from_local(
                     torch.norm(self.W_D.to_local(), dim=-1, keepdim=keepdim),
                     device_mesh=self.device_mesh,
-                    placements=placements_from_dim_map({"head": 0, "model": 1}, self.device_mesh),
+                    placements=DimMap({"head": 0, "model": 1}).placements(self.device_mesh),
                 )
 
     @override
@@ -371,7 +368,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
             return DTensor.from_local(
                 local_activations,
                 device_mesh=self.device_mesh,
-                placements=placements_from_dim_map({"head": -2}, self.device_mesh),
+                placements=DimMap({"head": -2}).placements(self.device_mesh),
             ), {}
 
     @override
@@ -390,16 +387,23 @@ class CrossCoder(AbstractSparseAutoEncoder):
         super().tensor_parallel(device_mesh)
         for name in ["W_E", "W_D", "b_E", "b_D"]:
             param = getattr(self, name)
-            distributed_param = distribute_tensor_on_dim(param, device_mesh, self.dim_maps()[name])
+            distributed_param = self.dim_maps()[name].distribute(param, device_mesh)
             self.register_parameter(name, nn.Parameter(distributed_param))
 
-    def dim_maps(self) -> dict[str, dict[str, int]]:
-        return super().dim_maps() | {
-            "W_E": {"head": 0, "model": 2},
-            "W_D": {"head": 0, "model": 1},
-            "b_E": {"head": 0, "model": 1},
-            "b_D": {"head": 0},
+    def dim_maps(self) -> dict[str, DimMap]:
+        """Return a dictionary mapping parameter names to dimension maps.
+
+        Returns:
+            A dictionary mapping parameter names to DimMap objects.
+        """
+        parent_maps = super().dim_maps()
+        crosscoder_maps = {
+            "W_E": DimMap({"head": 0, "model": 2}),
+            "W_D": DimMap({"head": 0, "model": 1}),
+            "b_E": DimMap({"head": 0, "model": 1}),
+            "b_D": DimMap({"head": 0}),
         }
+        return parent_maps | crosscoder_maps
 
     @override
     @timer.time("load_distributed_state_dict")
