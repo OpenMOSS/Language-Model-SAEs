@@ -12,7 +12,7 @@ from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import placements_from_dim_map
+from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
@@ -275,7 +275,7 @@ class FeatureAnalyzer:
                     )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
                     # TODO: Remove this once redistributing across device meshes is supported
                 feature_acts = feature_acts.redistribute(
-                    placements=placements_from_dim_map({"model": -1}, device_mesh)
+                    placements=DimMap({"model": -1}).placements(device_mesh)
                 ).to_local()
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.max(dim=-2).values
@@ -380,7 +380,7 @@ class FeatureAnalyzer:
                     # TODO: Remove this once redistributing across device meshes is supported
 
                 decoder_norms = decoder_norms.redistribute(
-                    placements=placements_from_dim_map({"model": -1}, device_mesh)
+                    placements=DimMap({"model": -1}).placements(device_mesh)
                 ).to_local()
             assert decoder_norms.shape[-1] == len(act_times), (
                 f"decoder_norms.shape: {decoder_norms.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
@@ -396,7 +396,7 @@ class FeatureAnalyzer:
                     # TODO: Remove this once redistributing across device meshes is supported
 
                 decoder_similarity_matrices = decoder_similarity_matrices.redistribute(
-                    placements=placements_from_dim_map({"model": 0}, device_mesh)
+                    placements=DimMap({"model": 0}).placements(device_mesh)
                 ).to_local()
             assert decoder_similarity_matrices.shape[0] == len(act_times), (
                 f"decoder_similarity_matrices.shape: {decoder_similarity_matrices.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
@@ -412,7 +412,7 @@ class FeatureAnalyzer:
                     # TODO: Remove this once redistributing across device meshes is supported
 
                 decoder_inner_product_matrices = decoder_inner_product_matrices.redistribute(
-                    placements=placements_from_dim_map({"model": 0}, device_mesh)
+                    placements=DimMap({"model": 0}).placements(device_mesh)
                 ).to_local()
             assert decoder_inner_product_matrices.shape[0] == len(act_times), (
                 f"decoder_inner_product_matrices.shape: {decoder_inner_product_matrices.shape}, expected d_sae dim to match act_times length: {len(act_times)}"

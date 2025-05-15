@@ -3,7 +3,16 @@ import os
 from abc import ABC, abstractmethod
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, Self, Union, cast, overload
+from typing import (
+    Any,
+    Callable,
+    Literal,
+    Optional,
+    Self,
+    Union,
+    cast,
+    overload,
+)
 
 import einops
 import safetensors.torch as safe
@@ -17,11 +26,7 @@ from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.database import MongoClient
-from lm_saes.utils.distributed import (
-    distribute_tensor_on_dim,
-    local_slices_from_dim_map,
-    placements_from_dim_map,
-)
+from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.timer import timer
@@ -97,7 +102,7 @@ class JumpReLU(torch.nn.Module):
                     shape,
                     dtype=dtype,
                     device_mesh=device_mesh,
-                    placements=placements_from_dim_map(self.dim_maps()["log_jumprelu_threshold"], device_mesh),
+                    placements=self.dim_maps()["log_jumprelu_threshold"].placements(device_mesh),
                 )
             )
 
@@ -105,9 +110,15 @@ class JumpReLU(torch.nn.Module):
         return cast(torch.Tensor, STEFunction.apply(input, self.log_jumprelu_threshold, self.jumprelu_threshold_window))
 
     def tensor_parallel(self, device_mesh: DeviceMesh):
+        """Distribute the parameters of the model across multiple devices."""
         self.device_mesh = device_mesh
-        log_jumprelu_threshold = distribute_tensor_on_dim(self.log_jumprelu_threshold, device_mesh, {"model": 0})
-        self.register_parameter("log_jumprelu_threshold", nn.Parameter(log_jumprelu_threshold))
+        self.log_jumprelu_threshold = nn.Parameter(
+            self.dim_maps()["log_jumprelu_threshold"].distribute(
+                self.log_jumprelu_threshold,
+                device_mesh,
+            )
+        )
+        self.register_parameter("log_jumprelu_threshold", self.log_jumprelu_threshold)
 
     def load_distributed_state_dict(
         self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
@@ -118,9 +129,9 @@ class JumpReLU(torch.nn.Module):
             nn.Parameter(state_dict[f"{prefix}log_jumprelu_threshold"].to(self.log_jumprelu_threshold.dtype)),
         )
 
-    def dim_maps(self) -> dict[str, dict[str, int]]:
+    def dim_maps(self) -> dict[str, DimMap]:
         return {
-            "log_jumprelu_threshold": {"model": 0},
+            "log_jumprelu_threshold": DimMap({"model": 0}),
         }
 
 
@@ -429,12 +440,13 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     def load_tensor(key: str) -> DTensor:
                         tensor_slice = f.get_slice(key)
                         shape = tensor_slice.get_shape()
-                        indices = local_slices_from_dim_map(shape, model.dim_maps()[key], device_mesh)
+                        dim_map = model.dim_maps()[key]
+                        indices = dim_map.local_slices(shape, device_mesh)
                         local_tensor = tensor_slice[indices].to(cfg.dtype)
                         return DTensor.from_local(
                             local_tensor,
                             device_mesh=device_mesh,
-                            placements=placements_from_dim_map(model.dim_maps()[key], device_mesh),
+                            placements=dim_map.placements(device_mesh),
                         )
 
                     state_dict = {k: load_tensor(k) if k in model.dim_maps() else f.get_tensor(k) for k in f.keys()}
@@ -692,12 +704,15 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         if isinstance(self.activation_function, JumpReLU):
             self.activation_function.tensor_parallel(device_mesh)
 
-    def dim_maps(self) -> dict[str, dict[str, int]]:
-        """Get the dimension maps for the model."""
+    def dim_maps(self) -> dict[str, DimMap]:
+        """Return a dictionary mapping parameter names to dimension maps.
+
+        Returns:
+            A dictionary mapping parameter names to DimMap objects.
+        """
         if isinstance(self.activation_function, JumpReLU):
             return {f"activation_function.{k}": v for k, v in self.activation_function.dim_maps().items()}
-        else:
-            return {}
+        return {}
 
     def load_distributed_state_dict(
         self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
