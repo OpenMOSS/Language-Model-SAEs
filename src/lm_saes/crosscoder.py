@@ -1,5 +1,5 @@
 import math
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, Optional, Union, cast, overload
 
 import einops
 import torch
@@ -29,8 +29,8 @@ class CrossCoder(AbstractSparseAutoEncoder):
     Can also act as a transcoder model, which learns to compress the input activation tensor into a feature activation tensor, and then reconstruct a label activation tensor from the feature activation tensor.
     """
 
-    def __init__(self, cfg: CrossCoderConfig):
-        super(CrossCoder, self).__init__(cfg)
+    def __init__(self, cfg: CrossCoderConfig, device_mesh: Optional[DeviceMesh] = None):
+        super(CrossCoder, self).__init__(cfg, device_mesh)
         self.cfg = cfg
 
         # Assertions
@@ -42,10 +42,54 @@ class CrossCoder(AbstractSparseAutoEncoder):
         assert not cfg.use_triton_kernel, "Triton kernel is not supported in CrossCoder"
 
         # Initialize weights and biases
-        self.W_E = nn.Parameter(torch.empty(cfg.n_heads, cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
-        self.b_E = nn.Parameter(torch.empty(cfg.n_heads, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
-        self.W_D = nn.Parameter(torch.empty(cfg.n_heads, cfg.d_sae, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
-        self.b_D = nn.Parameter(torch.empty(cfg.n_heads, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
+        if device_mesh is None:
+            self.W_E = nn.Parameter(
+                torch.empty(cfg.n_heads, cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype)
+            )
+            self.b_E = nn.Parameter(torch.empty(cfg.n_heads, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+            self.W_D = nn.Parameter(
+                torch.empty(cfg.n_heads, cfg.d_sae, cfg.d_model, device=cfg.device, dtype=cfg.dtype)
+            )
+            self.b_D = nn.Parameter(torch.empty(cfg.n_heads, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
+        else:
+            self.W_E = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.n_heads,
+                    cfg.d_model,
+                    cfg.d_sae,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=placements_from_dim_map(self.dim_maps()["W_E"], device_mesh),
+                )
+            )
+            self.b_E = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.n_heads,
+                    cfg.d_sae,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=placements_from_dim_map(self.dim_maps()["b_E"], device_mesh),
+                )
+            )
+            self.W_D = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.n_heads,
+                    cfg.d_sae,
+                    cfg.d_model,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=placements_from_dim_map(self.dim_maps()["W_D"], device_mesh),
+                )
+            )
+            self.b_D = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.n_heads,
+                    cfg.d_model,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=placements_from_dim_map(self.dim_maps()["b_D"], device_mesh),
+                )
+            )
 
     @torch.no_grad()
     def init_parameters(self, **kwargs) -> None:
@@ -184,6 +228,10 @@ class CrossCoder(AbstractSparseAutoEncoder):
         accumulated_hidden_pre = einops.repeat(
             accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
         )
+        if isinstance(accumulated_hidden_pre, DTensor):
+            accumulated_hidden_pre = accumulated_hidden_pre.redistribute(
+                placements=placements_from_dim_map({"head": -2, "model": -1}, accumulated_hidden_pre.device_mesh)
+            )
 
         # Apply activation function
         feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
@@ -345,8 +393,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
             distributed_param = distribute_tensor_on_dim(param, device_mesh, self.dim_maps()[name])
             self.register_parameter(name, nn.Parameter(distributed_param))
 
-    @classmethod
-    def dim_maps(cls) -> dict[str, dict[str, int]]:
+    def dim_maps(self) -> dict[str, dict[str, int]]:
         return super().dim_maps() | {
             "W_E": {"head": 0, "model": 2},
             "W_D": {"head": 0, "model": 1},

@@ -161,10 +161,14 @@ class Trainer:
 
         if (self.cur_step + 1) % self.cfg.log_frequency == 0:
             feature_acts = log_info["feature_acts"]
-            if isinstance(feature_acts, DTensor):
-                feature_acts = feature_acts.full_tensor()
-            mean_feature_act = feature_acts[feature_acts.gt(0)].mean()
+            act_feature_counts = feature_acts.gt(0).float().sum()
+            mean_feature_act = feature_acts.sum() / act_feature_counts
+            if isinstance(mean_feature_act, DTensor):
+                mean_feature_act = mean_feature_act.full_tensor()
+
             l0 = (feature_acts > 0).float().sum(-1).mean()
+            if isinstance(l0, DTensor):
+                l0 = l0.full_tensor()
 
             l_rec = log_info["l_rec"].sum(dim=-1).mean()
             if isinstance(l_rec, DTensor):
