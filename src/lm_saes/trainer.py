@@ -12,6 +12,7 @@ from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
+from lm_saes.crosscoder import CrossCoder
 from lm_saes.evaluator import evaluate_mixcoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
@@ -166,23 +167,29 @@ class Trainer:
             if isinstance(mean_feature_act, DTensor):
                 mean_feature_act = mean_feature_act.full_tensor()
 
-            l0 = (feature_acts > 0).float().sum(-1).mean()
+            l0 = (feature_acts > 0).float().sum(-1)  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
             if isinstance(l0, DTensor):
                 l0 = l0.full_tensor()
 
-            l_rec = log_info["l_rec"].sum(dim=-1).mean()
+            l_rec = log_info["l_rec"]
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
 
-            l_s = log_info["l_s"].mean()
+            l_s = log_info["l_s"]
             if isinstance(l_s, DTensor):
                 l_s = l_s.full_tensor()
 
-            per_token_l2_loss = (log_info["reconstructed"] - label).pow(2).sum(dim=-1)
-            total_variance = (label - label.mean(0)).pow(2).sum(dim=-1)
+            per_token_l2_loss = (
+                (log_info["reconstructed"] - label).pow(2).sum(dim=-1)
+            )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
+            total_variance = (
+                (label - label.mean(0)).pow(2).sum(dim=-1)
+            )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
             l2_norm_error = per_token_l2_loss.sqrt().mean()
             l2_norm_error_ratio = l2_norm_error / label.norm(p=2, dim=-1).mean()
-            explained_variance = 1 - per_token_l2_loss / total_variance
+            explained_variance = (
+                1 - per_token_l2_loss / total_variance
+            )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
             if isinstance(explained_variance, DTensor):
                 explained_variance = explained_variance.full_tensor()
             if isinstance(l2_norm_error, DTensor):
@@ -203,7 +210,7 @@ class Trainer:
                 "metrics/explained_variance": explained_variance.mean().item(),
                 "metrics/explained_variance_std": explained_variance.std().item(),
                 # sparsity
-                "metrics/l0": l0.item(),
+                "metrics/l0": l0.mean().item(),
                 "metrics/mean_feature_act": mean_feature_act.item(),
                 "metrics/l2_norm_error": l2_norm_error.item(),
                 "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
@@ -222,8 +229,8 @@ class Trainer:
             wandb_log_dict.update(timer_avg_data)
 
             wandb_log_dict.update(sae.log_statistics())
-            if sae.cfg.sae_type == "mixcoder":
-                assert isinstance(sae, MixCoder)
+
+            if isinstance(sae, MixCoder):
                 mixcoder_log_dict = evaluate_mixcoder(sae, batch)
                 wandb_log_dict.update({f"mixcoder_metrics/{key}": value for key, value in mixcoder_log_dict.items()})
                 for modality, (start, end) in sae.modality_index.items():
@@ -257,6 +264,17 @@ class Trainer:
                             f"mixcoder_metrics/{modality}_loss": log_info[f"{modality}_loss"].float().mean().item(),
                         }
                     )
+            elif isinstance(sae, CrossCoder):
+                assert explained_variance.ndim == 2 and explained_variance.shape[1] == len(batch.keys())
+                for i, k in enumerate(batch.keys()):
+                    wandb_log_dict.update(
+                        {
+                            f"crosscoder_metrics/{k}/explained_variance": explained_variance[:, i].mean().item(),
+                            f"crosscoder_metrics/{k}/explained_variance_std": explained_variance[:, i].std().item(),
+                            f"crosscoder_metrics/{k}/l0": l0[:, i].mean().item(),
+                        }
+                    )
+
             if is_primary_rank(sae.device_mesh):
                 print({"step": self.cur_step + 1, **wandb_log_dict})
 
