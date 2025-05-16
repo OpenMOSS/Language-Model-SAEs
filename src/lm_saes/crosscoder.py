@@ -225,10 +225,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
             accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
         )
         if isinstance(accumulated_hidden_pre, DTensor):
-            dim_map = DimMap({"head": -2, "model": -1})
-            accumulated_hidden_pre = accumulated_hidden_pre.redistribute(
-                placements=dim_map.placements(accumulated_hidden_pre.device_mesh)
-            )
+            accumulated_hidden_pre = DimMap({"head": -2, "model": -1}).redistribute(accumulated_hidden_pre)
 
         # Apply activation function
         feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
