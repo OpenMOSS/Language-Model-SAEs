@@ -89,7 +89,6 @@ dev = [
     "qwen-vl-utils>=0.0.10",
     "tabulate>=0.9.0",
 ]
-triton = ["triton>=3.1.0"]
 flash-attn = [
     "flash-attn>=2.7.4.post1; (sys_platform == 'win32' or sys_platform == 'linux')",
 ]
@@ -103,6 +102,8 @@ npu = [
     "torchvision>=0.20.1",
     "torch-npu==2.6.0rc1",
 ]
+
+triton = ["triton<3.3.0"]
 
 [tool.uv.sources]
 torch = [{ index = "torch-cpu", extra = "npu" }]
