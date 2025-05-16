@@ -129,6 +129,15 @@ class DimMap:
         placements = self.placements(device_mesh)
         return distribute_tensor(tensor, device_mesh, placements)
 
+    def redistribute(self, tensor: DTensor) -> DTensor:
+        """Redistribute a distributed tensor on the device mesh according to the dimension map.
+
+        Args:
+            tensor: The distributed tensor to redistribute.
+        """
+        placements = self.placements(tensor.device_mesh)
+        return tensor.redistribute(placements=placements)
+
     def __or__(self, other: "DimMap") -> "DimMap":
         """Merge this DimMap with another DimMap or dictionary."""
         return DimMap(self.to_dict() | other.to_dict())

@@ -203,8 +203,8 @@ class Trainer:
 
             wandb_log_dict = {
                 # losses
-                "losses/mse_loss": l_rec.item(),
-                **({"losses/sparsity_loss": l_s.item()} if log_info.get("l_s", None) is not None else {}),
+                "losses/mse_loss": l_rec.mean().item(),
+                **({"losses/sparsity_loss": l_s.mean().item()} if log_info.get("l_s", None) is not None else {}),
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
                 "metrics/explained_variance": explained_variance.mean().item(),
@@ -272,6 +272,7 @@ class Trainer:
                             f"crosscoder_metrics/{k}/explained_variance": explained_variance[:, i].mean().item(),
                             f"crosscoder_metrics/{k}/explained_variance_std": explained_variance[:, i].std().item(),
                             f"crosscoder_metrics/{k}/l0": l0[:, i].mean().item(),
+                            f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
                         }
                     )
 

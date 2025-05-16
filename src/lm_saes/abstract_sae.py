@@ -646,13 +646,13 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     l_rec
                     / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
                 )
-            l_rec = l_rec.sum(dim=-1).mean()
+            l_rec = l_rec.sum(dim=-1)
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
             loss_dict = {
                 "l_rec": l_rec,
             }
-            loss = l_rec
+            loss = l_rec.mean()
 
             if sparsity_loss_type is not None:
                 with timer.time("sparsity_loss_calculation"):
@@ -669,14 +669,12 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
                     else:
                         raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
-                    l_s = l_s.mean()
                     if isinstance(l_s, DTensor):
                         l_s = l_s.full_tensor()
                     l_s = l1_coefficient * l_s
-                    # WARNING: Some DTensor bugs make if l1_coefficient * l_s goes before full_tensor, the result will be constantly 0 and backward will throw some nonsense error. If no full_tensor is performed before backward, the gradient seems to be correct (though the value is an incorrect 0).
-                    # This can be constantly reproduced but I cannot construct a minimal example. All the examples I tried results in the correct value. (but the backward error exists in these minimal examples)
+                    # WARNING: Some DTensor bugs make if l1_coefficient * l_s goes before full_tensor, the l1_coefficient value will be internally cached. Furthermore, it will cause the backward pass to fail with redistribution error. See https://github.com/pytorch/pytorch/issues/153603 and https://github.com/pytorch/pytorch/issues/153615 .
                     loss_dict["l_s"] = l_s
-                    loss = loss + l_s
+                    loss = loss + l_s.mean()
 
         if return_aux_data:
             aux_data = {
