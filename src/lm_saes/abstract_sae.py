@@ -17,10 +17,12 @@ from typing import (
 import einops
 import safetensors.torch as safe
 import torch
+import torch.distributed.checkpoint as dcp
 import torch.distributed.tensor
 from jaxtyping import Float
 from safetensors import safe_open
 from torch import nn
+from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookedRootModule
@@ -198,7 +200,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     @torch.no_grad()
     def full_state_dict(self):  # should be overridden by subclasses
         state_dict = self.state_dict()
-        state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
 
         # Add dataset_average_activation_norm to state dict
         if self.dataset_average_activation_norm is not None:
@@ -217,18 +218,22 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             "path": final_ckpt_path,
         }
         """
-        if os.path.isdir(ckpt_path):
-            ckpt_path = os.path.join(ckpt_path, "sae_weights.safetensors")
         state_dict = self.full_state_dict()
-        if self.device_mesh is None or is_primary_rank(self.device_mesh):
-            if Path(ckpt_path).suffix == ".safetensors":
+        if Path(ckpt_path).suffix == ".safetensors":
+            state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
+            if self.device_mesh is None or is_primary_rank(self.device_mesh):
                 safe.save_file(state_dict, ckpt_path, {"version": version("lm-saes")})
-            elif Path(ckpt_path).suffix == ".pt":
+        elif Path(ckpt_path).suffix == ".pt":
+            state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
+            if self.device_mesh is None or is_primary_rank(self.device_mesh):
                 torch.save({"sae": state_dict, "version": version("lm-saes")}, ckpt_path)
-            else:
-                raise ValueError(
-                    f"Invalid checkpoint path {ckpt_path}. Currently only supports .safetensors and .pt formats."
-                )
+        elif Path(ckpt_path).suffix == ".dcp":
+            fs_writer = FileSystemWriter(ckpt_path)
+            dcp.save(state_dict, storage_writer=fs_writer)
+        else:
+            raise ValueError(
+                f"Invalid checkpoint path {ckpt_path}. Currently only supports .safetensors and .pt formats."
+            )
 
     @torch.no_grad()
     def save_pretrained(
@@ -238,7 +243,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         sae_series: str | None = None,
         mongo_client: MongoClient | None = None,
     ) -> None:
-        self.save_checkpoint(save_path)
+        if self.device_mesh is None:
+            self.save_checkpoint(Path(save_path) / "sae_weights.safetensors")
+        else:
+            self.save_checkpoint(Path(save_path) / "sae_weights.dcp")
         if is_primary_rank(self.device_mesh):
             if mongo_client is not None:
                 assert sae_name is not None and sae_series is not None, (
@@ -401,10 +409,12 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
             self.set_dataset_average_activation_norm(dataset_norm)
             state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
-        if device_mesh is None:
+        if device_mesh is None or any(isinstance(v, DTensor) for v in state_dict.values()):
+            # Non-distributed checkpoint or DCP checkpoint
             # Load the state dict through torch API
             self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
         else:
+            # Full checkpoint (in .safetensors or .pt format) to be loaded distributedly
             self.load_distributed_state_dict(state_dict, device_mesh)
 
     @classmethod
@@ -414,16 +424,19 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             return model
 
         path = parse_pretrained_name_or_path(cfg.sae_pretrained_name_or_path)
-        if path.endswith(".pt") or path.endswith(".safetensors"):
+        if path.endswith(".pt") or path.endswith(".safetensors") or path.endswith(".dcp"):
             ckpt_path = path
         else:
             ckpt_prioritized_paths = [
                 f"{path}/sae_weights.safetensors",
                 f"{path}/sae_weights.pt",
+                f"{path}/sae_weights.dcp",
                 f"{path}/checkpoints/pruned.safetensors",
                 f"{path}/checkpoints/pruned.pt",
+                f"{path}/checkpoints/pruned.dcp",
                 f"{path}/checkpoints/final.safetensors",
                 f"{path}/checkpoints/final.pt",
+                f"{path}/checkpoints/final.dcp",
             ]
             for ckpt_path in ckpt_prioritized_paths:
                 if os.path.exists(ckpt_path):
@@ -450,12 +463,19 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         )
 
                     state_dict = {k: load_tensor(k) if k in model.dim_maps() else f.get_tensor(k) for k in f.keys()}
-        else:
+        elif ckpt_path.endswith(".pt"):
             state_dict: dict[str, torch.Tensor] = torch.load(
                 ckpt_path,
                 map_location=cfg.device,
                 weights_only=True,
             )["sae"]
+        elif ckpt_path.endswith(".dcp"):
+            # DCP checkpoint
+            fs_reader = FileSystemReader(ckpt_path)
+            state_dict = model.full_state_dict()
+            dcp.load(state_dict, storage_reader=fs_reader)
+        else:
+            raise ValueError(f"Unsupported checkpoint format: {ckpt_path}")
 
         model.load_full_state_dict(state_dict, device_mesh)
         return model

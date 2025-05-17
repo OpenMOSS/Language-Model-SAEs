@@ -289,10 +289,11 @@ class Trainer:
     @timer.time("save_checkpoint")
     def _save_checkpoint(self, sae: AbstractSparseAutoEncoder):
         if len(self.checkpoint_thresholds) > 0 and self.cur_tokens >= self.checkpoint_thresholds[0]:
+            suffix = "safetensors" if sae.device_mesh is None else "dcp"
             path = os.path.join(
                 self.cfg.exp_result_path,
                 "checkpoints",
-                f"{self.cur_step}.safetensors",
+                f"{self.cur_step}.{suffix}",
             )
             sae.save_checkpoint(path)
             self.checkpoint_thresholds.pop(0)
