@@ -10,27 +10,23 @@ It includes:
    - Fuzzing: Having LLMs identify correctly marked activating tokens
 """
 
-from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
-import time
-import json_repair
 import random
+import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Generator, Literal, Optional
+from typing import Any, Callable, Generator, Literal, Optional
 
+import json_repair
 import torch
 from datasets import Dataset
 from pydantic import BaseModel, Field
-from tqdm import TMonitor, tqdm
 
 from lm_saes.backend.language_model import LanguageModel
-from lm_saes.config import BaseConfig, BaseSAEConfig
-from lm_saes.database import FeatureRecord, MongoClient, FeatureAnalysis
-import asyncio
-# from threading import Lock 
+from lm_saes.config import BaseConfig
+from lm_saes.database import FeatureAnalysis, FeatureRecord, MongoClient
+
+# from threading import Lock
 # lock = Lock()
-
-
 
 
 class ExplainerType(str, Enum):
@@ -57,16 +53,13 @@ class Step(BaseModel):
     # output: str
     # """The output of the step."""
 
-Step_Schema = {
-    "type":"object",
-    "properties":{
-        "thought":{
-            "type":"string",
-            "description":"The thought of the step."
-        },
-    }
-}
 
+Step_Schema = {
+    "type": "object",
+    "properties": {
+        "thought": {"type": "string", "description": "The thought of the step."},
+    },
+}
 
 
 class AutoInterpExplanation(BaseModel):
@@ -84,27 +77,24 @@ class AutoInterpExplanation(BaseModel):
     complexity: Literal[1, 2, 3, 4, 5]
     """The complexity of the feature."""
 
+
 AutoInterpExplanation_Schema = {
-    "type":"object",
-    "properties":{
-        "steps":{
-            "type":"array",
-            "items":Step_Schema
+    "type": "object",
+    "properties": {
+        "steps": {"type": "array", "items": Step_Schema},
+        "final_explanation": {
+            "type": "string",
+            "description": "The explanation of the feature, in the form of 'This feature activates on... '",
         },
-        "final_explanation":{
-            "type":"string",
-            "description":"The explanation of the feature, in the form of 'This feature activates on... '"
+        "activation_consistency": {
+            "type": "integer",
+            "description": "The consistency of the feature, on a scale of 1 to 5.",
         },
-        "activation_consistency":{
-            "type":"integer",
-            "description":"The consistency of the feature, on a scale of 1 to 5."
-        },
-        "complexity":{
-            "type":"integer",
-            "description":"The complexity of the feature, on a scale of 1 to 5."
-        }
-    }
+        "complexity": {"type": "integer", "description": "The complexity of the feature, on a scale of 1 to 5."},
+    },
 }
+
+
 class AutoInterpEvaluation(BaseModel):
     """The result of an auto-interpretation of a SAE feature."""
 
@@ -114,22 +104,20 @@ class AutoInterpEvaluation(BaseModel):
     evaluation_results: list[bool]
     """The evaluation results for each example. Should be a list of YES/NO values."""
 
+
 AutoInterpEvaluation_Schema = {
-    "type":"object",
-    "properties":{
-        "steps":{
-            "type":"array",
-            "items":Step_Schema
+    "type": "object",
+    "properties": {
+        "steps": {"type": "array", "items": Step_Schema},
+        "evaluation_results": {
+            "type": "array",
+            "items": {"type": "boolean"},
+            "description": "The evaluation results for each example. Should be a list of True/False values.",
         },
-        "evaluation_results":{
-            "type":"array",
-            "items":{
-                "type":"boolean"
-            },
-            "description":"The evaluation results for each example. Should be a list of True/False values."
-        }
-    }
+    },
 }
+
+
 class AutoInterpConfig(BaseConfig):
     """Configuration for automatic interpretation of SAE features."""
 
@@ -138,6 +126,7 @@ class AutoInterpConfig(BaseConfig):
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-3.5-turbo"
     openai_base_url: Optional[str] = None
+    openai_proxy: Optional[str] = None
 
     # Activation retrieval settings
     n_activating_examples: int = 7
@@ -230,13 +219,12 @@ class TokenizedSample:
                     for origin, act in zip(origins, activations)
                     if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
                 )
-            except Exception as e:
-                print(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\rorigins={origins}\n")
+            except Exception:
+                print(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n")
                 continue
             segments.append(Segment(text[start:end], segment_activation))
-        
-        return TokenizedSample(segments, max_activation)
 
+        return TokenizedSample(segments, max_activation)
 
 
 def generate_activating_examples(
@@ -279,9 +267,7 @@ def generate_activating_examples(
             data = dataset[context_idx]
 
             # Process the sample using model's trace method
-            # lock.acquire()
             origins = model.trace({k: [v] for k, v in data.items()})[0]
-            # lock.release()
 
             max_act_pos = torch.argmax(torch.tensor(feature_acts)).item()
 
@@ -303,7 +289,6 @@ def generate_activating_examples(
 
         if len(samples) >= n:
             break
-        
 
     return samples
 
@@ -329,10 +314,10 @@ def generate_non_activating_examples(
     Returns:
         List of TokenizedExample with low activation for the feature
     """
-    
+
     samples: list[TokenizedSample] = []
     error_prefix = f"Error processing non-activating examples of feature {feature.index}:"
-    
+
     sampling = analysis.samplings[-1]
     assert sampling.name == "non_activating", f"{error_prefix} Sampling {sampling.name} is not non_activating"
     for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts) in enumerate(
@@ -392,8 +377,20 @@ class FeatureInterpreter:
     def _setup_llm_clients(self):
         """Set up OpenAI client for explanation generation and evaluation."""
         try:
+            import httpx
             import openai
-            self.explainer_client = openai.Client(base_url=self.cfg.openai_base_url, api_key=self.cfg.openai_api_key)
+            from openai import DefaultHttpxClient
+
+            self.explainer_client = openai.Client(
+                base_url=self.cfg.openai_base_url,
+                api_key=self.cfg.openai_api_key,
+                http_client=DefaultHttpxClient(
+                    proxy=self.cfg.openai_proxy,
+                    transport=httpx.HTTPTransport(local_address="0.0.0.0"),
+                )
+                if self.cfg.openai_proxy
+                else None,
+            )
         except ImportError:
             raise ImportError("OpenAI package not installed. Please install it with `uv add openai`.")
 
@@ -406,7 +403,6 @@ class FeatureInterpreter:
         max_length: int = 50,
     ) -> tuple[list[TokenizedSample], list[TokenizedSample]]:
         """Get activating and non-activating examples for a feature."""
-        mongo_client = self.mongo_client
         analysis = next((a for a in feature.analyses if a.name == analysis_name), None)
         if not analysis:
             raise ValueError(f"Analysis {analysis_name} not found for feature {feature.index}")
@@ -472,7 +468,7 @@ class FeatureInterpreter:
 }
 
 """
-        system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. The activating words in each document are indicated with << ... >>. We will give you a list of documents on which the feature activates, in order from most strongly activating to least strongly activating.
+        system_prompt: str = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. The activating words in each document are indicated with << ... >>. We will give you a list of documents on which the feature activates, in order from most strongly activating to least strongly activating.
 
 Your task is to:
 
@@ -499,11 +495,9 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
 {examples_prompt}
 """
 
-
-
         user_prompt = "The activating documents are given below:\n\n"
         # Select a subset of examples to show
-        examples_to_show = activating_examples[:self.cfg.n_activating_examples]
+        examples_to_show = activating_examples[: self.cfg.n_activating_examples]
 
         for i, example in enumerate(examples_to_show, 1):
             highlighted = example.display_highlighted(self.cfg.activation_threshold)
@@ -528,17 +522,24 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_format={
-                'type': 'json_object'
-            },
+            response_format={"type": "json_object"},
         )
-        
-        assert response.choices[0].message.content is not None,f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
+
+        assert response.choices[0].message.content is not None, (
+            f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
+        )
         explanation = json_repair.loads(response.choices[0].message.content)
         response_time = time.time() - start_time
-        return {"user_prompt": user_prompt, "system_prompt": system_prompt, "response": explanation, "time": response_time}
+        return {
+            "user_prompt": user_prompt,
+            "system_prompt": system_prompt,
+            "response": explanation,
+            "time": response_time,
+        }
 
-    def _generate_detection_prompt(self, explanation: dict[str, Any], examples: list[TokenizedSample]) -> tuple[str, str]:
+    def _generate_detection_prompt(
+        self, explanation: dict[str, Any], examples: list[TokenizedSample]
+    ) -> tuple[str, str]:
         """Generate a prompt for detection evaluation.
 
         Args:
@@ -549,7 +550,7 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
             Prompt string for the LLM
         """
         system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. You will be given a short explanation of what this feature activates for, and then be shown {len(examples)} example sequences in random order. You will have to return a boolean list of the examples where you think the feature should activate at least once, on ANY of the words or substrings in the document, true if it does, false if it doesn't. Try not to be overly specific in your interpretation of the explanation."""
-        system_prompt += f"""
+        system_prompt += """
 Your output should be a JSON object that has the following fields: `steps`, `evaluation_results`. `steps` should be an array of strings, each representing a step in the chain-of-thought process within 50 words. `evaluation_results` should be an array of booleans, each representing whether the feature should activate on the corresponding example.
 """
         user_prompt = f"Here is the explanation:\n\n{explanation['final_explanation']}\n\nHere are the examples:\n\n"
@@ -617,12 +618,12 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_format={
-                'type': 'json_object'
-            },
+            response_format={"type": "json_object"},
         )
-        assert response.choices[0].message.content is not None, f"No detection response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
-        detection_response: dict[str, Any] = json_repair.loads(response.choices[0].message.content) # type: ignore
+        assert response.choices[0].message.content is not None, (
+            f"No detection response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
+        )
+        detection_response: dict[str, Any] = json_repair.loads(response.choices[0].message.content)  # type: ignore
         # print(f"Detection for feature :\n{detection_response}\n\n")
         predictions: list[bool] = detection_response["evaluation_results"]
         response_time = time.time() - start_time
@@ -658,7 +659,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
                 "balanced_accuracy": balanced_accuracy,
             },
             "passed": balanced_accuracy >= 0.7,  # Arbitrary threshold for passing
-            "time": response_time
+            "time": response_time,
         }
 
     def _generate_fuzzing_prompt(
@@ -673,10 +674,10 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             examples: List of tuples (example, is_correctly_marked)
 
         Returns:
-            Prompt string for the LLM   
+            Prompt string for the LLM
         """
         system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. You will be given a short explanation of what this feature activates for, and then be shown {len(examples)} example sequences in random order. In each example, text segments highlighted with << >> are presented as activating the feature as described in the explanation. You will have to return a boolean list of the examples where you think the highlighted parts CORRECTLY correspond to the explanation, true if they do, false if they don't. Try not to be overly specific in your interpretation of the explanation."""
-        system_prompt += f"""
+        system_prompt += """
 Your output should be a JSON object that has the following fields: `steps`, `evaluation_results`. `steps` should be an array of strings, each representing a step in the chain-of-thought process within 50 words. `evaluation_results` should be an array of booleans, each representing whether the feature should activate on the corresponding example.
 """
         user_prompt = f"Here is the explanation:\n\n{explanation['final_explanation']}\n\nHere are the examples:\n\n"
@@ -775,14 +776,14 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             model=self.cfg.openai_model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},   
+                {"role": "user", "content": user_prompt},
             ],
-            response_format={
-                'type': 'json_object'
-            },
+            response_format={"type": "json_object"},
         )
-        assert response.choices[0].message.content is not None, f"No fuzzing response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
-        fuzzing_response :dict[str, Any] = json_repair.loads(response.choices[0].message.content) # type: ignore
+        assert response.choices[0].message.content is not None, (
+            f"No fuzzing response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
+        )
+        fuzzing_response: dict[str, Any] = json_repair.loads(response.choices[0].message.content)  # type: ignore
         # print(f"Fuzzing for feature :\n{fuzzing_response}\n\n")
         # Parse response (CORRECT/INCORRECT for each example)
         predictions: list[bool] = fuzzing_response["evaluation_results"]
@@ -821,9 +822,8 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
                 "balanced_accuracy": balanced_accuracy,
             },
             "passed": balanced_accuracy >= 0.7,  # Arbitrary threshold for passing
-            "time": response_time
+            "time": response_time,
         }
-
 
     def interpret_single_feature(
         self,
@@ -843,7 +843,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         Returns:
             Dictionary mapping feature indices to their interpretation results
         """
-        
+
         start_time = time.time()
         response_time = 0
 
@@ -884,7 +884,9 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             "explanation": explanation["final_explanation"],
             "complexity": explanation["complexity"],
             "consistency": explanation["activation_consistency"],
-            "explanation_details": {k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in explanation_result.items()},
+            "explanation_details": {
+                k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in explanation_result.items()
+            },
             "evaluations": [
                 {k: v.model_dump() if isinstance(v, BaseModel) else v for k, v in eval_result.items()}
                 for eval_result in evaluation_results
@@ -893,7 +895,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             "time": {
                 "total": total_time,
                 "response": response_time,
-            }
+            },
         }
 
     def interpret_features(
@@ -922,7 +924,8 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         for feature_index in feature_indices:
             feature = self.mongo_client.get_feature(sae_name, sae_series, feature_index)
             if feature is not None and feature.interpretation is None:
-                yield {"feature_index": feature.index, "sae_name": sae_name, "sae_series": sae_series} | self.interpret_single_feature(feature, model, datasets, analysis_name)
-
-
-
+                yield {
+                    "feature_index": feature.index,
+                    "sae_name": sae_name,
+                    "sae_series": sae_series,
+                } | self.interpret_single_feature(feature, model, datasets, analysis_name)

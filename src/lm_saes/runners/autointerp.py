@@ -1,14 +1,13 @@
 """Module for automatic interpretation of SAE features."""
 
-from functools import lru_cache, partial
+import concurrent.futures
+from functools import lru_cache
 from typing import Any, Optional
 
 from datasets import Dataset
 from pydantic_settings import BaseSettings
-from tqdm import tqdm
-import multiprocessing as mp
 
-from lm_saes.analysis.auto_interp import AutoInterpConfig, FeatureInterpreter
+from lm_saes.analysis.feature_interpreter import AutoInterpConfig, FeatureInterpreter
 from lm_saes.config import LanguageModelConfig, MongoDBConfig
 from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset_shard, load_model
@@ -54,13 +53,15 @@ class AutoInterpSettings(BaseSettings):
 def interpret_feature(args: dict[str, Any]):
     settings: AutoInterpSettings = args["settings"]
     feature_indices: list[int] = args["feature_indices"]
+    print(f"Interpreting {len(feature_indices)} features")
+
     @lru_cache(maxsize=None)
     def get_dataset(dataset_name: str, shard_idx: int, n_shards: int) -> Dataset:
         dataset_cfg = mongo_client.get_dataset_cfg(dataset_name)
         assert dataset_cfg is not None, f"Dataset {dataset_name} not found"
         dataset = load_dataset_shard(dataset_cfg, shard_idx, n_shards)
         return dataset
-    
+
     mongo_client = MongoClient(settings.mongo)
     language_model = load_model(settings.model)
     interpreter = FeatureInterpreter(settings.auto_interp, mongo_client)
@@ -82,6 +83,7 @@ def interpret_feature(args: dict[str, Any]):
             "consistency": result["consistency"],
             "detail": result["explanation_details"],
             "passed": result["passed"],
+            "time": result["time"],
         }
         print(
             f"Updating feature {result['feature_index']}\nTime: {result['time']}\nExplanation: {interpretation['text']}\nComplexity: {interpretation['complexity']}\nConsistency: {interpretation['consistency']}\nPassed: {interpretation['passed']}\n\n"
@@ -89,8 +91,6 @@ def interpret_feature(args: dict[str, Any]):
         mongo_client.update_feature(
             settings.sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
         )
-
-
 
 
 def auto_interp(settings: AutoInterpSettings) -> None:
@@ -127,11 +127,13 @@ def auto_interp(settings: AutoInterpSettings) -> None:
 
     # Load resources
     print(f"Loading SAE model: {settings.sae_name}/{settings.sae_series}")
-
     print(f"Loading language model: {settings.model_name}")
-    
+
     chunk_size = len(feature_indices) // settings.max_workers + 1
-    feature_batches = [feature_indices[i:i+chunk_size] for i in range(0, len(feature_indices), chunk_size)]
+    feature_batches = [feature_indices[i : i + chunk_size] for i in range(0, len(feature_indices), chunk_size)]
     args_batches = [{"feature_indices": feature_indices, "settings": settings} for feature_indices in feature_batches]
-    with mp.Pool(settings.max_workers) as pool:
-        pool.map(interpret_feature, args_batches)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=settings.max_workers) as executor:
+        list(executor.map(interpret_feature, args_batches))
+
+    print("Done!")
