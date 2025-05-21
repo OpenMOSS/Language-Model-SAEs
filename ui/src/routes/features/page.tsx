@@ -112,7 +112,13 @@ export const FeaturesPage = () => {
     if (dictionariesState.value && selectedDictionary === null) {
       setSelectedDictionary(dictionariesState.value[0]);
       fetchAnalyses(dictionariesState.value[0]);
-      fetchFeature(dictionariesState.value[0], "random", "default");
+
+      const analysisParam = searchParams.get("analysis");
+      if (analysisParam) {
+        setSelectedAnalysis(analysisParam);
+      }
+
+      fetchFeature(dictionariesState.value[0], "random", analysisParam || "default");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dictionariesState.value]);

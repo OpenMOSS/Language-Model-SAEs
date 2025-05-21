@@ -37,17 +37,27 @@ export const InterpretationSchema = z.object({
       detail: z
         .object({
           prompt: z.string(),
-          response: z.string(),
+          response: z.any(),
         })
         .optional(),
     })
   ),
   detail: z
     .object({
-      prompt: z.string(),
-      response: z.string(),
+      userPrompt: z.string(),
+      systemPrompt: z.string(),
+      response: z.object({
+        steps: z.array(z.string()),
+        finalExplanation: z.string(),
+        complexity: z.number(),
+        activationConsistency: z.number(),
+      }),
     })
     .optional(),
+  complexity: z.number().optional(),
+  consistency: z.number().optional(),
+  passed: z.boolean().optional(),
+  time: z.any().optional(),
 });
 
 export type Interpretation = z.infer<typeof InterpretationSchema>;
