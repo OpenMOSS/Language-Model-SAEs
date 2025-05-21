@@ -1,11 +1,11 @@
-from .auto_interp import (
+from .feature_analyzer import FeatureAnalyzer
+from .feature_interpreter import (
     AutoInterpConfig,
     ExplainerType,
     FeatureInterpreter,
     ScorerType,
     TokenizedSample,
 )
-from .feature_analyzer import FeatureAnalyzer
 
 __all__ = [
     "FeatureAnalyzer",
