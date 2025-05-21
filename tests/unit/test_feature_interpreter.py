@@ -1,23 +1,22 @@
+from typing import Any, Callable
+
 import pytest
-from pytest_mock import MockerFixture
-import openai
-from lm_saes.analysis.auto_interp import (
+import torch
+
+from lm_saes.analysis.feature_interpreter import (
     AutoInterpConfig,
-    AutoInterpExplanation,
     AutoInterpEvaluation,
+    AutoInterpExplanation,
     FeatureInterpreter,
     Segment,
     TokenizedSample,
     generate_activating_examples,
     generate_non_activating_examples,
 )
-import torch
-from typing import Any, Callable, Dict, List, Optional
 from lm_saes.backend.language_model import LanguageModel
-from lm_saes.database import MongoClient, FeatureAnalysis, FeatureAnalysisSampling, FeatureRecord
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.database import FeatureAnalysis, FeatureAnalysisSampling, FeatureRecord, MongoClient
 
-pytest.skip("Skipping tokenized sample tests",allow_module_level=True)
+pytest.skip("Skipping tokenized sample tests", allow_module_level=True)
 
 
 class TestTokenizedSample:
@@ -79,13 +78,11 @@ class TestTokenizedSample:
 
 
 class TestFeatureInterpreter:
-
     @pytest.fixture
     def mongo_client(self, mocker, feature_to_interpret):
         mock = mocker.MagicMock(spec=MongoClient)
         mock.get_feature.return_value = feature_to_interpret
         return mock
-    
 
     def setup_method(self, mongo_client):
         self.cfg = AutoInterpConfig(
@@ -99,7 +96,6 @@ class TestFeatureInterpreter:
             fuzzing_n_examples=3,
         )
         self.feature_interpreter = FeatureInterpreter(self.cfg, mongo_client)
-
 
     @pytest.fixture
     def sample_tokenized_sample(self):
@@ -134,13 +130,16 @@ class TestFeatureInterpreter:
 
     @pytest.fixture
     def activating_samples(self, mocker):
-
         mock_1 = mocker.MagicMock(spec=TokenizedSample)
-        mock_1.display_plain.return_value = "to pay in cash to avoid bank fees from credit card machines. He says he plans to donate a portion"
+        mock_1.display_plain.return_value = (
+            "to pay in cash to avoid bank fees from credit card machines. He says he plans to donate a portion"
+        )
         mock_1.display_highlighted.return_value = "to pay in cash to avoid<< bank>> fees from credit<< card>><< machines>>. He says he plans to donate a portion"
 
         mock_2 = mocker.MagicMock(spec=TokenizedSample)
-        mock_2.display_plain.return_value = "the original amount is released back to your credit card, but some banks take upwards of 10 working days"
+        mock_2.display_plain.return_value = (
+            "the original amount is released back to your credit card, but some banks take upwards of 10 working days"
+        )
         mock_2.display_highlighted.return_value = "the original amount is released back to your credit<< card>> , but some banks take upwards of 10 working days"
 
         mock_3 = mocker.MagicMock(spec=TokenizedSample)
@@ -161,7 +160,6 @@ class TestFeatureInterpreter:
         mock = mocker.MagicMock(spec=AutoInterpEvaluation)
         mock.evaluation_results = [True, False, True, False, True, False]
         return mock
-
 
     def test_generate_explanation(self, activating_samples, mock_explanation):
         explanation = (
@@ -188,11 +186,7 @@ class TestFeatureInterpreter:
             mock_client = mocker.MagicMock()
             mock_response = mocker.MagicMock()
             mock_response.choices[0].message.parsed = mock_evaluation
-            mock_client.configure_mock(
-                **{
-                    "beta.chat.completions.parse.return_value": mock_response
-                }
-            )
+            mock_client.configure_mock(**{"beta.chat.completions.parse.return_value": mock_response})
             self.feature_interpreter.explainer_client = mock_client
         result = self.feature_interpreter.evaluate_explanation_detection(
             explanation, activating_samples, non_activating_samples
@@ -206,8 +200,16 @@ class TestFeatureInterpreter:
     # @pytest.mark.skip()
     def test_create_incorrectly_marked_example(self, sample_tokenized_sample: TokenizedSample):
         threshold = self.feature_interpreter.cfg.activation_threshold
-        incorrectly_marked_example = self.feature_interpreter._create_incorrectly_marked_example(sample_tokenized_sample)
-        assert all([origin.activation < threshold * sample_tokenized_sample.max_activation for origin, marked in zip(sample_tokenized_sample.segments, incorrectly_marked_example.segments) if marked.activation > 0])
+        incorrectly_marked_example = self.feature_interpreter._create_incorrectly_marked_example(
+            sample_tokenized_sample
+        )
+        assert all(
+            [
+                origin.activation < threshold * sample_tokenized_sample.max_activation
+                for origin, marked in zip(sample_tokenized_sample.segments, incorrectly_marked_example.segments)
+                if marked.activation > 0
+            ]
+        )
 
     # @pytest.mark.skip()
     def test_evaluate_explanation_fuzzing(self, activating_samples, mock_explanation, mock_evaluation, mocker):
@@ -220,11 +222,7 @@ class TestFeatureInterpreter:
             mock_client = mocker.MagicMock()
             mock_response = mocker.MagicMock()
             mock_response.choices[0].message.parsed = mock_evaluation
-            mock_client.configure_mock(
-                **{
-                    "beta.chat.completions.parse.return_value": mock_response
-                }
-            )
+            mock_client.configure_mock(**{"beta.chat.completions.parse.return_value": mock_response})
             self.feature_interpreter.explainer_client = mock_client
 
         result = self.feature_interpreter.evaluate_explanation_fuzzing(explanation, activating_samples)
@@ -234,22 +232,24 @@ class TestFeatureInterpreter:
         for k, v in result.items():
             print(f"{k}:\n{v}\n\n")
 
+
 # @pytest.mark.skip()
 class TestGenerateExamples:
-    
     @pytest.fixture
     def model(self, mocker):
         mock = mocker.MagicMock(spec=LanguageModel)
-        mock.trace.return_value = [[
-            {"key": "text", "range": (0, 4)},  # "This"
-            {"key": "text", "range": (4, 7)},  # " is"
-            {"key": "text", "range": (7, 9)},  # " a"
-            {"key": "text", "range": (9, 16)},  # " sample"
-            {"key": "text", "range": (16, 21)},  # " text"
-            {"key": "text", "range": (21, 25)},  # " for"
-            {"key": "text", "range": (25, 33)},  # " testing"
-            {"key": "text", "range": (33, 34)},  # "."
-        ]]
+        mock.trace.return_value = [
+            [
+                {"key": "text", "range": (0, 4)},  # "This"
+                {"key": "text", "range": (4, 7)},  # " is"
+                {"key": "text", "range": (7, 9)},  # " a"
+                {"key": "text", "range": (9, 16)},  # " sample"
+                {"key": "text", "range": (16, 21)},  # " text"
+                {"key": "text", "range": (21, 25)},  # " for"
+                {"key": "text", "range": (25, 33)},  # " testing"
+                {"key": "text", "range": (33, 34)},  # "."
+            ]
+        ]
         mock.to_activations = lambda _, hook_points: {hook_point: torch.randn(1, 8, 10) for hook_point in hook_points}
         return mock
 
@@ -258,19 +258,22 @@ class TestGenerateExamples:
         mock = mocker.MagicMock(spec=FeatureAnalysis)
         mock.name = "test_analysis"
         mock.max_feature_acts = 0.7
-        mock.samplings = [FeatureAnalysisSampling(
-            name="top_activations",
-            dataset_name=["test_dataset"],
-            context_idx=[0],
-            model_name=["test_model"],
-            feature_acts=[[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]],
-        ), FeatureAnalysisSampling(
-            name="non_activating",
-            dataset_name=["test_dataset"],
-            context_idx=[0],
-            model_name=["test_model"],
-            feature_acts=[[0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]],
-        )]
+        mock.samplings = [
+            FeatureAnalysisSampling(
+                name="top_activations",
+                dataset_name=["test_dataset"],
+                context_idx=[0],
+                model_name=["test_model"],
+                feature_acts=[[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]],
+            ),
+            FeatureAnalysisSampling(
+                name="non_activating",
+                dataset_name=["test_dataset"],
+                context_idx=[0],
+                model_name=["test_model"],
+                feature_acts=[[0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]],
+            ),
+        ]
         return mock
 
     @pytest.fixture
@@ -282,8 +285,6 @@ class TestGenerateExamples:
             }
         ]
         return mock
-
-    
 
     @pytest.fixture
     def feature_to_interpret(self, feature_analysis):
@@ -310,7 +311,6 @@ class TestGenerateExamples:
         )
         assert len(activating_examples) == 1
         assert isinstance(activating_examples[0], TokenizedSample)
-
 
     def test_generate_non_activating_examples(self, model, datasets, feature_to_interpret):
         non_activating_examples = generate_non_activating_examples(
