@@ -180,7 +180,7 @@ def get_feature(name: str, feature_index: str | int, feature_analysis_name: str 
 
     # Get feature data
     feature = (
-        client.get_random_alive_feature(sae_name=name, sae_series=sae_series)
+        client.get_random_alive_feature(sae_name=name, sae_series=sae_series, name=feature_analysis_name)
         if feature_index == "random"
         else client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
     )
@@ -275,6 +275,7 @@ def get_feature(name: str, feature_index: str | int, feature_analysis_name: str 
     # Prepare response
     response_data = {
         "feature_index": feature.index,
+        "interpretation": feature.interpretation,
         "dictionary_name": feature.sae_name,
         "decoder_norms": analysis.decoder_norms,
         "decoder_similarity_matrix": analysis.decoder_similarity_matrix,
