@@ -204,7 +204,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         # Add dataset_average_activation_norm to state dict
         if self.dataset_average_activation_norm is not None:
             for hook_point, value in self.dataset_average_activation_norm.items():
-                state_dict[f"dataset_average_activation_norm.{hook_point}"] = torch.tensor(value)
+                state_dict[f"dataset_average_activation_norm.{hook_point}"] = torch.tensor(
+                    value, device=self.cfg.device, dtype=self.cfg.dtype
+                )
+        else:
+            for hook_point in self.cfg.associated_hook_points:
+                state_dict[f"dataset_average_activation_norm.{hook_point}"] = torch.empty(
+                    1, device=self.cfg.device, dtype=self.cfg.dtype
+                )
 
         return cast(dict[str, torch.Tensor], state_dict)
 
