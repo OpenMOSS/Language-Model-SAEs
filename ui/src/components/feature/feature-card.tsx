@@ -1,7 +1,7 @@
 import { Feature, FeatureSampleCompactSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Plot from "react-plotly.js";
 import { useAsyncFn } from "react-use";
 import { Button } from "../ui/button";
@@ -74,6 +74,42 @@ const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
   );
 };
 
+const FeatureBookmarkButton = ({ feature }: { feature: Feature }) => {
+  const [isBookmarked, setIsBookmarked] = useState<boolean>(feature.isBookmarked || false);
+
+  const [toggleState, toggleBookmark] = useAsyncFn(async () => {
+    const method = isBookmarked ? "DELETE" : "POST";
+    const response = await fetch(
+      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${feature.dictionaryName}/features/${
+        feature.featureIndex
+      }/bookmark`,
+      {
+        method,
+      }
+    );
+    if (response.ok) {
+      setIsBookmarked(!isBookmarked);
+      return !isBookmarked;
+    } else {
+      throw new Error(await response.text());
+    }
+  }, [isBookmarked, feature.dictionaryName, feature.featureIndex]);
+
+  useEffect(() => {
+    setIsBookmarked(feature.isBookmarked || false);
+  }, [feature.isBookmarked]);
+
+  return (
+    <Button
+      onClick={toggleBookmark}
+      disabled={toggleState.loading}
+      variant={isBookmarked ? "default" : "outline"}
+    >
+      {toggleState.loading ? "..." : isBookmarked ? "★ Bookmarked" : "☆ Bookmark"}
+    </Button>
+  );
+};
+
 export const FeatureCard = ({ feature }: { feature: Feature }) => {
   const analysisNameMap = (analysisName: string) => {
     if (analysisName === "top_activations") {
@@ -137,9 +173,12 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
             #{feature.featureIndex} {activationTimesSpan}
             {maxActivationSpan}
           </span>
-          <Button onClick={() => setShowCustomInput((prev) => !prev)}>
-            {showCustomInput ? "Hide Custom Input" : "Try Custom Input"}
-          </Button>
+          <div className="flex gap-2">
+            <FeatureBookmarkButton feature={feature} />
+            <Button onClick={() => setShowCustomInput((prev) => !prev)}>
+              {showCustomInput ? "Hide Custom Input" : "Try Custom Input"}
+            </Button>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent>

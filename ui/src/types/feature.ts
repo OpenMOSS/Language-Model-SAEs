@@ -98,6 +98,7 @@ export const FeatureSchema = z.object({
     })
     .nullish(),
   interpretation: InterpretationSchema.nullish(),
+  isBookmarked: z.boolean().optional(),
 });
 
 export type Feature = z.infer<typeof FeatureSchema>;
