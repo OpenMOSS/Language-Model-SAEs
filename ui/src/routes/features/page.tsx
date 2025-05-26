@@ -37,13 +37,17 @@ export const FeaturesPage = () => {
       .then((res) => z.array(z.string()).parse(res));
   });
 
-  const [selectedAnalysis, setSelectedAnalysis] = useState<string>("default");
+  const [selectedAnalysis, setSelectedAnalysis] = useState<string | null>(null);
 
   const [featureIndex, setFeatureIndex] = useState<number>(0);
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
 
   const [featureState, fetchFeature] = useAsyncFn(
-    async (dictionary: string | null, featureIndex: number | string = "random", analysisName: string = "default") => {
+    async (
+      dictionary: string | null,
+      featureIndex: number | string = "random",
+      analysisName: string | null = null
+    ) => {
       if (!dictionary) {
         alert("Please select a dictionary first");
         return;
@@ -54,7 +58,7 @@ export const FeaturesPage = () => {
       const feature = await fetch(
         `${
           import.meta.env.VITE_BACKEND_URL
-        }/dictionaries/${dictionary}/features/${featureIndex}?feature_analysis_name=${analysisName}`,
+        }/dictionaries/${dictionary}/features/${featureIndex}${analysisName ? `?feature_analysis_name=${analysisName}` : ""}`,
         {
           method: "GET",
           headers: {
@@ -79,10 +83,11 @@ export const FeaturesPage = () => {
         )
         .then((res) => FeatureSchema.parse(res));
       setFeatureIndex(feature.featureIndex);
+      setSelectedAnalysis(feature.analysisName);
       setSearchParams({
         dictionary,
         featureIndex: feature.featureIndex.toString(),
-        analysis: analysisName,
+        analysis: feature.analysisName,
       });
       return feature;
     }
@@ -92,18 +97,18 @@ export const FeaturesPage = () => {
     await fetchDictionaries();
     if (searchParams.get("dictionary")) {
       const dict = searchParams.get("dictionary")!;
+      const analysisParam = searchParams.get("analysis");
       setSelectedDictionary(dict);
 
-      await fetchAnalyses(dict);
-
-      const analysisParam = searchParams.get("analysis");
-      if (analysisParam) {
-        setSelectedAnalysis(analysisParam);
-      }
+      fetchAnalyses(dict).then((analyses) => {
+        if (analyses.length > 0) {
+          setSelectedAnalysis(analysisParam || analyses[0]);
+        }
+      });
 
       if (searchParams.get("featureIndex")) {
         setFeatureIndex(parseInt(searchParams.get("featureIndex")!));
-        fetchFeature(dict, searchParams.get("featureIndex")!, analysisParam || "default");
+        fetchFeature(dict, searchParams.get("featureIndex")!, analysisParam || null);
       }
     }
   });
@@ -111,14 +116,13 @@ export const FeaturesPage = () => {
   useEffect(() => {
     if (dictionariesState.value && selectedDictionary === null) {
       setSelectedDictionary(dictionariesState.value[0]);
-      fetchAnalyses(dictionariesState.value[0]);
+      fetchAnalyses(dictionariesState.value[0]).then((analyses) => {
+        if (analyses.length > 0) {
+          setSelectedAnalysis(analyses[0]);
+        }
+      });
 
-      const analysisParam = searchParams.get("analysis");
-      if (analysisParam) {
-        setSelectedAnalysis(analysisParam);
-      }
-
-      fetchFeature(dictionariesState.value[0], "random", analysisParam || "default");
+      fetchFeature(dictionariesState.value[0], "random", selectedAnalysis);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dictionariesState.value]);
@@ -126,7 +130,7 @@ export const FeaturesPage = () => {
   useEffect(() => {
     if (selectedDictionary) {
       fetchAnalyses(selectedDictionary);
-      setSelectedAnalysis("default");
+      setSelectedAnalysis(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDictionary]);
@@ -195,7 +199,7 @@ export const FeaturesPage = () => {
           <span className="font-bold justify-self-end">Select analysis:</span>
           <Select
             disabled={analysesState.loading || !selectedDictionary || featureState.loading}
-            value={selectedAnalysis}
+            value={selectedAnalysis || undefined}
             onValueChange={setSelectedAnalysis}
           >
             <SelectTrigger className="bg-white">

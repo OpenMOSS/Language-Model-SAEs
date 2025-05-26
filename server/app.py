@@ -167,7 +167,11 @@ def get_image(dataset_name: str, context_idx: int, image_idx: int, shard_idx: in
 
 
 @app.get("/dictionaries/{name}/features/{feature_index}")
-def get_feature(name: str, feature_index: str | int, feature_analysis_name: str = "default"):
+def get_feature(
+    name: str,
+    feature_index: str | int,
+    feature_analysis_name: str | None = None,
+):
     # Parse feature_index if it's a string
     if isinstance(feature_index, str) and feature_index != "random":
         try:
@@ -191,10 +195,14 @@ def get_feature(name: str, feature_index: str | int, feature_analysis_name: str 
             status_code=404,
         )
 
-    analysis = next((a for a in feature.analyses if a.name == feature_analysis_name), None)
+    analysis = next(
+        (a for a in feature.analyses if a.name == feature_analysis_name or feature_analysis_name is None), None
+    )
     if analysis is None:
         return Response(
-            content=f"Feature analysis {feature_analysis_name} not found in SAE {name}",
+            content=f"Feature analysis {feature_analysis_name} not found in SAE {name}"
+            if feature_analysis_name is not None
+            else f"No feature analysis found in SAE {name}",
             status_code=404,
         )
 
@@ -275,6 +283,7 @@ def get_feature(name: str, feature_index: str | int, feature_analysis_name: str 
     # Prepare response
     response_data = {
         "feature_index": feature.index,
+        "analysis_name": analysis.name,
         "interpretation": feature.interpretation,
         "dictionary_name": feature.sae_name,
         "decoder_norms": analysis.decoder_norms,
