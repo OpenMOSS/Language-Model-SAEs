@@ -65,6 +65,7 @@ export type Interpretation = z.infer<typeof InterpretationSchema>;
 export const FeatureSchema = z.object({
   featureIndex: z.number(),
   dictionaryName: z.string(),
+  analysisName: z.string(),
   featureActivationHistogram: z.any().nullish(),
   decoderNorms: z.array(z.number()).nullish(),
   decoderSimilarityMatrix: z.array(z.array(z.number())).nullish(),

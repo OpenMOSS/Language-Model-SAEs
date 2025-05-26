@@ -235,7 +235,7 @@ class MongoClient:
         return SAERecord.model_validate(sae)
 
     def get_random_alive_feature(
-        self, sae_name: str, sae_series: str, name: str = "default"
+        self, sae_name: str, sae_series: str, name: str | None = None
     ) -> Optional[FeatureRecord]:
         """Get a random feature that has non-zero activation.
 
@@ -247,12 +247,16 @@ class MongoClient:
         Returns:
             A random feature record with non-zero activation, or None if no such feature exists
         """
+        elem_match: dict[str, Any] = {"max_feature_acts": {"$gt": 0}}
+        if name is not None:
+            elem_match["name"] = name
+
         pipeline = [
             {
                 "$match": {
                     "sae_name": sae_name,
                     "sae_series": sae_series,
-                    "analyses": {"$elemMatch": {"name": name, "max_feature_acts": {"$gt": 0}}},
+                    "analyses": {"$elemMatch": elem_match},
                 }
             },
             {"$sample": {"size": 1}},
