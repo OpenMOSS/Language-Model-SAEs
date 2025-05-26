@@ -129,7 +129,7 @@ const BookmarksPage = () => {
                     <TableRow key={`${bookmark.saeName}-${bookmark.featureIndex}`}>
                       <TableCell>
                         <Link
-                          to={`/features?dictionary=${bookmark.saeName}&feature=${bookmark.featureIndex}`}
+                          to={`/features?dictionary=${bookmark.saeName}&featureIndex=${bookmark.featureIndex}`}
                           className="text-blue-600 hover:underline font-medium"
                         >
                           #{bookmark.featureIndex}
