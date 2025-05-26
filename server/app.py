@@ -1,7 +1,7 @@
 import io
 import os
 from functools import lru_cache
-from typing import Any
+from typing import Any, Optional
 
 import msgpack
 import numpy as np
@@ -284,6 +284,7 @@ def get_feature(name: str, feature_index: str | int, feature_analysis_name: str 
         "max_feature_act": analysis.max_feature_acts,
         "n_analyzed_tokens": analysis.n_analyzed_tokens,
         "sample_groups": sample_groups,
+        "is_bookmarked": client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature.index),
     }
 
     return Response(
@@ -345,6 +346,111 @@ def get_analyses(name: str):
     # Extract unique analysis names from feature
     analyses = list(set(analysis.name for analysis in feature.analyses))
     return analyses
+
+
+@app.post("/dictionaries/{name}/features/{feature_index}/bookmark")
+def add_bookmark(name: str, feature_index: int):
+    """Add a bookmark for a feature.
+
+    Args:
+        name: Name of the dictionary/SAE
+        feature_index: Index of the feature to bookmark
+
+    Returns:
+        Success response or error
+    """
+    try:
+        success = client.add_bookmark(sae_name=name, sae_series=sae_series, feature_index=feature_index)
+        if success:
+            return {"message": "Bookmark added successfully"}
+        else:
+            return Response(content="Feature is already bookmarked", status_code=409)
+    except ValueError as e:
+        return Response(content=str(e), status_code=404)
+
+
+@app.delete("/dictionaries/{name}/features/{feature_index}/bookmark")
+def remove_bookmark(name: str, feature_index: int):
+    """Remove a bookmark for a feature.
+
+    Args:
+        name: Name of the dictionary/SAE
+        feature_index: Index of the feature to remove bookmark from
+
+    Returns:
+        Success response or error
+    """
+    success = client.remove_bookmark(sae_name=name, sae_series=sae_series, feature_index=feature_index)
+    if success:
+        return {"message": "Bookmark removed successfully"}
+    else:
+        return Response(content="Bookmark not found", status_code=404)
+
+
+@app.get("/dictionaries/{name}/features/{feature_index}/bookmark")
+def check_bookmark(name: str, feature_index: int):
+    """Check if a feature is bookmarked.
+
+    Args:
+        name: Name of the dictionary/SAE
+        feature_index: Index of the feature
+
+    Returns:
+        Bookmark status
+    """
+    is_bookmarked = client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature_index)
+    return {"is_bookmarked": is_bookmarked}
+
+
+@app.get("/bookmarks")
+def list_bookmarks(sae_name: Optional[str] = None, sae_series: Optional[str] = None, limit: int = 100, skip: int = 0):
+    """List bookmarks with optional filtering.
+
+    Args:
+        sae_name: Optional SAE name filter
+        sae_series: Optional SAE series filter
+        limit: Maximum number of bookmarks to return
+        skip: Number of bookmarks to skip (for pagination)
+
+    Returns:
+        List of bookmarks
+    """
+    bookmarks = client.list_bookmarks(sae_name=sae_name, sae_series=sae_series, limit=limit, skip=skip)
+
+    # Convert to dict for JSON serialization
+    bookmark_data = []
+    for bookmark in bookmarks:
+        bookmark_dict = bookmark.model_dump()
+        # Convert datetime to ISO string for JSON
+        bookmark_dict["created_at"] = bookmark.created_at.isoformat()
+        bookmark_data.append(bookmark_dict)
+
+    return {
+        "bookmarks": bookmark_data,
+        "total_count": client.get_bookmark_count(sae_name=sae_name, sae_series=sae_series),
+    }
+
+
+@app.put("/dictionaries/{name}/features/{feature_index}/bookmark")
+def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = None, notes: Optional[str] = None):
+    """Update a bookmark with new tags or notes.
+
+    Args:
+        name: Name of the dictionary/SAE
+        feature_index: Index of the feature
+        tags: Optional new tags for the bookmark
+        notes: Optional new notes for the bookmark
+
+    Returns:
+        Success response or error
+    """
+    success = client.update_bookmark(
+        sae_name=name, sae_series=sae_series, feature_index=feature_index, tags=tags, notes=notes
+    )
+    if success:
+        return {"message": "Bookmark updated successfully"}
+    else:
+        return Response(content="Bookmark not found", status_code=404)
 
 
 app.add_middleware(

@@ -8,6 +8,7 @@ import { RootPage } from "./routes/page";
 import { AttentionHeadPage } from "./routes/attn-heads/page";
 import { DictionaryPage } from "./routes/dictionaries/page";
 import { ModelsPage } from "./routes/models/page";
+import BookmarksPage from "./routes/bookmarks/page";
 
 const router = createBrowserRouter([
   {
@@ -25,6 +26,10 @@ const router = createBrowserRouter([
   {
     path: "/models",
     element: <ModelsPage />,
+  },
+  {
+    path: "/bookmarks",
+    element: <BookmarksPage />,
   },
   {
     path: "/",
