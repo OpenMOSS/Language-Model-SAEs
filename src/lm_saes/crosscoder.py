@@ -219,8 +219,13 @@ class CrossCoder(AbstractSparseAutoEncoder):
         hidden_pre = (
             einops.einsum(x, self.W_E, "... n_heads d_model, n_heads d_model d_sae -> ... n_heads d_sae") + self.b_E
         )
+
         # Sum across heads and add bias
         accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
+
+        if isinstance(accumulated_hidden_pre, DTensor):
+            accumulated_hidden_pre = DimMap({"model": -1}).redistribute(accumulated_hidden_pre)
+
         accumulated_hidden_pre = einops.repeat(
             accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
         )
