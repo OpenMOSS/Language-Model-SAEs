@@ -1,5 +1,4 @@
 import { AppNavbar } from "@/components/app/navbar";
-import { FeatureCard } from "@/components/feature/feature-card";
 import { SectionNavigator } from "@/components/app/section-navigator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,10 +6,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useCallback, Suspense, lazy } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useAsyncFn, useMount } from "react-use";
+import { useAsyncFn, useMount, useDebounce } from "react-use";
 import { z } from "zod";
+
+const FeatureCard = lazy(() => import("@/components/feature/feature-card").then(module => ({ default: module.FeatureCard })));
 
 export const FeaturesPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -40,7 +41,24 @@ export const FeaturesPage = () => {
   const [selectedAnalysis, setSelectedAnalysis] = useState<string | null>(null);
 
   const [featureIndex, setFeatureIndex] = useState<number>(0);
+  const [inputValue, setInputValue] = useState<string>("0");
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
+
+  // Debounce the input value to avoid excessive updates
+  useDebounce(
+    () => {
+      const parsed = parseInt(inputValue);
+      if (!isNaN(parsed) && parsed !== featureIndex) {
+        setFeatureIndex(parsed);
+      }
+    },
+    300,
+    [inputValue]
+  );
+
+  const handleFeatureIndexChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputValue(e.target.value);
+  }, []);
 
   const [featureState, fetchFeature] = useAsyncFn(
     async (
@@ -135,7 +153,8 @@ export const FeaturesPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDictionary]);
 
-  const sections = [
+  // Memoize sections calculation
+  const sections = useMemo(() => [
     {
       title: "Histogram",
       id: "Histogram",
@@ -160,7 +179,7 @@ export const FeaturesPage = () => {
       title: "Top Activation",
       id: "Activation",
     },
-  ].filter((section) => (featureState.value && featureState.value.logits != null) || section.id !== "Logits");
+  ].filter((section) => (featureState.value && featureState.value.logits != null) || section.id !== "Logits"), [featureState.value]);
 
   return (
     <div id="Top">
@@ -229,8 +248,8 @@ export const FeaturesPage = () => {
             id="feature-input"
             className="bg-white"
             type="number"
-            value={featureIndex.toString()}
-            onChange={(e) => setFeatureIndex(parseInt(e.target.value))}
+            value={inputValue}
+            onChange={handleFeatureIndexChange}
           />
           <Button
             disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
@@ -257,7 +276,9 @@ export const FeaturesPage = () => {
         {featureState.error && <div className="text-red-500 font-bold">Error: {featureState.error.message}</div>}
         {!featureState.loading && featureState.value && (
           <div className="flex gap-12 w-full">
-            <FeatureCard feature={featureState.value} />
+            <Suspense fallback={<div>Loading Feature Card...</div>}>
+              <FeatureCard feature={featureState.value} />
+            </Suspense>
             <SectionNavigator sections={sections} />
           </div>
         )}
