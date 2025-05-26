@@ -271,8 +271,12 @@ class FeatureAnalyzer:
                 assert device_mesh is not None, "Device mesh is required for DTensor feature activations"
                 if device_mesh is not feature_acts.device_mesh:
                     feature_acts = DTensor.from_local(
-                        feature_acts.full_tensor(), device_mesh, run_check=True
-                    )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                        feature_acts.redistribute(
+                            placements=DimMap({"head": -1, "model": -1}).placements(feature_acts.device_mesh)
+                        ).to_local(),
+                        device_mesh,
+                        placements=DimMap({"model": -1}).placements(device_mesh),
+                    )
                     # TODO: Remove this once redistributing across device meshes is supported
                 feature_acts = feature_acts.redistribute(
                     placements=DimMap({"model": -1}).placements(device_mesh)
@@ -375,8 +379,12 @@ class FeatureAnalyzer:
                 assert device_mesh is not None, "Device mesh is required for DTensor decoder norms"
                 if decoder_norms.device_mesh is not device_mesh:
                     decoder_norms = DTensor.from_local(
-                        decoder_norms.full_tensor(), device_mesh, run_check=True
-                    )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                        decoder_norms.redistribute(
+                            placements=DimMap({"head": -1, "model": -1}).placements(decoder_norms.device_mesh)
+                        ).to_local(),
+                        device_mesh,
+                        placements=DimMap({"model": -1}).placements(device_mesh),
+                    )
                     # TODO: Remove this once redistributing across device meshes is supported
 
                 decoder_norms = decoder_norms.redistribute(
@@ -391,8 +399,14 @@ class FeatureAnalyzer:
                 assert device_mesh is not None, "Device mesh is required for DTensor decoder similarity matrices"
                 if decoder_similarity_matrices.device_mesh is not device_mesh:
                     decoder_similarity_matrices = DTensor.from_local(
-                        decoder_similarity_matrices.full_tensor(), device_mesh, run_check=True
-                    )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                        decoder_similarity_matrices.redistribute(
+                            placements=DimMap({"head": 0, "model": 0}).placements(
+                                decoder_similarity_matrices.device_mesh
+                            )
+                        ).to_local(),
+                        device_mesh,
+                        placements=DimMap({"model": 0}).placements(device_mesh),
+                    )
                     # TODO: Remove this once redistributing across device meshes is supported
 
                 decoder_similarity_matrices = decoder_similarity_matrices.redistribute(
@@ -407,8 +421,14 @@ class FeatureAnalyzer:
                 assert device_mesh is not None, "Device mesh is required for DTensor decoder inner product matrices"
                 if decoder_inner_product_matrices.device_mesh is not device_mesh:
                     decoder_inner_product_matrices = DTensor.from_local(
-                        decoder_inner_product_matrices.full_tensor(), device_mesh, run_check=True
-                    )  # Convert to full tensor and distribute on the new device mesh since redistributing across device meshes is not supported yet
+                        decoder_inner_product_matrices.redistribute(
+                            placements=DimMap({"head": 0, "model": 0}).placements(
+                                decoder_inner_product_matrices.device_mesh
+                            )
+                        ).to_local(),
+                        device_mesh,
+                        placements=DimMap({"model": 0}).placements(device_mesh),
+                    )
                     # TODO: Remove this once redistributing across device meshes is supported
 
                 decoder_inner_product_matrices = decoder_inner_product_matrices.redistribute(
