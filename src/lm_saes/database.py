@@ -1,9 +1,11 @@
+from datetime import datetime
 from typing import Any, Optional
 
 import gridfs
 import numpy as np
 import pymongo
 import pymongo.database
+import pymongo.errors
 from bson import ObjectId
 from pydantic import BaseModel
 from typing_extensions import deprecated
@@ -73,6 +75,26 @@ class SAERecord(BaseModel):
     cfg: SAEConfig  # TODO: add more variants of SAEConfig
 
 
+class BookmarkRecord(BaseModel):
+    """Record for bookmarked features.
+
+    Attributes:
+        sae_name: Name of the SAE model
+        sae_series: Series of the SAE model
+        feature_index: Index of the bookmarked feature
+        created_at: Timestamp when the bookmark was created
+        tags: Optional list of tags for categorizing bookmarks
+        notes: Optional user notes about the bookmark
+    """
+
+    sae_name: str
+    sae_series: str
+    feature_index: int
+    created_at: datetime
+    tags: list[str] = []
+    notes: Optional[str] = None
+
+
 class MongoClient:
     def __init__(self, cfg: MongoDBConfig):
         self.client: pymongo.MongoClient = pymongo.MongoClient(cfg.mongo_uri)
@@ -83,6 +105,7 @@ class MongoClient:
         self.analysis_collection = self.db["analyses"]
         self.dataset_collection = self.db["datasets"]
         self.model_collection = self.db["models"]
+        self.bookmark_collection = self.db["bookmarks"]
         self.sae_collection.create_index([("name", pymongo.ASCENDING), ("series", pymongo.ASCENDING)], unique=True)
         self.sae_collection.create_index([("series", pymongo.ASCENDING)])
         self.analysis_collection.create_index(
@@ -95,6 +118,11 @@ class MongoClient:
         )
         self.dataset_collection.create_index([("name", pymongo.ASCENDING)], unique=True)
         self.model_collection.create_index([("name", pymongo.ASCENDING)], unique=True)
+        self.bookmark_collection.create_index(
+            [("sae_name", pymongo.ASCENDING), ("sae_series", pymongo.ASCENDING), ("feature_index", pymongo.ASCENDING)],
+            unique=True,
+        )
+        self.bookmark_collection.create_index([("created_at", pymongo.DESCENDING)])
 
     @deprecated("Not recommended for new code, where any single record can fit in 16MB size limit of BSON")
     def _init_fs(self):
@@ -358,3 +386,203 @@ class MongoClient:
         )
 
         return result
+
+    def add_bookmark(
+        self,
+        sae_name: str,
+        sae_series: str,
+        feature_index: int,
+        tags: Optional[list[str]] = None,
+        notes: Optional[str] = None,
+    ) -> bool:
+        """Add a bookmark for a feature.
+
+        Args:
+            sae_name: Name of the SAE
+            sae_series: Series of the SAE
+            feature_index: Index of the feature to bookmark
+            tags: Optional list of tags for the bookmark
+            notes: Optional notes for the bookmark
+
+        Returns:
+            bool: True if bookmark was added, False if it already exists
+
+        Raises:
+            ValueError: If the feature doesn't exist
+        """
+        # Check if feature exists
+        feature = self.get_feature(sae_name, sae_series, feature_index)
+        if feature is None:
+            raise ValueError(f"Feature {feature_index} not found for SAE {sae_name}/{sae_series}")
+
+        bookmark_data = {
+            "sae_name": sae_name,
+            "sae_series": sae_series,
+            "feature_index": feature_index,
+            "created_at": datetime.utcnow(),
+            "tags": tags or [],
+            "notes": notes,
+        }
+
+        try:
+            result = self.bookmark_collection.insert_one(bookmark_data)
+            return result.inserted_id is not None
+        except pymongo.errors.DuplicateKeyError:
+            return False
+
+    def remove_bookmark(self, sae_name: str, sae_series: str, feature_index: int) -> bool:
+        """Remove a bookmark for a feature.
+
+        Args:
+            sae_name: Name of the SAE
+            sae_series: Series of the SAE
+            feature_index: Index of the feature to remove bookmark from
+
+        Returns:
+            bool: True if bookmark was removed, False if it didn't exist
+        """
+        result = self.bookmark_collection.delete_one(
+            {
+                "sae_name": sae_name,
+                "sae_series": sae_series,
+                "feature_index": feature_index,
+            }
+        )
+        return result.deleted_count > 0
+
+    def is_bookmarked(self, sae_name: str, sae_series: str, feature_index: int) -> bool:
+        """Check if a feature is bookmarked.
+
+        Args:
+            sae_name: Name of the SAE
+            sae_series: Series of the SAE
+            feature_index: Index of the feature
+
+        Returns:
+            bool: True if the feature is bookmarked, False otherwise
+        """
+        bookmark = self.bookmark_collection.find_one(
+            {
+                "sae_name": sae_name,
+                "sae_series": sae_series,
+                "feature_index": feature_index,
+            }
+        )
+        return bookmark is not None
+
+    def get_bookmark(self, sae_name: str, sae_series: str, feature_index: int) -> Optional[BookmarkRecord]:
+        """Get a specific bookmark.
+
+        Args:
+            sae_name: Name of the SAE
+            sae_series: Series of the SAE
+            feature_index: Index of the feature
+
+        Returns:
+            BookmarkRecord: The bookmark record if it exists, None otherwise
+        """
+        bookmark = self.bookmark_collection.find_one(
+            {
+                "sae_name": sae_name,
+                "sae_series": sae_series,
+                "feature_index": feature_index,
+            }
+        )
+        if bookmark is None:
+            return None
+        return BookmarkRecord.model_validate(bookmark)
+
+    def list_bookmarks(
+        self,
+        sae_name: Optional[str] = None,
+        sae_series: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+        limit: Optional[int] = None,
+        skip: int = 0,
+    ) -> list[BookmarkRecord]:
+        """List bookmarks with optional filtering.
+
+        Args:
+            sae_name: Optional SAE name filter
+            sae_series: Optional SAE series filter
+            tags: Optional list of tags to filter by (matches any tag)
+            limit: Optional limit on number of results
+            skip: Number of results to skip (for pagination)
+
+        Returns:
+            list[BookmarkRecord]: List of bookmark records
+        """
+        query = {}
+
+        if sae_name is not None:
+            query["sae_name"] = sae_name
+        if sae_series is not None:
+            query["sae_series"] = sae_series
+        if tags:
+            query["tags"] = {"$in": tags}
+
+        cursor = self.bookmark_collection.find(query).sort("created_at", pymongo.DESCENDING)
+
+        if skip > 0:
+            cursor = cursor.skip(skip)
+        if limit is not None:
+            cursor = cursor.limit(limit)
+
+        return [BookmarkRecord.model_validate(bookmark) for bookmark in cursor]
+
+    def update_bookmark(
+        self,
+        sae_name: str,
+        sae_series: str,
+        feature_index: int,
+        tags: Optional[list[str]] = None,
+        notes: Optional[str] = None,
+    ) -> bool:
+        """Update an existing bookmark.
+
+        Args:
+            sae_name: Name of the SAE
+            sae_series: Series of the SAE
+            feature_index: Index of the feature
+            tags: Optional new tags for the bookmark
+            notes: Optional new notes for the bookmark
+
+        Returns:
+            bool: True if bookmark was updated, False if it doesn't exist
+        """
+        update_data = {}
+        if tags is not None:
+            update_data["tags"] = tags
+        if notes is not None:
+            update_data["notes"] = notes
+
+        if not update_data:
+            return True  # Nothing to update
+
+        result = self.bookmark_collection.update_one(
+            {
+                "sae_name": sae_name,
+                "sae_series": sae_series,
+                "feature_index": feature_index,
+            },
+            {"$set": update_data},
+        )
+        return result.modified_count > 0
+
+    def get_bookmark_count(self, sae_name: Optional[str] = None, sae_series: Optional[str] = None) -> int:
+        """Get the total count of bookmarks with optional filtering.
+
+        Args:
+            sae_name: Optional SAE name filter
+            sae_series: Optional SAE series filter
+
+        Returns:
+            int: Total number of bookmarks matching the criteria
+        """
+        query = {}
+        if sae_name is not None:
+            query["sae_name"] = sae_name
+        if sae_series is not None:
+            query["sae_series"] = sae_series
+
+        return self.bookmark_collection.count_documents(query)
