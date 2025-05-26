@@ -18,10 +18,6 @@ class DimMap:
             dim_map: A dictionary mapping mesh dimension names (e.g., "head", "model")
                     to shardable tensor dimensions (e.g., 0, 1, 2).
         """
-        # Validate that the dimension map values are unique
-        if len(set(dim_map.values())) != len(dim_map):
-            raise ValueError("Dimension map values must be unique")
-
         self._dim_map = dim_map.copy()
 
     def __getitem__(self, key: str) -> int:
@@ -59,6 +55,10 @@ class DimMap:
 
     def reverse(self) -> dict[int, str]:
         """Return a reversed dimension map mapping tensor dimensions to mesh dimension names."""
+        # Validate that the dimension map values are unique
+        if len(set(self._dim_map.values())) != len(self._dim_map):
+            raise ValueError("Dimension map values must be unique to reverse.")
+
         return {v: k for k, v in self._dim_map.items()}
 
     def placements(self, device_mesh: DeviceMesh) -> list[Placement]:
