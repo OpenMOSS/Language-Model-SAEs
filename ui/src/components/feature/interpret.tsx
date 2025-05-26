@@ -1,5 +1,5 @@
 import { Feature, Interpretation, InterpretationSchema } from "@/types/feature";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Button } from "../ui/button";
 import { Ban, Check, Info, ChevronDown, ChevronRight, Copy, CheckCircle2 } from "lucide-react";
 import { useAsyncFn } from "react-use";
@@ -68,7 +68,7 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
   const [validating, setValidating] = useState<boolean>(false);
 
   // Function to highlight tokens within << and >> with colored text
-  const highlightTokens = (text: string): React.ReactNode => {
+  const highlightTokens = useCallback((text: string): React.ReactNode => {
     if (!text) return "";
     
     const regex = /<<([^>]*)>>/g;
@@ -98,9 +98,9 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
     }
     
     return <>{parts}</>;
-  };
+  }, []);
 
-  const testNameMap = (method: string, passed: boolean) => {
+  const testNameMap = useCallback((method: string, passed: boolean) => {
     switch (method) {
       case "detection":
         return `Detection Test ${passed ? "Passed" : "Failed"}`;
@@ -111,7 +111,7 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
       default:
         return `Unknown Test ${method} ${passed ? "Passed" : "Failed"}`;
     }
-  };
+  }, []);
 
   const [state, autoInterpretation] = useAsyncFn(async () => {
     const interpretation = await fetch(

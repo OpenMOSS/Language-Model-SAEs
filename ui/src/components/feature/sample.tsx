@@ -1,5 +1,5 @@
 import { Feature, FeatureSampleCompact, ImageTokenOrigin, TextTokenOrigin } from "@/types/feature";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import { AppPagination } from "../ui/pagination";
 import { getAccentClassname } from "@/utils/style";
 import { cn } from "@/lib/utils";
@@ -15,8 +15,19 @@ export const FeatureSampleGroup = ({
   sampleGroup: Feature["sampleGroups"][0];
 }) => {
   const [page, setPage] = useState<number>(1);
-  const maxPage = Math.ceil(sampleGroup.samples.length / 10);
   const [visibleRange, setVisibleRange] = useState<number>(50);
+  
+  const maxPage = useMemo(() => Math.ceil(sampleGroup.samples.length / 10), [sampleGroup.samples.length]);
+  
+  const currentSamples = useMemo(() => 
+    sampleGroup.samples.slice((page - 1) * 10, page * 10),
+    [sampleGroup.samples, page]
+  );
+
+  const maxActivation = useMemo(() => 
+    sampleGroup.samples.length > 0 ? Math.max(...sampleGroup.samples[0].featureActs) : 0,
+    [sampleGroup.samples]
+  );
 
   // Handle input change
   const handleRangeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -28,7 +39,7 @@ export const FeatureSampleGroup = ({
 
   return (
     <div className="flex flex-col gap-4 mt-4">
-      <p className="font-bold">Max Activation: {Math.max(...sampleGroup.samples[0].featureActs).toFixed(3)}</p>
+      <p className="font-bold">Max Activation: {maxActivation.toFixed(3)}</p>
 
       {/* Feature-level configuration controls */}
       <div className="flex flex-col gap-2 mb-4">
@@ -48,7 +59,7 @@ export const FeatureSampleGroup = ({
         </div>
       </div>
 
-      {sampleGroup.samples.slice((page - 1) * 10, page * 10).map((sample, i) => (
+      {currentSamples.map((sample, i) => (
         <FeatureActivationSample
           key={(page - 1) * 10 + i}
           sample={sample}
@@ -97,78 +108,96 @@ export type FeatureActivationSampleProps = {
   visibleRange?: number;
 };
 
-export const FeatureActivationSample = ({
+export const FeatureActivationSample = memo(({
   sample,
   sampleName,
   maxFeatureAct,
   visibleRange,
 }: FeatureActivationSampleProps) => {
-  // Process text highlights
-  const textHighlights = sample.origins
-    .map((origin, index) => ({
-      origin,
-      featureAct: sample.featureActs[index],
-    }))
-    .filter((item): item is { origin: TextTokenOrigin; featureAct: number } => item.origin?.key === "text");
+  // Memoize text highlights processing
+  const textHighlights = useMemo(() => 
+    sample.origins
+      .map((origin, index) => ({
+        origin,
+        featureAct: sample.featureActs[index],
+      }))
+      .filter((item): item is { origin: TextTokenOrigin; featureAct: number } => item.origin?.key === "text"),
+    [sample.origins, sample.featureActs]
+  );
 
-  // Find the segment with max activation
-  const maxActivationHighlight =
+  // Memoize max activation highlight
+  const maxActivationHighlight = useMemo(() =>
     textHighlights.length > 0
       ? textHighlights.reduce(
           (max, current) => (current.featureAct > max.featureAct ? current : max),
           textHighlights[0]
         )
-      : null;
-
-  // Create segments for overlapping highlights
-  const segments: {
-    start: number;
-    end: number;
-    highlights: typeof textHighlights;
-    maxSegmentAct: number;
-    index: number;
-  }[] = [];
-  if (sample.text && textHighlights.length > 0 && maxActivationHighlight) {
-    // Get all unique positions
-    const positions = new Set<number>();
-    textHighlights.forEach((h) => {
-      positions.add(h.origin.range[0]);
-      positions.add(h.origin.range[1]);
-    });
-    const sortedPositions = Array.from(positions).sort((a, b) => a - b);
-
-    // Create segments between each pair of positions
-    for (let i = 0; i < sortedPositions.length - 1; i++) {
-      const start = sortedPositions[i];
-      const end = sortedPositions[i + 1];
-
-      const activeHighlights = textHighlights.filter((h) => h.origin.range[0] <= start && h.origin.range[1] >= end);
-      if (activeHighlights.length > 0) {
-        const maxSegmentAct = Math.max(...activeHighlights.map((h) => h.featureAct));
-        segments.push({ start, end, highlights: activeHighlights, maxSegmentAct, index: i });
-      }
-    }
-  }
-
-  // Find the index of the segment with max activation
-  const maxActivationSegmentIndex = segments.findIndex((segment) =>
-    segment.highlights.some((highlight) => highlight.featureAct === maxActivationHighlight?.featureAct)
+      : null,
+    [textHighlights]
   );
 
-  // Filter segments to only show those within the configured range of the max activation segment
-  const visibleSegments = segments.filter((segment) => {
-    if (!visibleRange) return true; // Show all if no visible range is set
-    if (maxActivationSegmentIndex === -1) return true; // Show all if max segment not found
-    return Math.abs(segment.index - maxActivationSegmentIndex) <= visibleRange;
-  });
+  // Memoize segments calculation
+  const segments = useMemo(() => {
+    const segmentList: {
+      start: number;
+      end: number;
+      highlights: typeof textHighlights;
+      maxSegmentAct: number;
+      index: number;
+    }[] = [];
+    
+    if (sample.text && textHighlights.length > 0 && maxActivationHighlight) {
+      // Get all unique positions
+      const positions = new Set<number>();
+      textHighlights.forEach((h) => {
+        positions.add(h.origin.range[0]);
+        positions.add(h.origin.range[1]);
+      });
+      const sortedPositions = Array.from(positions).sort((a, b) => a - b);
 
-  // Process image highlights
-  const imageHighlights = sample.origins
-    .map((origin, index) => ({
-      origin,
-      featureAct: sample.featureActs[index],
-    }))
-    .filter((item): item is { origin: ImageTokenOrigin; featureAct: number } => item.origin?.key === "image");
+      // Create segments between each pair of positions
+      for (let i = 0; i < sortedPositions.length - 1; i++) {
+        const start = sortedPositions[i];
+        const end = sortedPositions[i + 1];
+
+        const activeHighlights = textHighlights.filter((h) => h.origin.range[0] <= start && h.origin.range[1] >= end);
+        if (activeHighlights.length > 0) {
+          const maxSegmentAct = Math.max(...activeHighlights.map((h) => h.featureAct));
+          segmentList.push({ start, end, highlights: activeHighlights, maxSegmentAct, index: i });
+        }
+      }
+    }
+    return segmentList;
+  }, [sample.text, textHighlights, maxActivationHighlight]);
+
+  // Memoize max activation segment index
+  const maxActivationSegmentIndex = useMemo(() => 
+    segments.findIndex((segment) =>
+      segment.highlights.some((highlight) => highlight.featureAct === maxActivationHighlight?.featureAct)
+    ),
+    [segments, maxActivationHighlight]
+  );
+
+  // Memoize visible segments
+  const visibleSegments = useMemo(() => 
+    segments.filter((segment) => {
+      if (!visibleRange) return true;
+      if (maxActivationSegmentIndex === -1) return true;
+      return Math.abs(segment.index - maxActivationSegmentIndex) <= visibleRange;
+    }),
+    [segments, visibleRange, maxActivationSegmentIndex]
+  );
+
+  // Memoize image highlights processing
+  const imageHighlights = useMemo(() =>
+    sample.origins
+      .map((origin, index) => ({
+        origin,
+        featureAct: sample.featureActs[index],
+      }))
+      .filter((item): item is { origin: ImageTokenOrigin; featureAct: number } => item.origin?.key === "image"),
+    [sample.origins, sample.featureActs]
+  );
 
   const [showImageHighlights, setShowImageHighlights] = useState(true);
   const [showImageGrid, setShowImageGrid] = useState(false);
@@ -309,4 +338,4 @@ export const FeatureActivationSample = ({
       </div>
     </div>
   );
-};
+});

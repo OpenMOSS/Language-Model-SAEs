@@ -1,7 +1,7 @@
 import { Feature, FeatureSampleCompactSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Plot from "react-plotly.js";
 import { useAsyncFn } from "react-use";
 import { Button } from "../ui/button";
@@ -77,7 +77,7 @@ const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
 const FeatureBookmarkButton = ({ feature }: { feature: Feature }) => {
   const [isBookmarked, setIsBookmarked] = useState<boolean>(feature.isBookmarked || false);
 
-  const [toggleState, toggleBookmark] = useAsyncFn(async () => {
+  const toggleBookmark = useCallback(async () => {
     const method = isBookmarked ? "DELETE" : "POST";
     const response = await fetch(
       `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${feature.dictionaryName}/features/${
@@ -95,13 +95,15 @@ const FeatureBookmarkButton = ({ feature }: { feature: Feature }) => {
     }
   }, [isBookmarked, feature.dictionaryName, feature.featureIndex]);
 
+  const [toggleState, executeToggle] = useAsyncFn(toggleBookmark, [toggleBookmark]);
+
   useEffect(() => {
     setIsBookmarked(feature.isBookmarked || false);
   }, [feature.isBookmarked]);
 
   return (
     <Button
-      onClick={toggleBookmark}
+      onClick={executeToggle}
       disabled={toggleState.loading}
       variant={isBookmarked ? "default" : "outline"}
     >
