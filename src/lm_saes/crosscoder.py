@@ -148,6 +148,51 @@ class CrossCoder(AbstractSparseAutoEncoder):
         self.b_E.copy_(b_E)
         self.b_D.copy_(b_D)
 
+    @timer.time("encode_apply_encoding")
+    def _apply_encoding(
+        self,
+        x: Union[
+            Float[torch.Tensor, "batch n_heads d_model"],
+            Float[torch.Tensor, "batch seq_len n_heads d_model"],
+        ],
+        *,
+        no_einsum: bool = True,
+    ) -> Union[
+        Float[torch.Tensor, "batch n_heads d_sae"],
+        Float[torch.Tensor, "batch seq_len n_heads d_sae"],
+    ]:
+        """Apply encoding transformation to input tensor.
+
+        Args:
+            x: Input tensor of shape (..., n_heads, d_model).
+
+        Returns:
+            Encoded tensor of shape (..., n_heads, d_sae).
+        """
+        if no_einsum:
+            # TODO: Test consistency of this implementation
+            def _apply_encoding_local_no_einsum(x: torch.Tensor, W_E: torch.Tensor, b_E: torch.Tensor) -> torch.Tensor:
+                return torch.vmap(torch.matmul, in_dims=(-2, 0), out_dims=-2)(x, W_E) + b_E
+
+            if self.device_mesh is not None:
+                out_placements = DimMap({"head": -2, "model": -1}).placements(self.device_mesh)
+
+                def _apply_encoding_no_einsum(x: torch.Tensor, W_E: torch.Tensor, b_E: torch.Tensor) -> torch.Tensor:
+                    assert isinstance(x, DTensor) and isinstance(W_E, DTensor) and isinstance(b_E, DTensor)
+                    # x = DimMap({"head": -2}).redistribute(x)
+                    return DTensor.from_local(
+                        _apply_encoding_local_no_einsum(x.to_local(), W_E.to_local(), b_E.to_local()),
+                        device_mesh=self.device_mesh,
+                        placements=out_placements,
+                    )
+            else:
+                _apply_encoding_no_einsum = _apply_encoding_local_no_einsum
+            return _apply_encoding_no_einsum(x, self.W_E, self.b_E)
+        else:
+            return (
+                einops.einsum(x, self.W_E, "... n_heads d_model, n_heads d_model d_sae -> ... n_heads d_sae") + self.b_E
+            )
+
     @overload
     def encode(
         self,
@@ -156,6 +201,8 @@ class CrossCoder(AbstractSparseAutoEncoder):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: Literal[False] = False,
+        *,
+        no_einsum: bool = True,
         **kwargs,
     ) -> Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]: ...
 
@@ -167,6 +214,8 @@ class CrossCoder(AbstractSparseAutoEncoder):
             Float[torch.Tensor, "batch seq_len n_heads d_model"],
         ],
         return_hidden_pre: Literal[True],
+        *,
+        no_einsum: bool = True,
         **kwargs,
     ) -> tuple[
         Union[
@@ -188,6 +237,8 @@ class CrossCoder(AbstractSparseAutoEncoder):
             Float[torch.Tensor, "batch seq_len n_heads d_model"],
         ],
         return_hidden_pre: bool = False,
+        *,
+        no_einsum: bool = True,
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, "batch n_heads d_sae"],
@@ -206,31 +257,35 @@ class CrossCoder(AbstractSparseAutoEncoder):
         """Encode the input tensor.
 
         Args:
-            x: Input tensor of shape (n_heads, d_model).
+            x: Input tensor of shape (..., n_heads, d_model).
 
         Returns:
-            Encoded tensor of shape (n_heads, d_sae).
+            Encoded tensor of shape (..., n_heads, d_sae).
         """
         if self.device_mesh is not None and not isinstance(x, DTensor):
             with timer.time("encode_distribute_tensor"):
-                x = DimMap({"head": 0}).distribute(x, self.device_mesh)
+                x = DimMap({"head": -2}).distribute(x, self.device_mesh)
 
         # Apply encoding per head
-        hidden_pre = (
-            einops.einsum(x, self.W_E, "... n_heads d_model, n_heads d_model d_sae -> ... n_heads d_sae") + self.b_E
-        )
+        hidden_pre = self._apply_encoding(x, no_einsum=no_einsum)
 
         # Sum across heads and add bias
-        accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
+        if no_einsum:
+            accumulated_hidden_pre = torch.sum(hidden_pre, dim=-2)
+        else:
+            accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
 
-        if isinstance(accumulated_hidden_pre, DTensor):
-            accumulated_hidden_pre = DimMap({"model": -1}).redistribute(accumulated_hidden_pre)
+        with timer.time("encode_redistribute_tensor_pre_repeat"):
+            if isinstance(accumulated_hidden_pre, DTensor):
+                accumulated_hidden_pre = DimMap({"model": -1}).redistribute(accumulated_hidden_pre)
 
         accumulated_hidden_pre = einops.repeat(
             accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
         )
-        if isinstance(accumulated_hidden_pre, DTensor):
-            accumulated_hidden_pre = DimMap({"head": -2, "model": -1}).redistribute(accumulated_hidden_pre)
+
+        with timer.time("encode_redistribute_tensor_post_repeat"):
+            if isinstance(accumulated_hidden_pre, DTensor):
+                accumulated_hidden_pre = DimMap({"head": -2, "model": -1}).redistribute(accumulated_hidden_pre)
 
         # Apply activation function
         feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
@@ -238,6 +293,56 @@ class CrossCoder(AbstractSparseAutoEncoder):
         if return_hidden_pre:
             return feature_acts, accumulated_hidden_pre
         return feature_acts
+
+    def _apply_decoding(
+        self,
+        feature_acts: Union[
+            Float[torch.Tensor, "batch n_heads d_sae"],
+            Float[torch.Tensor, "batch seq_len n_heads d_sae"],
+        ],
+        *,
+        no_einsum: bool = True,
+    ) -> Union[
+        Float[torch.Tensor, "batch n_heads d_model"],
+        Float[torch.Tensor, "batch seq_len n_heads d_model"],
+    ]:
+        """Apply decoding transformation to feature activations.
+
+        Args:
+            feature_acts: Feature activations tensor of shape (..., n_heads, d_sae).
+
+        Returns:
+            Decoded tensor of shape (..., n_heads, d_model).
+        """
+        if no_einsum:
+
+            def _apply_decoding_local_no_einsum(
+                feature_acts: torch.Tensor, W_D: torch.Tensor, b_D: torch.Tensor
+            ) -> torch.Tensor:
+                return torch.vmap(torch.matmul, in_dims=(-2, 0), out_dims=-2)(feature_acts, W_D) + b_D
+
+            if self.device_mesh is not None:
+                out_placements = DimMap({"head": -2}).placements(self.device_mesh)
+
+                def _apply_decoding_no_einsum(
+                    feature_acts: torch.Tensor, W_D: torch.Tensor, b_D: torch.Tensor
+                ) -> torch.Tensor:
+                    assert isinstance(feature_acts, DTensor) and isinstance(W_D, DTensor) and isinstance(b_D, DTensor)
+                    # feature_acts = DimMap({"head": -2, "model": -1}).redistribute(feature_acts)
+                    return DTensor.from_local(
+                        _apply_decoding_local_no_einsum(feature_acts.to_local(), W_D.to_local(), b_D.to_local()),
+                        device_mesh=self.device_mesh,
+                        placements=out_placements,
+                    )
+            else:
+                _apply_decoding_no_einsum = _apply_decoding_local_no_einsum
+            return _apply_decoding_no_einsum(feature_acts, self.W_D, self.b_D)
+
+        else:
+            return (
+                einops.einsum(feature_acts, self.W_D, "... n_heads d_sae, n_heads d_sae d_model -> ... n_heads d_model")
+                + self.b_D
+            )
 
     @override
     @timer.time("decode")
@@ -247,6 +352,8 @@ class CrossCoder(AbstractSparseAutoEncoder):
             Float[torch.Tensor, "batch d_sae"],
             Float[torch.Tensor, "batch seq_len d_sae"],
         ],
+        *,
+        no_einsum: bool = True,
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, "batch d_model"],
@@ -260,11 +367,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
         Returns:
             Decoded tensor of shape (n_heads, d_model).
         """
-        reconstructed = (
-            einops.einsum(feature_acts, self.W_D, "... n_heads d_sae, n_heads d_sae d_model -> ... n_heads d_model")
-            + self.b_D
-        )
-        return reconstructed
+        return self._apply_decoding(feature_acts, no_einsum=no_einsum)
 
     @override
     def decoder_norm(self, keepdim: bool = False) -> torch.Tensor:
