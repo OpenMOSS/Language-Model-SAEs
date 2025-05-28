@@ -24,9 +24,9 @@ from pydantic import BaseModel, Field
 from lm_saes.backend.language_model import LanguageModel
 from lm_saes.config import BaseConfig
 from lm_saes.database import FeatureAnalysis, FeatureRecord, MongoClient
+from lm_saes.utils.logging import get_logger
 
-# from threading import Lock
-# lock = Lock()
+logger = get_logger("analysis.feature_interpreter")
 
 
 class ExplainerType(str, Enum):
@@ -220,7 +220,7 @@ class TokenizedSample:
                     if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
                 )
             except Exception:
-                print(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n")
+                logger.error(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n")
                 continue
             segments.append(Segment(text[start:end], segment_activation))
 
@@ -284,7 +284,7 @@ def generate_activating_examples(
             samples.append(sample)
 
         except Exception as e:
-            print(f"{error_prefix} {e}")
+            logger.error(f"{error_prefix} {e}")
             continue
 
         if len(samples) >= n:
@@ -349,7 +349,7 @@ def generate_non_activating_examples(
             samples.append(sample)
 
         except Exception as e:
-            print(f"{error_prefix} {e}")
+            logger.error(f"{error_prefix} {e}")
             continue
 
         if len(samples) >= n:
@@ -484,11 +484,11 @@ Second, Assess Activation Consistency: Based on your summary and the provided ex
 
 Third, Assess Feature Complexity: Based on your summary and the nature of the activation, evaluate the complexity of the feature. Return your assessment as a single integer from the following scale:
 
-5: Rich feature firing on diverse contexts with an interesting unifying theme, e.g., “feelings of togetherness”
-4: Feature relating to high-level semantic structure, e.g., “return statements in code”
-3: Moderate complexity, such as a phrase, category, or tracking sentence structure, e.g., “website URLs”
-2: Single word or token feature but including multiple languages or spelling, e.g., “mentions of dog”
-1: Single token feature, e.g., “the token ‘(‘”
+5: Rich feature firing on diverse contexts with an interesting unifying theme, e.g., "feelings of togetherness"
+4: Feature relating to high-level semantic structure, e.g., "return statements in code"
+3: Moderate complexity, such as a phrase, category, or tracking sentence structure, e.g., "website URLs"
+2: Single word or token feature but including multiple languages or spelling, e.g., "mentions of dog"
+1: Single token feature, e.g., "the token '('"
 
 Your output should be a JSON object that has the following fields: `steps`, `final_explanation`, `activation_consistency`, `complexity`. `steps` should be an array of strings with a length not exceeding 3, each representing a step in the chain-of-thought process. `final_explanation` should be a string in the form of 'This feature activates on... '. `activation_consistency` should be an integer between 1 and 5, representing the consistency of the feature. `complexity` should be an integer between 1 and 5, representing the complexity of the feature.
 

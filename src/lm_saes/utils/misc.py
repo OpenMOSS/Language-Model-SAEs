@@ -8,6 +8,10 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.nn.functional import all_reduce
 from transformers import PreTrainedTokenizerBase
 
+from .logging import get_distributed_logger
+
+logger = get_distributed_logger("utils.misc")
+
 
 def is_master() -> bool:
     return not dist.is_initialized() or dist.get_rank() == 0
@@ -29,19 +33,24 @@ def print_once(
     sep: str | None = " ",
     end: str | None = "\n",
 ) -> None:
+    """Print only from the master process in distributed training.
+
+    Note: This function is deprecated. Use logger.info() instead.
+    """
     if is_master():
-        print(*values, sep=sep, end=end)
+        message = sep.join(str(v) for v in values) if sep else " ".join(str(v) for v in values)
+        logger.info(message)
 
 
 def check_file_path_unused(file_path):
     # Check if the file path is None
     if file_path is None:
-        print("Error: File path is empty.")
+        logger.error("File path is empty.")
         exit()
 
     # Check if the file already exists
     if os.path.exists(file_path):
-        print(f"Error: File {file_path} already exists. Please choose a different file path.")
+        logger.error(f"File {file_path} already exists. Please choose a different file path.")
         exit()
 
 

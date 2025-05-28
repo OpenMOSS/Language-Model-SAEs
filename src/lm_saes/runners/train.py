@@ -28,7 +28,10 @@ from lm_saes.initializer import Initializer
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.trainer import Trainer
+from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from lm_saes.utils.misc import get_modality_tokens, is_primary_rank
+
+logger = get_distributed_logger("runners.train")
 
 
 class TrainSAESettings(BaseSettings):
@@ -86,6 +89,9 @@ def train_sae(settings: TrainSAESettings) -> None:
     Args:
         settings: Configuration settings for SAE training
     """
+    # Set up logging
+    setup_logging(level="INFO")
+
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
@@ -96,7 +102,11 @@ def train_sae(settings: TrainSAESettings) -> None:
         else None
     )
 
+    logger.info(f"Device mesh initialized: {device_mesh}")
+
     mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
+    if mongo_client:
+        logger.info("MongoDB client initialized")
 
     # Load configurations
     model_cfg = load_config(
@@ -122,6 +132,7 @@ def train_sae(settings: TrainSAESettings) -> None:
     )
 
     # Load model and datasets
+    logger.info("Loading model and datasets")
     model = load_model(model_cfg) if model_cfg is not None else None
     datasets = (
         {
@@ -133,6 +144,7 @@ def train_sae(settings: TrainSAESettings) -> None:
     )
 
     if isinstance(settings.sae, MixCoderConfig):
+        logger.info("Setting up MixCoder configuration")
         modality_names = settings.sae.modality_names
         if "text" in modality_names:  # Multimodal mixcoder SAE
             from transformers.models.auto.tokenization_auto import AutoTokenizer
@@ -179,16 +191,21 @@ def train_sae(settings: TrainSAESettings) -> None:
     else:
         activation_factory = ActivationFactory(settings.activation_factory)
 
+    logger.info("Processing activations stream")
     activations_stream = activation_factory.process(
         model=model,
         model_name=settings.model_name,
         datasets=datasets,
     )
+
+    logger.info("Initializing SAE")
     initializer = Initializer(settings.initializer)
 
     sae = initializer.initialize_sae_from_config(
         settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
     )
+
+    logger.info(f"SAE initialized: {type(sae).__name__}")
 
     wandb_logger = (
         wandb.init(
@@ -203,14 +220,18 @@ def train_sae(settings: TrainSAESettings) -> None:
         else None
     )
     if wandb_logger is not None:
+        logger.info("WandB logger initialized")
         wandb_logger.watch(sae, log="all")
 
     # TODO: implement eval_fn
     eval_fn = (lambda x: None) if settings.eval else None
 
+    logger.info("Starting training")
     trainer = Trainer(settings.trainer)
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
     trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+
+    logger.info("Training completed, saving model")
     sae.save_pretrained(
         save_path=settings.trainer.exp_result_path,
         sae_name=settings.sae_name,
@@ -220,6 +241,9 @@ def train_sae(settings: TrainSAESettings) -> None:
 
     if wandb_logger is not None:
         wandb_logger.finish()
+        logger.info("WandB session closed")
+
+    logger.info("SAE training completed successfully")
 
 
 class TrainCrossCoderSettings(BaseSettings):
@@ -277,6 +301,9 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     Args:
         settings: Configuration settings for SAE training
     """
+    # Set up logging
+    setup_logging(level="INFO")
+
     assert isinstance(settings.sae, CrossCoderConfig), "CrossCoderConfig is required for training a CrossCoder"
     assert len(settings.activation_factories) == settings.sae.n_heads, (
         "Number of activation factories must match the number of heads in the CrossCoder"
@@ -288,7 +315,11 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         mesh_dim_names=("head", "data", "model"),
     )
 
+    logger.info(f"Device mesh initialized with {settings.sae.n_heads} heads")
+
     mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
+    if mongo_client:
+        logger.info("MongoDB client initialized")
 
     # Load configurations
     model_cfg = load_config(
@@ -314,6 +345,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     )
 
     # Load model and datasets
+    logger.info("Loading model and datasets")
     model = load_model(model_cfg) if model_cfg is not None else None
     datasets = (
         {
@@ -324,18 +356,24 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         else None
     )
 
+    logger.info("Setting up activation factory for CrossCoder")
     activation_factory = ActivationFactory(settings.activation_factories[device_mesh.get_local_rank("head")])
 
+    logger.info("Processing activations stream")
     activations_stream = activation_factory.process(
         model=model,
         model_name=settings.model_name,
         datasets=datasets,
     )
+
+    logger.info("Initializing CrossCoder")
     initializer = Initializer(settings.initializer)
 
     sae = initializer.initialize_sae_from_config(
         settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
     )
+
+    logger.info("CrossCoder initialized")
 
     wandb_logger = (
         wandb.init(
@@ -350,12 +388,18 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         else None
     )
 
+    if wandb_logger is not None:
+        logger.info("WandB logger initialized")
+
     # TODO: implement eval_fn
     eval_fn = (lambda x: None) if settings.eval else None
 
+    logger.info("Starting CrossCoder training")
     trainer = Trainer(settings.trainer)
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
     trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+
+    logger.info("Training completed, saving CrossCoder")
     sae.save_pretrained(
         save_path=settings.trainer.exp_result_path,
         sae_name=settings.sae_name,
@@ -365,6 +409,9 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
 
     if wandb_logger is not None:
         wandb_logger.finish()
+        logger.info("WandB session closed")
+
+    logger.info("CrossCoder training completed successfully")
 
 
 class SweepingItem(BaseModel):
@@ -429,6 +476,8 @@ def sweep_sae(settings: SweepSAESettings) -> None:
     Args:
         settings: Configuration settings for SAE sweeping
     """
+    # Set up logging
+    setup_logging(level="INFO")
 
     n_sweeps = len(settings.items)
 
@@ -438,9 +487,12 @@ def sweep_sae(settings: SweepSAESettings) -> None:
         mesh_dim_names=("sweep", "data", "model"),
     )
 
+    logger.info(f"Device mesh initialized for sweep with {n_sweeps} configurations")
+
     mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
 
     if device_mesh.get_local_rank("sweep") == 0:
+        logger.info("Loading configurations on rank 0")
         # Load configurations
         model_cfg = load_config(
             config=settings.model,
@@ -465,6 +517,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
         )
 
         # Load model and datasets
+        logger.info("Loading model and datasets on rank 0")
         model = load_model(model_cfg) if model_cfg is not None else None
         datasets = (
             {
@@ -476,6 +529,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
         )
 
         if isinstance(settings.items[0].sae, MixCoderConfig):
+            logger.info("Setting up MixCoder configuration for sweep")
             modality_names = settings.items[0].sae.modality_names
             assert all(
                 isinstance(item.sae, MixCoderConfig) and item.sae.modality_names == modality_names
@@ -526,6 +580,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
         else:
             activation_factory = ActivationFactory(settings.activation_factory)
 
+        logger.info("Processing activations stream on rank 0")
         activations_stream = activation_factory.process(
             model=model,
             model_name=settings.model_name,
@@ -556,8 +611,11 @@ def sweep_sae(settings: SweepSAESettings) -> None:
     activations_stream = broadcast_activations_stream(activations_stream)
 
     item = settings.items[device_mesh.get_local_rank("sweep")]
+    logger.info(f"Processing sweep item: {item.sae_name}/{item.sae_series}")
+
     initializer = Initializer(item.initializer)
 
+    logger.info("Initializing SAE for sweep item")
     sae = initializer.initialize_sae_from_config(
         item.sae, activation_stream=activations_stream, device_mesh=device_mesh
     )
@@ -575,14 +633,18 @@ def sweep_sae(settings: SweepSAESettings) -> None:
         else None
     )
     if wandb_logger is not None:
+        logger.info("WandB logger initialized for sweep item")
         wandb_logger.watch(sae, log="all")
 
     # TODO: implement eval_fn
     eval_fn = (lambda x: None) if settings.eval else None
 
+    logger.info("Starting training for sweep item")
     trainer = Trainer(item.trainer)
     sae.cfg.save_hyperparameters(item.trainer.exp_result_path)
     trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+
+    logger.info("Training completed, saving sweep item")
     sae.save_pretrained(
         save_path=item.trainer.exp_result_path,
         sae_name=item.sae_name,
@@ -592,3 +654,6 @@ def sweep_sae(settings: SweepSAESettings) -> None:
 
     if wandb_logger is not None:
         wandb_logger.finish()
+        logger.info("WandB session closed for sweep item")
+
+    logger.info(f"Sweep item completed: {item.sae_name}/{item.sae_series}")

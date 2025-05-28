@@ -1,9 +1,15 @@
+"""Triton kernels for sparse matrix operations in SAE training."""
+
 from typing import cast
 
 import torch
 import triton
 import triton.language as tl
 from jaxtyping import Float
+
+from lm_saes.utils.logging import get_logger
+
+logger = get_logger("kernels")
 
 
 def triton_sparse_transpose_dense_matmul(
@@ -236,7 +242,7 @@ def triton_dense_dense_sparseout_matmul(
     assert dense2.stride(0) == 1, "dense2 must be contiguous along B"
 
     if K > 512:
-        print("WARN - using naive matmul for large K")
+        logger.warning("Using naive matmul for large K")
         # naive is more efficient for large K
         return (dense1 @ dense2).gather(1, at_indices)
 
@@ -550,7 +556,7 @@ if __name__ == "__main__":
                 f"Mismatch between Triton and PyTorch gradients on dense input! {triton_dense_input_grad=}, {torch_dense_input_grad=}"
             )
 
-        print("✅ Triton forward and backward pass matches nn.Linear!")
+        logger.info("✅ Triton forward and backward pass matches nn.Linear!")
 
     # Ensure we have the Triton-based kernel
     def benchmark_triton_vs_torch(
@@ -628,9 +634,9 @@ if __name__ == "__main__":
         triton_time = start_triton.elapsed_time(end_triton) / iters  # Average time in ms
 
         # Print results
-        print(f"🔹 PyTorch nn.Linear Avg Time: {torch_time:.3f} ms")
-        print(f"⚡ Triton Sparse-Dense Avg Time: {triton_time:.3f} ms")
-        print(f"🚀 Speedup: {torch_time / triton_time:.2f}x")
+        logger.info(f"🔹 PyTorch nn.Linear Avg Time: {torch_time:.3f} ms")
+        logger.info(f"⚡ Triton Sparse-Dense Avg Time: {triton_time:.3f} ms")
+        logger.info(f"🚀 Speedup: {torch_time / triton_time:.2f}x")
 
     # Run test
     test_triton_decoder(B=16, d_sae=4096, d_model=256, sparsity=0.9, require_precise_feature_acts_grad=True)

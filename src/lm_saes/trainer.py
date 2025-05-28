@@ -16,9 +16,12 @@ from lm_saes.crosscoder import CrossCoder
 from lm_saes.evaluator import evaluate_mixcoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
+from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
 from lm_saes.utils.timer import timer
+
+logger = get_distributed_logger("trainer")
 
 
 class Trainer:
@@ -276,12 +279,10 @@ class Trainer:
                         }
                     )
 
-            if is_primary_rank(sae.device_mesh):
-                print({"step": self.cur_step + 1, **wandb_log_dict})
+            log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Training Metrics")
 
-                if timer.enabled:
-                    print("\nTimer Summary:")
-                    print(timer.summary())
+            if timer.enabled:
+                logger.info(f"\nTimer Summary:\n{timer.summary()}")
 
             if self.wandb_logger is not None:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
