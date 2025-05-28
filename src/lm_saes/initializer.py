@@ -16,8 +16,11 @@ from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.mixcoder import MixCoder
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
 from lm_saes.utils.tensor_dict import batch_size
+
+logger = get_distributed_logger("initializer")
 
 
 class Initializer:
@@ -101,7 +104,7 @@ class Initializer:
                 torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
             )
 
-            print(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")
+            logger.info(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")
 
             sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
@@ -221,7 +224,7 @@ class Initializer:
             if sae.cfg.sparsity_include_decoder_norm:
                 sae.transform_to_unit_decoder_norm()
             if "topk" in sae.cfg.act_fn:
-                print(
+                logger.info(
                     "Converting topk activation to jumprelu for inference. Features are set independent to each other."
                 )
                 if sae.cfg.jump_relu_threshold is None:
