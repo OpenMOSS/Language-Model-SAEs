@@ -22,6 +22,9 @@ from lm_saes.config import (
 from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
+from lm_saes.utils.logging import get_distributed_logger, setup_logging
+
+logger = get_distributed_logger("runners.generate")
 
 
 class GenerateActivationsSettings(BaseSettings):
@@ -103,6 +106,9 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
     Args:
         settings: Configuration settings for activation generation
     """
+    # Set up logging
+    setup_logging(level="INFO")
+
     # Initialize device mesh
     device_mesh = (
         init_device_mesh(
@@ -114,9 +120,14 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
         else None
     )
 
+    logger.info(f"Device mesh initialized: {device_mesh}")
+
     mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
+    if mongo_client:
+        logger.info("MongoDB client initialized")
 
     # Load configurations
+    logger.info("Loading model and dataset configurations")
     model_cfg = load_config(
         config=settings.model, name=settings.model_name, mongo_client=mongo_client, config_type="model"
     )
@@ -126,6 +137,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
     )
 
     # Load model and dataset
+    logger.info("Loading model and dataset")
     model = load_model(model_cfg)
     dataset, metadata = load_dataset(
         dataset_cfg,
@@ -134,7 +146,11 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
         start_shard=settings.start_shard,
     )
 
+    logger.info(f"Model loaded: {settings.model_name}")
+    logger.info(f"Dataset loaded: {settings.dataset_name}")
+
     # Configure activation generation
+    logger.info("Configuring activation factory")
     factory_cfg = ActivationFactoryConfig(
         sources=[ActivationFactoryDatasetSource(name=settings.dataset_name)],
         target=settings.target,
@@ -148,6 +164,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
     )
 
     # Configure activation writer
+    logger.info("Configuring activation writer")
     writer_cfg = ActivationWriterConfig(
         hook_points=settings.hook_points,
         total_generating_tokens=settings.total_tokens,
@@ -161,8 +178,11 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
     factory = ActivationFactory(factory_cfg)
     writer = ActivationWriter(writer_cfg)
 
+    logger.info("Starting activation generation and writing")
     # Generate and write activations
     activations = factory.process(
         model=model, model_name=settings.model_name, datasets={settings.dataset_name: (dataset, metadata)}
     )
     writer.process(activations, device_mesh=device_mesh, start_shard=settings.start_shard)
+
+    logger.info("Activation generation completed successfully")

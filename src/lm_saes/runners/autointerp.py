@@ -11,6 +11,9 @@ from lm_saes.analysis.feature_interpreter import AutoInterpConfig, FeatureInterp
 from lm_saes.config import LanguageModelConfig, MongoDBConfig
 from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset_shard, load_model
+from lm_saes.utils.logging import get_logger, setup_logging
+
+logger = get_logger("runners.autointerp")
 
 
 class AutoInterpSettings(BaseSettings):
@@ -53,7 +56,6 @@ class AutoInterpSettings(BaseSettings):
 def interpret_feature(args: dict[str, Any]):
     settings: AutoInterpSettings = args["settings"]
     feature_indices: list[int] = args["feature_indices"]
-    print(f"Interpreting {len(feature_indices)} features")
 
     @lru_cache(maxsize=None)
     def get_dataset(dataset_name: str, shard_idx: int, n_shards: int) -> Dataset:
@@ -85,7 +87,7 @@ def interpret_feature(args: dict[str, Any]):
             "passed": result["passed"],
             "time": result["time"],
         }
-        print(
+        logger.info(
             f"Updating feature {result['feature_index']}\nTime: {result['time']}\nExplanation: {interpretation['text']}\nComplexity: {interpretation['complexity']}\nConsistency: {interpretation['consistency']}\nPassed: {interpretation['passed']}\n\n"
         )
         mongo_client.update_feature(
@@ -99,6 +101,8 @@ def auto_interp(settings: AutoInterpSettings) -> None:
     Args:
         settings: Configuration settings for auto-interpretation
     """
+    setup_logging(level="INFO")
+
     # Set up MongoDB client
     mongo_client = MongoClient(settings.mongo)
 
@@ -126,8 +130,8 @@ def auto_interp(settings: AutoInterpSettings) -> None:
         feature_indices = list(max_feature_acts.keys())
 
     # Load resources
-    print(f"Loading SAE model: {settings.sae_name}/{settings.sae_series}")
-    print(f"Loading language model: {settings.model_name}")
+    logger.info(f"Loading SAE model: {settings.sae_name}/{settings.sae_series}")
+    logger.info(f"Loading language model: {settings.model_name}")
 
     chunk_size = len(feature_indices) // settings.max_workers + 1
     feature_batches = [feature_indices[i : i + chunk_size] for i in range(0, len(feature_indices), chunk_size)]
@@ -136,4 +140,4 @@ def auto_interp(settings: AutoInterpSettings) -> None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=settings.max_workers) as executor:
         list(executor.map(interpret_feature, args_batches))
 
-    print("Done!")
+    logger.info("Done!")

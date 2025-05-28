@@ -22,7 +22,10 @@ from lm_saes.database import MongoClient
 from lm_saes.mixcoder import MixCoder
 from lm_saes.runners.utils import load_config
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from lm_saes.utils.misc import get_modality_tokens
+
+logger = get_distributed_logger("runners.analyze")
 
 
 class AnalyzeSAESettings(BaseSettings):
@@ -65,6 +68,9 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     Args:
         settings: Configuration settings for SAE analysis
     """
+    # Set up logging
+    setup_logging(level="INFO")
+
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
@@ -75,7 +81,10 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
         else None
     )
 
+    logger.info(f"Device mesh initialized: {device_mesh}")
+
     mongo_client = MongoClient(settings.mongo)
+    logger.info("MongoDB client initialized")
 
     model_cfg = load_config(
         config=settings.model,
@@ -86,6 +95,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     )
 
     if isinstance(settings.sae, MixCoderConfig):
+        logger.info("Setting up MixCoder configuration for analysis")
         modality_names = settings.sae.modality_names
         if "text" in modality_names:  # Multimodal mixcoder SAE
             from transformers.models.auto.tokenization_auto import AutoTokenizer
@@ -133,6 +143,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     else:
         activation_factory = ActivationFactory(settings.activation_factory)
 
+    logger.info("Loading SAE model")
     if isinstance(settings.sae, MixCoderConfig):
         sae = MixCoder.from_config(settings.sae, device_mesh=device_mesh)
     elif isinstance(settings.sae, CrossCoderConfig):
@@ -140,15 +151,22 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     else:
         sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
 
-    analyzer = FeatureAnalyzer(settings.analyzer)
+    logger.info(f"SAE model loaded: {type(sae).__name__}")
 
+    analyzer = FeatureAnalyzer(settings.analyzer)
+    logger.info("Feature analyzer initialized")
+
+    logger.info("Processing activations for analysis")
     activations = activation_factory.process()
     result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
 
+    logger.info("Analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
     mongo_client.add_feature_analysis(
         name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result, start_idx=start_idx
     )
+
+    logger.info("SAE analysis completed successfully")
 
 
 class AnalyzeCrossCoderSettings(BaseSettings):
@@ -186,8 +204,13 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
     Args:
         settings: Configuration settings for CrossCoder analysis
     """
+    # Set up logging
+    setup_logging(level="INFO")
+
     parallel_size = len(settings.activation_factories)
     assert parallel_size == settings.sae.n_heads, "Number of activation factories must match the number of heads"
+
+    logger.info(f"Analyzing CrossCoder with {settings.sae.n_heads} heads")
 
     crosscoder_device_mesh = init_device_mesh(
         device_type=settings.device_type,
@@ -201,17 +224,25 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
         mesh_dim_names=("model",),
     )
 
-    mongo_client = MongoClient(settings.mongo)
+    logger.info("Device meshes initialized for CrossCoder analysis")
 
+    mongo_client = MongoClient(settings.mongo)
+    logger.info("MongoDB client initialized")
+
+    logger.info("Setting up activation factory for CrossCoder head")
     activation_factory = ActivationFactory(settings.activation_factories[crosscoder_device_mesh.get_local_rank("head")])
 
+    logger.info("Loading CrossCoder model")
     sae = CrossCoder.from_config(settings.sae, device_mesh=crosscoder_device_mesh)
 
+    logger.info("Feature analyzer initialized")
     analyzer = FeatureAnalyzer(settings.analyzer)
 
+    logger.info("Processing activations for CrossCoder analysis")
     activations = activation_factory.process()
     result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
 
+    logger.info("CrossCoder analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
     mongo_client.add_feature_analysis(
         name=settings.feature_analysis_name,
@@ -220,3 +251,5 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
         analysis=result,
         start_idx=start_idx,
     )
+
+    logger.info("CrossCoder analysis completed successfully")
