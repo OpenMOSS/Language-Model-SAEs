@@ -8,6 +8,8 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.nn.functional import all_reduce
 from transformers import PreTrainedTokenizerBase
 
+from lm_saes.utils.distributed import DimMap
+
 from .logging import get_distributed_logger
 
 logger = get_distributed_logger("utils.misc")
@@ -152,7 +154,7 @@ def calculate_activation_norm(
     activation_norm = {}
     stream_iter = iter(activation_stream)
     if device_mesh is not None and "head" in cast(tuple[str, ...], device_mesh.mesh_dim_names):
-        hook_points = [hook_points[device_mesh.get_local_rank("head")]]
+        hook_points = hook_points[DimMap({"head": 0}).local_slices((len(hook_points),), device_mesh)[0]]
     assert len(hook_points) > 0, "No hook points provided"
     while batch_num > 0:
         try:

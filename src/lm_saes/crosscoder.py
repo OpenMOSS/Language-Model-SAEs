@@ -467,9 +467,12 @@ class CrossCoder(AbstractSparseAutoEncoder):
         if self.device_mesh is None or "head" not in cast(tuple[str, ...], self.device_mesh.mesh_dim_names):
             return torch.stack([pad_to_d_model(batch[hook_point]) for hook_point in self.cfg.hook_points], dim=-2), {}
         else:
-            local_activations = batch[self.cfg.hook_points[self.device_mesh.get_local_rank("head")]]
-            local_activations = pad_to_d_model(local_activations)
-            local_activations = einops.rearrange(local_activations, "... d_model -> ... 1 d_model")
+            local_hook_points = self.cfg.hook_points[
+                DimMap({"head": 0}).local_slices((len(self.cfg.hook_points),), self.device_mesh)[0]
+            ]
+            local_activations = torch.stack(
+                [pad_to_d_model(batch[hook_point]) for hook_point in local_hook_points], dim=-2
+            )
             return DTensor.from_local(
                 local_activations,
                 device_mesh=self.device_mesh,

@@ -305,17 +305,24 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     setup_logging(level="INFO")
 
     assert isinstance(settings.sae, CrossCoderConfig), "CrossCoderConfig is required for training a CrossCoder"
-    assert len(settings.activation_factories) == settings.sae.n_heads, (
-        "Number of activation factories must match the number of heads in the CrossCoder"
-    )
+    assert all(
+        len(settings.activation_factories[i].hook_points) == len(settings.activation_factories[0].hook_points)
+        for i in range(settings.sae.n_heads)
+    ), "Number of hook points of activation factories per rank must be the same"
+    assert (
+        len(settings.activation_factories) * len(settings.activation_factories[0].hook_points) == settings.sae.n_heads
+    ), "Total number of hook points must match the number of heads in the CrossCoder"
+    head_parallel_size = len(settings.activation_factories)
 
     device_mesh = init_device_mesh(
         device_type=settings.device_type,
-        mesh_shape=(settings.sae.n_heads, settings.data_parallel_size, settings.model_parallel_size),
+        mesh_shape=(head_parallel_size, settings.data_parallel_size, settings.model_parallel_size),
         mesh_dim_names=("head", "data", "model"),
     )
 
-    logger.info(f"Device mesh initialized with {settings.sae.n_heads} heads")
+    logger.info(
+        f"Device mesh initialized with {settings.sae.n_heads} heads, {head_parallel_size} head parallel size, {settings.data_parallel_size} data parallel size, {settings.model_parallel_size} model parallel size"
+    )
 
     mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
     if mongo_client:

@@ -207,10 +207,13 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
     # Set up logging
     setup_logging(level="INFO")
 
-    parallel_size = len(settings.activation_factories)
-    assert parallel_size == settings.sae.n_heads, "Number of activation factories must match the number of heads"
+    assert (
+        len(settings.activation_factories) * len(settings.activation_factories[0].hook_points) == settings.sae.n_heads
+    ), "Total number of hook points must match the number of heads in the CrossCoder"
 
-    logger.info(f"Analyzing CrossCoder with {settings.sae.n_heads} heads")
+    parallel_size = len(settings.activation_factories)
+
+    logger.info(f"Analyzing CrossCoder with {settings.sae.n_heads} heads, {parallel_size} parallel size")
 
     crosscoder_device_mesh = init_device_mesh(
         device_type=settings.device_type,
