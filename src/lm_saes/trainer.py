@@ -279,10 +279,11 @@ class Trainer:
                         }
                     )
 
-            log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Training Metrics")
+            if is_primary_rank(sae.device_mesh):
+                log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Training Metrics")
 
             if timer.enabled:
-                logger.info(f"\nTimer Summary:\n{timer.summary()}")
+                logger.info(f"\nTimer Summary:\n{timer.summary()}\n")
 
             if self.wandb_logger is not None:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
