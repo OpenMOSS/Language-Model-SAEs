@@ -87,15 +87,17 @@ class JumpReLU(torch.nn.Module):
     def __init__(
         self,
         jumprelu_threshold_window: float,
+        *,
         shape: tuple[int, ...],
         device: torch.device | str | None = None,
-        dtype: torch.dtype | None = None,
+        dtype: torch.dtype,
         device_mesh: DeviceMesh | None = None,
     ):
         super(JumpReLU, self).__init__()
         self.jumprelu_threshold_window = jumprelu_threshold_window
         self.shape = shape
         self.device_mesh = device_mesh
+        self.dtype = dtype
         if device_mesh is None:
             self.log_jumprelu_threshold = torch.nn.Parameter(torch.empty(shape, device=device, dtype=dtype))
         else:
@@ -109,7 +111,10 @@ class JumpReLU(torch.nn.Module):
             )
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        return cast(torch.Tensor, STEFunction.apply(input, self.log_jumprelu_threshold, self.jumprelu_threshold_window))
+        return cast(
+            torch.Tensor,
+            STEFunction.apply(input.to(self.dtype), self.log_jumprelu_threshold, self.jumprelu_threshold_window),
+        ).to(input.dtype)
 
     def tensor_parallel(self, device_mesh: DeviceMesh):
         """Distribute the parameters of the model across multiple devices."""
@@ -134,6 +139,11 @@ class JumpReLU(torch.nn.Module):
     def dim_maps(self) -> dict[str, DimMap]:
         return {
             "log_jumprelu_threshold": DimMap({"model": 0}),
+        }
+
+    def override_dtypes(self) -> dict[str, torch.dtype]:
+        return {
+            "log_jumprelu_threshold": self.dtype,
         }
 
 
@@ -462,7 +472,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         shape = tensor_slice.get_shape()
                         dim_map = model.dim_maps()[key]
                         indices = dim_map.local_slices(shape, device_mesh)
-                        local_tensor = tensor_slice[indices].to(cfg.dtype)
+                        local_tensor = tensor_slice[indices].to(model.override_dtypes().get(key, cfg.dtype))
                         return DTensor.from_local(
                             local_tensor,
                             device_mesh=device_mesh,
@@ -548,10 +558,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         elif self.cfg.act_fn.lower() == "jumprelu":
             return JumpReLU(
                 self.cfg.jumprelu_threshold_window,
-                (self.cfg.d_sae,),
-                self.cfg.device,
-                self.cfg.dtype,
-                device_mesh,
+                shape=(self.cfg.d_sae,),
+                device=self.cfg.device,
+                dtype=self.cfg.dtype if self.cfg.promote_act_fn_dtype is None else self.cfg.promote_act_fn_dtype,
+                device_mesh=device_mesh,
             )
 
         elif self.cfg.act_fn.lower() == "topk":
@@ -737,6 +747,11 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """
         if isinstance(self.activation_function, JumpReLU):
             return {f"activation_function.{k}": v for k, v in self.activation_function.dim_maps().items()}
+        return {}
+
+    def override_dtypes(self) -> dict[str, torch.dtype]:
+        if isinstance(self.activation_function, JumpReLU):
+            return {f"activation_function.{k}": v for k, v in self.activation_function.override_dtypes().items()}
         return {}
 
     def load_distributed_state_dict(

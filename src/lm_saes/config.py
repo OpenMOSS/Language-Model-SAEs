@@ -69,6 +69,17 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
+    promote_act_fn_dtype: Annotated[
+        torch.dtype | None,
+        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+        PlainSerializer(convert_torch_dtype_to_str),
+        WithJsonSchema(
+            {
+                "type": ["string", "null"],
+            },
+            mode="serialization",
+        ),
+    ] = Field(default=None, exclude=True, validate_default=False)
 
     @property
     def d_sae(self) -> int:
