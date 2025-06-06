@@ -132,28 +132,10 @@ class Initializer:
         return sae
 
     @torch.no_grad()
-    def initialize_encoder_bias_for_const_fire_times(
-        self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor]
-    ):
-        """
-        This function is used to initialize the encoder bias for constant fire times.
-        """
-        assert isinstance(sae, SparseAutoEncoder), (
-            "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
-        )
-        batch = sae.normalize_activations(activation_batch)
-        x, kwargs = sae.prepare_input(batch)
-        _, hidden_pre = sae.encode(x, **kwargs, return_hidden_pre=True)
-        k = int(self.cfg.const_times_for_init_b_e * batch_size(batch) / sae.cfg.d_sae)
-        encoder_bias, _ = torch.kthvalue(hidden_pre, batch_size(batch) - k + 1, dim=0)
-        assert isinstance(sae.activation_function, JumpReLU)
-        sae.encoder.bias.data.copy_(
-            (sae.activation_function.log_jumprelu_threshold.exp() - encoder_bias).to(dtype=torch.float32)
-        )
-        return sae
-
-    @torch.no_grad()
     def initialize_jump_relu_threshold(self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor]):
+        """
+        This function is used to initialize the jump_relu_threshold for the SAE.
+        """
         # TODO: add support for MixCoder
         if sae.cfg.sae_type == "mixcoder":
             warnings.warn("MixCoder is not supported for jump_relu_threshold initialization.")
@@ -205,13 +187,6 @@ class Initializer:
                         activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
                     )
                 sae.set_dataset_average_activation_norm(activation_norm)
-
-            if self.cfg.bias_init_method == "init_b_e_for_const_fire_times":
-                assert activation_stream is not None, (
-                    "Activation iterator must be provided for encoder bias initialization"
-                )
-                activation_batch = next(iter(activation_stream))
-                sae = self.initialize_encoder_bias_for_const_fire_times(sae, activation_batch)
 
             if self.cfg.init_search:
                 assert activation_stream is not None, "Activation iterator must be provided for initialization search"

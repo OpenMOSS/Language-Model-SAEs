@@ -173,7 +173,6 @@ class MixCoderConfig(SAEConfig):
 
 class InitializerConfig(BaseConfig):
     bias_init_method: str = "all_zero"
-    const_times_for_init_b_e: int = 10000
     init_decoder_norm: float | None = None
     decoder_uniform_bound: float = 1.0
     init_encoder_norm: float | None = None
