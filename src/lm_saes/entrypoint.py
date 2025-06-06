@@ -154,17 +154,17 @@ def handle_runner(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     runner_type = RunnerType(args.runner)
 
     if runner_type == RunnerType.GENERATE:
-        from lm_saes.runner import GenerateActivationsSettings, generate_activations
+        from lm_saes.runners import GenerateActivationsSettings, generate_activations
 
         _run_with_config(args, parser, GenerateActivationsSettings, generate_activations)
 
     elif runner_type == RunnerType.TRAIN:
-        from lm_saes.runner import TrainSAESettings, train_sae
+        from lm_saes.runners import TrainSAESettings, train_sae
 
         _run_with_config(args, parser, TrainSAESettings, train_sae)
 
     elif runner_type == RunnerType.ANALYZE:
-        from lm_saes.runner import AnalyzeSAESettings, analyze_sae
+        from lm_saes.runners import AnalyzeSAESettings, analyze_sae
 
         _run_with_config(args, parser, AnalyzeSAESettings, analyze_sae)
 
