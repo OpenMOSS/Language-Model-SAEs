@@ -17,9 +17,7 @@ class ActivationWriter:
 
     Args:
         cfg: Configuration for writing activations
-        executor: Optional ThreadPoolExecutor for parallel writing. If None, a new executor
-                 will be created with max_workers=2
-        max_active_chunks: Maximum number of chunks to write in parallel. Defaults to 2
+        executor: Optional ThreadPoolExecutor for parallel writing. If None, a new executor will be created with max_workers=2.
     """
 
     def __init__(
