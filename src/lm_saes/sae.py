@@ -3,6 +3,7 @@ from typing import Any, Literal, Union, overload
 
 import torch
 from jaxtyping import Float
+from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
@@ -12,9 +13,11 @@ from .config import SAEConfig
 
 
 class SparseAutoEncoder(AbstractSparseAutoEncoder):
-    def __init__(self, cfg: SAEConfig):
+    def __init__(self, cfg: SAEConfig, device_mesh: DeviceMesh | None = None):
         super(SparseAutoEncoder, self).__init__(cfg)
         self.cfg = cfg
+
+        assert device_mesh is None, "SparseAutoEncoder currently does not support multi-GPU."
 
         self.encoder = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
         self.decoder = torch.nn.Linear(
