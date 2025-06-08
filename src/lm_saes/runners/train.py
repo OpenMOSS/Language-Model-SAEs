@@ -201,12 +201,6 @@ def train_sae(settings: TrainSAESettings) -> None:
     logger.info("Initializing SAE")
     initializer = Initializer(settings.initializer)
 
-    sae = initializer.initialize_sae_from_config(
-        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
-    )
-
-    logger.info(f"SAE initialized: {type(sae).__name__}")
-
     wandb_logger = (
         wandb.init(
             project=settings.wandb.wandb_project,
@@ -219,6 +213,13 @@ def train_sae(settings: TrainSAESettings) -> None:
         if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
         else None
     )
+
+    sae = initializer.initialize_sae_from_config(
+        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger
+    )
+
+    logger.info(f"SAE initialized: {type(sae).__name__}")
+
     if wandb_logger is not None:
         logger.info("WandB logger initialized")
         wandb_logger.watch(sae, log="all")
