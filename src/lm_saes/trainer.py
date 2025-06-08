@@ -70,6 +70,14 @@ class Trainer:
                     for i in range(1, self.cfg.n_checkpoints)
                 ]
         self.wandb_logger = wandb_logger
+        
+    def _update_decoder_learning_rate(self, l0: float):
+        assert self.optimizer is not None and isinstance(self.cfg.lr, float)
+        # change the learning rate of the decoder weights to be inversely proportional to the l0
+        for param_group in self.optimizer.param_groups:
+            if "decoder" in param_group["name"] and "bias" not in param_group["name"]:
+                param_group["lr"] = self.cfg.lr * self.cfg.expected_l0 / l0
+        
 
     @timer.time("initialize_optimizer")
     def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
@@ -331,6 +339,9 @@ class Trainer:
                 self.optimizer.zero_grad()
 
                 loss_dict = self._training_step(sae, batch)
+                
+                l0 = (loss_dict["feature_acts"] > 0).float().sum(-1).item()
+                self._update_decoder_learning_rate(l0)
 
                 if sae.cfg.sae_type == "mixcoder":
                     flag = False
