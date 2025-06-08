@@ -19,6 +19,7 @@ from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
 from lm_saes.utils.tensor_dict import batch_size
+from wandb.sdk.wandb_run import Run
 
 logger = get_distributed_logger("initializer")
 
@@ -78,7 +79,12 @@ class Initializer:
         return sae
 
     @torch.no_grad()
-    def initialization_search(self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor]):
+    def initialization_search(
+        self,
+        sae: AbstractSparseAutoEncoder,
+        activation_batch: Dict[str, Tensor],
+        wandb_logger: Run | None = None,
+    ):
         """
         This function is used to search for the best initialization norm for the SAE decoder.
         """
@@ -105,6 +111,8 @@ class Initializer:
             )
 
             logger.info(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")
+            if wandb_logger is not None:
+                wandb_logger.log({"best_norm_fine_grained": best_norm_fine_grained})
 
             sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
@@ -156,6 +164,7 @@ class Initializer:
         activation_stream: Iterable[dict[str, Tensor]] | None = None,
         activation_norm: dict[str, float] | None = None,
         device_mesh: DeviceMesh | None = None,
+        wandb_logger: Run | None = None,
     ):
         """
         Initialize the SAE from the SAE config.
@@ -191,7 +200,7 @@ class Initializer:
             if self.cfg.init_search:
                 assert activation_stream is not None, "Activation iterator must be provided for initialization search"
                 activation_batch = next(iter(activation_stream))  # type: ignore
-                sae = self.initialization_search(sae, activation_batch)
+                sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
 
         elif self.cfg.state == "inference":
             if sae.cfg.norm_activation == "dataset-wise":
