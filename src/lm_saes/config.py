@@ -196,6 +196,7 @@ class TrainerConfig(BaseConfig):
 
     lr: float | dict[str, float] = 0.0004
     expected_l0: int = 100
+    update_decoder_lr_with_l0: bool = True
     betas: Tuple[float, float] = (0.9, 0.999)
     lr_scheduler_name: Literal[
         "constant",

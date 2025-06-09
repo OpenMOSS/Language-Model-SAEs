@@ -13,8 +13,6 @@ from wandb.sdk.wandb_run import Run
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.evaluator import evaluate_mixcoder
-from lm_saes.mixcoder import MixCoder
 from lm_saes.optim import get_scheduler
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
@@ -70,28 +68,18 @@ class Trainer:
                     for i in range(1, self.cfg.n_checkpoints)
                 ]
         self.wandb_logger = wandb_logger
-        
+
     def _update_decoder_learning_rate(self, l0: float):
         assert self.optimizer is not None and isinstance(self.cfg.lr, float)
         # change the learning rate of the decoder weights to be inversely proportional to the l0
         for param_group in self.optimizer.param_groups:
-            if "decoder" in param_group["name"] and "bias" not in param_group["name"]:
+            if param_group["name"] == "decoder_weight":
                 param_group["lr"] = self.cfg.lr * self.cfg.expected_l0 / l0
-        
 
     @timer.time("initialize_optimizer")
     def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
-        # TODO: check if this is correct
-        if isinstance(self.cfg.lr, float):
-            optimizer = Adam(sae.get_parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
-        else:
-            assert isinstance(self.cfg.lr, dict)
-            assert sae.cfg.sae_type == "mixcoder"
-            params = sae.get_parameters()
-            assert len(params) == len(self.cfg.lr)
-            for param_group in params:
-                param_group["lr"] = self.cfg.lr[param_group["modality"]]
-            optimizer = Adam(params, betas=self.cfg.betas)
+        assert isinstance(self.cfg.lr, float)
+        optimizer = Adam(sae.get_parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
         scheduler = get_scheduler(
             scheduler_name=self.cfg.lr_scheduler_name,
             optimizer=optimizer,
@@ -232,7 +220,13 @@ class Trainer:
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
             }
-
+            if self.cfg.update_decoder_lr_with_l0:
+                decoder_param_group = next(
+                    param_group
+                    for param_group in self.optimizer.param_groups
+                    if param_group["name"] == "decoder_weight"
+                )
+                wandb_log_dict["details/decoder_learning_rate"] = decoder_param_group["lr"]
             # Add timer information
             timer_data = {f"time/{name}": time_value for name, time_value in timer.get_all_timers().items()}
             timer_avg_data = {f"time_avg/{name}": avg_time for name, avg_time in timer.get_all_average_times().items()}
@@ -241,41 +235,7 @@ class Trainer:
 
             wandb_log_dict.update(sae.log_statistics())
 
-            if isinstance(sae, MixCoder):
-                mixcoder_log_dict = evaluate_mixcoder(sae, batch)
-                wandb_log_dict.update({f"mixcoder_metrics/{key}": value for key, value in mixcoder_log_dict.items()})
-                for modality, (start, end) in sae.modality_index.items():
-                    if modality == "shared":
-                        continue
-                    shared_start, shared_end = sae.modality_index["shared"]
-                    mask = sae.get_modality_token_mask(batch["modalities"], modality)
-                    feature_acts_modality = log_info["feature_acts"][mask]
-                    reconstructed_modality = log_info["reconstructed"][mask]
-                    label_modality = label[mask]
-                    explained_variance_modality = 1 - (reconstructed_modality - label_modality).pow(2).sum(dim=-1) / (
-                        label_modality - label_modality.mean(0)
-                    ).pow(2).sum(dim=-1)
-                    token_num = mask.sum().item()
-                    wandb_log_dict.update(
-                        {
-                            f"mixcoder_metrics/{modality}_l0": (feature_acts_modality[:, start:end] > 0)
-                            .float()
-                            .sum(-1)
-                            .mean()
-                            .item(),
-                            f"mixcoder_metrics/{modality}_shared_l0": (
-                                feature_acts_modality[:, shared_start:shared_end] > 0
-                            )
-                            .float()
-                            .sum(-1)
-                            .mean()
-                            .item(),
-                            f"mixcoder_metrics/{modality}_token_num": token_num,
-                            f"mixcoder_metrics/{modality}_ev": explained_variance_modality.float().mean().item(),
-                            f"mixcoder_metrics/{modality}_loss": log_info[f"{modality}_loss"].float().mean().item(),
-                        }
-                    )
-            elif isinstance(sae, CrossCoder):
+            if isinstance(sae, CrossCoder):
                 assert explained_variance.ndim == 2 and explained_variance.shape[1] == len(sae.cfg.hook_points)
                 for i, k in enumerate(sae.cfg.hook_points):
                     wandb_log_dict.update(
@@ -339,25 +299,15 @@ class Trainer:
                 self.optimizer.zero_grad()
 
                 loss_dict = self._training_step(sae, batch)
-                
-                l0 = (loss_dict["feature_acts"] > 0).float().sum(-1).item()
-                self._update_decoder_learning_rate(l0)
 
-                if sae.cfg.sae_type == "mixcoder":
-                    flag = False
-                    for k, v in loss_dict.items():
-                        if "token_num" in k:
-                            if v <= 200:
-                                flag = True
-                                break
-                    if flag:
-                        continue
+                if self.cfg.update_decoder_lr_with_l0:
+                    l0 = (loss_dict["feature_acts"] > 0).float().sum(-1).mean().item()
+                    self._update_decoder_learning_rate(l0)
 
                 with timer.time("backward"):
                     loss_dict["loss"].backward()
 
                 with timer.time("clip_grad_norm"):
-                    # TODO: add support for mixcoder to use different clip_grad_norm for each modality
                     loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
                         sae.parameters(),
                         max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
@@ -365,9 +315,6 @@ class Trainer:
 
                 with timer.time("optimizer_step"):
                     self.optimizer.step()
-
-                with timer.time("scheduler_step"):
-                    self.scheduler.step()
 
                 if sae.cfg.force_unit_decoder_norm:
                     sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
@@ -382,6 +329,8 @@ class Trainer:
                         eval_fn(sae)
 
                 self._save_checkpoint(sae)
+                with timer.time("scheduler_step"):
+                    self.scheduler.step()
 
                 self.cur_step += 1
                 self.cur_tokens += batch_size(batch)
