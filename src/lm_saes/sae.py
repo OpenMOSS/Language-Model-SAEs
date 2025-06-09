@@ -372,3 +372,18 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         return batch[self.cfg.hook_point_out]
+
+    def get_parameters(self) -> list[dict[str, Any]]:
+        return [
+            # all parameters but decoder weight, use filter to avoid modifying the decoder weight
+            {
+                "params": [
+                    param for name, param in self.named_parameters() if "decoder" not in name or "weight" not in name
+                ],
+                "name": "exclude_decoder_weight",
+            },
+            {
+                "params": [self.decoder.weight],
+                "name": "decoder_weight",
+            },
+        ]
