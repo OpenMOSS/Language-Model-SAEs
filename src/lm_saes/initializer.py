@@ -1,4 +1,3 @@
-import warnings
 from typing import Dict, Iterable, List
 
 import torch
@@ -10,16 +9,15 @@ from torch.distributed.tensor.parallel import (
     RowwiseParallel,
     parallelize_module,
 )
+from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder, JumpReLU
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.mixcoder import MixCoder
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
 from lm_saes.utils.tensor_dict import batch_size
-from wandb.sdk.wandb_run import Run
 
 logger = get_distributed_logger("initializer")
 
@@ -54,11 +52,6 @@ class Initializer:
     @torch.no_grad()
     def initialize_tensor_parallel(self, sae: AbstractSparseAutoEncoder, device_mesh: DeviceMesh | None = None):
         if not device_mesh:
-            return sae
-
-        if isinstance(sae, MixCoder):
-            # TODO: add support for MixCoder
-            warnings.warn("MixCoder is not supported for tensor parallel initialization.")
             return sae
 
         if isinstance(sae, SparseAutoEncoder):
@@ -116,8 +109,7 @@ class Initializer:
 
             sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
-        if self.cfg.bias_init_method == "geometric_median" and sae.cfg.sae_type != "mixcoder":
-            # TODO: add support for MixCoder
+        if self.cfg.bias_init_method == "geometric_median":
             assert isinstance(sae, SparseAutoEncoder), (
                 "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
             )
@@ -144,11 +136,6 @@ class Initializer:
         """
         This function is used to initialize the jump_relu_threshold for the SAE.
         """
-        # TODO: add support for MixCoder
-        if sae.cfg.sae_type == "mixcoder":
-            warnings.warn("MixCoder is not supported for jump_relu_threshold initialization.")
-            return sae
-
         batch = sae.normalize_activations(activation_batch)
         x, kwargs = sae.prepare_input(batch)
         _, hidden_pre = sae.encode(x, **kwargs, return_hidden_pre=True)
@@ -176,12 +163,9 @@ class Initializer:
         """
         if cfg.sae_type == "sae":
             sae: AbstractSparseAutoEncoder = SparseAutoEncoder.from_config(cfg, device_mesh=device_mesh)
-        elif cfg.sae_type == "mixcoder":
-            sae: AbstractSparseAutoEncoder = MixCoder.from_config(cfg, device_mesh=device_mesh)
         elif cfg.sae_type == "crosscoder":
             sae: AbstractSparseAutoEncoder = CrossCoder.from_config(cfg, device_mesh=device_mesh)
         else:
-            # TODO: add support for different SAE config types, e.g. MixCoderConfig, CrossCoderConfig, etc.
             raise ValueError(f"SAE type {cfg.sae_type} not supported.")
         if self.cfg.state == "training":
             if cfg.sae_pretrained_name_or_path is None:
@@ -217,8 +201,7 @@ class Initializer:
                     )
                     activation_batch = next(iter(activation_stream))
                     self.initialize_jump_relu_threshold(sae, activation_batch)
-                if cfg.sae_type != "mixcoder":  # TODO: add support for MixCoder
-                    sae.cfg.act_fn = "jumprelu"
+                sae.cfg.act_fn = "jumprelu"
 
         sae = self.initialize_tensor_parallel(sae, device_mesh)
         return sae
