@@ -14,16 +14,12 @@ from lm_saes.config import (
     CrossCoderConfig,
     FeatureAnalyzerConfig,
     LanguageModelConfig,
-    MixCoderConfig,
     MongoDBConfig,
 )
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient
-from lm_saes.mixcoder import MixCoder
-from lm_saes.runners.utils import load_config
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import get_modality_tokens
 
 logger = get_distributed_logger("runners.analyze")
 
@@ -86,67 +82,10 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     mongo_client = MongoClient(settings.mongo)
     logger.info("MongoDB client initialized")
 
-    model_cfg = load_config(
-        config=settings.model,
-        name=settings.model_name,
-        mongo_client=mongo_client,
-        config_type="model",
-        required=False,
-    )
-
-    if isinstance(settings.sae, MixCoderConfig):
-        logger.info("Setting up MixCoder configuration for analysis")
-        modality_names = settings.sae.modality_names
-        if "text" in modality_names:  # Multimodal mixcoder SAE
-            from transformers.models.auto.tokenization_auto import AutoTokenizer
-
-            assert model_cfg is not None, (
-                "Model cfg is required for multimodal mixcoder SAE for inferring text/image tokens"
-            )
-            tokenizer = AutoTokenizer.from_pretrained(model_cfg.model_name, trust_remote_code=True)
-            modality_tokens = get_modality_tokens(tokenizer, model_cfg.model_name)
-            for modality in modality_tokens.keys():
-                modality_tokens[modality] = modality_tokens[modality].to(settings.sae.device)
-
-            assert list(sorted(modality_tokens.keys())) == list(sorted(modality_names)), (
-                "Modality names must match the keys of modality_tokens"
-            )
-
-            def activation_interceptor(
-                activations: dict[str, torch.Tensor], source_idx: int
-            ) -> dict[str, torch.Tensor]:
-                assert "tokens" in activations, (
-                    "Tokens are required for multimodal mixcoder SAE for inferring text/image tokens"
-                )
-                modalities = torch.zeros_like(activations["tokens"], dtype=torch.int)
-                for i, modality in enumerate(modality_names):
-                    mask = torch.isin(activations["tokens"], modality_tokens[modality])
-                    modalities[mask] = i
-                activations = activations | {"modalities": modalities}
-                return activations
-        else:  # Multi-lingual mixcoder SAE
-            assert [source.name for source in settings.activation_factory.sources] == modality_names, (
-                "Modality names must match the names of the activation sources"
-            )
-
-            def activation_interceptor(
-                activations: dict[str, torch.Tensor], source_idx: int
-            ) -> dict[str, torch.Tensor]:
-                assert "tokens" in activations, "Tokens are required for inferring shape of activations"
-                modalities = torch.ones_like(activations["tokens"], dtype=torch.int) * source_idx
-                activations = activations | {"modalities": modalities}
-                return activations
-
-        activation_factory = ActivationFactory(
-            settings.activation_factory, before_aggregation_interceptor=activation_interceptor
-        )
-    else:
-        activation_factory = ActivationFactory(settings.activation_factory)
+    activation_factory = ActivationFactory(settings.activation_factory)
 
     logger.info("Loading SAE model")
-    if isinstance(settings.sae, MixCoderConfig):
-        sae = MixCoder.from_config(settings.sae, device_mesh=device_mesh)
-    elif isinstance(settings.sae, CrossCoderConfig):
+    if isinstance(settings.sae, CrossCoderConfig):
         sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
     else:
         sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)

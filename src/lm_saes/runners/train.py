@@ -18,7 +18,6 @@ from lm_saes.config import (
     DatasetConfig,
     InitializerConfig,
     LanguageModelConfig,
-    MixCoderConfig,
     MongoDBConfig,
     TrainerConfig,
     WandbConfig,
@@ -29,7 +28,7 @@ from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.trainer import Trainer
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import get_modality_tokens, is_primary_rank
+from lm_saes.utils.misc import is_primary_rank
 
 logger = get_distributed_logger("runners.train")
 
@@ -143,53 +142,7 @@ def train_sae(settings: TrainSAESettings) -> None:
         else None
     )
 
-    if isinstance(settings.sae, MixCoderConfig):
-        logger.info("Setting up MixCoder configuration")
-        modality_names = settings.sae.modality_names
-        if "text" in modality_names:  # Multimodal mixcoder SAE
-            from transformers.models.auto.tokenization_auto import AutoTokenizer
-
-            assert model_cfg is not None, (
-                "Model cfg is required for multimodal mixcoder SAE for inferring text/image tokens"
-            )
-            tokenizer = AutoTokenizer.from_pretrained(model_cfg.model_name, trust_remote_code=True)
-            modality_tokens = get_modality_tokens(tokenizer, model_cfg.model_name)
-            for modality in modality_tokens.keys():
-                modality_tokens[modality] = modality_tokens[modality].to(settings.sae.device)
-            assert list(sorted(modality_tokens.keys())) == list(sorted(modality_names)), (
-                "Modality names must match the keys of modality_tokens"
-            )
-
-            def activation_interceptor(
-                activations: dict[str, torch.Tensor], source_idx: int
-            ) -> dict[str, torch.Tensor]:
-                assert "tokens" in activations, (
-                    "Tokens are required for multimodal mixcoder SAE for inferring text/image tokens"
-                )
-                modalities = torch.zeros_like(activations["tokens"], dtype=torch.int)
-                for i, modality in enumerate(modality_names):
-                    mask = torch.isin(activations["tokens"], modality_tokens[modality])
-                    modalities[mask] = i
-                activations = activations | {"modalities": modalities}
-                return activations
-        else:  # Multi-lingual mixcoder SAE
-            assert [source.name for source in settings.activation_factory.sources] == modality_names, (
-                "Modality names must match the names of the activation sources"
-            )
-
-            def activation_interceptor(
-                activations: dict[str, torch.Tensor], source_idx: int
-            ) -> dict[str, torch.Tensor]:
-                assert "tokens" in activations, "Tokens are required for inferring shape of activations"
-                modalities = torch.ones_like(activations["tokens"], dtype=torch.int) * source_idx
-                activations = activations | {"modalities": modalities}
-                return activations
-
-        activation_factory = ActivationFactory(
-            settings.activation_factory, before_aggregation_interceptor=activation_interceptor
-        )
-    else:
-        activation_factory = ActivationFactory(settings.activation_factory)
+    activation_factory = ActivationFactory(settings.activation_factory)
 
     logger.info("Processing activations stream")
     activations_stream = activation_factory.process(
@@ -536,57 +489,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
             else None
         )
 
-        if isinstance(settings.items[0].sae, MixCoderConfig):
-            logger.info("Setting up MixCoder configuration for sweep")
-            modality_names = settings.items[0].sae.modality_names
-            assert all(
-                isinstance(item.sae, MixCoderConfig) and item.sae.modality_names == modality_names
-                for item in settings.items
-            ), "All items must have the same modality names"
-            if "text" in modality_names:  # Multimodal mixcoder SAE
-                from transformers.models.auto.tokenization_auto import AutoTokenizer
-
-                assert model_cfg is not None, (
-                    "Model cfg is required for multimodal mixcoder SAE for inferring text/image tokens"
-                )
-                tokenizer = AutoTokenizer.from_pretrained(model_cfg.model_name, trust_remote_code=True)
-                modality_tokens = get_modality_tokens(tokenizer, model_cfg.model_name)
-                for modality in modality_tokens.keys():
-                    modality_tokens[modality] = modality_tokens[modality].to(settings.items[0].sae.device)
-                assert list(sorted(modality_tokens.keys())) == list(sorted(modality_names)), (
-                    "Modality names must match the keys of modality_tokens"
-                )
-
-                def activation_interceptor(
-                    activations: dict[str, torch.Tensor], source_idx: int
-                ) -> dict[str, torch.Tensor]:
-                    assert "tokens" in activations, (
-                        "Tokens are required for multimodal mixcoder SAE for inferring text/image tokens"
-                    )
-                    modalities = torch.zeros_like(activations["tokens"], dtype=torch.int)
-                    for i, modality in enumerate(modality_names):
-                        mask = torch.isin(activations["tokens"], modality_tokens[modality])
-                        modalities[mask] = i
-                    activations = activations | {"modalities": modalities}
-                    return activations
-            else:  # Multi-lingual mixcoder SAE
-                assert [source.name for source in settings.activation_factory.sources] == modality_names, (
-                    "Modality names must match the names of the activation sources"
-                )
-
-                def activation_interceptor(
-                    activations: dict[str, torch.Tensor], source_idx: int
-                ) -> dict[str, torch.Tensor]:
-                    assert "tokens" in activations, "Tokens are required for inferring shape of activations"
-                    modalities = torch.ones_like(activations["tokens"], dtype=torch.int) * source_idx
-                    activations = activations | {"modalities": modalities}
-                    return activations
-
-            activation_factory = ActivationFactory(
-                settings.activation_factory, before_aggregation_interceptor=activation_interceptor
-            )
-        else:
-            activation_factory = ActivationFactory(settings.activation_factory)
+        activation_factory = ActivationFactory(settings.activation_factory)
 
         logger.info("Processing activations stream on rank 0")
         activations_stream = activation_factory.process(
