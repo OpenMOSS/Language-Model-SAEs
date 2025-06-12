@@ -116,17 +116,6 @@ class JumpReLU(torch.nn.Module):
             STEFunction.apply(input.to(self.dtype), self.log_jumprelu_threshold, self.jumprelu_threshold_window),
         ).to(input.dtype)
 
-    def tensor_parallel(self, device_mesh: DeviceMesh):
-        """Distribute the parameters of the model across multiple devices."""
-        self.device_mesh = device_mesh
-        self.log_jumprelu_threshold = nn.Parameter(
-            self.dim_maps()["log_jumprelu_threshold"].distribute(
-                self.log_jumprelu_threshold,
-                device_mesh,
-            )
-        )
-        self.register_parameter("log_jumprelu_threshold", self.log_jumprelu_threshold)
-
     def load_distributed_state_dict(
         self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
     ) -> None:
@@ -733,11 +722,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         """Prepare the label for the loss computation."""
         raise NotImplementedError("Subclasses must implement this method")
-
-    def tensor_parallel(self, device_mesh: DeviceMesh):
-        self.device_mesh = device_mesh
-        if isinstance(self.activation_function, JumpReLU):
-            self.activation_function.tensor_parallel(device_mesh)
 
     def dim_maps(self) -> dict[str, DimMap]:
         """Return a dictionary mapping parameter names to dimension maps.

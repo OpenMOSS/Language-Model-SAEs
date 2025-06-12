@@ -2,11 +2,15 @@ import math
 from typing import Any, Literal, Union, overload
 
 import torch
+import torch.distributed.tensor
 from jaxtyping import Float
+from torch import nn
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor
+from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
+
+from lm_saes.utils.distributed import DimMap
 
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import SAEConfig
@@ -17,14 +21,70 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         super(SparseAutoEncoder, self).__init__(cfg)
         self.cfg = cfg
 
-        assert device_mesh is None, "SparseAutoEncoder currently does not support multi-GPU."
+        if device_mesh is None:
+            self.W_E = nn.Parameter(torch.empty(cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+            self.b_E = nn.Parameter(torch.empty(cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+            self.W_D = nn.Parameter(torch.empty(cfg.d_sae, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
+            if cfg.use_decoder_bias:
+                self.b_D = nn.Parameter(torch.empty(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
 
-        self.encoder = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
-        self.decoder = torch.nn.Linear(
-            cfg.d_sae, cfg.d_model, bias=cfg.use_decoder_bias, device=cfg.device, dtype=cfg.dtype
-        )
-        if cfg.use_glu_encoder:
-            self.encoder_glu = torch.nn.Linear(cfg.d_model, cfg.d_sae, bias=True, device=cfg.device, dtype=cfg.dtype)
+            if cfg.use_glu_encoder:
+                self.W_E_glu = nn.Parameter(torch.empty(cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+                self.b_E_glu = nn.Parameter(torch.empty(cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+        else:
+            self.W_E = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.d_model,
+                    cfg.d_sae,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["W_E"].placements(device_mesh),
+                )
+            )
+            self.b_E = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.d_sae,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["b_E"].placements(device_mesh),
+                )
+            )
+            self.W_D = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.d_sae,
+                    cfg.d_model,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["W_D"].placements(device_mesh),
+                )
+            )
+            if cfg.use_decoder_bias:
+                self.b_D = nn.Parameter(
+                    torch.distributed.tensor.empty(
+                        cfg.d_model,
+                        dtype=cfg.dtype,
+                        device_mesh=device_mesh,
+                        placements=self.dim_maps()["b_D"].placements(device_mesh),
+                    )
+                )
+            if cfg.use_glu_encoder:
+                self.W_E_glu = nn.Parameter(
+                    torch.distributed.tensor.empty(
+                        cfg.d_model,
+                        cfg.d_sae,
+                        dtype=cfg.dtype,
+                        device_mesh=device_mesh,
+                        placements=self.dim_maps()["W_E_glu"].placements(device_mesh),
+                    )
+                )
+                self.b_E_glu = nn.Parameter(
+                    torch.distributed.tensor.empty(
+                        cfg.d_sae,
+                        dtype=cfg.dtype,
+                        device_mesh=device_mesh,
+                        placements=self.dim_maps()["b_E_glu"].placements(device_mesh),
+                    )
+                )
 
         self.hook_hidden_pre = HookPoint()
         self.hook_feature_acts = HookPoint()
@@ -33,90 +93,53 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     @override
     def encoder_norm(self, keepdim: bool = False):
         """Compute the norm of the encoder weight."""
-        if not isinstance(self.encoder.weight, DTensor):
-            return torch.norm(self.encoder.weight, p=2, dim=1, keepdim=keepdim).to(self.cfg.device)
+        if not isinstance(self.W_E, DTensor):
+            return torch.norm(self.W_E, p=2, dim=1, keepdim=keepdim).to(self.cfg.device)
         else:
-            # We suspect that using torch.norm on dtensor may lead to some bugs
-            # during the backward process that are difficult to pinpoint and resolve.
-            # Therefore, we first convert the decoder weight from dtensor to tensor for norm calculation,
-            # and then redistribute it to different nodes.
             assert self.device_mesh is not None
-            encoder_norm = torch.norm(self.encoder.weight.to_local(), p=2, dim=1, keepdim=keepdim)
-            encoder_norm = DTensor.from_local(
-                encoder_norm, device_mesh=self.device_mesh["model"], placements=[Shard(0)]
+            return DTensor.from_local(
+                torch.norm(self.W_E.to_local(), p=2, dim=1, keepdim=keepdim),
+                device_mesh=self.device_mesh,
+                placements=DimMap({"model": 1}).placements(self.device_mesh),
             )
-            encoder_norm = encoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
-            return encoder_norm
 
     @override
     def decoder_norm(self, keepdim: bool = False) -> torch.Tensor:
         """Compute the norm of the decoder weight."""
-        if not isinstance(self.decoder.weight, DTensor):
-            return torch.norm(self.decoder.weight, p=2, dim=0, keepdim=keepdim).to(self.cfg.device)
+        if not isinstance(self.W_D, DTensor):
+            return torch.norm(self.W_D, p=2, dim=0, keepdim=keepdim).to(self.cfg.device)
         else:
             assert self.device_mesh is not None
-            decoder_norm = torch.norm(self.decoder.weight.to_local(), p=2, dim=0, keepdim=keepdim)
-            decoder_norm = DTensor.from_local(
-                decoder_norm, device_mesh=self.device_mesh["model"], placements=[Shard(int(keepdim))]
+            return DTensor.from_local(
+                torch.norm(self.W_D.to_local(), p=2, dim=0, keepdim=keepdim),
+                device_mesh=self.device_mesh,
+                placements=DimMap({"model": 0}).placements(self.device_mesh),
             )
-            decoder_norm = decoder_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
-            return decoder_norm
 
     @override
     def decoder_bias_norm(self) -> torch.Tensor:
         if not self.cfg.use_decoder_bias:
             raise ValueError("Decoder bias is not used")
-        if not isinstance(self.decoder.bias, DTensor):
-            return torch.norm(self.decoder.bias, p=2, dim=0, keepdim=True).to(self.cfg.device)
+        if not isinstance(self.b_D, DTensor):
+            return torch.norm(self.b_D, p=2, dim=0, keepdim=True).to(self.cfg.device)
         else:
             assert self.device_mesh is not None
-            decoder_bias_norm = torch.norm(self.decoder.bias.to_local(), p=2, dim=0, keepdim=True)
-            decoder_bias_norm = DTensor.from_local(
-                decoder_bias_norm, device_mesh=self.device_mesh["model"], placements=[Shard(0)]
+            return DTensor.from_local(
+                torch.norm(self.b_D.to_local(), p=2, dim=0, keepdim=True),
+                device_mesh=self.device_mesh,
+                placements=DimMap({"model": 0}).placements(self.device_mesh),
             )
-            decoder_bias_norm = decoder_bias_norm.redistribute(placements=[Replicate()], async_op=True).to_local()
-            return decoder_bias_norm
-
-    @torch.no_grad()
-    def _set_decoder_to_fixed_norm(self, decoder: torch.nn.Linear, value: float, force_exact: bool):
-        """Set the decoder to a fixed norm.
-        Args:
-            value (float): The target norm value.
-            force_exact (bool): If True, the decoder weight will be scaled to exactly match the target norm.
-                If False, the decoder weight will be scaled to match the target norm up to a small tolerance.
-            device_mesh (DeviceMesh | None): The device mesh to use for distributed training.
-        """
-        decoder_norm = self.decoder_norm(keepdim=True)
-        if self.device_mesh:
-            # TODO: check if this is correct
-            # guess that norm should be distributed as the decoder weight
-            decoder_norm = distribute_tensor(decoder_norm, device_mesh=self.device_mesh["model"], placements=[Shard(0)])
-        if force_exact:
-            decoder.weight.data *= value / decoder_norm
-        else:
-            decoder.weight.data *= value / torch.clamp(decoder_norm, min=value)
 
     @override
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
-        self._set_decoder_to_fixed_norm(self.decoder, value, force_exact)
-
-    @torch.no_grad()
-    def _set_encoder_to_fixed_norm(self, encoder: torch.nn.Linear, value: float):
-        """Set the encoder to a fixed norm.
-        Args:
-            value (float): The target norm value.
-            device_mesh (DeviceMesh | None): The device mesh to use for distributed training.
-        """
-        assert not self.cfg.use_glu_encoder, "GLU encoder not supported"
-        encoder_norm = self.encoder_norm(keepdim=True)
-        if self.device_mesh:
-            # TODO: check if this is correct
-            encoder_norm = distribute_tensor(encoder_norm, device_mesh=self.device_mesh["model"], placements=[Shard(0)])
-        encoder.weight.data *= value / encoder_norm
+        if force_exact:
+            self.W_D.mul_(value / self.decoder_norm(keepdim=True))
+        else:
+            self.W_D.mul_(value / torch.clamp(self.decoder_norm(keepdim=True), min=value))
 
     @torch.no_grad()
     def set_encoder_to_fixed_norm(self, value: float):
-        self._set_encoder_to_fixed_norm(self.encoder, value)
+        self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
     @override
     @torch.no_grad()
@@ -126,25 +149,35 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         # If force_unit_decoder_norm is True, we need to normalize the decoder weight before saving
         # We use a deepcopy to avoid modifying the original weight to avoid affecting the training progress
         if self.cfg.force_unit_decoder_norm:
-            state_dict["decoder.weight"] = self.decoder.weight.data.clone()  # deepcopy
-            decoder_norm = torch.norm(state_dict["decoder.weight"], p=2, dim=0, keepdim=True)
-            state_dict["decoder.weight"] = state_dict["decoder.weight"] / decoder_norm
+            state_dict["W_D"] = self.W_D.data.clone()  # deepcopy
+            decoder_norm = torch.norm(state_dict["W_D"], p=2, dim=0, keepdim=True)
+            state_dict["W_D"] = state_dict["W_D"] / decoder_norm
 
         return state_dict
 
-    @staticmethod
-    @torch.no_grad()
-    def _transform_to_unit_decoder_norm(encoder: torch.nn.Linear, decoder: torch.nn.Linear):
-        decoder_weight = decoder.weight.to_local() if isinstance(decoder.weight, DTensor) else decoder.weight
-        decoder_norm = torch.norm(decoder_weight, p=2, dim=0, keepdim=False)
-        decoder.weight.data = decoder.weight.data / decoder_norm
-        encoder.weight.data = encoder.weight.data * decoder_norm[:, None]
-        encoder.bias.data = encoder.bias.data * decoder_norm
+    def dim_maps(self) -> dict[str, DimMap]:
+        """Return a dictionary mapping parameter names to dimension maps.
+
+        Returns:
+            A dictionary mapping parameter names to DimMap objects.
+        """
+        parent_maps = super().dim_maps()
+        sae_maps = {
+            "W_E": DimMap({"model": 1}),
+            "W_D": DimMap({"model": 0}),
+            "b_E": DimMap({"model": 0}),
+        }
+        if self.cfg.use_decoder_bias:
+            sae_maps["b_D"] = DimMap({})
+        if self.cfg.use_glu_encoder:
+            sae_maps["W_E_glu"] = DimMap({"model": 1})
+            sae_maps["b_E_glu"] = DimMap({"model": 0})
+        return parent_maps | sae_maps
 
     @override
     @torch.no_grad()
     def transform_to_unit_decoder_norm(self):
-        self._transform_to_unit_decoder_norm(self.encoder, self.decoder)
+        self.W_D.mul_(1 / self.decoder_norm(keepdim=False))
 
     @torch.no_grad()
     def standardize_parameters_of_dataset_norm(
@@ -185,10 +218,11 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         output_norm_factor: float = (
             math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_out]
         )
-        self.encoder.bias.data = self.encoder.bias.data / input_norm_factor
+        self.b_E.div_(input_norm_factor)
         if self.cfg.use_decoder_bias:
-            self.decoder.bias.data = self.decoder.bias.data / output_norm_factor
-        self.decoder.weight.data = self.decoder.weight.data * input_norm_factor / output_norm_factor
+            assert self.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
+            self.b_D.div_(output_norm_factor)
+        self.W_D.mul_(input_norm_factor / output_norm_factor)
         self.cfg.norm_activation = "inference"
 
     @overload
@@ -258,13 +292,14 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         """
         # Optionally subtract decoder bias before encoding
         if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
-            x = x - self.decoder.bias
+            x = x - self.b_D
 
         # Pass through encoder
-        hidden_pre = self.encoder(x)
+        hidden_pre = x @ self.W_E + self.b_E
+
         # Apply GLU if configured
         if self.cfg.use_glu_encoder:
-            hidden_pre_glu = torch.sigmoid(self.encoder_glu(x))
+            hidden_pre_glu = torch.sigmoid(x @ self.W_E_glu + self.b_E_glu)
             hidden_pre = hidden_pre * hidden_pre_glu
 
         hidden_pre = self.hook_hidden_pre(hidden_pre)
@@ -305,10 +340,10 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
             require_precise_feature_acts_grad = "topk" not in self.cfg.act_fn
             reconstructed = decode_with_triton_spmm_kernel(
-                feature_acts, self.decoder.weight, require_precise_feature_acts_grad
-            )
+                feature_acts, self.W_D.T.contiguous(), require_precise_feature_acts_grad
+            )  # TODO: remove the transpose
         else:
-            reconstructed = self.decoder(feature_acts)
+            reconstructed = feature_acts @ self.W_D
         reconstructed = self.hook_reconstructed(reconstructed)
 
         return reconstructed
@@ -342,28 +377,45 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     @override
     @torch.no_grad()
     def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
-        self._init_encoder_with_decoder_transpose(self.encoder, self.decoder, factor)
+        self.W_E.copy_(self.W_D.contiguous().T * factor)
 
     @override
     @torch.no_grad()
     def init_parameters(self, **kwargs):
         super().init_parameters(**kwargs)
-        torch.nn.init.uniform_(
-            self.encoder.weight,
-            a=-kwargs["encoder_uniform_bound"],
-            b=kwargs["encoder_uniform_bound"],
+
+        W_E = torch.empty(self.cfg.d_model, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(
+            -kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"]
         )
-        torch.nn.init.uniform_(
-            self.decoder.weight,
-            a=-kwargs["decoder_uniform_bound"],
-            b=kwargs["decoder_uniform_bound"],
+        W_D = torch.empty(self.cfg.d_sae, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(
+            -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"]
         )
-        torch.nn.init.zeros_(self.encoder.bias)
+        b_E = torch.zeros(self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype)
+
+        if self.device_mesh is not None:
+            W_E = self.dim_maps()["W_E"].distribute(W_E, self.device_mesh)
+            W_D = self.dim_maps()["W_D"].distribute(W_D, self.device_mesh)
+            b_E = self.dim_maps()["b_E"].distribute(b_E, self.device_mesh)
+
+        self.W_E.copy_(W_E)
+        self.W_D.copy_(W_D)
+        self.b_E.copy_(b_E)
+
         if self.cfg.use_decoder_bias:
-            torch.nn.init.zeros_(self.decoder.bias)
+            b_D = torch.zeros(self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype)
+
+            if self.device_mesh is not None:
+                b_D = self.dim_maps()["b_D"].distribute(b_D, self.device_mesh)
+
+            self.b_D.copy_(b_D)
+
         if self.cfg.use_glu_encoder:
-            torch.nn.init.kaiming_uniform_(self.encoder_glu.weight)
-            torch.nn.init.zeros_(self.encoder_glu.bias)
+            W_E_glu = torch.empty(
+                self.cfg.d_model, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype
+            ).uniform_(-kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"])
+            if self.device_mesh is not None:
+                W_E_glu = self.dim_maps()["W_E_glu"].distribute(W_E_glu, self.device_mesh)
+            self.W_E_glu.copy_(W_E_glu)
 
     @override
     def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
@@ -377,13 +429,11 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         return [
             # all parameters but decoder weight, use filter to avoid modifying the decoder weight
             {
-                "params": [
-                    param for name, param in self.named_parameters() if "decoder" not in name or "weight" not in name
-                ],
+                "params": [param for name, param in self.named_parameters() if name != "W_D"],
                 "name": "exclude_decoder_weight",
             },
             {
-                "params": [self.decoder.weight],
+                "params": [self.W_D],
                 "name": "decoder_weight",
             },
         ]

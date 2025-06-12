@@ -3,12 +3,6 @@ from typing import Dict, Iterable, List
 import torch
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import Replicate
-from torch.distributed.tensor.parallel import (
-    ColwiseParallel,
-    RowwiseParallel,
-    parallelize_module,
-)
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
@@ -46,28 +40,6 @@ class Initializer:
         else:
             if self.cfg.init_encoder_norm:
                 sae.set_encoder_to_fixed_norm(self.cfg.init_encoder_norm)
-
-        return sae
-
-    @torch.no_grad()
-    def initialize_tensor_parallel(self, sae: AbstractSparseAutoEncoder, device_mesh: DeviceMesh | None = None):
-        if not device_mesh:
-            return sae
-
-        if isinstance(sae, SparseAutoEncoder):
-            if device_mesh["model"].size(0) == 1:
-                return sae
-            sae.device_mesh = device_mesh
-            plan = {
-                "encoder": ColwiseParallel(output_layouts=Replicate()),
-                "decoder": RowwiseParallel(input_layouts=Replicate()),
-            }
-            if sae.cfg.use_glu_encoder:
-                plan["encoder_glu"] = ColwiseParallel(output_layouts=Replicate())
-            sae = parallelize_module(sae, device_mesh=device_mesh["model"], parallelize_plan=plan)  # type: ignore
-
-        elif isinstance(sae, CrossCoder):
-            sae.tensor_parallel(device_mesh)
 
         return sae
 
@@ -113,7 +85,8 @@ class Initializer:
             assert isinstance(sae, SparseAutoEncoder), (
                 "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
             )
-            sae.decoder.bias.data = (
+            assert sae.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
+            sae.b_D.copy_(
                 sae.compute_norm_factor(batch[sae.cfg.hook_point_out], hook_point=sae.cfg.hook_point_out)
                 * batch[sae.cfg.hook_point_out]
             ).mean(0)
@@ -124,7 +97,7 @@ class Initializer:
                     * batch[sae.cfg.hook_point_in]
                 )
                 normalized_median = normalized_input.mean(0)
-                sae.encoder.bias.data = -normalized_median @ sae.encoder.weight.data.T
+                sae.b_E.copy_(-normalized_median @ sae.W_E)
 
         if self.cfg.init_encoder_with_decoder_transpose:
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
@@ -203,5 +176,4 @@ class Initializer:
                     self.initialize_jump_relu_threshold(sae, activation_batch)
                 sae.cfg.act_fn = "jumprelu"
 
-        sae = self.initialize_tensor_parallel(sae, device_mesh)
         return sae

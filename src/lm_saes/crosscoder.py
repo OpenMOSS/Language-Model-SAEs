@@ -489,15 +489,6 @@ class CrossCoder(AbstractSparseAutoEncoder):
     def transform_to_unit_decoder_norm(self):
         raise NotImplementedError("Transform to unit decoder norm is not supported for CrossCoder")
 
-    @override
-    @timer.time("tensor_parallel")
-    def tensor_parallel(self, device_mesh: DeviceMesh):
-        super().tensor_parallel(device_mesh)
-        for name in ["W_E", "W_D", "b_E", "b_D"]:
-            param = getattr(self, name)
-            distributed_param = self.dim_maps()[name].distribute(param, device_mesh)
-            self.register_parameter(name, nn.Parameter(distributed_param))
-
     def dim_maps(self) -> dict[str, DimMap]:
         """Return a dictionary mapping parameter names to dimension maps.
 
