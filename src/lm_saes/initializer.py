@@ -37,9 +37,9 @@ class Initializer:
 
         if self.cfg.init_encoder_with_decoder_transpose:
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
-        else:
-            if self.cfg.init_encoder_norm:
-                sae.set_encoder_to_fixed_norm(self.cfg.init_encoder_norm)
+
+        if self.cfg.init_encoder_norm:
+            sae.set_encoder_to_fixed_norm(self.cfg.init_encoder_norm)
 
         return sae
 
@@ -56,16 +56,14 @@ class Initializer:
         batch = sae.normalize_activations(activation_batch)
 
         if self.cfg.init_decoder_norm is None:
-            if not self.cfg.init_encoder_with_decoder_transpose:
-                return sae
-
             def grid_search_best_init_norm(search_range: List[float]) -> float:
                 losses: Dict[float, float] = {}
 
                 for norm in search_range:
                     sae.set_decoder_to_fixed_norm(norm, force_exact=True)
-                    sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
-                    mse = sae.compute_loss(activation_batch)[1][0]["l_rec"].mean().item()
+                    if self.cfg.init_encoder_with_decoder_transpose and self.cfg.init_encoder_norm is None:
+                        sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
+                    mse = sae.compute_loss(batch)[1][0]["l_rec"].mean().item()
                     losses[norm] = mse
                 best_norm = min(losses, key=losses.get)  # type: ignore
                 return best_norm
@@ -99,7 +97,7 @@ class Initializer:
                 normalized_median = normalized_input.mean(0)
                 sae.b_E.copy_(-normalized_median @ sae.W_E)
 
-        if self.cfg.init_encoder_with_decoder_transpose:
+        if self.cfg.init_encoder_with_decoder_transpose and self.cfg.init_encoder_norm is None:
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
 
         return sae
