@@ -11,14 +11,17 @@ from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
 from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.logging import get_distributed_logger
 
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import SAEConfig
 
+logger = get_distributed_logger("sae")
+
 
 class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def __init__(self, cfg: SAEConfig, device_mesh: DeviceMesh | None = None):
-        super(SparseAutoEncoder, self).__init__(cfg)
+        super(SparseAutoEncoder, self).__init__(cfg, device_mesh=device_mesh)
         self.cfg = cfg
 
         if device_mesh is None:
@@ -94,11 +97,11 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def encoder_norm(self, keepdim: bool = False):
         """Compute the norm of the encoder weight."""
         if not isinstance(self.W_E, DTensor):
-            return torch.norm(self.W_E, p=2, dim=1, keepdim=keepdim).to(self.cfg.device)
+            return torch.norm(self.W_E, p=2, dim=0, keepdim=keepdim).to(self.cfg.device)
         else:
             assert self.device_mesh is not None
             return DTensor.from_local(
-                torch.norm(self.W_E.to_local(), p=2, dim=1, keepdim=keepdim),
+                torch.norm(self.W_E.to_local(), p=2, dim=0, keepdim=keepdim),
                 device_mesh=self.device_mesh,
                 placements=DimMap({"model": 1}).placements(self.device_mesh),
             )
@@ -107,11 +110,11 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def decoder_norm(self, keepdim: bool = False) -> torch.Tensor:
         """Compute the norm of the decoder weight."""
         if not isinstance(self.W_D, DTensor):
-            return torch.norm(self.W_D, p=2, dim=0, keepdim=keepdim).to(self.cfg.device)
+            return torch.norm(self.W_D, p=2, dim=1, keepdim=keepdim).to(self.cfg.device)
         else:
             assert self.device_mesh is not None
             return DTensor.from_local(
-                torch.norm(self.W_D.to_local(), p=2, dim=0, keepdim=keepdim),
+                torch.norm(self.W_D.to_local(), p=2, dim=1, keepdim=keepdim),
                 device_mesh=self.device_mesh,
                 placements=DimMap({"model": 0}).placements(self.device_mesh),
             )
@@ -127,7 +130,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             return DTensor.from_local(
                 torch.norm(self.b_D.to_local(), p=2, dim=0, keepdim=True),
                 device_mesh=self.device_mesh,
-                placements=DimMap({"model": 0}).placements(self.device_mesh),
+                placements=DimMap({}).placements(self.device_mesh),
             )
 
     @override
@@ -346,6 +349,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             reconstructed = feature_acts @ self.W_D
         reconstructed = self.hook_reconstructed(reconstructed)
 
+        if isinstance(reconstructed, DTensor):
+            reconstructed = DimMap({}).redistribute(reconstructed)
+
         return reconstructed
 
     def forward(
@@ -419,11 +425,19 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @override
     def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
-        return batch[self.cfg.hook_point_in], {}
+        if self.device_mesh is not None:
+            x = DimMap({}).distribute(batch[self.cfg.hook_point_in], self.device_mesh)
+        else:
+            x = batch[self.cfg.hook_point_in]
+        return x, {}
 
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
-        return batch[self.cfg.hook_point_out]
+        if self.device_mesh is not None:
+            label = DimMap({}).distribute(batch[self.cfg.hook_point_out], self.device_mesh)
+        else:
+            label = batch[self.cfg.hook_point_out]
+        return label
 
     def get_parameters(self) -> list[dict[str, Any]]:
         return [
