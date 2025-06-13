@@ -167,7 +167,7 @@ class TransformerLensLanguageModel(LanguageModel):
             local_files_only=cfg.local_files_only,
         )
         self.tokenizer = set_tokens(hf_tokenizer)
-        self.model = HookedTransformer.from_pretrained(
+        self.model = HookedTransformer.from_pretrained_no_processing(
             cfg.model_name,
             use_flash_attn=cfg.use_flash_attn,
             device=self.device,
