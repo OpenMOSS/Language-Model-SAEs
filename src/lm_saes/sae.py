@@ -103,7 +103,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             return DTensor.from_local(
                 torch.norm(self.W_E.to_local(), p=2, dim=0, keepdim=keepdim),
                 device_mesh=self.device_mesh,
-                placements=DimMap({"model": 1}).placements(self.device_mesh),
+                placements=DimMap({"model": 1 if keepdim else 0}).placements(self.device_mesh),
             )
 
     @override
