@@ -30,10 +30,13 @@ from transformer_lens.hook_points import HookedRootModule
 from lm_saes.database import MongoClient
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
+from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.timer import timer
 
 from .config import BaseSAEConfig
+
+logger = get_distributed_logger("abstract_sae")
 
 
 class STEFunction(torch.autograd.Function):

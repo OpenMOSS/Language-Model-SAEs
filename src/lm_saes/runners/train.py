@@ -60,9 +60,6 @@ class TrainSAESettings(BaseSettings):
     eval: bool = False
     """Whether to run in evaluation mode"""
 
-    data_parallel_size: int = 1
-    """Size of data parallel mesh"""
-
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
 
@@ -94,10 +91,10 @@ def train_sae(settings: TrainSAESettings) -> None:
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
-            mesh_shape=(settings.data_parallel_size, settings.model_parallel_size),
-            mesh_dim_names=("data", "model"),
+            mesh_shape=(settings.model_parallel_size,),
+            mesh_dim_names=("model",),
         )
-        if settings.data_parallel_size > 1 or settings.model_parallel_size > 1
+        if settings.model_parallel_size > 1
         else None
     )
 
@@ -175,7 +172,6 @@ def train_sae(settings: TrainSAESettings) -> None:
 
     if wandb_logger is not None:
         logger.info("WandB logger initialized")
-        wandb_logger.watch(sae, log="all")
 
     # TODO: implement eval_fn
     eval_fn = (lambda x: None) if settings.eval else None
