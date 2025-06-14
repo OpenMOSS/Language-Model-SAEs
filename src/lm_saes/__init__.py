@@ -7,6 +7,7 @@ from .config import (
     ActivationFactoryTarget,
     ActivationWriterConfig,
     BufferShuffleConfig,
+    CLTConfig,
     CrossCoderConfig,
     DatasetConfig,
     FeatureAnalyzerConfig,
@@ -18,6 +19,7 @@ from .config import (
     TrainerConfig,
     WandbConfig,
 )
+from .clt import CrossLayerTranscoder
 from .crosscoder import CrossCoder
 from .database import MongoClient
 from .mixcoder import MixCoder
@@ -44,6 +46,8 @@ from .sae import SparseAutoEncoder
 __all__ = [
     "ActivationFactory",
     "ActivationWriter",
+    "CLTConfig",
+    "CrossLayerTranscoder",
     "CrossCoderConfig",
     "CrossCoder",
     "SparseAutoEncoder",
