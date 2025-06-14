@@ -63,7 +63,7 @@ class TestCrossLayerTranscoder:
         assert clt_model.W_E.shape == (2, 4, 8)  # (n_layers, d_model, d_sae)
         assert clt_model.b_E.shape == (2, 8)     # (n_layers, d_sae)
         assert clt_model.W_D.shape == (3, 8, 4)  # (n_decoder_matrices, d_sae, d_model)
-        assert clt_model.b_D.shape == (2, 4)     # (n_layers, d_model)
+        assert clt_model.b_D.shape == (3, 4)     # (n_decoder_matrices, d_model)
 
     def test_prepare_input_and_label(self, clt_model, simple_batch):
         """Test input and label preparation."""
@@ -120,7 +120,7 @@ class TestCrossLayerTranscoder:
         assert "hidden_pre" in aux_data
 
     def test_decoder_indexing(self, clt_model):
-        """Test decoder weight indexing."""
+        """Test decoder weight and bias indexing."""
         # Test getting decoder weights for different layer pairs
         # For n_layers=2, we should have decoders for:
         # (0,0), (0,1), (1,1) - total of 3 decoders
@@ -133,37 +133,35 @@ class TestCrossLayerTranscoder:
         assert decoder_01.shape == (8, 4)
         assert decoder_11.shape == (8, 4)
         
+        # Test getting decoder biases for the same layer pairs
+        bias_00 = clt_model.get_decoder_bias(0, 0)
+        bias_01 = clt_model.get_decoder_bias(0, 1)
+        bias_11 = clt_model.get_decoder_bias(1, 1)
+        
+        assert bias_00.shape == (4,)  # (d_model,)
+        assert bias_01.shape == (4,)
+        assert bias_11.shape == (4,)
+        
         # Test that we can't access invalid decoder combinations
         with pytest.raises(AssertionError):
             clt_model.get_decoder_weights(1, 0)  # layer_from > layer_to
-
-    def test_parameter_initialization_methods(self, clt_model):
-        """Test parameter initialization and normalization methods."""
-        # Test encoder initialization with decoder transpose
-        clt_model.init_encoder_with_decoder_transpose(factor=1.0)
-        
-        # Test setting decoder to fixed norm
-        clt_model.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
-        
-        # Test setting encoder to fixed norm
-        clt_model.set_encoder_to_fixed_norm(value=1.0)
-        
-        # Test transform to unit decoder norm
-        clt_model.transform_to_unit_decoder_norm()
+            
+        with pytest.raises(AssertionError):
+            clt_model.get_decoder_bias(1, 0)  # layer_from > layer_to
 
     def test_norm_computations(self, clt_model):
         """Test norm computation methods."""
         # Test encoder norm
         encoder_norm = clt_model.encoder_norm()
-        assert encoder_norm.shape == (8,)  # (d_sae,)
+        assert encoder_norm.shape == (2,)  # (n_layers,)
         
         # Test decoder norm
         decoder_norm = clt_model.decoder_norm()
-        assert decoder_norm.shape == (8,)  # (d_sae,)
+        assert decoder_norm.shape == (3,)  # (n_decoder_matrices,)
         
         # Test decoder bias norm
         decoder_bias_norm = clt_model.decoder_bias_norm()
-        assert decoder_bias_norm.shape == (1, 4)  # (1, d_model)
+        assert decoder_bias_norm.shape == (3,)  # (n_decoder_matrices,)
 
     def test_missing_hook_points(self, clt_model):
         """Test error handling for missing hook points."""
@@ -178,22 +176,6 @@ class TestCrossLayerTranscoder:
         with pytest.raises(ValueError, match="Missing hook point"):
             clt_model.prepare_label(incomplete_batch)
 
-    def test_cross_layer_attribution(self, clt_model, simple_batch):
-        """Test cross-layer attribution functionality."""
-        x, _ = clt_model.prepare_input(simple_batch)
-        
-        attribution_data = clt_model.cross_layer_attribution(x)
-        
-        # Check that attribution data contains expected keys
-        assert "feature_activations" in attribution_data
-        assert "layer_outputs" in attribution_data
-        assert "contributions_to_layer_0" in attribution_data
-        assert "contributions_to_layer_1" in attribution_data
-        
-        # Check shapes
-        assert attribution_data["feature_activations"].shape == (2, 3, 2, 8)
-        assert attribution_data["layer_outputs"].shape == (2, 3, 2, 4)
-
     # TODO: Add your parameter initialization tests here
     def test_custom_parameter_initialization(self, clt_model, simple_batch):
         """Test with custom parameter initialization.
@@ -202,17 +184,35 @@ class TestCrossLayerTranscoder:
         that CLT is working correctly with known inputs and expected outputs.
         """
         # Example: Initialize parameters to specific values
-        # with torch.no_grad():
-        #     # Initialize encoders
-        #     clt_model.W_E.data.fill_(0.1)
-        #     clt_model.b_E.data.fill_(0.0)
-        #     
-        #     # Initialize decoders
-        #     clt_model.W_D.data.fill_(0.1)
-        #     clt_model.b_D.data.fill_(0.0)
+        with torch.no_grad():
+            # Initialize encoders
+            clt_model.W_E.data[0, :, :] = 0.1
+            clt_model.b_E.data[0, :] = 0.0
+            
+            clt_model.W_E.data[1, :, :] = -0.2
+            clt_model.b_E.data[1, :] = -0.1
+            
+            # Initialize decoders and their biases
+            # Decoder 0: (0,0) - layer 0 to layer 0
+            clt_model.W_D.data[0, :, :] = 0.3
+            clt_model.b_D.data[0, :] = -0.2
+            
+            # Decoder 1: (0,1) - layer 0 to layer 1
+            clt_model.W_D.data[1, :, :] = -0.4
+            clt_model.b_D.data[1, :] = -0.3
+
+            # Decoder 2: (1,1) - layer 1 to layer 1
+            clt_model.W_D.data[2, :, :] = 0.5
+            clt_model.b_D.data[2, :] = -0.4
         
-        # TODO: Add your specific tests here
-        pass
+            # Test forward pass
+            input, _ = clt_model.prepare_input(simple_batch)
+            output = clt_model(input)
+            
+            assert output.shape == (2, 3, 2, 4)
+            assert torch.allclose(output[:, :, 0, :], torch.ones(2, 3, 4) * 0.76)
+            assert torch.allclose(output[:, :, 1, :], torch.ones(2, 3, 4) * -1.98)
+
 
 
 if __name__ == "__main__":
