@@ -191,7 +191,6 @@ pyrightconfig.json
 /analysis-results
 /analysis
 /results
-/exp-llada
 
 # uv
 # We ignore uv.lock as conflicting optional dependencies generates non-compatible uv.lock files.
