@@ -9,7 +9,7 @@ from lm_saes.backend.language_model import (
     QwenLanguageModel,
     QwenVLLanguageModel,
     TransformerLensLanguageModel,
-    LLaDA,
+    LLaDALanguageModel,
 )
 from lm_saes.config import DatasetConfig, LanguageModelConfig, LLaDAConfig
 
@@ -89,7 +89,7 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
             return QwenLanguageModel(cfg)
         elif cfg.model_name.startswith("GSAI-ML/LLaDA"):
             assert isinstance(cfg, LLaDAConfig)
-            return LLaDA(cfg)
+            return LLaDALanguageModel(cfg)
         else:
             raise NotImplementedError(f"Model {cfg.model_name} not supported in HuggingFace backend.")
     elif backend == "transformer_lens":

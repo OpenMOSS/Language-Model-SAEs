@@ -233,7 +233,7 @@ class HuggingFaceLanguageModel(LanguageModel):
         )
 
 
-class LLaDA(HuggingFaceLanguageModel):
+class LLaDALanguageModel(HuggingFaceLanguageModel):
     cfg: LLaDAConfig  # Explicitly specify the type to avoid linter errors
     
     def __init__(self, cfg: LLaDAConfig):
