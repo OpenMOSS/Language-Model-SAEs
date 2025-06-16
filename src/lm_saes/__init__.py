@@ -12,6 +12,7 @@ from .config import (
     FeatureAnalyzerConfig,
     InitializerConfig,
     LanguageModelConfig,
+    LLaDAConfig,
     MixCoderConfig,
     MongoDBConfig,
     SAEConfig,
@@ -81,5 +82,6 @@ __all__ = [
     "TrainCrossCoderSettings",
     "auto_interp",
     "sweep_sae",
+    "LLaDAConfig",
     "train_crosscoder",
 ]
