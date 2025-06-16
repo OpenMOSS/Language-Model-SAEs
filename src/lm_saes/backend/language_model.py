@@ -7,6 +7,7 @@ from typing import Any, Optional, cast
 import torch
 from transformer_lens import HookedTransformer
 from transformers import (
+    AutoModel,
     AutoModelForCausalLM,
     AutoProcessor,
     AutoTokenizer,
@@ -14,7 +15,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from lm_saes.config import LanguageModelConfig
+from lm_saes.config import LanguageModelConfig, LLaDAConfig
 from lm_saes.utils.misc import pad_and_truncate_tokens
 
 
@@ -230,6 +231,109 @@ class HuggingFaceLanguageModel(LanguageModel):
         self.device = (
             torch.device(f"cuda:{torch.cuda.current_device()}") if cfg.device == "cuda" else torch.device(cfg.device)
         )
+
+
+class LLaDA(HuggingFaceLanguageModel):
+    cfg: LLaDAConfig  # Explicitly specify the type to avoid linter errors
+    
+    def __init__(self, cfg: LLaDAConfig):
+        super().__init__(cfg)
+        self.model = AutoModel.from_pretrained(
+            cfg.model_from_pretrained_path,
+            torch_dtype=cfg.dtype,
+            local_files_only=cfg.local_files_only,
+            trust_remote_code=True,
+        ).to(self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_from_pretrained_path,local_files_only=cfg.local_files_only, trust_remote_code=True)
+        self.model.eval()
+
+    @property
+    def eos_token_id(self) -> int:
+        return self.tokenizer.eos_token_id
+    
+    @property
+    def bos_token_id(self) -> int:
+        return self.tokenizer.bos_token_id
+    
+    @property
+    def pad_token_id(self) -> int:
+        return self.tokenizer.pad_token_id
+
+    @property
+    def mdm_mask_token_id(self) -> int:
+        return self.cfg.mdm_mask_token_id
+    
+
+
+    def to_activations(self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None) -> dict[str, torch.Tensor]:
+        layer_indices = _get_layer_indices_from_hook_points(hook_points)
+        inputs: BatchFeature = self.tokenizer(raw["text"], padding=True, truncation=True, max_length=self.cfg.max_length, return_tensors="pt").to(self.device)
+        input_ids = inputs["input_ids"]
+        attention_mask = inputs["attention_mask"]
+        # prepend bos token
+        if n_context is not None:
+            inputs["input_ids"] = pad_and_truncate_tokens(inputs["input_ids"], n_context, pad_token_id=self.pad_token_id)
+            inputs["attention_mask"] = pad_and_truncate_tokens(inputs["attention_mask"], n_context, pad_token_id=0)
+
+        # Apply random masking to non-pad tokens based on mask_ratio
+        masked_input_ids = input_ids.clone()
+        if self.cfg.mask_ratio > 0:
+            non_pad_mask = (input_ids != self.pad_token_id)
+            # Generate random values for all positions
+            random_values = torch.rand_like(input_ids, dtype=torch.float32, device=self.device)
+            
+            # For each sequence, we need to select the top-k positions to mask based on random values
+            # but only among non-pad positions
+            non_pad_counts = non_pad_mask.sum(dim=1)  # [batch_size]
+            num_to_mask = (non_pad_counts.float() * self.cfg.mask_ratio).long()  # [batch_size]
+            # Set random values for pad positions to a high value so they won't be selected
+            random_values = torch.where(non_pad_mask, random_values, torch.full_like(random_values, float('inf')))
+            
+            # Get the indices that would sort random_values in ascending order
+            sorted_indices = torch.argsort(random_values, dim=1)  # [batch_size, seq_length]
+            
+            # Create a mask for positions to be masked
+            # For each sequence, we want to mask the first num_to_mask[i] positions from sorted_indices[i]
+            position_ranks = torch.argsort(sorted_indices, dim=1)  # [batch_size, seq_length]
+            mask_positions = position_ranks < num_to_mask.unsqueeze(1)  # [batch_size, seq_length]
+            
+            # Apply masking only to non-pad positions
+            mask_positions = mask_positions & non_pad_mask
+            
+            # Apply the mask
+            masked_input_ids[mask_positions] = self.cfg.mdm_mask_token_id
+        
+        # Create new inputs dict with masked input_ids
+        masked_inputs = {"input_ids": masked_input_ids, "attention_mask": attention_mask}
+        outputs = self.model(**masked_inputs, output_hidden_states=True)
+        activations = {
+            hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
+        }
+        activations["tokens"] = masked_inputs["input_ids"]
+        return activations
+
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
+        """Trace how raw data is aligned with tokens for LLaDA model."""
+        inputs = self.tokenizer(
+            raw["text"], 
+            return_tensors="pt", 
+            padding="max_length", 
+            max_length=self.cfg.max_length, 
+            truncation=True
+        )
+        input_ids = inputs["input_ids"]
+        if n_context is not None:
+            assert self.pad_token_id is not None, (
+                "Pad token ID must be set for LLaDA when n_context is provided"
+            )
+            input_ids = pad_and_truncate_tokens(input_ids, n_context, pad_token_id=self.pad_token_id)
+        batch_str_tokens = [
+            self.tokenizer.batch_decode(input_id, clean_up_tokenization_spaces=False) for input_id in input_ids
+        ]
+        return [
+            _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
+        ]
+
 
 
 class QwenVLLanguageModel(HuggingFaceLanguageModel):
