@@ -384,6 +384,10 @@ class LanguageModelConfig(BaseModelConfig):
         with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
             json.dump(d, f, indent=4)
 
+class LLaDAConfig(LanguageModelConfig):
+    mask_ratio: float = 0.
+    mdm_mask_token_id: int = 126336
+    
 
 class ActivationWriterConfig(BaseConfig):
     hook_points: list[str]
