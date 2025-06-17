@@ -256,9 +256,9 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
 
     assert isinstance(settings.sae, CrossCoderConfig), "CrossCoderConfig is required for training a CrossCoder"
     assert all(
-        len(settings.activation_factories[i].hook_points) == len(settings.activation_factories[0].hook_points)
-        for i in range(settings.sae.n_heads)
-    ), "Number of hook points of activation factories per rank must be the same"
+        len(activation_factory.hook_points) == len(settings.activation_factories[0].hook_points)
+        for activation_factory in settings.activation_factories
+    ), "Number of hook points of activation factories must be the same"
     assert (
         len(settings.activation_factories) * len(settings.activation_factories[0].hook_points) == settings.sae.n_heads
     ), "Total number of hook points must match the number of heads in the CrossCoder"
