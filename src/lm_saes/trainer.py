@@ -109,6 +109,12 @@ class Trainer:
                 )
             )
 
+        l1_coefficient = (
+            min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
+            if self.cfg.l1_coefficient is not None
+            else 1.0
+        )
+
         loss, (loss_data, aux_data) = sae.compute_loss(
             batch,
             sparsity_loss_type=self.cfg.sparsity_loss_type,
@@ -116,11 +122,11 @@ class Trainer:
             p=self.cfg.p,
             use_batch_norm_mse=self.cfg.use_batch_norm_mse,
             return_aux_data=True,
-            l1_coefficient=min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
-            if self.cfg.l1_coefficient
-            else 1.0,
+            l1_coefficient=l1_coefficient,
         )
-        loss_dict = {"loss": loss, "batch_size": batch_size(batch)} | loss_data | aux_data
+        loss_dict = (
+            {"loss": loss, "batch_size": batch_size(batch), "l1_coefficient": l1_coefficient} | loss_data | aux_data
+        )
         return loss_dict
 
     @torch.no_grad()
@@ -219,6 +225,7 @@ class Trainer:
                 "sparsity/mean_passes_since_fired": log_info["n_forward_passes_since_fired"].mean().item(),
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
+                "details/l1_coefficient": log_info["l1_coefficient"],
             }
             if self.cfg.update_decoder_lr_with_l0:
                 decoder_param_group = next(
