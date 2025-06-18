@@ -1,18 +1,26 @@
-from typing import Any, Optional, cast
+from typing import Any, Literal, Optional, cast
 
 import datasets
 import torch
 from torch.distributed.device_mesh import DeviceMesh
-from transformer_lens import HookedTransformer
-from transformers import (
-    AutoModelForCausalLM,
-    AutoProcessor,
-    AutoTokenizer,
-    ChameleonForConditionalGeneration,
-    PreTrainedModel,
-)
 
+from lm_saes.backend.language_model import (
+    LanguageModel,
+    QwenLanguageModel,
+    QwenVLLanguageModel,
+    TransformerLensLanguageModel,
+)
 from lm_saes.config import DatasetConfig, LanguageModelConfig
+
+
+def dataset_transform(data):
+    if "image" in data:
+        # Rename image to images
+        data["images"] = data["image"]
+        del data["image"]
+
+        data["images"] = [[torch.tensor(image) for image in images] for images in data["images"]]
+    return data
 
 
 def load_dataset_shard(
@@ -26,7 +34,7 @@ def load_dataset_shard(
         dataset = datasets.load_from_disk(cfg.dataset_name_or_path)
     dataset = cast(datasets.Dataset, dataset)
     dataset = dataset.shard(num_shards=n_shards, index=shard_idx, contiguous=True)
-    dataset = dataset.with_format("torch")
+    dataset.set_transform(dataset_transform)
     return dataset
 
 
@@ -56,59 +64,29 @@ def load_dataset(
     else:
         shard = dataset
         shard_metadata = None
-    shard = shard.with_format("torch")
+    shard.set_transform(dataset_transform)
     return shard, shard_metadata
 
 
-def load_model(cfg: LanguageModelConfig):
-    if cfg.device == "cuda":
-        device = torch.device(f"cuda:{torch.cuda.current_device()}")
+def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_lens"]:
+    if model_name.startswith("Qwen/Qwen2.5-VL"):
+        return "huggingface"
+    elif model_name.startswith("Qwen/Qwen2.5"):
+        return "huggingface"
     else:
-        device = torch.device(cfg.device)
+        return "transformer_lens"
 
-    if "chameleon" in cfg.model_name:
-        hf_model = ChameleonForConditionalGeneration.from_pretrained(
-            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
-            cache_dir=cfg.cache_dir,
-            local_files_only=cfg.local_files_only,
-            torch_dtype=cfg.dtype,
-        ).to(device)  # type: ignore
-    else:
-        hf_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
-            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
-            cache_dir=cfg.cache_dir,
-            local_files_only=cfg.local_files_only,
-            torch_dtype=cfg.dtype,
-        ).to(device)
-    if "chameleon" in cfg.model_name:
-        hf_processor = AutoProcessor.from_pretrained(
-            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
-            trust_remote_code=True,
-            use_fast=True,
-            add_bos_token=True,
-            local_files_only=cfg.local_files_only,
-        )
-        hf_tokenizer = None
-    else:
-        hf_tokenizer = AutoTokenizer.from_pretrained(
-            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
-            trust_remote_code=True,
-            use_fast=True,
-            add_bos_token=True,
-            local_files_only=cfg.local_files_only,
-        )
-        hf_processor = None
 
-    model = HookedTransformer.from_pretrained_no_processing(
-        cfg.model_name,
-        use_flash_attn=cfg.use_flash_attn,
-        device=device,
-        cache_dir=cfg.cache_dir,
-        hf_model=hf_model,
-        hf_config=hf_model.config,
-        tokenizer=hf_tokenizer,
-        processor=hf_processor,
-        dtype=cfg.dtype,
-    )
-    model.eval()
-    return model
+def load_model(cfg: LanguageModelConfig) -> LanguageModel:
+    backend = infer_model_backend(cfg.model_name) if cfg.backend == "auto" else cfg.backend
+    if backend == "huggingface":
+        if cfg.model_name.startswith("Qwen/Qwen2.5-VL"):
+            return QwenVLLanguageModel(cfg)
+        elif cfg.model_name.startswith("Qwen/Qwen2.5"):
+            return QwenLanguageModel(cfg)
+        else:
+            raise NotImplementedError(f"Model {cfg.model_name} not supported in HuggingFace backend.")
+    elif backend == "transformer_lens":
+        return TransformerLensLanguageModel(cfg)
+    else:
+        raise NotImplementedError(f"Backend {backend} not supported.")

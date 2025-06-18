@@ -16,6 +16,7 @@ def feature_analyzer_config() -> FeatureAnalyzerConfig:
             "top": {"n_samples": 2, "proportion": 1.0},
             "mid": {"n_samples": 2, "proportion": 0.5},
         },
+        non_activating_subsample={"threshold": 0.3, "n_samples": 2, "max_length": 2},
     )
 
 
@@ -117,6 +118,58 @@ def test_process_batch(feature_analyzer: FeatureAnalyzer):
     )
 
 
+def test_sample_non_activating_examples(feature_analyzer: FeatureAnalyzer):
+    """Test _sample_non_activating_examples method."""
+    # First batch
+    feature_acts_1 = torch.tensor(
+        [
+            [[1.0, 0.2], [0.3, 0.8], [0.1, 0.1]],  # context 0
+            [[0.2, 0.9], [0.4, 0.1], [0.1, 0.1]],  # context 1
+        ]
+    )  # shape: (2, 2, 2) - (batch_size, context_size, d_sae)
+
+    discrete_meta_1 = {
+        "dataset": torch.tensor([0, 1]),
+        "context": torch.tensor([0, 1]),
+    }
+
+    feature_acts_2 = torch.tensor(
+        [
+            [[0.1, 0.1], [0.1, 0.1], [0.1, 0.1]],  # context 0
+            [[0.1, 0.1], [0.1, 0.1], [0.1, 0.1]],  # context 1
+        ]
+    )
+
+    discrete_meta_2 = {
+        "dataset": torch.tensor([2, 3]),
+        "context": torch.tensor([2, 3]),
+    }
+
+    max_feature_acts = torch.tensor([1.0, 0.9])
+
+    sample_result = {
+    }
+
+    result_1 = feature_analyzer._sample_non_activating_examples(
+        feature_acts=feature_acts_1,
+        discrete_meta=discrete_meta_1,
+        sample_result=sample_result,
+        max_feature_acts=max_feature_acts,
+    )
+
+    # Process second batch
+    result_2 = feature_analyzer._sample_non_activating_examples(
+        feature_acts=feature_acts_2,
+        discrete_meta=discrete_meta_2,
+        sample_result=result_1,
+        max_feature_acts=max_feature_acts,
+    )
+
+    print("result_1", result_1)
+    print("result_2", result_2)
+
+
+
 def test_analyze_chunk_no_sampling(
     feature_analyzer_config: FeatureAnalyzerConfig,
     mocker: MockerFixture,
@@ -154,9 +207,10 @@ def test_analyze_chunk_no_sampling(
     )
 
     # Create mock activation stream
+    activations_in = torch.randn(2, 2, 10)
     activation_stream = [
         {
-            "activations_in": torch.randn(2, 2, 10),  # (batch_size, context_size, d_model)
+            "activations_in": activations_in,  # (batch_size, context_size, d_model)
             "tokens": torch.randint(0, 1000, (2, 2)),  # (batch_size, context_size)
             "meta": [
                 {
@@ -170,6 +224,9 @@ def test_analyze_chunk_no_sampling(
             ],
         },
     ]
+
+    mock_sae.normalize_activations.return_value = activation_stream[0]
+    mock_sae.prepare_input.return_value = (activations_in, {})
 
     # Run analysis
     results = feature_analyzer.analyze_chunk(activation_stream, mock_sae)

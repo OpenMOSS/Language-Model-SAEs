@@ -7,6 +7,7 @@ from transformer_lens import HookedTransformer
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.config import EvalConfig
+from lm_saes.mixcoder import MixCoder
 from lm_saes.sae import SparseAutoEncoder
 
 
@@ -52,9 +53,10 @@ class Evaluator:
                 log_metric(loss_key, log_info.pop(loss_key).item())
 
         # 2. Get activations and compute reconstructions
-        activation_in = activation_dict[sae.cfg.hook_point_in][useful_token_mask]
-        activation_out = activation_dict[sae.cfg.hook_point_out][useful_token_mask]
-        tokens = activation_dict["tokens"][useful_token_mask]
+        batch = sae.normalize_activations(activation_dict)
+        activation_in = batch[sae.cfg.hook_point_in][useful_token_mask]
+        activation_out = batch[sae.cfg.hook_point_out][useful_token_mask]
+        tokens = batch["tokens"][useful_token_mask]
         feature_acts = sae.encode(activation_in, tokens=tokens)
         reconstructed = (
             log_info.pop("reconstructed")[useful_token_mask]
@@ -156,6 +158,7 @@ class Evaluator:
             names_filter=[sae.cfg.hook_point_in, sae.cfg.hook_point_out],
             return_cache_object=False,
         )
+        # TODO: check normalization
         reconstructed_activations = sae.forward(cache[sae.cfg.hook_point_in], tokens=input_ids)
 
         def replace_hook(activations: Tensor, hook_point: str) -> Tensor:
@@ -207,3 +210,24 @@ class Evaluator:
             if self.cur_tokens > self.cfg.total_eval_tokens:
                 break
         self.process_metrics(wandb_logger)
+
+
+@torch.no_grad()
+def evaluate_mixcoder(mixcoder: MixCoder, data: dict[str, Tensor]) -> dict[str, float]:
+    batch = mixcoder.normalize_activations(data)
+    feature_acts = mixcoder.encode(
+        batch[mixcoder.cfg.hook_point_in], return_hidden_pre=False, modalities=batch["modalities"]
+    )
+    log_dict = {}
+
+    for modality_focus, _ in mixcoder.modality_index.items():
+        if modality_focus == "shared":
+            continue
+        modality_token_mask = mixcoder.get_modality_token_mask(batch["modalities"], modality_focus)
+        modality_feature_acts = feature_acts[modality_token_mask]
+        total_nonzero = modality_feature_acts.nonzero().shape[0]
+        for modality, position in mixcoder.modality_index.items():
+            modality_nonzero = modality_feature_acts[:, position[0] : position[1]].nonzero().shape[0]
+            log_dict[f"{modality_focus}_token_{modality}_area_nonzero"] = modality_nonzero / total_nonzero
+
+    return log_dict

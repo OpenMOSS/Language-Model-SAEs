@@ -17,9 +17,7 @@ class ActivationWriter:
 
     Args:
         cfg: Configuration for writing activations
-        executor: Optional ThreadPoolExecutor for parallel writing. If None, a new executor
-                 will be created with max_workers=2
-        max_active_chunks: Maximum number of chunks to write in parallel. Defaults to 2
+        executor: Optional ThreadPoolExecutor for parallel writing. If None, a new executor will be created with max_workers=2.
     """
 
     def __init__(
@@ -103,9 +101,9 @@ class ActivationWriter:
 
             def collate_batch(batch: Sequence[dict[str, Any]]) -> dict[str, Any]:
                 # Assert that all samples have the same keys
-                assert all(
-                    k in d for k in batch[0] for d in batch
-                ), f"All samples must have the same keys: {batch[0].keys()}"
+                assert all(k in d for k in batch[0] for d in batch), (
+                    f"All samples must have the same keys: {batch[0].keys()}"
+                )
                 return {
                     k: torch.stack([d[k] for d in batch])
                     if isinstance(batch[0][k], torch.Tensor)
@@ -116,9 +114,9 @@ class ActivationWriter:
             data = map(collate_batch, itertools.batched(data, self.cfg.n_samples_per_chunk))
 
         for chunk_id, chunk in enumerate(data):
-            assert all(
-                k in chunk for k in self.cfg.hook_points
-            ), f"All samples must have the hook points: {self.cfg.hook_points}"
+            assert all(k in chunk for k in self.cfg.hook_points), (
+                f"All samples must have the hook points: {self.cfg.hook_points}"
+            )
 
             chunk_name = (
                 f"chunk-{chunk_id:08d}"
