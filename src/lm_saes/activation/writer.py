@@ -10,6 +10,10 @@ from torch.distributed.device_mesh import DeviceMesh
 from tqdm import tqdm
 
 from lm_saes.config import ActivationWriterConfig
+from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.timer import timer
+
+logger = get_distributed_logger(__name__)
 
 
 class ActivationWriter:
@@ -125,28 +129,34 @@ class ActivationWriter:
             )
 
             # Submit writing tasks for each hook point
-            for hook_point in self.cfg.hook_points:
-                chunk_data = {"activation": chunk[hook_point], "tokens": chunk["tokens"]}
-                if futures is None:
-                    self._write_chunk(hook_point, chunk_data, chunk_name, chunk["meta"] if "meta" in chunk else None)
-                else:
-                    assert self.executor is not None, "Executor is not initialized"
-                    future = self.executor.submit(
-                        self._write_chunk,
-                        hook_point,
-                        chunk_data,
-                        chunk_name,
-                        chunk["meta"] if "meta" in chunk else None,
-                    )
-                    futures.add(future)
+            with timer.time("write_chunk"):
+                for hook_point in self.cfg.hook_points:
+                    chunk_data = {"activation": chunk[hook_point], "tokens": chunk["tokens"]}
+                    if futures is None:
+                        self._write_chunk(
+                            hook_point, chunk_data, chunk_name, chunk["meta"] if "meta" in chunk else None
+                        )
+                    else:
+                        assert self.executor is not None, "Executor is not initialized"
+                        future = self.executor.submit(
+                            self._write_chunk,
+                            hook_point,
+                            chunk_data,
+                            chunk_name,
+                            chunk["meta"] if "meta" in chunk else None,
+                        )
+                        futures.add(future)
 
-            if futures is not None:
-                assert self.cfg.num_workers is not None, "num_workers must be set to use parallel writing"
-                # Wait for some futures to complete if we have too many pending
-                while len(futures) >= self.cfg.num_workers * 2:
-                    done, futures = wait(futures, return_when="FIRST_COMPLETED")
-                    for future in done:
-                        future.result()  # Raise any exceptions that occurred
+                if futures is not None:
+                    assert self.cfg.num_workers is not None, "num_workers must be set to use parallel writing"
+                    # Wait for some futures to complete if we have too many pending
+                    while len(futures) >= self.cfg.num_workers * 2:
+                        done, futures = wait(futures, return_when="FIRST_COMPLETED")
+                        for future in done:
+                            future.result()  # Raise any exceptions that occurred
+
+            if timer.enabled:
+                logger.info(f"\nTimer Summary:\n{timer.summary()}\n")
 
             n_tokens_written += chunk["tokens"].numel()
             pbar.update(chunk["tokens"].numel())
