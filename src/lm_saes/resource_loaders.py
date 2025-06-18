@@ -6,10 +6,10 @@ from torch.distributed.device_mesh import DeviceMesh
 
 from lm_saes.backend.language_model import (
     LanguageModel,
+    LLaDALanguageModel,
     QwenLanguageModel,
     QwenVLLanguageModel,
     TransformerLensLanguageModel,
-    LLaDALanguageModel,
 )
 from lm_saes.config import DatasetConfig, LanguageModelConfig, LLaDAConfig
 
