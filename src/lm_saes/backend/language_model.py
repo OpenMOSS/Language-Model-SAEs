@@ -159,6 +159,7 @@ class TransformerLensLanguageModel(LanguageModel):
             cache_dir=cfg.cache_dir,
             local_files_only=cfg.local_files_only,
             torch_dtype=cfg.dtype,
+            trust_remote_code=True,
         ) if cfg.load_ckpt else None
         hf_tokenizer = AutoTokenizer.from_pretrained(
             (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
@@ -208,14 +209,14 @@ class TransformerLensLanguageModel(LanguageModel):
         ]
 
     def to_activations(
-        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None, prepend_bos: bool = True
     ) -> dict[str, torch.Tensor]:
         assert self.model is not None
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
                 "Activations with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
-        tokens = self.model.to_tokens(raw["text"], prepend_bos=True)
+        tokens = self.model.to_tokens(raw["text"], prepend_bos=prepend_bos)
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
