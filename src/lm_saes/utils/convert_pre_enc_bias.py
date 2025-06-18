@@ -8,6 +8,6 @@ def merge_pre_enc_bias_to_enc_bias(sae: SparseAutoEncoder):
     assert sae.cfg.apply_decoder_bias_to_pre_encoder
 
     sae.cfg.apply_decoder_bias_to_pre_encoder = False
-    sae.encoder.bias.data = sae.encoder.bias.data - sae.encoder.weight.data @ sae.decoder.bias.data
+    sae.b_E.copy_(sae.b_E - sae.b_D @ sae.W_E)
 
     return sae
