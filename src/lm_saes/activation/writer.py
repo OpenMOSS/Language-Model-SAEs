@@ -1,9 +1,9 @@
-import itertools
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
 
+import more_itertools
 import torch
 from safetensors.torch import save_file
 from torch.distributed.device_mesh import DeviceMesh
@@ -111,7 +111,7 @@ class ActivationWriter:
                     for k in batch[0].keys()
                 }
 
-            data = map(collate_batch, itertools.batched(data, self.cfg.n_samples_per_chunk))
+            data = map(collate_batch, more_itertools.batched(data, self.cfg.n_samples_per_chunk))
 
         for chunk_id, chunk in enumerate(data):
             assert all(k in chunk for k in self.cfg.hook_points), (

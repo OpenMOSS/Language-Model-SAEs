@@ -150,7 +150,7 @@ class TransformerLensLanguageModel(LanguageModel):
         if cfg.device == "cuda":
             self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
         elif cfg.device == "npu":
-            self.device = torch.device(f"npu:{torch.npu.current_device()}")
+            self.device = torch.device(f"npu:{torch.npu.current_device()}")  # type: ignore[reportAttributeAccessIssue]
         else:
             self.device = torch.device(cfg.device)
 
