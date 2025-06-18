@@ -56,18 +56,16 @@ def test_chunk_info_from_path():
 def test_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, sample_tokens, sample_info):
     """Test CachedActivationLoader with a fake filesystem."""
     # Setup test directory structure
-    cache_dir = Path("/cache")
-    hook_points = ["hook1", "hook2"]
+    cache_dirs = {"hook1": Path("/cache/hook1"), "hook2": Path("/cache/hook2")}
 
-    for hook in hook_points:
-        hook_dir = cache_dir / hook
-        fs.create_dir(hook_dir)
+    for hook, cache_dir in cache_dirs.items():
+        fs.create_dir(cache_dir)
 
         # Create both sharded and non-sharded files
         files = [
-            hook_dir / "shard-0-chunk-0.pt",
-            hook_dir / "shard-0-chunk-1.pt",
-            hook_dir / "chunk-2.pt",
+            cache_dir / "shard-0-chunk-0.pt",
+            cache_dir / "shard-0-chunk-1.pt",
+            cache_dir / "chunk-2.pt",
         ]
 
         for file in files:
@@ -84,7 +82,7 @@ def test_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, 
     mocker.patch("torch.load", side_effect=mock_torch_load)
 
     # Initialize loader and process data
-    loader = CachedActivationLoader(cache_dir, hook_points)
+    loader = CachedActivationLoader(cache_dirs)
     results = list(loader.process())
 
     # Verify results
@@ -92,7 +90,7 @@ def test_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, 
 
     for i, result in enumerate(results):
         # Check if all hook points are present
-        for hook in hook_points:
+        for hook in cache_dirs.keys():
             assert hook in result
             assert torch.allclose(result[hook], sample_activation)
 
@@ -104,7 +102,7 @@ def test_cached_activation_loader(fs, mocker: MockerFixture, sample_activation, 
 def test_cached_activation_loader_missing_dir(fs):
     """Test CachedActivationLoader with missing directory."""
     with pytest.raises(FileNotFoundError):
-        loader = CachedActivationLoader("/nonexistent", ["hook1"])
+        loader = CachedActivationLoader({"hook1": Path("/nonexistent")})
         list(loader.process())
 
 
@@ -113,16 +111,16 @@ def test_cached_activation_loader_mismatched_chunks(
 ):
     """Test CachedActivationLoader with mismatched chunk counts."""
     # Setup directories with different numbers of chunks
-    cache_dir = Path("/cache")
+    cache_dirs = {"hook1": Path("/cache/hook1"), "hook2": Path("/cache/hook2")}
 
     # hook1 has 2 chunks
-    hook1_dir = cache_dir / "hook1"
+    hook1_dir = cache_dirs["hook1"]
     fs.create_dir(hook1_dir)
     create_fake_pt_file(fs, hook1_dir / "chunk-0.pt", sample_activation, sample_tokens, sample_info)
     create_fake_pt_file(fs, hook1_dir / "chunk-1.pt", sample_activation, sample_tokens, sample_info)
 
     # hook2 has 1 chunk
-    hook2_dir = cache_dir / "hook2"
+    hook2_dir = cache_dirs["hook2"]
     fs.create_dir(hook2_dir)
     create_fake_pt_file(fs, hook2_dir / "chunk-0.pt", sample_activation, sample_tokens, sample_info)
 
@@ -141,21 +139,21 @@ def test_cached_activation_loader_mismatched_chunks(
         ValueError,
         match="Hook points have different numbers of chunks: {'hook1': 2, 'hook2': 1}. All hook points must have the same number of chunks.",
     ):
-        loader = CachedActivationLoader(cache_dir, ["hook1", "hook2"])
+        loader = CachedActivationLoader(cache_dirs)
         list(loader.process())
 
 
 def test_cached_activation_loader_invalid_data(fs, mocker: MockerFixture):
     """Test CachedActivationLoader with invalid data format."""
-    cache_dir = Path("/cache")
-    hook_dir = cache_dir / "hook1"
+    cache_dirs = {"hook1": Path("/cache/hook1")}
+    hook_dir = cache_dirs["hook1"]
     fs.create_dir(hook_dir)
     create_fake_pt_file(fs, hook_dir / "chunk-0.pt", None, None, None)
 
     # Mock torch.load to return invalid data
     mocker.patch("torch.load", return_value={"invalid": "data"})
 
-    loader = CachedActivationLoader(cache_dir, ["hook1"])
+    loader = CachedActivationLoader(cache_dirs)
     with pytest.raises(
         AssertionError,
         match="Loading cached activation /cache/hook1/chunk-0.pt error: missing 'activation' field",

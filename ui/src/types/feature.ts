@@ -37,17 +37,27 @@ export const InterpretationSchema = z.object({
       detail: z
         .object({
           prompt: z.string(),
-          response: z.string(),
+          response: z.any(),
         })
         .optional(),
     })
   ),
   detail: z
     .object({
-      prompt: z.string(),
-      response: z.string(),
+      userPrompt: z.string(),
+      systemPrompt: z.string(),
+      response: z.object({
+        steps: z.array(z.string()),
+        finalExplanation: z.string(),
+        complexity: z.number(),
+        activationConsistency: z.number(),
+      }),
     })
     .optional(),
+  complexity: z.number().optional(),
+  consistency: z.number().optional(),
+  passed: z.boolean().optional(),
+  time: z.any().optional(),
 });
 
 export type Interpretation = z.infer<typeof InterpretationSchema>;
@@ -55,9 +65,16 @@ export type Interpretation = z.infer<typeof InterpretationSchema>;
 export const FeatureSchema = z.object({
   featureIndex: z.number(),
   dictionaryName: z.string(),
+  analysisName: z.string(),
   featureActivationHistogram: z.any().nullish(),
+  decoderNorms: z.array(z.number()).nullish(),
+  decoderSimilarityMatrix: z.array(z.array(z.number())).nullish(),
+  decoderInnerProductMatrix: z.array(z.array(z.number())).nullish(),
   actTimes: z.number(),
   maxFeatureAct: z.number(),
+  nAnalyzedTokens: z.number().nullish(),
+  actTimesModalities: z.record(z.string(), z.number()).nullish(),
+  maxFeatureActsModalities: z.record(z.string(), z.number()).nullish(),
   sampleGroups: z.array(
     z.object({
       analysisName: z.string(),
@@ -82,6 +99,7 @@ export const FeatureSchema = z.object({
     })
     .nullish(),
   interpretation: InterpretationSchema.nullish(),
+  isBookmarked: z.boolean().optional(),
 });
 
 export type Feature = z.infer<typeof FeatureSchema>;

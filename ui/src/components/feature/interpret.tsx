@@ -1,7 +1,7 @@
 import { Feature, Interpretation, InterpretationSchema } from "@/types/feature";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Button } from "../ui/button";
-import { Ban, Check, Info } from "lucide-react";
+import { Ban, Check, Info, ChevronDown, ChevronRight, Copy, CheckCircle2 } from "lucide-react";
 import { useAsyncFn } from "react-use";
 import { Textarea } from "../ui/textarea";
 import camelcaseKeys from "camelcase-keys";
@@ -59,25 +59,59 @@ const FeatureCustomInterpretionArea = ({
 
 export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
   const [showCustomInput, setShowCustomInput] = useState<boolean>(false);
+  const [isUserPromptExpanded, setIsUserPromptExpanded] = useState<boolean>(false);
+  const [isSystemPromptExpanded, setIsSystemPromptExpanded] = useState<boolean>(false);
+  const [expandedValidationSections, setExpandedValidationSections] = useState<Record<number, Record<string, boolean>>>({});
 
-  const [interpretation, setInterpretation] = useState<Interpretation | null>(
-    feature.interpretation || null
-  );
+  const [interpretation, setInterpretation] = useState<Interpretation | null>(feature.interpretation || null);
 
   const [validating, setValidating] = useState<boolean>(false);
 
-  const testNameMap = (method: string, passed: boolean) => {
+  // Function to highlight tokens within << and >> with colored text
+  const highlightTokens = useCallback((text: string): React.ReactNode => {
+    if (!text) return "";
+    
+    const regex = /<<([^>]*)>>/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    
+    while ((match = regex.exec(text)) !== null) {
+      // Add text before the match
+      if (match.index > lastIndex) {
+        parts.push(text.substring(lastIndex, match.index));
+      }
+      
+      // Add the highlighted token with delimiters
+      parts.push(
+        <span key={match.index} className="text-blue-600 font-medium">
+          {`<<${match[1]}>>`}
+        </span>
+      );
+      
+      lastIndex = match.index + match[0].length;
+    }
+    
+    // Add any remaining text
+    if (lastIndex < text.length) {
+      parts.push(text.substring(lastIndex));
+    }
+    
+    return <>{parts}</>;
+  }, []);
+
+  const testNameMap = useCallback((method: string, passed: boolean) => {
     switch (method) {
-      case "activation":
-        return `Activation Prediction Test ${passed ? "Passed" : "Failed"}`;
-      case "generative":
-        return `Generative Test ${passed ? "Passed" : "Failed"}`;
+      case "detection":
+        return `Detection Test ${passed ? "Passed" : "Failed"}`;
+      case "fuzzing":
+        return `Fuzzing Test ${passed ? "Passed" : "Failed"}`;
       case "manual":
         return "Human Validated";
       default:
         return `Unknown Test ${method} ${passed ? "Passed" : "Failed"}`;
     }
-  };
+  }, []);
 
   const [state, autoInterpretation] = useAsyncFn(async () => {
     const interpretation = await fetch(
@@ -119,6 +153,23 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
     return interpretationValidated;
   });
 
+  // Toggle validation section expand/collapse state
+  const toggleValidationSection = (validationIndex: number, section: string) => {
+    setExpandedValidationSections((prev) => {
+      const newState = { ...prev };
+      if (!newState[validationIndex]) {
+        newState[validationIndex] = {};
+      }
+      newState[validationIndex][section] = !newState[validationIndex]?.[section];
+      return newState;
+    });
+  };
+
+  // Check if a validation section is expanded
+  const isValidationSectionExpanded = (validationIndex: number, section: string) => {
+    return !!expandedValidationSections[validationIndex]?.[section];
+  };
+
   return (
     <div className="flex flex-col w-full gap-4">
       <p className="font-bold">Interpretation</p>
@@ -126,25 +177,127 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
         <div className="flex flex-col justify-between gap-4 basis-2/3 min-w-2/3">
           {!interpretation && <p className="text-neutral-500">No interpretation available.</p>}
           {interpretation && (
-            <div className="flex gap-4">
+            <div className="flex flex-col gap-4">
               <p>
-                {interpretation.text}
+                {highlightTokens(interpretation.text)}
                 {interpretation.detail && (
                   <HoverCard>
                     <HoverCardTrigger>
                       <Info size={20} className="hover:text-blue-500 inline-block mx-2" />
                     </HoverCardTrigger>
                     <HoverCardContent className="w-[800px] max-h-[400px] overflow-y-auto">
-                      <div className="grid gap-4 whitespace-pre-wrap grid-cols-[auto,1fr]">
-                        <div className="text-sm font-bold">Prompt:</div>
-                        <div className="text-sm">{interpretation.detail.prompt}</div>
-                        <div className="text-sm font-bold">Response:</div>
-                        <div className="text-sm">{interpretation.detail.response}</div>
+                      <div className="flex flex-col gap-4 whitespace-pre-wrap">
+                        {interpretation.detail.userPrompt && (
+                          <div className="flex flex-col gap-2">
+                            <div 
+                              className="text-sm font-bold flex items-center cursor-pointer" 
+                              onClick={() => setIsUserPromptExpanded(!isUserPromptExpanded)}
+                            >
+                              {isUserPromptExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                              <span className="ml-1">User Prompt</span>
+                            </div>
+                            {isUserPromptExpanded && (
+                              <div className="text-sm bg-blue-50 p-3 rounded-md border border-blue-200 relative">
+                                <CopyButton text={interpretation.detail.userPrompt} />
+                                {highlightTokens(interpretation.detail.userPrompt)}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        
+                        {interpretation.detail.systemPrompt && (
+                          <div className="flex flex-col gap-2">
+                            <div 
+                              className="text-sm font-bold flex items-center cursor-pointer" 
+                              onClick={() => setIsSystemPromptExpanded(!isSystemPromptExpanded)}
+                            >
+                              {isSystemPromptExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                              <span className="ml-1">System Prompt</span>
+                            </div>
+                            {isSystemPromptExpanded && (
+                              <div className="text-sm bg-gray-50 p-3 rounded-md border border-gray-200 relative">
+                                <CopyButton text={interpretation.detail.systemPrompt} />
+                                {highlightTokens(interpretation.detail.systemPrompt)}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        
+                        {interpretation.detail.response?.finalExplanation && (
+                          <div className="flex flex-col gap-2">
+                            <div className="text-sm font-bold">Final Explanation:</div>
+                            <div className="text-sm bg-slate-50 p-3 rounded-md border border-slate-200">
+                              {highlightTokens(interpretation.detail.response.finalExplanation)}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {interpretation.detail.response?.steps && interpretation.detail.response.steps.length > 0 && (
+                          <div className="flex flex-col gap-2">
+                            <div className="text-sm font-bold">Reasoning Steps:</div>
+                            <div className="flex flex-col gap-2">
+                              {interpretation.detail.response.steps.map((step: string, index: number) => (
+                                <div key={index} className="text-sm bg-slate-50 p-2 rounded-md border border-slate-200">
+                                  <span className="font-semibold text-slate-500">Step {index + 1}:</span> {highlightTokens(step)}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {(interpretation.detail.response?.activationConsistency !== undefined || 
+                          interpretation.detail.response?.complexity !== undefined) && (
+                          <div className="grid grid-cols-2 gap-4 mt-2">
+                            {interpretation.detail.response?.activationConsistency !== undefined && (
+                              <div className="text-sm">
+                                <span className="font-bold">Activation Consistency:</span>{" "}
+                                {interpretation.detail.response.activationConsistency}
+                              </div>
+                            )}
+                            {interpretation.detail.response?.complexity !== undefined && (
+                              <div className="text-sm">
+                                <span className="font-bold">Explanation Complexity:</span>{" "}
+                                {interpretation.detail.response.complexity}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </HoverCardContent>
                   </HoverCard>
                 )}
               </p>
+              
+              {(interpretation.complexity !== undefined || 
+                interpretation.consistency !== undefined || 
+                interpretation.time !== undefined) && (
+                <div className="flex flex-wrap gap-4 text-sm text-neutral-600">
+                  {interpretation.complexity !== undefined && (
+                    <div>
+                      <span className="font-medium">Complexity:</span> {interpretation.complexity.toFixed(2)}
+                    </div>
+                  )}
+                  {interpretation.consistency !== undefined && (
+                    <div>
+                      <span className="font-medium">Consistency:</span> {interpretation.consistency.toFixed(2)}
+                    </div>
+                  )}
+                  {interpretation.passed !== undefined && (
+                    <div className="flex items-center gap-1">
+                      <span className="font-medium">Status:</span>
+                      {interpretation.passed ? (
+                        <span className="text-green-500 flex items-center gap-1">
+                          <Check size={16} /> Passed
+                        </span>
+                      ) : (
+                        <span className="text-red-500 flex items-center gap-1">
+                          <Ban size={16} /> Failed
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
           <div className="flex gap-4">
@@ -174,7 +327,7 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
                   <HoverCardTrigger>
                     <Info size={20} className="hover:text-blue-500" />
                   </HoverCardTrigger>
-                  <HoverCardContent className="w-[800px] flex flex-col gap-2">
+                  <HoverCardContent className="w-[800px] flex flex-col gap-4">
                     {validation.method === "activation" && (
                       <>
                         <p className="text-sm">
@@ -200,12 +353,44 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
                         </p>
                       </>
                     )}
-                    <div className="grid gap-2 whitespace-pre-wrap grid-cols-[auto,1fr]">
-                      <div className="text-sm font-bold">Prompt:</div>
-                      <div className="text-sm">{validation.detail.prompt}</div>
-                      <div className="text-sm font-bold">Response:</div>
-                      <div className="text-sm">{validation.detail.response}</div>
-                    </div>
+                    
+                    {validation.detail?.prompt && (
+                      <div className="flex flex-col gap-2">
+                        <div 
+                          className="text-sm font-bold flex items-center cursor-pointer" 
+                          onClick={() => toggleValidationSection(i, 'prompt')}
+                        >
+                          {isValidationSectionExpanded(i, 'prompt') ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <span className="ml-1">Prompt</span>
+                        </div>
+                        {isValidationSectionExpanded(i, 'prompt') && (
+                          <div className="text-sm bg-blue-50 p-3 rounded-md border border-blue-200 relative">
+                            <CopyButton text={validation.detail.prompt} />
+                            {highlightTokens(validation.detail.prompt)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {validation.detail?.response !== undefined && (
+                      <div className="flex flex-col gap-2">
+                        <div 
+                          className="text-sm font-bold flex items-center cursor-pointer" 
+                          onClick={() => toggleValidationSection(i, 'response')}
+                        >
+                          {isValidationSectionExpanded(i, 'response') ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <span className="ml-1">Response</span>
+                        </div>
+                        {isValidationSectionExpanded(i, 'response') && (
+                          <div className="text-sm bg-gray-50 p-3 rounded-md border border-gray-200 relative">
+                            <CopyButton text={JSON.stringify(validation.detail.response, null, 2)} />
+                            <pre className="bg-slate-50 p-2 rounded-md border border-slate-200 overflow-x-auto">
+                              {JSON.stringify(validation.detail.response, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </HoverCardContent>
                 </HoverCard>
               )}
@@ -225,5 +410,29 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
         />
       )}
     </div>
+  );
+};
+
+const CopyButton = ({ text }: { text: string }) => {
+  const [copied, setCopied] = useState(false);
+  
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+    }
+  };
+  
+  return (
+    <button 
+      onClick={handleCopy} 
+      className="absolute top-2 right-2 p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+      aria-label="Copy to clipboard"
+    >
+      {copied ? <CheckCircle2 size={16} className="text-green-500" /> : <Copy size={16} />}
+    </button>
   );
 };

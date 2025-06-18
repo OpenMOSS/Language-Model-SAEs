@@ -31,6 +31,15 @@ export const AppNavbar = () => {
           <Link
             className={cn(
               "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/bookmarks" && "text-foreground"
+            )}
+            to="/bookmarks"
+          >
+            Bookmarks
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
               location.pathname === "/models" && "text-foreground"
             )}
             to="/models"
