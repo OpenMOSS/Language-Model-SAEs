@@ -93,7 +93,7 @@ class MixCoder(SparseAutoEncoder):
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
 
-    def compute_loss(
+    def compute_loss(  # type: ignore
         self,
         batch: dict[str, torch.Tensor],
         label: (
