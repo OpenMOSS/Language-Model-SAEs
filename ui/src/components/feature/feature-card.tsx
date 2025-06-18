@@ -1,7 +1,7 @@
 import { Feature, FeatureSampleCompactSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Plot from "react-plotly.js";
 import { useAsyncFn } from "react-use";
 import { Button } from "../ui/button";
@@ -74,6 +74,44 @@ const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
   );
 };
 
+const FeatureBookmarkButton = ({ feature }: { feature: Feature }) => {
+  const [isBookmarked, setIsBookmarked] = useState<boolean>(feature.isBookmarked || false);
+
+  const toggleBookmark = useCallback(async () => {
+    const method = isBookmarked ? "DELETE" : "POST";
+    const response = await fetch(
+      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${feature.dictionaryName}/features/${
+        feature.featureIndex
+      }/bookmark`,
+      {
+        method,
+      }
+    );
+    if (response.ok) {
+      setIsBookmarked(!isBookmarked);
+      return !isBookmarked;
+    } else {
+      throw new Error(await response.text());
+    }
+  }, [isBookmarked, feature.dictionaryName, feature.featureIndex]);
+
+  const [toggleState, executeToggle] = useAsyncFn(toggleBookmark, [toggleBookmark]);
+
+  useEffect(() => {
+    setIsBookmarked(feature.isBookmarked || false);
+  }, [feature.isBookmarked]);
+
+  return (
+    <Button
+      onClick={executeToggle}
+      disabled={toggleState.loading}
+      variant={isBookmarked ? "default" : "outline"}
+    >
+      {toggleState.loading ? "..." : isBookmarked ? "★ Bookmarked" : "☆ Bookmark"}
+    </Button>
+  );
+};
+
 export const FeatureCard = ({ feature }: { feature: Feature }) => {
   const analysisNameMap = (analysisName: string) => {
     if (analysisName === "top_activations") {
@@ -82,24 +120,67 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
       const [, proportion] = analysisName.split("-");
       const percentage = parseFloat(proportion) * 100;
       return `Subsample ${percentage}%`;
+    } else {
+      return analysisName;
     }
   };
 
   const [showCustomInput, setShowCustomInput] = useState<boolean>(false);
+
+  const activationTimesSpan = feature.nAnalyzedTokens ? (
+    <span className="font-medium">
+      (Activation Times ={" "}
+      <span className="font-bold">
+        {feature.actTimes}
+        {feature.actTimesModalities &&
+          ` = ${Object.entries(feature.actTimesModalities)
+            .map(([modality, actTime]) => `${actTime} (${modality})`)
+            .join(" + ")}`}
+        )
+      </span>
+    </span>
+  ) : (
+    <span className="font-medium">
+      (Activation Frequency ={" "}
+      <span className="font-bold">
+        {(feature.actTimes / feature.nAnalyzedTokens!).toFixed(3)}
+        {feature.actTimesModalities &&
+          ` = ${Object.entries(feature.actTimesModalities)
+            .map(([modality, actTime]) => `${(actTime / feature.nAnalyzedTokens!).toFixed(3)} (${modality})`)
+            .join(" + ")}`}
+        )
+      </span>
+    </span>
+  );
+
+  const maxActivationSpan = (
+    <span className="font-medium">
+      (Max Activation ={" "}
+      <span className="font-bold">
+        {feature.maxFeatureAct}
+        {feature.maxFeatureActsModalities &&
+          ` = max(${Object.entries(feature.maxFeatureActsModalities)
+            .map(([modality, maxFeatureAct]) => `${maxFeatureAct} (${modality})`)
+            .join(", ")})`}
+        )
+      </span>
+    </span>
+  );
 
   return (
     <Card id="Interp." className="container">
       <CardHeader>
         <CardTitle className="flex justify-between items-center text-xl">
           <span>
-            #{feature.featureIndex}{" "}
-            <span className="font-medium">
-              (Activation Times = <span className="font-bold">{feature.actTimes}</span>)
-            </span>
+            #{feature.featureIndex} {activationTimesSpan}
+            {maxActivationSpan}
           </span>
-          <Button onClick={() => setShowCustomInput((prev) => !prev)}>
-            {showCustomInput ? "Hide Custom Input" : "Try Custom Input"}
-          </Button>
+          <div className="flex gap-2">
+            <FeatureBookmarkButton feature={feature} />
+            <Button onClick={() => setShowCustomInput((prev) => !prev)}>
+              {showCustomInput ? "Hide Custom Input" : "Try Custom Input"}
+            </Button>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -107,6 +188,102 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
           {showCustomInput && <FeatureCustomInputArea feature={feature} />}
 
           <FeatureInterpretation feature={feature} />
+
+          {feature.decoderNorms && (
+            <div id="DecoderNorms" className="flex flex-col w-full gap-4">
+              <p className="font-bold">Decoder Norms</p>
+              <Plot
+                data={[
+                  {
+                    x: Array.from({ length: feature.decoderNorms.length }, (_, i) => i),
+                    y: feature.decoderNorms,
+                    type: "bar",
+                    marker: { color: "#636EFA" },
+                    hovertemplate: "Index: %{x}<br>Norm: %{y}<extra></extra>",
+                  },
+                ]}
+                layout={{
+                  xaxis: { title: "Output Feature Index" },
+                  yaxis: { title: "Norm" },
+                  bargap: 0.2,
+                  margin: { t: 0, b: 40 },
+                  showlegend: false,
+                  height: 300,
+                }}
+                config={{ responsive: true }}
+              />
+            </div>
+          )}
+
+          {(feature.decoderSimilarityMatrix || feature.decoderInnerProductMatrix) && (
+            <div className="flex flex-col w-full gap-4">
+              <div className="flex justify-between gap-4">
+                {feature.decoderSimilarityMatrix && (
+                  <div id="DecoderSimilarityMatrix" className="flex flex-col w-1/2 gap-2">
+                    <p className="font-bold">Decoder Similarity Matrix</p>
+                    <Plot
+                      data={[
+                        {
+                          z: feature.decoderSimilarityMatrix,
+                          type: "heatmap",
+                          colorscale: "Viridis",
+                          hovertemplate: "Row: %{y}<br>Column: %{x}<br>Value: %{z}<extra></extra>",
+                        },
+                      ]}
+                      layout={{
+                        xaxis: {
+                          title: "Head Index",
+                          scaleanchor: "y",
+                          scaleratio: 1,
+                          constrain: "domain",
+                        },
+                        yaxis: {
+                          title: "Head Index",
+                          constrain: "domain",
+                        },
+                        margin: { t: 10, b: 50, l: 60, r: 10 },
+                        height: 400,
+                        width: 400,
+                      }}
+                      config={{ responsive: true }}
+                    />
+                  </div>
+                )}
+
+                {feature.decoderInnerProductMatrix && (
+                  <div id="DecoderInnerProductMatrix" className="flex flex-col w-1/2 gap-2">
+                    <p className="font-bold">Decoder Inner Product Matrix</p>
+                    <Plot
+                      data={[
+                        {
+                          z: feature.decoderInnerProductMatrix,
+                          type: "heatmap",
+                          colorscale: "Viridis",
+                          hovertemplate: "Row: %{y}<br>Column: %{x}<br>Value: %{z}<extra></extra>",
+                        },
+                      ]}
+                      layout={{
+                        xaxis: {
+                          title: "Head Index",
+                          scaleanchor: "y",
+                          scaleratio: 1,
+                          constrain: "domain",
+                        },
+                        yaxis: {
+                          title: "Head Index",
+                          constrain: "domain",
+                        },
+                        margin: { t: 10, b: 50, l: 60, r: 10 },
+                        height: 400,
+                        width: 400,
+                      }}
+                      config={{ responsive: true }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {feature.featureActivationHistogram && (
             <div id="Histogram" className="flex flex-col w-full gap-4">

@@ -1,5 +1,6 @@
 import json
 import os
+from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Tuple
@@ -13,10 +14,12 @@ from pydantic import (
     PlainSerializer,
     WithJsonSchema,
 )
-from transformer_lens.loading_from_pretrained import get_official_model_name
 
 from .utils.huggingface import parse_pretrained_name_or_path
-from .utils.misc import convert_str_to_torch_dtype, convert_torch_dtype_to_str
+from .utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
+)
 
 
 class BaseConfig(BaseModel):
@@ -41,7 +44,7 @@ class BaseModelConfig(BaseModel):
     ] = Field(default=torch.bfloat16, exclude=True, validate_default=False)
 
 
-class BaseSAEConfig(BaseModelConfig):
+class BaseSAEConfig(BaseModelConfig, ABC):
     """
     Base class for SAE configs.
     Initializer will initialize SAE based on config type.
@@ -49,12 +52,9 @@ class BaseSAEConfig(BaseModelConfig):
     """
 
     sae_type: Literal["sae", "crosscoder", "mixcoder"]
-    hook_point_in: str
-    hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
     d_model: int
     expansion_factor: int
     use_decoder_bias: bool = True
-    use_glu_encoder: bool = False
     act_fn: Literal["relu", "jumprelu", "topk", "batchtopk"] = "relu"
     jump_relu_threshold: float = 0.0
     apply_decoder_bias_to_pre_encoder: bool = False
@@ -66,9 +66,20 @@ class BaseSAEConfig(BaseModelConfig):
     strict_loading: bool = True
     use_triton_kernel: bool = False
     sparsity_threshold_for_triton_spmm_kernel: float = 0.99
-    
+
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
+    promote_act_fn_dtype: Annotated[
+        torch.dtype | None,
+        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+        PlainSerializer(convert_torch_dtype_to_str),
+        WithJsonSchema(
+            {
+                "type": ["string", "null"],
+            },
+            mode="serialization",
+        ),
+    ] = Field(default=None, exclude=True, validate_default=False)
 
     @property
     def d_sae(self) -> int:
@@ -99,43 +110,84 @@ class BaseSAEConfig(BaseModelConfig):
         with open(os.path.join(sae_path, "config.json"), "w") as f:
             json.dump(d, f, indent=4)
 
+    @property
+    @abstractmethod
+    def associated_hook_points(self) -> list[str]:
+        pass
+
 
 class SAEConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "sae"
+    hook_point_in: str
+    hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
+    use_glu_encoder: bool = False
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return [self.hook_point_in, self.hook_point_out]
 
 
 class CrossCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "crosscoder"
+    hook_points: list[str]
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return self.hook_points
+
+    @property
+    def n_heads(self) -> int:
+        return len(self.hook_points)
 
 
-class MixCoderConfig(BaseSAEConfig):
+class MixCoderConfig(SAEConfig):
     sae_type: Literal["sae", "crosscoder", "mixcoder"] = "mixcoder"
+    hook_point_in: str
+    hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
     modalities: dict[str, int]
+    penalty_coefficient: dict[str, float]
+    loss_weights: dict[str, float]
 
     @property
     def d_sae(self) -> int:
         return sum(self.modalities.values())
 
+    @property
+    def modality_names(self) -> list[str]:
+        return [k for k in self.modalities.keys() if k != "shared"]
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        if "shared" in self.modalities:
+            assert list(self.modalities.keys())[-1] == "shared", "Shared modality must be the last modality"
+
+    def penalty_coefficient_post_init(self, __context):
+        super().model_post_init(__context)
+        for modality in self.modalities.keys():
+            assert self.penalty_coefficient[modality] >= 1, "Penalty coefficient must be greater than or equal to 1"
+
+    def activation_function_post_init(self, __context):
+        super().model_post_init(__context)
+        assert self.act_fn == "jumprelu", "Only jumprelu is supported for MixCoder"
+
 
 class InitializerConfig(BaseConfig):
     bias_init_method: str = "all_zero"
-    const_times_for_init_b_e: int = 10000
     init_decoder_norm: float | None = None
-    decoder_uniform_bound: float = 1.
+    decoder_uniform_bound: float = 1.0
     init_encoder_norm: float | None = None
-    encoder_uniform_bound: float = 1.
+    encoder_uniform_bound: float = 1.0
     init_encoder_with_decoder_transpose: bool = True
-    init_encoder_with_decoder_transpose_factor: float = 1.
+    init_encoder_with_decoder_transpose_factor: float = 1.0
     init_log_jumprelu_threshold_value: float | None = None
     init_search: bool = False
     state: Literal["training", "inference"] = "training"
-    l1_coefficient: float | None = 0.00008
 
 
 class TrainerConfig(BaseConfig):
     l1_coefficient: float | None = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
-    sparsity_loss_type: Literal["power", "tanh", None] = None
+    sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None
     tanh_stretch_coefficient: float = 4.0
     p: int = 1
     initial_k: int | float | None = None
@@ -143,6 +195,8 @@ class TrainerConfig(BaseConfig):
     use_batch_norm_mse: bool = True
 
     lr: float | dict[str, float] = 0.0004
+    expected_l0: int = 100
+    update_decoder_lr_with_l0: bool = True
     betas: Tuple[float, float] = (0.9, 0.999)
     lr_scheduler_name: Literal[
         "constant",
@@ -168,10 +222,6 @@ class TrainerConfig(BaseConfig):
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
-        if self.exp_result_path.exists():
-            raise ValueError(
-                f"Checkpoints for experiment {self.exp_result_path} already exist. Consider changing the experiment name."
-            )
         self.exp_result_path.mkdir(parents=True, exist_ok=True)
         self.exp_result_path.joinpath("checkpoints").mkdir(parents=True, exist_ok=True)
         assert self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
@@ -208,23 +258,25 @@ class ActivationFactoryDatasetSource(ActivationFactorySource):
 
 class ActivationFactoryActivationsSource(ActivationFactorySource):
     model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
-    
+
     type: str = "activations"
-    path: str
+    path: str | dict[str, Path]
     """ The path to the cached activations. """
     device: str = "cpu"
     """ The device to load the activations on. """
-    dtype: Optional[Annotated[
-        torch.dtype,
-        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
-        PlainSerializer(convert_torch_dtype_to_str),
-        WithJsonSchema(
-            {
-                "type": "string",
-            },
-            mode="serialization",
-        ),
-    ]] = None
+    dtype: Optional[
+        Annotated[
+            torch.dtype,
+            BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+            PlainSerializer(convert_torch_dtype_to_str),
+            WithJsonSchema(
+                {
+                    "type": "string",
+                },
+                mode="serialization",
+            ),
+        ]
+    ] = None
     """ We might want to convert presaved bf16 activations to fp32"""
     num_workers: int = 4
     """ The number of workers to use for loading the activations. """
@@ -236,11 +288,9 @@ class ActivationFactoryTarget(Enum):
     TOKENS = "tokens"
     """ Output non-padded and non-truncated tokens. """
     ACTIVATIONS_2D = "activations-2d"
-    """ Output activations in `(seq_len, d_model)` shape. Tokens are padded and truncated to the same length. """
+    """ Output activations in `(batch_size, seq_len, d_model)` shape. Tokens are padded and truncated to the same length. """
     ACTIVATIONS_1D = "activations-1d"
     """ Output activations in `(n_filtered_tokens, d_model)` shape. Tokens are filtered in this stage. """
-    BATCHED_ACTIVATIONS_1D = "batched-activations-1d"
-    """ Output batched activations in `(batch_size, d_model)` shape. Tokens may be shuffled in this stage. """
 
     @property
     def stage(self) -> int:
@@ -248,7 +298,6 @@ class ActivationFactoryTarget(Enum):
             ActivationFactoryTarget.TOKENS: 0,
             ActivationFactoryTarget.ACTIVATIONS_2D: 1,
             ActivationFactoryTarget.ACTIVATIONS_1D: 2,
-            ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D: 3,
         }[self]
 
     def __lt__(self, other: "ActivationFactoryTarget") -> bool:
@@ -272,19 +321,21 @@ class ActivationFactoryConfig(BaseConfig):
     """ The target to produce. """
     hook_points: list[str]
     """ The hook points to capture activations from. """
-    context_size: int = 128
-    """ The context size to use for generating activations. All tokens will be padded or truncated to this size. """
-    model_batch_size: Optional[int] = None
-    """ The batch size to use for generating activations. If `None`, will not use batched generation. """
+    num_workers: int = 4
+    """ The number of workers to use for loading the dataset. """
+    context_size: Optional[int] = None
+    """ The context size to use for generating activations. All tokens will be padded or truncated to this size. If `None`, will not pad or truncate tokens. This may lead to some error when re-batching activations of different context sizes."""
+    model_batch_size: int = 1
+    """ The batch size to use for generating activations. """
     batch_size: Optional[int] = Field(
         default_factory=lambda validated_model: 64
-        if validated_model["target"] == ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D
+        if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
         else None
     )
-    """ The batch size to use for outputting `batched-activations-1d`. """
+    """ The batch size to use for outputting `activations-1d`. """
     buffer_size: Optional[int] = Field(
         default_factory=lambda validated_model: 500_000
-        if validated_model["target"] == ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D
+        if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
         else None
     )
     """ Buffer size for online shuffling. If `None`, no shuffling will be performed. """
@@ -295,7 +346,7 @@ class ActivationFactoryConfig(BaseConfig):
 
 
 class LanguageModelConfig(BaseModelConfig):
-    model_name: Annotated[str, BeforeValidator(lambda v: get_official_model_name(v))] = "gpt2"
+    model_name: str = "gpt2"
     """ The name of the model to use. """
     model_from_pretrained_path: Optional[str] = None
     """ The path to the pretrained model. If `None`, will use the model from HuggingFace. """
@@ -307,6 +358,11 @@ class LanguageModelConfig(BaseModelConfig):
     """ The dimension of the model. """
     local_files_only: bool = False
     """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
+    max_length: int = 2048
+    """ The maximum length of the input. """
+    backend: Literal["huggingface", "transformer_lens", "auto"] = "auto"
+    """ The backend to use for the language model. """
+    load_ckpt: bool = True
 
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
@@ -354,15 +410,25 @@ class FeatureAnalyzerConfig(BaseConfig):
 
     sample_weight_exponent: float = 2.0
     """ Exponent for weighting samples by activation value """
-    
-    ignore_token_ids: Optional[list[int | None]] = None
+
+    ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
 
     subsamples: dict[str, dict[str, int | float]] = Field(
-        default_factory=lambda: {"top_activations": {"proportion": 1.0, "n_samples": 10}}
+        default_factory=lambda: {
+            "top_activations": {"proportion": 1.0, "n_samples": 10},
+        }
     )
     """ Dictionary mapping subsample names to their parameters:
         - `proportion`: Proportion of max activation to consider
+        - `n_samples`: Number of samples to keep
+    """
+
+    non_activating_subsample: dict[str, int | float] = Field(
+        default_factory=lambda: {"threshold": 0.3, "n_samples": 10, "max_length": 50}
+    )
+    """ Parameters for non-activating subsample:
+        - `threshold`: Threshold of max activation to consider
         - `n_samples`: Number of samples to keep
     """
 

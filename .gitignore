@@ -18,7 +18,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -192,3 +191,7 @@ pyrightconfig.json
 /analysis-results
 /analysis
 /results
+
+# uv
+# We ignore uv.lock as conflicting optional dependencies generates non-compatible uv.lock files.
+uv.lock

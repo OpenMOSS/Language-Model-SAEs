@@ -75,6 +75,7 @@ def sae(sae_config: SAEConfig, mocker: MockerFixture) -> SparseAutoEncoder:
     sae.encode.return_value = (
         torch.ones(batch_size, sae_config.d_sae, device=sae_config.device, dtype=sae_config.dtype) * 4
     )
+    sae.normalize_activations.side_effect = lambda x: x
     return sae
 
 

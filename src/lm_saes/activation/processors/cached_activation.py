@@ -2,7 +2,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Optional, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence
 
 import torch
 from safetensors.torch import load_file
@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
+from lm_saes.utils.misc import is_master
 from lm_saes.utils.tensor_dict import move_dict_of_tensor_to_device
 
 
@@ -81,15 +82,13 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
 
     def __init__(
         self,
-        cache_dir: str | Path,
-        hook_points: list[str],
+        cache_dirs: Mapping[str, str | Path],
         device: str = "cpu",
         dtype: Optional[torch.dtype] = None,
         num_workers: int = 0,
         prefetch_factor: int | None = None,
     ):
-        self.cache_dir = Path(cache_dir)
-        self.hook_points = hook_points
+        self.cache_dirs = {k: Path(v) for k, v in cache_dirs.items()}
         self.device = device
         self.dtype = dtype
         self.num_workers = num_workers
@@ -107,7 +106,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         """
         chunk_data = {}
 
-        for hook in self.hook_points:
+        for hook in self.cache_dirs.keys():
             chunk = hook_chunks[hook][chunk_idx]
             data: dict[str, Any] = self._load_chunk(chunk.path)
 
@@ -115,22 +114,21 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             assert isinstance(data, dict), f"Loading cached activation {chunk.path} error: returned {type(data)}"
             assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
             assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
-
             chunk_data[hook] = data["activation"]
 
             # Store tokens and info from first hook point only
-            if hook == self.hook_points[0]:
+            if hook == list(self.cache_dirs.keys())[0]:
                 chunk_data["tokens"] = data["tokens"]
                 if "meta" in data:
                     chunk_data["meta"] = data["meta"]
             else:
-                assert torch.allclose(
-                    data["tokens"], chunk_data["tokens"]
-                ), f"Loading cached activation {chunk.path} error: tokens mismatch"
+                assert torch.allclose(data["tokens"], chunk_data["tokens"]), (
+                    f"Loading cached activation {chunk.path} error: tokens mismatch"
+                )
                 if "meta" in data:
-                    assert (
-                        data["meta"] == chunk_data["meta"]
-                    ), f"Loading cached activation {chunk.path} error: info mismatch"
+                    assert data["meta"] == chunk_data["meta"], (
+                        f"Loading cached activation {chunk.path} error: info mismatch"
+                    )
 
         return chunk_data
 
@@ -146,7 +144,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         Raises:
             FileNotFoundError: If hook point directory doesn't exist
         """
-        hook_dir = self.cache_dir / hook_point
+        hook_dir = self.cache_dirs[hook_point]
         if not hook_dir.exists():
             raise FileNotFoundError(f"Hook point directory not found: {hook_dir}")
 
@@ -195,7 +193,14 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             pin_memory=True,  # mandatory!
             collate_fn=first_data_collate_fn,
         )
-        return iter(tqdm(dataloader, total=total_chunks, desc="Processing activation chunks"))
+        return iter(
+            tqdm(
+                dataloader,
+                total=total_chunks,
+                desc="Processing activation chunks",
+                disable=not is_master(),
+            )
+        )
 
     def process(self, data: None = None, **kwargs) -> Iterable[dict[str, Any]]:
         """Load cached activations in a streaming fashion.
@@ -220,7 +225,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             AssertionError: If loaded data doesn't match expected format
         """
         # Get sorted chunks for each hook point
-        hook_chunks = {hook: self._get_sorted_chunks(hook) for hook in self.hook_points}
+        hook_chunks = {hook: self._get_sorted_chunks(hook) for hook in self.cache_dirs.keys()}
 
         # Verify all hook points have same number of chunks
         chunk_counts = {hook: len(chunks) for hook, chunks in hook_chunks.items()}
@@ -230,7 +235,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 "All hook points must have the same number of chunks."
             )
 
-        stream = self._process_chunks(hook_chunks, len(hook_chunks[self.hook_points[0]]))
+        stream = self._process_chunks(hook_chunks, len(hook_chunks[list(self.cache_dirs.keys())[0]]))
         for chunk in stream:
             activations: dict[str, Any] = move_dict_of_tensor_to_device(
                 chunk,
@@ -238,17 +243,19 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             )
             if self.dtype is not None:
                 for k, v in activations.items():
-                    if k in self.hook_points:
+                    if k in self.cache_dirs.keys():
                         activations[k] = v.to(self.dtype)
-            
+
             while activations["tokens"].ndim >= 3:
+
                 def flatten(x: torch.Tensor | list[list[Any]]) -> torch.Tensor | list[Any]:
                     if isinstance(x, torch.Tensor):
                         return x.flatten(start_dim=0, end_dim=1)
                     else:
                         return [a for b in x for a in b]
+
                 activations = {k: flatten(v) for k, v in activations.items()}
-                
+
             yield activations  # Use pin_memory to load data on cpu, then transfer them to cuda in the main process, as advised in https://discuss.pytorch.org/t/dataloader-multiprocessing-with-dataset-returning-a-cuda-tensor/151022/2.
             # I wrote this utils function as I notice it is used multiple times in this repo. Do we need to apply it elsewhere?
 

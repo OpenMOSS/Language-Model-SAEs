@@ -3,10 +3,11 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, cast
 
 import torch
+from more_itertools import batched
 from tqdm import tqdm
-from transformer_lens import HookedTransformer
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
+from lm_saes.backend.language_model import LanguageModel
 from lm_saes.config import BufferShuffleConfig
 
 
@@ -79,13 +80,15 @@ class ActivationBuffer:
             ActivationBuffer: New buffer with shuffled samples
         """
         data = self.consume()
-        assert all(
-            isinstance(data[k], torch.Tensor) for k in data.keys()
-        ), "All data must be tensors to perform shuffling"
+        assert all(isinstance(data[k], torch.Tensor) for k in data.keys()), (
+            "All data must be tensors to perform shuffling"
+        )
         data = cast(dict[str, torch.Tensor], data)
-        
+
         # Use the passed generator for shuffling
-        perm = torch.randperm(data[list(data.keys())[0]].shape[0], generator=self.generator, device=self.generator.device)
+        perm = torch.randperm(
+            data[list(data.keys())[0]].shape[0], generator=self.generator, device=self.generator.device
+        )
         buffer = {k: v[perm] for k, v in data.items()}
         return ActivationBuffer(buffer=[buffer], generator=self.generator)
 
@@ -106,30 +109,22 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
             should be divisible by the original batch size.
     """
 
-    def __init__(self, hook_points: list[str], batch_size: Optional[int] = None):
+    def __init__(self, hook_points: list[str], batch_size: int, n_context: Optional[int] = None):
         self.hook_points = hook_points
         self.batch_size = batch_size
+        self.n_context = n_context
 
     def batched(self, data: Iterable[dict[str, Any]]) -> Iterable[dict[str, Any]]:
-        if self.batch_size is None:
-            yield from data
-            return
-        buffer = ActivationBuffer()
-        for d in data:
-            if len(d["tokens"].shape) == 1:
-                d = {k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else [v] for k, v in d.items()}
-            buffer = buffer.cat(d)
-            if len(buffer) >= self.batch_size:
-                yield buffer.consume()
-                buffer = ActivationBuffer()
-        if len(buffer) > 0:
-            yield buffer.consume()
+        for d in batched(data, self.batch_size):
+            keys = d[0].keys()
+            yield {k: [dd[k] for dd in d] for k in keys}
 
+    @torch.no_grad()
     def process(
         self,
         data: Iterable[dict[str, Any]],
         *,
-        model: HookedTransformer,
+        model: LanguageModel,
         model_name: str,
         **kwargs,
     ) -> Iterable[dict[str, Any]]:
@@ -137,7 +132,7 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
 
         Args:
             data (Iterable[dict[str, Any]]): Input data containing tokens to process
-            model (HookedTransformer): Model to extract activations from
+            model (LanguageModel): Model to extract activations from
             model_name (str): Name of the model. Save to metadata.
             **kwargs: Additional keyword arguments. Not used by this processor.
 
@@ -148,24 +143,12 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
                 - Original info field if present in input
         """
         for d in self.batched(data):
-            assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
-            tokens = d["tokens"]
-            _, cache = model.run_with_cache_until(tokens, names_filter=self.hook_points, until=self.hook_points[-1])
-            # TODO: Further organize this
-            if len(tokens.shape) == 1:
-                ret = {k: cache[k][0] for k in self.hook_points}
-                if "meta" in d:
-                    ret = ret | {"meta": d["meta"] | {"model_name": model_name}}
-                else:
-                    ret = ret | {"meta": {"model_name": model_name}}
+            activations = model.to_activations(d, self.hook_points, n_context=self.n_context)
+            if "meta" in d:
+                activations = activations | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
             else:
-                ret = {k: cache[k] for k in self.hook_points}
-                if "meta" in d:
-                    ret = ret | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
-                else:
-                    ret = ret | {"meta": [{"model_name": model_name} for _ in range(tokens.shape[0])]}
-            ret = ret | {"tokens": tokens}
-            yield ret
+                activations = activations | {"meta": [{"model_name": model_name} for _ in range(len(d["text"]))]}
+            yield activations
 
 
 class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]):
@@ -180,15 +163,12 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
         hook_points (list[str]): List of hook point names to process activations from
     """
 
-    def __init__(self, hook_points: list[str]):
-        self.hook_points = hook_points
-
     def process(
         self,
         data: Iterable[dict[str, Any]],
         *,
         ignore_token_ids: Optional[list[int]] = None,
-        model: Optional[HookedTransformer] = None,
+        model: Optional[LanguageModel] = None,
         **kwargs,
     ) -> Iterable[dict[str, Any]]:
         """Process activations by filtering out specified token types.
@@ -209,17 +189,17 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
         """
         if ignore_token_ids is None and model is None:
             warnings.warn(
-                "Both ignore_token_ids and model are not provided. No tokens (including pad tokens) will be filtered out. If this is intentional, set ignore_token_ids explicitly to an empty list to avoid this warning.",
+                "ignore_token_ids are not provided. No tokens (including pad tokens) will be filtered out. If this is intentional, set ignore_token_ids explicitly to an empty list to avoid this warning.",
                 UserWarning,
                 stacklevel=2,
             )
         if ignore_token_ids is None and model is not None:
-            assert model.tokenizer is not None, "Tokenizer is required to obtain ignore_token_ids"
-            ignore_token_ids = [
-                cast(int, model.tokenizer.eos_token_id),
-                cast(int, model.tokenizer.pad_token_id),
-                cast(int, model.tokenizer.bos_token_id),
+            ignore_token_ids_optional = [
+                model.eos_token_id,
+                model.pad_token_id,
+                model.bos_token_id,
             ]
+            ignore_token_ids = [token_id for token_id in ignore_token_ids_optional if token_id is not None]
         if ignore_token_ids is None:
             ignore_token_ids = []
         for d in data:
@@ -228,10 +208,7 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
             mask = torch.ones_like(tokens, dtype=torch.bool)
             for token_id in ignore_token_ids:
                 mask &= tokens != token_id
-            activations = {k: d[k][mask] for k in self.hook_points}
-            activations = activations | {"tokens": tokens[mask]}
-            if "meta" in d:
-                activations = activations | {"meta": d["meta"]}
+            activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
             yield activations
 
 
@@ -258,7 +235,12 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             data will be refilled into the buffer whenever the buffer is less than half full, and then re-shuffled.
     """
 
-    def __init__(self, hook_points: list[str], batch_size: int, buffer_size: Optional[int] = None, buffer_shuffle_config: Optional[BufferShuffleConfig] = None):
+    def __init__(
+        self,
+        batch_size: int,
+        buffer_size: Optional[int] = None,
+        buffer_shuffle_config: Optional[BufferShuffleConfig] = None,
+    ):
         """Initialize the ActivationBatchler.
 
         Args:
@@ -266,7 +248,6 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             batch_size (int): Number of samples per batch
             buffer_size (Optional[int], optional): Size of buffer for online shuffling. Defaults to None.
         """
-        self.hook_points = hook_points
         self.batch_size = batch_size
         self.buffer_size = buffer_size
         self.perm_generator = torch.Generator()
@@ -274,7 +255,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             self.perm_generator = torch.Generator(buffer_shuffle_config.generator_device)
             self.perm_generator.manual_seed(buffer_shuffle_config.perm_seed)  # Set seed if provided
 
-    def process(self, data: Iterable[dict[str, Any]], **kwargs) -> Iterable[dict[str, Any]]:
+    def process(self, data: Iterable[dict[str, Any]], **kwargs) -> Iterable[dict[str, torch.Tensor]]:
         """Process input data by batching activations.
 
         Takes an iterable of activation dictionaries and yields batches of activations.
@@ -292,21 +273,16 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             AssertionError: If hook points are missing or tensors have invalid shapes
         """
         buffer = ActivationBuffer(generator=self.perm_generator)
-        pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1)
+        pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1, disable=True)
 
         for d in data:
-            # Validate input: ensure all hook points exist and are 2D tensors
-            assert all(
-                (k in d and isinstance(d[k], torch.Tensor) and len(d[k].shape) == 2) for k in self.hook_points
-            ), "All hook points must be present and be 2D tensors"
-
-            # Validate input: ensure all tensors have consistent shapes
-            assert all(
-                d[k].shape == d[self.hook_points[0]].shape for k in self.hook_points
-            ), "All tensors must have the same shape"
+            # Validate input: ensure all tensors and lists have consistent shapes
+            assert all(len(d[k]) == len(d[next(iter(d.keys()))]) for k in d.keys()), (
+                "All tensors and lists must have the same batch size"
+            )
 
             # Add new data to buffer
-            buffer = buffer.cat({k: v for k, v in d.items() if k in self.hook_points or k == "tokens"})
+            buffer = buffer.cat(d)
             pbar.update(len(buffer) - pbar.n)
 
             if self.buffer_size is not None:
@@ -320,18 +296,18 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
                         # Perhaps this is a bug with basedpyright
                         batch, buffer = cast(ActivationBuffer, buffer).yield_batch(self.batch_size)
                         pbar.update(len(buffer) - pbar.n)
-                        yield batch
+                        yield cast(dict[str, torch.Tensor], batch)
             else:
                 # If no buffer size specified, yield complete batches as they become available
                 while len(buffer) >= self.batch_size:
                     # The same issue as above
                     batch, buffer = cast(ActivationBuffer, buffer).yield_batch(self.batch_size)
                     pbar.update(len(buffer) - pbar.n)
-                    yield batch
+                    yield cast(dict[str, torch.Tensor], batch)
 
         # Yield any remaining samples in batches
         while len(buffer) > 0:
             batch, buffer = buffer.yield_batch(self.batch_size)
             pbar.update(len(buffer) - pbar.n)
-            yield batch
+            yield cast(dict[str, torch.Tensor], batch)
         pbar.close()

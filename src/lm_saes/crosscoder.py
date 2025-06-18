@@ -1,15 +1,23 @@
-from typing import Callable, Literal, Union, cast, overload
+import math
+from typing import Any, Literal, Optional, Union, cast, overload
 
+import einops
 import torch
+import torch.distributed.tensor
+import torch.nn as nn
 from jaxtyping import Float
+from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+from typing_extensions import override
 
-from .config import BaseSAEConfig
-from .sae import SparseAutoEncoder
-from .utils.misc import all_reduce_tensor, get_tensor_from_specific_rank
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.config import CrossCoderConfig
+from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.misc import get_slice_length
+from lm_saes.utils.timer import timer
 
 
-class CrossCoder(SparseAutoEncoder):
+class CrossCoder(AbstractSparseAutoEncoder):
     """Sparse AutoEncoder model.
 
     An autoencoder model that learns to compress the input activation tensor into a high-dimensional but sparse feature activation tensor.
@@ -17,70 +25,173 @@ class CrossCoder(SparseAutoEncoder):
     Can also act as a transcoder model, which learns to compress the input activation tensor into a feature activation tensor, and then reconstruct a label activation tensor from the feature activation tensor.
     """
 
-    def __init__(self, cfg: BaseSAEConfig):
-        super(CrossCoder, self).__init__(cfg)
+    def __init__(self, cfg: CrossCoderConfig, device_mesh: Optional[DeviceMesh] = None):
+        super(CrossCoder, self).__init__(cfg, device_mesh)
+        self.cfg = cfg
 
-    def _decoder_norm(self, decoder: torch.nn.Linear, keepdim: bool = False, local_only=True, aggregate="none"):
-        decoder_norm = super()._decoder_norm(
-            decoder=decoder,
-            keepdim=keepdim,
+        # Assertions
+        assert cfg.sparsity_include_decoder_norm, "Sparsity should include decoder norm in CrossCoder"
+        assert not cfg.apply_decoder_bias_to_pre_encoder, (
+            "Decoder bias should not be applied to pre-encoder in CrossCoder"
         )
-        if not local_only:
-            decoder_norm = all_reduce_tensor(
-                decoder_norm,
-                aggregate=aggregate,
+        assert cfg.use_decoder_bias, "Decoder bias should be used in CrossCoder"
+        assert not cfg.use_triton_kernel, "Triton kernel is not supported in CrossCoder"
+
+        # Initialize weights and biases
+        if device_mesh is None:
+            self.W_E = nn.Parameter(
+                torch.empty(cfg.n_heads, cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype)
             )
-        return decoder_norm
-
-    def activation_function_factory(self) -> Callable[[torch.Tensor], torch.Tensor]:
-        assert self.cfg.act_fn.lower() in [
-            "relu",
-            "topk",
-            "jumprelu",
-            "batchtopk",
-        ], f"Not implemented activation function {self.cfg.act_fn}"
-        if self.cfg.act_fn.lower() == "jumprelu":
-
-            class STEFunction(torch.autograd.Function):
-                @staticmethod
-                def forward(ctx, input: torch.Tensor, log_jumprelu_threshold: torch.Tensor):
-                    jumprelu_threshold = log_jumprelu_threshold.exp()
-                    jumprelu_threshold = all_reduce_tensor(jumprelu_threshold, aggregate="sum")
-                    ctx.save_for_backward(input, jumprelu_threshold)
-                    return input.gt(jumprelu_threshold).to(input.dtype)
-
-                @staticmethod
-                def backward(ctx, *grad_outputs: torch.Tensor):
-                    assert len(grad_outputs) == 1
-                    grad_output = grad_outputs[0]
-
-                    input, jumprelu_threshold = ctx.saved_tensors
-                    grad_input = torch.zeros_like(input)
-                    grad_log_jumprelu_threshold_unscaled = torch.where(
-                        (input - jumprelu_threshold).abs() < self.cfg.jumprelu_threshold_window * 0.5,
-                        -jumprelu_threshold / self.cfg.jumprelu_threshold_window,
-                        0.0,
-                    )
-                    grad_log_jumprelu_threshold = (
-                        grad_log_jumprelu_threshold_unscaled
-                        / torch.where(
-                            ((input - jumprelu_threshold).abs() < self.cfg.jumprelu_threshold_window * 0.5)
-                            * (input != 0.0),
-                            input,
-                            1.0,
-                        )
-                        * grad_output
-                    )
-                    grad_log_jumprelu_threshold = grad_log_jumprelu_threshold.sum(
-                        dim=tuple(range(grad_log_jumprelu_threshold.ndim - 1))
-                    )
-
-                    return grad_input, grad_log_jumprelu_threshold
-
-            return lambda x: cast(torch.Tensor, STEFunction.apply(x, self.log_jumprelu_threshold))
-
+            self.b_E = nn.Parameter(torch.empty(cfg.n_heads, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+            self.W_D = nn.Parameter(
+                torch.empty(cfg.n_heads, cfg.d_sae, cfg.d_model, device=cfg.device, dtype=cfg.dtype)
+            )
+            self.b_D = nn.Parameter(torch.empty(cfg.n_heads, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
         else:
-            return super().activation_function_factory()
+            self.W_E = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.n_heads,
+                    cfg.d_model,
+                    cfg.d_sae,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["W_E"].placements(device_mesh),
+                )
+            )
+            self.b_E = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.n_heads,
+                    cfg.d_sae,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["b_E"].placements(device_mesh),
+                )
+            )
+            self.W_D = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.n_heads,
+                    cfg.d_sae,
+                    cfg.d_model,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["W_D"].placements(device_mesh),
+                )
+            )
+            self.b_D = nn.Parameter(
+                torch.distributed.tensor.empty(
+                    cfg.n_heads,
+                    cfg.d_model,
+                    dtype=cfg.dtype,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["b_D"].placements(device_mesh),
+                )
+            )
+
+    @torch.no_grad()
+    def init_parameters(self, **kwargs) -> None:
+        """Initialize the weights of the model."""
+        super().init_parameters(**kwargs)
+        # Initialize a single head's weights
+        W_E_per_head = torch.empty(
+            self.cfg.d_model, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype
+        ).uniform_(-kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"])
+        W_D_per_head = torch.empty(
+            self.cfg.d_sae, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype
+        ).uniform_(-kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"])
+
+        # Repeat for all heads
+        if self.device_mesh is None:
+            W_E = einops.repeat(W_E_per_head, "d_model d_sae -> n_heads d_model d_sae", n_heads=self.cfg.n_heads)
+            W_D = einops.repeat(W_D_per_head, "d_sae d_model -> n_heads d_sae d_model", n_heads=self.cfg.n_heads)
+            b_E = torch.zeros(self.cfg.n_heads, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype)
+            b_D = torch.zeros(self.cfg.n_heads, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype)
+        else:
+            with timer.time("init_parameters_distributed"):
+                W_E_slices = self.dim_maps()["W_E"].local_slices(
+                    (self.cfg.n_heads, self.cfg.d_model, self.cfg.d_sae), self.device_mesh
+                )
+                W_D_slices = self.dim_maps()["W_D"].local_slices(
+                    (self.cfg.n_heads, self.cfg.d_sae, self.cfg.d_model), self.device_mesh
+                )
+                W_E_head_repeats = get_slice_length(W_E_slices[0], self.cfg.n_heads)
+                W_D_head_repeats = get_slice_length(W_D_slices[0], self.cfg.n_heads)
+                W_E_local = einops.repeat(
+                    W_E_per_head, "d_model d_sae -> n_heads d_model d_sae", n_heads=W_E_head_repeats
+                )
+                W_D_local = einops.repeat(
+                    W_D_per_head, "d_sae d_model -> n_heads d_sae d_model", n_heads=W_D_head_repeats
+                )
+                W_E = DTensor.from_local(
+                    W_E_local, self.device_mesh, self.dim_maps()["W_E"].placements(self.device_mesh)
+                )
+                W_D = DTensor.from_local(
+                    W_D_local, self.device_mesh, self.dim_maps()["W_D"].placements(self.device_mesh)
+                )
+                b_E = torch.distributed.tensor.zeros(
+                    self.cfg.n_heads,
+                    self.cfg.d_sae,
+                    device_mesh=self.device_mesh,
+                    placements=self.dim_maps()["b_E"].placements(self.device_mesh),
+                    dtype=self.cfg.dtype,
+                )
+                b_D = torch.distributed.tensor.zeros(
+                    self.cfg.n_heads,
+                    self.cfg.d_model,
+                    device_mesh=self.device_mesh,
+                    placements=self.dim_maps()["b_D"].placements(self.device_mesh),
+                    dtype=self.cfg.dtype,
+                )
+
+        # Assign to parameters
+        self.W_E.copy_(W_E)
+        self.W_D.copy_(W_D)
+        self.b_E.copy_(b_E)
+        self.b_D.copy_(b_D)
+
+    @timer.time("encode_apply_encoding")
+    def _apply_encoding(
+        self,
+        x: Union[
+            Float[torch.Tensor, "batch n_heads d_model"],
+            Float[torch.Tensor, "batch seq_len n_heads d_model"],
+        ],
+        *,
+        no_einsum: bool = True,
+    ) -> Union[
+        Float[torch.Tensor, "batch n_heads d_sae"],
+        Float[torch.Tensor, "batch seq_len n_heads d_sae"],
+    ]:
+        """Apply encoding transformation to input tensor.
+
+        Args:
+            x: Input tensor of shape (..., n_heads, d_model).
+
+        Returns:
+            Encoded tensor of shape (..., n_heads, d_sae).
+        """
+        if no_einsum:
+            # TODO: Test consistency of this implementation
+            def _apply_encoding_local_no_einsum(x: torch.Tensor, W_E: torch.Tensor, b_E: torch.Tensor) -> torch.Tensor:
+                return torch.vmap(torch.matmul, in_dims=(-2, 0), out_dims=-2)(x, W_E) + b_E
+
+            if self.device_mesh is not None:
+                out_placements = DimMap({"head": -2, "model": -1}).placements(self.device_mesh)
+
+                def _apply_encoding_no_einsum(x: torch.Tensor, W_E: torch.Tensor, b_E: torch.Tensor) -> torch.Tensor:
+                    assert isinstance(x, DTensor) and isinstance(W_E, DTensor) and isinstance(b_E, DTensor)
+                    # x = DimMap({"head": -2}).redistribute(x)
+                    return DTensor.from_local(
+                        _apply_encoding_local_no_einsum(x.to_local(), W_E.to_local(), b_E.to_local()),
+                        device_mesh=self.device_mesh,
+                        placements=out_placements,
+                    )
+            else:
+                _apply_encoding_no_einsum = _apply_encoding_local_no_einsum
+            return _apply_encoding_no_einsum(x, self.W_E, self.b_E)
+        else:
+            return (
+                einops.einsum(x, self.W_E, "... n_heads d_model, n_heads d_model d_sae -> ... n_heads d_sae") + self.b_E
+            )
 
     @overload
     def encode(
@@ -90,6 +201,8 @@ class CrossCoder(SparseAutoEncoder):
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
         return_hidden_pre: Literal[False] = False,
+        *,
+        no_einsum: bool = True,
         **kwargs,
     ) -> Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]: ...
 
@@ -97,209 +210,323 @@ class CrossCoder(SparseAutoEncoder):
     def encode(
         self,
         x: Union[
-            Float[torch.Tensor, "batch d_model"],
-            Float[torch.Tensor, "batch seq_len d_model"],
+            Float[torch.Tensor, "batch n_heads d_model"],
+            Float[torch.Tensor, "batch seq_len n_heads d_model"],
         ],
         return_hidden_pre: Literal[True],
+        *,
+        no_einsum: bool = True,
         **kwargs,
     ) -> tuple[
         Union[
-            Float[torch.Tensor, "batch d_sae"],
-            Float[torch.Tensor, "batch seq_len d_sae"],
+            Float[torch.Tensor, "batch n_heads d_sae"],
+            Float[torch.Tensor, "batch seq_len n_heads d_sae"],
         ],
         Union[
-            Float[torch.Tensor, "batch d_sae"],
-            Float[torch.Tensor, "batch seq_len d_sae"],
+            Float[torch.Tensor, "batch n_heads d_sae"],
+            Float[torch.Tensor, "batch seq_len n_heads d_sae"],
         ],
     ]: ...
 
+    @override
+    @timer.time("encode")
     def encode(
         self,
         x: Union[
-            Float[torch.Tensor, "batch d_model"],
-            Float[torch.Tensor, "batch seq_len d_model"],
+            Float[torch.Tensor, "batch n_heads d_model"],
+            Float[torch.Tensor, "batch seq_len n_heads d_model"],
         ],
         return_hidden_pre: bool = False,
+        *,
+        no_einsum: bool = True,
         **kwargs,
     ) -> Union[
-        Float[torch.Tensor, "batch d_sae"],
-        Float[torch.Tensor, "batch seq_len d_sae"],
+        Float[torch.Tensor, "batch n_heads d_sae"],
+        Float[torch.Tensor, "batch seq_len n_heads d_sae"],
         tuple[
             Union[
-                Float[torch.Tensor, "batch d_sae"],
-                Float[torch.Tensor, "batch seq_len d_sae"],
+                Float[torch.Tensor, "batch n_heads d_sae"],
+                Float[torch.Tensor, "batch seq_len n_heads d_sae"],
             ],
             Union[
-                Float[torch.Tensor, "batch d_sae"],
-                Float[torch.Tensor, "batch seq_len d_sae"],
+                Float[torch.Tensor, "batch n_heads d_sae"],
+                Float[torch.Tensor, "batch seq_len n_heads d_sae"],
             ],
         ],
     ]:
-        """Encode the model activation x into feature activations.
+        """Encode the input tensor.
 
         Args:
-            x (torch.Tensor): The input activation tensor.
-            return_hidden_pre (bool, optional): Whether to return the hidden pre-activation. Defaults to False.
+            x: Input tensor of shape (..., n_heads, d_model).
 
         Returns:
-            torch.Tensor: The feature activations.
-
+            Encoded tensor of shape (..., n_heads, d_sae).
         """
+        if self.device_mesh is not None and not isinstance(x, DTensor):
+            with timer.time("encode_distribute_tensor"):
+                x = DimMap({"head": -2}).distribute(x, self.device_mesh)
 
-        input_norm_factor = self.compute_norm_factor(x, hook_point=self.cfg.hook_point_in)
-        x = x * input_norm_factor
+        # Apply encoding per head
+        hidden_pre = self._apply_encoding(x, no_einsum=no_einsum)
 
-        if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
-            bias = self.decoder.bias.to_local() if isinstance(self.decoder.bias, DTensor) else self.decoder.bias
-            x = x - bias
-
-        hidden_pre = self.encoder(x)
-
-        hidden_pre = all_reduce_tensor(hidden_pre, aggregate="sum")
-        hidden_pre = self.hook_hidden_pre(hidden_pre)
-
-        if self.cfg.sparsity_include_decoder_norm:
-            sparsity_scores = hidden_pre * self._decoder_norm(
-                decoder=self.decoder,
-                local_only=True,
-            )
+        # Sum across heads and add bias
+        if no_einsum:
+            accumulated_hidden_pre = torch.sum(hidden_pre, dim=-2)
         else:
-            sparsity_scores = hidden_pre
+            accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
 
-        activation_mask = self.activation_function(sparsity_scores)
-        feature_acts = hidden_pre * activation_mask
+        with timer.time("encode_redistribute_tensor_pre_repeat"):
+            if isinstance(accumulated_hidden_pre, DTensor):
+                accumulated_hidden_pre = DimMap({"model": -1}).redistribute(accumulated_hidden_pre)
 
-        feature_acts = self.hook_feature_acts(feature_acts)
+        accumulated_hidden_pre = einops.repeat(
+            accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
+        )
+
+        with timer.time("encode_redistribute_tensor_post_repeat"):
+            if isinstance(accumulated_hidden_pre, DTensor):
+                accumulated_hidden_pre = DimMap({"head": -2, "model": -1}).redistribute(accumulated_hidden_pre)
+
+        # Apply activation function
+        feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
 
         if return_hidden_pre:
-            return feature_acts, hidden_pre
+            return feature_acts, accumulated_hidden_pre
         return feature_acts
 
-    @overload
-    def compute_loss(
+    def _apply_decoding(
         self,
-        batch: dict[str, torch.Tensor],
+        feature_acts: Union[
+            Float[torch.Tensor, "batch n_heads d_sae"],
+            Float[torch.Tensor, "batch seq_len n_heads d_sae"],
+        ],
         *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        return_aux_data: Literal[True] = True,
-        **kwargs,
-    ) -> tuple[
-        Float[torch.Tensor, " batch"],
-        tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
-    ]: ...
+        no_einsum: bool = True,
+    ) -> Union[
+        Float[torch.Tensor, "batch n_heads d_model"],
+        Float[torch.Tensor, "batch seq_len n_heads d_model"],
+    ]:
+        """Apply decoding transformation to feature activations.
 
-    @overload
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        return_aux_data: Literal[False],
-        **kwargs,
-    ) -> Float[torch.Tensor, " batch"]: ...
+        Args:
+            feature_acts: Feature activations tensor of shape (..., n_heads, d_sae).
 
-    def compute_loss(
+        Returns:
+            Decoded tensor of shape (..., n_heads, d_model).
+        """
+        if no_einsum:
+
+            def _apply_decoding_local_no_einsum(
+                feature_acts: torch.Tensor, W_D: torch.Tensor, b_D: torch.Tensor
+            ) -> torch.Tensor:
+                return torch.vmap(torch.matmul, in_dims=(-2, 0), out_dims=-2)(feature_acts, W_D) + b_D
+
+            if self.device_mesh is not None:
+                out_placements = DimMap({"head": -2}).placements(self.device_mesh)
+
+                def _apply_decoding_no_einsum(
+                    feature_acts: torch.Tensor, W_D: torch.Tensor, b_D: torch.Tensor
+                ) -> torch.Tensor:
+                    assert isinstance(feature_acts, DTensor) and isinstance(W_D, DTensor) and isinstance(b_D, DTensor)
+                    # feature_acts = DimMap({"head": -2, "model": -1}).redistribute(feature_acts)
+                    return DTensor.from_local(
+                        _apply_decoding_local_no_einsum(feature_acts.to_local(), W_D.to_local(), b_D.to_local()),
+                        device_mesh=self.device_mesh,
+                        placements=out_placements,
+                    )
+            else:
+                _apply_decoding_no_einsum = _apply_decoding_local_no_einsum
+            return _apply_decoding_no_einsum(feature_acts, self.W_D, self.b_D)
+
+        else:
+            return (
+                einops.einsum(feature_acts, self.W_D, "... n_heads d_sae, n_heads d_sae d_model -> ... n_heads d_model")
+                + self.b_D
+            )
+
+    @override
+    @timer.time("decode")
+    def decode(
         self,
-        batch: dict[str, torch.Tensor],
-        label: (
-            Union[
-                Float[torch.Tensor, "batch d_model"],
-                Float[torch.Tensor, "batch seq_len d_model"],
-            ]
-            | None
-        ) = None,
+        feature_acts: Union[
+            Float[torch.Tensor, "batch d_sae"],
+            Float[torch.Tensor, "batch seq_len d_sae"],
+        ],
         *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        return_aux_data: bool = True,
+        no_einsum: bool = True,
         **kwargs,
     ) -> Union[
-        Float[torch.Tensor, " batch"],
-        tuple[
-            Float[torch.Tensor, " batch"],
-            tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
-        ],
-    ]:
-        x: torch.Tensor = batch[self.cfg.hook_point_in]
-        label: torch.Tensor = batch[self.cfg.hook_point_out]
+        Float[torch.Tensor, "batch d_model"],
+        Float[torch.Tensor, "batch seq_len d_model"],
+    ]:  # may be overridden by subclasses
+        """Decode the encoded tensor.
 
-        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True)
-        reconstructed = self.decode(feature_acts)
+        Args:
+            x: Encoded tensor of shape (n_heads, d_sae).
 
-        label_norm_factor = self.compute_norm_factor(label, hook_point=self.cfg.hook_point_out)
-        label_normed = label * label_norm_factor
+        Returns:
+            Decoded tensor of shape (n_heads, d_model).
+        """
+        return self._apply_decoding(feature_acts, no_einsum=no_einsum)
 
-        # l_rec: (batch, d_model)
-        l_rec = (reconstructed - label_normed).pow(2)
+    @override
+    def decoder_norm(self, keepdim: bool = False) -> torch.Tensor:
+        """Calculate the norm of the decoder weights.
 
-        if use_batch_norm_mse:
-            l_rec = (
-                l_rec
-                / (label_normed - label_normed.mean(dim=0, keepdim=True))
-                .pow(2)
-                .sum(dim=-1, keepdim=True)
-                .clamp(min=1e-8)
-                .sqrt()
-            )
+        Returns:
+            Norm of decoder weights of shape (n_heads, d_sae).
+        """
+        with timer.time("decoder_norm_computation"):
+            if not isinstance(self.W_D, DTensor):
+                return torch.norm(self.W_D, dim=-1, keepdim=keepdim)
+            else:
+                assert self.device_mesh is not None
+                return DTensor.from_local(
+                    torch.norm(self.W_D.to_local(), dim=-1, keepdim=keepdim),
+                    device_mesh=self.device_mesh,
+                    placements=DimMap({"head": 0, "model": 1}).placements(self.device_mesh),
+                )
 
-        l_rec = l_rec.sum(dim=-1).mean()
+    @override
+    @timer.time("encoder_norm")
+    def encoder_norm(self, keepdim: bool = False) -> torch.Tensor:
+        """Calculate the norm of the encoder weights.
 
-        loss = l_rec
-        loss_dict = {
-            "l_rec": l_rec,
-        }
+        Returns:
+            Norm of encoder weights of shape (n_heads, d_sae).
+        """
+        return torch.norm(self.W_E, dim=-2, keepdim=keepdim)
 
-        if sparsity_loss_type == "power":
-            l_s = torch.norm(feature_acts * self._decoder_norm(decoder=self.decoder), p=p, dim=-1)
-            loss_dict["l_s"] = self.current_l1_coefficient * l_s.mean()
-            assert self.current_l1_coefficient is not None
-            loss = loss + self.current_l1_coefficient * l_s.mean()
-        elif sparsity_loss_type == "tanh":
-            l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self._decoder_norm(decoder=self.decoder)).sum(
-                dim=-1
-            )
-            loss_dict["l_s"] = self.current_l1_coefficient * l_s.mean()
-            assert self.current_l1_coefficient is not None
-            loss = loss + self.current_l1_coefficient * l_s.mean()
-        elif sparsity_loss_type is None:
-            pass
+    @override
+    @timer.time("decoder_bias_norm")
+    def decoder_bias_norm(self) -> torch.Tensor:
+        return torch.norm(self.b_D, dim=-1, keepdim=True)
+
+    @override
+    @timer.time("set_decoder_to_fixed_norm")
+    @torch.no_grad()
+    def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
+        if force_exact:
+            self.W_D.mul_(value / self.decoder_norm(keepdim=True))
         else:
-            raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
+            self.W_D.mul_(value / torch.clamp(self.decoder_norm(keepdim=True), min=value))
 
-        loss = all_reduce_tensor(loss, aggregate="mean")
+    @override
+    @timer.time("set_encoder_to_fixed_norm")
+    @torch.no_grad()
+    def set_encoder_to_fixed_norm(self, value: float):
+        self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
-        if return_aux_data:
-            aux_data = {
-                "feature_acts": feature_acts,
-                "reconstructed": reconstructed / label_norm_factor,
-                "hidden_pre": hidden_pre,
-            }
-            return loss, (
-                loss_dict,
-                aux_data,
+    @override
+    @timer.time("standardize_parameters_of_dataset_norm")
+    @torch.no_grad()
+    def standardize_parameters_of_dataset_norm(self, dataset_average_activation_norm: dict[str, float] | None):
+        """
+        Standardize the parameters of the model to account for dataset_norm during inference.
+        """
+        assert self.cfg.norm_activation == "dataset-wise"
+        assert self.dataset_average_activation_norm is not None or dataset_average_activation_norm is not None
+        if dataset_average_activation_norm is not None:
+            self.set_dataset_average_activation_norm(dataset_average_activation_norm)
+        assert self.dataset_average_activation_norm is not None
+        norm_factors = torch.tensor(
+            [
+                math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point]
+                for hook_point in self.cfg.hook_points
+            ],
+            dtype=self.cfg.dtype,
+            device=self.cfg.device,
+        )
+        self.b_E.div_(norm_factors.view(self.cfg.n_heads, 1))
+        self.b_D.div_(norm_factors.view(self.cfg.n_heads, 1))
+        self.cfg.norm_activation = "inference"
+
+    @override
+    @timer.time("init_encoder_with_decoder_transpose")
+    @torch.no_grad()
+    def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
+        transposed_decoder = (
+            einops.rearrange(self.W_D, "n_heads d_sae d_model -> n_heads d_model d_sae").clone().contiguous() * factor
+        )
+        self.W_E.copy_(transposed_decoder)
+
+    @override
+    @timer.time("prepare_input")
+    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
+        def pad_to_d_model(x: torch.Tensor) -> torch.Tensor:
+            if x.shape[-1] > self.cfg.d_model:
+                raise ValueError(f"Input tensor has {x.shape[-1]} dimensions, but expected {self.cfg.d_model}.")
+            elif x.shape[-1] < self.cfg.d_model:
+                zero_padding = torch.zeros(
+                    *x.shape[:-1], self.cfg.d_model - x.shape[-1], device=x.device, dtype=x.dtype
+                )
+                return torch.cat([x, zero_padding], dim=-1)
+            else:
+                return x
+
+        if self.device_mesh is None or "head" not in cast(tuple[str, ...], self.device_mesh.mesh_dim_names):
+            return torch.stack([pad_to_d_model(batch[hook_point]) for hook_point in self.cfg.hook_points], dim=-2), {}
+        else:
+            local_hook_points = self.cfg.hook_points[
+                DimMap({"head": 0}).local_slices((len(self.cfg.hook_points),), self.device_mesh)[0]
+            ]
+            local_activations = torch.stack(
+                [pad_to_d_model(batch[hook_point]) for hook_point in local_hook_points], dim=-2
             )
+            return DTensor.from_local(
+                local_activations,
+                device_mesh=self.device_mesh,
+                placements=DimMap({"head": -2}).placements(self.device_mesh),
+            ), {}
 
-        return loss
+    @override
+    @timer.time("prepare_label")
+    def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
+        return self.prepare_input(batch)[0]
+
+    @override
+    @torch.no_grad()
+    def transform_to_unit_decoder_norm(self):
+        raise NotImplementedError("Transform to unit decoder norm is not supported for CrossCoder")
+
+    def dim_maps(self) -> dict[str, DimMap]:
+        """Return a dictionary mapping parameter names to dimension maps.
+
+        Returns:
+            A dictionary mapping parameter names to DimMap objects.
+        """
+        parent_maps = super().dim_maps()
+        crosscoder_maps = {
+            "W_E": DimMap({"head": 0, "model": 2}),
+            "W_D": DimMap({"head": 0, "model": 1}),
+            "b_E": DimMap({"head": 0, "model": 1}),
+            "b_D": DimMap({"head": 0}),
+        }
+        return parent_maps | crosscoder_maps
+
+    @override
+    @timer.time("load_distributed_state_dict")
+    def load_distributed_state_dict(
+        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
+    ) -> None:
+        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
+        for name in ["W_E", "W_D", "b_E", "b_D"]:
+            self.register_parameter(
+                name,
+                nn.Parameter(state_dict[f"{prefix}{name}"].to(getattr(self, name).dtype)),
+            )
 
     @torch.no_grad()
-    def log_statistics(self):
-        assert self.dataset_average_activation_norm is not None
-        log_dict = {
-            'metrics/mean_jumprelu_threshold': all_reduce_tensor(self.log_jumprelu_threshold.exp(), aggregate='sum'),
-            'metrics/current_l1_coefficient':self.current_l1_coefficient,
-        }
-        return log_dict
+    @timer.time("decoder_inner_product_matrices")
+    def decoder_inner_product_matrices(self) -> Float[torch.Tensor, "d_sae n_head n_head"]:
+        inner_product_matrices = einops.einsum(self.W_D, self.W_D, "i d_sae d_model, j d_sae d_model -> d_sae i j")
+        inner_product_matrices = einops.einsum(self.W_D, self.W_D, "i d_sae d_model, j d_sae d_model -> d_sae i j")
+        return inner_product_matrices
 
-    def initialize_with_same_weight_across_layers(self):
-        self.encoder.weight.data = get_tensor_from_specific_rank(self.encoder.weight.data.clone(), src=0)
-        self.encoder.bias.data = get_tensor_from_specific_rank(self.encoder.bias.data.clone(), src=0)
-        self.decoder.weight.data = get_tensor_from_specific_rank(self.decoder.weight.data.clone(), src=0)
-        self.decoder.bias.data = get_tensor_from_specific_rank(self.decoder.bias.data.clone(), src=0)
+    @torch.no_grad()
+    @timer.time("decoder_similarity_matrices")
+    def decoder_similarity_matrices(self) -> Float[torch.Tensor, "d_sae n_head n_head"]:
+        inner_product_matrices = self.decoder_inner_product_matrices()
+        decoder_norms = self.decoder_norm()
+        decoder_norm_products = einops.einsum(decoder_norms, decoder_norms, "i d_sae, j d_sae -> d_sae i j")
+        return inner_product_matrices / decoder_norm_products

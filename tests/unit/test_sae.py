@@ -65,14 +65,14 @@ def test_set_norm(sae: SparseAutoEncoder):
         model.set_decoder_to_fixed_norm(norm, force_exact=force_exact)
         if force_exact:
             assert torch.allclose(
-                model._decoder_norm(model.decoder, keepdim=False),
+                model.decoder_norm(keepdim=False),
                 norm * torch.ones(size=(model.cfg.d_sae,), device=model.cfg.device, dtype=model.cfg.dtype),
                 atol=1e-4,
                 rtol=1e-5,
             )
         else:
             assert torch.all(
-                model._decoder_norm(model.decoder, keepdim=False)
+                model.decoder_norm(keepdim=False)
                 <= norm * torch.ones(size=(model.cfg.d_sae,), device=model.cfg.device, dtype=model.cfg.dtype) + 1e-4
             )
 
@@ -80,7 +80,7 @@ def test_set_norm(sae: SparseAutoEncoder):
         model = sae
         model.set_encoder_to_fixed_norm(norm)
         assert torch.allclose(
-            model._encoder_norm(model.encoder, keepdim=False),
+            model.encoder_norm(keepdim=False),
             norm * torch.ones(size=(model.cfg.d_sae,), device=model.cfg.device, dtype=model.cfg.dtype),
             atol=1e-4,
             rtol=1e-5,
@@ -125,7 +125,7 @@ def test_sae_activate_fn(sae_config: SAEConfig, sae: SparseAutoEncoder):
 def test_transform_to_unit_decoder_norm(sae_config: SAEConfig, sae: SparseAutoEncoder):
     sae.transform_to_unit_decoder_norm()
     assert torch.allclose(
-        sae._decoder_norm(sae.decoder, keepdim=False),
+        sae.decoder_norm(keepdim=False),
         torch.ones(size=(sae_config.d_sae,), device=sae_config.device, dtype=sae_config.dtype),
         atol=1e-4,
         rtol=1e-5,
@@ -181,12 +181,12 @@ def test_compute_norm_factor(sae_config: SAEConfig, sae: SparseAutoEncoder):
 def test_persistent_dataset_average_activation_norm(sae_config: SAEConfig, sae: SparseAutoEncoder):
     sae.set_dataset_average_activation_norm({"in": 3.0, "out": 2.0})
     assert sae.dataset_average_activation_norm == {"in": 3.0, "out": 2.0}
-    state_dict = sae._get_full_state_dict()
+    state_dict = sae.full_state_dict()
     assert state_dict["dataset_average_activation_norm.in"] == 3.0
     assert state_dict["dataset_average_activation_norm.out"] == 2.0
 
     new_sae = SparseAutoEncoder(sae_config)
-    new_sae._load_full_state_dict(state_dict)
+    new_sae.load_full_state_dict(state_dict)
     assert new_sae.cfg == sae.cfg
     assert all(torch.allclose(p, q, atol=1e-4, rtol=1e-5) for p, q in zip(new_sae.parameters(), sae.parameters()))
     assert new_sae.dataset_average_activation_norm == {"in": 3.0, "out": 2.0}
@@ -194,7 +194,7 @@ def test_persistent_dataset_average_activation_norm(sae_config: SAEConfig, sae: 
 
 def test_get_full_state_dict(sae_config: SAEConfig, sae: SparseAutoEncoder):
     sae_config.force_unit_decoder_norm = True
-    state_dict = sae._get_full_state_dict()
+    state_dict = sae.full_state_dict()
     assert "decoder.weight" in state_dict
     assert not torch.allclose(state_dict["decoder.weight"], sae.decoder.weight.data, atol=1e-4, rtol=1e-5)
     sae.set_decoder_to_fixed_norm(1.0, force_exact=True)
@@ -228,5 +228,8 @@ def test_forward(sae_config: SAEConfig, sae: SparseAutoEncoder):
     sae.set_dataset_average_activation_norm(
         {"in": 2.0 * math.sqrt(sae_config.d_model), "out": 1.0 * math.sqrt(sae_config.d_model)}
     )
-    output = sae.forward(torch.tensor([[4.0, 4.0]], device=sae_config.device, dtype=sae_config.dtype))
+    batch = {"in": torch.tensor([[4.0, 4.0]], device=sae_config.device, dtype=sae_config.dtype)}
+    batch = sae.normalize_activations(batch)
+    x, _ = sae.prepare_input(batch)
+    output = sae.forward(x)
     assert torch.allclose(output, torch.tensor([[212.0, 449.0]], device=sae_config.device, dtype=sae_config.dtype))
