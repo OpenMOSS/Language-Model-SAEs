@@ -17,6 +17,7 @@ from transformers import (
 
 from lm_saes.config import LanguageModelConfig, LLaDAConfig
 from lm_saes.utils.misc import pad_and_truncate_tokens
+from lm_saes.utils.timer import timer
 
 
 def get_input_with_manually_prepended_bos(tokenizer, input):
@@ -216,6 +217,8 @@ class TransformerLensLanguageModel(LanguageModel):
             _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
         ]
 
+    @timer.time("to_activations")
+    @torch.no_grad()
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None, prepend_bos: bool = True
     ) -> dict[str, torch.Tensor]:
@@ -224,13 +227,15 @@ class TransformerLensLanguageModel(LanguageModel):
             warnings.warn(
                 "Activations with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
-        tokens = self.model.to_tokens(raw["text"], prepend_bos=prepend_bos)
+        with timer.time("to_tokens"):
+            tokens = self.model.to_tokens(raw["text"], prepend_bos=prepend_bos)
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
             )
             tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
-        _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
+        with timer.time("run_with_cache_until"):
+            _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
         return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
 
 
