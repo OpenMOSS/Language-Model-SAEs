@@ -440,14 +440,4 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         return label
 
     def get_parameters(self) -> list[dict[str, Any]]:
-        return [
-            # all parameters but decoder weight, use filter to avoid modifying the decoder weight
-            {
-                "params": [param for name, param in self.named_parameters() if name != "W_D"],
-                "name": "exclude_decoder_weight",
-            },
-            {
-                "params": [self.W_D],
-                "name": "decoder_weight",
-            },
-        ]
+        return [{"params": self.parameters()}]

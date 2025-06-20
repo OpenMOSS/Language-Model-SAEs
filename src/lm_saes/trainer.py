@@ -69,13 +69,6 @@ class Trainer:
                 ]
         self.wandb_logger = wandb_logger
 
-    def _update_decoder_learning_rate(self, l0: float):
-        assert self.optimizer is not None and isinstance(self.cfg.lr, float)
-        # change the learning rate of the decoder weights to be inversely proportional to the l0
-        for param_group in self.optimizer.param_groups:
-            if param_group["name"] == "decoder_weight":
-                param_group["lr"] = self.cfg.lr * self.cfg.expected_l0 / l0
-
     @timer.time("initialize_optimizer")
     def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
         assert isinstance(self.cfg.lr, float)
@@ -220,13 +213,6 @@ class Trainer:
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
             }
-            if self.cfg.update_decoder_lr_with_l0:
-                decoder_param_group = next(
-                    param_group
-                    for param_group in self.optimizer.param_groups
-                    if param_group["name"] == "decoder_weight"
-                )
-                wandb_log_dict["details/decoder_learning_rate"] = decoder_param_group["lr"]
             # Add timer information
             timer_data = {f"time/{name}": time_value for name, time_value in timer.get_all_timers().items()}
             timer_avg_data = {f"time_avg/{name}": avg_time for name, avg_time in timer.get_all_average_times().items()}
@@ -299,10 +285,6 @@ class Trainer:
                 self.optimizer.zero_grad()
 
                 loss_dict = self._training_step(sae, batch)
-
-                if self.cfg.update_decoder_lr_with_l0:
-                    l0 = (loss_dict["feature_acts"] > 0).float().sum(-1).mean().item()
-                    self._update_decoder_learning_rate(l0)
 
                 with timer.time("backward"):
                     loss_dict["loss"].backward()
