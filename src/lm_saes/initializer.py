@@ -73,23 +73,6 @@ class Initializer:
 
         sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
-        if self.cfg.bias_init_method == "geometric_median":
-            assert isinstance(sae, SparseAutoEncoder), (
-                "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
-            )
-            assert sae.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
-            sae.b_D.copy_(
-                sae.compute_norm_factor(batch[sae.cfg.hook_point_out], hook_point=sae.cfg.hook_point_out)
-                * batch[sae.cfg.hook_point_out]
-            ).mean(0)
-
-            normalized_input = (
-                sae.compute_norm_factor(batch[sae.cfg.hook_point_in], hook_point=sae.cfg.hook_point_in)
-                * batch[sae.cfg.hook_point_in]
-            )
-            normalized_median = normalized_input.mean(0)
-            sae.b_E.copy_(-normalized_median @ sae.W_E)
-
         if self.cfg.init_encoder_with_decoder_transpose:
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
 

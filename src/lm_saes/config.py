@@ -138,7 +138,6 @@ class CrossCoderConfig(BaseSAEConfig):
 
 
 class InitializerConfig(BaseConfig):
-    bias_init_method: str = "all_zero"
     decoder_uniform_bound: float = 1.0
     encoder_uniform_bound: float = 1.0
     init_encoder_with_decoder_transpose: bool = True
