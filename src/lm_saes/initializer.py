@@ -1,3 +1,4 @@
+import math
 from typing import Dict, Iterable, List
 
 import torch
@@ -5,7 +6,7 @@ from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder, JumpReLU
 from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.sae import SparseAutoEncoder
@@ -32,14 +33,8 @@ class Initializer:
             init_log_jumprelu_threshold_value=self.cfg.init_log_jumprelu_threshold_value,
         )
 
-        if self.cfg.init_decoder_norm:
-            sae.set_decoder_to_fixed_norm(self.cfg.init_decoder_norm, force_exact=True)
-
         if self.cfg.init_encoder_with_decoder_transpose:
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
-
-        if self.cfg.init_encoder_norm:
-            sae.set_encoder_to_fixed_norm(self.cfg.init_encoder_norm)
 
         return sae
 
@@ -55,29 +50,28 @@ class Initializer:
         """
         batch = sae.normalize_activations(activation_batch)
 
-        if self.cfg.init_decoder_norm is None:
-            def grid_search_best_init_norm(search_range: List[float]) -> float:
-                losses: Dict[float, float] = {}
+        def grid_search_best_init_norm(search_range: List[float]) -> float:
+            losses: Dict[float, float] = {}
 
-                for norm in search_range:
-                    sae.set_decoder_to_fixed_norm(norm, force_exact=True)
-                    if self.cfg.init_encoder_with_decoder_transpose and self.cfg.init_encoder_norm is None:
-                        sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
-                    mse = sae.compute_loss(batch)[1][0]["l_rec"].mean().item()
-                    losses[norm] = mse
-                best_norm = min(losses, key=losses.get)  # type: ignore
-                return best_norm
+            for norm in search_range:
+                sae.set_decoder_to_fixed_norm(norm, force_exact=True)
+                if self.cfg.init_encoder_with_decoder_transpose:
+                    sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
+                mse = sae.compute_loss(batch)[1][0]["l_rec"].mean().item()
+                losses[norm] = mse
+            best_norm = min(losses, key=losses.get)  # type: ignore
+            return best_norm
 
-            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
-            best_norm_fine_grained = grid_search_best_init_norm(
-                torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
-            )
+        best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
+        best_norm_fine_grained = grid_search_best_init_norm(
+            torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
+        )
 
-            logger.info(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")
-            if wandb_logger is not None:
-                wandb_logger.log({"best_norm_fine_grained": best_norm_fine_grained})
+        logger.info(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")
+        if wandb_logger is not None:
+            wandb_logger.log({"best_norm_fine_grained": best_norm_fine_grained})
 
-            sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
+        sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
         if self.cfg.bias_init_method == "geometric_median":
             assert isinstance(sae, SparseAutoEncoder), (
@@ -89,15 +83,14 @@ class Initializer:
                 * batch[sae.cfg.hook_point_out]
             ).mean(0)
 
-            if not sae.cfg.apply_decoder_bias_to_pre_encoder:
-                normalized_input = (
-                    sae.compute_norm_factor(batch[sae.cfg.hook_point_in], hook_point=sae.cfg.hook_point_in)
-                    * batch[sae.cfg.hook_point_in]
-                )
-                normalized_median = normalized_input.mean(0)
-                sae.b_E.copy_(-normalized_median @ sae.W_E)
+            normalized_input = (
+                sae.compute_norm_factor(batch[sae.cfg.hook_point_in], hook_point=sae.cfg.hook_point_in)
+                * batch[sae.cfg.hook_point_in]
+            )
+            normalized_median = normalized_input.mean(0)
+            sae.b_E.copy_(-normalized_median @ sae.W_E)
 
-        if self.cfg.init_encoder_with_decoder_transpose and self.cfg.init_encoder_norm is None:
+        if self.cfg.init_encoder_with_decoder_transpose:
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
 
         return sae
@@ -113,7 +106,10 @@ class Initializer:
         hidden_pre = torch.clamp(hidden_pre, min=0.0)
         hidden_pre = hidden_pre.flatten()
         threshold = hidden_pre.topk(k=batch_size(batch) * sae.cfg.top_k).values[-1]
-        sae.cfg.jump_relu_threshold = threshold.item()
+        sae.cfg.act_fn = "jumprelu"
+        sae.activation_function = sae.activation_function_factory(sae.device_mesh)
+        assert isinstance(sae.activation_function, JumpReLU)
+        sae.activation_function.log_jumprelu_threshold.data.fill_(math.log(threshold.item()))
         return sae
 
     def initialize_sae_from_config(
@@ -166,12 +162,9 @@ class Initializer:
                 logger.info(
                     "Converting topk activation to jumprelu for inference. Features are set independent to each other."
                 )
-                if sae.cfg.jump_relu_threshold is None:
-                    assert activation_stream is not None, (
-                        "Activation iterator must be provided for jump_relu_threshold initialization"
-                    )
-                    activation_batch = next(iter(activation_stream))
-                    self.initialize_jump_relu_threshold(sae, activation_batch)
-                sae.cfg.act_fn = "jumprelu"
-
+                assert activation_stream is not None, (
+                    "Activation iterator must be provided for jump_relu_threshold initialization"
+                )
+                activation_batch = next(iter(activation_stream))
+                self.initialize_jump_relu_threshold(sae, activation_batch)
         return sae
