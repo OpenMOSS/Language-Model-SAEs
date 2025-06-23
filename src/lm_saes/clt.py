@@ -26,45 +26,6 @@ from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import BaseSAEConfig, CLTConfig
 from lm_saes.utils.distributed import DimMap
 
-
-def _upper_triangular_index(layer_from: int, layer_to: int, n_layers: int) -> int:
-    """Convert (layer_from, layer_to) to index in upper triangular storage.
-
-    We store decoders for (layer_from=i, layer_to=j) where i <= j.
-    The mapping is: flatten the upper triangular matrix by rows.
-
-    Mapping:
-    (0, 0) -> 0
-    (0, 1) -> 1
-    (1, 1) -> 2
-    (0, 2) -> 3
-    (1, 2) -> 4
-    (2, 2) -> 5
-
-    Args:
-        layer_from: Source layer (0 to n_layers-1)
-        layer_to: Target layer (layer_from to n_layers-1)
-        n_layers: Total number of layers
-
-    Returns:
-        Index in the flattened upper triangular storage
-    """
-    assert 0 <= layer_from < n_layers
-    assert layer_from <= layer_to < n_layers
-
-    # Number of elements in rows 0 to layer_from-1
-    elements_before_row = layer_from * n_layers - (layer_from * (layer_from - 1)) // 2
-    # Position within row layer_from
-    pos_in_row = layer_to - layer_from
-
-    return int(elements_before_row + pos_in_row)  # Ensure integer index
-
-
-def _total_upper_triangular_elements(n_layers: int) -> int:
-    """Calculate total number of elements in upper triangular matrix."""
-    return (n_layers * (n_layers + 1)) // 2
-
-
 class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     """Cross Layer Transcoder (CLT) implementation.
 
@@ -87,12 +48,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         self.cfg = cfg
 
         # CLT requires specific configuration settings
-        assert cfg.sparsity_include_decoder_norm, "CLT requires sparsity_include_decoder_norm=True"
+        assert not cfg.sparsity_include_decoder_norm, "CLT requires sparsity_include_decoder_norm=False"
         assert cfg.use_decoder_bias, "CLT requires use_decoder_bias=True"
         assert not cfg.apply_decoder_bias_to_pre_encoder, "CLT requires apply_decoder_bias_to_pre_encoder=False"
-
-        # Calculate storage dimensions
-        self.n_decoder_matrices = _total_upper_triangular_elements(cfg.n_layers)
 
         # Initialize weights and biases for cross-layer architecture
         if device_mesh is None:
@@ -108,8 +66,13 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 for i in range(cfg.n_layers)
             ])
             
-            # L(L+1)/2 decoder biases: upper triangular pattern stored efficiently
-            self.b_D = nn.Parameter(torch.empty(self.n_decoder_matrices, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
+            # L decoder biases: one bias per target layer
+            self.b_D = nn.ParameterList([
+                nn.Parameter(torch.empty(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
+                for _ in range(cfg.n_layers)
+            ])
+            if cfg.act_fn == "jumprelu":
+                self.log_jump_relu_threshold = nn.Parameter(torch.tensor(cfg.jump_relu_threshold, device=cfg.device, dtype=cfg.dtype))
         else:
             # Distributed initialization - shard along feature dimension
             self.W_E = nn.Parameter(
@@ -145,15 +108,97 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 for i in range(cfg.n_layers)
             ])
             
-            self.b_D = nn.Parameter(
-                torch.distributed.tensor.empty(
-                    self.n_decoder_matrices,
-                    cfg.d_model,
-                    dtype=cfg.dtype,
-                    device_mesh=device_mesh,
-                    placements=self.dim_maps()["b_D"].placements(device_mesh),
-                )  # shard along d_model
-            )
+            self.b_D = nn.ParameterList([
+                nn.Parameter(
+                    torch.distributed.tensor.empty(
+                        cfg.d_model,
+                        dtype=cfg.dtype,
+                        device_mesh=device_mesh,
+                        placements=self.dim_maps()["b_D"].placements(device_mesh),
+                    )
+                )
+                for _ in range(cfg.n_layers)
+            ])
+
+    @override
+    @torch.no_grad()
+    def init_parameters(self, **kwargs):
+        """Initialize parameters.
+        
+        Encoders: uniformly initialized in range (-1/sqrt(d_sae), 1/sqrt(d_sae))
+        Decoders at layer L: uniformly initialized in range (-1/sqrt(L*d_model), 1/sqrt(L*d_model))
+        """
+        super().init_parameters(**kwargs)
+        
+        # Initialize encoder weights and biases
+        encoder_bound = 1.0 / math.sqrt(self.cfg.d_sae)
+        
+        if self.device_mesh is None:
+            # Non-distributed initialization
+            
+            # Initialize encoder weights: (n_layers, d_model, d_sae)
+            W_E = torch.empty(
+                self.cfg.n_layers, self.cfg.d_model, self.cfg.d_sae, 
+                device=self.cfg.device, dtype=self.cfg.dtype
+            ).uniform_(-encoder_bound, encoder_bound)
+            
+            # Initialize encoder biases: (n_layers, d_sae) - set to zero
+            nn.init.zeros_(self.b_E)
+            
+            # Initialize decoder weights
+            W_D_initialized = []
+            for layer_to in range(self.cfg.n_layers):
+                # Initialize decoder weights for layer layer_to
+                # W_D[layer_to] has shape (layer_to+1, d_sae, d_model)
+                # Scale by 1/sqrt(L*d_model) where L is the number of contributing layers
+                scale = 1.0 / math.sqrt((layer_to + 1) * self.cfg.d_model)
+                W_D_layer = torch.empty(layer_to + 1, self.cfg.d_sae, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype)
+                nn.init.uniform_(W_D_layer, -scale, scale)
+                W_D_initialized.append(W_D_layer)
+            
+            # Initialize decoder biases
+            for layer_to in range(self.cfg.n_layers):
+                # Initialize decoder bias for layer layer_to to zero
+                nn.init.zeros_(self.b_D[layer_to])
+            
+        else:
+            # Distributed initialization
+            # Initialize encoder weights
+            W_E_local = torch.empty(
+                self.cfg.n_layers, self.cfg.d_model, self.cfg.d_sae,
+                device=self.cfg.device, dtype=self.cfg.dtype
+            ).uniform_(-encoder_bound, encoder_bound)
+            W_E = self.dim_maps()["W_E"].distribute(W_E_local, self.device_mesh)
+            
+            # Initialize encoder biases
+            nn.init.zeros_(self.b_E)
+            
+            # Initialize decoder weights for each layer
+            W_D_initialized = []
+            for layer_to in range(self.cfg.n_layers):
+                decoder_bound = 1.0 / math.sqrt((layer_to + 1) * self.cfg.d_model)
+                W_D_layer_local = torch.empty(
+                    layer_to + 1, self.cfg.d_sae, self.cfg.d_model,
+                    device=self.cfg.device, dtype=self.cfg.dtype
+                ).uniform_(-decoder_bound, decoder_bound)
+                W_D_layer = self.dim_maps()["W_D"].distribute(W_D_layer_local, self.device_mesh)
+                W_D_initialized.append(W_D_layer)
+            
+            # Initialize decoder biases
+            for layer_to in range(self.cfg.n_layers):
+                # Initialize decoder bias for layer layer_to to zero
+                nn.init.zeros_(self.b_D[layer_to])
+        
+        # Copy initialized values to parameters
+        self.W_E.copy_(W_E)
+        
+        for layer_to, W_D_layer in enumerate(W_D_initialized):
+            self.W_D[layer_to].copy_(W_D_layer)
+        
+        # Initialize jump ReLU threshold if using jump ReLU activation
+        if self.cfg.act_fn == "jumprelu" and hasattr(self, 'log_jump_relu_threshold'):
+            if kwargs.get("init_log_jumprelu_threshold_value") is not None:
+                self.log_jump_relu_threshold.data.fill_(kwargs["init_log_jumprelu_threshold_value"])
 
     def get_decoder_weights(self, layer_to: int) -> torch.Tensor:
         """Get decoder weights for all layers from 0..layer_to to layer_to.
@@ -167,17 +212,15 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         return self.W_D[layer_to]
 
     def get_decoder_bias(self, layer_to: int) -> torch.Tensor:
-        """Get decoder bias for layer_from -> layer_to.
-
+        """Get decoder bias for target layer layer_to.
+        
         Args:
-            layer_to: Target layer (layer_from to n_layers-1)
-
+            layer_to: Target layer index (0 to n_layers-1)
+            
         Returns:
-            Decoder bias for the specified layer pair
+            Decoder bias tensor of shape (d_model,)
         """
-        start = _upper_triangular_index(layer_from=0, layer_to=layer_to, n_layers=self.cfg.n_layers)
-        end = _upper_triangular_index(layer_from=layer_to, layer_to=layer_to, n_layers=self.cfg.n_layers)
-        return self.b_D[start: end + 1]
+        return self.b_D[layer_to]
 
     @overload
     def encode(
@@ -276,42 +319,47 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         Returns:
             Reconstructed activations for all layers (..., n_layers, d_model)
         """
-        batch_shape = feature_acts.shape[:-2]
-
-        reconstructed = [
-            torch.zeros(batch_shape + (self.cfg.d_model, ), device=feature_acts.device, dtype=feature_acts.dtype)
-            for _ in range(self.cfg.n_layers)
-        ]
+        reconstructed = []
     
         # For each output layer L
         for layer_to in range(self.cfg.n_layers):
             decoder_weights = self.get_decoder_weights(layer_to)  #(layer_to+1, d_sae, d_model)
-            decoder_bias = self.get_decoder_bias(layer_to)  #(layer_to+1, d_model)
+            decoder_bias = self.get_decoder_bias(layer_to)  #(d_model,)
             
+            if self.device_mesh is not None:
+                assert isinstance(feature_acts, DTensor)
+                feature_acts_per_layer = DTensor.from_local(feature_acts.to_local()[..., :layer_to + 1, :], device_mesh=self.device_mesh, placements=DimMap({"model": 2}).placements(self.device_mesh))
+            else:
+                feature_acts_per_layer = feature_acts[..., :layer_to + 1, :]
+            
+            print("Feature acts per layer", feature_acts_per_layer.shape, feature_acts_per_layer.placements)
+            print("Decoder weights", decoder_weights.shape, decoder_weights.placements)
+
             # Compute weighted sum of features from layers 0 to layer_to
-            contribution = torch.einsum("...ls,lsd->...d", feature_acts[..., :layer_to + 1, :], decoder_weights)
-            # Add bias contribution
-            bias_contribution = decoder_bias.sum(dim=0)  # Sum over all contributing layers
-            
-            reconstructed[layer_to] = (contribution + bias_contribution).to_local()  # pyright: ignore
+            contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights)
+            # Add bias contribution (single bias vector for this target layer)
+            if isinstance(decoder_bias, DTensor):
+                reconstructed.append((contribution + decoder_bias).full_tensor())  # pyright: ignore
+            else:
+                reconstructed.append(contribution + decoder_bias)
         
         reconstructed = torch.stack(reconstructed, dim=-2)
 
         return reconstructed
 
     @override 
-    def decoder_norm(self, keepdim: bool = False) -> torch.Tensor:
+    def decoder_norm(self, keepdim: bool = False) -> Float[torch.Tensor, "n_decoder_matrices"]:
         """Compute the effective norm of decoder weights for each feature."""
         # Collect norms from all decoder groups
         all_norms = []
         for layer_to in range(self.cfg.n_layers):
             decoder_weights = self.W_D[layer_to]  # Shape: (layer_to+1, d_sae, d_model)
             if not isinstance(decoder_weights, DTensor):
-                norms = torch.norm(decoder_weights, p=2, dim=-1, keepdim=keepdim)  # (layer_to+1, d_sae)
+                norms = torch.norm(decoder_weights, p=2, dim=-1, keepdim=keepdim).mean(dim=-1, keepdim=keepdim)
                 all_norms.append(norms)
             else: 
                 assert self.device_mesh is not None
-                norms = torch.norm(decoder_weights.to_local(), p=2, dim=-1, keepdim=keepdim)
+                norms = torch.norm(decoder_weights.to_local(), p=2, dim=-1, keepdim=keepdim).mean(dim=-1, keepdim=keepdim)
                 norms = DTensor.from_local(
                     norms,
                     device_mesh=self.device_mesh,
@@ -321,10 +369,10 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         
         # Average across all decoders
         all_norms_tensor = torch.cat(all_norms, dim=0)  # Concatenate along decoder dimension
-        return all_norms_tensor.mean(dim=0, keepdim=keepdim)  # Average across all decoders
+        return all_norms_tensor
 
     @override
-    def encoder_norm(self, keepdim: bool = False) -> torch.Tensor:
+    def encoder_norm(self, keepdim: bool = False) -> Float[torch.Tensor, "n_layers"]:
         """Compute the norm of encoder weights averaged across layers."""
         if not isinstance(self.W_E, DTensor):
             # W_E shape: (n_layers, d_model, d_sae)
@@ -343,19 +391,23 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             ).to_local()
 
     @override
-    def decoder_bias_norm(self) -> torch.Tensor:
-        """Compute the norm of decoder bias averaged across all decoders."""
-        if not isinstance(self.b_D, DTensor):
-            # b_D shape: (n_decoder_matrices, d_model)
-            # Compute norm along d_model dimension (dim=-1), then average across decoders (dim=0)
-            return torch.norm(self.b_D, p=2, dim=-1, keepdim=False)
-        else:
-            assert self.device_mesh is not None
-            bias_norm = torch.norm(self.b_D.to_local(), p=2, dim=-1)
-            bias_norm = DTensor.from_local(
-                bias_norm, device_mesh=self.device_mesh, placements=[torch.distributed.tensor.Replicate()]
-            )
-            return bias_norm.to_local()
+    def decoder_bias_norm(self) -> Float[torch.Tensor, "n_layers"]:
+        """Compute the norm of decoder bias for each target layer."""
+        bias_norms = []
+        for layer_to in range(self.cfg.n_layers):
+            bias = self.b_D[layer_to]  # Shape: (d_model,)
+            if not isinstance(bias, DTensor):
+                norm = torch.norm(bias, p=2, dim=-1, keepdim=False)
+                bias_norms.append(norm)
+            else:
+                assert self.device_mesh is not None
+                norm = torch.norm(bias.to_local(), p=2, dim=-1, keepdim=False)
+                norm = DTensor.from_local(
+                    norm, device_mesh=self.device_mesh, placements=[torch.distributed.tensor.Replicate()]
+                )
+                bias_norms.append(norm.to_local())
+        
+        return torch.stack(bias_norms, dim=0)  # Shape: (n_layers,)
 
     @override
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
@@ -404,9 +456,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             self.W_D[layer_idx].data = self.W_D[layer_idx].data * input_norm_factor / output_norm_factor
             
             # Adjust decoder bias for this specific decoder
-            for layer_from in range(layer_idx + 1):
-                decoder_idx = _upper_triangular_index(layer_from, layer_idx, self.cfg.n_layers)
-                self.b_D.data[decoder_idx] = self.b_D.data[decoder_idx] / output_norm_factor
+            self.b_D[layer_idx].data = self.b_D[layer_idx].data / output_norm_factor
 
         self.cfg.norm_activation = "inference"
 
@@ -472,7 +522,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         self.device_mesh = device_mesh
 
         # Load encoder parameters
-        for param_name in ["W_E", "b_E", "b_D"]:
+        for param_name in ["W_E", "b_E"]:
             self.register_parameter(
                 param_name,
                 nn.Parameter(state_dict[f"{prefix}{param_name}"].to(getattr(self, param_name).dtype)),
@@ -483,6 +533,13 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             param_name = f"W_D.{layer_to}"
             self.W_D[layer_to] = nn.Parameter(
                 state_dict[f"{prefix}{param_name}"].to(self.W_D[layer_to].dtype)
+            )
+
+        # Load b_D parameters
+        for layer_to in range(self.cfg.n_layers):
+            param_name = f"b_D.{layer_to}"
+            self.b_D[layer_to] = nn.Parameter(
+                state_dict[f"{prefix}{param_name}"].to(self.b_D[layer_to].dtype)
             )
 
     @classmethod

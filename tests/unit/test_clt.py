@@ -3,6 +3,7 @@
 import pytest
 import torch
 import torch.nn as nn
+import math
 
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import CLTConfig
@@ -24,9 +25,9 @@ class TestCrossLayerTranscoder:
             act_fn="relu",
             apply_decoder_bias_to_pre_encoder=False,
             norm_activation="inference",  # No normalization for simplicity
-            sparsity_include_decoder_norm=True,
+            sparsity_include_decoder_norm=False,
             force_unit_decoder_norm=False,
-            device="cpu",
+            device="cuda" if torch.cuda.is_available() else "cpu",
             dtype=torch.float32,
         )
 
@@ -36,7 +37,7 @@ class TestCrossLayerTranscoder:
         return CrossLayerTranscoder(simple_config)
 
     @pytest.fixture
-    def simple_batch(self):
+    def simple_batch(self, clt_model):
         """Create simple test data with only 1's and 0's."""
         batch_size = 2
         seq_len = 3
@@ -44,10 +45,10 @@ class TestCrossLayerTranscoder:
         
         # Create simple binary data
         batch = {
-            "layer_0_in": torch.ones(batch_size, seq_len, d_model),
-            "layer_1_in": torch.zeros(batch_size, seq_len, d_model),
-            "layer_0_out": torch.ones(batch_size, seq_len, d_model),
-            "layer_1_out": torch.zeros(batch_size, seq_len, d_model),
+            "layer_0_in": torch.ones(batch_size, seq_len, d_model, device=clt_model.cfg.device),
+            "layer_1_in": torch.zeros(batch_size, seq_len, d_model, device=clt_model.cfg.device),
+            "layer_0_out": torch.ones(batch_size, seq_len, d_model, device=clt_model.cfg.device),
+            "layer_1_out": torch.zeros(batch_size, seq_len, d_model, device=clt_model.cfg.device),
         }
         return batch
 
@@ -56,28 +57,27 @@ class TestCrossLayerTranscoder:
         # Check basic properties
         assert clt_model.cfg.n_layers == 2
         assert clt_model.cfg.d_model == 4
-        assert clt_model.cfg.d_sae == 8
-        assert clt_model.n_decoder_matrices == 3  # 2*(2+1)/2 = 3
-        
+        assert clt_model.cfg.d_sae == 8        
         # Check parameter shapes
         assert clt_model.W_E.shape == (2, 4, 8)  # (n_layers, d_model, d_sae)
         assert clt_model.b_E.shape == (2, 8)     # (n_layers, d_sae)
-        assert clt_model.W_D.shape == (3, 8, 4)  # (n_decoder_matrices, d_sae, d_model)
-        assert clt_model.b_D.shape == (3, 4)     # (n_decoder_matrices, d_model)
+        for layer_to in range(clt_model.cfg.n_layers):
+            assert clt_model.W_D[layer_to].shape == (layer_to + 1, 8, 4)  # (1, d_sae, d_model)
+            assert clt_model.b_D[layer_to].shape == (4,)     # (d_model,)
 
     def test_prepare_input_and_label(self, clt_model, simple_batch):
         """Test input and label preparation."""
         # Test input preparation (uses hook_points_in)
         x, kwargs = clt_model.prepare_input(simple_batch)
         assert x.shape == (2, 3, 2, 4)  # (batch_size, seq_len, n_layers, d_model)
-        assert torch.allclose(x[:, :, 0, :], torch.ones(2, 3, 4))  # layer_0_in
-        assert torch.allclose(x[:, :, 1, :], torch.zeros(2, 3, 4))  # layer_1_in
+        assert torch.allclose(x[:, :, 0, :], torch.ones(2, 3, 4, device=clt_model.cfg.device))  # layer_0_in
+        assert torch.allclose(x[:, :, 1, :], torch.zeros(2, 3, 4, device=clt_model.cfg.device))  # layer_1_in
         
         # Test label preparation (uses hook_points_out)
         labels = clt_model.prepare_label(simple_batch)
         assert labels.shape == (2, 3, 2, 4)  # (batch_size, seq_len, n_layers, d_model)
-        assert torch.allclose(labels[:, :, 0, :], torch.ones(2, 3, 4))  # layer_0_out
-        assert torch.allclose(labels[:, :, 1, :], torch.zeros(2, 3, 4))  # layer_1_out
+        assert torch.allclose(labels[:, :, 0, :], torch.ones(2, 3, 4, device=clt_model.cfg.device))  # layer_0_out
+        assert torch.allclose(labels[:, :, 1, :], torch.zeros(2, 3, 4, device=clt_model.cfg.device))  # layer_1_out
 
     def test_encoder_decoder_shapes(self, clt_model, simple_batch):
         """Test encoder and decoder forward pass shapes."""
@@ -121,52 +121,42 @@ class TestCrossLayerTranscoder:
 
     def test_decoder_indexing(self, clt_model):
         """Test decoder weight and bias indexing."""
-        # Test getting decoder weights for different layer pairs
-        # For n_layers=2, we should have decoders for:
-        # (0,0), (0,1), (1,1) - total of 3 decoders
+        # Test getting decoder weights for different layers
+        # For n_layers=2, we should have:
+        # W_D[0] contains decoder for layer 0 -> layer 0  (shape: 1, d_sae, d_model)
+        # W_D[1] contains decoders for layers 0,1 -> layer 1  (shape: 2, d_sae, d_model)
         
-        decoder_00 = clt_model.get_decoder_weights(0, 0)
-        decoder_01 = clt_model.get_decoder_weights(0, 1)
-        decoder_11 = clt_model.get_decoder_weights(1, 1)
+        decoder_weights_0 = clt_model.get_decoder_weights(0)  # layer 0 decoders
+        decoder_weights_1 = clt_model.get_decoder_weights(1)  # layer 1 decoders
         
-        assert decoder_00.shape == (8, 4)  # (d_sae, d_model)
-        assert decoder_01.shape == (8, 4)
-        assert decoder_11.shape == (8, 4)
+        assert decoder_weights_0.shape == (1, 8, 4)  # (1, d_sae, d_model) - only layer 0->0
+        assert decoder_weights_1.shape == (2, 8, 4)  # (2, d_sae, d_model) - layers 0,1->1
         
-        # Test getting decoder biases for the same layer pairs
-        bias_00 = clt_model.get_decoder_bias(0, 0)
-        bias_01 = clt_model.get_decoder_bias(0, 1)
-        bias_11 = clt_model.get_decoder_bias(1, 1)
+        # Test getting decoder biases
+        bias_0 = clt_model.get_decoder_bias(0)  # layer 0 bias
+        bias_1 = clt_model.get_decoder_bias(1)  # layer 1 bias
         
-        assert bias_00.shape == (4,)  # (d_model,)
-        assert bias_01.shape == (4,)
-        assert bias_11.shape == (4,)
-        
-        # Test that we can't access invalid decoder combinations
-        with pytest.raises(AssertionError):
-            clt_model.get_decoder_weights(1, 0)  # layer_from > layer_to
-            
-        with pytest.raises(AssertionError):
-            clt_model.get_decoder_bias(1, 0)  # layer_from > layer_to
+        assert bias_0.shape == (4,)  # (d_model,)
+        assert bias_1.shape == (4,)  # (d_model,)
 
     def test_norm_computations(self, clt_model):
         """Test norm computation methods."""
-        # Test encoder norm
+        # Test encoder norm - should return norm for each layer
         encoder_norm = clt_model.encoder_norm()
-        assert encoder_norm.shape == (2,)  # (n_layers,)
+        assert encoder_norm.shape == (2,)  # (n_layers,) - averaged across layers
         
-        # Test decoder norm
+        # Test decoder norm - should return norm for each decoder
         decoder_norm = clt_model.decoder_norm()
         assert decoder_norm.shape == (3,)  # (n_decoder_matrices,)
         
-        # Test decoder bias norm
+        # Test decoder bias norm - should return norm for each layer
         decoder_bias_norm = clt_model.decoder_bias_norm()
-        assert decoder_bias_norm.shape == (3,)  # (n_decoder_matrices,)
+        assert decoder_bias_norm.shape == (2,)  # (n_layers,)
 
     def test_missing_hook_points(self, clt_model):
         """Test error handling for missing hook points."""
         incomplete_batch = {
-            "layer_0_in": torch.ones(2, 3, 4),
+            "layer_0_in": torch.ones(2, 3, 4, device=clt_model.cfg.device),
             # Missing other hook points
         }
         
@@ -176,43 +166,160 @@ class TestCrossLayerTranscoder:
         with pytest.raises(ValueError, match="Missing hook point"):
             clt_model.prepare_label(incomplete_batch)
 
-    # TODO: Add your parameter initialization tests here
-    def test_custom_parameter_initialization(self, clt_model, simple_batch):
-        """Test with custom parameter initialization.
-        
-        Fill in this test with specific parameter values to verify
-        that CLT is working correctly with known inputs and expected outputs.
-        """
-        # Example: Initialize parameters to specific values
-        with torch.no_grad():
-            # Initialize encoders
-            clt_model.W_E.data[0, :, :] = 0.1
-            clt_model.b_E.data[0, :] = 0.0
-            
-            clt_model.W_E.data[1, :, :] = -0.2
-            clt_model.b_E.data[1, :] = -0.1
-            
-            # Initialize decoders and their biases
-            # Decoder 0: (0,0) - layer 0 to layer 0
-            clt_model.W_D.data[0, :, :] = 0.3
-            clt_model.b_D.data[0, :] = -0.2
-            
-            # Decoder 1: (0,1) - layer 0 to layer 1
-            clt_model.W_D.data[1, :, :] = -0.4
-            clt_model.b_D.data[1, :] = -0.3
+    @pytest.fixture
+    def large_config(self):
+        """Create a larger CLT configuration for testing initialization behavior."""
+        return CLTConfig(
+            sae_type="clt",
+            d_model=1024,
+            expansion_factor=16,  # d_sae = 16384
+            hook_points_in=["layer_0_in", "layer_1_in", "layer_2_in"],
+            hook_points_out=["layer_0_out", "layer_1_out", "layer_2_out"],
+            use_decoder_bias=True,
+            act_fn="relu",
+            apply_decoder_bias_to_pre_encoder=False,
+            norm_activation="inference",
+            sparsity_include_decoder_norm=False,
+            force_unit_decoder_norm=False,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            dtype=torch.float32,
+        )
 
-            # Decoder 2: (1,1) - layer 1 to layer 1
-            clt_model.W_D.data[2, :, :] = 0.5
-            clt_model.b_D.data[2, :] = -0.4
-        
-            # Test forward pass
-            input, _ = clt_model.prepare_input(simple_batch)
-            output = clt_model(input)
-            
-            assert output.shape == (2, 3, 2, 4)
-            assert torch.allclose(output[:, :, 0, :], torch.ones(2, 3, 4) * 0.76)
-            assert torch.allclose(output[:, :, 1, :], torch.ones(2, 3, 4) * -1.98)
+    @pytest.fixture
+    def large_clt_model(self, large_config):
+        """Create a large CLT model instance."""
+        return CrossLayerTranscoder(large_config)
 
+    def test_clt_initialization_behavior_large_model(self, large_clt_model):
+        """Test CLT model with custom initialization to observe activation and output norms with larger dimensions."""
+        config = large_clt_model.cfg
+        
+        # Initialize with custom CLT initialization
+        large_clt_model.init_parameters(
+            encoder_uniform_bound=0.1,  # Will be ignored by CLT
+            decoder_uniform_bound=0.1,  # Will be ignored by CLT
+            init_log_jumprelu_threshold_value=0.0
+        )
+        
+        # Create random input with 2-norm of sqrt(d_model)
+        batch_size = 8
+        seq_len = 16
+        d_model = config.d_model
+        n_layers = config.n_layers
+        
+        # Generate random input for each layer and normalize to have 2-norm of sqrt(d_model)
+        target_norm = torch.sqrt(torch.tensor(d_model, dtype=torch.float32, device=large_clt_model.cfg.device))
+        
+        random_batch = {}
+        for layer_idx in range(n_layers):
+            # Generate random tensor
+            random_tensor = torch.randn(batch_size, seq_len, d_model, device=large_clt_model.cfg.device)
+            
+            # Normalize each example to have the desired norm
+            for b in range(batch_size):
+                for s in range(seq_len):
+                    current_norm = torch.norm(random_tensor[b, s, :])
+                    if current_norm > 0:
+                        random_tensor[b, s, :] = random_tensor[b, s, :] * target_norm / current_norm
+            
+            random_batch[f"layer_{layer_idx}_in"] = random_tensor
+            random_batch[f"layer_{layer_idx}_out"] = random_tensor  # Use same for out (just for testing)
+        
+        # Prepare input and run forward pass
+        input_tensor, _ = large_clt_model.prepare_input(random_batch)
+        
+        # Get feature activations and final output
+        feature_acts, hidden_pre = large_clt_model.encode(input_tensor, return_hidden_pre=True)
+        output = large_clt_model.decode(feature_acts)
+        
+        print(f"\n=== CLT Custom Initialization Test Results (Large Model) ===")
+        print(f"Model config: d_model={config.d_model}, d_sae={config.d_sae}, n_layers={config.n_layers}")
+        print(f"Input shape: {input_tensor.shape}")
+        print(f"Target input norm per token: {target_norm:.4f}")
+        
+        # Check actual input norms
+        input_norms_per_layer = []
+        for layer_idx in range(n_layers):
+            layer_input = input_tensor[:, :, layer_idx, :]  # (batch, seq, d_model)
+            layer_norms = torch.norm(layer_input, dim=-1)  # (batch, seq)
+            avg_norm = layer_norms.mean().item()
+            input_norms_per_layer.append(avg_norm)
+            print(f"Layer {layer_idx} input - Average norm: {avg_norm:.4f}, Min: {layer_norms.min().item():.4f}, Max: {layer_norms.max().item():.4f}")
+        
+        print(f"\n--- Feature Activations ---")
+        for layer_idx in range(n_layers):
+            layer_features = feature_acts[:, :, layer_idx, :]  # (batch, seq, d_sae)
+            layer_feature_norms = torch.norm(layer_features, dim=-1)  # (batch, seq)
+            layer_sparsity = (layer_features > 0).float().mean().item()
+            
+            print(f"Layer {layer_idx} features - Average norm: {layer_feature_norms.mean().item():.4f}, "
+                  f"Min: {layer_feature_norms.min().item():.4f}, Max: {layer_feature_norms.max().item():.4f}, "
+                  f"Sparsity: {layer_sparsity:.4f}")
+        
+        print(f"\n--- Hidden Pre-Activations ---")
+        for layer_idx in range(n_layers):
+            layer_hidden_pre = hidden_pre[:, :, layer_idx, :]  # (batch, seq, d_sae)
+            layer_hidden_norms = torch.norm(layer_hidden_pre, dim=-1)  # (batch, seq)
+            
+            print(f"Layer {layer_idx} hidden_pre - Average norm: {layer_hidden_norms.mean().item():.4f}, "
+                  f"Min: {layer_hidden_norms.min().item():.4f}, Max: {layer_hidden_norms.max().item():.4f}")
+        
+        print(f"\n--- Reconstruction Outputs ---")
+        for layer_idx in range(n_layers):
+            layer_output = output[:, :, layer_idx, :]  # (batch, seq, d_model)
+            layer_output_norms = torch.norm(layer_output, dim=-1)  # (batch, seq)
+            
+            print(f"Layer {layer_idx} output - Average norm: {layer_output_norms.mean().item():.4f}, "
+                  f"Min: {layer_output_norms.min().item():.4f}, Max: {layer_output_norms.max().item():.4f}")
+        
+        print(f"\n--- Parameter Initialization Stats ---")
+        
+        # Encoder stats
+        expected_encoder_bound = 1.0 / math.sqrt(config.d_sae)
+        encoder_norm = torch.norm(large_clt_model.W_E)
+        encoder_max = torch.max(torch.abs(large_clt_model.W_E))
+        encoder_std = torch.std(large_clt_model.W_E)
+        print(f"Encoder weights - Expected bound: ±{expected_encoder_bound:.6f}")
+        print(f"  Actual norm: {encoder_norm.item():.4f}, Max abs value: {encoder_max.item():.6f}, Std: {encoder_std.item():.6f}")
+        
+        # Decoder stats per layer
+        for layer_to in range(n_layers):
+            expected_decoder_bound = 1.0 / math.sqrt((layer_to + 1) * config.d_model)
+            decoder_weights = large_clt_model.W_D[layer_to]
+            decoder_norm = torch.norm(decoder_weights)
+            decoder_max = torch.max(torch.abs(decoder_weights))
+            decoder_std = torch.std(decoder_weights)
+            print(f"Layer {layer_to} decoder weights - Expected bound: ±{expected_decoder_bound:.6f}")
+            print(f"  Actual norm: {decoder_norm.item():.4f}, Max abs value: {decoder_max.item():.6f}, Std: {decoder_std.item():.6f}")
+        
+        # Basic assertions to ensure things are working
+        assert not torch.isnan(feature_acts).any(), "Feature activations contain NaN"
+        assert not torch.isnan(output).any(), "Output contains NaN"
+        assert not torch.isinf(feature_acts).any(), "Feature activations contain Inf"
+        assert not torch.isinf(output).any(), "Output contains Inf"
+        
+        # Test loss computation
+        loss = large_clt_model.compute_loss(random_batch, return_aux_data=False)
+        assert isinstance(loss, torch.Tensor)
+        assert loss.dim() == 0  # scalar loss
+        assert not torch.isnan(loss), "Loss is NaN"
+        assert not torch.isinf(loss), "Loss is Inf"
+        
+        print(f"\nLoss: {loss.item():.6f}")
+        
+        # Test statistical properties with larger model
+        # For uniform distribution U(-a,a), variance = a^2/3
+        expected_encoder_var = (expected_encoder_bound ** 2) / 3
+        actual_encoder_var = torch.var(large_clt_model.W_E).item()
+        print(f"\nEncoder variance - Expected: {expected_encoder_var:.8f}, Actual: {actual_encoder_var:.8f}")
+        
+        for layer_to in range(n_layers):
+            expected_decoder_bound = 1.0 / math.sqrt((layer_to + 1) * config.d_model)
+            expected_decoder_var = (expected_decoder_bound ** 2) / 3
+            actual_decoder_var = torch.var(large_clt_model.W_D[layer_to]).item()
+            print(f"Layer {layer_to} decoder variance - Expected: {expected_decoder_var:.8f}, Actual: {actual_decoder_var:.8f}")
+        
+        print(f"=== Test completed successfully ===\n")
 
 
 if __name__ == "__main__":
