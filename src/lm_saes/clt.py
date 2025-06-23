@@ -331,9 +331,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 feature_acts_per_layer = DTensor.from_local(feature_acts.to_local()[..., :layer_to + 1, :], device_mesh=self.device_mesh, placements=DimMap({"model": 2}).placements(self.device_mesh))
             else:
                 feature_acts_per_layer = feature_acts[..., :layer_to + 1, :]
-            
-            print("Feature acts per layer", feature_acts_per_layer.shape, feature_acts_per_layer.placements)
-            print("Decoder weights", decoder_weights.shape, decoder_weights.placements)
 
             # Compute weighted sum of features from layers 0 to layer_to
             contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights)
