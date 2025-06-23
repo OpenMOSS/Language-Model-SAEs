@@ -220,7 +220,7 @@ class TransformerLensLanguageModel(LanguageModel):
     @timer.time("to_activations")
     @torch.no_grad()
     def to_activations(
-        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None, prepend_bos: bool = True
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
     ) -> dict[str, torch.Tensor]:
         assert self.model is not None
         if any(key in ["images", "videos"] for key in raw):
@@ -228,7 +228,7 @@ class TransformerLensLanguageModel(LanguageModel):
                 "Activations with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
         with timer.time("to_tokens"):
-            tokens = self.model.to_tokens(raw["text"], prepend_bos=prepend_bos)
+            tokens = self.model.to_tokens(raw["text"], prepend_bos=self.cfg.prepend_bos)
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
@@ -330,6 +330,12 @@ class LLaDALanguageModel(HuggingFaceLanguageModel):
             hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
         }
         activations["tokens"] = masked_inputs["input_ids"]
+        activations["meta"] = [{
+            "original_tokens": input_ids,
+            "mask_ratio": self.cfg.mask_ratio,
+            "logits": outputs.logits[i].max(dim=1).values,
+            "output_tokens": outputs.logits[i].max(dim=1).indices,
+        } for i in range(len(raw["text"]))]
         return activations
 
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
