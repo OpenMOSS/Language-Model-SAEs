@@ -362,6 +362,9 @@ class LanguageModelConfig(BaseModelConfig):
     """ The backend to use for the language model. """
     load_ckpt: bool = True
 
+    prepend_bos: bool = True
+    """ Whether to prepend the BOS token to the input. """
+
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
         """Load the LanguageModelConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/lm_config.json.
@@ -385,6 +388,7 @@ class LanguageModelConfig(BaseModelConfig):
 class LLaDAConfig(LanguageModelConfig):
     mask_ratio: float = 0.
     mdm_mask_token_id: int = 126336
+    prepend_bos: bool = False
     
 
 class ActivationWriterConfig(BaseConfig):
