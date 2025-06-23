@@ -10,7 +10,6 @@ from tqdm import tqdm
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.mixcoder import MixCoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import is_primary_rank
@@ -245,18 +244,6 @@ class FeatureAnalyzer:
         max_feature_acts = torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
         mapper = KeyedDiscreteMapper()
 
-        if isinstance(sae, MixCoder):
-            act_times_modalities = {
-                k: torch.zeros((d_sae_local,), dtype=torch.long, device=sae.cfg.device) for k in sae.cfg.modality_names
-            }
-            max_feature_acts_modalities = {
-                k: torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
-                for k in sae.cfg.modality_names
-            }
-        else:
-            act_times_modalities = None
-            max_feature_acts_modalities = None
-
         # Process activation batches
         for batch in activation_stream:
             # Reshape meta to zip outer dimensions to inner
@@ -295,15 +282,6 @@ class FeatureAnalyzer:
             act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
             max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
 
-            if isinstance(sae, MixCoder):
-                assert act_times_modalities is not None and max_feature_acts_modalities is not None
-                for i, k in enumerate(sae.cfg.modality_names):
-                    feature_acts_modality = feature_acts * (batch["modalities"] == i).long().unsqueeze(-1)
-                    act_times_modalities[k] += feature_acts_modality.gt(0.0).sum(dim=[0, 1])
-                    max_feature_acts_modalities[k] = torch.max(
-                        max_feature_acts_modalities[k], feature_acts_modality.max(dim=0).values.max(dim=0).values
-                    )
-
             # TODO: Filter out meta that is not string
             discrete_meta = {
                 k: torch.tensor(mapper.encode(k, v), device=sae.cfg.device, dtype=torch.int32) for k, v in meta.items()
@@ -339,8 +317,6 @@ class FeatureAnalyzer:
             max_feature_acts=max_feature_acts,
             sample_result=sample_result,
             mapper=mapper,
-            act_times_modalities=act_times_modalities,
-            max_feature_acts_modalities=max_feature_acts_modalities,
             device_mesh=device_mesh,
         )
 
@@ -352,8 +328,6 @@ class FeatureAnalyzer:
         max_feature_acts: torch.Tensor,
         sample_result: dict[str, dict[str, torch.Tensor]],
         mapper: KeyedDiscreteMapper,
-        act_times_modalities: dict[str, torch.Tensor] | None = None,
-        max_feature_acts_modalities: dict[str, torch.Tensor] | None = None,
         device_mesh: DeviceMesh | None = None,
     ) -> list[dict[str, Any]]:
         """Format the analysis results into the final per-feature format.
@@ -365,8 +339,6 @@ class FeatureAnalyzer:
             max_feature_acts: Tensor of maximum activation values for each feature
             sample_result: Dictionary of sampling results
             mapper: MetaMapper for encoding/decoding metadata
-            act_times_modalities: Optional dictionary of activation times per modality (for MixCoder)
-            max_feature_acts_modalities: Optional dictionary of maximum activation values per modality (for MixCoder)
 
         Returns:
             List of dictionaries containing per-feature analysis results
@@ -466,16 +438,6 @@ class FeatureAnalyzer:
                 feature_result["decoder_similarity_matrix"] = decoder_similarity_matrices[i, :, :].tolist()
                 feature_result["decoder_inner_product_matrix"] = decoder_inner_product_matrices[i, :, :].tolist()
 
-            # Add modality-specific metrics for MixCoder
-            if (
-                isinstance(sae, MixCoder)
-                and act_times_modalities is not None
-                and max_feature_acts_modalities is not None
-            ):
-                feature_result["act_times_modalities"] = {k: v[i].item() for k, v in act_times_modalities.items()}
-                feature_result["max_feature_acts_modalities"] = {
-                    k: v[i].item() for k, v in max_feature_acts_modalities.items()
-                }
 
             results.append(feature_result)
 
