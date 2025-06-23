@@ -43,9 +43,6 @@ class EvaluateSAESettings(BaseSettings):
     model: Optional[LanguageModelConfig] = None
     """Configuration for the language model. Required if using dataset sources."""
 
-    model_name: Optional[str] = None
-    """Name of the tokenizer to load. Mixcoder requires a tokenizer to get the modality indices."""
-
     eval: EvalConfig
     """Configuration for evaluation"""
 

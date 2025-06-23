@@ -13,7 +13,6 @@ from .config import (
     InitializerConfig,
     LanguageModelConfig,
     LLaDAConfig,
-    MixCoderConfig,
     MongoDBConfig,
     SAEConfig,
     TrainerConfig,
@@ -22,7 +21,6 @@ from .config import (
 from .crosscoder import CrossCoder
 from .database import MongoClient
 from .evaluator import EvalConfig, Evaluator
-from .mixcoder import MixCoder
 from .resource_loaders import load_dataset, load_model
 from .runners import (
     AnalyzeCrossCoderSettings,
@@ -83,8 +81,6 @@ __all__ = [
     "FeatureAnalyzerConfig",
     "MongoDBConfig",
     "MongoClient",
-    "MixCoderConfig",
-    "MixCoder",
     "AnalyzeCrossCoderSettings",
     "analyze_crosscoder",
     "AutoInterpSettings",
