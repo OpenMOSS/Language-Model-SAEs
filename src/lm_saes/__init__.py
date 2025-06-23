@@ -33,6 +33,8 @@ from .runners import (
     SweepSAESettings,
     TrainCrossCoderSettings,
     TrainSAESettings,
+    TrainCLTSettings,
+    train_clt,
     analyze_crosscoder,
     analyze_sae,
     auto_interp,

@@ -134,8 +134,6 @@ class Trainer:
         if isinstance(act_freq_scores, DTensor):
             act_freq_scores = act_freq_scores.full_tensor()
 
-        log_info["n_forward_passes_since_fired"] += 1
-        log_info["n_forward_passes_since_fired"][act_freq_scores > 0] = 0
         log_info["act_freq_scores"] += act_freq_scores
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
