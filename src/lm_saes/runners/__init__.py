@@ -13,6 +13,8 @@ from .train import (
     SweepSAESettings,
     TrainCrossCoderSettings,
     TrainSAESettings,
+    TrainCLTSettings,
+    train_clt,
     sweep_sae,
     train_crosscoder,
     train_sae,

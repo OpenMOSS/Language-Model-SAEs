@@ -49,7 +49,7 @@ def create_test_config(device: str) -> CLTConfig:
         act_fn="relu",
         apply_decoder_bias_to_pre_encoder=False,
         norm_activation="inference",
-        sparsity_include_decoder_norm=True,
+        sparsity_include_decoder_norm=False,
         force_unit_decoder_norm=False,
         device=device,
         dtype=torch.float32,
@@ -124,13 +124,18 @@ def test_distributed_clt_tensor_parallel():
                     W_D_1_local, device_mesh=device_mesh, placements=clt_model.W_D[1].placements
                 )
                 
-                b_D_local = clt_model.b_D.to_local()
-                b_D_local[0, :] = -0.2  # Decoder 0: (0,0) - layer 0 to layer 0
-                b_D_local[1, :] = -0.3  # Decoder 1: (0,1) - layer 0 to layer 1
-                b_D_local[2, :] = -0.4  # Decoder 2: (1,1) - layer 1 to layer 1
-                clt_model.b_D.data = torch.distributed.tensor.DTensor.from_local(
-                    b_D_local, device_mesh=device_mesh, placements=clt_model.b_D.placements
+                b_D_0_local = clt_model.b_D[0].to_local()
+                b_D_0_local.fill_(-0.2)
+                clt_model.b_D[0].data = torch.distributed.tensor.DTensor.from_local(
+                    b_D_0_local, device_mesh=device_mesh, placements=clt_model.b_D[0].placements
                 )
+                
+                b_D_1_local = clt_model.b_D[1].to_local()
+                b_D_1_local.fill_(-0.7)
+                clt_model.b_D[1].data = torch.distributed.tensor.DTensor.from_local(
+                    b_D_1_local, device_mesh=device_mesh, placements=clt_model.b_D[1].placements
+                )
+                
             else:
                 # Fallback for non-distributed case
                 clt_model.W_E.data[0, :, :] = 0.1
@@ -140,9 +145,8 @@ def test_distributed_clt_tensor_parallel():
                 clt_model.W_D.data[0, :, :] = 0.3
                 clt_model.b_D.data[0, :] = -0.2
                 clt_model.W_D.data[1, :, :] = -0.4
-                clt_model.b_D.data[1, :] = -0.3
+                clt_model.b_D.data[1, :] = -0.7
                 clt_model.W_D.data[2, :, :] = 0.5
-                clt_model.b_D.data[2, :] = -0.4
         
         # Wait for all processes to synchronize
         dist.barrier()
@@ -164,7 +168,14 @@ def test_distributed_clt_tensor_parallel():
         assert torch.allclose(output, expected_output, atol=1e-6)
         
         # Test loss computation
-        loss = clt_model.compute_loss(simple_batch, return_aux_data=False)
+        loss = clt_model.compute_loss(
+            simple_batch,
+            return_aux_data=False,
+            sparsity_loss_type="tanh",
+            tanh_stretch_coefficient=1.0,
+            p=1,
+            l1_coefficient=1.0,
+        )
         assert isinstance(loss, torch.Tensor)
         assert loss.dim() == 0  # scalar loss
         
