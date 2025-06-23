@@ -144,10 +144,16 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
         """
         for d in self.batched(data):
             activations = model.to_activations(d, self.hook_points, n_context=self.n_context)
-            if "meta" in d:
-                activations = activations | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
-            else:
-                activations = activations | {"meta": [{"model_name": model_name} for _ in range(len(d["text"]))]}
+            # merge meta information
+            existing_meta = activations.get("meta", [])
+            input_meta = d.get("meta", [])
+            batch_size = len(d["text"])
+            activations["meta"] = [
+                (existing_meta[i] if i < len(existing_meta) else {}) | 
+                (input_meta[i] if i < len(input_meta) else {}) | 
+                {"model_name": model_name}
+                for i in range(batch_size)
+            ]
             yield activations
 
 
