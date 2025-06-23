@@ -144,20 +144,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def set_encoder_to_fixed_norm(self, value: float):
         self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
-    @override
-    @torch.no_grad()
-    def full_state_dict(self):  # should be overridden by subclasses
-        state_dict = super().full_state_dict()
-
-        # If force_unit_decoder_norm is True, we need to normalize the decoder weight before saving
-        # We use a deepcopy to avoid modifying the original weight to avoid affecting the training progress
-        if self.cfg.force_unit_decoder_norm:
-            state_dict["W_D"] = self.W_D.data.clone()  # deepcopy
-            decoder_norm = torch.norm(state_dict["W_D"], p=2, dim=0, keepdim=True)
-            state_dict["W_D"] = state_dict["W_D"] / decoder_norm
-
-        return state_dict
-
     def dim_maps(self) -> dict[str, DimMap]:
         """Return a dictionary mapping parameter names to dimension maps.
 
@@ -293,10 +279,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             If return_hidden_pre is True:
                 Tuple of (feature_acts, hidden_pre) where both have shape (batch, d_sae) or (batch, seq_len, d_sae)
         """
-        # Optionally subtract decoder bias before encoding
-        if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
-            x = x - self.b_D
-
         # Pass through encoder
         hidden_pre = x @ self.W_E + self.b_E
 
@@ -347,6 +329,10 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             )  # TODO: remove the transpose
         else:
             reconstructed = feature_acts @ self.W_D
+
+        assert reconstructed is not None, "Reconstructed cannot be None"
+        if self.cfg.use_decoder_bias:
+            reconstructed = reconstructed + self.b_D
         reconstructed = self.hook_reconstructed(reconstructed)
 
         if isinstance(reconstructed, DTensor):
