@@ -675,35 +675,36 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     l_rec
                     / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
                 )
-        l_rec = l_rec.sum(dim=-1)
-        if isinstance(l_rec, DTensor):
-            l_rec = l_rec.full_tensor()
-        loss_dict = {
-            "l_rec": l_rec,
-        }
-        loss = l_rec.mean()
+            l_rec = l_rec.sum(dim=-1)
+            if isinstance(l_rec, DTensor):
+                l_rec = l_rec.full_tensor()
+            loss_dict = {
+                "l_rec": l_rec,
+            }
+            loss = l_rec.mean()
 
-        if sparsity_loss_type is not None:
-            decoder_norm = self.decoder_norm() if self.cfg.sparsity_include_decoder_norm else 1.0
-            if sparsity_loss_type == "power":
-                l_s = torch.norm(feature_acts * decoder_norm, p=p, dim=-1)
-            elif sparsity_loss_type == "tanh":
-                l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm).sum(dim=-1)
-            elif sparsity_loss_type == "tanh-quad":
-                approx_frequency = einops.reduce(
-                    torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm),
-                    "... d_sae -> d_sae",
-                    "mean",
-                )
-                l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
-            else:
-                raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
-            if isinstance(l_s, DTensor):
-                l_s = l_s.full_tensor()
-            l_s = l1_coefficient * l_s
-            # WARNING: Some DTensor bugs make if l1_coefficient * l_s goes before full_tensor, the l1_coefficient value will be internally cached. Furthermore, it will cause the backward pass to fail with redistribution error. See https://github.com/pytorch/pytorch/issues/153603 and https://github.com/pytorch/pytorch/issues/153615 .
-            loss_dict["l_s"] = l_s
-            loss = loss + l_s.mean()
+            if sparsity_loss_type is not None:
+                with timer.time("sparsity_loss_calculation"):
+                    decoder_norm = self.decoder_norm() if self.cfg.sparsity_include_decoder_norm else 1.0
+                    if sparsity_loss_type == "power":
+                        l_s = torch.norm(feature_acts * decoder_norm, p=p, dim=-1)
+                    elif sparsity_loss_type == "tanh":
+                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm).sum(dim=-1)
+                    elif sparsity_loss_type == "tanh-quad":
+                        approx_frequency = einops.reduce(
+                            torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm),
+                            "... d_sae -> d_sae",
+                            "mean",
+                        )
+                        l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
+                    else:
+                        raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
+                    if isinstance(l_s, DTensor):
+                        l_s = l_s.full_tensor()
+                    l_s = l1_coefficient * l_s
+                    # WARNING: Some DTensor bugs make if l1_coefficient * l_s goes before full_tensor, the l1_coefficient value will be internally cached. Furthermore, it will cause the backward pass to fail with redistribution error. See https://github.com/pytorch/pytorch/issues/153603 and https://github.com/pytorch/pytorch/issues/153615 .
+                    loss_dict["l_s"] = l_s
+                    loss = loss + l_s.mean()
 
         if return_aux_data:
             aux_data = {
