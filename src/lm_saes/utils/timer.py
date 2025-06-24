@@ -1,38 +1,118 @@
 import time
-from collections import defaultdict
 from contextlib import contextmanager
-from typing import Dict, List
+from typing import Dict, List, Optional, Set
 
 import torch
 
 
+class TimerNode:
+    """A node in the hierarchical timer tree.
+
+    Attributes:
+        name: The name of this timer node (without path).
+        path: The full path of this node in the tree.
+        total_time: Total accumulated time for this node.
+        count: Number of times this timer has been called.
+        parent_path: Path of the parent node in the hierarchy.
+        children: Set of child node paths.
+        start_time: Start time if currently running.
+    """
+
+    def __init__(self, name: str, path: str, parent_path: Optional[str] = None):
+        self.name = name
+        self.path = path
+        self.total_time = 0.0
+        self.count = 0
+        self.parent_path = parent_path
+        self.children: Set[str] = set()
+        self.start_time: Optional[float] = None
+
+
 class Timer:
-    """A singleton timer class to track time usage in different parts of the training process.
+    """A singleton timer class to track time usage hierarchically in different parts of the training process.
 
     This class provides methods to track time usage in different parts of the training process,
-    such as communication vs computation. It is designed as a singleton to be accessible
-    from anywhere in the codebase.
+    organized in a true tree structure where nodes with the same name but different parents
+    are recorded separately. An implicit root timer captures the entire session.
 
     Attributes:
         _instance: The singleton instance of the Timer class.
-        _timers: Dictionary mapping timer names to their accumulated time.
-        _start_times: Dictionary mapping timer names to their start times.
-        _counts: Dictionary mapping timer names to the number of times they've been called.
-        _active_timers: List of currently active timers.
+        _nodes: Dictionary mapping timer paths to their TimerNode objects.
+        _active_stack: Stack of currently active timer paths (for hierarchy).
         _enabled: Whether the timer is enabled.
+        _root_start_time: Start time of the implicit root timer.
+        _session_started: Whether a timing session has been started.
     """
 
     _instance = None
+    ROOT_NAME = "__root__"
+    PATH_SEPARATOR = "/"
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(Timer, cls).__new__(cls)
-            cls._instance._timers = defaultdict(float)
-            cls._instance._start_times = {}
-            cls._instance._counts = defaultdict(int)
-            cls._instance._active_timers = []
+            cls._instance._nodes = {}
+            cls._instance._active_stack = []
             cls._instance._enabled = False
+            cls._instance._root_start_time = None
+            cls._instance._session_started = False
         return cls._instance
+
+    def _get_node_path(self, name: str) -> str:
+        """Get the full path for a node based on current active stack.
+
+        Args:
+            name: The name of the timer.
+
+        Returns:
+            The full path for the node.
+        """
+        if name == self.ROOT_NAME:
+            return self.ROOT_NAME
+
+        if not self._active_stack:
+            # Direct child of root
+            return f"{self.ROOT_NAME}{self.PATH_SEPARATOR}{name}"
+        else:
+            # Child of current active timer
+            parent_path = self._active_stack[-1]
+            return f"{parent_path}{self.PATH_SEPARATOR}{name}"
+
+    def _ensure_root_started(self):
+        """Ensure the root timer is started for the session."""
+        if not self._session_started and self._enabled:
+            # Synchronize CUDA operations before timing
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            elif torch.npu.is_available():  # type: ignore
+                torch.npu.synchronize()  # type: ignore
+
+            self._root_start_time = time.perf_counter()
+            self._session_started = True
+
+            # Create root node
+            root_path = self.ROOT_NAME
+            self._nodes[root_path] = TimerNode(self.ROOT_NAME, root_path)
+
+    def _finalize_root(self):
+        """Finalize the root timer if there are no active timers."""
+        if (
+            self._session_started
+            and not self._active_stack
+            and self._root_start_time is not None
+            and self.ROOT_NAME in self._nodes
+        ):
+            # Synchronize CUDA operations before timing
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            elif torch.npu.is_available():  # type: ignore
+                torch.npu.synchronize()  # type: ignore
+
+            root_node = self._nodes[self.ROOT_NAME]
+            if root_node.start_time is None:  # Only finalize if not already finalized
+                elapsed = time.perf_counter() - self._root_start_time
+                root_node.total_time = elapsed
+                root_node.count = 1
 
     @contextmanager
     def time(self, name: str):
@@ -60,17 +140,41 @@ class Timer:
         if not self._enabled:
             return
 
-        if name in self._start_times:
-            raise ValueError(f"Timer {name} is already running")
+        if name == self.ROOT_NAME:
+            raise ValueError(f"Timer name '{self.ROOT_NAME}' is reserved for the root timer")
+
+        # Ensure root timer is started
+        self._ensure_root_started()
+
+        # Get the full path for this node
+        node_path = self._get_node_path(name)
+
+        if node_path in self._nodes and self._nodes[node_path].start_time is not None:
+            raise ValueError(f"Timer {node_path} is already running")
 
         # Synchronize CUDA operations before timing
         if torch.cuda.is_available():
             torch.cuda.synchronize()
-        elif torch.npu.is_available():
-            torch.npu.synchronize()
+        elif torch.npu.is_available():  # type: ignore
+            torch.npu.synchronize()  # type: ignore
 
-        self._start_times[name] = time.perf_counter()
-        self._active_timers.append(name)
+        # Determine parent path
+        parent_path = None
+        if self._active_stack:
+            parent_path = self._active_stack[-1]
+        else:
+            # If no active stack, make this a child of root
+            parent_path = self.ROOT_NAME
+
+        # Create or get node
+        if node_path not in self._nodes:
+            self._nodes[node_path] = TimerNode(name, node_path, parent_path)
+            # Add to parent's children
+            if parent_path in self._nodes:
+                self._nodes[parent_path].children.add(node_path)
+
+        self._nodes[node_path].start_time = time.perf_counter()
+        self._active_stack.append(node_path)
 
     def stop(self, name: str):
         """Stop a timer.
@@ -81,128 +185,266 @@ class Timer:
         if not self._enabled:
             return
 
-        if name not in self._start_times:
-            raise ValueError(f"Timer {name} is not running")
+        # Get the expected path for the most recent timer
+        if not self._active_stack:
+            raise ValueError("No active timers to stop")
+
+        expected_path = self._active_stack[-1]
+        expected_name = self._nodes[expected_path].name
+
+        if expected_name != name:
+            raise ValueError(f"Timer {name} is not the most recently started timer (expected {expected_name})")
 
         # Synchronize CUDA operations before timing
         if torch.cuda.is_available():
             torch.cuda.synchronize()
-        elif torch.npu.is_available():
-            torch.npu.synchronize()
+        elif torch.npu.is_available():  # type: ignore
+            torch.npu.synchronize()  # type: ignore
 
-        elapsed = time.perf_counter() - self._start_times[name]
-        self._timers[name] += elapsed
-        self._counts[name] += 1
-        del self._start_times[name]
-        self._active_timers.remove(name)
+        node = self._nodes[expected_path]
+        elapsed = time.perf_counter() - node.start_time
+        node.total_time += elapsed
+        node.count += 1
+        node.start_time = None
+        self._active_stack.pop()
+
+        # Finalize root timer if this was the last active timer
+        self._finalize_root()
 
     def reset(self):
         """Reset all timers."""
-        self._timers = defaultdict(float)
-        self._start_times = {}
-        self._counts = defaultdict(int)
-        self._active_timers = []
+        self._nodes = {}
+        self._active_stack = []
+        self._root_start_time = None
+        self._session_started = False
 
-    def reset_timer(self, name: str):
-        """Reset a specific timer.
+    def reset_timer(self, name: str, parent_context: Optional[str] = None):
+        """Reset a specific timer and all its children.
 
         Args:
             name: The name of the timer.
+            parent_context: Optional parent context to specify which instance of the timer to reset.
         """
-        if name in self._timers:
-            self._timers[name] = 0.0
-        if name in self._counts:
-            self._counts[name] = 0
-        if name in self._start_times:
-            del self._start_times[name]
-        if name in self._active_timers:
-            self._active_timers.remove(name)
+        if name == self.ROOT_NAME:
+            # Reset the entire session
+            self.reset()
+            return
 
-    def get_time(self, name: str) -> float:
+        # Find the node path
+        if parent_context:
+            node_path = f"{parent_context}{self.PATH_SEPARATOR}{name}"
+        else:
+            # Find all nodes with this name
+            matching_paths = [path for path in self._nodes.keys() if self._nodes[path].name == name]
+            if len(matching_paths) == 1:
+                node_path = matching_paths[0]
+            elif len(matching_paths) > 1:
+                raise ValueError(f"Multiple timers with name '{name}' found. Specify parent_context.")
+            else:
+                return  # No timer found
+
+        if node_path not in self._nodes:
+            return
+
+        node = self._nodes[node_path]
+
+        # Reset children first
+        for child_path in list(node.children):
+            self._reset_node_by_path(child_path)
+
+        # Remove from parent's children
+        if node.parent_path and node.parent_path in self._nodes:
+            self._nodes[node.parent_path].children.discard(node_path)
+
+        # Remove from active stack if present
+        if node_path in self._active_stack:
+            self._active_stack.remove(node_path)
+
+        # Remove the node
+        del self._nodes[node_path]
+
+    def _reset_node_by_path(self, node_path: str):
+        """Reset a node by its path."""
+        if node_path not in self._nodes:
+            return
+
+        node = self._nodes[node_path]
+
+        # Reset children first
+        for child_path in list(node.children):
+            self._reset_node_by_path(child_path)
+
+        # Remove from parent's children
+        if node.parent_path and node.parent_path in self._nodes:
+            self._nodes[node.parent_path].children.discard(node_path)
+
+        # Remove from active stack if present
+        if node_path in self._active_stack:
+            self._active_stack.remove(node_path)
+
+        # Remove the node
+        del self._nodes[node_path]
+
+    def get_time(self, name: str, parent_context: Optional[str] = None) -> float:
         """Get the accumulated time for a timer.
 
         Args:
             name: The name of the timer.
+            parent_context: Optional parent context to specify which instance of the timer.
 
         Returns:
             The accumulated time in seconds.
         """
-        return self._timers.get(name, 0.0)
+        if parent_context:
+            node_path = f"{parent_context}{self.PATH_SEPARATOR}{name}"
+            return self._nodes[node_path].total_time if node_path in self._nodes else 0.0
+        else:
+            # Sum all instances with this name
+            total = 0.0
+            for path, node in self._nodes.items():
+                if node.name == name:
+                    total += node.total_time
+            return total
 
-    def get_count(self, name: str) -> int:
+    def get_count(self, name: str, parent_context: Optional[str] = None) -> int:
         """Get the number of times a timer has been called.
 
         Args:
             name: The name of the timer.
+            parent_context: Optional parent context to specify which instance of the timer.
 
         Returns:
             The number of times the timer has been called.
         """
-        return self._counts.get(name, 0)
+        if parent_context:
+            node_path = f"{parent_context}{self.PATH_SEPARATOR}{name}"
+            return self._nodes[node_path].count if node_path in self._nodes else 0
+        else:
+            # Sum all instances with this name
+            total = 0
+            for path, node in self._nodes.items():
+                if node.name == name:
+                    total += node.count
+            return total
 
-    def get_average_time(self, name: str) -> float:
+    def get_average_time(self, name: str, parent_context: Optional[str] = None) -> float:
         """Get the average time for a timer.
 
         Args:
             name: The name of the timer.
+            parent_context: Optional parent context to specify which instance of the timer.
 
         Returns:
             The average time in seconds.
         """
-        count = self._counts.get(name, 0)
-        if count == 0:
-            return 0.0
-        return self._timers.get(name, 0.0) / count
+        total_time = self.get_time(name, parent_context)
+        total_count = self.get_count(name, parent_context)
+        return total_time / total_count if total_count > 0 else 0.0
 
     def get_all_timers(self) -> Dict[str, float]:
         """Get all timers.
 
         Returns:
-            Dictionary mapping timer names to their accumulated time.
+            Dictionary mapping timer paths to their accumulated time.
         """
-        return dict(self._timers)
+        return {path: node.total_time for path, node in self._nodes.items()}
 
     def get_all_counts(self) -> Dict[str, int]:
         """Get all counts.
 
         Returns:
-            Dictionary mapping timer names to their call counts.
+            Dictionary mapping timer paths to their call counts.
         """
-        return dict(self._counts)
+        return {path: node.count for path, node in self._nodes.items()}
 
     def get_all_average_times(self) -> Dict[str, float]:
         """Get all average times.
 
         Returns:
-            Dictionary mapping timer names to their average time.
+            Dictionary mapping timer paths to their average time.
         """
-        return {name: self.get_average_time(name) for name in self._timers}
+        return {path: (node.total_time / node.count if node.count > 0 else 0.0) for path, node in self._nodes.items()}
 
     def get_active_timers(self) -> List[str]:
         """Get all currently active timers.
 
         Returns:
-            List of active timer names.
+            List of active timer paths in stack order.
         """
-        return self._active_timers.copy()
+        return self._active_stack.copy()
 
-    def summary(self) -> str:
-        """Get a summary of all timers.
+    def _format_node(self, node_path: str, depth: int = 0, parent_time: Optional[float] = None) -> List[str]:
+        """Format a timer node and its children for display.
+
+        Args:
+            node_path: The path of the timer node.
+            depth: Current depth in the hierarchy.
+            parent_time: Total time of the parent node for percentage calculation.
 
         Returns:
-            A string summarizing all timers.
+            List of formatted strings for this node and its children.
         """
-        result = []
-        total_time = sum(self._timers.values())
+        if node_path not in self._nodes:
+            return []
 
-        for name, time_value in sorted(self._timers.items(), key=lambda x: x[1], reverse=True):
-            count = self._counts[name]
-            avg_time = time_value / count if count > 0 else 0
-            percentage = (time_value / total_time * 100) if total_time > 0 else 0
+        node = self._nodes[node_path]
 
-            result.append(
-                f"{name}: {time_value:.4f}s total, {avg_time:.6f}s avg ({count} calls), {percentage:.2f}% of total"
-            )
+        # Skip displaying the root node itself, but process its children
+        if node_path == self.ROOT_NAME:
+            result = []
+            # Sort children by total time (descending)
+            sorted_children = sorted(node.children, key=lambda x: self._nodes[x].total_time, reverse=True)
+
+            # Recursively format children with root time as parent time
+            for child_path in sorted_children:
+                result.extend(self._format_node(child_path, depth, node.total_time))
+
+            return result
+
+        indent = "  " * depth
+
+        # Calculate percentage relative to parent
+        if parent_time and parent_time > 0:
+            percentage = (node.total_time / parent_time) * 100
+            percentage_str = f"{percentage:.2f}% of parent"
+        else:
+            percentage_str = "root"
+
+        avg_time = node.total_time / node.count if node.count > 0 else 0
+
+        # Show just the name, not the full path for cleaner display
+        result = [
+            f"{indent}{node.name}: {node.total_time:.4f}s total, {avg_time:.6f}s avg "
+            f"({node.count} calls), {percentage_str}"
+        ]
+
+        # Sort children by total time (descending)
+        sorted_children = sorted(node.children, key=lambda x: self._nodes[x].total_time, reverse=True)
+
+        # Recursively format children
+        for child_path in sorted_children:
+            result.extend(self._format_node(child_path, depth + 1, node.total_time))
+
+        return result
+
+    def summary(self) -> str:
+        """Get a hierarchical summary of all timers.
+
+        Returns:
+            A string summarizing all timers in hierarchical format with percentages relative to parent nodes.
+        """
+        if not self._nodes:
+            return "No timers recorded."
+
+        # Ensure root is finalized
+        self._finalize_root()
+
+        if self.ROOT_NAME not in self._nodes:
+            return "No root timer found."
+
+        root_node = self._nodes[self.ROOT_NAME]
+        result = [f"Total session time: {root_node.total_time:.4f}s"]
+        result.extend(self._format_node(self.ROOT_NAME))
 
         return "\n".join(result)
 

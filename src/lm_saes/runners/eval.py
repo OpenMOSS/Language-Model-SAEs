@@ -1,31 +1,32 @@
-"""Module for analyzing SAE models."""
+"""Module for evaluating SAE models."""
 
+import os
 from typing import Optional
 
 import torch
+import wandb
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory
-from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
 from lm_saes.config import (
     ActivationFactoryConfig,
     BaseSAEConfig,
     CrossCoderConfig,
-    FeatureAnalyzerConfig,
+    EvalConfig,
     LanguageModelConfig,
-    MongoDBConfig,
+    WandbConfig,
 )
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.database import MongoClient
+from lm_saes.evaluator import Evaluator
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 
-logger = get_distributed_logger("runners.analyze")
+logger = get_distributed_logger("runners.eval")
 
 
-class AnalyzeSAESettings(BaseSettings):
-    """Settings for analyzing a Sparse Autoencoder."""
+class EvaluateSAESettings(BaseSettings):
+    """Settings for evaluating a Sparse Autoencoder."""
 
     sae: BaseSAEConfig
     """Configuration for the SAE model architecture and parameters"""
@@ -45,24 +46,24 @@ class AnalyzeSAESettings(BaseSettings):
     model_name: Optional[str] = None
     """Name of the tokenizer to load. Mixcoder requires a tokenizer to get the modality indices."""
 
-    analyzer: FeatureAnalyzerConfig
-    """Configuration for feature analysis"""
-
-    mongo: MongoDBConfig
-    """Configuration for the MongoDB database."""
+    eval: EvalConfig
+    """Configuration for evaluation"""
 
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
+
+    wandb: Optional[WandbConfig] = None
+    """Configuration for Weights & Biases logging"""
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
 
-def analyze_sae(settings: AnalyzeSAESettings) -> None:
-    """Analyze a SAE model.
+def evaluate_sae(settings: EvaluateSAESettings) -> None:
+    """Evaluate a SAE model.
 
     Args:
-        settings: Configuration settings for SAE analysis
+        settings: Configuration settings for SAE evaluation
     """
     # Set up logging
     setup_logging(level="INFO")
@@ -79,9 +80,6 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
 
     logger.info(f"Device mesh initialized: {device_mesh}")
 
-    mongo_client = MongoClient(settings.mongo)
-    logger.info("MongoDB client initialized")
-
     activation_factory = ActivationFactory(settings.activation_factory)
 
     logger.info("Loading SAE model")
@@ -92,24 +90,31 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
 
-    analyzer = FeatureAnalyzer(settings.analyzer)
-    logger.info("Feature analyzer initialized")
-
-    logger.info("Processing activations for analysis")
-    activations = activation_factory.process()
-    result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
-
-    logger.info("Analysis completed, saving results to MongoDB")
-    start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
-    mongo_client.add_feature_analysis(
-        name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result, start_idx=start_idx
+    wandb_logger = (
+        wandb.init(
+            project=settings.wandb.wandb_project,
+            config=settings.model_dump(),
+            name=settings.wandb.exp_name,
+            entity=settings.wandb.wandb_entity,
+            settings=wandb.Settings(x_disable_stats=True),
+            mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
+        )
+        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        else None
     )
 
-    logger.info("SAE analysis completed successfully")
+    if wandb_logger is not None:
+        logger.info("WandB logger initialized")
+
+    logger.info("Processing activations for evaluation")
+    activations = activation_factory.process()
+    evaluator = Evaluator(settings.eval)
+    evaluator.evaluate(sae, activations, wandb_logger)
+    logger.info("Evaluation completed")
 
 
-class AnalyzeCrossCoderSettings(BaseSettings):
-    """Settings for analyzing a CrossCoder model."""
+class EvaluateCrossCoderSettings(BaseSettings):
+    """Settings for evaluating a CrossCoder model."""
 
     sae: CrossCoderConfig
     """Configuration for the CrossCoder model architecture and parameters"""
@@ -123,25 +128,22 @@ class AnalyzeCrossCoderSettings(BaseSettings):
     activation_factories: list[ActivationFactoryConfig]
     """Configuration for generating activations"""
 
-    analyzer: FeatureAnalyzerConfig
-    """Configuration for feature analysis"""
+    eval: EvalConfig
+    """Configuration for evaluation"""
 
-    feature_analysis_name: str = "default"
-    """Name of the feature analysis."""
-
-    mongo: MongoDBConfig
-    """Configuration for the MongoDB database."""
+    wandb: Optional[WandbConfig] = None
+    """Configuration for Weights & Biases logging"""
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
 
 @torch.no_grad()
-def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
-    """Analyze a CrossCoder model. The key difference to analyze_sae is that the activation factories are a list of ActivationFactoryConfig, one for each head; and the analyzing contains a device mesh transformation from head parallelism to model (feature) parallelism.
+def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
+    """Evaluate a CrossCoder model. The key difference to evaluate_sae is that the activation factories are a list of ActivationFactoryConfig, one for each head; and the evaluating contains a device mesh transformation from head parallelism to model (feature) parallelism.
 
     Args:
-        settings: Configuration settings for CrossCoder analysis
+        settings: Configuration settings for CrossCoder evaluation
     """
     # Set up logging
     setup_logging(level="INFO")
@@ -154,44 +156,39 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
 
     logger.info(f"Analyzing CrossCoder with {settings.sae.n_heads} heads, {parallel_size} parallel size")
 
-    crosscoder_device_mesh = init_device_mesh(
+    device_mesh = init_device_mesh(
         device_type=settings.device_type,
         mesh_shape=(parallel_size,),
         mesh_dim_names=("head",),
     )
 
-    device_mesh = init_device_mesh(
-        device_type=settings.device_type,
-        mesh_shape=(parallel_size,),
-        mesh_dim_names=("model",),
-    )
-
     logger.info("Device meshes initialized for CrossCoder analysis")
 
-    mongo_client = MongoClient(settings.mongo)
-    logger.info("MongoDB client initialized")
-
     logger.info("Setting up activation factory for CrossCoder head")
-    activation_factory = ActivationFactory(settings.activation_factories[crosscoder_device_mesh.get_local_rank("head")])
+    activation_factory = ActivationFactory(settings.activation_factories[device_mesh.get_local_rank("head")])
 
     logger.info("Loading CrossCoder model")
-    sae = CrossCoder.from_config(settings.sae, device_mesh=crosscoder_device_mesh)
+    sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
 
-    logger.info("Feature analyzer initialized")
-    analyzer = FeatureAnalyzer(settings.analyzer)
-
-    logger.info("Processing activations for CrossCoder analysis")
-    activations = activation_factory.process()
-    result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
-
-    logger.info("CrossCoder analysis completed, saving results to MongoDB")
-    start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
-    mongo_client.add_feature_analysis(
-        name=settings.feature_analysis_name,
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        analysis=result,
-        start_idx=start_idx,
+    wandb_logger = (
+        wandb.init(
+            project=settings.wandb.wandb_project,
+            config=settings.model_dump(),
+            name=settings.wandb.exp_name,
+            entity=settings.wandb.wandb_entity,
+            settings=wandb.Settings(x_disable_stats=True),
+            mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
+        )
+        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        else None
     )
 
-    logger.info("CrossCoder analysis completed successfully")
+    if wandb_logger is not None:
+        logger.info("WandB logger initialized")
+
+    logger.info("Processing activations for CrossCoder evaluation")
+    activations = activation_factory.process()
+    evaluator = Evaluator(settings.eval)
+    evaluator.evaluate(sae, activations, wandb_logger)
+
+    logger.info("CrossCoder evaluation completed successfully")
