@@ -7,6 +7,7 @@ from typing import Any, Optional, cast
 import torch
 from transformer_lens import HookedTransformer
 from transformers import (
+    AutoModel,
     AutoModelForCausalLM,
     AutoProcessor,
     AutoTokenizer,
@@ -14,8 +15,9 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from lm_saes.config import LanguageModelConfig
+from lm_saes.config import LanguageModelConfig, LLaDAConfig
 from lm_saes.utils.misc import pad_and_truncate_tokens
+from lm_saes.utils.timer import timer
 
 
 def get_input_with_manually_prepended_bos(tokenizer, input):
@@ -40,12 +42,12 @@ def to_tokens(tokenizer, text, max_length, device="cpu"):
     tokenizer_prepends_bos = len(tokenizer.encode("")) > 0
     text = text if not tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
     tokens = tokenizer(
-                text,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=max_length,
-            )["input_ids"]
+        text,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=max_length,
+    )["input_ids"]
     return tokens.to(device)
 
 
@@ -149,16 +151,21 @@ class TransformerLensLanguageModel(LanguageModel):
         if cfg.device == "cuda":
             self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
         elif cfg.device == "npu":
-            self.device = torch.device(f"npu:{torch.npu.current_device()}")
+            self.device = torch.device(f"npu:{torch.npu.current_device()}")  # type: ignore[reportAttributeAccessIssue]
         else:
             self.device = torch.device(cfg.device)
 
-        hf_model = AutoModelForCausalLM.from_pretrained(
-            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
-            cache_dir=cfg.cache_dir,
-            local_files_only=cfg.local_files_only,
-            torch_dtype=cfg.dtype,
-        ) if cfg.load_ckpt else None
+        hf_model = (
+            AutoModelForCausalLM.from_pretrained(
+                (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
+                cache_dir=cfg.cache_dir,
+                local_files_only=cfg.local_files_only,
+                torch_dtype=cfg.dtype,
+                trust_remote_code=True,
+            )
+            if cfg.load_ckpt
+            else None
+        )
         hf_tokenizer = AutoTokenizer.from_pretrained(
             (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
             trust_remote_code=True,
@@ -167,16 +174,20 @@ class TransformerLensLanguageModel(LanguageModel):
             local_files_only=cfg.local_files_only,
         )
         self.tokenizer = set_tokens(hf_tokenizer)
-        self.model = HookedTransformer.from_pretrained_no_processing(
-            cfg.model_name,
-            use_flash_attn=cfg.use_flash_attn,
-            device=self.device,
-            cache_dir=cfg.cache_dir,
-            hf_model=hf_model,
-            hf_config=hf_model.config,
-            tokenizer=hf_tokenizer,
-            dtype=cfg.dtype,  # type: ignore ; issue with transformer_lens
-        ) if hf_model else None
+        self.model = (
+            HookedTransformer.from_pretrained_no_processing(
+                cfg.model_name,
+                use_flash_attn=cfg.use_flash_attn,
+                device=self.device,
+                cache_dir=cfg.cache_dir,
+                hf_model=hf_model,
+                hf_config=hf_model.config,
+                tokenizer=hf_tokenizer,
+                dtype=cfg.dtype,  # type: ignore ; issue with transformer_lens
+            )
+            if hf_model
+            else None
+        )
 
     @property
     def eos_token_id(self) -> int | None:
@@ -206,6 +217,8 @@ class TransformerLensLanguageModel(LanguageModel):
             _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
         ]
 
+    @timer.time("to_activations")
+    @torch.no_grad()
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
     ) -> dict[str, torch.Tensor]:
@@ -214,13 +227,15 @@ class TransformerLensLanguageModel(LanguageModel):
             warnings.warn(
                 "Activations with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
-        tokens = self.model.to_tokens(raw["text"], prepend_bos=True)
+        with timer.time("to_tokens"):
+            tokens = self.model.to_tokens(raw["text"], prepend_bos=self.cfg.prepend_bos)
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
             )
             tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
-        _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
+        with timer.time("run_with_cache_until"):
+            _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
         return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
 
 
@@ -230,6 +245,114 @@ class HuggingFaceLanguageModel(LanguageModel):
         self.device = (
             torch.device(f"cuda:{torch.cuda.current_device()}") if cfg.device == "cuda" else torch.device(cfg.device)
         )
+
+
+class LLaDALanguageModel(HuggingFaceLanguageModel):
+    cfg: LLaDAConfig  # Explicitly specify the type to avoid linter errors
+
+    def __init__(self, cfg: LLaDAConfig):
+        super().__init__(cfg)
+        self.model = AutoModel.from_pretrained(
+            cfg.model_from_pretrained_path,
+            torch_dtype=cfg.dtype,
+            local_files_only=cfg.local_files_only,
+            trust_remote_code=True,
+        ).to(self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            cfg.model_from_pretrained_path, local_files_only=cfg.local_files_only, trust_remote_code=True
+        )
+        self.model.eval()
+
+    @property
+    def eos_token_id(self) -> int:
+        return self.tokenizer.eos_token_id
+
+    @property
+    def bos_token_id(self) -> int:
+        return self.tokenizer.bos_token_id
+
+    @property
+    def pad_token_id(self) -> int:
+        return self.tokenizer.pad_token_id
+
+    @property
+    def mdm_mask_token_id(self) -> int:
+        return self.cfg.mdm_mask_token_id
+
+    def to_activations(
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
+    ) -> dict[str, torch.Tensor]:
+        layer_indices = _get_layer_indices_from_hook_points(hook_points)
+        inputs: BatchFeature = self.tokenizer(
+            raw["text"], padding=True, truncation=True, max_length=self.cfg.max_length, return_tensors="pt"
+        ).to(self.device)
+        input_ids = inputs["input_ids"]
+        attention_mask = inputs["attention_mask"]
+        # prepend bos token
+        if n_context is not None:
+            inputs["input_ids"] = pad_and_truncate_tokens(
+                inputs["input_ids"], n_context, pad_token_id=self.pad_token_id
+            )
+            inputs["attention_mask"] = pad_and_truncate_tokens(inputs["attention_mask"], n_context, pad_token_id=0)
+
+        # Apply random masking to non-pad tokens based on mask_ratio
+        masked_input_ids = input_ids.clone()
+        if self.cfg.mask_ratio > 0:
+            non_pad_mask = input_ids != self.pad_token_id
+            # Generate random values for all positions
+            random_values = torch.rand_like(input_ids, dtype=torch.float32, device=self.device)
+
+            # For each sequence, we need to select the top-k positions to mask based on random values
+            # but only among non-pad positions
+            non_pad_counts = non_pad_mask.sum(dim=1)  # [batch_size]
+            num_to_mask = (non_pad_counts.float() * self.cfg.mask_ratio).long()  # [batch_size]
+            # Set random values for pad positions to a high value so they won't be selected
+            random_values = torch.where(non_pad_mask, random_values, torch.full_like(random_values, float("inf")))
+
+            # Get the indices that would sort random_values in ascending order
+            sorted_indices = torch.argsort(random_values, dim=1)  # [batch_size, seq_length]
+
+            # Create a mask for positions to be masked
+            # For each sequence, we want to mask the first num_to_mask[i] positions from sorted_indices[i]
+            position_ranks = torch.argsort(sorted_indices, dim=1)  # [batch_size, seq_length]
+            mask_positions = position_ranks < num_to_mask.unsqueeze(1)  # [batch_size, seq_length]
+
+            # Apply masking only to non-pad positions
+            mask_positions = mask_positions & non_pad_mask
+
+            # Apply the mask
+            masked_input_ids[mask_positions] = self.cfg.mdm_mask_token_id
+
+        # Create new inputs dict with masked input_ids
+        masked_inputs = {"input_ids": masked_input_ids, "attention_mask": attention_mask}
+        outputs = self.model(**masked_inputs, output_hidden_states=True)
+        activations = {
+            hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
+        }
+        activations["tokens"] = masked_inputs["input_ids"]
+        activations["meta"] = [{
+            "original_tokens": input_ids,
+            "mask_ratio": self.cfg.mask_ratio,
+            "logits": outputs.logits[i].max(dim=1).values,
+            "output_tokens": outputs.logits[i].max(dim=1).indices,
+        } for i in range(len(raw["text"]))]
+        return activations
+
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
+        """Trace how raw data is aligned with tokens for LLaDA model."""
+        inputs = self.tokenizer(
+            raw["text"], return_tensors="pt", padding="max_length", max_length=self.cfg.max_length, truncation=True
+        )
+        input_ids = inputs["input_ids"]
+        if n_context is not None:
+            assert self.pad_token_id is not None, "Pad token ID must be set for LLaDA when n_context is provided"
+            input_ids = pad_and_truncate_tokens(input_ids, n_context, pad_token_id=self.pad_token_id)
+        batch_str_tokens = [
+            self.tokenizer.batch_decode(input_id, clean_up_tokenization_spaces=False) for input_id in input_ids
+        ]
+        return [
+            _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
+        ]
 
 
 class QwenVLLanguageModel(HuggingFaceLanguageModel):

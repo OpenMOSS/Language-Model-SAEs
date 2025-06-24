@@ -13,6 +13,7 @@ from .config import (
     FeatureAnalyzerConfig,
     InitializerConfig,
     LanguageModelConfig,
+    LLaDAConfig,
     MixCoderConfig,
     MongoDBConfig,
     SAEConfig,
@@ -22,12 +23,15 @@ from .config import (
 from .clt import CrossLayerTranscoder
 from .crosscoder import CrossCoder
 from .database import MongoClient
+from .evaluator import EvalConfig, Evaluator
 from .mixcoder import MixCoder
 from .resource_loaders import load_dataset, load_model
 from .runners import (
     AnalyzeCrossCoderSettings,
     AnalyzeSAESettings,
     AutoInterpSettings,
+    EvaluateCrossCoderSettings,
+    EvaluateSAESettings,
     GenerateActivationsSettings,
     SweepingItem,
     SweepSAESettings,
@@ -38,6 +42,8 @@ from .runners import (
     analyze_crosscoder,
     analyze_sae,
     auto_interp,
+    evaluate_crosscoder,
+    evaluate_sae,
     generate_activations,
     sweep_sae,
     train_crosscoder,
@@ -64,6 +70,12 @@ __all__ = [
     "load_dataset",
     "load_model",
     "FeatureAnalyzer",
+    "EvaluateCrossCoderSettings",
+    "evaluate_crosscoder",
+    "EvaluateSAESettings",
+    "Evaluator",
+    "EvalConfig",
+    "evaluate_sae",
     "GenerateActivationsSettings",
     "generate_activations",
     "InitializerConfig",
@@ -87,5 +99,6 @@ __all__ = [
     "TrainCrossCoderSettings",
     "auto_interp",
     "sweep_sae",
+    "LLaDAConfig",
     "train_crosscoder",
 ]
