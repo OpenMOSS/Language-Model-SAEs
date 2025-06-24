@@ -48,7 +48,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         # CLT requires specific configuration settings
         assert not cfg.sparsity_include_decoder_norm, "CLT requires sparsity_include_decoder_norm=False"
         assert cfg.use_decoder_bias, "CLT requires use_decoder_bias=True"
-        assert not cfg.apply_decoder_bias_to_pre_encoder, "CLT requires apply_decoder_bias_to_pre_encoder=False"
 
         # Initialize weights and biases for cross-layer architecture
         if device_mesh is None:
