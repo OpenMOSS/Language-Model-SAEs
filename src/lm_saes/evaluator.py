@@ -6,13 +6,13 @@ from einops import reduce
 from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
+from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import EvalConfig
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
-from wandb.sdk.wandb_run import Run
 
 logger = get_distributed_logger("evaluator")
 
