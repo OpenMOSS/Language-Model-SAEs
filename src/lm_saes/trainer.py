@@ -1,6 +1,6 @@
 import math
 import os
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 import torch
 import torch.optim.lr_scheduler as lr_scheduler
@@ -72,7 +72,31 @@ class Trainer:
     @timer.time("initialize_optimizer")
     def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
         assert isinstance(self.cfg.lr, float)
-        optimizer = Adam(sae.get_parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
+
+        def _apply_lr(parameters: dict[str, Any]):
+            assert isinstance(self.cfg.lr, float)
+            if parameters["name"] == "jumprelu":
+                return {**parameters, "lr": self.cfg.jumprelu_lr_factor * self.cfg.lr}
+            return parameters
+
+        params = [_apply_lr(parameters) for parameters in sae.get_parameters()]
+
+        def _format_parameters(parameters: dict[str, Any]) -> str:
+            param_info = f"{parameters['name']}:"
+            for i, param in enumerate(parameters["params"]):
+                param_info += f"\n    [{i}] shape={list(param.shape)}, dtype={param.dtype}"
+                if param.requires_grad:
+                    param_info += ", trainable"
+                else:
+                    param_info += ", frozen"
+            if "lr" in parameters:
+                param_info += f"\n    lr={parameters['lr']}"
+            return param_info
+
+        param_str = "\n".join([_format_parameters(p) for p in params])
+        logger.info(f"\nParameter Groups: \n{param_str}\n")
+
+        optimizer = Adam(params, lr=self.cfg.lr, betas=self.cfg.betas)
         scheduler = get_scheduler(
             scheduler_name=self.cfg.lr_scheduler_name,
             optimizer=optimizer,

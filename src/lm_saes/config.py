@@ -201,6 +201,7 @@ class TrainerConfig(BaseConfig):
     lr_end_ratio: float = 1 / 32
     lr_warm_up_steps: int | float = 5000
     lr_cool_down_steps: int | float = 0.2
+    jumprelu_lr_factor: float = 1.0
     clip_grad_norm: float = 0.0
     feature_sampling_window: int = 1000
     total_training_tokens: int = 300_000_000

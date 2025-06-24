@@ -424,6 +424,3 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         else:
             label = batch[self.cfg.hook_point_out]
         return label
-
-    def get_parameters(self) -> list[dict[str, Any]]:
-        return [{"params": self.parameters()}]
