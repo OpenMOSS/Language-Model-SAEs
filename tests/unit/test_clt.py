@@ -1,9 +1,9 @@
 """Unit tests for Cross Layer Transcoder (CLT) implementation."""
 
+import math
+
 import pytest
 import torch
-import torch.nn as nn
-import math
 
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import CLTConfig
@@ -232,7 +232,7 @@ class TestCrossLayerTranscoder:
         feature_acts, hidden_pre = large_clt_model.encode(input_tensor, return_hidden_pre=True)
         output = large_clt_model.decode(feature_acts)
         
-        print(f"\n=== CLT Custom Initialization Test Results (Large Model) ===")
+        print("\n=== CLT Custom Initialization Test Results (Large Model) ===")
         print(f"Model config: d_model={config.d_model}, d_sae={config.d_sae}, n_layers={config.n_layers}")
         print(f"Input shape: {input_tensor.shape}")
         print(f"Target input norm per token: {target_norm:.4f}")
@@ -246,7 +246,7 @@ class TestCrossLayerTranscoder:
             input_norms_per_layer.append(avg_norm)
             print(f"Layer {layer_idx} input - Average norm: {avg_norm:.4f}, Min: {layer_norms.min().item():.4f}, Max: {layer_norms.max().item():.4f}")
         
-        print(f"\n--- Feature Activations ---")
+        print("\n--- Feature Activations ---")
         for layer_idx in range(n_layers):
             layer_features = feature_acts[:, :, layer_idx, :]  # (batch, seq, d_sae)
             layer_feature_norms = torch.norm(layer_features, dim=-1)  # (batch, seq)
@@ -256,7 +256,7 @@ class TestCrossLayerTranscoder:
                   f"Min: {layer_feature_norms.min().item():.4f}, Max: {layer_feature_norms.max().item():.4f}, "
                   f"Sparsity: {layer_sparsity:.4f}")
         
-        print(f"\n--- Hidden Pre-Activations ---")
+        print("\n--- Hidden Pre-Activations ---")
         for layer_idx in range(n_layers):
             layer_hidden_pre = hidden_pre[:, :, layer_idx, :]  # (batch, seq, d_sae)
             layer_hidden_norms = torch.norm(layer_hidden_pre, dim=-1)  # (batch, seq)
@@ -264,7 +264,7 @@ class TestCrossLayerTranscoder:
             print(f"Layer {layer_idx} hidden_pre - Average norm: {layer_hidden_norms.mean().item():.4f}, "
                   f"Min: {layer_hidden_norms.min().item():.4f}, Max: {layer_hidden_norms.max().item():.4f}")
         
-        print(f"\n--- Reconstruction Outputs ---")
+        print("\n--- Reconstruction Outputs ---")
         for layer_idx in range(n_layers):
             layer_output = output[:, :, layer_idx, :]  # (batch, seq, d_model)
             layer_output_norms = torch.norm(layer_output, dim=-1)  # (batch, seq)
@@ -272,7 +272,7 @@ class TestCrossLayerTranscoder:
             print(f"Layer {layer_idx} output - Average norm: {layer_output_norms.mean().item():.4f}, "
                   f"Min: {layer_output_norms.min().item():.4f}, Max: {layer_output_norms.max().item():.4f}")
         
-        print(f"\n--- Parameter Initialization Stats ---")
+        print("\n--- Parameter Initialization Stats ---")
         
         # Encoder stats
         expected_encoder_bound = 1.0 / math.sqrt(config.d_sae)
@@ -319,7 +319,7 @@ class TestCrossLayerTranscoder:
             actual_decoder_var = torch.var(large_clt_model.W_D[layer_to]).item()
             print(f"Layer {layer_to} decoder variance - Expected: {expected_decoder_var:.8f}, Actual: {actual_decoder_var:.8f}")
         
-        print(f"=== Test completed successfully ===\n")
+        print("=== Test completed successfully ===\n")
 
 
 if __name__ == "__main__":
