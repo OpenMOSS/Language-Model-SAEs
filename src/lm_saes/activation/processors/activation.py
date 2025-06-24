@@ -149,9 +149,9 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
             input_meta = d.get("meta", [])
             batch_size = len(d["text"])
             activations["meta"] = [
-                (existing_meta[i] if i < len(existing_meta) else {}) | 
-                (input_meta[i] if i < len(input_meta) else {}) | 
-                {"model_name": model_name}
+                (existing_meta[i] if i < len(existing_meta) else {})
+                | (input_meta[i] if i < len(input_meta) else {})
+                | {"model_name": model_name}
                 for i in range(batch_size)
             ]
             yield activations

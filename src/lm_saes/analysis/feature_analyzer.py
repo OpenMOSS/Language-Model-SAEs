@@ -438,7 +438,6 @@ class FeatureAnalyzer:
                 feature_result["decoder_similarity_matrix"] = decoder_similarity_matrices[i, :, :].tolist()
                 feature_result["decoder_inner_product_matrix"] = decoder_inner_product_matrices[i, :, :].tolist()
 
-
             results.append(feature_result)
 
         return results
