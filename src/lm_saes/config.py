@@ -51,7 +51,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
     """
 
-    sae_type: Literal["sae", "crosscoder", "mixcoder", "clt"]
+    sae_type: Literal["sae", "crosscoder", "clt"]
     d_model: int
     expansion_factor: int
     use_decoder_bias: bool = True
@@ -114,7 +114,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
 
 class SAEConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "mixcoder", "clt"] = "sae"
+    sae_type: Literal["sae", "crosscoder", "clt"] = "sae"
     hook_point_in: str
     hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
     use_glu_encoder: bool = False
@@ -131,7 +131,7 @@ class CLTConfig(BaseSAEConfig):
     reads from the residual stream at that layer and can decode to layers L through L-1.
     """
 
-    sae_type: Literal["sae", "crosscoder", "mixcoder", "clt"] = "clt"
+    sae_type: Literal["sae", "crosscoder", "clt"] = "clt"
     hook_points_in: list[str]
     """List of hook points to capture input activations from, one for each layer."""
     hook_points_out: list[str]
@@ -155,7 +155,7 @@ class CLTConfig(BaseSAEConfig):
 
 
 class CrossCoderConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "mixcoder", "clt"] = "crosscoder"
+    sae_type: Literal["sae", "crosscoder", "clt"] = "crosscoder"
     hook_points: list[str]
 
     @property
