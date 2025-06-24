@@ -126,29 +126,32 @@ class SAEConfig(BaseSAEConfig):
 
 class CLTConfig(BaseSAEConfig):
     """Configuration for Cross Layer Transcoder (CLT).
-    
+
     A CLT consists of L encoders and L(L+1)/2 decoders where each encoder at layer L
     reads from the residual stream at that layer and can decode to layers L through L-1.
     """
+
     sae_type: Literal["sae", "crosscoder", "mixcoder", "clt"] = "clt"
     hook_points_in: list[str]
     """List of hook points to capture input activations from, one for each layer."""
     hook_points_out: list[str]
     """List of hook points to capture output activations from, one for each layer."""
-    
+
     @property
     def n_layers(self) -> int:
         """Number of layers in the CLT."""
         return len(self.hook_points_in)
-    
+
     @property
     def associated_hook_points(self) -> list[str]:
         """All hook points used by the CLT."""
         return self.hook_points_in + self.hook_points_out
-    
+
     def model_post_init(self, __context):
         super().model_post_init(__context)
-        assert len(self.hook_points_in) == len(self.hook_points_out), "Number of input and output hook points must match"
+        assert len(self.hook_points_in) == len(self.hook_points_out), (
+            "Number of input and output hook points must match"
+        )
 
 
 class CrossCoderConfig(BaseSAEConfig):
@@ -163,7 +166,7 @@ class CrossCoderConfig(BaseSAEConfig):
     def n_heads(self) -> int:
         return len(self.hook_points)
 
-      
+
 class InitializerConfig(BaseConfig):
     bias_init_method: str = "all_zero"
     decoder_uniform_bound: float = 1.0
