@@ -4,10 +4,10 @@ import os
 from typing import Optional
 
 import torch
-import wandb
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
+import wandb
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.config import (
     ActivationFactoryConfig,
