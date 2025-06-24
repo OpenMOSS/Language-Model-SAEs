@@ -11,20 +11,18 @@ This enables linear attribution between features across layers.
 import math
 from typing import Any, Literal, Optional, Union, overload
 
-import einops
 import torch
 import torch.distributed.tensor
 import torch.nn as nn
-import torch.nn.functional as F
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
-from pydantic import Field
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import BaseSAEConfig, CLTConfig
 from lm_saes.utils.distributed import DimMap
+
 
 class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     """Cross Layer Transcoder (CLT) implementation.
@@ -345,7 +343,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         return reconstructed
 
     @override 
-    def decoder_norm(self, keepdim: bool = False) -> Float[torch.Tensor, "n_decoder_matrices"]:
+    def decoder_norm(self, keepdim: bool = False):
         """Compute the effective norm of decoder weights for each feature."""
         # Collect norms from all decoder groups
         all_norms = []
@@ -369,7 +367,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         return all_norms_tensor
 
     @override
-    def encoder_norm(self, keepdim: bool = False) -> Float[torch.Tensor, "n_layers"]:
+    def encoder_norm(self, keepdim: bool = False):
         """Compute the norm of encoder weights averaged across layers."""
         if not isinstance(self.W_E, DTensor):
             # W_E shape: (n_layers, d_model, d_sae)
@@ -388,7 +386,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             ).to_local()
 
     @override
-    def decoder_bias_norm(self) -> Float[torch.Tensor, "n_layers"]:
+    def decoder_bias_norm(self):
         """Compute the norm of decoder bias for each target layer."""
         bias_norms = []
         for layer_to in range(self.cfg.n_layers):

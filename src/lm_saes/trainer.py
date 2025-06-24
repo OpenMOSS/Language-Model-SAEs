@@ -17,6 +17,7 @@ from lm_saes.optim import get_scheduler
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
+from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("trainer")
 
@@ -36,6 +37,7 @@ class Trainer:
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
 
+    @timer.time("initialize_trainer")
     def _initialize_trainer(
         self,
         sae: AbstractSparseAutoEncoder,
@@ -67,7 +69,6 @@ class Trainer:
                 ]
         self.wandb_logger = wandb_logger
 
-        
     @timer.time("initialize_optimizer")
     def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
         assert isinstance(self.cfg.lr, float)
@@ -83,6 +84,7 @@ class Trainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
+    @timer.time("training_step")
     def _training_step(
         self,
         sae: AbstractSparseAutoEncoder,
@@ -121,6 +123,7 @@ class Trainer:
         return loss_dict
 
     @torch.no_grad()
+    @timer.time("log")
     def _log(self, sae: AbstractSparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
         # TODO: add full distributed support
         assert self.optimizer is not None, "Optimizer must be initialized"
@@ -135,6 +138,8 @@ class Trainer:
         if isinstance(act_freq_scores, DTensor):
             act_freq_scores = act_freq_scores.full_tensor()
 
+        log_info["n_forward_passes_since_fired"] += 1
+        log_info["n_forward_passes_since_fired"][act_freq_scores > 0] = 0
         log_info["act_freq_scores"] += act_freq_scores
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
@@ -238,9 +243,13 @@ class Trainer:
             if is_primary_rank(sae.device_mesh):
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Training Metrics")
 
+            if timer.enabled:
+                logger.info(f"\nTimer Summary:\n{timer.summary()}\n")
+
             if self.wandb_logger is not None:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
 
+    @timer.time("save_checkpoint")
     def _save_checkpoint(self, sae: AbstractSparseAutoEncoder):
         if len(self.checkpoint_thresholds) > 0 and self.cur_tokens >= self.checkpoint_thresholds[0]:
             suffix = "safetensors" if sae.device_mesh is None else "dcp"
@@ -259,6 +268,9 @@ class Trainer:
         eval_fn: Callable[[AbstractSparseAutoEncoder], None] | None = None,
         wandb_logger: Run | None = None,
     ):
+        # Reset timer at the start of training
+        timer.reset()
+
         self._initialize_trainer(sae, activation_stream, wandb_logger)
         self._initialize_optimizer(sae)
         assert self.optimizer is not None
@@ -270,36 +282,43 @@ class Trainer:
         }
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
         for batch in activation_stream:
-            proc_bar.update(1)
-            batch = sae.normalize_activations(batch)
-            sae.train()
-            self.optimizer.zero_grad()
-            loss_dict = self._training_step(sae, batch)
+            with timer.time("training_iteration"):
+                proc_bar.update(1)
 
-            with timer.time("backward"):
-                loss_dict["loss"].backward()
+                batch = sae.normalize_activations(batch)
 
-            with timer.time("clip_grad_norm"):
-                loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
-                    sae.parameters(),
-                    max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
-                )
+                sae.train()
 
-            with timer.time("optimizer_step"):
-                self.optimizer.step()
+                self.optimizer.zero_grad()
 
-            log_info.update(loss_dict)
-            proc_bar.set_description(f"loss: {log_info['loss'].item()}")
+                loss_dict = self._training_step(sae, batch)
 
-            self._log(sae, log_info, batch)
+                with timer.time("backward"):
+                    loss_dict["loss"].backward()
 
-            if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
-                eval_fn(sae)
+                with timer.time("clip_grad_norm"):
+                    loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
+                        sae.parameters(),
+                        max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
+                    )
 
-            self._save_checkpoint(sae)
-            self.scheduler.step()
+                with timer.time("optimizer_step"):
+                    self.optimizer.step()
 
-            self.cur_step += 1
-            self.cur_tokens += batch_size(batch)
-            if self.cur_tokens >= self.cfg.total_training_tokens:
-                break
+                log_info.update(loss_dict)
+                proc_bar.set_description(f"loss: {log_info['loss'].item()}")
+
+                self._log(sae, log_info, batch)
+
+                if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
+                    with timer.time("evaluation"):
+                        eval_fn(sae)
+
+                self._save_checkpoint(sae)
+                with timer.time("scheduler_step"):
+                    self.scheduler.step()
+
+                self.cur_step += 1
+                self.cur_tokens += batch_size(batch)
+                if self.cur_tokens >= self.cfg.total_training_tokens:
+                    break

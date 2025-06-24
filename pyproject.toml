@@ -12,7 +12,7 @@ dependencies = [
     "pandas>=2.2.3",
     "pymongo>=4.10.1",
     "tensorboardX>=2.6.2.2",
-    "torch==2.7.0",
+    # "torch>=2.5.0",
     # "torchvision>=0.20.1",
     "transformer-lens",
     "uvicorn>=0.32.0",
@@ -96,7 +96,19 @@ flash-attn = [
 
 [project.optional-dependencies]
 # NPU variant of PyTorch (for Huawei Ascend hardware)
-default = ["torch==2.7.0", "torchvision>=0.20.1"]
+default = ["torch==2.6.0", "torchvision>=0.20.1"]
+
+npu = [
+    "torch==2.6.0",
+    "torchvision>=0.20.1",
+    "torch-npu==2.6.0rc1",
+]
+
+triton = ["triton<3.3.0"]
+
+[tool.uv.sources]
+torch = [{ index = "torch-cpu", extra = "npu" }]
+torchvision = [{ index = "torch-cpu", extra = "npu" }]
 
 [[tool.uv.index]]
 name = "torch-cpu"

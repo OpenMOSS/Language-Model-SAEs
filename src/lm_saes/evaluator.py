@@ -6,7 +6,7 @@ from einops import reduce
 from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
-from wandb.sdk.wandb_run import Run
+from wandb.sdk.wandb_run import Run 
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import EvalConfig
@@ -19,6 +19,7 @@ logger = get_distributed_logger("evaluator")
 
 def item(x: torch.Tensor) -> float:
     return x.item() if not isinstance(x, DTensor) else x.full_tensor().item()
+
 
 
 class Evaluator:

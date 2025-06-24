@@ -2,13 +2,12 @@
 Tests for Cross Layer Transcoder (CLT) in distributed settings.
 """
 import os
-import pytest
+
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
-from torch.distributed.tensor import DTensor
 
-from lm_saes import CrossLayerTranscoder, CLTConfig
+from lm_saes import CLTConfig, CrossLayerTranscoder
 
 
 def setup_distributed():
@@ -77,7 +76,6 @@ def test_distributed_clt_tensor_parallel():
     
     try:
         # Create device mesh for tensor parallel
-        device_list = list(range(world_size))
         if torch.cuda.is_available():
             device_mesh = init_device_mesh("cuda", (world_size,), mesh_dim_names=("tp",))
         else:
