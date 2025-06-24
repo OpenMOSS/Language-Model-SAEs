@@ -8,6 +8,7 @@ from torch import Tensor
 from torch.distributed.tensor import DTensor
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
+from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
@@ -17,7 +18,6 @@ from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
 from lm_saes.utils.timer import timer
-from wandb.sdk.wandb_run import Run
 
 logger = get_distributed_logger("trainer")
 
