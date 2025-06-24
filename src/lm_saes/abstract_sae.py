@@ -32,6 +32,7 @@ from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import is_primary_rank
+from lm_saes.utils.timer import timer
 
 from .config import BaseSAEConfig
 
@@ -388,6 +389,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             return torch.tensor(1.0, device=x.device, dtype=x.dtype)
         raise ValueError(f"Not implemented norm_activation {self.cfg.norm_activation}")
 
+    @timer.time("normalize_activations")
     def normalize_activations(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Normalize the input activations.
         This should be called before calling `encode` or `compute_loss`.
@@ -630,6 +632,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
 
+    @timer.time("compute_loss")
     def compute_loss(
         self,
         batch: dict[str, torch.Tensor],
@@ -665,12 +668,13 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
 
-        l_rec = (reconstructed - label).pow(2)
-        if use_batch_norm_mse:
-            l_rec = (
-                l_rec
-                / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
-            )
+        with timer.time("loss_calculation"):
+            l_rec = (reconstructed - label).pow(2)
+            if use_batch_norm_mse:
+                l_rec = (
+                    l_rec
+                    / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+                )
         l_rec = l_rec.sum(dim=-1)
         if isinstance(l_rec, DTensor):
             l_rec = l_rec.full_tensor()
