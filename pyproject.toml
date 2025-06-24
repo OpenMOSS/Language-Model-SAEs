@@ -96,7 +96,7 @@ flash-attn = [
 
 [project.optional-dependencies]
 # NPU variant of PyTorch (for Huawei Ascend hardware)
-default = ["torch==2.6.0", "torchvision>=0.20.1"]
+default = ["torch==2.7.0", "torchvision>=0.20.1"]
 
 npu = [
     "torch==2.6.0",
@@ -104,7 +104,7 @@ npu = [
     "torch-npu==2.6.0rc1",
 ]
 
-triton = ["triton<3.3.0"]
+triton = ["triton"]
 
 [tool.uv.sources]
 torch = [{ index = "torch-cpu", extra = "npu" }]
@@ -174,7 +174,7 @@ reportPrivateImportUsage = false
 [tool.uv]
 package = true
 no-build-isolation-package = ["flash-attn"]
-conflicts = [[{ extra = "default" }, { extra = "npu" }]]
+conflicts = [[{ extra = "default" }, { extra = "npu" }], [{ extra = "triton" }, { extra = "npu" }],]
 
 [[tool.uv.dependency-metadata]]
 name = "flash-attn"
