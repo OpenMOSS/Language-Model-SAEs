@@ -1,5 +1,6 @@
 from .activation import ActivationFactory, ActivationWriter
 from .analysis import FeatureAnalyzer
+from .clt import CrossLayerTranscoder
 from .config import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
@@ -20,7 +21,6 @@ from .config import (
     TrainerConfig,
     WandbConfig,
 )
-from .clt import CrossLayerTranscoder
 from .crosscoder import CrossCoder
 from .database import MongoClient
 from .evaluator import EvalConfig, Evaluator
@@ -35,10 +35,9 @@ from .runners import (
     GenerateActivationsSettings,
     SweepingItem,
     SweepSAESettings,
+    TrainCLTSettings,
     TrainCrossCoderSettings,
     TrainSAESettings,
-    TrainCLTSettings,
-    train_clt,
     analyze_crosscoder,
     analyze_sae,
     auto_interp,
@@ -46,6 +45,7 @@ from .runners import (
     evaluate_sae,
     generate_activations,
     sweep_sae,
+    train_clt,
     train_crosscoder,
     train_sae,
 )
@@ -84,6 +84,8 @@ __all__ = [
     "WandbConfig",
     "train_sae",
     "TrainSAESettings",
+    "TrainCLTSettings",
+    "train_clt",
     "AnalyzeSAESettings",
     "analyze_sae",
     "FeatureAnalyzerConfig",

@@ -5,11 +5,11 @@ from typing import Any, Iterable, Optional, cast
 
 import torch
 import torch.distributed as dist
-import wandb
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
+import wandb
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.config import (
     ActivationFactoryConfig,
