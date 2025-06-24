@@ -21,7 +21,6 @@ def item(x: torch.Tensor) -> float:
     return x.item() if not isinstance(x, DTensor) else x.full_tensor().item()
 
 
-
 class Evaluator:
     def __init__(self, cfg: EvalConfig):
         self.cfg = cfg
