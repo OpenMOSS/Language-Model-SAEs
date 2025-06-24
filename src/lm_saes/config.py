@@ -48,7 +48,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     """
     Base class for SAE configs.
     Initializer will initialize SAE based on config type.
-    So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, MixCoderConfig, CrossCoderConfig, etc.
+    So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
     """
 
     sae_type: Literal["sae", "crosscoder", "mixcoder", "clt"]
