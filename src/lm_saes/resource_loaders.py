@@ -6,11 +6,12 @@ from torch.distributed.device_mesh import DeviceMesh
 
 from lm_saes.backend.language_model import (
     LanguageModel,
+    LLaDALanguageModel,
     QwenLanguageModel,
     QwenVLLanguageModel,
     TransformerLensLanguageModel,
 )
-from lm_saes.config import DatasetConfig, LanguageModelConfig
+from lm_saes.config import DatasetConfig, LanguageModelConfig, LLaDAConfig
 
 
 def dataset_transform(data):
@@ -73,6 +74,8 @@ def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_
         return "huggingface"
     elif model_name.startswith("Qwen/Qwen2.5"):
         return "huggingface"
+    elif model_name.startswith("GSAI-ML/LLaDA"):
+        return "huggingface"
     else:
         return "transformer_lens"
 
@@ -84,6 +87,9 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
             return QwenVLLanguageModel(cfg)
         elif cfg.model_name.startswith("Qwen/Qwen2.5"):
             return QwenLanguageModel(cfg)
+        elif cfg.model_name.startswith("GSAI-ML/LLaDA"):
+            assert isinstance(cfg, LLaDAConfig)
+            return LLaDALanguageModel(cfg)
         else:
             raise NotImplementedError(f"Model {cfg.model_name} not supported in HuggingFace backend.")
     elif backend == "transformer_lens":

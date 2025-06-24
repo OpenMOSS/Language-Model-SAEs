@@ -56,11 +56,8 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     expansion_factor: int
     use_decoder_bias: bool = True
     act_fn: Literal["relu", "jumprelu", "topk", "batchtopk"] = "relu"
-    jump_relu_threshold: float = 0.0
-    apply_decoder_bias_to_pre_encoder: bool = False
     norm_activation: str = "dataset-wise"
     sparsity_include_decoder_norm: bool = True
-    force_unit_decoder_norm: bool = False
     top_k: int = 50
     sae_pretrained_name_or_path: Optional[str] = None
     strict_loading: bool = True
@@ -166,43 +163,10 @@ class CrossCoderConfig(BaseSAEConfig):
     def n_heads(self) -> int:
         return len(self.hook_points)
 
-
-class MixCoderConfig(SAEConfig):
-    sae_type: Literal["sae", "crosscoder", "mixcoder", "clt"] = "mixcoder"
-    hook_point_in: str
-    hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
-    modalities: dict[str, int]
-    penalty_coefficient: dict[str, float]
-    loss_weights: dict[str, float]
-
-    @property
-    def d_sae(self) -> int:
-        return sum(self.modalities.values())
-
-    @property
-    def modality_names(self) -> list[str]:
-        return [k for k in self.modalities.keys() if k != "shared"]
-
-    def model_post_init(self, __context):
-        super().model_post_init(__context)
-        if "shared" in self.modalities:
-            assert list(self.modalities.keys())[-1] == "shared", "Shared modality must be the last modality"
-
-    def penalty_coefficient_post_init(self, __context):
-        super().model_post_init(__context)
-        for modality in self.modalities.keys():
-            assert self.penalty_coefficient[modality] >= 1, "Penalty coefficient must be greater than or equal to 1"
-
-    def activation_function_post_init(self, __context):
-        super().model_post_init(__context)
-        assert self.act_fn == "jumprelu", "Only jumprelu is supported for MixCoder"
-
-
+      
 class InitializerConfig(BaseConfig):
     bias_init_method: str = "all_zero"
-    init_decoder_norm: float | None = None
     decoder_uniform_bound: float = 1.0
-    init_encoder_norm: float | None = None
     encoder_uniform_bound: float = 1.0
     init_encoder_with_decoder_transpose: bool = True
     init_encoder_with_decoder_transpose_factor: float = 1.0
@@ -222,8 +186,6 @@ class TrainerConfig(BaseConfig):
     use_batch_norm_mse: bool = True
 
     lr: float | dict[str, float] = 0.0004
-    expected_l0: int = 100
-    update_decoder_lr_with_l0: bool = False
     betas: Tuple[float, float] = (0.9, 0.999)
     lr_scheduler_name: Literal[
         "constant",
@@ -391,6 +353,9 @@ class LanguageModelConfig(BaseModelConfig):
     """ The backend to use for the language model. """
     load_ckpt: bool = True
 
+    prepend_bos: bool = True
+    """ Whether to prepend the BOS token to the input. """
+
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
         """Load the LanguageModelConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/lm_config.json.
@@ -410,6 +375,12 @@ class LanguageModelConfig(BaseModelConfig):
         d = self.model_dump()
         with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
             json.dump(d, f, indent=4)
+
+
+class LLaDAConfig(LanguageModelConfig):
+    mask_ratio: float = 0.0
+    mdm_mask_token_id: int = 126336
+    prepend_bos: bool = False
 
 
 class ActivationWriterConfig(BaseConfig):

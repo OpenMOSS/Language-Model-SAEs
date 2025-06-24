@@ -67,13 +67,8 @@ class Trainer:
                 ]
         self.wandb_logger = wandb_logger
 
-    def _update_decoder_learning_rate(self, l0: float):
-        assert self.optimizer is not None and isinstance(self.cfg.lr, float)
-        # change the learning rate of the decoder weights to be inversely proportional to the l0
-        for param_group in self.optimizer.param_groups:
-            if param_group["name"] == "decoder_weight":
-                param_group["lr"] = self.cfg.lr * self.cfg.expected_l0 / l0
-
+        
+    @timer.time("initialize_optimizer")
     def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
         assert isinstance(self.cfg.lr, float)
         optimizer = Adam(sae.get_parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
@@ -105,6 +100,12 @@ class Trainer:
                 )
             )
 
+        l1_coefficient = (
+            min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
+            if self.cfg.l1_coefficient is not None
+            else 1.0
+        )
+
         loss, (loss_data, aux_data) = sae.compute_loss(
             batch,
             sparsity_loss_type=self.cfg.sparsity_loss_type,
@@ -112,11 +113,11 @@ class Trainer:
             p=self.cfg.p,
             use_batch_norm_mse=self.cfg.use_batch_norm_mse,
             return_aux_data=True,
-            l1_coefficient=min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
-            if self.cfg.l1_coefficient
-            else 1.0,
+            l1_coefficient=l1_coefficient,
         )
-        loss_dict = {"loss": loss, "batch_size": batch_size(batch)} | loss_data | aux_data
+        loss_dict = (
+            {"loss": loss, "batch_size": batch_size(batch), "l1_coefficient": l1_coefficient} | loss_data | aux_data
+        )
         return loss_dict
 
     @torch.no_grad()
@@ -212,15 +213,14 @@ class Trainer:
                 "sparsity/mean_passes_since_fired": log_info["n_forward_passes_since_fired"].mean().item(),
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
+                "details/l1_coefficient": log_info["l1_coefficient"],
             }
-            if self.cfg.update_decoder_lr_with_l0:
-                decoder_param_group = next(
-                    param_group
-                    for param_group in self.optimizer.param_groups
-                    if param_group["name"] == "decoder_weight"
-                )
-                wandb_log_dict["details/decoder_learning_rate"] = decoder_param_group["lr"]
 
+            # Add timer information
+            timer_data = {f"time/{name}": time_value for name, time_value in timer.get_all_timers().items()}
+            timer_avg_data = {f"time_avg/{name}": avg_time for name, avg_time in timer.get_all_average_times().items()}
+            wandb_log_dict.update(timer_data)
+            wandb_log_dict.update(timer_avg_data)
             wandb_log_dict.update(sae.log_statistics())
 
             if isinstance(sae, CrossCoder):
@@ -276,18 +276,17 @@ class Trainer:
             self.optimizer.zero_grad()
             loss_dict = self._training_step(sae, batch)
 
-            if self.cfg.update_decoder_lr_with_l0:
-                l0 = (loss_dict["feature_acts"] > 0).float().sum(-1).mean().item()
-                self._update_decoder_learning_rate(l0)
+            with timer.time("backward"):
+                loss_dict["loss"].backward()
 
-            loss_dict["loss"].backward()
-            loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
-                sae.parameters(),
-                max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
-            )
-            self.optimizer.step()
-            if sae.cfg.force_unit_decoder_norm:
-                sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
+            with timer.time("clip_grad_norm"):
+                loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
+                    sae.parameters(),
+                    max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
+                )
+
+            with timer.time("optimizer_step"):
+                self.optimizer.step()
 
             log_info.update(loss_dict)
             proc_bar.set_description(f"loss: {log_info['loss'].item()}")
