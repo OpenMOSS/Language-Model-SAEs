@@ -409,7 +409,11 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
     def get_parameters(self) -> list[dict[str, Any]]:
         """Get the parameters of the model for optimization."""
-        return [{"params": self.parameters()}]
+        jumprelu_params = (
+            list(self.activation_function.parameters()) if isinstance(self.activation_function, JumpReLU) else []
+        )
+        other_params = [p for p in self.parameters() if not any(p is param for param in jumprelu_params)]
+        return [{"params": other_params, "name": "others"}, {"params": jumprelu_params, "name": "jumprelu"}]
 
     def load_full_state_dict(self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh | None = None) -> None:
         # Extract and set dataset_average_activation_norm if present
