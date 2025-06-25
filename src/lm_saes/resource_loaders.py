@@ -87,12 +87,13 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
             return QwenVLLanguageModel(cfg)
         elif cfg.model_name.startswith("Qwen/Qwen2.5"):
             return QwenLanguageModel(cfg)
-        elif cfg.model_name.startswith("GSAI-ML/LLaDA"):
-            assert isinstance(cfg, LLaDAConfig)
-            return LLaDALanguageModel(cfg)
         else:
             raise NotImplementedError(f"Model {cfg.model_name} not supported in HuggingFace backend.")
     elif backend == "transformer_lens":
-        return TransformerLensLanguageModel(cfg)
+        if cfg.model_name.startswith("GSAI-ML/LLaDA"):
+            assert isinstance(cfg, LLaDAConfig)
+            return LLaDALanguageModel(cfg)
+        else:
+            return TransformerLensLanguageModel(cfg)
     else:
         raise NotImplementedError(f"Backend {backend} not supported.")
