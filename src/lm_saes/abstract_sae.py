@@ -685,13 +685,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
             if sparsity_loss_type is not None:
                 with timer.time("sparsity_loss_calculation"):
+                    decoder_norm = self.decoder_norm() if self.cfg.sparsity_include_decoder_norm else 1.0
                     if sparsity_loss_type == "power":
-                        l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
+                        l_s = torch.norm(feature_acts * decoder_norm, p=p, dim=-1)
                     elif sparsity_loss_type == "tanh":
-                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
+                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm).sum(dim=-1)
                     elif sparsity_loss_type == "tanh-quad":
                         approx_frequency = einops.reduce(
-                            torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()),
+                            torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm),
                             "... d_sae -> d_sae",
                             "mean",
                         )

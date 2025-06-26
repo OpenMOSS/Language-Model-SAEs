@@ -51,7 +51,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
     """
 
-    sae_type: Literal["sae", "crosscoder"]
+    sae_type: Literal["sae", "crosscoder", "clt"]
     d_model: int
     expansion_factor: int
     use_decoder_bias: bool = True
@@ -114,7 +114,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
 
 class SAEConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder"] = "sae"
+    sae_type: Literal["sae", "crosscoder", "clt"] = "sae"
     hook_point_in: str
     hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
     use_glu_encoder: bool = False
@@ -124,8 +124,38 @@ class SAEConfig(BaseSAEConfig):
         return [self.hook_point_in, self.hook_point_out]
 
 
+class CLTConfig(BaseSAEConfig):
+    """Configuration for Cross Layer Transcoder (CLT).
+
+    A CLT consists of L encoders and L(L+1)/2 decoders where each encoder at layer L
+    reads from the residual stream at that layer and can decode to layers L through L-1.
+    """
+
+    sae_type: Literal["sae", "crosscoder", "clt"] = "clt"
+    hook_points_in: list[str]
+    """List of hook points to capture input activations from, one for each layer."""
+    hook_points_out: list[str]
+    """List of hook points to capture output activations from, one for each layer."""
+
+    @property
+    def n_layers(self) -> int:
+        """Number of layers in the CLT."""
+        return len(self.hook_points_in)
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        """All hook points used by the CLT."""
+        return self.hook_points_in + self.hook_points_out
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        assert len(self.hook_points_in) == len(self.hook_points_out), (
+            "Number of input and output hook points must match"
+        )
+
+
 class CrossCoderConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder"] = "crosscoder"
+    sae_type: Literal["sae", "crosscoder", "clt"] = "crosscoder"
     hook_points: list[str]
 
     @property
