@@ -17,9 +17,11 @@ from .generate import GenerateActivationsSettings, generate_activations
 from .train import (
     SweepingItem,
     SweepSAESettings,
+    TrainCLTSettings,
     TrainCrossCoderSettings,
     TrainSAESettings,
     sweep_sae,
+    train_clt,
     train_crosscoder,
     train_sae,
 )
@@ -32,6 +34,8 @@ __all__ = [
     "train_sae",
     "TrainCrossCoderSettings",
     "train_crosscoder",
+    "TrainCLTSettings",
+    "train_clt",
     "SweepSAESettings",
     "SweepingItem",
     "sweep_sae",

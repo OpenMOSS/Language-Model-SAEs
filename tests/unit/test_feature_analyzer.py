@@ -147,8 +147,7 @@ def test_sample_non_activating_examples(feature_analyzer: FeatureAnalyzer):
 
     max_feature_acts = torch.tensor([1.0, 0.9])
 
-    sample_result = {
-    }
+    sample_result = {}
 
     result_1 = feature_analyzer._sample_non_activating_examples(
         feature_acts=feature_acts_1,
@@ -167,7 +166,6 @@ def test_sample_non_activating_examples(feature_analyzer: FeatureAnalyzer):
 
     print("result_1", result_1)
     print("result_2", result_2)
-
 
 
 def test_analyze_chunk_no_sampling(

@@ -220,12 +220,12 @@ class Trainer:
                 "details/n_training_tokens": self.cur_tokens,
                 "details/l1_coefficient": log_info["l1_coefficient"],
             }
+
             # Add timer information
             timer_data = {f"time/{name}": time_value for name, time_value in timer.get_all_timers().items()}
             timer_avg_data = {f"time_avg/{name}": avg_time for name, avg_time in timer.get_all_average_times().items()}
             wandb_log_dict.update(timer_data)
             wandb_log_dict.update(timer_avg_data)
-
             wandb_log_dict.update(sae.log_statistics())
 
             if isinstance(sae, CrossCoder):
