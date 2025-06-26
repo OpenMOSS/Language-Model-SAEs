@@ -1,5 +1,6 @@
 from .activation import ActivationFactory, ActivationWriter
 from .analysis import FeatureAnalyzer
+from .clt import CrossLayerTranscoder
 from .config import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
@@ -7,6 +8,7 @@ from .config import (
     ActivationFactoryTarget,
     ActivationWriterConfig,
     BufferShuffleConfig,
+    CLTConfig,
     CrossCoderConfig,
     DatasetConfig,
     FeatureAnalyzerConfig,
@@ -31,6 +33,7 @@ from .runners import (
     GenerateActivationsSettings,
     SweepingItem,
     SweepSAESettings,
+    TrainCLTSettings,
     TrainCrossCoderSettings,
     TrainSAESettings,
     analyze_crosscoder,
@@ -40,6 +43,7 @@ from .runners import (
     evaluate_sae,
     generate_activations,
     sweep_sae,
+    train_clt,
     train_crosscoder,
     train_sae,
 )
@@ -48,6 +52,8 @@ from .sae import SparseAutoEncoder
 __all__ = [
     "ActivationFactory",
     "ActivationWriter",
+    "CLTConfig",
+    "CrossLayerTranscoder",
     "CrossCoderConfig",
     "CrossCoder",
     "SparseAutoEncoder",
@@ -76,6 +82,8 @@ __all__ = [
     "WandbConfig",
     "train_sae",
     "TrainSAESettings",
+    "TrainCLTSettings",
+    "train_clt",
     "AnalyzeSAESettings",
     "analyze_sae",
     "FeatureAnalyzerConfig",

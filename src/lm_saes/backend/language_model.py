@@ -330,12 +330,15 @@ class LLaDALanguageModel(HuggingFaceLanguageModel):
             hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
         }
         activations["tokens"] = masked_inputs["input_ids"]
-        activations["meta"] = [{
-            "original_tokens": input_ids,
-            "mask_ratio": self.cfg.mask_ratio,
-            "logits": outputs.logits[i].max(dim=1).values,
-            "output_tokens": outputs.logits[i].max(dim=1).indices,
-        } for i in range(len(raw["text"]))]
+        activations["meta"] = [
+            {
+                "original_tokens": input_ids,
+                "mask_ratio": self.cfg.mask_ratio,
+                "logits": outputs.logits[i].max(dim=1).values,
+                "output_tokens": outputs.logits[i].max(dim=1).indices,
+            }
+            for i in range(len(raw["text"]))
+        ]
         return activations
 
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
