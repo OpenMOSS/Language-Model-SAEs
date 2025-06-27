@@ -390,6 +390,7 @@ class LLaDAConfig(LanguageModelConfig):
     mask_ratio: float = 0.0
     mdm_mask_token_id: int = 126336
     prepend_bos: bool = False
+    calculate_logits: bool = False
 
 
 class ActivationWriterConfig(BaseConfig):

@@ -113,7 +113,7 @@ class LanguageModel(ABC):
     @abstractmethod
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
-    ) -> dict[str, torch.Tensor]:
+    ) -> tuple[dict[str, torch.Tensor], list[dict[str, Any]] | None]:
         """Convert raw data to activations.
 
         Args:
@@ -235,7 +235,7 @@ class TransformerLensLanguageModel(LanguageModel):
     @torch.no_grad()
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
-    ) -> dict[str, torch.Tensor]:
+    ) -> tuple[dict[str, torch.Tensor], list[dict[str, Any]] | None]:
         assert self.model is not None
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
@@ -250,7 +250,7 @@ class TransformerLensLanguageModel(LanguageModel):
             tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
         with timer.time("run_with_cache_until"):
             _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
-        return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
+        return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}, None
 
 
 class HuggingFaceLanguageModel(LanguageModel):
@@ -340,7 +340,7 @@ class LLaDALanguageModel(TransformerLensLanguageModel):
     @torch.no_grad()
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
-    ) -> dict[str, torch.Tensor]:
+    ) -> tuple[dict[str, torch.Tensor], list[dict[str, Any]] | None]:
         assert self.model is not None
         tokens = self.model.to_tokens(raw["text"], prepend_bos=self.cfg.prepend_bos)
         if n_context is not None:
@@ -348,8 +348,17 @@ class LLaDALanguageModel(TransformerLensLanguageModel):
                 "Pad token ID must be set for LLaDALanguageModel when n_context is provided"
             )
             tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
-        _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
-        return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
+        pad_mask = tokens == self.pad_token_id
+        predicted_tokens = None
+        if self.cfg.calculate_logits:
+            logits, activations = self.model.run_with_cache(tokens, names_filter=hook_points)
+            assert isinstance(logits, torch.Tensor)
+            predicted_token_ids = logits.argmax(dim=-1)
+            predicted_tokens = torch.where(pad_mask, -1, predicted_token_ids)
+        else:
+            _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
+        meta_info = [{"predicted_tokens": predicted_tokens[i]} for i in range(len(predicted_tokens))] if predicted_tokens is not None else None
+        return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens} , meta_info
 
 
 class QwenVLLanguageModel(HuggingFaceLanguageModel):
@@ -470,7 +479,7 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
 
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
-    ) -> dict[str, torch.Tensor]:
+    ) -> tuple[dict[str, torch.Tensor], list[dict[str, Any]] | None]:
         layer_indices = _get_layer_indices_from_hook_points(hook_points)
         inputs = self.process_raw_data(raw)[0].to(self.device)
         if n_context is not None:
@@ -485,7 +494,7 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
             hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
         }
         activations["tokens"] = inputs["input_ids"]
-        return activations
+        return activations, None
 
     def process_raw_data(
         self, raw: dict[str, Any], padding: str | bool = "max_length"
@@ -549,7 +558,7 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
 
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
-    ) -> dict[str, torch.Tensor]:
+    ) -> tuple[dict[str, torch.Tensor], list[dict[str, Any]] | None]:
         layer_indices = _get_layer_indices_from_hook_points(hook_points)
         inputs = self.tokenizer(
             raw["text"],
@@ -570,7 +579,7 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
             hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
         }
         activations["tokens"] = inputs["input_ids"]
-        return activations
+        return activations, None
 
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         inputs = self.tokenizer(
