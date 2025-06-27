@@ -13,7 +13,12 @@ from .eval import (
     evaluate_crosscoder,
     evaluate_sae,
 )
-from .generate import GenerateActivationsSettings, generate_activations
+from .generate import (
+    CheckActivationConsistencySettings,
+    GenerateActivationsSettings,
+    check_activation_consistency,
+    generate_activations,
+)
 from .train import (
     SweepingItem,
     SweepSAESettings,
@@ -30,6 +35,8 @@ from .utils import load_config
 __all__ = [
     "GenerateActivationsSettings",
     "generate_activations",
+    "CheckActivationConsistencySettings",
+    "check_activation_consistency",
     "TrainSAESettings",
     "train_sae",
     "TrainCrossCoderSettings",
