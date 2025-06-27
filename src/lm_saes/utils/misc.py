@@ -1,6 +1,6 @@
 import os
 import warnings
-from typing import Iterable, cast
+from typing import Iterable, cast, Any, Optional
 
 import torch
 import torch.distributed as dist
@@ -177,36 +177,6 @@ def calculate_activation_norm(
     return activation_norm
 
 
-def get_modality_tokens(tokenizer: PreTrainedTokenizerBase, model_name: str) -> dict[str, torch.Tensor]:
-    modality_tokens = {}
-    if model_name == "facebook/chameleon-7b":
-        for token_name, token_id in tokenizer.get_vocab().items():
-            if token_name.startswith("IMGIMG"):
-                modality_tokens["image"] = (
-                    [token_id] if "image" not in modality_tokens else modality_tokens["image"] + [token_id]
-                )
-            else:
-                modality_tokens["text"] = (
-                    [token_id] if "text" not in modality_tokens else modality_tokens["text"] + [token_id]
-                )
-
-    elif model_name == "Qwen/Qwen2.5-VL-7B-Instruct":
-        for token_name, token_id in tokenizer.get_vocab().items():
-            if token_name == "<|image_pad|>":
-                modality_tokens["image"] = [token_id]
-            elif token_name == "<|vision_start|>" or token_name == "<|vision_end|>":
-                continue
-            else:
-                modality_tokens["text"] = (
-                    [token_id] if "text" not in modality_tokens else modality_tokens["text"] + [token_id]
-                )
-    else:
-        raise ValueError(f"Unsupported model: {model_name}")
-    for modality in modality_tokens:
-        modality_tokens[modality] = torch.tensor(modality_tokens[modality], dtype=torch.long)
-    return modality_tokens
-
-
 def pad_and_truncate_tokens(
     tokens: torch.Tensor,
     seq_len: int,
@@ -240,3 +210,44 @@ def get_slice_length(s: slice, length: int):
     start, stop, step = s.indices(length)
     length = (stop - start + step - 1) // step
     return length
+
+
+def all_gather_dict(
+    data: dict[str, Any],
+    group: Optional[torch.distributed.ProcessGroup] = None,
+) -> list[dict[str, Any]]:
+    """
+    All-gather a dictionary across all ranks. For each key, if the value is a tensor, use torch.distributed.all_gather
+    (with CUDA tensors by default); otherwise, use all_gather_object. Returns a list of dicts, one per rank.
+
+    Args:
+        data: Dictionary to all-gather. Tensor values should be on the correct device.
+        device: Device to move tensors to before all_gather (default: "cuda").
+        group: Optional process group for communication.
+
+    Returns:
+        List of dictionaries, one per rank, with gathered values.
+    """
+    world_size = dist.get_world_size(group=group)
+    rank = dist.get_rank(group=group)
+    keys = list(data.keys())
+    gathered_dicts: list[dict[str, Any]] = [dict() for _ in range(world_size)]
+
+    # Gather each key separately
+    for k in keys:
+        v = data[k]
+        if isinstance(v, torch.Tensor):
+            expected_device = torch.device(f"cuda:{dist.get_rank(group=group)}")
+            v = v.to(expected_device)
+            # Prepare list for gathered tensors
+            output = [torch.empty_like(v) for _ in range(world_size)]
+            dist.all_gather(output, v, group=group)
+            for i, t in enumerate(output):
+                gathered_dicts[i][k] = t
+        else:
+            # Use all_gather_object for non-tensor values
+            object_list = [None for _ in range(world_size)]
+            dist.all_gather_object(object_list, v, group=group)
+            for i, obj in enumerate(object_list):
+                gathered_dicts[i][k] = obj
+    return gathered_dicts

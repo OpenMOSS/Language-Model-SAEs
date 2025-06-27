@@ -140,7 +140,7 @@ def train_sae(settings: TrainSAESettings) -> None:
         else None
     )
 
-    activation_factory = ActivationFactory(settings.activation_factory)
+    activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
     logger.info("Processing activations stream")
     activations_stream = activation_factory.process(
@@ -478,7 +478,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
         else None
     )
 
-    activation_factory = ActivationFactory(settings.activation_factory)
+    activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
     logger.info("Processing activations stream")
     activations_stream = activation_factory.process(
@@ -649,7 +649,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
             else None
         )
 
-        activation_factory = ActivationFactory(settings.activation_factory)
+        activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
         logger.info("Processing activations stream on rank 0")
         activations_stream = activation_factory.process(

@@ -159,11 +159,11 @@ class Trainer:
             else:
                 # Operator aten.amax.default does not have a sharding strategy registered.
                 act_freq_scores = act_freq_scores.full_tensor().amax(dim=0)
+        elif sae.cfg.sae_type == "clt":
+            act_freq_scores = act_freq_scores.mean(dim=0)  # [d_sae], take mean over layer dimension
         if isinstance(act_freq_scores, DTensor):
             act_freq_scores = act_freq_scores.full_tensor()
 
-        log_info["n_forward_passes_since_fired"] += 1
-        log_info["n_forward_passes_since_fired"][act_freq_scores > 0] = 0
         log_info["act_freq_scores"] += act_freq_scores
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
@@ -238,8 +238,6 @@ class Trainer:
                 "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
                 # norm
                 "metrics/gradients_norm": grad_norm.item(),
-                # sparsity
-                "sparsity/mean_passes_since_fired": log_info["n_forward_passes_since_fired"].mean().item(),
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
                 "details/l1_coefficient": log_info["l1_coefficient"],
@@ -301,7 +299,6 @@ class Trainer:
         assert self.scheduler is not None
         log_info = {
             "act_freq_scores": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
-            "n_forward_passes_since_fired": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
             "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
         }
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
