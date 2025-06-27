@@ -2,15 +2,17 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Tuple
 
 import torch
+import torch.distributed as dist
 from safetensors.torch import load_file
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
-from lm_saes.utils.misc import is_master
+from lm_saes.utils.misc import is_master, all_gather_dict
 from lm_saes.utils.tensor_dict import move_dict_of_tensor_to_device
 
 
@@ -78,6 +80,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         device: Device to load tensors to
         num_workers: Number of worker processes for data loading. Default is 4
         prefetch_factor: Number of samples loaded in advance by each worker. Default is 8
+        distributed: Whether to use distributed batch loading and broadcasting
     """
 
     def __init__(
@@ -87,50 +90,45 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         dtype: Optional[torch.dtype] = None,
         num_workers: int = 0,
         prefetch_factor: int | None = None,
+        device_mesh: Optional[Any] = None,
     ):
         self.cache_dirs = {k: Path(v) for k, v in cache_dirs.items()}
         self.device = device
         self.dtype = dtype
         self.num_workers = num_workers
         self.prefetch_factor = prefetch_factor
+        self.device_mesh = device_mesh
+        self.distributed = self.device_mesh is not None        
+        # Distributed setup
+        if self.distributed and not dist.is_initialized():
+            raise RuntimeError("Distributed training must be initialized before using distributed loading")
 
-    def load_chunk_for_hooks(self, chunk_idx: int, hook_chunks: dict[str, list[ChunkInfo]]) -> dict[str, Any]:
-        """Load chunk data for all hook points at given index.
+    def load_single_hook_chunk(self, chunk_idx: int, hook_point: str, hook_chunks: dict[str, list[ChunkInfo]]) -> dict[str, Any]:
+        """Load chunk data for a single hook point at given index.
 
         Args:
             chunk_idx: Index of the chunk to load
+            hook_point: Name of the hook point to load
             hook_chunks: Dictionary mapping hook points to their chunk info lists
 
         Returns:
-            dict[str, Any]: Combined chunk data for all hooks
+            dict[str, Any]: Chunk data for the specific hook point
         """
-        chunk_data = {}
+        chunk = hook_chunks[hook_point][chunk_idx]
+        data: dict[str, Any] = self._load_chunk(chunk.path)
 
-        for hook in self.cache_dirs.keys():
-            chunk = hook_chunks[hook][chunk_idx]
-            data: dict[str, Any] = self._load_chunk(chunk.path)
-
-            # Validate data format
-            assert isinstance(data, dict), f"Loading cached activation {chunk.path} error: returned {type(data)}"
-            assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
-            assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
-            chunk_data[hook] = data["activation"]
-
-            # Store tokens and info from first hook point only
-            if hook == list(self.cache_dirs.keys())[0]:
-                chunk_data["tokens"] = data["tokens"]
-                if "meta" in data:
-                    chunk_data["meta"] = data["meta"]
-            else:
-                assert torch.allclose(data["tokens"], chunk_data["tokens"]), (
-                    f"Loading cached activation {chunk.path} error: tokens mismatch"
-                )
-                if "meta" in data:
-                    assert data["meta"] == chunk_data["meta"], (
-                        f"Loading cached activation {chunk.path} error: info mismatch"
-                    )
-
-        return chunk_data
+        # Validate data format
+        assert isinstance(data, dict), f"Loading cached activation {chunk.path} error: returned {type(data)}"
+        assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
+        assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
+        
+        return {
+            "hook_point": hook_point,
+            "activation": data["activation"],
+            "tokens": data["tokens"],
+            "meta": data.get("meta"),
+            "chunk_idx": chunk_idx,
+        }
 
     def _get_sorted_chunks(self, hook_point: str) -> list[ChunkInfo]:
         """Get sorted list of chunk files for a hook point.
@@ -178,29 +176,46 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         else:
             raise ValueError(f"Invalid chunk file format: {chunk_path}. Expected .safetensors or .pt")
 
-    def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int) -> Iterator[dict[str, Any]]:
+
+    def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], num_chunks: int) -> Iterator[dict[str, Any]]:
+        """Process chunks using the appropriate method based on distributed setting.
+        
+        Args:
+            hook_chunks: Dictionary mapping hook points to their chunk info lists
+            num_chunks: Total number of chunks
+            
+        Returns:
+            Iterator over chunk data
+        """
         cached_activation_dataset = CachedActivationDataset(
             self,
             hook_chunks,
-            total_chunks,
+            num_chunks,
         )
         dataloader = DataLoader(
             cached_activation_dataset,
-            batch_size=1,  # mandatory!
-            shuffle=False,  # mandatory!
+            batch_size=1,
+            shuffle=False,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
-            pin_memory=True,  # mandatory!
+            pin_memory=True,
             collate_fn=first_data_collate_fn,
+            sampler=DistributedSampler(cached_activation_dataset, shuffle=False) if self.distributed else None,
         )
-        return iter(
-            tqdm(
+        
+        if not self.distributed:
+            yield from tqdm(
                 dataloader,
-                total=total_chunks,
+                total=len(cached_activation_dataset),
                 desc="Processing activation chunks",
                 disable=not is_master(),
             )
-        )
+        else:
+            for data in tqdm(dataloader, total=len(cached_activation_dataset), desc="Processing activation chunks", disable=not is_master()):
+                # Use all_gather_dict to gather chunk dicts from all ranks
+                gathered = all_gather_dict(data)
+                yield from gathered
+
 
     def process(self, data: None = None, **kwargs) -> Iterable[dict[str, Any]]:
         """Load cached activations in a streaming fashion.
@@ -235,46 +250,89 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 "All hook points must have the same number of chunks."
             )
 
-        stream = self._process_chunks(hook_chunks, len(hook_chunks[list(self.cache_dirs.keys())[0]]))
-        for chunk in stream:
-            activations: dict[str, Any] = move_dict_of_tensor_to_device(
-                chunk,
-                device=self.device,
-            )
-            if self.dtype is not None:
-                for k, v in activations.items():
-                    if k in self.cache_dirs.keys():
-                        activations[k] = v.to(self.dtype)
+        num_chunks = len(hook_chunks[list(self.cache_dirs.keys())[0]]) if hook_chunks else 0
 
-            while activations["tokens"].ndim >= 3:
+        # Group data by chunk_idx to maintain the same output structure
+        chunk_buffer: dict[int, dict[str, Any]] = {}
+        stream = self._process_chunks(hook_chunks, num_chunks)
 
-                def flatten(x: torch.Tensor | list[list[Any]]) -> torch.Tensor | list[Any]:
-                    if isinstance(x, torch.Tensor):
-                        return x.flatten(start_dim=0, end_dim=1)
-                    else:
-                        return [a for b in x for a in b]
-
-                activations = {k: flatten(v) for k, v in activations.items()}
-
-            yield activations  # Use pin_memory to load data on cpu, then transfer them to cuda in the main process, as advised in https://discuss.pytorch.org/t/dataloader-multiprocessing-with-dataset-returning-a-cuda-tensor/151022/2.
-            # I wrote this utils function as I notice it is used multiple times in this repo. Do we need to apply it elsewhere?
+        for single_hook_data in stream:
+            chunk_idx = single_hook_data["chunk_idx"]
+            hook_point = single_hook_data["hook_point"]
+            
+            # Initialize chunk buffer entry if not exists
+            if chunk_idx not in chunk_buffer:
+                chunk_buffer[chunk_idx] = {
+                    "tokens": single_hook_data["tokens"],
+                    "meta": single_hook_data["meta"],
+                }
+            
+            # Add activation for this hook point
+            chunk_buffer[chunk_idx][hook_point] = single_hook_data["activation"]
+            
+            # Verify tokens consistency across hook points for the same chunk
+            if not torch.allclose(single_hook_data["tokens"], chunk_buffer[chunk_idx]["tokens"]):
+                raise AssertionError(
+                    f"Loading cached activation error: tokens mismatch for chunk {chunk_idx}"
+                )
+            
+            # Check if we have all hook points for this chunk
+            if len(chunk_buffer[chunk_idx]) - 2 == len(self.cache_dirs):  # -2 for tokens and meta
+                # Yield the complete chunk data
+                activations: dict[str, Any] = move_dict_of_tensor_to_device(
+                    chunk_buffer[chunk_idx],
+                    device=self.device,
+                )
+                if self.dtype is not None:
+                    for k, v in activations.items():
+                        if k in self.cache_dirs.keys():
+                            activations[k] = v.to(self.dtype)
+                
+                # Flatten tokens if needed (maintain existing logic)
+                while activations["tokens"].ndim >= 3:
+                    def flatten(x: torch.Tensor | list[list[Any]]) -> torch.Tensor | list[Any]:
+                        if isinstance(x, torch.Tensor):
+                            return x.flatten(start_dim=0, end_dim=1)
+                        else:
+                            return [a for b in x for a in b]
+                    activations = {k: flatten(v) for k, v in activations.items()}
+                
+                yield activations
+                # Remove from buffer to free memory
+                del chunk_buffer[chunk_idx]
 
 
 class CachedActivationDataset(Dataset):
-    """Wrap the data loading process with torch dataset and loader for multiprocessing."""
+    """Wrap the data loading process with torch dataset and loader for multiprocessing.
+    
+    This dataset uses (chunk_idx, hook_point) as the index to enable parallel loading
+    of individual hook points instead of loading all hook points sequentially.
+    """
 
     def __init__(
-        self, activation_loader: CachedActivationLoader, hook_chunks: dict[str, list[ChunkInfo]], total_chunks: int
+        self, 
+        activation_loader: CachedActivationLoader, 
+        hook_chunks: dict[str, list[ChunkInfo]], 
+        num_chunks: int,
     ):
         self.activation_loader = activation_loader
         self.hook_chunks = hook_chunks
-        self.total_chunks = total_chunks
+        self.num_chunks = num_chunks
+        self.hook_points = list(hook_chunks.keys())
+        
+        # Create index mapping: (chunk_idx, hook_point) -> dataset_idx
+        self.index_mapping: list[Tuple[int, str]] = []
+        for chunk_idx in range(num_chunks):
+            for hook_point in self.hook_points:
+                self.index_mapping.append((chunk_idx, hook_point))
 
     def __len__(self):
-        return self.total_chunks
+        return len(self.index_mapping)
 
-    def __getitem__(self, chunk_idx):
-        return self.activation_loader.load_chunk_for_hooks(
+    def __getitem__(self, dataset_idx):
+        chunk_idx, hook_point = self.index_mapping[dataset_idx]
+        return self.activation_loader.load_single_hook_chunk(
             chunk_idx,
+            hook_point,
             self.hook_chunks,
         )

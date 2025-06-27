@@ -72,10 +72,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     for _ in range(cfg.n_layers)
                 ]
             )
-            if cfg.act_fn == "jumprelu":
-                self.log_jump_relu_threshold = nn.Parameter(
-                    torch.tensor(cfg.jump_relu_threshold, device=cfg.device, dtype=cfg.dtype)
-                )
         else:
             # Distributed initialization - shard along feature dimension
             self.W_E = nn.Parameter(
@@ -137,7 +133,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         Encoders: uniformly initialized in range (-1/sqrt(d_sae), 1/sqrt(d_sae))
         Decoders at layer L: uniformly initialized in range (-1/sqrt(L*d_model), 1/sqrt(L*d_model))
         """
-        super().init_parameters(**kwargs)
+        super().init_parameters(**kwargs)  # jump ReLU threshold is initialized in super()
 
         # Initialize encoder weights and biases
         encoder_bound = 1.0 / math.sqrt(self.cfg.d_sae)
@@ -202,11 +198,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         for layer_to, W_D_layer in enumerate(W_D_initialized):
             self.W_D[layer_to].copy_(W_D_layer)
-
-        # Initialize jump ReLU threshold if using jump ReLU activation
-        if self.cfg.act_fn == "jumprelu" and hasattr(self, "log_jump_relu_threshold"):
-            if kwargs.get("init_log_jumprelu_threshold_value") is not None:
-                self.log_jump_relu_threshold.data.fill_(kwargs["init_log_jumprelu_threshold_value"])
 
     def get_decoder_weights(self, layer_to: int) -> torch.Tensor:
         """Get decoder weights for all layers from 0..layer_to to layer_to.
@@ -360,67 +351,17 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     def decoder_norm(self, keepdim: bool = False):
         """Compute the effective norm of decoder weights for each feature."""
         # Collect norms from all decoder groups
-        all_norms = []
-        for layer_to in range(self.cfg.n_layers):
-            decoder_weights = self.W_D[layer_to]  # Shape: (layer_to+1, d_sae, d_model)
-            if not isinstance(decoder_weights, DTensor):
-                norms = torch.norm(decoder_weights, p=2, dim=-1, keepdim=keepdim).mean(dim=-1, keepdim=keepdim)
-                all_norms.append(norms)
-            else:
-                assert self.device_mesh is not None
-                norms = torch.norm(decoder_weights.to_local(), p=2, dim=-1, keepdim=keepdim).mean(
-                    dim=-1, keepdim=keepdim
-                )
-                norms = DTensor.from_local(
-                    norms,
-                    device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["W_D"].placements(self.device_mesh)[1:],  # Skip first dimension
-                )
-                all_norms.append(
-                    norms.redistribute(placements=[torch.distributed.tensor.Replicate()], async_op=True).to_local()
-                )
-
-        # Average across all decoders
-        all_norms_tensor = torch.cat(all_norms, dim=0)  # Concatenate along decoder dimension
-        return all_norms_tensor
+        return torch.ones(self.cfg.n_decoders, device=self.cfg.device, dtype=self.cfg.dtype)
 
     @override
     def encoder_norm(self, keepdim: bool = False):
         """Compute the norm of encoder weights averaged across layers."""
-        if not isinstance(self.W_E, DTensor):
-            # W_E shape: (n_layers, d_model, d_sae)
-            # Compute norm along d_model dimension (dim=-2), then average across layers (dim=0)
-            return torch.norm(self.W_E, p=2, dim=-2, keepdim=keepdim).mean(dim=-1, keepdim=keepdim)
-        else:
-            assert self.device_mesh is not None
-            encoder_norm = torch.norm(self.W_E.to_local(), p=2, dim=-2, keepdim=keepdim).mean(dim=-1, keepdim=keepdim)
-            encoder_norm = DTensor.from_local(
-                encoder_norm,
-                device_mesh=self.device_mesh,
-                placements=self.dim_maps()["W_E"].placements(self.device_mesh)[2:],  # Skip layer and model dimensions
-            )
-            return encoder_norm.redistribute(
-                placements=[torch.distributed.tensor.Replicate()], async_op=True
-            ).to_local()
+        return torch.ones(self.cfg.n_layers, device=self.cfg.device, dtype=self.cfg.dtype)
 
     @override
     def decoder_bias_norm(self):
         """Compute the norm of decoder bias for each target layer."""
-        bias_norms = []
-        for layer_to in range(self.cfg.n_layers):
-            bias = self.b_D[layer_to]  # Shape: (d_model,)
-            if not isinstance(bias, DTensor):
-                norm = torch.norm(bias, p=2, dim=-1, keepdim=False)
-                bias_norms.append(norm)
-            else:
-                assert self.device_mesh is not None
-                norm = torch.norm(bias.to_local(), p=2, dim=-1, keepdim=False)
-                norm = DTensor.from_local(
-                    norm, device_mesh=self.device_mesh, placements=[torch.distributed.tensor.Replicate()]
-                )
-                bias_norms.append(norm.to_local())
-
-        return torch.stack(bias_norms, dim=0)  # Shape: (n_layers,)
+        return torch.ones(self.cfg.n_layers, device=self.cfg.device, dtype=self.cfg.dtype)
 
     @override
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
@@ -430,10 +371,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     @torch.no_grad()
     def set_encoder_to_fixed_norm(self, value: float):
         """Set encoder weights to fixed norm."""
-        encoder_norm = self.encoder_norm(keepdim=True)  # Shape: (1, d_sae)
-        # W_E shape: (n_layers, d_model, d_sae)
-        # encoder_norm shape: (1, d_sae) -> need to broadcast to (1, 1, d_sae)
-        self.W_E.data *= value / encoder_norm.unsqueeze(0)
+        raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for CLT")  
 
     @override
     @torch.no_grad()
