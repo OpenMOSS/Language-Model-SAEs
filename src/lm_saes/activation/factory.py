@@ -47,7 +47,7 @@ class ActivationFactory:
         """
         self.cfg = cfg
         self.device_mesh = device_mesh
-        
+
         self.pre_aggregation_processors = self.build_pre_aggregation_processors()
         self.post_aggregation_processor = self.build_post_aggregation_processor()
         self.aggregator = self.build_aggregator()
@@ -136,7 +136,7 @@ class ActivationFactory:
             dtype=activations_source.dtype,
             num_workers=activations_source.num_workers,
             prefetch_factor=activations_source.prefetch,
-            device_mesh=self.device_mesh,   
+            device_mesh=self.device_mesh,
         )
 
         processors = [ActivationTransformer()] if self.cfg.target >= ActivationFactoryTarget.ACTIVATIONS_1D else []
