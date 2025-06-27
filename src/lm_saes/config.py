@@ -141,7 +141,7 @@ class CLTConfig(BaseSAEConfig):
     def n_layers(self) -> int:
         """Number of layers in the CLT."""
         return len(self.hook_points_in)
-    
+
     @property
     def n_decoders(self) -> int:
         """Number of decoders in the CLT."""
@@ -340,6 +340,7 @@ class ActivationFactoryConfig(BaseConfig):
     """" Manual seed and device of generator for generating randomperm in buffer. """
     ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
+
 
 class LanguageModelConfig(BaseModelConfig):
     model_name: str = "gpt2"
