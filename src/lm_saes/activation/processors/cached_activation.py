@@ -6,8 +6,8 @@ from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Tuple
 
 import torch
 import torch.distributed as dist
-from torch.distributed.device_mesh import DeviceMesh
 from safetensors.torch import load_file
+from torch.distributed.device_mesh import DeviceMesh
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
