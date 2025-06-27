@@ -371,7 +371,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     @torch.no_grad()
     def set_encoder_to_fixed_norm(self, value: float):
         """Set encoder weights to fixed norm."""
-        raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for CLT")  
+        raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for CLT")
 
     @override
     @torch.no_grad()

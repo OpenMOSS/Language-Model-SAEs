@@ -1,12 +1,11 @@
 import os
 import warnings
-from typing import Iterable, cast, Any, Optional
+from typing import Any, Iterable, Optional, cast
 
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.nn.functional import all_reduce
-from transformers import PreTrainedTokenizerBase
 
 from lm_saes.utils.distributed import DimMap
 
@@ -229,7 +228,6 @@ def all_gather_dict(
         List of dictionaries, one per rank, with gathered values.
     """
     world_size = dist.get_world_size(group=group)
-    rank = dist.get_rank(group=group)
     keys = list(data.keys())
     gathered_dicts: list[dict[str, Any]] = [dict() for _ in range(world_size)]
 
