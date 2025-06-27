@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory
+from lm_saes.activation.processors.cached_activation import CachedActivationLoader
 from lm_saes.activation.writer import ActivationWriter
 from lm_saes.config import (
     ActivationFactoryConfig,
@@ -186,3 +187,34 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
     writer.process(activations, device_mesh=device_mesh, start_shard=settings.start_shard)
 
     logger.info("Activation generation completed successfully")
+
+
+class CheckActivationConsistencySettings(BaseSettings):
+    """Settings for checking activation consistency. It will check if the activations are consistent across different hook points by comparing their token ids."""
+
+    paths: dict[str, Path]
+    """Paths to the activations to check."""
+
+    device: str = "cuda"
+    """Device to use for checking activation consistency"""
+
+    num_workers: int = 0
+    """Number of workers to use for checking activation consistency"""
+
+    prefetch_factor: int | None = None
+    """Number of samples loaded in advance by each worker"""
+
+
+def check_activation_consistency(settings: CheckActivationConsistencySettings) -> None:
+    """Check activation consistency."""
+
+    loader = CachedActivationLoader(
+        cache_dirs=settings.paths,
+        device=settings.device,
+        num_workers=settings.num_workers,
+        prefetch_factor=settings.prefetch_factor,
+    )
+
+    activations = loader.process()
+    for activation in activations:
+        pass
