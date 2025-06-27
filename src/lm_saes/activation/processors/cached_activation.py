@@ -6,6 +6,7 @@ from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Tuple
 
 import torch
 import torch.distributed as dist
+from torch.distributed.device_mesh import DeviceMesh
 from safetensors.torch import load_file
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
@@ -90,7 +91,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         dtype: Optional[torch.dtype] = None,
         num_workers: int = 0,
         prefetch_factor: int | None = None,
-        device_mesh: Optional[Any] = None,
+        device_mesh: Optional[DeviceMesh] = None,
     ):
         self.cache_dirs = {k: Path(v) for k, v in cache_dirs.items()}
         self.device = device
@@ -201,7 +202,14 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             prefetch_factor=self.prefetch_factor,
             pin_memory=True,
             collate_fn=first_data_collate_fn,
-            sampler=DistributedSampler(cached_activation_dataset, shuffle=False) if self.distributed else None,
+            sampler=DistributedSampler(
+                cached_activation_dataset,
+                num_replicas=self.device_mesh.get_group().size(),
+                rank=self.device_mesh.get_group().rank(),
+                shuffle=False,
+            )
+            if self.distributed and self.device_mesh is not None  # abundant condition to make mypy happy
+            else None,
         )
 
         if not self.distributed:
@@ -218,8 +226,9 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 desc="Processing activation chunks",
                 disable=not is_master(),
             ):
+                assert self.device_mesh is not None
                 # Use all_gather_dict to gather chunk dicts from all ranks
-                gathered = all_gather_dict(data)
+                gathered = all_gather_dict(data, group=self.device_mesh.get_group())
                 yield from gathered
 
     def process(self, data: None = None, **kwargs) -> Iterable[dict[str, Any]]:
