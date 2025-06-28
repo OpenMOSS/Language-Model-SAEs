@@ -53,7 +53,7 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Install the project
-        run: uv sync --default --dev
+        run: uv sync --extra default --dev
 
       - name: Type check
         run: uv run basedpyright .
