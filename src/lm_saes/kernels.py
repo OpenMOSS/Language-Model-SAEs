@@ -3,8 +3,8 @@
 from typing import cast
 
 import torch
-import triton
-import triton.language as tl
+import triton  # type: ignore
+import triton.language as tl  # type: ignore
 from jaxtyping import Float
 
 from lm_saes.utils.logging import get_logger
@@ -66,7 +66,7 @@ def triton_coo_sparse_dense_matmul(
     def grid(META):
         return triton.cdiv(AK, META["BLOCK_SIZE_AK"]), 1
 
-    triton_sparse_transpose_dense_matmul_kernel[grid](
+    triton_sparse_transpose_dense_matmul_kernel[grid](  # type: ignore
         coo_indices,
         coo_values,
         dense,
@@ -200,7 +200,7 @@ def triton_sparse_dense_matmul(
 
     out = torch.zeros(A, B, device=dense.device, dtype=sparse_values.dtype)
 
-    triton_sparse_dense_matmul_kernel[(A,)](
+    triton_sparse_dense_matmul_kernel[(A,)](  # type: ignore
         sparse_indices,
         sparse_values,
         dense,
@@ -250,7 +250,7 @@ def triton_dense_dense_sparseout_matmul(
 
     # grid = lambda META: (triton.cdiv(A, META['BLOCK_SIZE_A']),)
 
-    triton_dense_dense_sparseout_matmul_kernel[(A,)](
+    triton_dense_dense_sparseout_matmul_kernel[(A,)](  # type: ignore
         dense1,
         dense2,
         at_indices,
@@ -499,8 +499,8 @@ def decode_with_triton_spmm_kernel(
 if __name__ == "__main__":
     import torch
     import torch.nn as nn
-    import triton
-    import triton.language as tl
+    import triton  # type: ignore
+    import triton.language as tl  # type: ignore
 
     def test_triton_decoder(
         B, d_sae, d_model, sparsity=0.9, dtype=torch.float32, require_precise_feature_acts_grad=True
