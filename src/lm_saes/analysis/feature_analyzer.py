@@ -54,6 +54,10 @@ class FeatureAnalyzer:
         Returns:
             Updated sampling results with new batch incorporated
         """
+
+        # if len(feature_acts.shape) == 2:
+        #     feature_acts = feature_acts.unsqueeze(0)
+
         # Compute exponential lottery ticket values for sampling if enabled
         if self.cfg.enable_sampling:
             weights = feature_acts.clamp(min=0.0).pow(self.cfg.sample_weight_exponent).max(dim=1).values
@@ -66,6 +70,8 @@ class FeatureAnalyzer:
         for name in self.cfg.subsamples.keys():
             elt_cur = elt.clone()
             # Zero out samples above the subsample threshold
+            # print(i)
+            # print(f'{feature_acts.shape}   {max_feature_acts.shape}')
             elt_cur[
                 feature_acts.max(dim=1).values > max_feature_acts.unsqueeze(0) * self.cfg.subsamples[name]["proportion"]
             ] = -torch.inf
@@ -141,7 +147,7 @@ class FeatureAnalyzer:
             - Sampled activations with metadata
         """
         n_training_tokens = 0
-        
+
         if ignore_token_ids is None:
             ignore_token_ids = []
 
@@ -158,11 +164,14 @@ class FeatureAnalyzer:
         max_feature_acts = torch.zeros((sae.cfg.d_sae,), dtype=sae.cfg.dtype, device=sae.cfg.device)
         mapper = KeyedDiscreteMapper()
 
+        # i = 0
         # Process activation batches
         for batch in activation_stream:
+            # i += 1
+            # print(f'{i}  {batch["tokens"].shape}')
             # Reshape meta to zip outer dimensions to inner
             meta = {k: [m[k] for m in batch["meta"]] for k in batch["meta"][0].keys()}
-            
+
             mask = torch.ones_like(batch["tokens"], dtype=torch.bool)
             for token_id in ignore_token_ids:
                 mask &= batch["tokens"] != token_id
@@ -170,7 +179,7 @@ class FeatureAnalyzer:
             # Get feature activations from SAE
             feature_acts = sae.encode(batch[sae.cfg.hook_point_in], tokens=batch["tokens"])
             feature_acts[~mask] = 0.0
-            
+
             # Update activation statistics
             act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
             max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
@@ -180,7 +189,6 @@ class FeatureAnalyzer:
                 k: torch.tensor(mapper.encode(k, v), device=sae.cfg.device, dtype=torch.int32) for k, v in meta.items()
             }
             sample_result = self._process_batch(feature_acts, discrete_meta, sample_result, max_feature_acts)
-            
 
             # Update progress
             n_tokens_current = mask.int().sum().item()

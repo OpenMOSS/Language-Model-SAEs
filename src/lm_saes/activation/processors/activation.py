@@ -3,11 +3,30 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, cast
 
 import torch
+import torch.distributed as dist
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.config import BufferShuffleConfig
+
+
+def assert_tensor_consistency(tensor):
+    flat_tensor = tensor.flatten()
+
+    local_checksum = flat_tensor.sum().item()
+    checksum_tensor = torch.tensor(local_checksum).to(tensor.device)
+
+    dist.all_reduce(checksum_tensor, op=dist.ReduceOp.SUM)
+
+    world_size = dist.get_world_size()
+    expected_checksum = local_checksum * world_size
+
+    # Step 5: Assert that the checksums match across all ranks
+    if checksum_tensor.item() != expected_checksum:
+        print(tensor.tolist()[-100:])
+        raise AssertionError
+    # print(checksum_tensor.item() == expected_checksum)
 
 
 @dataclass
@@ -83,9 +102,11 @@ class ActivationBuffer:
             isinstance(data[k], torch.Tensor) for k in data.keys()
         ), "All data must be tensors to perform shuffling"
         data = cast(dict[str, torch.Tensor], data)
-        
+
         # Use the passed generator for shuffling
-        perm = torch.randperm(data[list(data.keys())[0]].shape[0], generator=self.generator, device=self.generator.device)
+        perm = torch.randperm(
+            data[list(data.keys())[0]].shape[0], generator=self.generator, device=self.generator.device
+        )
         buffer = {k: v[perm] for k, v in data.items()}
         return ActivationBuffer(buffer=[buffer], generator=self.generator)
 
@@ -232,6 +253,13 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
             activations = activations | {"tokens": tokens[mask]}
             if "meta" in d:
                 activations = activations | {"meta": d["meta"]}
+            # torch.cuda.synchronize()
+            # # print("TAGTAGTAG")
+            # # print(activations["tokens"].shape)
+            # assert_tensor_consistency(activations["tokens"])
+            # dist.barrier()
+
+            # print(f'transformer : {activations['blocks.15.hook_resid_post'].shape}')
             yield activations
 
 
@@ -258,7 +286,13 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             data will be refilled into the buffer whenever the buffer is less than half full, and then re-shuffled.
     """
 
-    def __init__(self, hook_points: list[str], batch_size: int, buffer_size: Optional[int] = None, buffer_shuffle_config: Optional[BufferShuffleConfig] = None):
+    def __init__(
+        self,
+        hook_points: list[str],
+        batch_size: int,
+        buffer_size: Optional[int] = None,
+        buffer_shuffle_config: Optional[BufferShuffleConfig] = None,
+    ):
         """Initialize the ActivationBatchler.
 
         Args:
@@ -320,6 +354,9 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
                         # Perhaps this is a bug with basedpyright
                         batch, buffer = cast(ActivationBuffer, buffer).yield_batch(self.batch_size)
                         pbar.update(len(buffer) - pbar.n)
+
+                        # print(f'Batchler : {batch['activation'].shape}')
+
                         yield batch
             else:
                 # If no buffer size specified, yield complete batches as they become available
@@ -327,6 +364,9 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
                     # The same issue as above
                     batch, buffer = cast(ActivationBuffer, buffer).yield_batch(self.batch_size)
                     pbar.update(len(buffer) - pbar.n)
+
+                    # print(f'Batchler : {batch['activation'].shape}')
+
                     yield batch
 
         # Yield any remaining samples in batches

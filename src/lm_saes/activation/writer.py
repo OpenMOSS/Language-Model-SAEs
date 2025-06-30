@@ -11,6 +11,37 @@ from tqdm import tqdm
 
 from lm_saes.config import ActivationWriterConfig
 
+# def _find_indices_to_be_filtered(tensor):
+#     indices = [0]
+#     k = len(tensor) - 1
+#     while k >= 0 and tensor[k] == 128001:
+#         k -= 1
+#     if k < len(tensor) - 1:
+#         indices.extend(range(k+1, len(tensor)))
+
+#     i = 1
+#     print(f'tensor{i}: {tensor[i].shape}')
+#     while i <= k:
+#         if tensor[i] >= 128000:
+#             found = False
+#             for j in range(i + 1, min(i + 6, len(tensor))):
+#                 if tensor[j] >= 128000:
+#                     indices.extend(range(i, j + 1))
+#                     i = j + 1
+#                     found = True
+#                     break
+#             if not found:
+#                 indices.append(i)
+#                 i += 1
+#         else:
+#             i += 1
+#     return indices
+
+# def _remove_elements(tensor, indices):
+#     mask = torch.ones(len(tensor), dtype=torch.bool)
+#     mask[indices] = False
+#     return tensor[mask]
+
 
 class ActivationWriter:
     """Writes activations to disk in a format compatible with CachedActivationLoader.
@@ -119,6 +150,15 @@ class ActivationWriter:
             assert all(
                 k in chunk for k in self.cfg.hook_points
             ), f"All samples must have the hook points: {self.cfg.hook_points}"
+
+            # # fiter template tokens
+            # print(chunk["tokens"])
+            # print(chunk)
+            # for chunk_bactch in range(len(chunk["tokens"])):
+            #     indices_to_remove = _find_indices_to_be_filtered(chunk["tokens"][chunk_bactch])
+            #     for value in chunk.values():
+            #         if isinstance(value, torch.Tensor):
+            #             value[chunk_bactch] = _remove_elements(value[chunk_bactch], torch.tensor(indices_to_remove))
 
             chunk_name = (
                 f"chunk-{chunk_id:08d}"

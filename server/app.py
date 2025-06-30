@@ -149,7 +149,13 @@ def get_feature(name: str, feature_index: str | int):
                 sampling.shard_idx[i] if sampling.shard_idx is not None else 0,
                 sampling.n_shards[i] if sampling.n_shards is not None else 1,
             )[context_idx]
+            print(data)
+            print(feature_acts)
+            print(len(feature_acts))
+            
             _, token_origins = model.to_tokens_with_origins(data)
+            
+            print(token_origins)
 
             # Replace image_key with image_url
             image_key = "image" if "image" in data else "images" if "images" in data else None

@@ -2,12 +2,12 @@ import os
 from pathlib import Path
 from typing import List, Literal, Optional, TypeVar, overload
 
-import wandb
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoTokenizer
 
+import wandb
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.activation.writer import ActivationWriter
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
@@ -155,7 +155,7 @@ class GenerateActivationsSettings(BaseSettings):
 
     mongo: Optional[MongoDBConfig] = None
     """Configuration for the MongoDB database. If `None`, will not use the database."""
-    
+
     ignore_token_ids: Optional[List[int | None]] = None
     """ Tokens to ignore in the activations. """
 
@@ -210,7 +210,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
         batch_size=settings.batch_size,
         buffer_size=settings.buffer_size,
         buffer_shuffle=settings.buffer_shuffle,
-        ignore_token_ids=settings.ignore_token_ids
+        ignore_token_ids=settings.ignore_token_ids,
     )
 
     # Configure activation writer
@@ -344,12 +344,14 @@ def train_sae(settings: TrainSAESettings) -> None:
         assert settings.model_name is not None, "Model name is required for mixcoder SAE"
         assert isinstance(settings.sae, MixCoderConfig)
         tokenizer = AutoTokenizer.from_pretrained(settings.model_name, trust_remote_code=True)
-        mixcoder_settings = {
-            "model_name": settings.model_name,
-            "tokenizer": tokenizer,
-        } if settings.sae.modality_indices is None else {
-            "modality_indices": settings.sae.modality_indices
-        }
+        mixcoder_settings = (
+            {
+                "model_name": settings.model_name,
+                "tokenizer": tokenizer,
+            }
+            if settings.sae.modality_indices is None
+            else {"modality_indices": settings.sae.modality_indices}
+        )
         sae = initializer.initialize_sae_from_config(
             settings.sae,
             activation_stream=activations_stream,
@@ -411,9 +413,8 @@ class AnalyzeSAESettings(BaseSettings):
 
     mongo: MongoDBConfig
     """Configuration for the MongoDB database."""
-    
-    ignore_token_ids: Optional[List[int | None]] = None
 
+    ignore_token_ids: Optional[List[int | None]] = None
 
 
 def analyze_sae(settings: AnalyzeSAESettings) -> None:
@@ -431,6 +432,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     analyzer = FeatureAnalyzer(settings.analyzer)
 
     activations = activation_factory.process()
+
     result = analyzer.analyze_chunk(activations, sae=sae, ignore_token_ids=settings.ignore_token_ids)
 
     mongo_client.add_feature_analysis(

@@ -1,6 +1,7 @@
 from typing import Any, Iterable, Iterator, Optional, Sequence
 
 import numpy as np
+import torch.distributed as dist
 from datasets import Dataset
 from transformer_lens import HookedTransformer
 
@@ -195,7 +196,10 @@ class ActivationFactory:
             """Create batchler for batched-activations-1d target."""
             assert cfg.batch_size is not None, "Batch size must be provided for outputting batched-activations-1d"
             return ActivationBatchler(
-                hook_points=cfg.hook_points, batch_size=cfg.batch_size, buffer_size=cfg.buffer_size, buffer_shuffle_config=cfg.buffer_shuffle
+                hook_points=cfg.hook_points,
+                batch_size=cfg.batch_size,
+                buffer_size=cfg.buffer_size,
+                buffer_shuffle_config=cfg.buffer_shuffle,
             )
 
         processors = [build_batchler()] if cfg.target >= ActivationFactoryTarget.BATCHED_ACTIVATIONS_1D else []
@@ -242,17 +246,46 @@ class ActivationFactory:
             """
             ran_out_of_samples = np.zeros(len(cfg.sources), dtype=bool)
             activations: list[Iterator[dict[str, Any]]] = [iter(activation) for activation in activations]
-            # Mask out sources run out of samples
-            weights = source_sample_weights[~ran_out_of_samples]
-            weights = weights / weights.sum()
+
+            # Fixed pattern, e.g., [0, 1, 1] repeats cyclically
+            # pattern = [0, 1, 1]  # Can be adjusted as needed
+            # pattern = [0,]
+            pattern = [0, 1, 1, 1, 1, 1, 1, 1, 1]  # for analyze shared #####
+            pattern_length = len(pattern)
+            pattern_index = 0  # This will help cycle through the pattern
 
             while not all(ran_out_of_samples):
-                sampled_sources = np.random.choice(len(activations), replace=True, p=weights)
+                sampled_sources = pattern[pattern_index % pattern_length]
+                pattern_index += 1  # Move to the next element in the pattern
+
                 try:
                     result = next(activations[sampled_sources])
                 except StopIteration:
                     ran_out_of_samples[sampled_sources] = True
                     continue
+
+                rank = dist.get_rank()
+
+                if rank == 0:
+                    with open(
+                        "/inspire/hdd/ws-8207e9e2-e733-4eec-a475-cfa1c36480ba/embodied-multimodality/public/zfhe/jiaxing_projects/Language-Model-SAEs/exp/log/analyze-shared-0.txt",
+                        "a",
+                    ) as f:
+                        f.write(f"selected_source: {sampled_sources}, shape[0]: {result['tokens'].shape}\n")
+
+                        # if rank == 1:
+                        #     with open('/inspire/hdd/ws-8207e9e2-e733-4eec-a475-cfa1c36480ba/embodied-multimodality/public/zfhe/jiaxing_projects/Language-Model-SAEs/exp/log/shared-1.txt','a') as f:
+                        #         f.write(f"selected_source: {sampled_sources}, shape[0]: {result['tokens'].shape}\n")
+
+                        # if rank == 2:
+                        #     with open('/inspire/hdd/ws-8207e9e2-e733-4eec-a475-cfa1c36480ba/embodied-multimodality/public/zfhe/jiaxing_projects/Language-Model-SAEs/exp/log/shared-2.txt','a') as f:
+                        f.write(f"selected_source: {sampled_sources}, shape[0]: {result['tokens'].shape}\n")
+
+                # with open('/inspire/hdd/ws-8207e9e2-e733-4eec-a475-cfa1c36480ba/embodied-multimodality/public/zfhe/jiaxing_projects/Language-Model-SAEs/exp/log/shared.txt','a') as f:
+                # f.write(f"selected_source: {sampled_sources}, shape[0]: {result['tokens'].shape}\n")
+                # print(result['meta'])
+                # print(f"selected_source: {sampled_sources}, shape[0]: {result['tokens'].shape}\n")
+
                 yield result
 
         return aggregate
@@ -267,5 +300,15 @@ class ActivationFactory:
             Iterable of processed activation data
         """
         streams = [processor(**kwargs) for processor in self.pre_aggregation_processors]
+
+        # print(f'{next(streams[0])['blocks.15.hook_resid_post'].shape}   0')
+        # print(f'{next(streams[1])['blocks.15.hook_resid_post'].shape}   1')
+
         stream = self.aggregator(streams)
+
+        # a = next(stream)
+        # print(f'{a['meta'][0]['dataset_name']}     {a['blocks.15.hook_resid_post'].shape}')
+        # a = next(stream)
+        # print(f'{a['meta'][0]['dataset_name']}     {a['blocks.15.hook_resid_post'].shape}')
+
         return self.post_aggregation_processor(stream, **kwargs)

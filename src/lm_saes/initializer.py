@@ -34,8 +34,10 @@ class Initializer:
             if mixcoder_settings.get("modality_indices", None) is None:
                 modality_indices = get_modality_indices(mixcoder_settings["tokenizer"], mixcoder_settings["model_name"])
             else:
-                modality_indices = {k: torch.tensor(v, device=sae.cfg.device) for k, v in mixcoder_settings["modality_indices"].items()}
-                
+                modality_indices = {
+                    k: torch.tensor(v, device=sae.cfg.device) for k, v in mixcoder_settings["modality_indices"].items()
+                }
+
             sae.init_parameters(modality_indices=modality_indices)
 
         else:
@@ -49,9 +51,7 @@ class Initializer:
             sae.set_decoder_to_fixed_norm(self.cfg.init_decoder_norm, force_exact=True)
 
         if self.cfg.init_encoder_with_decoder_transpose:
-            sae.init_encoder_with_decoder_transpose(
-                self.cfg.init_encoder_with_decoder_transpose_factor
-            )
+            sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
         else:
             if self.cfg.init_encoder_norm:
                 sae.set_encoder_to_fixed_norm(self.cfg.init_encoder_norm)
@@ -96,12 +96,10 @@ class Initializer:
 
                 for norm in search_range:
                     sae.set_decoder_to_fixed_norm(norm, force_exact=True)
-                    sae.init_encoder_with_decoder_transpose(
-                        self.cfg.init_encoder_with_decoder_transpose_factor
-                    )
+                    sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
                     if sae.cfg.sae_type == "crosscoder":
                         sae.initialize_with_same_weight_across_layers()
-                    mse = sae.compute_loss(activation_batch, tokens=tokens)[1][0]["l_rec"].mean()
+                    mse = sae.compute_loss(activation_batch, tokens=tokens, return_aux_data=False).mean()
                     if sae.cfg.sae_type == "crosscoder":
                         mse = all_reduce_tensor(mse, aggregate="mean")
                     losses[norm] = mse.item()
@@ -134,12 +132,10 @@ class Initializer:
                 sae.encoder.bias.data = -normalized_median @ sae.encoder.weight.data.T
 
         if self.cfg.init_encoder_with_decoder_transpose:
-            sae.init_encoder_with_decoder_transpose(
-                self.cfg.init_encoder_with_decoder_transpose_factor
-            )
+            sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
 
         return sae
-    
+
     @torch.no_grad()
     def initialize_encoder_bias_for_const_fire_times(self, sae: SparseAutoEncoder, activation_batch: Dict[str, Tensor]):
         """
@@ -151,9 +147,7 @@ class Initializer:
         _, hidden_pre = sae.encode(activation_in, return_hidden_pre=True, tokens=tokens)
         k = int(self.cfg.const_times_for_init_b_e * batch_size / sae.cfg.d_sae)
         encoder_bias, _ = torch.kthvalue(hidden_pre, batch_size - k + 1, dim=0)
-        sae.encoder.bias.data.copy_(
-            (sae.log_jumprelu_threshold.exp() - encoder_bias).to(dtype=torch.float32)
-        )
+        sae.encoder.bias.data.copy_((sae.log_jumprelu_threshold.exp() - encoder_bias).to(dtype=torch.float32))
         # feature_act, hidden_pre = sae.encode(activation_in, return_hidden_pre=True, tokens=tokens)
         # print(hidden_pre.shape)
         # print(torch.sum(hidden_pre > sae.log_jumprelu_threshold.exp(), dim=0))
@@ -201,10 +195,12 @@ class Initializer:
                 sae.set_dataset_average_activation_norm(activation_norm)
 
             if self.cfg.bias_init_method == "init_b_e_for_const_fire_times":
-                assert activation_stream is not None, "Activation iterator must be provided for encoder bias initialization"
+                assert (
+                    activation_stream is not None
+                ), "Activation iterator must be provided for encoder bias initialization"
                 activation_batch = next(iter(activation_stream))
                 sae = self.initialize_encoder_bias_for_const_fire_times(sae, activation_batch)
-            
+
             if self.cfg.init_search:
                 assert activation_stream is not None, "Activation iterator must be provided for initialization search"
                 activation_batch = next(iter(activation_stream))  # type: ignore

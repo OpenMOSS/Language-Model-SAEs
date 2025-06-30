@@ -64,7 +64,10 @@ class RawDatasetTokenProcessor(BaseActivationProcessor[Iterable[dict[str, Any]],
         """
         for d in data:
             tokens = model.to_tokens_with_origins(d, tokens_only=True, prepend_bos=self.prepend_bos)
-            ret = {"tokens": tokens[0]}
+
+            filtered = tokens[0][(tokens[0] < 128016) | (tokens[0] > 128021)]
+
+            ret = {"tokens": filtered}
             if "meta" in d:
                 ret = ret | {"meta": d["meta"]}
             yield ret
