@@ -285,7 +285,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 raise AssertionError(f"Loading cached activation error: tokens mismatch for chunk {chunk_idx}")
 
             # Check if we have all hook points for this chunk
-            if len(chunk_buffer[chunk_idx]) - 2 == len(self.cache_dirs):  # -2 for tokens and meta
+            if len(chunk_buffer[chunk_idx]) - 2 >= len(self.cache_dirs):  # -2 for tokens and meta
                 # Yield the complete chunk data
                 activations: dict[str, Any] = move_dict_of_tensor_to_device(
                     chunk_buffer[chunk_idx],
