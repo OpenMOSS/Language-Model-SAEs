@@ -100,11 +100,17 @@ def convert_torch_dtype_to_str(dtype: torch.dtype) -> str:
         raise ValueError(f"Unsupported data type: {dtype}. Supported data types: {list(dtype_str_map.values())}.")
 
 
-def gather_tensors_from_specific_rank(tensor, dst=0):
-    world_size = dist.get_world_size()
-    gathered_tensors = [torch.zeros_like(tensor) for _ in range(world_size)] if dist.get_rank() == dst else None
-    dist.gather(tensor, gather_list=gathered_tensors, dst=dst)
-    return gathered_tensors if dist.get_rank() == dst else None
+def all_gather_tensor(tensor, group: Optional[torch.distributed.ProcessGroup] = None):
+    world_size = dist.get_world_size(group=group)
+    tensor_meta = {"shape": tensor.shape, "dtype": tensor.dtype}
+    meta_list: list[dict[str, Any] | None] = [None for _ in range(world_size)]
+    dist.all_gather_object(meta_list, tensor_meta, group=group)
+    gathered_tensors = [
+        torch.empty(rank_meta["shape"], dtype=rank_meta["dtype"], device=tensor.device)
+        for rank_meta in cast(list[dict[str, Any]], meta_list)
+    ]
+    dist.all_gather(gathered_tensors, tensor, group=group)
+    return gathered_tensors
 
 
 def get_tensor_from_specific_rank(tensor, src=0):
@@ -112,7 +118,7 @@ def get_tensor_from_specific_rank(tensor, src=0):
     return tensor
 
 
-def all_reduce_tensor(tensor, aggregate="none"):
+def all_reduce_tensor(tensor, aggregate: str, group: Optional[torch.distributed.ProcessGroup] = None):
     _OP_MAP = {
         "sum": dist.ReduceOp.SUM,
         "mean": dist.ReduceOp.SUM,  # Use SUM for mean, but will need to divide by world size
@@ -120,12 +126,13 @@ def all_reduce_tensor(tensor, aggregate="none"):
         "max": dist.ReduceOp.MAX,
         "product": dist.ReduceOp.PRODUCT,
     }
+    assert aggregate in _OP_MAP, f"Unsupported aggregate: {aggregate}. Supported aggregates: {list(_OP_MAP.keys())}."
 
     # gathered_tensors = [torch.zeros_like(tensor) for _ in range(world_size)]
     tensor = all_reduce(tensor, op=_OP_MAP[aggregate])
     assert tensor is not None, "All reduce failed"
     if aggregate == "mean":
-        tensor = tensor / dist.get_world_size()
+        tensor = tensor / dist.get_world_size(group=group)
     return tensor
 
 
@@ -217,11 +224,10 @@ def all_gather_dict(
 ) -> list[dict[str, Any]]:
     """
     All-gather a dictionary across all ranks. For each key, if the value is a tensor, use torch.distributed.all_gather
-    (with CUDA tensors by default); otherwise, use all_gather_object. Returns a list of dicts, one per rank.
+    (supporting uneven sized tensors); otherwise, use all_gather_object. Returns a list of dicts, one per rank.
 
     Args:
         data: Dictionary to all-gather. Tensor values should be on the correct device.
-        device: Device to move tensors to before all_gather (default: "cuda").
         group: Optional process group for communication.
 
     Returns:
@@ -237,8 +243,18 @@ def all_gather_dict(
         if isinstance(v, torch.Tensor):
             expected_device = torch.device(f"cuda:{dist.get_rank(group=group)}")
             v = v.to(expected_device)
-            # Prepare list for gathered tensors
-            output = [torch.empty_like(v) for _ in range(world_size)]
+
+            # First, gather tensor metadata (shape, dtype) from all ranks
+            tensor_meta = {"shape": v.shape, "dtype": v.dtype}
+            meta_list: list[dict[str, Any] | None] = [None for _ in range(world_size)]
+            dist.all_gather_object(meta_list, tensor_meta, group=group)
+
+            # Create output tensors with correct shapes for each rank
+            output = [
+                torch.empty(rank_meta["shape"], dtype=rank_meta["dtype"], device=expected_device)
+                for rank_meta in cast(list[dict[str, Any]], meta_list)
+            ]
+            # Now perform all_gather with correctly sized tensors
             dist.all_gather(output, v, group=group)
             for i, t in enumerate(output):
                 gathered_dicts[i][k] = t
