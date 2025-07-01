@@ -99,9 +99,8 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         self.num_workers = num_workers
         self.prefetch_factor = prefetch_factor
         self.device_mesh = device_mesh
-        self.distributed = self.device_mesh is not None
         # Distributed setup
-        if self.distributed and not dist.is_initialized():
+        if self.device_mesh is not None and not dist.is_initialized():
             raise RuntimeError("Distributed training must be initialized before using distributed loading")
 
     def load_single_hook_chunk(
@@ -125,12 +124,10 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
         assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
 
-        return {
+        return {k: v for k, v in data.items()} | {
             "hook_point": hook_point,
-            "activation": data["activation"],
-            "tokens": data["tokens"],
-            "meta": data.get("meta"),
             "chunk_idx": chunk_idx,
+            "meta": data.get("meta"),
         }
 
     def _get_sorted_chunks(self, hook_point: str) -> list[ChunkInfo]:
@@ -208,11 +205,11 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 rank=self.device_mesh.get_group().rank(),
                 shuffle=False,
             )
-            if self.distributed and self.device_mesh is not None  # abundant condition to make mypy happy
+            if self.device_mesh is not None  # abundant condition to make mypy happy
             else None,
         )
 
-        if not self.distributed:
+        if not self.device_mesh:
             yield from tqdm(
                 dataloader,
                 total=len(cached_activation_dataset),
@@ -227,8 +224,8 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 disable=not is_master(),
             ):
                 assert self.device_mesh is not None
-                # Use all_gather_dict to gather chunk dicts from all ranks
-                gathered = all_gather_dict(data, group=self.device_mesh.get_group())
+                # Use all_gather_dict to gather chunk dicts from model parallel group
+                gathered = all_gather_dict(data, group=self.device_mesh.get_group(mesh_dim="model"))
                 yield from gathered
 
     def process(self, data: None = None, **kwargs) -> Iterable[dict[str, Any]]:
@@ -277,8 +274,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             # Initialize chunk buffer entry if not exists
             if chunk_idx not in chunk_buffer:
                 chunk_buffer[chunk_idx] = {
-                    "tokens": single_hook_data["tokens"],
-                    "meta": single_hook_data["meta"],
+                    k: v for k, v in single_hook_data.items() if k not in ["hook_point", "chunk_idx", "activation"]
                 }
 
             # Add activation for this hook point
