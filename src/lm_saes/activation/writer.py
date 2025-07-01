@@ -131,7 +131,7 @@ class ActivationWriter:
             # Submit writing tasks for each hook point
             with timer.time("write_chunk"):
                 for hook_point in self.cfg.hook_points:
-                    chunk_data = {"activation": chunk[hook_point], "tokens": chunk["tokens"]}
+                    chunk_data = {k if k != hook_point else "activation": v for k, v in chunk.items() if k != "meta"}
                     if futures is None:
                         self._write_chunk(
                             hook_point, chunk_data, chunk_name, chunk["meta"] if "meta" in chunk else None
