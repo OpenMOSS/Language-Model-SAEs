@@ -62,7 +62,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     sae_pretrained_name_or_path: Optional[str] = None
     strict_loading: bool = True
     use_triton_kernel: bool = False
-    sparsity_threshold_for_triton_spmm_kernel: float = 0.99
+    sparsity_threshold_for_triton_spmm_kernel: float = 0.996
 
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
@@ -116,7 +116,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 class SAEConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "clt"] = "sae"
     hook_point_in: str
-    hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
+    hook_point_out: str
     use_glu_encoder: bool = False
 
     @property
@@ -184,8 +184,21 @@ class InitializerConfig(BaseConfig):
 
 
 class TrainerConfig(BaseConfig):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     l1_coefficient: float | None = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
+    amp_dtype: Annotated[
+        torch.dtype | None,
+        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+        PlainSerializer(convert_torch_dtype_to_str),
+        WithJsonSchema(
+            {
+                "type": ["string", "null"],
+            },
+            mode="serialization",
+        ),
+    ] = Field(default=torch.bfloat16, exclude=True, validate_default=False)
     sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None
     tanh_stretch_coefficient: float = 4.0
     p: int = 1

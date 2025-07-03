@@ -6,7 +6,8 @@ from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder, JumpReLU
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.activation_functions import JumpReLU
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
@@ -51,6 +52,7 @@ class Initializer:
         """
         batch = sae.normalize_activations(activation_batch)
 
+        @torch.autocast(device_type=sae.cfg.device, dtype=sae.cfg.dtype)
         def grid_search_best_init_norm(search_range: List[float]) -> float:
             losses: Dict[float, float] = {}
 
@@ -58,7 +60,7 @@ class Initializer:
                 sae.set_decoder_to_fixed_norm(norm, force_exact=True)
                 if self.cfg.init_encoder_with_decoder_transpose:
                     sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
-                mse = sae.compute_loss(batch)[1][0]["l_rec"].mean().item()
+                mse = sae.compute_loss(batch)[1][0]["l_rec"].mean().item()  # type: ignore
                 losses[norm] = mse
             best_norm = min(losses, key=losses.get)  # type: ignore
             return best_norm

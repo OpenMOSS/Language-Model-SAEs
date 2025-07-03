@@ -1,7 +1,10 @@
+from torch._tensor import Tensor
 import torch
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Placement, distribute_tensor
 from torch.distributed.tensor.placement_types import Replicate, Shard
+from typing import Any, Union, Optional
+from jaxtyping import Float
 
 
 class DimMap:
@@ -141,3 +144,82 @@ class DimMap:
     def __or__(self, other: "DimMap") -> "DimMap":
         """Merge this DimMap with another DimMap or dictionary."""
         return DimMap(self.to_dict() | other.to_dict())
+
+@torch.no_grad()
+def distributed_batch_kthvalue_clt(
+    x: Float[DTensor, "batch n_layers d_sae"],
+    k: int,
+    device_mesh: Optional[DeviceMesh] = None,
+    mesh_dim_name: str = "model",
+) -> tuple[DTensor, Optional[DTensor]]:
+    """
+    Perform distributed batch kthvalue operation on a DTensor sharded along the specified dimension.
+    """
+    if not isinstance(x, DTensor):
+        # For regular tensors, use standard kthvalue
+        raise ValueError("x must be a DTensor")
+    
+    if x.dim() != 3:
+        raise ValueError("x must be a 3D DTensor")
+    
+    if device_mesh is None:
+        raise ValueError("device_mesh must be provided when x is a DTensor")
+    
+    # Get local tensor and placements
+    local_tensor = x.to_local()
+    placements = x.placements
+    
+    # Find the placement indices for the specified dimensions
+    mesh_dim_idx = None
+    if device_mesh.mesh_dim_names is not None:
+        try:
+            mesh_dim_idx = device_mesh.mesh_dim_names.index(mesh_dim_name)
+        except ValueError:
+            raise ValueError(f"Mesh dimension '{mesh_dim_name}' not found in device mesh")
+    
+    # Check if the tensor is sharded along the specified dimensions
+    if mesh_dim_idx is None or not isinstance(placements[mesh_dim_idx], Shard):
+        # If not sharded along the specified dimensions, use standard kthvalue
+        raise ValueError("x must be sharded along the specified dimension")
+    
+    shard_dim: Any = placements[mesh_dim_idx].dim  # type: ignore
+    if shard_dim != 1 and shard_dim != 2:  # also consider negative dims
+        # If sharded along a different dimension, use standard kthvalue
+        raise ValueError("x must be sharded along the specified dimension")
+    
+    # Get the groups for the mesh dimensions
+    group = device_mesh.get_group(mesh_dim_name)
+    world_size = group.size()
+    
+    # Compute kthvalue on local tensor
+    batch_size, n_layers, d_sae = local_tensor.shape
+    local_tensor = local_tensor.flatten()
+    # local_tensor = local_tensor[local_tensor.gt(0)]
+
+    candidates, _ = torch.kthvalue(local_tensor, k=local_tensor.shape[-1] - k * batch_size * n_layers // world_size + 1, dim=-1)
+    candidates = candidates.unsqueeze(0)
+    # loose_k = k * 10
+    # candidates = []
+    # for layer_idx in range(local_tensor.shape[0]):
+    #     first_token_loose_kth_value, _ = torch.kthvalue(local_tensor[layer_idx, 0], k=local_tensor.shape[-1] - loose_k + 1, dim=-1)
+    #     layer_candidates = local_tensor[layer_idx].flatten()
+    #     layer_candidates = layer_candidates[layer_candidates.ge(first_token_loose_kth_value)]
+    #     layer_candidates, _ = torch.topk(layer_candidates, k=k * batch_size, dim=-1)
+    #     candidates.append(layer_candidates)
+    # candidates = torch.stack(candidates, dim=0)
+    
+    # Gather all local kthvalue results
+    gathered_values = [torch.empty_like(candidates) for _ in range(world_size)]
+    print(candidates)
+    print(gathered_values[0])
+    torch.distributed.all_gather(gathered_values, candidates, group=group)
+    
+    # Concatenate all gathered results along the specified dimension
+    all_values = torch.cat(gathered_values, dim=-1)
+    
+    # Compute global kthvalue on the concatenated results
+    # result_values, _ = torch.kthvalue(all_values, k=all_values.shape[-1] - k * batch_size * n_layers + 1, dim=-1)
+    result_values = all_values.mean()
+    # place the result_values back to DTensor (Replicate)
+    result_values = DTensor.from_local(result_values, device_mesh=device_mesh, placements=[Replicate() for _ in range(len(placements))])
+    return result_values, None

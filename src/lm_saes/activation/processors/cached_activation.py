@@ -215,14 +215,14 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         if not self.distributed:
             yield from tqdm(
                 dataloader,
-                total=len(cached_activation_dataset),
+                total=len(dataloader),
                 desc="Processing activation chunks",
                 disable=not is_master(),
             )
         else:
             for data in tqdm(
                 dataloader,
-                total=len(cached_activation_dataset),
+                total=len(dataloader),
                 desc="Processing activation chunks",
                 disable=not is_master(),
             ):
