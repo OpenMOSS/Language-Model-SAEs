@@ -6,6 +6,7 @@ import torch
 import triton
 import triton.language as tl
 from jaxtyping import Float
+from typing import Union
 
 from lm_saes.utils.logging import get_logger
 
@@ -61,7 +62,7 @@ def triton_coo_sparse_dense_matmul(
     AK = coo_indices.shape[1]
     B = dense.shape[1]
 
-    out = torch.zeros(N, B, device=dense.device, dtype=coo_values.dtype)
+    out = torch.zeros(N, B, device=dense.device, dtype=torch.float32)
 
     def grid(META):
         return triton.cdiv(AK, META["BLOCK_SIZE_AK"]), 1
@@ -79,7 +80,7 @@ def triton_coo_sparse_dense_matmul(
         BLOCK_SIZE_AK=BLOCK_SIZE_AK,  # type: ignore
         BLOCK_SIZE_B=triton.next_power_of_2(B),  # type: ignore
     )
-    return out
+    return out.to(coo_values.dtype)
 
 
 @triton.jit
@@ -424,7 +425,7 @@ def get_sparse_representation(x, pad_val=0):
     return sparse_indices, sparse_values
 
 
-class TritonDecoderAutogradJumpReLU(torch.autograd.Function):
+class TritonDecoderAutogradDynamicK(torch.autograd.Function):
     @staticmethod
     def forward(ctx, feature_acts, decoder_weight):
         sparse_indices, sparse_values = get_sparse_representation(feature_acts)
@@ -447,7 +448,6 @@ class TritonDecoderAutogradJumpReLU(torch.autograd.Function):
 
         # decoder is contiguous when transposed so this is a matching layout
         return grad_output @ decoder_weight, decoder_grad
-
 
 class TritonDecoderAutogradTopK(torch.autograd.Function):
     @staticmethod
@@ -476,24 +476,28 @@ class TritonDecoderAutogradTopK(torch.autograd.Function):
 def decode_with_triton_spmm_kernel(
     feature_acts: Float[torch.Tensor, "batch d_sae"],
     decoder_weight: Float[torch.Tensor, "d_model d_sae"],
-    require_precise_feature_acts_grad: bool,
-):
+    dynamic_k: bool = True,
+) -> Union[
+    Float[torch.Tensor, "batch d_model"],
+    Float[torch.Tensor, "batch n_layers d_model"],
+    Float[torch.Tensor, "batch seq_len d_model"],
+]:
     """
     Perform sparse-dense matrix multiplication using Triton.
 
     Args:
         feature_acts: (B, d_sae) - Sparse feature activations (input).
-        decoder_weight: (d_model d_sae) - Decoder weight matrix.
+        decoder_weight: (d_sae, d_model) - Decoder weight matrix.
 
     Returns:
         output: (B, d_model) - The decoded output.
     """
-    if require_precise_feature_acts_grad:
-        output = TritonDecoderAutogradJumpReLU.apply(feature_acts, decoder_weight.T.contiguous().T)
+    if dynamic_k:
+        output = TritonDecoderAutogradDynamicK.apply(feature_acts, decoder_weight.contiguous().T)
     else:
         sparse_indices, sparse_values = get_sparse_representation(feature_acts)
-        output = TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.T.contiguous().T)
-    return output
+        output = TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.contiguous().T)
+    return output  # type: ignore[return-value]
 
 
 if __name__ == "__main__":

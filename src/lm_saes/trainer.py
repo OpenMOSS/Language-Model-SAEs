@@ -136,7 +136,8 @@ class Trainer:
                 # Operator aten.amax.default does not have a sharding strategy registered.
                 act_freq_scores = act_freq_scores.full_tensor().amax(dim=0)
         elif sae.cfg.sae_type == "clt":
-            act_freq_scores = act_freq_scores.mean(dim=0)  # [d_sae], take mean over layer dimension
+            log_info["reconstructed"] = log_info["reconstructed"].permute(1, 0, 2)
+            label = label.permute(1, 0, 2)
         if isinstance(act_freq_scores, DTensor):
             act_freq_scores = act_freq_scores.full_tensor()
 
@@ -145,14 +146,14 @@ class Trainer:
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
 
-            log_feature_sparsity = torch.log10(feature_sparsity + 1e-10)
             wandb_log_dict = {
-                "metrics/mean_log10_feature_sparsity": log_feature_sparsity.mean().item(),
                 "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum().item(),
                 "sparsity/above_1e-2": (feature_sparsity > 1e-2).sum().item(),
                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
             }
+            if is_primary_rank(sae.device_mesh):
+                log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Sparsity Metrics")
             if self.wandb_logger is not None:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
             log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
@@ -190,6 +191,18 @@ class Trainer:
             )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
             if isinstance(explained_variance, DTensor):
                 explained_variance = explained_variance.full_tensor()
+            if sae.cfg.sae_type == "clt":
+                per_layer_ev = explained_variance.mean(0)
+                clt_per_layer_ev_dict = {
+                    f"metrics/explained_variance_L{l}": per_layer_ev[l].item() for l in range(per_layer_ev.size(0))
+                }
+                clt_per_layer_l0_dict = {
+                    f"metrics/l0_L{l}": l0[:, l].mean().item() for l in range(l0.size(1))
+                }
+            else:
+                clt_per_layer_ev_dict = {}
+                clt_per_layer_l0_dict = {}
+
             if isinstance(l2_norm_error, DTensor):
                 l2_norm_error = l2_norm_error.full_tensor()
             if isinstance(l2_norm_error_ratio, DTensor):
@@ -198,17 +211,19 @@ class Trainer:
             grad_norm = log_info["grad_norm"]
             if isinstance(grad_norm, DTensor):
                 grad_norm = grad_norm.full_tensor()
-
+            
+            
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.mean().item(),
                 **({"losses/sparsity_loss": l_s.mean().item()} if log_info.get("l_s", None) is not None else {}),
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
+                **clt_per_layer_ev_dict,
                 "metrics/explained_variance": explained_variance.mean().item(),
-                "metrics/explained_variance_std": explained_variance.std().item(),
                 # sparsity
                 "metrics/l0": l0.mean().item(),
+                **clt_per_layer_l0_dict,
                 "metrics/mean_feature_act": mean_feature_act.item(),
                 "metrics/l2_norm_error": l2_norm_error.item(),
                 "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
@@ -273,8 +288,9 @@ class Trainer:
         self._initialize_optimizer(sae)
         assert self.optimizer is not None
         assert self.scheduler is not None
+        act_freq_scores_shape = (sae.cfg.n_layers, sae.cfg.d_sae) if sae.cfg.sae_type == "clt" else (sae.cfg.d_sae,)  # type: ignore
         log_info = {
-            "act_freq_scores": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
+            "act_freq_scores": torch.zeros(act_freq_scores_shape, device=sae.cfg.device, dtype=sae.cfg.dtype),
             "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
         }
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
@@ -288,14 +304,16 @@ class Trainer:
 
                 self.optimizer.zero_grad()
 
-                loss_dict = self._training_step(sae, batch)
+                with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
+                    loss_dict = self._training_step(sae, batch)
 
                 with timer.time("backward"):
                     loss_dict["loss"].backward()
 
                 with timer.time("clip_grad_norm"):
+                    # exclude the grad of the jumprelu threshold
                     loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
-                        sae.parameters(),
+                        [param for name, param in sae.named_parameters() if param.grad is not None and 'log_jumprelu_threshold' not in name],
                         max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
                     )
 
@@ -304,6 +322,7 @@ class Trainer:
 
                 log_info.update(loss_dict)
                 proc_bar.set_description(f"loss: {log_info['loss'].item()}")
+                
 
                 self._log(sae, log_info, batch)
 

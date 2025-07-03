@@ -1,4 +1,5 @@
 from .activation import ActivationFactory, ActivationWriter
+from .activation_functions import JumpReLU
 from .analysis import FeatureAnalyzer
 from .clt import CrossLayerTranscoder
 from .config import (
@@ -57,6 +58,7 @@ __all__ = [
     "CrossCoderConfig",
     "CrossCoder",
     "SparseAutoEncoder",
+    "JumpReLU",
     "LanguageModelConfig",
     "DatasetConfig",
     "ActivationFactoryActivationsSource",

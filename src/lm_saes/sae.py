@@ -298,8 +298,8 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         # Apply activation function. The activation function here differs from a common activation function,
         # since it computes a scaling of the input tensor, which is, suppose the common activation function
         # is $f(x)$, then here it computes $f(x) / x$. For simple ReLU case, it computes a mask of 1s and 0s.
-        activation_mask = self.activation_function(sparsity_scores)
-        feature_acts = self.hook_feature_acts(hidden_pre * activation_mask)
+        feature_acts = self.activation_function(sparsity_scores)
+        feature_acts = self.hook_feature_acts(feature_acts)
 
         if return_hidden_pre:
             return feature_acts, hidden_pre
@@ -323,10 +323,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         ):  # triton kernel cannot handle empty feature_acts
             from .kernels import decode_with_triton_spmm_kernel
 
-            require_precise_feature_acts_grad = "topk" not in self.cfg.act_fn
             reconstructed = decode_with_triton_spmm_kernel(
-                feature_acts, self.W_D.T.contiguous(), require_precise_feature_acts_grad
-            )  # TODO: remove the transpose
+                feature_acts, self.W_D.T.contiguous()
+            )
         else:
             reconstructed = feature_acts @ self.W_D
 
