@@ -411,33 +411,23 @@ class FeatureAnalyzerConfig(BaseConfig):
     total_analyzing_tokens: int
     """ Total number of tokens to analyze """
 
-    enable_sampling: bool = False
-    """ Whether to use weighted sampling for selecting activations. 
-        If `False`, will only keep top activations (below the subsample threshold). 
-    """
-
-    sample_weight_exponent: float = 2.0
-    """ Exponent for weighting samples by activation value """
-
     ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
 
     subsamples: dict[str, dict[str, int | float]] = Field(
         default_factory=lambda: {
             "top_activations": {"proportion": 1.0, "n_samples": 10},
+            "non_activating": {
+                "proportion": 0.3,
+                "n_samples": 20,
+                "max_length": 50,
+            },
         }
     )
     """ Dictionary mapping subsample names to their parameters:
         - `proportion`: Proportion of max activation to consider
         - `n_samples`: Number of samples to keep
-    """
-
-    non_activating_subsample: dict[str, int | float] = Field(
-        default_factory=lambda: {"threshold": 0.3, "n_samples": 10, "max_length": 50}
-    )
-    """ Parameters for non-activating subsample:
-        - `threshold`: Threshold of max activation to consider
-        - `n_samples`: Number of samples to keep
+        - `max_length`: Maximum length of the sample
     """
 
 
