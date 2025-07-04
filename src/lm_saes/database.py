@@ -55,6 +55,7 @@ class FeatureRecord(BaseModel):
     index: int
     analyses: list[FeatureAnalysis] = []
     interpretation: Optional[dict[str, Any]] = None
+    metric: Optional[dict[str, float]] = None
 
 
 class AnalysisRecord(BaseModel):
@@ -235,7 +236,11 @@ class MongoClient:
         return SAERecord.model_validate(sae)
 
     def get_random_alive_feature(
-        self, sae_name: str, sae_series: str, name: str | None = None
+        self,
+        sae_name: str,
+        sae_series: str,
+        name: str | None = None,
+        metric_filters: Optional[dict[str, dict[str, float]]] = None,
     ) -> Optional[FeatureRecord]:
         """Get a random feature that has non-zero activation.
 
@@ -243,6 +248,7 @@ class MongoClient:
             sae_name: Name of the SAE model
             sae_series: Series of the SAE model
             name: Name of the analysis
+            metric_filters: Optional dict of metric filters in the format {"metric_name": {"$gte": value, "$lte": value}}
 
         Returns:
             A random feature record with non-zero activation, or None if no such feature exists
@@ -251,14 +257,19 @@ class MongoClient:
         if name is not None:
             elem_match["name"] = name
 
+        match_filter: dict[str, Any] = {
+            "sae_name": sae_name,
+            "sae_series": sae_series,
+            "analyses": {"$elemMatch": elem_match},
+        }
+
+        # Add metric filters if provided
+        if metric_filters:
+            for metric_name, filters in metric_filters.items():
+                match_filter[f"metric.{metric_name}"] = filters
+
         pipeline = [
-            {
-                "$match": {
-                    "sae_name": sae_name,
-                    "sae_series": sae_series,
-                    "analyses": {"$elemMatch": elem_match},
-                }
-            },
+            {"$match": match_filter},
             {"$sample": {"size": 1}},
         ]
         feature = next(self.feature_collection.aggregate(pipeline), None)
@@ -590,3 +601,60 @@ class MongoClient:
             query["sae_series"] = sae_series
 
         return self.bookmark_collection.count_documents(query)
+
+    def get_available_metrics(self, sae_name: str, sae_series: str) -> list[str]:
+        """Get available metrics for an SAE by checking the first feature.
+
+        Args:
+            sae_name: Name of the SAE model
+            sae_series: Series of the SAE model
+
+        Returns:
+            List of available metric names
+        """
+        # Use projection to avoid loading large arrays from analyses[0].samplings
+        projection = {
+            "metric": 1,
+        }
+
+        first_feature = self.feature_collection.find_one({"sae_name": sae_name, "sae_series": sae_series}, projection)
+
+        if first_feature is None or first_feature.get("metric") is None:
+            return []
+
+        return list(first_feature["metric"].keys())
+
+    def count_features_with_filters(
+        self,
+        sae_name: str,
+        sae_series: str,
+        name: str | None = None,
+        metric_filters: Optional[dict[str, dict[str, float]]] = None,
+    ) -> int:
+        """Count features that match the given filters.
+
+        Args:
+            sae_name: Name of the SAE model
+            sae_series: Series of the SAE model
+            name: Name of the analysis
+            metric_filters: Optional dict of metric filters in the format {"metric_name": {"$gte": value, "$lte": value}}
+
+        Returns:
+            Number of features matching the filters
+        """
+        elem_match: dict[str, Any] = {"max_feature_acts": {"$gt": 0}}
+        if name is not None:
+            elem_match["name"] = name
+
+        match_filter: dict[str, Any] = {
+            "sae_name": sae_name,
+            "sae_series": sae_series,
+            "analyses": {"$elemMatch": elem_match},
+        }
+
+        # Add metric filters if provided
+        if metric_filters:
+            for metric_name, filters in metric_filters.items():
+                match_filter[f"metric.{metric_name}"] = filters
+
+        return self.feature_collection.count_documents(match_filter)
