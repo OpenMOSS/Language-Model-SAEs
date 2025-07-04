@@ -265,3 +265,11 @@ def all_gather_dict(
             for i, obj in enumerate(object_list):
                 gathered_dicts[i][k] = obj
     return gathered_dicts
+
+
+def get_device_mesh_dim_size(device_mesh: DeviceMesh | None, mesh_dim: str) -> int:
+    if device_mesh is None:
+        return 1
+    assert device_mesh is not None
+    assert device_mesh.mesh_dim_names is not None, "Device mesh does not have mesh dimension names"
+    return device_mesh.get_group(mesh_dim).size() if mesh_dim in device_mesh.mesh_dim_names else 1
