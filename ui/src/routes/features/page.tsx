@@ -40,6 +40,24 @@ export const FeaturesPage = () => {
 
   const [selectedAnalysis, setSelectedAnalysis] = useState<string | null>(null);
 
+  // Metric filtering state
+  const [metricsState, fetchMetrics] = useAsyncFn(async (dictionary: string) => {
+    if (!dictionary) return [];
+
+    return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/metrics`)
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+        return res;
+      })
+      .then(async (res) => await res.json())
+      .then((res) => z.object({ metrics: z.array(z.string()) }).parse(res).metrics);
+  });
+
+  const [metricFilters, setMetricFilters] = useState<Record<string, { min?: number; max?: number }>>({});
+  const [featureCount, setFeatureCount] = useState<number | null>(null);
+
   const [featureIndex, setFeatureIndex] = useState<number>(0);
   const [inputValue, setInputValue] = useState<string>("0");
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
@@ -60,11 +78,73 @@ export const FeaturesPage = () => {
     setInputValue(e.target.value);
   }, []);
 
+  // Function to count features matching filters
+  const [countState, countFeatures] = useAsyncFn(
+    async (
+      dictionary: string | null,
+      analysisName: string | null = null,
+      metricFilters?: Record<string, { min?: number; max?: number }>
+    ) => {
+      if (!dictionary) {
+        return 0;
+      }
+
+      // Build query parameters
+      const params = new URLSearchParams();
+      if (analysisName) {
+        params.append("feature_analysis_name", analysisName);
+      }
+      
+      // Add metric filters if provided
+      if (metricFilters) {
+        const mongoFilters: Record<string, Record<string, number>> = {};
+        
+        for (const [metricName, filter] of Object.entries(metricFilters)) {
+          const mongoFilter: Record<string, number> = {};
+          if (filter.min !== undefined) {
+            mongoFilter["$gte"] = filter.min;
+          }
+          if (filter.max !== undefined) {
+            mongoFilter["$lte"] = filter.max;
+          }
+          
+          if (Object.keys(mongoFilter).length > 0) {
+            mongoFilters[metricName] = mongoFilter;
+          }
+        }
+        
+        if (Object.keys(mongoFilters).length > 0) {
+          params.append("metric_filters", JSON.stringify(mongoFilters));
+        }
+      }
+
+      const queryString = params.toString();
+      const url = `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/count${queryString ? `?${queryString}` : ""}`;
+
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const data = await response.json();
+      const count = z.object({ count: z.number() }).parse(data).count;
+      setFeatureCount(count);
+      return count;
+    }
+  );
+
   const [featureState, fetchFeature] = useAsyncFn(
     async (
       dictionary: string | null,
       featureIndex: number | string = "random",
-      analysisName: string | null = null
+      analysisName: string | null = null,
+      metricFilters?: Record<string, { min?: number; max?: number }>
     ) => {
       if (!dictionary) {
         alert("Please select a dictionary first");
@@ -73,17 +153,44 @@ export const FeaturesPage = () => {
 
       setLoadingRandomFeature(featureIndex === "random");
 
-      const feature = await fetch(
-        `${
-          import.meta.env.VITE_BACKEND_URL
-        }/dictionaries/${dictionary}/features/${featureIndex}${analysisName ? `?feature_analysis_name=${analysisName}` : ""}`,
-        {
-          method: "GET",
-          headers: {
-            Accept: "application/x-msgpack",
-          },
+      // Build query parameters
+      const params = new URLSearchParams();
+      if (analysisName) {
+        params.append("feature_analysis_name", analysisName);
+      }
+      
+      // Add metric filters if provided and we're fetching a random feature
+      if (metricFilters && featureIndex === "random") {
+        const mongoFilters: Record<string, Record<string, number>> = {};
+        
+        for (const [metricName, filter] of Object.entries(metricFilters)) {
+          const mongoFilter: Record<string, number> = {};
+          if (filter.min !== undefined) {
+            mongoFilter["$gte"] = filter.min;
+          }
+          if (filter.max !== undefined) {
+            mongoFilter["$lte"] = filter.max;
+          }
+          
+          if (Object.keys(mongoFilter).length > 0) {
+            mongoFilters[metricName] = mongoFilter;
+          }
         }
-      )
+        
+        if (Object.keys(mongoFilters).length > 0) {
+          params.append("metric_filters", JSON.stringify(mongoFilters));
+        }
+      }
+
+      const queryString = params.toString();
+      const url = `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}${queryString ? `?${queryString}` : ""}`;
+
+      const feature = await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/x-msgpack",
+        },
+      })
         .then(async (res) => {
           if (!res.ok) {
             throw new Error(await res.text());
@@ -124,6 +231,8 @@ export const FeaturesPage = () => {
         }
       });
 
+      fetchMetrics(dict);
+
       if (searchParams.get("featureIndex")) {
         setFeatureIndex(parseInt(searchParams.get("featureIndex")!));
         fetchFeature(dict, searchParams.get("featureIndex")!, analysisParam || null);
@@ -140,6 +249,7 @@ export const FeaturesPage = () => {
         }
       });
 
+      fetchMetrics(dictionariesState.value[0]);
       fetchFeature(dictionariesState.value[0], "random", selectedAnalysis);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -148,10 +258,32 @@ export const FeaturesPage = () => {
   useEffect(() => {
     if (selectedDictionary) {
       fetchAnalyses(selectedDictionary);
+      fetchMetrics(selectedDictionary);
       setSelectedAnalysis(null);
+      setMetricFilters({});
+      setFeatureCount(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDictionary]);
+
+  // Handle metric filter changes
+  const handleMetricFilterChange = useCallback((metricName: string, type: 'min' | 'max', value: string) => {
+    setMetricFilters(prev => ({
+      ...prev,
+      [metricName]: {
+        ...prev[metricName],
+        [type]: value === '' ? undefined : parseFloat(value)
+      }
+    }));
+    // Clear count when filters change
+    setFeatureCount(null);
+  }, []);
+
+  // Handle clear filters
+  const handleClearFilters = useCallback(() => {
+    setMetricFilters({});
+    setFeatureCount(null);
+  }, []);
 
   // Memoize sections calculation
   const sections = useMemo(() => [
@@ -260,11 +392,70 @@ export const FeaturesPage = () => {
           <Button
             disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
             onClick={async () => {
-              await fetchFeature(selectedDictionary, "random", selectedAnalysis);
+              await fetchFeature(selectedDictionary, "random", selectedAnalysis, metricFilters);
             }}
           >
             Show Random Feature
           </Button>
+
+          {/* Metric filters section */}
+          {metricsState.value && metricsState.value.length > 0 && (
+            <>
+              <span className="font-bold justify-self-end">Metric filters:</span>
+              <div className="bg-white p-4 rounded-lg border grid grid-cols-2 gap-4 col-span-2">
+                {metricsState.value.map((metric) => (
+                  <div key={metric} className="flex flex-col gap-2">
+                    <label className="text-sm font-medium">{metric}</label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Min"
+                        type="number"
+                        step="any"
+                        value={metricFilters[metric]?.min?.toString() || ''}
+                        onChange={(e) => handleMetricFilterChange(metric, 'min', e.target.value)}
+                        className="text-xs"
+                      />
+                      <Input
+                        placeholder="Max"
+                        type="number"
+                        step="any"
+                        value={metricFilters[metric]?.max?.toString() || ''}
+                        onChange={(e) => handleMetricFilterChange(metric, 'max', e.target.value)}
+                        className="text-xs"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <span className="font-bold"></span>
+
+              <span className="font-bold justify-self-end">Filter actions:</span>
+              <div className="flex gap-2 items-center">
+                <Button
+                  disabled={dictionariesState.loading || selectedDictionary === null || countState.loading}
+                  onClick={async () => {
+                    await countFeatures(selectedDictionary, selectedAnalysis, metricFilters);
+                  }}
+                >
+                  Count Features
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={dictionariesState.loading || selectedDictionary === null}
+                  onClick={handleClearFilters}
+                >
+                  Clear Filters
+                </Button>
+                {featureCount !== null && (
+                  <span className="text-sm font-medium ml-2">
+                    {countState.loading ? "Counting..." : `Found ${featureCount} features`}
+                  </span>
+                )}
+              </div>
+              <span className="font-bold"></span>
+              <span className="font-bold"></span>
+            </>
+          )}
         </div>
 
         {featureState.loading && !loadingRandomFeature && (

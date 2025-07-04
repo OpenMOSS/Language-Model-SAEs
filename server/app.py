@@ -1,4 +1,5 @@
 import io
+import json
 import os
 from functools import lru_cache
 from typing import Any, Optional
@@ -166,11 +167,60 @@ def get_image(dataset_name: str, context_idx: int, image_idx: int, shard_idx: in
     return Response(content=img_byte_arr.getvalue(), media_type="image/png")
 
 
+@app.get("/dictionaries/{name}/metrics")
+def get_available_metrics(name: str):
+    """Get available metrics for a dictionary.
+
+    Args:
+        name: Name of the dictionary/SAE
+
+    Returns:
+        List of available metric names
+    """
+    metrics = client.get_available_metrics(name, sae_series=sae_series)
+    return {"metrics": metrics}
+
+
+@app.get("/dictionaries/{name}/features/count")
+def count_features_with_filters(
+    name: str,
+    feature_analysis_name: str | None = None,
+    metric_filters: str | None = None,
+):
+    """Count features that match the given filters.
+
+    Args:
+        name: Name of the dictionary/SAE
+        feature_analysis_name: Optional analysis name
+        metric_filters: Optional JSON string of metric filters
+
+    Returns:
+        Count of features matching the filters
+    """
+    # Parse metric filters if provided
+    parsed_metric_filters = None
+    if metric_filters:
+        try:
+            parsed_metric_filters = json.loads(metric_filters)
+        except (json.JSONDecodeError, TypeError):
+            return Response(
+                content=f"Invalid metric_filters format: {metric_filters}",
+                status_code=400,
+            )
+
+    count = client.count_features_with_filters(
+        sae_name=name, sae_series=sae_series, name=feature_analysis_name, metric_filters=parsed_metric_filters
+    )
+
+    return {"count": count}
+
+
 @app.get("/dictionaries/{name}/features/{feature_index}")
 def get_feature(
     name: str,
     feature_index: str | int,
     feature_analysis_name: str | None = None,
+    metric_filters: str | None = None,
 ):
     # Parse feature_index if it's a string
     if isinstance(feature_index, str) and feature_index != "random":
@@ -182,9 +232,22 @@ def get_feature(
                 status_code=400,
             )
 
+    # Parse metric filters if provided
+    parsed_metric_filters = None
+    if metric_filters:
+        try:
+            parsed_metric_filters = json.loads(metric_filters)
+        except (json.JSONDecodeError, TypeError):
+            return Response(
+                content=f"Invalid metric_filters format: {metric_filters}",
+                status_code=400,
+            )
+
     # Get feature data
     feature = (
-        client.get_random_alive_feature(sae_name=name, sae_series=sae_series, name=feature_analysis_name)
+        client.get_random_alive_feature(
+            sae_name=name, sae_series=sae_series, name=feature_analysis_name, metric_filters=parsed_metric_filters
+        )
         if feature_index == "random"
         else client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
     )
