@@ -294,12 +294,16 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             # Verify tokens consistency across hook points for the same chunk
             # allclose is not supported for DTensor
             if isinstance(single_hook_data["tokens"], DTensor):
-                assert torch.allclose(single_hook_data["tokens"].to_local(), chunk_buffer[chunk_idx]["tokens"].to_local()), f"Loading cached activation error: tokens mismatch for chunk {chunk_idx}"
+                assert torch.allclose(
+                    single_hook_data["tokens"].to_local(), chunk_buffer[chunk_idx]["tokens"].to_local()
+                ), f"Loading cached activation error: tokens mismatch for chunk {chunk_idx}"
             else:
-                assert torch.allclose(single_hook_data["tokens"], chunk_buffer[chunk_idx]["tokens"]), f"Loading cached activation error: tokens mismatch for chunk {chunk_idx}"
+                assert torch.allclose(single_hook_data["tokens"], chunk_buffer[chunk_idx]["tokens"]), (
+                    f"Loading cached activation error: tokens mismatch for chunk {chunk_idx}"
+                )
 
             # Check if we have all hook points for this chunk
-            if len(chunk_buffer[chunk_idx]) - 2 >= len(self.cache_dirs):  # -2 for tokens and meta
+            if all(k in chunk_buffer[chunk_idx] for k in self.cache_dirs.keys()):
                 # Yield the complete chunk data
                 activations: dict[str, Any] = move_dict_of_tensor_to_device(
                     chunk_buffer[chunk_idx],
