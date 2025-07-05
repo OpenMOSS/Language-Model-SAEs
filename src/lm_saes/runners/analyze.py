@@ -51,6 +51,9 @@ class AnalyzeSAESettings(BaseSettings):
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
 
+    data_parallel_size: int = 1
+    """Size of data parallel mesh"""
+
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
@@ -67,10 +70,10 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
-            mesh_shape=(settings.model_parallel_size,),
-            mesh_dim_names=("model",),
+            mesh_shape=(settings.model_parallel_size, settings.data_parallel_size),
+            mesh_dim_names=("model", "data"),
         )
-        if settings.model_parallel_size > 1
+        if settings.model_parallel_size > 1 or settings.data_parallel_size > 1
         else None
     )
 
@@ -79,7 +82,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     mongo_client = MongoClient(settings.mongo)
     logger.info("MongoDB client initialized")
 
-    activation_factory = ActivationFactory(settings.activation_factory)
+    activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
     logger.info("Loading SAE model")
     if isinstance(settings.sae, CrossCoderConfig):
@@ -95,14 +98,18 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     logger.info("Processing activations for analysis")
     activations = activation_factory.process()
     result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
-
     logger.info("Analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
-    mongo_client.add_feature_analysis(
-        name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result, start_idx=start_idx
-    )
+    if device_mesh is None or settings.data_parallel_size == 1 or device_mesh.get_local_rank("data") == 0:
+        mongo_client.add_feature_analysis(
+            name="default",
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            analysis=result,
+            start_idx=start_idx,
+        )
 
-    logger.info("SAE analysis completed successfully")
+        logger.info("SAE analysis completed successfully")
 
 
 class AnalyzeCrossCoderSettings(BaseSettings):

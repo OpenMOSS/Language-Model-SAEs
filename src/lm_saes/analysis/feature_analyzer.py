@@ -1,5 +1,5 @@
 import warnings
-from typing import Any, Iterable, Mapping, Optional, cast
+from typing import Any, Iterable, Optional, cast
 
 import torch
 from einops import rearrange, repeat
@@ -12,8 +12,58 @@ from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.misc import is_primary_rank
+from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.misc import all_gather_dict, all_reduce_tensor, get_device_mesh_dim_size, is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
+from lm_saes.utils.timer import timer
+
+logger = get_distributed_logger(__name__)
+
+
+@timer.time("update_mask_ratio_stats")
+def update_mask_ratio_stats(
+    mask_ratio_stats: dict[str, torch.Tensor],
+    meta: dict[str, Any],
+    feature_acts: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    """
+    Update the mask ratio statistics. Only works for LLaDA SAEs with mask_ratio meta in 2D activations.
+
+    Args:
+        mask_ratio_stats: Dictionary mapping mask ratios to activation counts per feature
+        meta: Dictionary containing the mask ratio
+        feature_acts: Feature activations
+
+    Returns:
+        Updated mask ratio statistics
+    """
+    mask_ratios = torch.tensor(meta["mask_ratio"], device=feature_acts.device)
+    unique_mask_ratios = torch.unique(mask_ratios)
+    # Create all masks at once for parallel processing
+    masks = mask_ratios.unsqueeze(0) == unique_mask_ratios.unsqueeze(1)  # [n_unique, batch_size]
+
+    # Parallel computation for all mask ratios at once
+    for i, mask_ratio in enumerate(unique_mask_ratios):
+        mask_ratio_key = str(mask_ratio.item())
+        mask = masks[i]  # [batch_size]
+
+        if mask.any():  # Only process if there are samples with this mask ratio
+            # Vectorized computation of activations for selected samples
+            # Use broadcasting to avoid explicit selection
+            mask_expanded = mask.unsqueeze(1).unsqueeze(2)  # [batch_size, 1, 1]
+            masked_feature_acts = feature_acts * mask_expanded  # [batch_size, context_size, d_sae_local]
+            current_activations = masked_feature_acts.gt(0.0).sum(dim=[0, 1])  # [d_sae_local]
+
+            # Initialize tensor for this mask_ratio if first time seeing it
+            if mask_ratio_key not in mask_ratio_stats:
+                mask_ratio_stats[mask_ratio_key] = torch.zeros(
+                    (feature_acts.size(-1),), dtype=torch.long, device=feature_acts.device
+                )
+
+            # Add current batch activations to the running total
+            mask_ratio_stats[mask_ratio_key] += current_activations
+
+    return mask_ratio_stats
 
 
 class FeatureAnalyzer:
@@ -36,149 +86,53 @@ class FeatureAnalyzer:
         """
         self.cfg = cfg
 
-    def _process_batch(
-        self,
-        feature_acts: torch.Tensor,  # [batch_size, context_size, d_sae]
-        discrete_meta: dict[str, torch.Tensor],
-        sample_result: Mapping[str, dict[str, torch.Tensor] | None],
-        max_feature_acts: torch.Tensor,  # [d_sae]
-    ) -> Mapping[str, dict[str, torch.Tensor] | None]:
-        """Process a batch of activations to update sampling results.
-
-        For each subsample type:
-        1. Computes sampling weights if enabled
-        2. Filters activations based on configured thresholds
-        3. Updates running sample collections
-        4. Maintains top N samples by activation magnitude
-
-        Args:
-            feature_acts: Feature activation values for current batch
-            discrete_meta: Metadata tensors like dataset/context IDs
-            sample_result: Current sampling results to update
-            max_feature_acts: Maximum activation seen so far per feature
-
-        Returns:
-            Updated sampling results with new batch incorporated
-        """
-        # Compute exponential lottery ticket values for sampling if enabled
-        if self.cfg.enable_sampling:
-            weights = (
-                feature_acts.clamp(min=0.0).pow(self.cfg.sample_weight_exponent).max(dim=1).values
-            )  # [batch_size, d_sae]
-            elt = torch.rand_like(weights).log() / weights  # [batch_size, d_sae]
-            elt[weights == 0.0] = -torch.inf
-        else:
+    def _merge_sample_results(
+        self, sample_results: list[dict[str, torch.Tensor] | None], max_feature_acts: torch.Tensor, name: str
+    ) -> dict[str, torch.Tensor] | None:
+        def calculate_elt(feature_acts: torch.Tensor) -> torch.Tensor:
             elt = feature_acts.clamp(min=0.0).max(dim=1).values
+            elt[elt > max_feature_acts.unsqueeze(0) * self.cfg.subsamples[name]["proportion"]] = -torch.inf
+            return elt
 
-        # Process each subsample type (e.g. top activations)
-        for name in self.cfg.subsamples.keys():
-            elt_cur = elt.clone()
-            # Zero out samples above the subsample threshold
-            elt_cur[
-                feature_acts.max(dim=1).values > max_feature_acts.unsqueeze(0) * self.cfg.subsamples[name]["proportion"]
-            ] = -torch.inf
-
-            sample_result_cur = sample_result[name]
-
-            # Prepare batch data with proper dimensions
-            batch_data = {
-                "elt": elt_cur,
-                "feature_acts": rearrange(
-                    feature_acts,
-                    "batch_size context_size d_sae -> batch_size d_sae context_size",
-                ),
-                **{
-                    k: repeat(
-                        v,
-                        "batch_size -> batch_size d_sae",
-                        d_sae=feature_acts.size(-1),
-                    )
-                    for k, v in discrete_meta.items()
-                },
-            }
-
-            # Initialize or update sample collection
-            if sample_result_cur is None:
-                sample_result_cur = batch_data
-            elif (
-                sample_result_cur["elt"].size(0) > 0
-                and (elt_cur.max(dim=0).values > sample_result_cur["elt"][-1]).any()
-            ):
-                sample_result_cur = concat_dict_of_tensor(
-                    sample_result_cur,
-                    batch_data,
+        sample_results: list[dict[str, torch.Tensor]] = [
+            sample_result for sample_result in sample_results if sample_result is not None
+        ]
+        if len(sample_results) == 0:
+            return None
+        merged_sample_result = None
+        for sample_result in sample_results:
+            if "elt" not in sample_result.keys():
+                # this sample result is not sorted, so we need to truncate the feature_acts to max_length,
+                # calculate the elt for each sample,
+                # and then rearrange the feature_acts to [batch_size, d_sae, context_size],
+                if "max_length" in self.cfg.subsamples[name].keys():
+                    sample_result["feature_acts"] = sample_result["feature_acts"][
+                        :, : self.cfg.subsamples[name]["max_length"], :
+                    ]
+                sample_result["elt"] = calculate_elt(sample_result["feature_acts"])
+                sample_result["feature_acts"] = rearrange(
+                    sample_result["feature_acts"], "batch_size context_size d_sae -> batch_size d_sae context_size"
                 )
-            else:  # Skip if all activations are below the threshold
-                continue
 
-            # Sort and keep top N samples
-            sample_result_cur = sort_dict_of_tensor(sample_result_cur, sort_dim=0, sort_key="elt", descending=True)
-            sample_result_cur = {
+            if merged_sample_result is None:
+                merged_sample_result = {
+                    k: torch.zeros((0, *v.shape[1:]), device=v.device, dtype=v.dtype) for k, v in sample_result.items()
+                }
+            merged_sample_result = concat_dict_of_tensor(sample_result, merged_sample_result, dim=0)
+            merged_sample_result = sort_dict_of_tensor(
+                merged_sample_result, sort_dim=0, sort_key="elt", descending=True
+            )
+            merged_sample_result = {
                 k: v[
-                    : min(self.cfg.subsamples[name]["n_samples"], (sample_result_cur["elt"] != -torch.inf).sum().item())
+                    : min(
+                        self.cfg.subsamples[name]["n_samples"], (merged_sample_result["elt"] != -torch.inf).sum().item()
+                    )
                 ]
-                for k, v in sample_result_cur.items()
+                for k, v in merged_sample_result.items()
             }
+        return merged_sample_result
 
-            # Update main sample result with current batch results out of place
-            sample_result = {**sample_result, name: sample_result_cur}
-
-        return sample_result
-
-    def _sample_non_activating_examples(
-        self,
-        feature_acts: torch.Tensor,  # [batch_size, context_size, d_sae]
-        discrete_meta: dict[str, torch.Tensor],
-        sample_result: Mapping[str, dict[str, torch.Tensor] | None],
-        max_feature_acts: torch.Tensor,
-    ) -> Mapping[str, dict[str, torch.Tensor] | None]:
-        """Sample non-activating examples.
-
-        Args:
-            feature_acts: Feature activation values for current batch
-            discrete_meta: Metadata tensors like dataset/context IDs
-            sample_result: Current sampling results to update
-        """
-        feature_acts = feature_acts[:, : self.cfg.non_activating_subsample["max_length"], :]
-        sample_result_cur = sample_result.get("non_activating", None)
-        if sample_result_cur is not None and all(
-            sample_result_cur["elt"].min(dim=-1).values > -torch.inf
-        ):  # [n_samples, d_sae]
-            return sample_result
-
-        elt = feature_acts.clamp(min=0.0).max(dim=1).values  # [batch_size, d_sae]
-        elt[
-            feature_acts.max(dim=1).values
-            > max_feature_acts.unsqueeze(0) * self.cfg.non_activating_subsample["threshold"]
-        ] = -torch.inf
-
-        batch_data = {
-            "elt": elt,
-            "feature_acts": rearrange(
-                feature_acts,
-                "batch_size context_size d_sae -> batch_size d_sae context_size",
-            ),
-            **{
-                k: repeat(
-                    v,
-                    "batch_size -> batch_size d_sae",
-                    d_sae=feature_acts.size(-1),
-                )
-                for k, v in discrete_meta.items()
-            },
-        }
-        if sample_result_cur is None:
-            sample_result_cur = batch_data
-        else:
-            sample_result_cur = concat_dict_of_tensor(sample_result_cur, batch_data)
-        sample_result_cur = sort_dict_of_tensor(sample_result_cur, sort_dim=0, sort_key="elt", descending=True)
-        sample_result_cur = {
-            k: v[: self.cfg.non_activating_subsample["n_samples"]] for k, v in sample_result_cur.items()
-        }
-        sample_result = {**sample_result, "non_activating": sample_result_cur}
-
-        return sample_result
-
+    @timer.time("compute_ignore_token_masks")
     def compute_ignore_token_masks(
         self, tokens: torch.Tensor, ignore_token_ids: Optional[list[int]] = None
     ) -> torch.Tensor:
@@ -195,7 +149,7 @@ class FeatureAnalyzer:
                 stacklevel=2,
             )
             ignore_token_ids = []
-        mask = torch.ones_like(tokens, dtype=torch.bool)
+        mask = torch.ones_like(tokens, dtype=torch.bool)  # TODO: check if this is correct when tokens is a DTensor
         for token_id in ignore_token_ids:
             mask &= tokens != token_id
         return mask
@@ -233,18 +187,18 @@ class FeatureAnalyzer:
             disable=not is_primary_rank(device_mesh),
         )
 
-        if device_mesh is not None and device_mesh.mesh_dim_names is not None and "model" in device_mesh.mesh_dim_names:
-            d_sae_local = sae.cfg.d_sae // device_mesh["model"].size()
-        else:
-            d_sae_local = sae.cfg.d_sae
+        d_sae_local = sae.cfg.d_sae // get_device_mesh_dim_size(device_mesh, "model")
 
         # Initialize tracking variables
-        sample_result = {k: None for k in self.cfg.subsamples.keys()}
+        sample_results = cast(
+            dict[str, dict[str, torch.Tensor] | None], {name: None for name in self.cfg.subsamples.keys()}
+        )
         act_times = torch.zeros((d_sae_local,), dtype=torch.long, device=sae.cfg.device)
         max_feature_acts = torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
         mapper = KeyedDiscreteMapper()
-
+        mask_ratio_stats = {}
         # Process activation batches
+
         for batch in activation_stream:
             # Reshape meta to zip outer dimensions to inner
             meta = {k: [m[k] for m in batch["meta"]] for k in batch["meta"][0].keys()}
@@ -266,33 +220,61 @@ class FeatureAnalyzer:
                     )
                     # TODO: Remove this once redistributing across device meshes is supported
                 feature_acts = feature_acts.redistribute(
-                    placements=DimMap({"model": -1}).placements(device_mesh)
+                    placements=DimMap({"model": -1, "data": 0}).placements(device_mesh)
                 ).to_local()
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.max(dim=-2).values
-            assert feature_acts.shape == (batch["tokens"].shape[0], batch["tokens"].shape[1], d_sae_local), (
-                f"feature_acts.shape: {feature_acts.shape}, expected: {(batch['tokens'].shape[0], batch['tokens'].shape[1], d_sae_local)}"
+            assert feature_acts.shape == (
+                batch["tokens"].shape[0] // get_device_mesh_dim_size(device_mesh, "data"),
+                batch["tokens"].shape[1],
+                d_sae_local,
+            ), (
+                f"feature_acts.shape: {feature_acts.shape}, expected: {(batch['tokens'].shape[0] // get_device_mesh_dim_size(device_mesh, 'data'), batch['tokens'].shape[1], d_sae_local)}"
             )
 
             # Compute ignore token masks
             ignore_token_masks = self.compute_ignore_token_masks(batch["tokens"], self.cfg.ignore_token_ids)
+            if isinstance(ignore_token_masks, DTensor):
+                ignore_token_masks = ignore_token_masks.to_local()
             feature_acts *= repeat(ignore_token_masks, "batch_size n_ctx -> batch_size n_ctx 1")
 
             # Update activation statistics
             act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
             max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
 
+            if "mask_ratio" in meta.keys():
+                meta["mask_ratio"] = [round(float(m), 2) for m in meta["mask_ratio"]]
+                mask_ratio_stats = update_mask_ratio_stats(mask_ratio_stats, meta, feature_acts)
             # TODO: Filter out meta that is not string
-            discrete_meta = {
-                k: torch.tensor(mapper.encode(k, v), device=sae.cfg.device, dtype=torch.int32) for k, v in meta.items()
-            }
-            sample_result = self._process_batch(feature_acts, discrete_meta, sample_result, max_feature_acts)
-            sample_result = self._sample_non_activating_examples(
-                feature_acts, discrete_meta, sample_result, max_feature_acts
+            data_group = (
+                device_mesh.get_group("data")
+                if device_mesh is not None and get_device_mesh_dim_size(device_mesh, "data") > 1
+                else None
             )
+            discrete_meta = {
+                k: torch.tensor(mapper.encode(k, v, group=data_group), device=sae.cfg.device, dtype=torch.int32)
+                for k, v in meta.items()
+            }
+            for name in self.cfg.subsamples.keys():
+                sample_results[name] = self._merge_sample_results(
+                    [
+                        sample_results[name],
+                        {
+                            "feature_acts": feature_acts,  # [batch_size, context_size, d_sae]
+                            **{
+                                k: repeat(v, "batch_size -> batch_size d_sae", d_sae=d_sae_local)  # [batch_size, d_sae]
+                                for k, v in discrete_meta.items()
+                            },
+                        },
+                    ],
+                    max_feature_acts,
+                    name,
+                )
 
             # Update progress
-            n_tokens_current = batch["tokens"].numel()
+            n_tokens_current = batch[
+                "tokens"
+            ].numel()  # n_tokens_current is the number of tokens in the current batch across all ranks, which equals to batch_size * group_size
             n_tokens += n_tokens_current
             n_analyzed_tokens += cast(int, ignore_token_masks.int().sum().item())
             pbar.update(n_tokens_current)
@@ -302,11 +284,27 @@ class FeatureAnalyzer:
 
         pbar.close()
 
+        if device_mesh is not None and get_device_mesh_dim_size(device_mesh, "data") > 1:
+            max_feature_acts = all_reduce_tensor(max_feature_acts, "max", device_mesh.get_group("data"))
+            act_times = all_reduce_tensor(act_times, "sum", device_mesh.get_group("data"))
+            for name in self.cfg.subsamples.keys():
+                assert sample_results[name] is not None, "Sample results are not collected for all ranks"
+                gathered_sample_results = all_gather_dict(
+                    cast(dict[str, torch.Tensor], sample_results[name]), device_mesh.get_group("data")
+                )
+                sample_results[name] = self._merge_sample_results(
+                    cast(list[dict[str, torch.Tensor] | None], gathered_sample_results),
+                    max_feature_acts,
+                    name,
+                )
+            for mask_ratio, tensor in mask_ratio_stats.items():
+                gathered_tensor = all_reduce_tensor(tensor, "sum", device_mesh.get_group("data"))
+                mask_ratio_stats[mask_ratio] = gathered_tensor
         # Filter and rearrange results
-        sample_result = {k: v for k, v in sample_result.items() if v is not None}
-        sample_result = {
-            k1: {k2: rearrange(v2, "n_samples d_sae ... -> d_sae n_samples ...") for k2, v2 in v1.items()}
-            for k1, v1 in sample_result.items()
+        sample_results = {k: v for k, v in sample_results.items() if v is not None}
+        sample_results = {
+            name: {k: rearrange(v, "n_samples d_sae ... -> d_sae n_samples ...") for k, v in sample_result.items()}
+            for name, sample_result in sample_results.items()
         }
 
         # Format final per-feature results
@@ -315,9 +313,10 @@ class FeatureAnalyzer:
             act_times=act_times,
             n_analyzed_tokens=n_analyzed_tokens,
             max_feature_acts=max_feature_acts,
-            sample_result=sample_result,
+            sample_results=sample_results,
             mapper=mapper,
             device_mesh=device_mesh,
+            mask_ratio_stats=mask_ratio_stats,
         )
 
     def _format_analysis_results(
@@ -326,9 +325,10 @@ class FeatureAnalyzer:
         act_times: torch.Tensor,
         n_analyzed_tokens: int,
         max_feature_acts: torch.Tensor,
-        sample_result: dict[str, dict[str, torch.Tensor]],
+        sample_results: dict[str, dict[str, torch.Tensor]],
         mapper: KeyedDiscreteMapper,
         device_mesh: DeviceMesh | None = None,
+        mask_ratio_stats: dict[str, torch.Tensor] | None = None,
     ) -> list[dict[str, Any]]:
         """Format the analysis results into the final per-feature format.
 
@@ -344,7 +344,6 @@ class FeatureAnalyzer:
             List of dictionaries containing per-feature analysis results
         """
         results = []
-
         if isinstance(sae, CrossCoder):
             decoder_norms = sae.decoder_norm()
             if isinstance(decoder_norms, DTensor):
@@ -419,14 +418,21 @@ class FeatureAnalyzer:
                 "max_feature_acts": max_feature_acts[i].item(),
                 "samplings": [
                     {
-                        "name": k,
-                        "feature_acts": v["feature_acts"][i].tolist(),
+                        "name": name,
+                        "feature_acts": sample_result["feature_acts"][i].tolist(),
                         # TODO: Filter out meta that is not string
-                        **{k2: mapper.decode(k2, v[k2][i].tolist()) for k2 in mapper.keys()},
+                        **{
+                            meta_key: mapper.decode(meta_key, sample_result[meta_key][i].tolist())
+                            for meta_key in mapper.keys()
+                        },
                     }
-                    for k, v in sample_result.items()
+                    for name, sample_result in sample_results.items()
                 ],
             }
+            if mask_ratio_stats is not None:
+                feature_result["mask_ratio_stats"] = {
+                    mask_ratio: tensor[i].item() for mask_ratio, tensor in mask_ratio_stats.items()
+                }
 
             if isinstance(sae, CrossCoder):
                 assert (
