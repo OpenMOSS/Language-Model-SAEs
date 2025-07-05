@@ -8,11 +8,13 @@ import torch
 import torch.distributed as dist
 from safetensors.torch import load_file
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
+from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import all_gather_dict, is_master
 from lm_saes.utils.tensor_dict import move_dict_of_tensor_to_device
 
@@ -99,9 +101,8 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         self.num_workers = num_workers
         self.prefetch_factor = prefetch_factor
         self.device_mesh = device_mesh
-        self.distributed = self.device_mesh is not None
         # Distributed setup
-        if self.distributed and not dist.is_initialized():
+        if self.device_mesh is not None and not dist.is_initialized():
             raise RuntimeError("Distributed training must be initialized before using distributed loading")
 
     def load_single_hook_chunk(
@@ -125,12 +126,10 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
         assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
 
-        return {
+        return {k: v for k, v in data.items()} | {
             "hook_point": hook_point,
-            "activation": data["activation"],
-            "tokens": data["tokens"],
-            "meta": data.get("meta"),
             "chunk_idx": chunk_idx,
+            "meta": data.get("meta"),
         }
 
     def _get_sorted_chunks(self, hook_point: str) -> list[ChunkInfo]:
@@ -204,15 +203,15 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             collate_fn=first_data_collate_fn,
             sampler=DistributedSampler(
                 cached_activation_dataset,
-                num_replicas=self.device_mesh.get_group().size(),
-                rank=self.device_mesh.get_group().rank(),
+                num_replicas=self.device_mesh.size(),
+                rank=self.device_mesh.get_rank(),
                 shuffle=False,
             )
-            if self.distributed and self.device_mesh is not None  # abundant condition to make mypy happy
+            if self.device_mesh is not None  # abundant condition to make mypy happy
             else None,
         )
 
-        if not self.distributed:
+        if not self.device_mesh:
             yield from tqdm(
                 dataloader,
                 total=len(cached_activation_dataset),
@@ -227,9 +226,18 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 disable=not is_master(),
             ):
                 assert self.device_mesh is not None
-                # Use all_gather_dict to gather chunk dicts from all ranks
-                gathered = all_gather_dict(data, group=self.device_mesh.get_group())
-                yield from gathered
+                # Use all_gather_dict to gather chunk dicts from model parallel group
+                gathered = all_gather_dict(data, group=self.device_mesh.get_group(mesh_dim="model"))
+                # transform all tensors in gathered to DTensor which is only sharded across data parallel group
+                for gathered_data in gathered:
+                    for k, v in gathered_data.items():
+                        if isinstance(v, torch.Tensor):
+                            gathered_data[k] = DTensor.from_local(
+                                v,
+                                device_mesh=self.device_mesh,
+                                placements=DimMap({"data": 0}).placements(self.device_mesh),
+                            )
+                    yield gathered_data
 
     def process(self, data: None = None, **kwargs) -> Iterable[dict[str, Any]]:
         """Load cached activations in a streaming fashion.
@@ -277,19 +285,25 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             # Initialize chunk buffer entry if not exists
             if chunk_idx not in chunk_buffer:
                 chunk_buffer[chunk_idx] = {
-                    "tokens": single_hook_data["tokens"],
-                    "meta": single_hook_data["meta"],
+                    k: v for k, v in single_hook_data.items() if k not in ["hook_point", "chunk_idx", "activation"]
                 }
 
             # Add activation for this hook point
             chunk_buffer[chunk_idx][hook_point] = single_hook_data["activation"]
 
             # Verify tokens consistency across hook points for the same chunk
-            if not torch.allclose(single_hook_data["tokens"], chunk_buffer[chunk_idx]["tokens"]):
-                raise AssertionError(f"Loading cached activation error: tokens mismatch for chunk {chunk_idx}")
+            # allclose is not supported for DTensor
+            if isinstance(single_hook_data["tokens"], DTensor):
+                assert torch.allclose(
+                    single_hook_data["tokens"].to_local(), chunk_buffer[chunk_idx]["tokens"].to_local()
+                ), f"Loading cached activation error: tokens mismatch for chunk {chunk_idx}"
+            else:
+                assert torch.allclose(single_hook_data["tokens"], chunk_buffer[chunk_idx]["tokens"]), (
+                    f"Loading cached activation error: tokens mismatch for chunk {chunk_idx}"
+                )
 
             # Check if we have all hook points for this chunk
-            if len(chunk_buffer[chunk_idx]) - 2 == len(self.cache_dirs):  # -2 for tokens and meta
+            if all(k in chunk_buffer[chunk_idx] for k in self.cache_dirs.keys()):
                 # Yield the complete chunk data
                 activations: dict[str, Any] = move_dict_of_tensor_to_device(
                     chunk_buffer[chunk_idx],
