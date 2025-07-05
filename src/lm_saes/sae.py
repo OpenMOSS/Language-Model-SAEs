@@ -336,7 +336,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         reconstructed = self.hook_reconstructed(reconstructed)
 
         if isinstance(reconstructed, DTensor):
-            reconstructed = DimMap({}).redistribute(reconstructed)
+            reconstructed = DimMap({"data": 0}).redistribute(reconstructed)
 
         return reconstructed
 

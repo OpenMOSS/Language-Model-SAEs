@@ -330,7 +330,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 feature_acts_per_layer = DTensor.from_local(
                     feature_acts.to_local()[..., : layer_to + 1, :],
                     device_mesh=self.device_mesh,
-                    placements=DimMap({"model": 2}).placements(self.device_mesh),
+                    placements=DimMap({"data": 0, "model": 2}).placements(self.device_mesh),
                 )
             else:
                 feature_acts_per_layer = feature_acts[..., : layer_to + 1, :]

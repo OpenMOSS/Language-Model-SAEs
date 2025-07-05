@@ -4,11 +4,15 @@ from typing import Any, Iterable, Optional, cast
 
 import torch
 from more_itertools import batched
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.backend.language_model import LanguageModel
 from lm_saes.config import BufferShuffleConfig
+from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.misc import get_mesh_dim_size
 
 
 @dataclass
@@ -25,6 +29,7 @@ class ActivationBuffer:
     """
 
     buffer: list[dict[str, Any]] = field(default_factory=list)
+    device_mesh: Optional[DeviceMesh] = None
     generator: torch.Generator = torch.Generator()  # Generator passed from ActivationBatchler
 
     def __len__(self) -> int:
@@ -44,12 +49,35 @@ class ActivationBuffer:
         Returns:
             ActivationBuffer: New buffer containing concatenated activations
         """
-        return ActivationBuffer(buffer=self.buffer + [activations], generator=self.generator)
+        return ActivationBuffer(
+            buffer=self.buffer + [activations], generator=self.generator, device_mesh=self.device_mesh
+        )
 
     def consume(self) -> dict[str, torch.Tensor | list[Any]]:
         """Consume the buffer and return the activations as a dictionary."""
+
+        def _cat(xs: list[torch.Tensor]) -> torch.Tensor:
+            """Concatenate a list of tensors. Mainly for distributed setting.
+            For non-distributed setting, this is just torch.cat(xs, dim=0).
+            """
+
+            if self.device_mesh is not None:
+                assert all(isinstance(x, DTensor) and x.device_mesh == self.device_mesh for x in xs)
+                xs_local = [cast(DTensor, x).to_local() for x in xs]
+            else:
+                xs_local = xs
+
+            catted = torch.cat(xs_local, dim=0)
+
+            if self.device_mesh is not None:
+                return DTensor.from_local(
+                    catted, device_mesh=self.device_mesh, placements=cast(DTensor, xs[0]).placements
+                )
+            else:
+                return catted
+
         return {
-            k: torch.cat([d[k] for d in self.buffer])
+            k: _cat([d[k] for d in self.buffer])
             if isinstance(self.buffer[0][k], torch.Tensor)
             else sum([d[k] for d in self.buffer], [])
             for k in self.buffer[0].keys()
@@ -69,9 +97,39 @@ class ActivationBuffer:
         if self.__len__() == 0:
             raise ValueError("Buffer is empty")
         data = self.consume()
-        batch = {k: v[:batch_size] for k, v in data.items()}
-        buffer = {k: v[batch_size:] for k, v in data.items()}
-        return batch, ActivationBuffer(buffer=[buffer], generator=self.generator)
+
+        def _split(
+            x: torch.Tensor | list[Any], batch_size: int
+        ) -> tuple[torch.Tensor | list[Any], torch.Tensor | list[Any]]:
+            """Split the tensor into a batch and a buffer. Mainly for distributed setting.
+            For non-distributed setting, this is just x[:batch_size] and x[batch_size:].
+            """
+
+            dp_size = get_mesh_dim_size(self.device_mesh, "data")
+            local_batch_size = batch_size // dp_size  # For non-distributed setting, this is just batch_size
+
+            if self.device_mesh is not None and isinstance(x, DTensor):
+                assert (
+                    x.device_mesh == self.device_mesh
+                    and DimMap.from_placements(x.placements, self.device_mesh)["data"] == 0
+                )
+                assert batch_size % dp_size == 0, "Batch size must be divisible by data parallel size"
+
+                x_local = x.to_local()
+                batch_tensor = x_local[:local_batch_size]
+                buffer_tensor = x_local[local_batch_size:]
+
+                # Convert back to DTensor with same placements
+                batch_dtensor = DTensor.from_local(batch_tensor, device_mesh=x.device_mesh, placements=x.placements)
+                buffer_dtensor = DTensor.from_local(buffer_tensor, device_mesh=x.device_mesh, placements=x.placements)
+                return batch_dtensor, buffer_dtensor
+            else:
+                return x[:local_batch_size], x[local_batch_size:]
+
+        splitted = {k: _split(v, batch_size) for k, v in data.items()}
+        batch = {k: v[0] for k, v in splitted.items()}
+        buffer = {k: v[1] for k, v in splitted.items()}
+        return batch, ActivationBuffer(buffer=[buffer], generator=self.generator, device_mesh=self.device_mesh)
 
     def shuffle(self) -> "ActivationBuffer":
         """Randomly shuffle all samples in the buffer.
@@ -79,6 +137,8 @@ class ActivationBuffer:
         Returns:
             ActivationBuffer: New buffer with shuffled samples
         """
+        assert self.device_mesh is None, "Shuffling is not supported for distributed setting"
+
         data = self.consume()
         assert all(isinstance(data[k], torch.Tensor) for k in data.keys()), (
             "All data must be tensors to perform shuffling"
@@ -90,7 +150,7 @@ class ActivationBuffer:
             data[list(data.keys())[0]].shape[0], generator=self.generator, device=self.generator.device
         )
         buffer = {k: v[perm] for k, v in data.items()}
-        return ActivationBuffer(buffer=[buffer], generator=self.generator)
+        return ActivationBuffer(buffer=[buffer], generator=self.generator, device_mesh=self.device_mesh)
 
 
 class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]):
@@ -210,8 +270,15 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
             assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
             tokens = d["tokens"]
             mask = torch.ones_like(tokens, dtype=torch.bool)
+
             for token_id in ignore_token_ids:
                 mask &= tokens != token_id
+
+            if isinstance(mask, DTensor):
+                # Check if mask is all true
+                # TODO: Actually, this assertion is not necessary for tp settings. Remove it in future.
+                assert mask.to_local().all(), "Mask must be all true for distributed tensors"
+
             activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
             yield activations
 
@@ -244,6 +311,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
         batch_size: int,
         buffer_size: Optional[int] = None,
         buffer_shuffle_config: Optional[BufferShuffleConfig] = None,
+        device_mesh: Optional[DeviceMesh] = None,
     ):
         """Initialize the ActivationBatchler.
 
@@ -254,6 +322,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
         """
         self.batch_size = batch_size
         self.buffer_size = buffer_size
+        self.device_mesh = device_mesh
         self.perm_generator = torch.Generator()
         if buffer_shuffle_config is not None:
             self.perm_generator = torch.Generator(buffer_shuffle_config.generator_device)
@@ -276,7 +345,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
         Raises:
             AssertionError: If hook points are missing or tensors have invalid shapes
         """
-        buffer = ActivationBuffer(generator=self.perm_generator)
+        buffer = ActivationBuffer(generator=self.perm_generator, device_mesh=self.device_mesh)
         pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1, disable=True)
 
         for d in data:
