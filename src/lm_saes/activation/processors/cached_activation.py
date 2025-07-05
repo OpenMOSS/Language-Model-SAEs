@@ -226,6 +226,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 disable=not is_master(),
             ):
                 assert self.device_mesh is not None
+                data = move_dict_of_tensor_to_device(data, device=self.device)
                 # Use all_gather_dict to gather chunk dicts from model parallel group
                 gathered = all_gather_dict(data, group=self.device_mesh.get_group(mesh_dim="model"))
                 # transform all tensors in gathered to DTensor which is only sharded across data parallel group

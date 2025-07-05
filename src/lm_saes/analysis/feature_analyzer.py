@@ -13,7 +13,12 @@ from lm_saes.crosscoder import CrossCoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.misc import all_gather_dict, all_reduce_tensor, get_device_mesh_dim_size, is_primary_rank
+from lm_saes.utils.misc import (
+    all_gather_dict,
+    all_reduce_tensor,
+    get_mesh_dim_size,
+    is_primary_rank,
+)
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 from lm_saes.utils.timer import timer
 
@@ -187,7 +192,7 @@ class FeatureAnalyzer:
             disable=not is_primary_rank(device_mesh),
         )
 
-        d_sae_local = sae.cfg.d_sae // get_device_mesh_dim_size(device_mesh, "model")
+        d_sae_local = sae.cfg.d_sae // get_mesh_dim_size(device_mesh, "model")
 
         # Initialize tracking variables
         sample_results = cast(
@@ -225,11 +230,11 @@ class FeatureAnalyzer:
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.max(dim=-2).values
             assert feature_acts.shape == (
-                batch["tokens"].shape[0] // get_device_mesh_dim_size(device_mesh, "data"),
+                batch["tokens"].shape[0] // get_mesh_dim_size(device_mesh, "data"),
                 batch["tokens"].shape[1],
                 d_sae_local,
             ), (
-                f"feature_acts.shape: {feature_acts.shape}, expected: {(batch['tokens'].shape[0] // get_device_mesh_dim_size(device_mesh, 'data'), batch['tokens'].shape[1], d_sae_local)}"
+                f"feature_acts.shape: {feature_acts.shape}, expected: {(batch['tokens'].shape[0] // get_mesh_dim_size(device_mesh, 'data'), batch['tokens'].shape[1], d_sae_local)}"
             )
 
             # Compute ignore token masks
@@ -248,7 +253,7 @@ class FeatureAnalyzer:
             # TODO: Filter out meta that is not string
             data_group = (
                 device_mesh.get_group("data")
-                if device_mesh is not None and get_device_mesh_dim_size(device_mesh, "data") > 1
+                if device_mesh is not None and get_mesh_dim_size(device_mesh, "data") > 1
                 else None
             )
             discrete_meta = {
@@ -284,7 +289,7 @@ class FeatureAnalyzer:
 
         pbar.close()
 
-        if device_mesh is not None and get_device_mesh_dim_size(device_mesh, "data") > 1:
+        if device_mesh is not None and get_mesh_dim_size(device_mesh, "data") > 1:
             max_feature_acts = all_reduce_tensor(max_feature_acts, "max", device_mesh.get_group("data"))
             act_times = all_reduce_tensor(act_times, "sum", device_mesh.get_group("data"))
             for name in self.cfg.subsamples.keys():

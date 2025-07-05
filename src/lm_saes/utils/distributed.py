@@ -61,14 +61,14 @@ class DimMap:
 
         return {v: k for k, v in self._dim_map.items()}
 
-    def placements(self, device_mesh: DeviceMesh) -> list[Placement]:
+    def placements(self, device_mesh: DeviceMesh) -> tuple[Placement, ...]:
         """Get the placements for a tensor based on the dimension map and device mesh.
 
         Args:
             device_mesh: The device mesh to get placements for.
 
         Returns:
-            A list of placements for the tensor.
+            A tuple of placements for the tensor.
 
         Raises:
             ValueError: If the device mesh does not have mesh dimension names.
@@ -76,10 +76,10 @@ class DimMap:
         if device_mesh.mesh_dim_names is None:
             raise ValueError("Device mesh does not have mesh dimension names.")
 
-        return [
+        return tuple(
             Shard(self._dim_map[dim_name]) if dim_name in self._dim_map else Replicate()
             for dim_name in device_mesh.mesh_dim_names
-        ]
+        )
 
     def local_slices(self, shape: tuple[int, ...], device_mesh: DeviceMesh) -> tuple[slice, ...]:
         """Get the local slices for a tensor based on the dimension map and device mesh.
@@ -141,3 +141,26 @@ class DimMap:
     def __or__(self, other: "DimMap") -> "DimMap":
         """Merge this DimMap with another DimMap or dictionary."""
         return DimMap(self.to_dict() | other.to_dict())
+
+    @classmethod
+    def from_placements(cls, placements: tuple[Placement, ...], device_mesh: DeviceMesh) -> "DimMap":
+        """Create a DimMap from a list of placements and a device mesh."""
+        assert device_mesh.mesh_dim_names is not None, "Device mesh must have mesh dimension names"
+        assert all(isinstance(placement, Shard) or isinstance(placement, Replicate) for placement in placements), (
+            "All placements must be Shard or Replicate"
+        )
+        return cls(
+            {dim_name: i for i, dim_name in enumerate(device_mesh.mesh_dim_names) if isinstance(placements[i], Shard)}
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, DimMap):
+            return False
+        """Check if two DimMaps are equal."""
+        return self.to_dict() == other.to_dict()
+
+    def __ne__(self, other: object) -> bool:
+        if not isinstance(other, DimMap):
+            return True
+        """Check if two DimMaps are not equal."""
+        return self.to_dict() != other.to_dict()
