@@ -1,10 +1,12 @@
-from torch._tensor import Tensor
+from typing import Any, Optional, Union
+
 import torch
+from jaxtyping import Float
+from torch._tensor import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Placement, distribute_tensor
 from torch.distributed.tensor.placement_types import Replicate, Shard
-from typing import Any, Union, Optional
-from jaxtyping import Float
+from lm_saes.utils.timer import timer
 
 
 class DimMap:
@@ -149,7 +151,7 @@ class DimMap:
 def distributed_batch_kthvalue_clt(
     x: Float[DTensor, "batch n_layers d_sae"],
     k: int,
-    device_mesh: Optional[DeviceMesh] = None,
+    device_mesh: Optional[DeviceMesh] = None,  ## TODO: type
     mesh_dim_name: str = "model",
 ) -> tuple[DTensor, Optional[DTensor]]:
     """
@@ -191,27 +193,43 @@ def distributed_batch_kthvalue_clt(
     group = device_mesh.get_group(mesh_dim_name)
     world_size = group.size()
     
-    # Compute kthvalue on local tensor
-    batch_size, n_layers, d_sae = local_tensor.shape
-    local_tensor = local_tensor.flatten()
-    # local_tensor = local_tensor[local_tensor.gt(0)]
+    # approximate top-k based on divide and conquer
+    # hardcoded parameters
+    with timer.time("kthvalue"):
+        divide_batch = 65536
+        bucket_size = 8192
+        batch_k = 16
+        # divide_batch = 131072
+        # bucket_size = 8192
+        # batch_k = 16
+        batch_size, n_layers, d_sae = local_tensor.shape
+        # local_tensor = local_tensor[local_tensor.gt(0)]  ## TODO
+        local_tensor = local_tensor[:divide_batch * bucket_size]  # Truncate extra elements to ensure reshape
+        # local_tensor = local_tensor.reshape((divide_batch, bucket_size))
+        local_tensor = local_tensor.reshape((bucket_size, divide_batch)).transpose(0, 1)
+        # Top-t in each row
+        topkbs, _ = torch.topk(local_tensor, k=batch_k, dim=1)
+        # Flatten to 1D
+        topkbs = topkbs.flatten()
+        # kthvalue among these elements
+        candidates, _ = torch.kthvalue(topkbs, k=topkbs.shape[-1] - k * batch_size * n_layers // world_size + 1, dim=-1)
+        candidates = candidates.unsqueeze(0)
 
-    candidates, _ = torch.kthvalue(local_tensor, k=local_tensor.shape[-1] - k * batch_size * n_layers // world_size + 1, dim=-1)
-    candidates = candidates.unsqueeze(0)
-    # loose_k = k * 10
-    # candidates = []
-    # for layer_idx in range(local_tensor.shape[0]):
-    #     first_token_loose_kth_value, _ = torch.kthvalue(local_tensor[layer_idx, 0], k=local_tensor.shape[-1] - loose_k + 1, dim=-1)
-    #     layer_candidates = local_tensor[layer_idx].flatten()
-    #     layer_candidates = layer_candidates[layer_candidates.ge(first_token_loose_kth_value)]
-    #     layer_candidates, _ = torch.topk(layer_candidates, k=k * batch_size, dim=-1)
-    #     candidates.append(layer_candidates)
-    # candidates = torch.stack(candidates, dim=0)
-    
+
+    # rigorous top-k
+    # with timer.time("kthvalue"):
+    #     # Compute kthvalue on local tensor
+    #     batch_size, n_layers, d_sae = local_tensor.shape
+    #     local_tensor = local_tensor.flatten()
+    #     # local_tensor = local_tensor[local_tensor.gt(0)]
+
+    #     candidates, _ = torch.kthvalue(local_tensor, k=local_tensor.shape[-1] - k * batch_size * n_layers // world_size + 1, dim=-1)
+    #     candidates = candidates.unsqueeze(0)
+
     # Gather all local kthvalue results
     gathered_values = [torch.empty_like(candidates) for _ in range(world_size)]
-    print(candidates)
-    print(gathered_values[0])
+    # print(candidates)
+    # print(gathered_values[0])
     torch.distributed.all_gather(gathered_values, candidates, group=group)
     
     # Concatenate all gathered results along the specified dimension
@@ -222,4 +240,151 @@ def distributed_batch_kthvalue_clt(
     result_values = all_values.mean()
     # place the result_values back to DTensor (Replicate)
     result_values = DTensor.from_local(result_values, device_mesh=device_mesh, placements=[Replicate() for _ in range(len(placements))])
+    return result_values, None
+
+@torch.no_grad()
+def distributed_batch_kthvalue_per_layer_clt(
+    x: Float[DTensor, "batch n_layers d_sae"],
+    k: int,
+    device_mesh: Optional[DeviceMesh] = None,
+    mesh_dim_name: str = "model",
+) -> tuple[DTensor, Optional[DTensor]]:
+    """
+    Perform distributed batch kthvalue operation on each layer separately.
+    
+    Args:
+        x: Input tensor of shape (batch, n_layers, d_sae)
+        k: Number of top elements to keep per layer
+        device_mesh: Device mesh for distributed training
+        mesh_dim_name: Name of the mesh dimension to shard along
+        
+    Returns:
+        Tuple of (kth_values_per_layer, None) where kth_values_per_layer has shape (n_layers,)
+    """
+    if not isinstance(x, DTensor):
+        raise ValueError("x must be a DTensor")
+    
+    if x.dim() != 3:
+        raise ValueError("x must be a 3D DTensor")
+    
+    if device_mesh is None:
+        raise ValueError("device_mesh must be provided when x is a DTensor")
+    
+    # Get local tensor and placements
+    local_tensor = x.to_local()
+    placements = x.placements
+    
+    # Find the placement indices for the specified dimensions
+    mesh_dim_idx = None
+    if device_mesh.mesh_dim_names is not None:
+        try:
+            mesh_dim_idx = device_mesh.mesh_dim_names.index(mesh_dim_name)
+        except ValueError:
+            raise ValueError(f"Mesh dimension '{mesh_dim_name}' not found in device mesh")
+    
+    # Check if the tensor is sharded along the specified dimensions
+    if mesh_dim_idx is None or not isinstance(placements[mesh_dim_idx], Shard):
+        raise ValueError("x must be sharded along the specified dimension")
+    
+    shard_dim: Any = placements[mesh_dim_idx].dim  # type: ignore
+    if shard_dim != 1 and shard_dim != 2:  # also consider negative dims
+        raise ValueError("x must be sharded along the specified dimension")
+    
+    # Get the groups for the mesh dimensions
+    group = device_mesh.get_group(mesh_dim_name)
+    world_size = group.size()
+    
+    batch_size, n_layers, d_sae = local_tensor.shape
+    
+    # Compute kthvalue for each layer separately using divide and conquer
+    with timer.time("kthvalue_per_layer"):
+        candidates_per_layer = []
+        
+        # hardcoded parameters for divide and conquer
+        divide_batch = 32768
+        bucket_size = 8192
+        batch_k = 16
+        
+        for layer_idx in range(n_layers):
+            # Extract activations for this layer: (batch, d_sae)
+            layer_activations = local_tensor[:, layer_idx, :].flatten()
+            
+            # approximate top-k based on divide and conquer for this layer
+            # Truncate extra elements to ensure reshape
+            layer_activations_truncated = layer_activations[:divide_batch * bucket_size]
+            # Reshape to (bucket_size, divide_batch) and transpose to (divide_batch, bucket_size)
+            # layer_activations_reshaped = layer_activations_truncated.reshape((bucket_size, divide_batch)).transpose(0, 1)
+            layer_activations_reshaped = layer_activations_truncated.reshape((divide_batch, bucket_size))   ## for equal comparison with cross-layer topk 
+            # Top-k in each row
+            topkbs, _ = torch.topk(layer_activations_reshaped, k=batch_k, dim=1)
+            # Flatten to 1D
+            topkbs = topkbs.flatten()
+            # kthvalue among these elements for this layer
+            k_for_layer = k * batch_size // world_size
+            if k_for_layer > 0 and topkbs.shape[-1] > k_for_layer:
+                candidates, _ = torch.kthvalue(
+                    topkbs, 
+                    k=topkbs.shape[-1] - k_for_layer + 1, 
+                    dim=-1
+                )
+            else:
+                # If k is too small or not enough elements, use minimum value
+                candidates = layer_activations.min().unsqueeze(0)
+            
+            candidates_per_layer.append(candidates)
+        
+        # Stack candidates for all layers: (n_layers, 1)
+        candidates = torch.stack(candidates_per_layer, dim=0)
+
+        # rigorous top-k per layer (commented out for performance)
+        # with timer.time("kthvalue_per_layer"):
+        #     candidates_per_layer = []
+        #     
+        #     for layer_idx in range(n_layers):
+        #         # Extract activations for this layer: (batch, d_sae)
+        #         layer_activations = local_tensor[:, layer_idx, :].flatten()
+        #         
+        #         # Compute kthvalue for this layer
+        #         # We want to keep top k elements per layer across the batch
+        #         k_for_layer = k * batch_size // world_size
+        #         if k_for_layer > 0:
+        #             candidates, _ = torch.kthvalue(
+        #                 layer_activations, 
+        #                 k=layer_activations.shape[-1] - k_for_layer + 1, 
+        #                 dim=-1
+        #             )
+        #         else:
+        #             # If k is too small, use minimum value
+        #             candidates = layer_activations.min().unsqueeze(0)
+        #         
+        #         candidates_per_layer.append(candidates)
+        #     
+        #     # Stack candidates for all layers: (n_layers, 1)
+        #     candidates = torch.stack(candidates_per_layer, dim=0)
+
+    # Gather all local kthvalue results from all devices
+    gathered_values = [torch.empty_like(candidates) for _ in range(world_size)]
+    torch.distributed.all_gather(gathered_values, candidates, group=group)
+    
+    # Concatenate all gathered results: (n_layers, world_size)
+    all_values = torch.cat(gathered_values, dim=-1)
+    
+    # Compute global kthvalue for each layer
+    result_values_per_layer = []
+    for layer_idx in range(n_layers):
+        layer_values = all_values[layer_idx]  # (world_size,)
+        # Compute global kthvalue for this layer
+        global_kth_value = layer_values.mean()  # Using mean as approximation
+        result_values_per_layer.append(global_kth_value)
+    
+    # Stack results: (n_layers,)
+    result_values = torch.stack(result_values_per_layer, dim=0)
+    
+    # Place the result_values back to DTensor (Replicate)
+    result_values = DTensor.from_local(
+        result_values, 
+        device_mesh=device_mesh, 
+        placements=[Replicate() for _ in range(len(placements))]
+    )
+    
     return result_values, None
