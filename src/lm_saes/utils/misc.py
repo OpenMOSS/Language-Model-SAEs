@@ -1,3 +1,5 @@
+import functools
+import operator
 import os
 import warnings
 from typing import Any, Iterable, Optional, cast
@@ -241,9 +243,6 @@ def all_gather_dict(
     for k in keys:
         v = data[k]
         if isinstance(v, torch.Tensor):
-            expected_device = torch.device(f"cuda:{dist.get_rank(group=group)}")
-            v = v.to(expected_device)
-
             # First, gather tensor metadata (shape, dtype) from all ranks
             tensor_meta = {"shape": v.shape, "dtype": v.dtype}
             meta_list: list[dict[str, Any] | None] = [None for _ in range(world_size)]
@@ -251,7 +250,7 @@ def all_gather_dict(
 
             # Create output tensors with correct shapes for each rank
             output = [
-                torch.empty(rank_meta["shape"], dtype=rank_meta["dtype"], device=expected_device)
+                torch.empty(rank_meta["shape"], dtype=rank_meta["dtype"], device=v.device)
                 for rank_meta in cast(list[dict[str, Any]], meta_list)
             ]
             # Now perform all_gather with correctly sized tensors
@@ -267,9 +266,26 @@ def all_gather_dict(
     return gathered_dicts
 
 
-def get_device_mesh_dim_size(device_mesh: DeviceMesh | None, mesh_dim: str) -> int:
+def get_mesh_dim_size(device_mesh: DeviceMesh | None, mesh_dim: str) -> int:
     if device_mesh is None:
         return 1
     assert device_mesh is not None
     assert device_mesh.mesh_dim_names is not None, "Device mesh does not have mesh dimension names"
     return device_mesh.get_group(mesh_dim).size() if mesh_dim in device_mesh.mesh_dim_names else 1
+
+
+def get_mesh_rank(device_mesh: DeviceMesh | None) -> int:
+    """Get the rank of the current process in the device mesh. Computed through the coordinate of the device mesh.
+
+    Args:
+        device_mesh: Device mesh to get the rank from.
+
+    Returns:
+        Rank of the current process in the device mesh.
+    """
+    if device_mesh is None:
+        return 0
+    coord = device_mesh.get_coordinate()
+    shape = device_mesh.shape
+    assert coord is not None, "Device mesh does not have coordinate"
+    return sum(coord[i] * functools.reduce(operator.mul, shape[i + 1 :], 1) for i in range(len(coord)))
