@@ -1,3 +1,5 @@
+from typing import cast
+
 import torch
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Placement, distribute_tensor
@@ -150,7 +152,11 @@ class DimMap:
             "All placements must be Shard or Replicate"
         )
         return cls(
-            {dim_name: i for i, dim_name in enumerate(device_mesh.mesh_dim_names) if isinstance(placements[i], Shard)}
+            {
+                dim_name: cast(Shard, placements[i]).dim
+                for i, dim_name in enumerate(device_mesh.mesh_dim_names)
+                if isinstance(placements[i], Shard)
+            }
         )
 
     def __eq__(self, other: object) -> bool:
