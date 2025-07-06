@@ -21,6 +21,7 @@ from lm_saes.crosscoder import CrossCoder
 from lm_saes.evaluator import Evaluator
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
+from lm_saes.utils.misc import get_mesh_rank
 
 logger = get_distributed_logger("runners.eval")
 
@@ -96,7 +97,7 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -176,7 +177,7 @@ def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
         else None
     )
 

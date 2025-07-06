@@ -29,7 +29,7 @@ from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.trainer import Trainer
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import is_primary_rank
+from lm_saes.utils.misc import get_mesh_rank, is_primary_rank
 
 logger = get_distributed_logger("runners.train")
 
@@ -161,7 +161,7 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -314,8 +314,14 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         else None
     )
 
+    activation_factory_mesh = device_mesh[
+        "data", "model"
+    ]  # Remove the head dimension, since each activation factory should only be responsible for a subset of the heads.
+
     logger.info("Setting up activation factory for CrossCoder")
-    activation_factory = ActivationFactory(settings.activation_factories[device_mesh.get_local_rank("head")])
+    activation_factory = ActivationFactory(
+        settings.activation_factories[device_mesh.get_local_rank("head")], device_mesh=activation_factory_mesh
+    )
 
     logger.info("Processing activations stream")
     activations_stream = activation_factory.process(
@@ -342,7 +348,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -499,7 +505,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
         else None
     )
 

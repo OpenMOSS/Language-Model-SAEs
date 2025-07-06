@@ -7,7 +7,7 @@ import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
+from torch.distributed.tensor import DTensor, Shard
 from typing_extensions import override
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
@@ -172,11 +172,10 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 return torch.vmap(torch.matmul, in_dims=(-2, 0), out_dims=-2)(x, W_E) + b_E
 
             if self.device_mesh is not None:
-                out_placements = DimMap({"head": -2, "model": -1}).placements(self.device_mesh)
+                out_placements = DimMap({"data": 0, "head": -2, "model": -1}).placements(self.device_mesh)
 
                 def _apply_encoding_no_einsum(x: torch.Tensor, W_E: torch.Tensor, b_E: torch.Tensor) -> torch.Tensor:
                     assert isinstance(x, DTensor) and isinstance(W_E, DTensor) and isinstance(b_E, DTensor)
-                    # x = DimMap({"head": -2}).redistribute(x)
                     return DTensor.from_local(
                         _apply_encoding_local_no_einsum(x.to_local(), W_E.to_local(), b_E.to_local()),
                         device_mesh=self.device_mesh,
@@ -259,10 +258,6 @@ class CrossCoder(AbstractSparseAutoEncoder):
         Returns:
             Encoded tensor of shape (..., n_heads, d_sae).
         """
-        if self.device_mesh is not None and not isinstance(x, DTensor):
-            with timer.time("encode_distribute_tensor"):
-                x = DimMap({"head": -2}).distribute(x, self.device_mesh)
-
         # Apply encoding per head
         hidden_pre = self._apply_encoding(x, no_einsum=no_einsum)
 
@@ -274,7 +269,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
         with timer.time("encode_redistribute_tensor_pre_repeat"):
             if isinstance(accumulated_hidden_pre, DTensor):
-                accumulated_hidden_pre = DimMap({"model": -1}).redistribute(accumulated_hidden_pre)
+                accumulated_hidden_pre = DimMap({"data": 0, "model": -1}).redistribute(accumulated_hidden_pre)
 
         accumulated_hidden_pre = einops.repeat(
             accumulated_hidden_pre, "... d_sae -> ... n_heads d_sae", n_heads=self.cfg.n_heads
@@ -282,7 +277,9 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
         with timer.time("encode_redistribute_tensor_post_repeat"):
             if isinstance(accumulated_hidden_pre, DTensor):
-                accumulated_hidden_pre = DimMap({"head": -2, "model": -1}).redistribute(accumulated_hidden_pre)
+                accumulated_hidden_pre = DimMap({"data": 0, "head": -2, "model": -1}).redistribute(
+                    accumulated_hidden_pre
+                )
 
         # Apply activation function
         feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
@@ -319,7 +316,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 return torch.vmap(torch.matmul, in_dims=(-2, 0), out_dims=-2)(feature_acts, W_D) + b_D
 
             if self.device_mesh is not None:
-                out_placements = DimMap({"head": -2}).placements(self.device_mesh)
+                out_placements = DimMap({"data": 0, "head": -2}).placements(self.device_mesh)
 
                 def _apply_decoding_no_einsum(
                     feature_acts: torch.Tensor, W_D: torch.Tensor, b_D: torch.Tensor
@@ -451,9 +448,11 @@ class CrossCoder(AbstractSparseAutoEncoder):
     @timer.time("prepare_input")
     def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
         def pad_to_d_model(x: torch.Tensor) -> torch.Tensor:
+            # TODO: Support padding for distributed setting
             if x.shape[-1] > self.cfg.d_model:
                 raise ValueError(f"Input tensor has {x.shape[-1]} dimensions, but expected {self.cfg.d_model}.")
             elif x.shape[-1] < self.cfg.d_model:
+                assert not isinstance(x, DTensor), "Padding for DTensor is not supported"
                 zero_padding = torch.zeros(
                     *x.shape[:-1], self.cfg.d_model - x.shape[-1], device=x.device, dtype=x.dtype
                 )
@@ -461,19 +460,55 @@ class CrossCoder(AbstractSparseAutoEncoder):
             else:
                 return x
 
+        # The following code is to stack the activations per head to (batch, ..., n_heads, d_model)
         if self.device_mesh is None or "head" not in cast(tuple[str, ...], self.device_mesh.mesh_dim_names):
             return torch.stack([pad_to_d_model(batch[hook_point]) for hook_point in self.cfg.hook_points], dim=-2), {}
         else:
+            # The following code stacks the activations in a distributed setting. It's a bit complicated so I'll try to explain it in detail.
+
+            # The input batch is not a dict of common DTensor-ed activations. It can be first sharded across the heads, which are keys of the dict. The values (DTensor activations) have a sub-mesh of the device mesh with the head dimension removed.
+
+            # Each head-parallelized process only has a subset of the hook points. Retrieve the local hook points.
+            # the `DimMap.local_slices` returns the range of indices of the local hook points in the global hook points list.
             local_hook_points = self.cfg.hook_points[
                 DimMap({"head": 0}).local_slices((len(self.cfg.hook_points),), self.device_mesh)[0]
             ]
-            local_activations = torch.stack(
-                [pad_to_d_model(batch[hook_point]) for hook_point in local_hook_points], dim=-2
+
+            # The latest version of ActivationFactory directly produces DTensor in distributed setting.
+            assert all(isinstance(batch[hook_point], DTensor) for hook_point in local_hook_points)
+
+            # Stack the activations per head to (batch, ..., n_heads_per_process, d_model)
+            # We need to do some ugly local mapping and check since the `torch.stack` over DTensor results in buggy output placements.
+            first_hook_point_activations = cast(DTensor, batch[local_hook_points[0]])
+            assert all(
+                ((placement.dim + first_hook_point_activations.ndim) % first_hook_point_activations.ndim)
+                <= first_hook_point_activations.ndim - 2
+                for placement in first_hook_point_activations.placements
+                if isinstance(placement, Shard)
+            )  # Check the input tensor is not sharded over the last dimension
+            per_process_activations = DTensor.from_local(
+                torch.stack(
+                    [pad_to_d_model(cast(DTensor, batch[hook_point]).to_local()) for hook_point in local_hook_points],
+                    dim=-2,
+                ),
+                device_mesh=first_hook_point_activations.device_mesh,
+                placements=first_hook_point_activations.placements,
             )
+
+            assert "head" not in cast(tuple[str, ...], per_process_activations.device_mesh.mesh_dim_names), (
+                "Head dimension should not be in the device mesh of per head activations, as it should be added in the cross-head concatenation"
+            )
+
+            # Build the output dimension map by adding the head dimension.
+            # This dimension map should work no matter whether the activations are data parallelized or not.
+            output_dim_map = DimMap({"head": -2}) | DimMap.from_placements(
+                per_process_activations.placements, per_process_activations.device_mesh
+            )
+
             return DTensor.from_local(
-                local_activations,
+                per_process_activations.to_local(),
                 device_mesh=self.device_mesh,
-                placements=DimMap({"head": -2}).placements(self.device_mesh),
+                placements=output_dim_map.placements(self.device_mesh),
             ), {}
 
     @override
