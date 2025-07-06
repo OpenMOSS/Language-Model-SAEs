@@ -159,16 +159,50 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         elif self.cfg.act_fn.lower() == "batchtopk":
             if device_mesh is None:
                 raise ValueError("device_mesh must be provided when act_fn is batchtopk")
-            from lm_saes.utils.distributed import distributed_batch_kthvalue_clt
+            from lm_saes.utils.distributed import distributed_batch_kthvalue_clt, distributed_batch_kthvalue_clt_cuda_optimized
+            # from lm_saes.utils.distributed import distributed_batch_kthvalue_per_layer_clt
 
             def batch_topk(feature_acts: Tensor) -> Tensor:
                 # decoder_norms = self.decoder_norm_per_feature()
-                # feature_acts = feature_acts * feature_acts.gt(0).to(feature_acts.dtype)
+                # feature_acts = feature_acts * feature_acts.gt(0).to(feature_acts.dtype)  ##
                 # sparsity_score = feature_acts * decoder_norms
                 assert isinstance(feature_acts, DTensor)
+                # assert isinstance(sparsity_score, DTensor)
                 # assert isinstance(decoder_norms, DTensor)
-                kth_value, _ = distributed_batch_kthvalue_clt(feature_acts, self.current_k, device_mesh) # type: ignore
-                return feature_acts.ge(kth_value)
+                
+                # Try CUDA-optimized version first, fall back to Python version
+                try:
+                    kth_value, _ = distributed_batch_kthvalue_clt_cuda_optimized(
+                        feature_acts, 
+                        self.current_k, 
+                        device_mesh,
+                        j=4,  # Use 4 items per bucket for better accuracy
+                        k_mult=1,  # Use 1x multiplier for speed
+                        interleaved=True,  # Use interleaved distribution
+                        multithread_buckets=None  # Let the kernel decide
+                    )
+                except Exception:
+                    # Fall back to Python implementation
+                    kth_value, _ = distributed_batch_kthvalue_clt(
+                        feature_acts, 
+                        self.current_k, 
+                        device_mesh,
+                        j=4,
+                        k_mult=1,
+                        interleaved=True
+                    )
+                
+                # kth_value, _ = distributed_batch_kthvalue_clt(sparsity_score, self.current_k, device_mesh) 
+                # kth_values_per_layer, _ = distributed_batch_kthvalue_per_layer_clt(feature_acts, self.current_k, device_mesh) 
+
+                # # type: ignore
+                # return feature_acts * sparsity_score.ge(kth_value)
+                return feature_acts * feature_acts.ge(kth_value)
+                
+                # Apply threshold per layer: kth_values_per_layer has shape (n_layers,)
+                # We need to expand it to match feature_acts shape (batch, n_layers, d_sae)
+                # kth_values_expanded = kth_values_per_layer.unsqueeze(0).unsqueeze(-1)  # (1, n_layers, 1)
+                # return feature_acts * feature_acts.ge(kth_values_expanded)
 
             return batch_topk  # type: ignore
 
@@ -572,6 +606,33 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         for layer_to, decoder_weights in enumerate(self.W_D):
             decoder_norms[:layer_to + 1] = decoder_norms[:layer_to + 1] + decoder_weights.pow(2).sum(dim=-1)
         decoder_norms = decoder_norms.sqrt()
+        return decoder_norms
+
+    def decoder_norm_per_decoder(self) -> Union[Float[torch.Tensor, "n_decoders"], DTensor]:  # noqa: F821
+        """Compute the L2 norm of decoder weights for each decoder (layer_from -> layer_to).
+        Returns:
+            norms: torch.Tensor or DTensor of shape (n_decoders,), where n_decoders = n_layers * (n_layers + 1) // 2
+        """
+        n_decoders: int = self.cfg.n_layers * (self.cfg.n_layers + 1) // 2
+        if self.device_mesh is None:
+            decoder_norms = torch.zeros(
+                n_decoders, self.cfg.d_sae,
+                dtype=self.cfg.dtype,
+                device=self.cfg.device,
+            )
+        else:
+            decoder_norms = torch.distributed.tensor.zeros(
+                n_decoders, self.cfg.d_sae,
+                dtype=self.cfg.dtype,
+                device_mesh=self.device_mesh,
+                placements=self.dim_maps()["decoder_norms"].placements(self.device_mesh)
+            )
+        idx = 0
+        for layer_to, decoder_weights in enumerate(self.W_D):
+            for layer_from in range(layer_to + 1):
+                decoder_norms[idx] = decoder_weights[layer_from].pow(2).sum(dim=-1)
+                idx += 1
+        decoder_norms = decoder_norms.sqrt().mean(dim=-1)
         return decoder_norms
 
     @override
