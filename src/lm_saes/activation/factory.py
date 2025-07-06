@@ -205,6 +205,7 @@ class ActivationFactory:
                 batch_size=self.cfg.batch_size,
                 buffer_size=self.cfg.buffer_size,
                 buffer_shuffle_config=self.cfg.buffer_shuffle,
+                device_mesh=self.device_mesh,
             )
 
         processors = [build_batchler()] if self.cfg.batch_size is not None else []
