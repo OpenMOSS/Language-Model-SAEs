@@ -278,8 +278,10 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
                 # Check if mask is all true
                 # TODO: Actually, this assertion is not necessary for tp settings. Remove it in future.
                 assert mask.to_local().all(), "Mask must be all true for distributed tensors"
+                activations = {k: v for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
+            else:
+                activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
 
-            activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
             yield activations
 
 
