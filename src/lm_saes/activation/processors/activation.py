@@ -349,11 +349,15 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
         """
         buffer = ActivationBuffer(generator=self.perm_generator, device_mesh=self.device_mesh)
         pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1, disable=True)
-
+        dp_size = get_mesh_dim_size(self.device_mesh, "data")
         for d in data:
+
+            def get_batch_size(x):
+                return len(x) if isinstance(x, DTensor) else len(x) * dp_size
+
             # Validate input: ensure all tensors and lists have consistent shapes
-            assert all(len(d[k]) == len(d[next(iter(d.keys()))]) for k in d.keys()), (
-                "All tensors and lists must have the same batch size"
+            assert all(get_batch_size(d[k]) == get_batch_size(d[next(iter(d.keys()))]) for k in d.keys()), (
+                f"All tensors and lists must have the same batch size, {[(k, len(d[k])) for k in d.keys()]}"
             )
 
             # Add new data to buffer
