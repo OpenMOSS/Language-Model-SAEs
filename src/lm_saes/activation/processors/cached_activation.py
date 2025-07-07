@@ -240,7 +240,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         else:
             for data in tqdm(
                 dataloader,
-                total=len(cached_activation_dataset),
+                total=len(cached_activation_dataset) // self.device_mesh.size(),
                 desc="Processing activation chunks",
                 disable=not is_master(),
             ):
