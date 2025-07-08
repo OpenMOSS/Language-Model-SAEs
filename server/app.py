@@ -349,6 +349,7 @@ def get_feature(
         "analysis_name": analysis.name,
         "interpretation": feature.interpretation,
         "dictionary_name": feature.sae_name,
+        "logits": feature.logits,
         "decoder_norms": analysis.decoder_norms,
         "decoder_similarity_matrix": analysis.decoder_similarity_matrix,
         "decoder_inner_product_matrix": analysis.decoder_inner_product_matrix,
