@@ -7,19 +7,26 @@ from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory
+from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
+from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.config import (
     ActivationFactoryConfig,
     BaseSAEConfig,
     CrossCoderConfig,
+    DirectLogitAttributorConfig,
     FeatureAnalyzerConfig,
     LanguageModelConfig,
     MongoDBConfig,
+    SAEConfig,
 )
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient
+from lm_saes.resource_loaders import load_model
+from lm_saes.runners.utils import load_config
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
+from lm_saes.utils.misc import is_master
 
 logger = get_distributed_logger("runners.analyze")
 
@@ -199,3 +206,102 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
     )
 
     logger.info("CrossCoder analysis completed successfully")
+
+
+class DirectLogitAttributeSettings(BaseSettings):
+    """Settings for analyzing a CrossCoder model."""
+
+    sae: BaseSAEConfig
+    """Configuration for the SAE model architecture and parameters"""
+
+    sae_name: str
+    """Name of the SAE model. Use as identifier for the SAE model in the database."""
+
+    sae_series: str
+    """Series of the SAE model. Use as identifier for the SAE model in the database."""
+
+    model: Optional[LanguageModelConfig] = None
+    """Configuration for the language model."""
+
+    model_name: str
+    """Name of the language model."""
+
+    direct_logit_attributor: DirectLogitAttributorConfig
+    """Configuration for the direct logit attributor."""
+
+    mongo: MongoDBConfig
+    """Configuration for the MongoDB database."""
+
+    device_type: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+
+    # model_parallel_size: int = 1
+    # """Size of model parallel (tensor parallel) mesh"""
+
+    # data_parallel_size: int = 1
+    # """Size of data parallel mesh"""
+
+    # head_parallel_size: int = 1
+    # """Size of head parallel mesh"""
+
+
+@torch.no_grad()
+def direct_logit_attribute(settings: DirectLogitAttributeSettings) -> None:
+    """Direct logit attribute a SAE model.
+
+    Args:
+        settings: Configuration settings for DirectLogitAttributor
+    """
+    # Set up logging
+    setup_logging(level="INFO")
+
+    # device_mesh = (
+    #     init_device_mesh(
+    #         device_type=settings.device_type,
+    #         mesh_shape=(settings.head_parallel_size, settings.data_parallel_size, settings.model_parallel_size),
+    #         mesh_dim_names=("head", "data", "model"),
+    #     )
+    #     if settings.head_parallel_size > 1 or settings.data_parallel_size > 1 or settings.model_parallel_size > 1
+    #     else None
+    # )
+
+    mongo_client = MongoClient(settings.mongo)
+    logger.info("MongoDB client initialized")
+
+    logger.info("Loading SAE model")
+    if isinstance(settings.sae, CrossCoderConfig):
+        sae = CrossCoder.from_config(settings.sae)
+    elif isinstance(settings.sae, SAEConfig):
+        sae = SparseAutoEncoder.from_config(settings.sae)
+    else:
+        raise ValueError(f"Unsupported SAE config type: {type(settings.sae)}")
+
+    # Load configurations
+    model_cfg = load_config(
+        config=settings.model,
+        name=settings.model_name,
+        mongo_client=mongo_client,
+        config_type="model",
+        required=True,
+    )
+    model_cfg.device = settings.device_type
+    model_cfg.dtype = sae.cfg.dtype
+
+    model = load_model(model_cfg)
+    assert isinstance(model, TransformerLensLanguageModel), (
+        "DirectLogitAttributor only supports TransformerLensLanguageModel as the model backend"
+    )
+
+    logger.info("Direct logit attribution")
+    direct_logit_attributor = DirectLogitAttributor(settings.direct_logit_attributor)
+    results = direct_logit_attributor.direct_logit_attribute(sae, model)
+
+    if is_master():
+        logger.info("Direct logit attribution completed, saving results to MongoDB")
+        mongo_client.update_features(
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            update_data=[{"logits": result} for result in results],
+            start_idx=0,
+        )
+    logger.info("Direct logit attribution completed successfully")
