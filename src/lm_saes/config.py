@@ -431,6 +431,11 @@ class FeatureAnalyzerConfig(BaseConfig):
     """
 
 
+class DirectLogitAttributorConfig(BaseConfig):
+    top_k: int = 10
+    """ The number of top tokens to attribute to. """
+
+
 class WandbConfig(BaseConfig):
     wandb_project: str = "gpt2-sae-training"
     exp_name: Optional[str] = None
