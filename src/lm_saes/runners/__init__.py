@@ -3,8 +3,10 @@
 from .analyze import (
     AnalyzeCrossCoderSettings,
     AnalyzeSAESettings,
+    DirectLogitAttributeSettings,
     analyze_crosscoder,
     analyze_sae,
+    direct_logit_attribute,
 )
 from .autointerp import AutoInterpSettings, auto_interp
 from .eval import (
@@ -33,6 +35,8 @@ from .train import (
 from .utils import load_config
 
 __all__ = [
+    "DirectLogitAttributeSettings",
+    "direct_logit_attribute",
     "GenerateActivationsSettings",
     "generate_activations",
     "CheckActivationConsistencySettings",
