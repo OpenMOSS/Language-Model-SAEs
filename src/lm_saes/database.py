@@ -57,6 +57,7 @@ class FeatureRecord(BaseModel):
     logits: Optional[dict[str, list[dict[str, Any]]]] = None
     interpretation: Optional[dict[str, Any]] = None
     metric: Optional[dict[str, float]] = None
+    metric: Optional[dict[str, float]] = None
 
 
 class AnalysisRecord(BaseModel):

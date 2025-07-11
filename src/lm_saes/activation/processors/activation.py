@@ -207,7 +207,8 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
             d = model.preprocess_raw_data(d)
             activations = model.to_activations(d, self.hook_points, n_context=self.n_context)
             # merge meta information
-            existing_meta = d.get("meta", [{} for _ in range(len(d["text"]))])
+            existing_meta = d.get("meta", [{} for _ in range(len(d["text"]))]) 
+
             activations = {
                 **activations,
                 "meta": [{"model_name": model_name} | existing_meta[i] for i in range(len(existing_meta))],
@@ -280,7 +281,8 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
                 assert mask.to_local().all(), "Mask must be all true for distributed tensors"
                 activations = {k: v for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
             else:
-                activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
+    
+            activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
 
             yield activations
 
