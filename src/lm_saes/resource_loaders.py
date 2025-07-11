@@ -74,8 +74,6 @@ def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_
         return "huggingface"
     elif model_name.startswith("Qwen/Qwen2.5"):
         return "huggingface"
-    elif model_name.startswith("GSAI-ML/LLaDA"):
-        return "huggingface"
     else:
         return "transformer_lens"
 

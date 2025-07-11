@@ -1,29 +1,43 @@
 import { z } from "zod";
 
 export const TextTokenOriginSchema = z.object({
-  key: z.literal("text"),
+  type: z.literal("text"),
   range: z.tuple([z.number(), z.number()]),
 });
 
 export type TextTokenOrigin = z.infer<typeof TextTokenOriginSchema>;
 
+export const MultipleTextTokenOriginSchema = z.object({
+  type: z.literal("multiple_text"),
+  range: z.record(z.string(), z.tuple([z.number(), z.number()])),
+});
+
+export type MultipleTextTokenOrigin = z.infer<typeof MultipleTextTokenOriginSchema>;
+
 export const ImageTokenOriginSchema = z.object({
-  key: z.literal("image"),
+  type: z.literal("image"),
   imageIndex: z.number(),
   rect: z.tuple([z.number(), z.number(), z.number(), z.number()]),
 });
 
 export type ImageTokenOrigin = z.infer<typeof ImageTokenOriginSchema>;
 
-export const TokenOriginSchema = z.union([TextTokenOriginSchema, ImageTokenOriginSchema]);
+export const TokenOriginSchema = z.union([
+  TextTokenOriginSchema,
+  MultipleTextTokenOriginSchema,
+  ImageTokenOriginSchema,
+]);
 
 export type TokenOrigin = z.infer<typeof TokenOriginSchema>;
 
 export const FeatureSampleCompactSchema = z.object({
   text: z.string().nullish(),
+  predictedText: z.string().nullish(),
+  originalText: z.string().nullish(),
   images: z.array(z.string()).nullish(),
   origins: z.array(TokenOriginSchema.nullable()),
   featureActs: z.array(z.number()),
+  maskRatio: z.number().nullish(),
 });
 
 export type FeatureSampleCompact = z.infer<typeof FeatureSampleCompactSchema>;
@@ -100,6 +114,12 @@ export const FeatureSchema = z.object({
     .nullish(),
   interpretation: InterpretationSchema.nullish(),
   isBookmarked: z.boolean().optional(),
+  maskRatioState: z.array(
+    z.object({
+      maskRatio: z.number(),
+      activationTime: z.number(),
+    })
+  ).nullish(),
 });
 
 export type Feature = z.infer<typeof FeatureSchema>;

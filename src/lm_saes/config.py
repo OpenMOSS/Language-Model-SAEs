@@ -387,10 +387,11 @@ class LanguageModelConfig(BaseModelConfig):
 
 
 class LLaDAConfig(LanguageModelConfig):
+    d_model: int = 4096
+    max_length: int = 4096
     mask_ratio: float = 0.0
     mdm_mask_token_id: int = 126336
     prepend_bos: bool = False
-    calculate_logits: bool = False
 
 
 class ActivationWriterConfig(BaseConfig):

@@ -4,7 +4,6 @@ from typing import Any, Optional
 import gridfs
 import numpy as np
 import pymongo
-import pymongo.database
 import pymongo.errors
 from bson import ObjectId
 from pydantic import BaseModel
@@ -14,6 +13,7 @@ from lm_saes.config import (
     BaseSAEConfig,
     DatasetConfig,
     LanguageModelConfig,
+    LLaDAConfig,
     MongoDBConfig,
     SAEConfig,
 )
@@ -34,6 +34,7 @@ class FeatureAnalysisSampling(BaseModel):
     n_shards: Optional[list[int]] = None
     context_idx: list[int]
     model_name: list[str]
+    mask_ratio: Optional[list[float]] = None
 
 
 class FeatureAnalysis(BaseModel):
@@ -47,6 +48,7 @@ class FeatureAnalysis(BaseModel):
     act_times_modalities: Optional[dict[str, float]] = None
     max_feature_acts_modalities: Optional[dict[str, float]] = None
     samplings: list[FeatureAnalysisSampling]
+    mask_ratio_state: Optional[list[dict[float, float]]] = None
 
 
 class FeatureRecord(BaseModel):
@@ -344,7 +346,11 @@ class MongoClient:
         model = self.model_collection.find_one({"name": name})
         if model is None:
             return None
-        return LanguageModelConfig.model_validate(model["cfg"])
+        return (
+            LanguageModelConfig.model_validate(model["cfg"])
+            if "LLaDA" not in name
+            else LLaDAConfig.model_validate(model["cfg"])
+        )
 
     def add_feature_analysis(self, name: str, sae_name: str, sae_series: str, analysis: list[dict], start_idx: int = 0):
         operations = []

@@ -5,6 +5,7 @@ from itertools import accumulate
 from typing import Any, Optional, cast
 
 import torch
+from pydantic import BaseModel
 from transformer_lens import HookedTransformer
 from transformers import (
     AutoModelForCausalLM,
@@ -60,33 +61,80 @@ def set_tokens(tokenizer):
     return tokenizer
 
 
-def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optional[tuple[int, int]]]:
+class BaseOrigin(BaseModel):
+    type: str
+
+
+class TextTokenOrigin(BaseOrigin):
+    type: str = "text"
+    range: tuple[int, int]
+
+
+class MultipleTextTokenOrigin(BaseOrigin):
+    type: str = "multiple_text"
+    range: dict[str, tuple[int, int]]
+
+
+def _match_batch_str_tokens_to_input(
+    text_dict: dict[str, list[str]], str_tokens_dict: dict[str, list[list[str]]]
+) -> list[list[BaseOrigin | None]]:
     """Match the tokens to the input text, returning a list of tuples of the form (start_idx, end_idx) for each token."""
     # Initialize list to store token positions
-    token_positions = []
-
+    assert text_dict.keys() == str_tokens_dict.keys(), "text_dict and str_tokens_dict must have the same keys"
     # Keep track of current position in text
-    curr_pos = 0
+    origins_dict = {}
+    for key in text_dict.keys():
+        assert len(text_dict[key]) == len(str_tokens_dict[key]), (
+            "text_dict and str_tokens_dict must have the same length"
+        )
+        batch_keyed_origin_list: list[list[BaseOrigin | None]] = []
+        for text, str_tokens in zip(text_dict[key], str_tokens_dict[key]):
+            curr_pos = 0
+            # For each token, try to find its position in the input text
+            keyed_origin_list: list[BaseOrigin | None] = []
+            for token in str_tokens:
+                # Search for token in remaining text
+                if "�" in token:
+                    keyed_origin_list.append(None)
+                    continue
+                pos = text.find(token, curr_pos)
+                if pos != -1:
+                    # Found a match, store position and update curr_pos
+                    keyed_origin_list.append(TextTokenOrigin(range=(pos, pos + len(token))))
+                    curr_pos = pos + len(token)
+                else:
+                    # No match found. This is only allowed if the token is a special token
+                    # that doesn't appear in the input text, or if the token is a subword token
+                    # which cannot be decoded separately.
+                    # TODO: Deal with subword tokens properly
+                    if not (token.startswith("<") and token.endswith(">")):
+                        # warnings.warn(f"Token {token} not found in input text")
+                        raise ValueError(f"Token {token} not found in input text")
+            batch_keyed_origin_list.append(keyed_origin_list)
+        origins_dict[key] = batch_keyed_origin_list  # dict[str, list[list[BaseOrigin | None]]]
 
-    # For each token, try to find its position in the input text
-    for token in str_tokens:
-        # Search for token in remaining text
-        pos = text.find(token, curr_pos)
-
-        if pos != -1:
-            # Found a match, store position and update curr_pos
-            token_positions.append({"key": "text", "range": (pos, pos + len(token))})
-            curr_pos = pos + len(token)
-        else:
-            # No match found. This is only allowed if the token is a special token
-            # that doesn't appear in the input text, or if the token is a subword token
-            # which cannot be decoded separately.
-            # TODO: Deal with subword tokens properly
-            if not ((token.startswith("<") and token.endswith(">")) or "�" in token):
-                raise ValueError(f"Token {token} not found in input text")
-            token_positions.append(None)
-
-    return token_positions
+    # merge origins_dict into a single list of origins
+    origins_list = []
+    batch_size = len(origins_dict["text"])
+    if len(origins_dict) > 1:
+        assert "text" in origins_dict, "text must be in origins_dict"
+        for batch_id in range(batch_size):
+            batch_origin_list: list[BaseOrigin | None] = []
+            for i, origins_to_merge in enumerate(zip(*[origins_dict[key][batch_id] for key in origins_dict.keys()])):
+                if any(origin is None for origin in origins_to_merge):
+                    batch_origin_list.append(None)
+                else:
+                    multiple_text_origin = MultipleTextTokenOrigin(
+                        range={
+                            key: (origins_dict[key][batch_id][i].range[0], origins_dict[key][batch_id][i].range[1])
+                            for key in origins_dict.keys()
+                        }
+                    )
+                    batch_origin_list.append(multiple_text_origin)
+            origins_list.append(batch_origin_list)
+    else:
+        origins_list: list[list[BaseOrigin | None]] = origins_dict["text"]
+    return origins_list
 
 
 def _get_layer_indices_from_hook_points(hook_points: list[str]) -> list[int]:
@@ -99,7 +147,7 @@ def _get_layer_indices_from_hook_points(hook_points: list[str]) -> list[int]:
 
 class LanguageModel(ABC):
     @abstractmethod
-    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[BaseOrigin | None]]:
         """Trace how raw data is eventually aligned with tokens.
 
         Args:
@@ -126,7 +174,7 @@ class LanguageModel(ABC):
         pass
 
     @abstractmethod
-    def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
+    def preprocess_raw_data(self, raw: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         """Preprocess the raw data.
 
         Args:
@@ -212,24 +260,24 @@ class TransformerLensLanguageModel(LanguageModel):
     def pad_token_id(self) -> int | None:
         return self.tokenizer.pad_token_id
 
-    def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
+    def preprocess_raw_data(self, raw: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         return raw
 
-    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[BaseOrigin | None]]:
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
                 "Tracing with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
-        tokens = to_tokens(self.tokenizer, raw["text"], max_length=self.cfg.max_length, device=self.cfg.device)
+        print(f"raw: {raw['text']}")
+        # list[list[str]]
+        tokens = to_tokens(self.tokenizer, text=raw["text"], max_length=self.cfg.max_length, device=self.cfg.device)
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
             )
             tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
         batch_str_tokens = [self.tokenizer.batch_decode(token, clean_up_tokenization_spaces=False) for token in tokens]
-        return [
-            _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
-        ]
+        return _match_batch_str_tokens_to_input({"text": raw["text"]}, {"text": batch_str_tokens})
 
     @timer.time("to_activations")
     @torch.no_grad()
@@ -260,7 +308,7 @@ class HuggingFaceLanguageModel(LanguageModel):
             torch.device(f"cuda:{torch.cuda.current_device()}") if cfg.device == "cuda" else torch.device(cfg.device)
         )
 
-    def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
+    def preprocess_raw_data(self, raw: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         return raw
 
 
@@ -272,7 +320,9 @@ class LLaDALanguageModel(TransformerLensLanguageModel):
         return self.cfg.mdm_mask_token_id
 
     @torch.no_grad()
-    def _get_masked_tokens(self, tokens: torch.Tensor, pad_mask: torch.Tensor) -> torch.Tensor:
+    def _get_masked_tokens(
+        self, tokens: torch.Tensor, pad_mask: torch.Tensor, mask_ratio: float | None = None
+    ) -> torch.Tensor:
         """
         Apply random masking to non-pad tokens based on mask_ratio. The random seed should be determined by the raw data.
         Args:
@@ -282,7 +332,9 @@ class LLaDALanguageModel(TransformerLensLanguageModel):
         Returns:
             torch.Tensor: The tokens after masking. Pad tokens are included.
         """
-        if self.cfg.mask_ratio <= 0:
+        mask_ratio = self.cfg.mask_ratio if mask_ratio is None else mask_ratio
+        print(f"mask_ratio: {mask_ratio}")
+        if mask_ratio <= 0:
             return tokens
 
         # Calculate random seeds based on non-pad tokens
@@ -303,7 +355,7 @@ class LLaDALanguageModel(TransformerLensLanguageModel):
             non_pad_count = non_pad_mask.sum()
 
             # Calculate number of tokens to mask
-            num_to_mask = int(non_pad_count.item() * self.cfg.mask_ratio)
+            num_to_mask = int(non_pad_count.item() * mask_ratio)
             if num_to_mask == 0:
                 continue
 
@@ -316,15 +368,23 @@ class LLaDALanguageModel(TransformerLensLanguageModel):
             # Apply masking
             masked_tokens[i][mask_indices] = self.mdm_mask_token_id
 
+        # print(f"masked_tokens: {masked_tokens}\n\n")
+
+        assert not torch.allclose(masked_tokens, tokens), "Masked tokens should be different from original tokens"
+
         return masked_tokens
 
     @torch.no_grad()
-    def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
+    def preprocess_raw_data(
+        self, raw: dict[str, Any], mask_ratio: float | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         assert self.model is not None
         tokens = self.model.to_tokens(raw["text"], prepend_bos=self.cfg.prepend_bos)
         pad_mask = tokens == self.pad_token_id
-        masked_tokens = self._get_masked_tokens(tokens, pad_mask)
+        masked_tokens = self._get_masked_tokens(tokens, pad_mask, mask_ratio=mask_ratio)
+        raw["original_text"] = raw["text"]
         raw["text"] = self.tokenizer.batch_decode(masked_tokens)
+
         pad_token = self.tokenizer.pad_token
         raw["text"] = [text.replace(pad_token, "") for text in raw["text"]]
         raw_meta = raw.get("meta", [])
@@ -332,6 +392,9 @@ class LLaDALanguageModel(TransformerLensLanguageModel):
             (raw_meta[i] if i < len(raw_meta) else {}) | {"mask_ratio": self.cfg.mask_ratio}
             for i in range(len(raw["text"]))
         ]
+        if len(raw["text"]) == 1:
+            raw["text"] = raw["text"][0]
+            raw["meta"] = raw["meta"][0]
         return raw
 
     @torch.no_grad()
@@ -345,19 +408,54 @@ class LLaDALanguageModel(TransformerLensLanguageModel):
                 "Pad token ID must be set for LLaDALanguageModel when n_context is provided"
             )
             tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
+        _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
+        return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
+
+    @torch.no_grad()
+    def predict(self, raw: dict[str, Any], n_context: Optional[int] = None) -> dict[str, Any]:
+        assert self.model is not None
+        tokens = self.model.to_tokens(raw["text"], prepend_bos=self.cfg.prepend_bos)
+        if n_context is not None:
+            assert self.pad_token_id is not None, (
+                "Pad token ID must be set for LLaDALanguageModel when n_context is provided"
+            )
+            tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
         pad_mask = tokens == self.pad_token_id
-        predicted_tokens = None
-        if self.cfg.calculate_logits:
-            logits, activations = self.model.run_with_cache(tokens, names_filter=hook_points)
-            assert isinstance(logits, torch.Tensor)
-            predicted_token_ids = logits.argmax(dim=-1)
-            predicted_tokens = torch.where(pad_mask, -1, predicted_token_ids)
-        else:
-            _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
-        predicted_tokens = {"predicted_tokens": predicted_tokens} if predicted_tokens is not None else {}
-        return (
-            {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens} | predicted_tokens
-        )
+        print("Calculating logits...")
+        logits = self.model(tokens)
+        assert isinstance(logits, torch.Tensor)
+        predicted_token_ids = logits.argmax(dim=-1)
+        predicted_tokens = torch.where(pad_mask, -1, predicted_token_ids)
+        predicted_text = []
+        for i, predicted_token in enumerate(predicted_tokens):
+            non_pad_predicted_tokens = predicted_token[predicted_token != -1]
+            assert non_pad_predicted_tokens.shape[0] == tokens[i].shape[0], (
+                "Predicted tokens should have the same length as the original tokens"
+            )
+            predict_text = self.tokenizer.decode(non_pad_predicted_tokens)
+            predicted_text.append(predict_text)
+        if len(predicted_text) == 1:
+            predicted_text = predicted_text[0]
+        return {"predicted_text": predicted_text}
+
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[BaseOrigin | None]]:
+        assert self.model is not None
+        text_dict = {}
+        str_tokens_dict = {}
+        for key in ["text", "predicted_text", "original_text"]:
+            if key in raw:
+                tokens = self.model.to_tokens(raw[key], prepend_bos=self.cfg.prepend_bos)
+                if n_context is not None:
+                    assert self.pad_token_id is not None, (
+                        "Pad token ID must be set for LLaDALanguageModel when n_context is provided"
+                    )
+                    tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
+                batch_str_tokens = [
+                    self.tokenizer.batch_decode(token, clean_up_tokenization_spaces=False) for token in tokens
+                ]
+                text_dict[key] = raw[key]
+                str_tokens_dict[key] = batch_str_tokens
+        return _match_batch_str_tokens_to_input(text_dict, str_tokens_dict)
 
 
 class QwenVLLanguageModel(HuggingFaceLanguageModel):
@@ -414,9 +512,9 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
             remainder = n % int(m)
             return [quotient + 1 if i < remainder else quotient for i in range(int(m))]
 
-        batch_token_positions: list[list[Any]] = [
-            _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
-        ]
+        batch_token_positions: list[list[Any]] = _match_batch_str_tokens_to_input(
+            {"text": raw["text"]}, {"text": batch_str_tokens}
+        )
 
         if "images" in raw and raw["images"] is not None:
             assert "image_grid_thw" in inputs
@@ -593,6 +691,4 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
         batch_str_tokens = [
             self.tokenizer.batch_decode(input_id, clean_up_tokenization_spaces=False) for input_id in input_ids
         ]
-        return [
-            _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
-        ]
+        return _match_batch_str_tokens_to_input({"text": raw["text"]}, {"text": batch_str_tokens})

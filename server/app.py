@@ -15,6 +15,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from torchvision import transforms
 
 from lm_saes.backend import LanguageModel
+from lm_saes.backend.language_model import LLaDALanguageModel
 from lm_saes.config import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset_shard, load_model
@@ -51,6 +52,7 @@ def get_model(name: str) -> LanguageModel:
     cfg = client.get_model_cfg(name)
     if cfg is None:
         raise ValueError(f"Model {name} not found")
+    cfg.device = device
     return load_model(cfg)
 
 
@@ -269,7 +271,16 @@ def get_feature(
             status_code=404,
         )
 
-    def process_sample(*, feature_acts, context_idx, dataset_name, model_name, shard_idx=None, n_shards=None):
+    def process_sample(
+        *,
+        feature_acts,
+        context_idx,
+        dataset_name,
+        model_name,
+        shard_idx=None,
+        n_shards=None,
+        mask_ratio=None,
+    ):
         """Process a sample to extract and format feature data.
 
         Args:
@@ -286,10 +297,21 @@ def get_feature(
         """  # Get model and dataset
         model = get_model(model_name)
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx]
+        # print(f"data_text: {data['text']}")
+        if mask_ratio is not None:
+            processed_data = model.preprocess_raw_data(data, mask_ratio=mask_ratio)
+            data["text"] = processed_data["text"]
+            data["original_text"] = processed_data["original_text"]
+            # print(f"data_text: {data['text']}")
+            assert isinstance(model, LLaDALanguageModel), "Predicted tokens are only supported for LLaDA models"
+            predicted_data = model.predict(data)
+            data |= predicted_data
 
+        # print(f"data_keys: {data.keys()}")
         # Get origins for the features
-        origins = model.trace({k: [v] for k, v in data.items()})[0]
-
+        origins_list = model.trace({k: [v] for k, v in data.items()})
+        origins = origins_list[0]
+        # print(f"origins: {origins}")
         # Process image data if present
         image_key = next((key for key in ["image", "images"] if key in data), None)
         if image_key is not None:
@@ -306,17 +328,32 @@ def get_feature(
 
         # Process text data if present
         if "text" in data:
-            text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
-            if text_ranges:
-                max_text_origin = max(text_ranges, key=lambda x: x[1])
-                data["text"] = data["text"][: max_text_origin[1]]
-
-        return {**data, "origins": origins, "feature_acts": feature_acts}
+            if origins[0].type == "multiple_text":
+                for key in origins[0].range.keys():
+                    text_ranges = [
+                        origin.range[key] for origin in origins if origin is not None and origin.type == "multiple_text"
+                    ]
+                    if text_ranges:
+                        max_text_origin = max(text_ranges, key=lambda x: x[1])
+                        data[key] = data[key][: max_text_origin[1]]
+            else:
+                text_ranges = [origin.range for origin in origins if origin is not None and origin.type == "text"]
+                if text_ranges:
+                    max_text_origin = max(text_ranges, key=lambda x: x[1])
+                    data["text"] = data["text"][: max_text_origin[1]]
+        return {
+            **data,
+            "origins": [origin.model_dump() if origin is not None else None for origin in origins],
+            "feature_acts": feature_acts,
+            "mask_ratio": mask_ratio,
+        }
 
     # Process all samples for each sampling
     sample_groups = []
     for sampling in analysis.samplings:
         # Using zip to process correlated data instead of indexing
+        if sampling.name == "non_activating":
+            continue
         samples = [
             process_sample(
                 feature_acts=feature_acts,
@@ -325,14 +362,16 @@ def get_feature(
                 model_name=model_name,
                 shard_idx=shard_idx,
                 n_shards=n_shards,
+                mask_ratio=mask_ratio,
             )
-            for feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
+            for feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards, mask_ratio in zip(
                 sampling.feature_acts,
                 sampling.context_idx,
                 sampling.dataset_name,
                 sampling.model_name,
                 sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts),
                 sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts),
+                sampling.mask_ratio if sampling.mask_ratio is not None else [None] * len(sampling.feature_acts),
             )
         ]
 
@@ -358,6 +397,8 @@ def get_feature(
         "sample_groups": sample_groups,
         "is_bookmarked": client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature.index),
     }
+
+    # print(f"response_data: \n{response_data}\nresponse_data type: {type(response_data)}")
 
     return Response(
         content=msgpack.packb(make_serializable(response_data)),
