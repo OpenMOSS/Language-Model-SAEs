@@ -35,6 +35,66 @@ sae_series = os.environ.get("SAE_SERIES", "default")
 # dataset_cache: dict[tuple[str, int, int], Dataset] = {}
 
 
+def fen_to_longfen(fen: str, move: str) -> str:
+    '''
+    input: fen,move
+    output: longfen(wrnbqkbnrpppppppp................................PPPPPPPPRNBQKBNRKQkq..0..1..e2e40)
+    '''
+    parts = fen.split()
+    board_fen = parts[0]  # 棋盘部分
+    active_color = parts[1]  # 当前走棋方 (w/b)
+    castling = parts[2]  # 王车易位权利
+    en_passant = parts[3]  # 过路兵目标格
+    halfmove = parts[4]  # 半回合计数
+    fullmove = parts[5]  # 全回合计数
+    
+    # 转换棋盘部分 (8x8 = 64个字符)
+    longfen_board = ""
+    for char in board_fen:
+        if char == '/':
+            continue  # 跳过行分隔符
+        elif char.isdigit():
+            # 数字表示连续的空格数
+            longfen_board += '.' * int(char)
+        else:
+            # 棋子字符直接添加
+            longfen_board += char
+    
+    # 确保棋盘部分正好64个字符
+    assert len(longfen_board) == 64, f"棋盘应该有64个字符，实际有{len(longfen_board)}个"
+    
+    # 处理王车易位权利 (4个字符位置：KQkq)
+    castling_longfen = ""
+    for right in ['K', 'Q', 'k', 'q']:
+        if right in castling:
+            castling_longfen += right
+        else:
+            castling_longfen += '.'
+    
+    # 处理过路兵 (2个字符)
+    if en_passant == '-':
+        en_passant_longfen = ".."
+    else:
+        en_passant_longfen = en_passant
+    
+    # 处理半回合和全回合计数 (各1个字符)
+    halfmove_padded = halfmove.ljust(3, '.')  # 左对齐，右侧填充.
+    fullmove_padded = fullmove.ljust(3, '.')  # 左对齐，右侧填充.
+    
+    # 组装longfen字符串
+    longfen = (
+        active_color +  # 当前走棋方 (1字符)
+        longfen_board +  # 棋盘 (64字符)
+        castling_longfen +  # 王车易位 (4字符)
+        en_passant_longfen +  # 过路兵 (2字符)
+        halfmove_padded +  # 半回合 (3字符)
+        fullmove_padded +  # 全回合 (3字符)
+        move +  # 走法
+        "0"  # 结束标记
+    )
+    
+    return longfen
+
 @lru_cache(maxsize=8)
 def get_model(name: str) -> LanguageModel:
     """Load and cache a language model.
@@ -284,13 +344,19 @@ def get_feature(
         Returns:
             dict: Processed sample data
         """  # Get model and dataset
+        
+        # TODO 
+        # 打印一下data
+        
+        print(f"{context_idx=}")
         model = get_model(model_name)
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx]
 
-        # Get origins for the features
+        # Get origins for the features  
         origins = model.trace({k: [v] for k, v in data.items()})[0]
 
         # Process image data if present
+        # TODO: check here 
         image_key = next((key for key in ["image", "images"] if key in data), None)
         if image_key is not None:
             image_urls = [
@@ -299,19 +365,29 @@ def get_feature(
             ]
             del data[image_key]
             data["images"] = image_urls
-
+        
+        # TODO: 
         # Trim to matching lengths
         origins, feature_acts = trim_minimum(origins, feature_acts)
         assert origins is not None and feature_acts is not None, "Origins and feature acts must not be None"
 
+        long_fen = fen_to_longfen(data["fen"], data["move"])
+        if "chess" in model_name:
+            data["text"] = long_fen
+            print(f"len(data['text']) = {len(data['text'])}")
         # Process text data if present
         if "text" in data:
             text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
             if text_ranges:
                 max_text_origin = max(text_ranges, key=lambda x: x[1])
                 data["text"] = data["text"][: max_text_origin[1]]
-
-        return {**data, "origins": origins, "feature_acts": feature_acts}
+        
+        print(f"{data = }after process_sample")
+        print(f"{shard_idx = }")
+        print(f"{n_shards = }")
+        print(f"{context_idx = }")
+        # return {**data, "origins": origins, "feature_acts": feature_acts}
+        return {**data, "origins": origins, "feature_acts": feature_acts, "context_idx": context_idx}
 
     # Process all samples for each sampling
     sample_groups = []

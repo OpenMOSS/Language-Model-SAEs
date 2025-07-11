@@ -3,6 +3,7 @@ import warnings
 from abc import ABC, abstractmethod
 from itertools import accumulate
 from typing import Any, Optional, cast
+import os
 
 import torch
 from transformer_lens import HookedTransformer
@@ -13,11 +14,71 @@ from transformers import (
     BatchFeature,
     Qwen2_5_VLForConditionalGeneration,
 )
-
+from transformer_lens.components import SearchlessChessTokenizer
 from lm_saes.config import LanguageModelConfig, LLaDAConfig
 from lm_saes.utils.misc import pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
 
+
+def fen_to_longfen(fen: str, move: str) -> str:
+    '''
+    input: fen,move
+    output: longfen(wrnbqkbnrpppppppp................................PPPPPPPPRNBQKBNRKQkq..0..1..e2e40)
+    '''
+    parts = fen.split()
+    board_fen = parts[0]  # 棋盘部分
+    active_color = parts[1]  # 当前走棋方 (w/b)
+    castling = parts[2]  # 王车易位权利
+    en_passant = parts[3]  # 过路兵目标格
+    halfmove = parts[4]  # 半回合计数
+    fullmove = parts[5]  # 全回合计数
+    
+    # 转换棋盘部分 (8x8 = 64个字符)
+    longfen_board = ""
+    for char in board_fen:
+        if char == '/':
+            continue  # 跳过行分隔符
+        elif char.isdigit():
+            # 数字表示连续的空格数
+            longfen_board += '.' * int(char)
+        else:
+            # 棋子字符直接添加
+            longfen_board += char
+    
+    # 确保棋盘部分正好64个字符
+    assert len(longfen_board) == 64, f"棋盘应该有64个字符，实际有{len(longfen_board)}个"
+    
+    # 处理王车易位权利 (4个字符位置：KQkq)
+    castling_longfen = ""
+    for right in ['K', 'Q', 'k', 'q']:
+        if right in castling:
+            castling_longfen += right
+        else:
+            castling_longfen += '.'
+    
+    # 处理过路兵 (2个字符)
+    if en_passant == '-':
+        en_passant_longfen = ".."
+    else:
+        en_passant_longfen = en_passant
+    
+    # 处理半回合和全回合计数 (各1个字符)
+    halfmove_padded = halfmove.ljust(3, '.')  # 左对齐，右侧填充.
+    fullmove_padded = fullmove.ljust(3, '.')  # 左对齐，右侧填充.
+    
+    # 组装longfen字符串
+    longfen = (
+        active_color +  # 当前走棋方 (1字符)
+        longfen_board +  # 棋盘 (64字符)
+        castling_longfen +  # 王车易位 (4字符)
+        en_passant_longfen +  # 过路兵 (2字符)
+        halfmove_padded +  # 半回合 (3字符)
+        fullmove_padded +  # 全回合 (3字符)
+        move +  # 走法
+        "0"  # 结束标记
+    )
+    
+    return longfen
 
 def get_input_with_manually_prepended_bos(tokenizer, input):
     """
@@ -90,7 +151,7 @@ def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optiona
 
 
 def _get_layer_indices_from_hook_points(hook_points: list[str]) -> list[int]:
-    residual_pattern = r"^blocks\.(\d+)\.hook_resid_post$"
+    residual_pattern = r"^blocks\.(\d+)\.hook_mlp_out$"
     matches = [re.match(residual_pattern, hook_point) for hook_point in hook_points]
     assert all(match is not None for match in matches), "hook_points must be residual stream hook points"
     layer_indices = [int(cast(re.Match[str], match).group(1)) for match in matches]
@@ -226,7 +287,8 @@ class TransformerLensLanguageModel(LanguageModel):
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
             )
             tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
-        batch_str_tokens = [self.tokenizer.batch_decode(token, clean_up_tokenization_spaces=False) for token in tokens]
+        decoded_str = self.tokenizer.decode(tokens)
+        batch_str_tokens = list(decoded_str)
         return [
             _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
         ]
@@ -262,6 +324,119 @@ class HuggingFaceLanguageModel(LanguageModel):
 
     def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
         return raw
+
+
+class SearchlessChessModel(TransformerLensLanguageModel):
+    def __init__(self, cfg: LanguageModelConfig):
+        # 不调用父类的 __init__ 方法，这样可以避免继承父类的 tokenizer 初始化
+        self.cfg = cfg
+        self.device = (
+            torch.device(f"cuda:{torch.cuda.current_device()}") if cfg.device == "cuda" else torch.device(cfg.device)
+        )
+        
+        # 如果用户指定了自定义的 checkpoint 路径，设置环境变量
+        if cfg.model_from_pretrained_path:
+            os.environ["SEARCHLESS_CHESS_PYTORCH_PATH"] = cfg.model_from_pretrained_path
+        
+        # 使用 TransformerLens 的标准加载方式
+        print("Loading searchless_chess model using TransformerLens...")
+        self.model = HookedTransformer.from_pretrained_no_processing(
+            'google/searchless-chess-270M',
+            dtype=torch.float32,
+            device=self.device,
+        ).eval()
+        
+        # 使用 SearchlessChessTokenizer
+        self.tokenizer = SearchlessChessTokenizer()
+
+    # 你可以根据需要覆写 tokenizer 相关的属性和方法
+    @property
+    def eos_token_id(self) -> int | None:
+        # 如果没有 tokenizer，可以直接返回 None 或者实现默认行为
+        return None
+
+    @property
+    def bos_token_id(self) -> int | None:
+        return None
+
+    @property
+    def pad_token_id(self) -> int | None:
+        return None
+    
+    @torch.no_grad()
+    def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
+        assert len(raw["fen"]) == len(raw["move"]) == len(raw["move_type"]) == len(raw["meta"])
+        
+        # 处理所有32个元素
+        texts = []
+        metas = []
+        for i in range(len(raw["fen"])):
+            fen = raw["fen"][i]
+            move = raw["move"][i]
+            # best_move = raw["best move"][i]
+            # random_move = raw["random move"][i]
+            input = f"{fen},{move}"
+            # input_random = f"{fen},{random_move}"
+            texts.append(input)
+            metas.append(raw["meta"][i])
+        
+        preprocessed_data = {"text": texts}
+        preprocessed_data["meta"] = metas
+        
+        return preprocessed_data
+        
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
+        fen = raw["fen"]
+        move = raw["move"]
+        # input_str = f"{fen},{move}"
+        # tokens = self.tokenizer.encode(input_str)
+        longfens = []
+        print(f"{len(fen)=}")
+        for i in range(len(fen)):
+            fen_i = fen[i]
+            move_i = move[i]
+            longfen = fen_to_longfen(fen_i, move_i)
+            longfens.append(longfen)
+        
+        # 特殊分词：第77个字符到倒数第二个字符作为move token，其他字符分别作为token
+        str_tokens = []
+        for i, longfen in enumerate(longfens):
+            str_token = []
+            for j, char in enumerate(longfen):
+                if j == 77:
+                    # move token
+                    str_token.append(longfen[77:-1])
+                    break
+                elif j < 77:
+                    str_token.append(char)  
+            str_token.append(longfen[-1])
+            str_tokens.append(str_token)
+        
+        return [
+            _match_str_tokens_to_input(longfen, str_tokens) for (longfen , str_tokens) in zip(longfens, str_tokens)
+        ]
+
+    @torch.no_grad()
+    def to_activations(
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
+    ) -> tuple[dict[str, torch.Tensor], list[dict[str, Any]] | None]:
+        assert self.model is not None
+        layer_indices = _get_layer_indices_from_hook_points(hook_points)
+        inputs = raw["text"]
+        
+        # Process single input (inputs length is 1)
+        # Convert input to tokens and get model output
+        tokens, _ = self.tokenizer(inputs)
+        log_softmax_output, cache = self.model.run_with_cache_until(tokens, names_filter=hook_points)
+
+        assert isinstance(log_softmax_output, torch.Tensor)
+
+        # Get activations for each hook point and tokens
+        activations = {hook_point: cache[hook_point] for hook_point in hook_points}
+        tokens = tokens.to(self.cfg.device)
+
+        # Return the activations and tokens
+        return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}, None
 
 
 class LLaDALanguageModel(TransformerLensLanguageModel):
@@ -590,9 +765,8 @@ class QwenLanguageModel(HuggingFaceLanguageModel):
                 "Pad token ID must be set for QwenLanguageModel when n_context is provided"
             )
             input_ids = pad_and_truncate_tokens(input_ids, n_context, pad_token_id=self.pad_token_id)
-        batch_str_tokens = [
-            self.tokenizer.batch_decode(input_id, clean_up_tokenization_spaces=False) for input_id in input_ids
-        ]
+        decoded_str = self.tokenizer.decode(input_ids)
+        batch_str_tokens = list(decoded_str)
         return [
             _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
         ]
