@@ -102,5 +102,6 @@ __all__ = [
     "auto_interp",
     "sweep_sae",
     "LLaDAConfig",
+    "SearchlessChessConfig",
     "train_crosscoder",
 ]

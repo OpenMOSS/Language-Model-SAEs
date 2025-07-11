@@ -195,3 +195,33 @@ pyrightconfig.json
 # uv
 # We ignore uv.lock as conflicting optional dependencies generates non-compatible uv.lock files.
 uv.lock
+ chess_analysis_40hcc.json
+ chess_analysis_1831.json
+ chess_analysis_1931.json
+chess_analysis_2014_02.json
+chess_analysis_2015_02.json
+chess_analysis_2016_02.json
+chess_analysis_2017_02.json
+chess_analysis_2018_02.json
+chess_analysis_2019_02.json
+chess_analysis_2020_02.json
+chess_analysis_2021_02.json
+chess_analysis_2022_02.json
+chess_analysis_2023_02.json
+chess_analysis_2024_02.json
+chess_analysis_2025_01.json
+chess_positions.txt
+.gitignore
+core*
+dataconstruct.sh
+pyproject.toml
+output.txt
+pyproject.toml
+pyproject.toml
+results_distributed_train/checkpoints/19532.safetensors
+results_distributed_train/config.json
+results_distributed_train/checkpoints/39063.safetensors
+results_tmux/config.json
+results_tmux/sae_weights.safetensors
+results_tmux/checkpoints/156250.safetensors
+run.sh

@@ -104,21 +104,27 @@ class FeatureAnalyzer:
                 sample_result_cur["elt"].size(0) > 0
                 and (elt_cur.max(dim=0).values > sample_result_cur["elt"][-1]).any()
             ):
+
                 sample_result_cur = concat_dict_of_tensor(
                     sample_result_cur,
                     batch_data,
                 )
+
             else:  # Skip if all activations are below the threshold
                 continue
 
+
+
             # Sort and keep top N samples
             sample_result_cur = sort_dict_of_tensor(sample_result_cur, sort_dim=0, sort_key="elt", descending=True)
+
             sample_result_cur = {
                 k: v[
                     : min(self.cfg.subsamples[name]["n_samples"], (sample_result_cur["elt"] != -torch.inf).sum().item())
                 ]
                 for k, v in sample_result_cur.items()
             }
+
 
             # Update main sample result with current batch results out of place
             sample_result = {**sample_result, name: sample_result_cur}
@@ -151,7 +157,7 @@ class FeatureAnalyzer:
             feature_acts.max(dim=1).values
             > max_feature_acts.unsqueeze(0) * self.cfg.non_activating_subsample["threshold"]
         ] = -torch.inf
-
+  
         batch_data = {
             "elt": elt,
             "feature_acts": rearrange(
@@ -171,6 +177,7 @@ class FeatureAnalyzer:
             sample_result_cur = batch_data
         else:
             sample_result_cur = concat_dict_of_tensor(sample_result_cur, batch_data)
+
         sample_result_cur = sort_dict_of_tensor(sample_result_cur, sort_dim=0, sort_key="elt", descending=True)
         sample_result_cur = {
             k: v[: self.cfg.non_activating_subsample["n_samples"]] for k, v in sample_result_cur.items()
@@ -247,12 +254,15 @@ class FeatureAnalyzer:
         # Process activation batches
         for batch in activation_stream:
             # Reshape meta to zip outer dimensions to inner
+            # print(f"{batch['meta']=}")
             meta = {k: [m[k] for m in batch["meta"]] for k in batch["meta"][0].keys()}
+            # print(f"{meta=}")
 
             batch = sae.normalize_activations(batch)
 
             # Get feature activations from SAE
             x, kwargs = sae.prepare_input(batch)
+
             feature_acts: torch.Tensor = sae.encode(x, **kwargs)
             if isinstance(feature_acts, DTensor):
                 assert device_mesh is not None, "Device mesh is required for DTensor feature activations"
@@ -411,6 +421,7 @@ class FeatureAnalyzer:
             )
         else:
             decoder_norms, decoder_similarity_matrices, decoder_inner_product_matrices = None, None, None
+
 
         for i in range(len(act_times)):
             feature_result = {
