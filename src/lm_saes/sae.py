@@ -336,7 +336,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         reconstructed = self.hook_reconstructed(reconstructed)
 
         if isinstance(reconstructed, DTensor):
-            reconstructed = DimMap({}).redistribute(reconstructed)
+            reconstructed = DimMap({"data": 0}).redistribute(reconstructed)
 
         return reconstructed
 
@@ -411,16 +411,10 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @override
     def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
-        if self.device_mesh is not None:
-            x = DimMap({}).distribute(batch[self.cfg.hook_point_in], self.device_mesh)
-        else:
-            x = batch[self.cfg.hook_point_in]
+        x = batch[self.cfg.hook_point_in]
         return x, {}
 
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
-        if self.device_mesh is not None:
-            label = DimMap({}).distribute(batch[self.cfg.hook_point_out], self.device_mesh)
-        else:
-            label = batch[self.cfg.hook_point_out]
+        label = batch[self.cfg.hook_point_out]
         return label

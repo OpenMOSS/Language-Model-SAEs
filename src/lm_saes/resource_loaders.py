@@ -7,6 +7,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from lm_saes.backend.language_model import (
     LanguageModel,
     LLaDALanguageModel,
+    SearchlessChessModel,
     QwenLanguageModel,
     QwenVLLanguageModel,
     TransformerLensLanguageModel,
@@ -91,8 +92,12 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
             raise NotImplementedError(f"Model {cfg.model_name} not supported in HuggingFace backend.")
     elif backend == "transformer_lens":
         if cfg.model_name.startswith("GSAI-ML/LLaDA"):
-            assert isinstance(cfg, LLaDAConfig)
+            assert isinstance(cfg, LLaDAConfig), "cfg is not a LLaDAConfig"
             return LLaDALanguageModel(cfg)
+        elif cfg.model_name.startswith("google/searchless-chess-270M"):
+            print("loading a searchless_chess model, welcome to play chess with me.  ^^")
+            # assert isinstance(cfg, SearchlessChessConfig), "cfg is not a SearchlessChessConfig"
+            return SearchlessChessModel(cfg)
         else:
             return TransformerLensLanguageModel(cfg)
     else:

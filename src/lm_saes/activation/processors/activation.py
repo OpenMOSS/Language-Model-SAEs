@@ -148,7 +148,8 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
             activations, extra_info = model.to_activations(d, self.hook_points, n_context=self.n_context)
             # merge meta information
             extra_info = extra_info if extra_info is not None else [{} for _ in range(len(d["text"]))]
-            existing_meta = d.get("meta", [{} for _ in range(len(d["text"]))])
+            existing_meta = d.get("meta", [{} for _ in range(len(d["text"]))]) 
+
             activations = {
                 **activations,
                 "meta": [
@@ -215,6 +216,7 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
             mask = torch.ones_like(tokens, dtype=torch.bool)
             for token_id in ignore_token_ids:
                 mask &= tokens != token_id
+
             activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
             yield activations
 
