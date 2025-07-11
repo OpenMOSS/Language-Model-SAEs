@@ -318,7 +318,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                       {feature.logits.topPositive.map((token) => (
                         <TableRow key={token.token}>
                           <TableCell className="underline whitespace-pre-wrap decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
-                            {token.token}
+                            {token.token.replaceAll("\n", "↵").replaceAll("\t", "→")}
                           </TableCell>
                           <TableCell>{token.logit.toFixed(3)}</TableCell>
                         </TableRow>
@@ -339,7 +339,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                       {feature.logits.topNegative.map((token) => (
                         <TableRow key={token.token}>
                           <TableCell className="underline whitespace-pre-wrap decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
-                            {token.token}
+                            {token.token.replaceAll("\n", "↵").replaceAll("\t", "→")}
                           </TableCell>
                           <TableCell>{token.logit.toFixed(3)}</TableCell>
                         </TableRow>
@@ -348,14 +348,16 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                   </Table>
                 </div>
               </div>
-              <Plot
-                data={feature.logits.histogram}
-                layout={{
-                  bargap: 0.2,
-                  margin: { t: 0, b: 40 },
-                  showlegend: false,
-                }}
-              />
+              {feature.logits.histogram && (
+                <Plot
+                  data={feature.logits.histogram}
+                  layout={{
+                    bargap: 0.2,
+                    margin: { t: 0, b: 40 },
+                    showlegend: false,
+                  }}
+                />
+              )}
             </div>
           )}
 

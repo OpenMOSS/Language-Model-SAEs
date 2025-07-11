@@ -39,7 +39,7 @@ def get_input_with_manually_prepended_bos(tokenizer, input):
 
 def to_tokens(tokenizer, text, max_length, device="cpu"):
     tokenizer_prepends_bos = len(tokenizer.encode("")) > 0
-    text = text if not tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
+    text = text if tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
     tokens = tokenizer(
         text,
         return_tensors="pt",
@@ -221,6 +221,10 @@ class TransformerLensLanguageModel(LanguageModel):
                 "Tracing with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
         tokens = to_tokens(self.tokenizer, raw["text"], max_length=self.cfg.max_length, device=self.cfg.device)
+        if raw["text"][0].startswith("US Soccer"):
+            import json
+
+            json.dump(raw, open("raw.json", "w"))
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
