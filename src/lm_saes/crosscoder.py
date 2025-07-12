@@ -113,10 +113,10 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 W_E_head_repeats = get_slice_length(W_E_slices[0], self.cfg.n_heads)
                 W_D_head_repeats = get_slice_length(W_D_slices[0], self.cfg.n_heads)
                 W_E_local = einops.repeat(
-                    W_E_per_head, "d_model d_sae -> n_heads d_model d_sae", n_heads=W_E_head_repeats
+                    W_E_per_head[*W_E_slices[1:]], "d_model d_sae -> n_heads d_model d_sae", n_heads=W_E_head_repeats
                 )
                 W_D_local = einops.repeat(
-                    W_D_per_head, "d_sae d_model -> n_heads d_sae d_model", n_heads=W_D_head_repeats
+                    W_D_per_head[*W_D_slices[1:]], "d_sae d_model -> n_heads d_sae d_model", n_heads=W_D_head_repeats
                 )
                 W_E = DTensor.from_local(
                     W_E_local, self.device_mesh, self.dim_maps()["W_E"].placements(self.device_mesh)
@@ -474,39 +474,41 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 DimMap({"head": 0}).local_slices((len(self.cfg.hook_points),), self.device_mesh)[0]
             ]
 
-            # The latest version of ActivationFactory directly produces DTensor in distributed setting.
-            assert all(isinstance(batch[hook_point], DTensor) for hook_point in local_hook_points)
-
             # Stack the activations per head to (batch, ..., n_heads_per_process, d_model)
-            # We need to do some ugly local mapping and check since the `torch.stack` over DTensor results in buggy output placements.
-            first_hook_point_activations = cast(DTensor, batch[local_hook_points[0]])
-            assert all(
-                ((placement.dim + first_hook_point_activations.ndim) % first_hook_point_activations.ndim)
-                <= first_hook_point_activations.ndim - 2
-                for placement in first_hook_point_activations.placements
-                if isinstance(placement, Shard)
-            )  # Check the input tensor is not sharded over the last dimension
-            per_process_activations = DTensor.from_local(
-                torch.stack(
-                    [pad_to_d_model(cast(DTensor, batch[hook_point]).to_local()) for hook_point in local_hook_points],
+            if any(not isinstance(batch[hook_point], DTensor) for hook_point in local_hook_points):
+                per_process_activations = torch.stack(
+                    [pad_to_d_model(batch[hook_point]) for hook_point in local_hook_points], dim=-2
+                )
+                output_dim_map = DimMap({"head": -2})
+            else:
+                batch: dict[str, DTensor] = cast(dict[str, DTensor], batch)
+
+                # We need to do some ugly local mapping and check since the `torch.stack` over DTensor results in buggy output placements.
+                first_hook_point_activations = batch[local_hook_points[0]]
+                assert all(
+                    ((placement.dim + first_hook_point_activations.ndim) % first_hook_point_activations.ndim)
+                    <= first_hook_point_activations.ndim - 2
+                    for placement in first_hook_point_activations.placements
+                    if isinstance(placement, Shard)
+                )  # Check the input tensor is not sharded over the last dimension
+
+                per_process_activations = torch.stack(
+                    [pad_to_d_model(batch[hook_point].to_local()) for hook_point in local_hook_points],
                     dim=-2,
-                ),
-                device_mesh=first_hook_point_activations.device_mesh,
-                placements=first_hook_point_activations.placements,
-            )
+                )
 
-            assert "head" not in cast(tuple[str, ...], per_process_activations.device_mesh.mesh_dim_names), (
-                "Head dimension should not be in the device mesh of per head activations, as it should be added in the cross-head concatenation"
-            )
+                assert "head" not in cast(tuple[str, ...], first_hook_point_activations.device_mesh.mesh_dim_names), (
+                    "Head dimension should not be in the device mesh of per head activations, as it should be added in the cross-head concatenation"
+                )
 
-            # Build the output dimension map by adding the head dimension.
-            # This dimension map should work no matter whether the activations are data parallelized or not.
-            output_dim_map = DimMap({"head": -2}) | DimMap.from_placements(
-                per_process_activations.placements, per_process_activations.device_mesh
-            )
+                # Build the output dimension map by adding the head dimension.
+                # This dimension map should work no matter whether the activations are data parallelized or not.
+                output_dim_map = DimMap({"head": -2}) | DimMap.from_placements(
+                    first_hook_point_activations.placements, first_hook_point_activations.device_mesh
+                )
 
             return DTensor.from_local(
-                per_process_activations.to_local(),
+                per_process_activations,
                 device_mesh=self.device_mesh,
                 placements=output_dim_map.placements(self.device_mesh),
             ), {}
@@ -562,3 +564,8 @@ class CrossCoder(AbstractSparseAutoEncoder):
         decoder_norms = self.decoder_norm()
         decoder_norm_products = einops.einsum(decoder_norms, decoder_norms, "i d_sae, j d_sae -> d_sae i j")
         return inner_product_matrices / decoder_norm_products
+
+    @classmethod
+    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+        cfg = CrossCoderConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
+        return cls.from_config(cfg)
