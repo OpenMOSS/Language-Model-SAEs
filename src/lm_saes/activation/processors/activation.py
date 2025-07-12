@@ -67,7 +67,10 @@ class ActivationBuffer:
             else:
                 xs_local = xs
 
-            catted = torch.cat(xs_local, dim=0)
+            if len(xs_local) == 1:
+                catted = xs_local[0]
+            else:
+                catted = torch.cat(xs_local, dim=0)
 
             if self.device_mesh is not None:
                 return DTensor.from_local(

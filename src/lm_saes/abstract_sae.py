@@ -45,7 +45,12 @@ class STEFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, input: torch.Tensor, log_jumprelu_threshold: torch.Tensor, jumprelu_threshold_window: float):
+    def forward(
+        ctx,
+        input: torch.Tensor,
+        log_jumprelu_threshold: torch.Tensor,
+        jumprelu_threshold_window: float,
+    ):
         jumprelu_threshold = log_jumprelu_threshold.exp()
         ctx.save_for_backward(
             input,
@@ -116,11 +121,18 @@ class JumpReLU(torch.nn.Module):
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return cast(
             torch.Tensor,
-            STEFunction.apply(input.to(self.dtype), self.log_jumprelu_threshold, self.jumprelu_threshold_window),
+            STEFunction.apply(
+                input.to(self.dtype),
+                self.log_jumprelu_threshold,
+                self.jumprelu_threshold_window,
+            ),
         ).to(input.dtype)
 
     def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
+        self,
+        state_dict: dict[str, torch.Tensor],
+        device_mesh: DeviceMesh,
+        prefix: str = "",
     ) -> None:
         self.device_mesh = device_mesh
         self.register_parameter(
@@ -262,7 +274,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     "sae_name and sae_series must be provided when saving to MongoDB"
                 )
                 mongo_client.create_sae(
-                    name=sae_name, series=sae_series, path=str(Path(save_path).absolute()), cfg=self.cfg
+                    name=sae_name,
+                    series=sae_series,
+                    path=str(Path(save_path).absolute()),
+                    cfg=self.cfg,
                 )
 
     @overload
@@ -389,17 +404,47 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             return torch.tensor(1.0, device=x.device, dtype=x.dtype)
         raise ValueError(f"Not implemented norm_activation {self.cfg.norm_activation}")
 
+    @overload
+    def normalize_activations(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        return_scale_factor: Literal[False] = False,
+    ) -> dict[str, torch.Tensor]: ...
+
+    @overload
+    def normalize_activations(
+        self, batch: dict[str, torch.Tensor], *, return_scale_factor: Literal[True]
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]: ...
+
     @timer.time("normalize_activations")
-    def normalize_activations(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def normalize_activations(
+        self, batch: dict[str, torch.Tensor], *, return_scale_factor: bool = False
+    ) -> dict[str, torch.Tensor] | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         """Normalize the input activations.
         This should be called before calling `encode` or `compute_loss`.
         """
 
-        def normalize_hook_point(hook_point: str, original_tensor: torch.Tensor):
-            input_norm_factor = self.compute_norm_factor(original_tensor, hook_point=hook_point)
-            return original_tensor * input_norm_factor
+        scale_factors = {
+            k: self.compute_norm_factor(v, hook_point=k)
+            for k, v in batch.items()
+            if k in self.cfg.associated_hook_points
+        }
+        others = {k: v for k, v in batch.items() if k not in self.cfg.associated_hook_points}
+        activations = {k: v * scale_factors[k] for k, v in batch.items() if k in self.cfg.associated_hook_points}
 
-        return {k: normalize_hook_point(k, v) if k in self.cfg.associated_hook_points else v for k, v in batch.items()}
+        if not return_scale_factor:
+            return activations | others
+        else:
+            return activations | others, scale_factors
+
+    def denormalize_activations(
+        self, batch: dict[str, torch.Tensor], scale_factors: dict[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        """Denormalize the input activations.
+        This should be called after calling `encode` or `compute_loss`.
+        """
+        return {k: v / scale_factors[k] for k, v in batch.items()}
 
     @abstractmethod
     @torch.no_grad()
@@ -413,7 +458,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             list(self.activation_function.parameters()) if isinstance(self.activation_function, JumpReLU) else []
         )
         other_params = [p for p in self.parameters() if not any(p is param for param in jumprelu_params)]
-        return [{"params": other_params, "name": "others"}, {"params": jumprelu_params, "name": "jumprelu"}]
+        return [
+            {"params": other_params, "name": "others"},
+            {"params": jumprelu_params, "name": "jumprelu"},
+        ]
 
     def load_full_state_dict(self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh | None = None) -> None:
         # Extract and set dataset_average_activation_norm if present
@@ -747,7 +795,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         return {}
 
     def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
+        self,
+        state_dict: dict[str, torch.Tensor],
+        device_mesh: DeviceMesh,
+        prefix: str = "",
     ) -> None:
         self.device_mesh = device_mesh
         if isinstance(self.activation_function, JumpReLU):
