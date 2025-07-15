@@ -145,13 +145,25 @@ class Trainer:
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
-
-            wandb_log_dict = {
-                "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum().item(),
-                "sparsity/above_1e-2": (feature_sparsity > 1e-2).sum().item(),
-                "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
-                "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
-            }
+            if sae.cfg.sae_type == "clt":
+                above_1e_1 = (feature_sparsity > 1e-1).sum(-1)
+                above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
+                below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
+                below_1e_6 = (feature_sparsity < 1e-6).sum(-1)
+                wandb_log_dict = {}
+                for l in range(sae.cfg.n_layers):
+                    wandb_log_dict[f"sparsity/above_1e-1_layer{l}"] = above_1e_1[l].item()
+                    wandb_log_dict[f"sparsity/above_1e-2_layer{l}"] = above_1e_2[l].item()
+                for l in range(sae.cfg.n_layers):
+                    wandb_log_dict[f"sparsity/below_1e-5_layer{l}"] = below_1e_5[l].item()
+                    wandb_log_dict[f"sparsity/below_1e-6_layer{l}"] = below_1e_6[l].item()
+            else:
+                wandb_log_dict = {
+                    "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum(-1).item(),
+                    "sparsity/above_1e-2": (feature_sparsity > 1e-2).sum(-1).item(),
+                    "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum(-1).item(),
+                    "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum(-1).item(),
+                }
             if is_primary_rank(sae.device_mesh):
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Sparsity Metrics")
             if self.wandb_logger is not None:
@@ -197,7 +209,7 @@ class Trainer:
                     f"metrics/explained_variance_L{l}": per_layer_ev[l].item() for l in range(per_layer_ev.size(0))
                 }
                 clt_per_layer_l0_dict = {
-                    f"metrics/l0_L{l}": l0[:, l].mean().item() for l in range(l0.size(1))
+                    f"metrics/l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))
                 }
             else:
                 clt_per_layer_ev_dict = {}
