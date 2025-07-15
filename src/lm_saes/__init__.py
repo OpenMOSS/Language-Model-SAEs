@@ -49,6 +49,7 @@ from .runners import (
     train_sae,
 )
 from .sae import SparseAutoEncoder
+from .circuit import ReplacementModel, attribute
 
 __all__ = [
     "ActivationFactory",
@@ -101,4 +102,6 @@ __all__ = [
     "sweep_sae",
     "LLaDAConfig",
     "train_crosscoder",
+    "ReplacementModel",
+    "attribute",
 ]
