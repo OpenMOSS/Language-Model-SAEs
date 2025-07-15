@@ -3,6 +3,8 @@
 from typing import cast
 
 import torch
+from torch.distributed.tensor import DTensor, Replicate
+from torch.distributed.device_mesh import DeviceMesh
 import triton
 import triton.language as tl
 from jaxtyping import Float
@@ -407,6 +409,193 @@ class TritonDecoderAutogradDynamicK(torch.autograd.Function):
 
         # decoder is contiguous when transposed so this is a matching layout
         return grad_output @ decoder_weight, decoder_grad
+
+
+def triton_clt_sparse_backward_x(grad_hidden_pre, W_E):
+    """
+    Compute grad_x = einsum("...ls,lds->...ld", grad_hidden_pre, W_E)
+    Accelerate computation using sparsity in grad_hidden_pre
+    
+    Args:
+        grad_hidden_pre: (..., n_layers, d_sae) - Sparse gradients
+        W_E: (n_layers, d_model, d_sae) - Encoder weights
+    
+    Returns:
+        grad_x: (..., n_layers, d_model) - Input gradients
+    """
+    batch_dims = grad_hidden_pre.shape[:-2]
+    n_layers, d_sae = grad_hidden_pre.shape[-2:]
+    d_model = W_E.shape[-2]
+    
+    # Initialize output
+    grad_x = torch.zeros(*batch_dims, n_layers, d_model, device=grad_hidden_pre.device, dtype=grad_hidden_pre.dtype)
+    
+    # Process layer by layer, each layer is independent
+    for layer in range(n_layers):
+        grad_hidden_layer = grad_hidden_pre[..., layer, :]  # (..., d_sae)
+        W_E_layer = W_E[layer]  # (d_model, d_sae)
+        
+        # Use triton sparse kernel (caller has already checked sparsity condition)
+        # Reshape to 2D for sparse matrix multiplication
+        batch_size = grad_hidden_layer.flatten(end_dim=-2).shape[0]
+        grad_hidden_flat = grad_hidden_layer.flatten(end_dim=-2).contiguous()  # (batch_flattened, d_sae)
+        
+        # Get sparse representation
+        sparse_indices, sparse_values = get_sparse_representation(grad_hidden_flat)
+        
+        # Sparse matrix multiplication: grad_hidden_flat @ W_E_layer.T
+        # Make W_E_layer.T contiguous to satisfy kernel requirements
+        W_E_layer_T_contiguous = W_E_layer.T.contiguous()
+        grad_x_flat = triton_sparse_dense_matmul(sparse_indices, sparse_values, W_E_layer_T_contiguous)
+        
+        # Reshape back to original shape
+        grad_x[..., layer, :] = grad_x_flat.view(*batch_dims, d_model)
+    
+    return grad_x
+
+
+def triton_clt_sparse_backward_W_E(x, grad_hidden_pre):
+    """
+    Compute grad_W_E = einsum("...ld,...ls->lds", x, grad_hidden_pre)
+    Accelerate computation using sparsity in grad_hidden_pre
+    
+    Args:
+        x: (..., n_layers, d_model) - Input activations
+        grad_hidden_pre: (..., n_layers, d_sae) - Sparse gradients
+    
+    Returns:
+        grad_W_E: (n_layers, d_model, d_sae) - Encoder weight gradients
+    """
+    batch_dims = x.shape[:-2]
+    n_layers, d_model = x.shape[-2:]
+    d_sae = grad_hidden_pre.shape[-1]
+    
+    # Initialize output
+    grad_W_E = torch.zeros(n_layers, d_model, d_sae, device=x.device, dtype=x.dtype)
+    
+    # Process layer by layer
+    for layer in range(n_layers):
+        x_layer = x[..., layer, :]  # (..., d_model)
+        grad_hidden_layer = grad_hidden_pre[..., layer, :]  # (..., d_sae)
+        
+        # Use triton sparse kernel (caller has already checked sparsity condition)
+        # Reshape to 2D
+        batch_size = x_layer.flatten(end_dim=-2).shape[0]
+        x_flat = x_layer.flatten(end_dim=-2).contiguous()  # (batch_flattened, d_model)
+        grad_hidden_flat = grad_hidden_layer.flatten(end_dim=-2).contiguous()  # (batch_flattened, d_sae)
+        
+        # Get sparse representation
+        sparse_indices, sparse_values = get_sparse_representation(grad_hidden_flat)
+        
+        # Sparse matrix multiplication: x_flat.T @ grad_hidden_sparse
+        grad_W_E_layer = triton_sparse_transpose_dense_matmul(
+            sparse_indices, sparse_values, x_flat, N=d_sae
+        ).T  # (d_model, d_sae)
+        
+        grad_W_E[layer] = grad_W_E_layer
+    
+    return grad_W_E
+
+
+def encode_with_triton_clt_kernel(
+    x: Float[torch.Tensor, "... n_layers d_model"],
+    W_E: Float[torch.Tensor, "n_layers d_model d_sae"],
+    b_E: Float[torch.Tensor, "n_layers d_sae"],
+    k: int,
+    device_mesh: DeviceMesh,
+) -> Float[torch.Tensor, "... n_layers d_sae"]:
+    """
+    Triton-accelerated version of CLT encoding with distributed training support
+    
+    Args:
+        x: Input activations (..., n_layers, d_model)
+        W_E: Encoder weights (n_layers, d_model, d_sae)
+        b_E: Encoder biases (n_layers, d_sae)
+        k: Top-k activation count
+        device_mesh: Distributed device mesh
+    
+    Returns:
+        feature_acts: CLT feature activations (..., n_layers, d_sae)
+    """
+    # We need to modify TritonEncoderAutogradDynamicK to accept bias parameter
+    # or compute einsum here first then pass to the modified autograd function
+    
+    # Compute hidden_pre = einsum("...ld,lds->...ls", x, W_E) + b_E
+    hidden_pre = torch.einsum("...ld,lds->...ls", x, W_E) + b_E
+    
+    # Use modified autograd function to handle batchtopk and backward
+    result = TritonEncoderAutogradFromHiddenPre.apply(hidden_pre, x, W_E, k, device_mesh)
+    assert isinstance(result, torch.Tensor), "TritonEncoderAutogradFromHiddenPre should return a tensor"
+    return result
+
+
+class TritonEncoderAutogradFromHiddenPre(torch.autograd.Function):
+    """
+    CLT triton autograd function starting from computed hidden_pre
+    Specialized for handling batchtopk activation and sparse backward
+    """
+    @staticmethod
+    def forward(ctx, hidden_pre, x, W_E, k, device_mesh):
+        # hidden_pre: (..., n_layers, d_sae) - Pre-activation including bias
+        # x: (..., n_layers, d_model) - Original input
+        # W_E: (n_layers, d_model, d_sae) - Encoder weights
+        
+        assert isinstance(hidden_pre, DTensor)
+        
+        # Apply batchtopk activation function
+        from lm_saes.utils.distributed import distributed_batch_kthvalue_clt_binary_search
+        threshold, _ = distributed_batch_kthvalue_clt_binary_search(hidden_pre, (k-1, k), device_mesh=device_mesh)
+        mask = hidden_pre >= threshold
+        feature_acts = hidden_pre * mask
+        
+        # Save information needed for backward
+        ctx.save_for_backward(x, W_E, mask)
+        ctx.device_mesh = device_mesh
+        return feature_acts
+
+    @staticmethod
+    def backward(ctx, *grad_outputs, **args):
+        assert len(grad_outputs) == 1, "grad_outputs must be a single tensor"
+        grad_output = grad_outputs[0]
+        x, W_E, mask = ctx.saved_tensors
+        grad_hidden_pre = grad_output * mask  # Only topk positions have gradients
+        
+        # Use our optimized backward functions
+        assert isinstance(grad_hidden_pre, DTensor)
+        
+        # Convert to local tensors for triton operations
+        grad_hidden_pre_local = grad_hidden_pre.to_local()
+        x_local = x.to_local()
+        W_E_local = W_E.to_local()
+        
+        grad_x_local = triton_clt_sparse_backward_x(grad_hidden_pre_local, W_E_local)
+        grad_W_E_local = triton_clt_sparse_backward_W_E(x_local, grad_hidden_pre_local)
+        
+        # Convert back to DTensor
+        from lm_saes.utils.distributed import DimMap
+        
+        grad_x = DTensor.from_local(
+            grad_x_local,
+            device_mesh=ctx.device_mesh,
+            placements=[Replicate()]
+        )
+        grad_W_E = DTensor.from_local(
+            grad_W_E_local,
+            device_mesh=ctx.device_mesh,
+            placements=DimMap({"model": 2}).placements(ctx.device_mesh)
+        )
+        
+        # For b_E gradient (bias gradient equals sum of grad_hidden_pre over batch dimensions)
+        grad_b_E_local = grad_hidden_pre_local.sum(dim=tuple(range(len(grad_hidden_pre_local.shape) - 2)))
+        grad_b_E = DTensor.from_local(
+            grad_b_E_local,
+            device_mesh=ctx.device_mesh,
+            placements=DimMap({"model": 1}).placements(ctx.device_mesh)
+        )
+        
+        # Return order: hidden_pre, x, W_E, k, device_mesh
+        return grad_hidden_pre, grad_x, grad_W_E, None, None
+
 
 class TritonDecoderAutogradTopK(torch.autograd.Function):
     @staticmethod
