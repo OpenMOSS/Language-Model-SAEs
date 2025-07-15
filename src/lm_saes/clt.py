@@ -10,7 +10,7 @@ This enables linear attribution between features across layers.
 
 import math
 from torch._tensor import Tensor
-from typing import Any, Callable, Literal, Optional, Union, overload
+from typing import Any, Callable, Literal, Optional, Union, overload, List
 
 import einops
 import torch
@@ -19,12 +19,11 @@ import torch.nn as nn
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
-from torch.distributed.tensor.placement_types import Shard
 from typing_extensions import override
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation_functions import JumpReLU
-from lm_saes.config import BaseSAEConfig, CLTConfig
+from lm_saes.config import CLTConfig
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.timer import timer
@@ -347,15 +346,67 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             return feature_acts, hidden_pre
         return feature_acts
 
+    def encode_single_layer(
+        self,
+        x: Union[
+            Float[torch.Tensor, "batch d_model"],
+            Float[torch.Tensor, "batch seq_len d_model"],
+        ],
+        layer: int,
+        return_hidden_pre: bool = False,
+        **kwargs,
+    ) -> Union[
+        Float[torch.Tensor, "batch d_sae"],
+        Float[torch.Tensor, "batch seq_len d_sae"],
+        tuple[
+            Union[
+                Float[torch.Tensor, "batch d_sae"],
+                Float[torch.Tensor, "batch seq_len d_sae"],
+            ],
+            Union[
+                Float[torch.Tensor, "batch d_sae"],
+                Float[torch.Tensor, "batch seq_len d_sae"],
+            ],
+        ],
+    ]:
+        """Encode input activations to CLT features using L encoders.
+
+        Args:
+            x: Input activations from a given layer (..., d_model)
+            layer: The layer to encode
+            return_hidden_pre: Whether to return pre-activation values
+
+        Returns:
+            Feature activations for the given layer (..., d_sae)
+        """
+        # Apply each encoder to its corresponding layer: x[..., layer, :] @ W_E[layer] + b_E[layer]
+        hidden_pre = torch.einsum("...d,ds->...s", x, self.W_E[layer]) + self.b_E[layer]
+
+        # Apply activation function (ReLU, TopK, etc.)
+        if self.cfg.act_fn.lower() == "jumprelu":
+            assert isinstance(self.activation_function, JumpReLU)
+            jumprelu_threshold = self.activation_function.get_jumprelu_threshold()
+            feature_acts = hidden_pre * hidden_pre.gt(jumprelu_threshold[layer])
+        else:
+            feature_acts = self.activation_function(hidden_pre)
+
+        if return_hidden_pre:
+            return feature_acts, hidden_pre
+        return feature_acts
+
     @override
     def decode(
         self,
         feature_acts: Union[
             Float[torch.Tensor, "batch n_layers d_sae"],
             Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+            List[Float[torch.sparse.Tensor, "seq_len d_sae"]],
         ],
+        batch_f
         **kwargs,
     ) -> Union[
+        Float[torch.Tensor, "n_layers batch d_model"],
+        Float[torch.Tensor, "n_layers batch seq_len d_model"],
         Float[torch.Tensor, "batch n_layers d_model"],
         Float[torch.Tensor, "batch seq_len n_layers d_model"],
     ]:
@@ -374,51 +425,109 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         # For each output layer L
         for layer_to in range(self.cfg.n_layers):
-            decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
             decoder_bias = self.get_decoder_bias(layer_to)  # (d_model,)
 
-            if self.device_mesh is not None:
-                assert isinstance(feature_acts, DTensor)
-                assert isinstance(decoder_weights, DTensor)
-
-                feature_acts_per_layer = feature_acts.to_local()[..., : layer_to + 1, :]
-                decoder_weights_local = decoder_weights.to_local()
-                
-                enable_kernel_threshold = 1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel
-                sparsity = feature_acts_per_layer.ne(0).sum() / feature_acts_per_layer.numel()
-
-                if self.cfg.use_triton_kernel and sparsity < enable_kernel_threshold:
-                    from lm_saes.kernels import decode_with_triton_spmm_kernel
-                    
-                    contribution = decode_with_triton_spmm_kernel(
-                        feature_acts_per_layer.flatten(start_dim=-2), # (batch, layer_to+1 * d_sae)
-                        decoder_weights_local.flatten(end_dim=-2), # (layer_to+1 * d_sae, d_model)
-                        dynamic_k=True
-                    ) # (batch, d_model)
-                else:
-                    contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights_local)
-                
-                # sum contributions from all devices
-                contributions = DTensor.from_local(
-                    contribution.unsqueeze(-2),
-                    device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["W_D"].placements(self.device_mesh)
-                )
-                contribution = contributions.sum(dim=1)
+            # we only compute W_D @ feature_acts here, without b_D
+            if isinstance(feature_acts, list):
+                contribution = self._decode_single_output_layer_sparse(feature_acts, layer_to)
             else:
-                feature_acts_per_layer = feature_acts[..., : layer_to + 1, :]
-                contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights)
+                contribution = self._decode_single_output_layer(feature_acts, layer_to)
 
             # Add bias contribution (single bias vector for this target layer)
-            if isinstance(decoder_bias, DTensor) and isinstance(contribution, DTensor):
-                reconstructed.append((contribution + decoder_bias).full_tensor())
-            else:
-                reconstructed.append(contribution + decoder_bias)
+            contribution = contribution + decoder_bias
+            if isinstance(contribution, DTensor):
+                contribution = contribution.full_tensor()
+            reconstructed.append(contribution)
 
-        reconstructed = torch.stack(reconstructed, dim=0)
+        reconstructed = torch.stack(reconstructed, dim=1 if batch_first else 0)
 
         return reconstructed
 
+        def _use_triton_kernel(self, feature_acts: Union[
+            Float[torch.Tensor, "batch n_layers d_sae"],
+            Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+            Float[torch.sparse.Tensor, "batch n_layers d_sae"],
+        ]) -> bool:
+        is_sparse = isinstance(feature_acts, torch.sparse.Tensor)
+        is_sparse = is_sparse or (
+            (feature_acts.ne(0).sum() / feature_acts.numel()).item() < 1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel
+        )
+        return is_sparse and self.cfg.use_triton_kernel
+    
+    def _decode_single_output_layer(self, feature_acts: Union[
+        Float[torch.Tensor, "batch n_layers d_sae"],
+        Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+    ], layer_to: int) -> Union[
+        Float[torch.Tensor, "batch d_model"],
+        Float[torch.Tensor, "batch seq_len d_model"],
+    ]:
+        decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
+        if self.device_mesh is not None:
+            assert isinstance(feature_acts, DTensor)
+            assert isinstance(decoder_weights, DTensor)
+
+            feature_acts_per_layer = feature_acts.to_local()[..., : layer_to + 1, :]
+            decoder_weights_local = decoder_weights.to_local()
+        else:
+            feature_acts_per_layer = feature_acts[..., : layer_to + 1, :]
+            decoder_weights_local = decoder_weights
+
+        if self._use_triton_kernel(feature_acts_per_layer):
+            from lm_saes.kernels import decode_with_triton_spmm_kernel
+            
+            contribution = decode_with_triton_spmm_kernel(
+                feature_acts.flatten(start_dim=-2), # (batch, layer_to+1 * d_sae)
+                decoder_weights_local.flatten(end_dim=-2), # (layer_to+1 * d_sae, d_model)
+                dynamic_k=True
+            ) # (batch, d_model)
+        else:
+            contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights_local)
+
+        return contribution
+    
+    @torch.no_grad()
+    def _decode_single_output_layer_sparse(
+        self,
+        feature_acts: List[Float[torch.sparse.Tensor, "seq_len d_sae"]],
+        layer_to: int,
+    ) -> Union[
+        Float[torch.Tensor, "batch d_model"],
+        Float[torch.Tensor, "batch seq_len d_model"],
+    ]:
+        assert isinstance(feature_acts, list)
+        for fa in feature_acts:
+            assert isinstance(fa, torch.sparse.Tensor)
+            assert fa.ndim == 2
+
+        decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
+
+        total_contribution = torch.zeros(
+            *feature_acts[0].shape[:-1],
+            decoder_weights.shape[-1],
+            device=feature_acts[0].device,
+            dtype=feature_acts[0].dtype
+        )  # shape (seq_len, d_model)
+
+        # each feature_acts[i] has indices: (2, sum of K over seq_len)
+        # each feature_acts[i] has values: (sum of K over seq_len)
+
+        for layer_from in range(layer_to + 1):
+            sparse_tensor = feature_acts[layer_from]
+            seq_indices = sparse_tensor.indices()[0]  # Sequence position indices
+            feature_indices = sparse_tensor.indices()[1]  # Feature indices
+            values = sparse_tensor.values()  # Active values
+            
+            # Get decoder weights for active features
+            active_decoder_vecs = decoder_weights[layer_from][feature_indices]  # (K, d_model)
+            
+            # Compute contribution for each active feature: values * decoder_weights
+            scaled_decoder_vecs = active_decoder_vecs * values.unsqueeze(-1)  # (K, d_model)
+            
+            # Accumulate contributions to the appropriate sequence positions
+            total_contribution.index_add_(0, seq_indices, scaled_decoder_vecs)
+
+        return total_contribution
+    
     @override
     def decoder_norm(self, keepdim: bool = False):
         """Compute the effective norm of decoder weights for each feature."""
@@ -693,10 +802,16 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         for layer_to in range(self.cfg.n_layers):
             param_name = f"b_D.{layer_to}"
             self.b_D[layer_to] = nn.Parameter(state_dict[f"{prefix}{param_name}"].to(self.b_D[layer_to].dtype))
+    
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str,
+        strict_loading: bool = True,
+        **kwargs,
+    ):
         """Load a pretrained CLT model."""
-        cfg = BaseSAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
+        cfg = CLTConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
         model = cls.from_config(cfg)
         return model
