@@ -30,6 +30,7 @@ class Trainer:
         self.lr_warm_up_steps: int = 0
         self.lr_cool_down_steps: int = 0
         self.k_warmup_steps: int = 0
+        self.k_cold_booting_steps: int = 0
         self.l1_coefficient_warmup_steps: int = 0
         self.cur_step: int = 0
         self.cur_tokens: int = 0
@@ -56,7 +57,9 @@ class Trainer:
         self.lr_warm_up_steps = calculate_warmup_steps(self.cfg.lr_warm_up_steps)
         self.lr_cool_down_steps = calculate_warmup_steps(self.cfg.lr_cool_down_steps)
         self.k_warmup_steps = calculate_warmup_steps(self.cfg.k_warmup_steps)
+        self.k_cold_booting_steps = calculate_warmup_steps(self.cfg.k_cold_booting_steps)
         self.l1_coefficient_warmup_steps = calculate_warmup_steps(self.cfg.l1_coefficient_warmup_steps)
+        print(f"l1_coefficient_warmup_steps: {self.l1_coefficient_warmup_steps}  total_training_steps: {self.total_training_steps}")
         if self.cfg.n_checkpoints > 0:
             if self.cfg.check_point_save_mode == "linear":
                 self.checkpoint_thresholds = list(
@@ -93,14 +96,17 @@ class Trainer:
         if "topk" in sae.cfg.act_fn and self.k_warmup_steps > 0:
             assert self.cfg.initial_k is not None, "initial_k must be provided"
             assert self.cfg.initial_k >= sae.cfg.top_k, "initial_k must be greater than or equal to top_k"
-            sae.set_current_k(
-                max(
-                    sae.cfg.top_k,
-                    math.ceil(
-                        self.cfg.initial_k + (sae.cfg.top_k - self.cfg.initial_k) / self.k_warmup_steps * self.cur_step,
-                    ),
+            if self.cur_step < self.k_cold_booting_steps:
+                sae.set_current_k(int(self.cfg.initial_k))
+            else:
+                sae.set_current_k(
+                    max(
+                        sae.cfg.top_k,
+                        math.ceil(
+                            self.cfg.initial_k + (sae.cfg.top_k - self.cfg.initial_k) / self.k_warmup_steps * (self.cur_step - self.k_cold_booting_steps),
+                        ),
+                    )
                 )
-            )
 
         l1_coefficient = (
             min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
@@ -145,18 +151,30 @@ class Trainer:
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
+<<<<<<< HEAD
+=======
+
+>>>>>>> 6bdd2a2 (misc(trainer): some training dynamics settings for sweeping clt)
             if sae.cfg.sae_type == "clt":
                 above_1e_1 = (feature_sparsity > 1e-1).sum(-1)
                 above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
                 below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
                 below_1e_6 = (feature_sparsity < 1e-6).sum(-1)
                 wandb_log_dict = {}
+                
                 for l in range(sae.cfg.n_layers):
                     wandb_log_dict[f"sparsity/above_1e-1_layer{l}"] = above_1e_1[l].item()
                     wandb_log_dict[f"sparsity/above_1e-2_layer{l}"] = above_1e_2[l].item()
+
                 for l in range(sae.cfg.n_layers):
                     wandb_log_dict[f"sparsity/below_1e-5_layer{l}"] = below_1e_5[l].item()
                     wandb_log_dict[f"sparsity/below_1e-6_layer{l}"] = below_1e_6[l].item()
+
+                wandb_log_dict["sparsity/above_1e-1"] = above_1e_1.sum().item()
+                wandb_log_dict["sparsity/above_1e-2"] = above_1e_2.sum().item()
+                wandb_log_dict["sparsity/below_1e-5"] = below_1e_5.sum().item()
+                wandb_log_dict["sparsity/below_1e-6"] = below_1e_6.sum().item()
+            
             else:
                 wandb_log_dict = {
                     "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum(-1).item(),
@@ -211,9 +229,17 @@ class Trainer:
                 clt_per_layer_l0_dict = {
                     f"metrics/l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))
                 }
+                ####
+                # per_decoder_norm = sae.decoder_norm_per_decoder()
+                # if isinstance(per_decoder_norm, DTensor):
+                #     per_decoder_norm = per_decoder_norm.full_tensor()  ## TODO: check if this is correct
+                # clt_per_decoder_norm_dict = {
+                #     f"metrics/decoder_norm_per_decoder_{i}": per_decoder_norm[i].item() for i in range(per_decoder_norm.shape[0])
+                # }
             else:
                 clt_per_layer_ev_dict = {}
                 clt_per_layer_l0_dict = {}
+                # clt_per_decoder_norm_dict = {} 
 
             if isinstance(l2_norm_error, DTensor):
                 l2_norm_error = l2_norm_error.full_tensor()
@@ -236,6 +262,7 @@ class Trainer:
                 # sparsity
                 "metrics/l0": l0.mean().item(),
                 **clt_per_layer_l0_dict,
+                # **clt_per_decoder_norm_dict,
                 "metrics/mean_feature_act": mean_feature_act.item(),
                 "metrics/l2_norm_error": l2_norm_error.item(),
                 "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
