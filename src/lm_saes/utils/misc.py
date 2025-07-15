@@ -231,6 +231,13 @@ def all_gather_dict(
     keys = list(data.keys())
     gathered_dicts: list[dict[str, Any]] = [dict() for _ in range(world_size)]
 
+    # make sure all processes have the same keys
+    keys_list = [keys] * world_size
+    dist.all_gather_object(keys_list, keys, group=group)
+    keys = set(keys_list[0])
+    for d in keys_list:
+        assert set(d) == keys, "Keys mismatch across ranks"
+
     # Gather each key separately
     for k in keys:
         v = data[k]
