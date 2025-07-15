@@ -119,6 +119,9 @@ class JumpReLU(torch.nn.Module):
                 self.dims_to_keep_in_bwd,
             ),
         ).to(input.dtype)
+    
+    def get_jumprelu_threshold(self) -> torch.Tensor:
+        return self.log_jumprelu_threshold.exp()
 
     def load_distributed_state_dict(
         self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
