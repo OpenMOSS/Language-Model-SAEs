@@ -39,18 +39,25 @@ def get_sparse_representation(x, pad_val=0):
     nnz_per_row = torch.bincount(batch_indices, minlength=B)
     nnz_max = nnz_per_row.max().item()
 
-    # Prepare output tensors
-    sparse_indices = torch.full((B, cast(int, nnz_max)), pad_val, dtype=torch.long, device=x.device)
-    sparse_values = torch.zeros((B, cast(int, nnz_max)), dtype=x.dtype, device=x.device)
+    # Prepare output tensors (handle case where there are no nonzero elements)
+    if nnz_max == 0:
+        # No nonzero elements - return minimal zerotensors
+        sparse_indices = torch.zeros((B, 1), dtype=torch.long, device=x.device)
+        sparse_values = torch.zeros((B, 1), dtype=x.dtype, device=x.device)
+    else:
+        sparse_indices = torch.full((B, cast(int, nnz_max)), pad_val, dtype=torch.long, device=x.device)
+        sparse_values = torch.zeros((B, cast(int, nnz_max)), dtype=x.dtype, device=x.device)
 
-    # Compute position indices for scattering
-    cum_nnzs = torch.cumsum(nnz_per_row, dim=0)
-    row_offsets = torch.cat([torch.tensor([0], device=x.device), cum_nnzs[:-1]])  # Shift right for offsets
-    positions = torch.arange(len(batch_indices), device=x.device) - row_offsets[batch_indices]
+    # Only perform scattering if we have nonzero elements
+    if nnz_max > 0 and len(batch_indices) > 0:
+        # Compute position indices for scattering
+        cum_nnzs = torch.cumsum(nnz_per_row, dim=0)
+        row_offsets = torch.cat([torch.tensor([0], device=x.device), cum_nnzs[:-1]])  # Shift right for offsets
+        positions = torch.arange(len(batch_indices), device=x.device) - row_offsets[batch_indices]
 
-    # Scatter indices and values
-    sparse_indices[batch_indices, positions] = col_indices
-    sparse_values[batch_indices, positions] = values
+        # Scatter indices and values
+        sparse_indices[batch_indices, positions] = col_indices
+        sparse_values[batch_indices, positions] = values
 
     return sparse_indices, sparse_values
 
@@ -490,10 +497,11 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
             # Use triton sparse kernels for backward pass
             sparse_indices, sparse_values = get_sparse_representation(grad_output)
             
-            # Validate sparse indices are within bounds
-            max_sparse_idx = sparse_indices.max().item()
-            if max_sparse_idx >= W_E.size(1):
-                raise ValueError(f"Sparse indices out of bounds: max_idx={max_sparse_idx}, expected < {W_E.size(1)}")
+            # Validate sparse indices are within bounds (skip if no active features)
+            if sparse_indices.numel() > 0:
+                max_sparse_idx = sparse_indices.max().item()
+                if max_sparse_idx >= W_E.size(1):
+                    raise ValueError(f"Sparse indices out of bounds: max_idx={max_sparse_idx}, expected < {W_E.size(1)}")
             
             # grad_x = grad_output @ W_E.T (sparse @ dense)
             grad_x = triton_sparse_dense_matmul(sparse_indices, sparse_values, W_E.T.contiguous())
@@ -516,12 +524,14 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
             batch_idx_expanded = torch.arange(batch_size, device=sparse_indices.device).unsqueeze(1).expand(-1, k)
             
             # Get valid (non-padded) entries
-            valid_mask = sparse_indices < W_E.size(1)  # Valid feature indices
-            valid_feature_indices = sparse_indices[valid_mask]
-            valid_values = sparse_values[valid_mask]
-            
-            # Sum values by feature index to compute bias gradient
-            grad_b_E.index_add_(0, valid_feature_indices, valid_values)
+            if sparse_indices.numel() > 0:
+                valid_mask = sparse_indices < W_E.size(1)  # Valid feature indices
+                valid_feature_indices = sparse_indices[valid_mask]
+                valid_values = sparse_values[valid_mask]
+                
+                # Sum values by feature index to compute bias gradient (only if we have valid features)
+                if valid_feature_indices.numel() > 0:
+                    grad_b_E.index_add_(0, valid_feature_indices, valid_values)
             
         else:
             # Fall back to dense operations when not sparse enough
@@ -561,7 +571,6 @@ class TritonDecoderAutogradTopK(torch.autograd.Function):
     @staticmethod
     def forward(ctx, sparse_indices, sparse_values, decoder_weight):
         ctx.save_for_backward(sparse_indices, sparse_values, decoder_weight)
-        print(f"sparse_indices: {sparse_indices.shape}, sparse_values: {sparse_values.shape}, decoder_weight: {decoder_weight.shape}")
         return triton_sparse_dense_matmul(sparse_indices, sparse_values, decoder_weight.T)
 
     @staticmethod
