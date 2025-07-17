@@ -33,6 +33,7 @@ def norm_ratio(a, b):
     b_norm = torch.norm(b, 2, dim=0).mean()
     return a_norm / b_norm
 
+@torch.no_grad()
 def batch_kthvalue_clt_binary_search(
     x: torch.Tensor,
     k_range: tuple[int, int],
