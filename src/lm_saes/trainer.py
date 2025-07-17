@@ -151,10 +151,6 @@ class Trainer:
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
-<<<<<<< HEAD
-=======
-
->>>>>>> 6bdd2a2 (misc(trainer): some training dynamics settings for sweeping clt)
             if sae.cfg.sae_type == "clt":
                 above_1e_1 = (feature_sparsity > 1e-1).sum(-1)
                 above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
