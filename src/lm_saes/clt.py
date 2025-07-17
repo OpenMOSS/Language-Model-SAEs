@@ -363,6 +363,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     x_local, # (batch n_layers d_model)
                     W_E_local, # (n_layers , d_model, d_sae)
                     b_E_local, # (n_layers, d_sae)
+                    self.cfg.sparsity_threshold_for_triton_spmm_kernel,
                 )
             else:
                 hidden_pre_local = torch.einsum("...ld,lds->...ls", x_local, W_E_local) + b_E_local

@@ -435,7 +435,7 @@ def triton_sparse_dense_matmul_kernel(
 
 class TritonEncoderAutogradDynamicK(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, W_E, b_E):
+    def forward(ctx, x, W_E, b_E, sparsity_threshold):
         """
         Forward pass: x @ W_E + b_E using dense operations.
         
@@ -444,12 +444,15 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
             x: (batch, d_model) - Input activations
             W_E: (d_model, d_sae) - Encoder weights
             b_E: (d_sae,) - Encoder bias
+            sparsity_threshold: (float) - Sparsity threshold for using sparse kernels.
             
         Returns:
             output: (batch, d_sae) - Encoded activations
         """
         # Save tensors for backward pass
         ctx.save_for_backward(x, W_E, b_E)
+        # Save non-tensor values separately
+        ctx.sparsity_threshold = sparsity_threshold
 
         # Forward pass using dense operations (no triton kernel needed)
         output = torch.mm(x, W_E) + b_E
@@ -467,11 +470,13 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
             grad_x: (batch, d_model) - Gradient w.r.t. input
             grad_W_E: (d_model, d_sae) - Gradient w.r.t. encoder weights  
             grad_b_E: (d_sae,) - Gradient w.r.t. encoder bias
+            None: For sparsity_threshold (no gradient needed)
         """
         assert len(grad_outputs) == 1, "Expected exactly one gradient output"
         grad_output = grad_outputs[0]
         
         x, W_E, b_E = ctx.saved_tensors
+        sparsity_threshold = ctx.sparsity_threshold
         
         assert grad_output.is_contiguous(), (
             "grad_output must be contiguous for triton kernels"
@@ -479,7 +484,7 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
         
         # Check if grad_output is sparse (after topk activation)
         sparsity_ratio = (grad_output == 0).float().mean().item()
-        use_sparse_kernels = sparsity_ratio > 0.7  # Use sparse kernels if >70% zeros
+        use_sparse_kernels = sparsity_ratio > sparsity_threshold  # Use sparse kernels if sparsity_ratio > sparsity_threshold
         
         if use_sparse_kernels:
             # Use triton sparse kernels for backward pass
@@ -524,7 +529,7 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
             grad_W_E = x.T @ grad_output  
             grad_b_E = grad_output.sum(dim=0)
         
-        return grad_x, grad_W_E, grad_b_E
+        return grad_x, grad_W_E, grad_b_E, None
 
 
 class TritonDecoderAutogradDynamicK(torch.autograd.Function):
