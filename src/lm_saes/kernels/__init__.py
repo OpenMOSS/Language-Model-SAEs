@@ -1,6 +1,6 @@
-from .entrypoints import decode_with_triton_spmm_kernel, triton_sparse_dense_matmul
+from .entrypoints import decode_with_triton_spmm_kernel, encode_with_triton_spmm_kernel
 
 __all__ = [
     "decode_with_triton_spmm_kernel",
-    "triton_sparse_dense_matmul",
+    "encode_with_triton_spmm_kernel",
 ]
