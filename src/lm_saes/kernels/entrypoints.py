@@ -49,6 +49,7 @@ def encode_with_triton_spmm_kernel(
     x: Float[torch.Tensor, "batch n_layers d_model"],
     W_E: Float[torch.Tensor, "n_layers d_model d_sae"],
     b_E: Float[torch.Tensor, "n_layers d_sae"],
+    sparsity_threshold: float = 0.996,
 ) -> Float[torch.Tensor, "batch n_layers d_sae"]:
     """
     Perform sparse-dense matrix multiplication using Triton for encoding.
@@ -60,6 +61,7 @@ def encode_with_triton_spmm_kernel(
         x: (batch, n_layers, d_model) - Input activations from all layers.
         W_E: (n_layers, d_model, d_sae) - Encoder weight matrices for each layer.
         b_E: (n_layers, d_sae) - Encoder bias vectors for each layer.
+        sparsity_threshold: (float) - Sparsity threshold for using sparse kernels.
 
     Returns:
         output: (batch, n_layers, d_sae) - The encoded output for all layers.
@@ -83,7 +85,7 @@ def encode_with_triton_spmm_kernel(
         
         # Compute: x_layer @ W_E_layer + b_E_layer
         # Result shape: (batch, d_sae)
-        layer_output = TritonEncoderAutogradDynamicK.apply(x_layer, W_E_layer, b_E_layer)
+        layer_output = TritonEncoderAutogradDynamicK.apply(x_layer, W_E_layer, b_E_layer, sparsity_threshold)
         assert isinstance(layer_output, torch.Tensor), "TritonEncoderAutogradDynamicK must return a tensor"
         
         # Store result in output tensor
