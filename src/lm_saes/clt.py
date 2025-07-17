@@ -364,7 +364,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     W_E_local, # (n_layers , d_model, d_sae)
                     b_E_local, # (n_layers, d_sae)
                     self.current_k, # k
-                    use_vmap=False, # Use vectorized implementation for better performance
+                    use_vmap=True, # Use vectorized implementation for better performance
                 )
             else:
                 hidden_pre_local = torch.einsum("...ld,lds->...ls", x_local, W_E_local) + b_E_local
@@ -488,7 +488,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         Float[torch.Tensor, "batch seq_len n_layers d_sae"],
         Float[torch.sparse.Tensor, "batch n_layers d_sae"],
     ]) -> bool:
-        is_sparse = isinstance(feature_acts, torch.sparse.Tensor)
+        is_sparse = feature_acts.is_sparse
         is_sparse = is_sparse or (
             (feature_acts.ne(0).sum() / feature_acts.numel()).item() < 1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel
         )
@@ -545,7 +545,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     ]:
         assert isinstance(feature_acts, list)
         for fa in feature_acts:
-            assert isinstance(fa, torch.sparse.Tensor)
+            assert fa.is_sparse
             assert fa.ndim == 2
 
         decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
