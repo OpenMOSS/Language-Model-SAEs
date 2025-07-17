@@ -435,23 +435,22 @@ def triton_sparse_dense_matmul_kernel(
 
 class TritonEncoderAutogradDynamicK(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, W_E, b_E, k):
+    def forward(ctx, x, W_E, b_E):
         """
         Forward pass: x @ W_E + b_E using dense operations.
         
         Args:
+            ctx: autograd context
             x: (batch, d_model) - Input activations
             W_E: (d_model, d_sae) - Encoder weights
             b_E: (d_sae,) - Encoder bias
-            k: int - Number of top-k activations (used for sparsity detection in backward)
             
         Returns:
             output: (batch, d_sae) - Encoded activations
         """
         # Save tensors for backward pass
         ctx.save_for_backward(x, W_E, b_E)
-        ctx.k = k
-        
+
         # Forward pass using dense operations (no triton kernel needed)
         output = torch.mm(x, W_E) + b_E
         return output
@@ -474,7 +473,6 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
         grad_output = grad_outputs[0]
         
         x, W_E, b_E = ctx.saved_tensors
-        k = ctx.k
         
         assert grad_output.is_contiguous(), (
             "grad_output must be contiguous for triton kernels"
