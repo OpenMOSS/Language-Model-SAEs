@@ -59,7 +59,6 @@ class Trainer:
         self.k_warmup_steps = calculate_warmup_steps(self.cfg.k_warmup_steps)
         self.k_cold_booting_steps = calculate_warmup_steps(self.cfg.k_cold_booting_steps)
         self.l1_coefficient_warmup_steps = calculate_warmup_steps(self.cfg.l1_coefficient_warmup_steps)
-        print(f"l1_coefficient_warmup_steps: {self.l1_coefficient_warmup_steps}  total_training_steps: {self.total_training_steps}")
         if self.cfg.n_checkpoints > 0:
             if self.cfg.check_point_save_mode == "linear":
                 self.checkpoint_thresholds = list(
