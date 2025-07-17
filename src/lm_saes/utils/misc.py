@@ -228,18 +228,24 @@ def all_gather_dict(
         List of dictionaries, one per rank, with gathered values.
     """
     world_size = dist.get_world_size(group=group)
+    current_rank = dist.get_rank(group=group)
     keys = list(data.keys())
     gathered_dicts: list[dict[str, Any]] = [dict() for _ in range(world_size)]
 
     # make sure all processes have the same keys
     keys_list = [keys] * world_size
     dist.all_gather_object(keys_list, keys, group=group)
-    keys = set(keys_list[0])
+    
+    # Ensure all ranks have the same keys and process them in the same order
+    all_keys = set(keys_list[0])
     for d in keys_list:
-        assert set(d) == keys, "Keys mismatch across ranks"
+        assert set(d) == all_keys, f"Keys mismatch across ranks. Rank {current_rank} expected {all_keys}, got {set(d)}"
+    
+    # CRITICAL: Sort keys to ensure all ranks process them in the same order
+    sorted_keys = sorted(all_keys)
 
-    # Gather each key separately
-    for k in keys:
+    # Gather each key separately in sorted order
+    for k in sorted_keys:
         v = data[k]
         if isinstance(v, torch.Tensor):
             expected_device = torch.device(f"cuda:{dist.get_rank(group=group)}")
@@ -255,4 +261,5 @@ def all_gather_dict(
             dist.all_gather_object(object_list, v, group=group)
             for i, obj in enumerate(object_list):
                 gathered_dicts[i][k] = obj
+    
     return gathered_dicts
