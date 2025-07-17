@@ -467,7 +467,6 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
             grad_x: (batch, d_model) - Gradient w.r.t. input
             grad_W_E: (d_model, d_sae) - Gradient w.r.t. encoder weights  
             grad_b_E: (d_sae,) - Gradient w.r.t. encoder bias
-            grad_k: None - No gradient for k parameter
         """
         assert len(grad_outputs) == 1, "Expected exactly one gradient output"
         grad_output = grad_outputs[0]
@@ -525,7 +524,7 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
             grad_W_E = x.T @ grad_output  
             grad_b_E = grad_output.sum(dim=0)
         
-        return grad_x, grad_W_E, grad_b_E, None
+        return grad_x, grad_W_E, grad_b_E
 
 
 class TritonDecoderAutogradDynamicK(torch.autograd.Function):
