@@ -52,7 +52,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         self.cfg = cfg
 
         # CLT requires specific configuration settings
-        assert cfg.sparsity_include_decoder_norm, "CLT requires sparsity_include_decoder_norm=True"
+        assert not cfg.sparsity_include_decoder_norm, "CLT requires sparsity_include_decoder_norm=False"
         assert cfg.use_decoder_bias, "CLT requires use_decoder_bias=True"
 
         # Initialize weights and biases for cross-layer architecture
@@ -157,80 +157,24 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             raise NotImplementedError("TopK activation function is not implemented for CLT")
 
         elif self.cfg.act_fn.lower() == "batchtopk":
-
-            # # batchtopk on single card
-            if self.cfg.type == "gt_include_decoder":
-                def batch_topk(feature_acts: Tensor) -> Tensor:
-                    batch_size, n_layers, d_sae = feature_acts.shape
-                    feature_acts = feature_acts * feature_acts.gt(0).to(feature_acts.dtype)
-                    decoder_norms = self.decoder_norm_per_feature()
-                    sparsity_score = feature_acts * decoder_norms
-                    kth_value, _ = torch.kthvalue(sparsity_score.flatten(), k=sparsity_score.flatten().shape[-1] - batch_size * n_layers * self.current_k + 1, dim=-1)
-                    # kth_value, _ = torch.kthvalue(feature_acts.flatten(), k=feature_acts.flatten().shape[-1] - batch_size * n_layers * self.current_k + 1, dim=-1)
-                    # return feature_acts * feature_acts.ge(kth_value)
-                    return feature_acts * sparsity_score.ge(kth_value)
-
-
-            # per-layer batchtopk on single card
-            # if device_mesh is None:
-            #     def batch_topk(feature_acts: Tensor) -> Tensor:
-            #         batch_size, n_layers, d_sae = feature_acts.shape
-            #         feature_acts = feature_acts * feature_acts.gt(0).to(feature_acts.dtype)
-                    
-            #         # Reshape to (n_layers, batch_size * d_sae) for per-layer top-k
-            #         feature_acts_reshaped = feature_acts.transpose(0, 1).reshape(n_layers, batch_size * d_sae)
-                    
-            #         # Compute k-th value for each layer
-            #         kth_values, _ = torch.kthvalue(
-            #             feature_acts_reshaped, 
-            #             k=feature_acts_reshaped.shape[-1] - batch_size *self.current_k + 1, 
-            #             dim=-1
-            #         )
-                    
-            #         # Reshape kth_values to (1, n_layers, 1) for broadcasting
-            #         kth_values = kth_values.view(1, n_layers, 1)
-                    
-            #         return feature_acts * feature_acts.ge(kth_values)
-            
-            # distributed batchtopk 
-            elif self.cfg.type == "binary_search":
+            if device_mesh is not None:
+                # distributed batchtopk 
                 from lm_saes.utils.distributed import distributed_batch_kthvalue_clt_binary_search
                 def batch_topk(feature_acts: Tensor) -> Tensor:
                     feature_acts = feature_acts * feature_acts.gt(0).to(feature_acts.dtype)
                     assert isinstance(feature_acts, DTensor)
-                    # Use configurable k_range from the configuration
-                    # k_range = self.cfg.k_range
                     k_range = (self.current_k-1, self.current_k)
-                    threshold, _ = distributed_batch_kthvalue_clt_binary_search(feature_acts, k_range, device_mesh)
+                    threshold = distributed_batch_kthvalue_clt_binary_search(feature_acts, k_range, device_mesh)
                     # threshold is now a scalar, so we can use it directly for comparison
                     return feature_acts * feature_acts.ge(threshold)
-
-            # from lm_saes.utils.distributed import distributed_batch_kthvalue_clt
-            # from lm_saes.utils.distributed import distributed_batch_k_filtered_clt
-            # from lm_saes.utils.distributed import distributed_batch_kthvalue_per_layer_clt
-
-            # def batch_topk(feature_acts: Tensor) -> Tensor:
-            #     # decoder_norms = self.decoder_norm_per_feature()
-            #     # feature_acts = feature_acts * feature_acts.gt(0).to(feature_acts.dtype)  ##
-            #     # sparsity_score = feature_acts * decoder_norms
-            #     assert isinstance(feature_acts, DTensor)
-            #     # assert isinstance(sparsity_score, DTensor)
-            #     # assert isinstance(decoder_norms, DTensor)
-            #     # kth_value, _ = distributed_batch_kthvalue_clt(feature_acts, self.current_k, device_mesh) 
-            #     filtered_feature_acts, _ = distributed_batch_k_filtered_clt(feature_acts, self.current_k, device_mesh) 
-            #     assert isinstance(filtered_feature_acts, DTensor)
-            #     return filtered_feature_acts
-            #     # kth_value, _ = distributed_batch_kthvalue_clt(sparsity_score, self.current_k, device_mesh) 
-            #     # kth_values_per_layer, _ = distributed_batch_kthvalue_per_layer_clt(feature_acts, self.current_k, device_mesh) 
-
-            #     # # type: ignore
-            #     # return feature_acts * sparsity_score.ge(kth_value)
-            #     # return feature_acts * feature_acts.ge(kth_value)
-                
-            #     # Apply threshold per layer: kth_values_per_layer has shape (n_layers,)
-            #     # We need to expand it to match feature_acts shape (batch, n_layers, d_sae)
-            #     # kth_values_expanded = kth_values_per_layer.unsqueeze(0).unsqueeze(-1)  # (1, n_layers, 1)
-            #     # return feature_acts * feature_acts.ge(kth_values_expanded)
+            else:
+                # single-GPU batchtopk
+                from lm_saes.utils.math import batch_kthvalue_clt_binary_search
+                def batch_topk(feature_acts: Tensor) -> Tensor:
+                    feature_acts = feature_acts * feature_acts.gt(0).to(feature_acts.dtype)
+                    k_range = (self.current_k-1, self.current_k)
+                    threshold = batch_kthvalue_clt_binary_search(feature_acts, k_range)
+                    return feature_acts * feature_acts.ge(threshold)
 
             return batch_topk  # type: ignore
 
@@ -396,29 +340,51 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         Returns:
             Feature activations for all layers (..., n_layers, d_sae)
         """
-        if self.cfg.use_triton_kernel and self.device_mesh is not None and self.current_k / self.cfg.d_sae < (1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel):  ## TODO: change this config name
-            # Only use triton kernel for distributed case
-            from lm_saes.kernels import encode_with_triton_clt_kernel
-            feature_acts = encode_with_triton_clt_kernel(x, self.W_E, self.b_E, self.current_k, self.device_mesh)
-            assert isinstance(feature_acts, DTensor), "encode_with_triton_clt_kernel should return a DTensor"
-            if return_hidden_pre:
-                # Note: triton kernel doesn't return hidden_pre, so we need to compute it separately
-                # This is a limitation - for full triton support with hidden_pre, we'd need to modify the kernel  ## TODO
-                hidden_pre = torch.einsum("...ld,lds->...ls", x, self.W_E) + self.b_E
-                return feature_acts, hidden_pre
-            return feature_acts
-        else:
-            # Apply each encoder to its corresponding layer: x[..., layer, :] @ W_E[layer] + b_E[layer]
-            with timer.time("encoder_matmul"):
-                hidden_pre = torch.einsum("...ld,lds->...ls", x, self.W_E) + self.b_E
 
-            # Apply activation function (ReLU, TopK, etc.)
-            with timer.time("activation_function"):
-                feature_acts = self.activation_function(hidden_pre)
+        encode_use_triton_kernel = self.cfg.encode_use_triton_kernel
 
-            if return_hidden_pre:
-                return feature_acts, hidden_pre
-            return feature_acts
+        # Apply each encoder to its corresponding layer: x[..., layer, :] @ W_E[layer] + b_E[layer]
+        with timer.time("encoder_matmul"):
+            if self.device_mesh is not None:
+                assert isinstance(x, DTensor)
+                assert isinstance(self.W_E, DTensor)
+                assert isinstance(self.b_E, DTensor)
+                x_local = x.to_local()
+                W_E_local = self.W_E.to_local()
+                b_E_local = self.b_E.to_local()
+            else:
+                x_local = x
+                W_E_local = self.W_E
+                b_E_local = self.b_E
+
+            if encode_use_triton_kernel:
+                from lm_saes.kernels import encode_with_triton_spmm_kernel
+                hidden_pre_local = encode_with_triton_spmm_kernel(
+                    x_local, # (batch n_layers d_model)
+                    W_E_local, # (n_layers , d_model, d_sae)
+                    b_E_local, # (n_layers, d_sae)
+                    self.current_k, # k
+                    use_vmap=False, # Use vectorized implementation for better performance
+                )
+            else:
+                hidden_pre_local = torch.einsum("...ld,lds->...ls", x_local, W_E_local) + b_E_local
+            
+            if self.device_mesh is not None:
+                hidden_pre = DTensor.from_local(
+                    hidden_pre_local,
+                    device_mesh=self.device_mesh,
+                    placements=self.dim_maps()["W_E"].placements(self.device_mesh),
+                )
+            else:
+                hidden_pre = hidden_pre_local
+
+        # Apply activation function (ReLU, TopK, etc.)
+        with timer.time("activation_function"):
+            feature_acts = self.activation_function(hidden_pre)
+
+        if return_hidden_pre:
+            return feature_acts, hidden_pre
+        return feature_acts
 
     def encode_single_layer(
         self,
@@ -476,7 +442,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             Float[torch.Tensor, "batch seq_len n_layers d_sae"],
             List[Float[torch.sparse.Tensor, "seq_len d_sae"]],
         ],
-        batch_f
+        batch_first: bool = False,
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, "n_layers batch d_model"],
@@ -517,11 +483,11 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         return reconstructed
 
-        def _use_triton_kernel(self, feature_acts: Union[
-            Float[torch.Tensor, "batch n_layers d_sae"],
-            Float[torch.Tensor, "batch seq_len n_layers d_sae"],
-            Float[torch.sparse.Tensor, "batch n_layers d_sae"],
-        ]) -> bool:
+    def _use_triton_kernel(self, feature_acts: Union[
+        Float[torch.Tensor, "batch n_layers d_sae"],
+        Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+        Float[torch.sparse.Tensor, "batch n_layers d_sae"],
+    ]) -> bool:
         is_sparse = isinstance(feature_acts, torch.sparse.Tensor)
         is_sparse = is_sparse or (
             (feature_acts.ne(0).sum() / feature_acts.numel()).item() < 1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel
@@ -550,12 +516,21 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             from lm_saes.kernels import decode_with_triton_spmm_kernel
             
             contribution = decode_with_triton_spmm_kernel(
-                feature_acts.flatten(start_dim=-2), # (batch, layer_to+1 * d_sae)
+                feature_acts_per_layer.flatten(start_dim=-2), # (batch, layer_to+1 * d_sae)
                 decoder_weights_local.flatten(end_dim=-2), # (layer_to+1 * d_sae, d_model)
                 dynamic_k=True
             ) # (batch, d_model)
         else:
             contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights_local)
+        
+        if self.device_mesh is not None:
+            # sum contributions from all devices
+            contributions = DTensor.from_local(
+                contribution.unsqueeze(-2),
+                device_mesh=self.device_mesh,
+                placements=self.dim_maps()["W_D"].placements(self.device_mesh)
+            )
+            contribution = contributions.sum(dim=1)
 
         return contribution
     
