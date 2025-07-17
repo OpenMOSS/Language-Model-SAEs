@@ -3,46 +3,12 @@ from typing import Union
 import torch
 from jaxtyping import Float
 
-from .kernels import TritonDecoderAutogradDynamicK, TritonDecoderAutogradTopK
+from .kernels import TritonDecoderAutogradDynamicK, TritonDecoderAutogradTopK, TritonEncoderAutogradDynamicK
+from .kernels import get_sparse_representation
 
-def get_sparse_representation(x, pad_val=0):
-    """
-    Efficiently extracts sparse indices and values from a batched dense tensor x.
+from lm_saes.utils.logging import get_logger
 
-    Args:
-        x (torch.Tensor): (B, d_sae) dense tensor with sparsity.
-        pad_val (int, optional): Value to use for padding (default: 0).
-
-    Returns:
-        sparse_indices (torch.Tensor): (B, nnz_max) Tensor containing column indices of nonzero elements.
-        sparse_values (torch.Tensor): (B, nnz_max) Tensor containing corresponding nonzero values.
-        nnz_per_row (torch.Tensor): (B,) Number of nonzero elements per row.
-    """
-    B, d_sae = x.shape
-
-    # Get nonzero indices and values
-    nonzero_idx = (x != 0).nonzero(as_tuple=True)  # (batch_idx, col_idx)
-    batch_indices, col_indices = nonzero_idx
-    values = x[nonzero_idx]
-
-    # Count nonzero elements per row
-    nnz_per_row = torch.bincount(batch_indices, minlength=B)
-    nnz_max = nnz_per_row.max().item()
-
-    # Prepare output tensors
-    sparse_indices = torch.full((B, cast(int, nnz_max)), pad_val, dtype=torch.long, device=x.device)
-    sparse_values = torch.zeros((B, cast(int, nnz_max)), dtype=x.dtype, device=x.device)
-
-    # Compute position indices for scattering
-    cum_nnzs = torch.cumsum(nnz_per_row, dim=0)
-    row_offsets = torch.cat([torch.tensor([0], device=x.device), cum_nnzs[:-1]])  # Shift right for offsets
-    positions = torch.arange(len(batch_indices), device=x.device) - row_offsets[batch_indices]
-
-    # Scatter indices and values
-    sparse_indices[batch_indices, positions] = col_indices
-    sparse_values[batch_indices, positions] = values
-
-    return sparse_indices, sparse_values
+logger = get_logger("kernels")
 
 
 def decode_with_triton_spmm_kernel(
@@ -50,7 +16,7 @@ def decode_with_triton_spmm_kernel(
         Float[torch.Tensor, "batch d_sae"],
         Float[torch.sparse.Tensor, "batch d_sae"]
     ],
-    decoder_weight: Float[torch.Tensor, "d_model d_sae"],
+    decoder_weight: Float[torch.Tensor, "d_sae d_model"], ## TODO: check if this is correct, this is compatible with current situation
     dynamic_k: bool = True,
 ) -> Union[
     Float[torch.Tensor, "batch d_model"],
@@ -67,7 +33,7 @@ def decode_with_triton_spmm_kernel(
     Returns:
         output: (B, d_model) - The decoded output.
     """
-    if isinstance(feature_acts, torch.sparse.Tensor):
+    if feature_acts.is_sparse:
         sparse_indices, sparse_values = feature_acts.indices(), feature_acts.values()
         output = TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.contiguous().T)
         return output  # type: ignore[return-value]
@@ -79,6 +45,70 @@ def decode_with_triton_spmm_kernel(
         output = TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.contiguous().T)
     return output  # type: ignore[return-value]
 
+def encode_with_triton_spmm_kernel(
+    x: Float[torch.Tensor, "batch n_layers d_model"],
+    W_E: Float[torch.Tensor, "n_layers d_model d_sae"],
+    b_E: Float[torch.Tensor, "n_layers d_sae"],
+    k: int,
+    use_vmap: bool = True,
+) -> Float[torch.Tensor, "batch n_layers d_sae"]:
+    """
+    Perform sparse-dense matrix multiplication using Triton for encoding.
+
+    This function implements the "bld,lds->bls" operation by processing each layer
+    separately and stacking the results, as requested. Provides both for-loop
+    and vectorized (vmap) implementations.
+
+    Args:
+        x: (batch, n_layers, d_model) - Input activations from all layers.
+        W_E: (n_layers, d_model, d_sae) - Encoder weight matrices for each layer.
+        b_E: (n_layers, d_sae) - Encoder bias vectors for each layer.
+        k: (int) - Number of top-k values to keep for sparsity optimization.
+        use_vmap: (bool) - Whether to use torch.vmap for vectorization (default: True).
+
+    Returns:
+        output: (batch, n_layers, d_sae) - The encoded output for all layers.
+    """
+    batch_size, n_layers, d_model = x.shape
+    d_sae = W_E.shape[2]
+    
+    if use_vmap:
+        # Vectorized implementation using torch.vmap
+        def layer_encode(x_layer, w_layer, b_layer):
+            """Encode a single layer: (batch, d_model) @ (d_model, d_sae) + (d_sae,)"""
+            result = TritonEncoderAutogradDynamicK.apply(x_layer, w_layer, b_layer, k)
+            assert isinstance(result, torch.Tensor), "TritonEncoderAutogradDynamicK must return a tensor"
+            return result
+        
+        # Use vmap to vectorize across the layer dimension
+        # vmap over dimension 1 (layer dimension) for all inputs
+        vmapped_encode = torch.vmap(layer_encode, in_dims=(1, 0, 0), out_dims=1)
+        output = vmapped_encode(x, W_E, b_E)
+        
+    else:
+        # For-loop implementation as originally requested
+        output = torch.zeros(batch_size, n_layers, d_sae, device=x.device, dtype=x.dtype)
+        
+        # Process each layer separately using the approach suggested by the user
+        for layer_idx in range(n_layers):
+            # Extract activations for this layer: (batch, d_model)
+            x_layer = x[:, layer_idx, :]
+            
+            # Extract encoder weights for this layer: (d_model, d_sae)
+            W_E_layer = W_E[layer_idx, :, :]
+            
+            # Extract bias for this layer: (d_sae,)
+            b_E_layer = b_E[layer_idx, :]
+            
+            # Compute: x_layer @ W_E_layer + b_E_layer
+            # Result shape: (batch, d_sae)
+            layer_output = TritonEncoderAutogradDynamicK.apply(x_layer, W_E_layer, b_E_layer, k)
+            assert isinstance(layer_output, torch.Tensor), "TritonEncoderAutogradDynamicK must return a tensor"
+            
+            # Store result in output tensor
+            output[:, layer_idx, :] = layer_output
+    
+    return output
 
 
 if __name__ == "__main__":
