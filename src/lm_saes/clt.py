@@ -363,8 +363,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     x_local, # (batch n_layers d_model)
                     W_E_local, # (n_layers , d_model, d_sae)
                     b_E_local, # (n_layers, d_sae)
-                    self.current_k, # k
-                    use_vmap=True, # Use vectorized implementation for better performance
                 )
             else:
                 hidden_pre_local = torch.einsum("...ld,lds->...ls", x_local, W_E_local) + b_E_local

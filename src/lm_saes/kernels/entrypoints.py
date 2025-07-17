@@ -49,22 +49,17 @@ def encode_with_triton_spmm_kernel(
     x: Float[torch.Tensor, "batch n_layers d_model"],
     W_E: Float[torch.Tensor, "n_layers d_model d_sae"],
     b_E: Float[torch.Tensor, "n_layers d_sae"],
-    k: int,
-    use_vmap: bool = True,
 ) -> Float[torch.Tensor, "batch n_layers d_sae"]:
     """
     Perform sparse-dense matrix multiplication using Triton for encoding.
 
     This function implements the "bld,lds->bls" operation by processing each layer
-    separately and stacking the results, as requested. Provides both for-loop
-    and vectorized (vmap) implementations.
+    separately and stacking the results, as requested. Provides only for-loop implementations.
 
     Args:
         x: (batch, n_layers, d_model) - Input activations from all layers.
         W_E: (n_layers, d_model, d_sae) - Encoder weight matrices for each layer.
         b_E: (n_layers, d_sae) - Encoder bias vectors for each layer.
-        k: (int) - Number of top-k values to keep for sparsity optimization.
-        use_vmap: (bool) - Whether to use torch.vmap for vectorization (default: True).
 
     Returns:
         output: (batch, n_layers, d_sae) - The encoded output for all layers.
@@ -72,41 +67,27 @@ def encode_with_triton_spmm_kernel(
     batch_size, n_layers, d_model = x.shape
     d_sae = W_E.shape[2]
     
-    if use_vmap:
-        # Vectorized implementation using torch.vmap
-        def layer_encode(x_layer, w_layer, b_layer):
-            """Encode a single layer: (batch, d_model) @ (d_model, d_sae) + (d_sae,)"""
-            result = TritonEncoderAutogradDynamicK.apply(x_layer, w_layer, b_layer, k)
-            assert isinstance(result, torch.Tensor), "TritonEncoderAutogradDynamicK must return a tensor"
-            return result
+    # For-loop implementation as originally requested
+    output = torch.zeros(batch_size, n_layers, d_sae, device=x.device, dtype=x.dtype)
+    
+    # Process each layer separately using the approach suggested by the user
+    for layer_idx in range(n_layers):
+        # Extract activations for this layer: (batch, d_model)
+        x_layer = x[:, layer_idx, :]
         
-        # Use vmap to vectorize across the layer dimension
-        # vmap over dimension 1 (layer dimension) for all inputs
-        vmapped_encode = torch.vmap(layer_encode, in_dims=(1, 0, 0), out_dims=1)
-        output = vmapped_encode(x, W_E, b_E)
+        # Extract encoder weights for this layer: (d_model, d_sae)
+        W_E_layer = W_E[layer_idx, :, :]
         
-    else:
-        # For-loop implementation as originally requested
-        output = torch.zeros(batch_size, n_layers, d_sae, device=x.device, dtype=x.dtype)
+        # Extract bias for this layer: (d_sae,)
+        b_E_layer = b_E[layer_idx, :]
         
-        # Process each layer separately using the approach suggested by the user
-        for layer_idx in range(n_layers):
-            # Extract activations for this layer: (batch, d_model)
-            x_layer = x[:, layer_idx, :]
-            
-            # Extract encoder weights for this layer: (d_model, d_sae)
-            W_E_layer = W_E[layer_idx, :, :]
-            
-            # Extract bias for this layer: (d_sae,)
-            b_E_layer = b_E[layer_idx, :]
-            
-            # Compute: x_layer @ W_E_layer + b_E_layer
-            # Result shape: (batch, d_sae)
-            layer_output = TritonEncoderAutogradDynamicK.apply(x_layer, W_E_layer, b_E_layer, k)
-            assert isinstance(layer_output, torch.Tensor), "TritonEncoderAutogradDynamicK must return a tensor"
-            
-            # Store result in output tensor
-            output[:, layer_idx, :] = layer_output
+        # Compute: x_layer @ W_E_layer + b_E_layer
+        # Result shape: (batch, d_sae)
+        layer_output = TritonEncoderAutogradDynamicK.apply(x_layer, W_E_layer, b_E_layer)
+        assert isinstance(layer_output, torch.Tensor), "TritonEncoderAutogradDynamicK must return a tensor"
+        
+        # Store result in output tensor
+        output[:, layer_idx, :] = layer_output
     
     return output
 
