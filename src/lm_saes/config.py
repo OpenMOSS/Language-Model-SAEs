@@ -138,8 +138,6 @@ class CLTConfig(BaseSAEConfig):
     """List of hook points to capture output activations from, one for each layer."""
     k_range: tuple[int, int] = (60, 70)
     """Acceptable range for the number of elements above threshold in batchtopk activation (lower_bound, upper_bound)."""
-    type: Literal["gt_include_decoder", "binary_search"] = "gt_include_decoder"
-    """The type of batchtopk while developing.""" 
 
     @property
     def n_layers(self) -> int:

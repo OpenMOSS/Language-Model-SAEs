@@ -341,8 +341,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             Feature activations for all layers (..., n_layers, d_sae)
         """
 
-        encode_use_triton_kernel = self.cfg.encode_use_triton_kernel
-
         # Apply each encoder to its corresponding layer: x[..., layer, :] @ W_E[layer] + b_E[layer]
         with timer.time("encoder_matmul"):
             if self.device_mesh is not None:
@@ -357,7 +355,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 W_E_local = self.W_E
                 b_E_local = self.b_E
 
-            if encode_use_triton_kernel:
+            if self.cfg.use_triton_kernel:
                 from lm_saes.kernels import encode_with_triton_spmm_kernel
                 hidden_pre_local = encode_with_triton_spmm_kernel(
                     x_local, # (batch n_layers d_model)
@@ -481,17 +479,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         reconstructed = torch.stack(reconstructed, dim=1 if batch_first else 0)
 
         return reconstructed
-
-    def _use_triton_kernel(self, feature_acts: Union[
-        Float[torch.Tensor, "batch n_layers d_sae"],
-        Float[torch.Tensor, "batch seq_len n_layers d_sae"],
-        Float[torch.sparse.Tensor, "batch n_layers d_sae"],
-    ]) -> bool:
-        is_sparse = feature_acts.is_sparse
-        is_sparse = is_sparse or (
-            (feature_acts.ne(0).sum() / feature_acts.numel()).item() < 1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel
-        )
-        return is_sparse and self.cfg.use_triton_kernel
     
     def _decode_single_output_layer(self, feature_acts: Union[
         Float[torch.Tensor, "batch n_layers d_sae"],
@@ -511,13 +498,14 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             feature_acts_per_layer = feature_acts[..., : layer_to + 1, :]
             decoder_weights_local = decoder_weights
 
-        if self._use_triton_kernel(feature_acts_per_layer):
+        if self.cfg.use_triton_kernel:
             from lm_saes.kernels import decode_with_triton_spmm_kernel
             
             contribution = decode_with_triton_spmm_kernel(
                 feature_acts_per_layer.flatten(start_dim=-2), # (batch, layer_to+1 * d_sae)
                 decoder_weights_local.flatten(end_dim=-2), # (layer_to+1 * d_sae, d_model)
-                dynamic_k=True
+                dynamic_k=True,
+                sparsity_threshold=self.cfg.sparsity_threshold_for_triton_spmm_kernel,
             ) # (batch, d_model)
         else:
             contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights_local)
