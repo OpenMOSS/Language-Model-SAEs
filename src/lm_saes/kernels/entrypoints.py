@@ -18,6 +18,7 @@ def decode_with_triton_spmm_kernel(
     ],
     decoder_weight: Float[torch.Tensor, "d_sae d_model"], ## TODO: check if this is correct, this is compatible with current situation
     dynamic_k: bool = True,
+    sparsity_threshold: float = 0.996,
 ) -> Union[
     Float[torch.Tensor, "batch d_model"],
     Float[torch.Tensor, "batch n_layers d_model"],
@@ -29,6 +30,8 @@ def decode_with_triton_spmm_kernel(
     Args:
         feature_acts: (B, d_sae) - Sparse feature activations (input).
         decoder_weight: (d_sae, d_model) - Decoder weight matrix.
+        dynamic_k: bool - Whether to use dynamic k selection.
+        sparsity_threshold: float - Sparsity threshold for using sparse kernels.
 
     Returns:
         output: (B, d_model) - The decoded output.
@@ -39,7 +42,7 @@ def decode_with_triton_spmm_kernel(
         return output  # type: ignore[return-value]
     
     if dynamic_k:
-        output = TritonDecoderAutogradDynamicK.apply(feature_acts, decoder_weight.contiguous().T)
+        output = TritonDecoderAutogradDynamicK.apply(feature_acts, decoder_weight.contiguous().T, sparsity_threshold)
     else:
         sparse_indices, sparse_values = get_sparse_representation(feature_acts)
         output = TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.contiguous().T)
