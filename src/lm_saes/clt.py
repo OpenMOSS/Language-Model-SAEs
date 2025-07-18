@@ -340,40 +340,103 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         Returns:
             Feature activations for all layers (..., n_layers, d_sae)
         """
+        if self.device_mesh is not None:
+            return self._encode_distributed(x, return_hidden_pre, **kwargs)
+        else:
+            return self._encode_single_gpu(x, return_hidden_pre, **kwargs)
 
-        # Apply each encoder to its corresponding layer: x[..., layer, :] @ W_E[layer] + b_E[layer]
+    def _encode_distributed(
+        self,
+        x: Union[
+            Float[torch.Tensor, "batch n_layers d_model"],
+            Float[torch.Tensor, "batch seq_len n_layers d_model"],
+        ],
+        return_hidden_pre: bool = False,
+        **kwargs,
+    ) -> Union[
+        Float[torch.Tensor, "batch n_layers d_sae"],
+        Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+        tuple[
+            Union[
+                Float[torch.Tensor, "batch n_layers d_sae"],
+                Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+            ],
+            Union[
+                Float[torch.Tensor, "batch n_layers d_sae"],
+                Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+            ],
+        ],
+    ]:
+        """Distributed encoding implementation."""
+        assert isinstance(x, DTensor)
+        assert isinstance(self.W_E, DTensor)
+        assert isinstance(self.b_E, DTensor)
+        assert self.device_mesh is not None
+        
         with timer.time("encoder_matmul"):
-            if self.device_mesh is not None:
-                assert isinstance(x, DTensor)
-                assert isinstance(self.W_E, DTensor)
-                assert isinstance(self.b_E, DTensor)
-                x_local = x.to_local()
-                W_E_local = self.W_E.to_local()
-                b_E_local = self.b_E.to_local()
-            else:
-                x_local = x
-                W_E_local = self.W_E
-                b_E_local = self.b_E
+            x_local = x.to_local()
+            W_E_local = self.W_E.to_local()
+            b_E_local = self.b_E.to_local()
 
             if self.cfg.use_triton_kernel:
                 from lm_saes.kernels import encode_with_triton_spmm_kernel
                 hidden_pre_local = encode_with_triton_spmm_kernel(
-                    x_local, # (batch n_layers d_model)
-                    W_E_local, # (n_layers , d_model, d_sae)
-                    b_E_local, # (n_layers, d_sae)
+                    x_local,  # (batch n_layers d_model)
+                    W_E_local,  # (n_layers, d_model, d_sae)
+                    b_E_local,  # (n_layers, d_sae)
                     self.cfg.sparsity_threshold_for_triton_spmm_kernel,
                 )
             else:
                 hidden_pre_local = torch.einsum("...ld,lds->...ls", x_local, W_E_local) + b_E_local
             
-            if self.device_mesh is not None:
-                hidden_pre = DTensor.from_local(
-                    hidden_pre_local,
-                    device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["W_E"].placements(self.device_mesh),
+            hidden_pre = DTensor.from_local(
+                hidden_pre_local,
+                device_mesh=self.device_mesh,
+                placements=self.dim_maps()["W_E"].placements(self.device_mesh),
+            )
+
+        # Apply activation function (ReLU, TopK, etc.)
+        with timer.time("activation_function"):
+            feature_acts = self.activation_function(hidden_pre)
+
+        if return_hidden_pre:
+            return feature_acts, hidden_pre
+        return feature_acts
+
+    def _encode_single_gpu(
+        self,
+        x: Union[
+            Float[torch.Tensor, "batch n_layers d_model"],
+            Float[torch.Tensor, "batch seq_len n_layers d_model"],
+        ],
+        return_hidden_pre: bool = False,
+        **kwargs,
+    ) -> Union[
+        Float[torch.Tensor, "batch n_layers d_sae"],
+        Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+        tuple[
+            Union[
+                Float[torch.Tensor, "batch n_layers d_sae"],
+                Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+            ],
+            Union[
+                Float[torch.Tensor, "batch n_layers d_sae"],
+                Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+            ],
+        ],
+    ]:
+        """Single GPU encoding implementation."""
+        with timer.time("encoder_matmul"):
+            if self.cfg.use_triton_kernel:
+                from lm_saes.kernels import encode_with_triton_spmm_kernel
+                hidden_pre = encode_with_triton_spmm_kernel(
+                    x,  # (batch n_layers d_model)
+                    self.W_E,  # (n_layers, d_model, d_sae)
+                    self.b_E,  # (n_layers, d_sae)
+                    self.cfg.sparsity_threshold_for_triton_spmm_kernel,
                 )
             else:
-                hidden_pre = hidden_pre_local
+                hidden_pre = torch.einsum("...ld,lds->...ls", x, self.W_E) + self.b_E
 
         # Apply activation function (ReLU, TopK, etc.)
         with timer.time("activation_function"):
@@ -487,37 +550,80 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
-        decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
+        """Decode features for a single output layer using upper triangular pattern."""
         if self.device_mesh is not None:
-            assert isinstance(feature_acts, DTensor)
-            assert isinstance(decoder_weights, DTensor)
-
-            feature_acts_per_layer = feature_acts.to_local()[..., : layer_to + 1, :]
-            decoder_weights_local = decoder_weights.to_local()
+            return self._decode_single_output_layer_distributed(feature_acts, layer_to)
         else:
-            feature_acts_per_layer = feature_acts[..., : layer_to + 1, :]
-            decoder_weights_local = decoder_weights
+            return self._decode_single_output_layer_single_gpu(feature_acts, layer_to)
+
+    def _decode_single_output_layer_distributed(
+        self, 
+        feature_acts: Union[
+            Float[torch.Tensor, "batch n_layers d_sae"],
+            Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+        ], 
+        layer_to: int
+    ) -> Union[
+        Float[torch.Tensor, "batch d_model"],
+        Float[torch.Tensor, "batch seq_len d_model"],
+    ]:
+        """Distributed decoding implementation for a single output layer."""
+        decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
+        
+        assert isinstance(feature_acts, DTensor)
+        assert isinstance(decoder_weights, DTensor)
+
+        feature_acts_per_layer = feature_acts.to_local()[..., : layer_to + 1, :]
+        decoder_weights_local = decoder_weights.to_local()
 
         if self.cfg.use_triton_kernel:
             from lm_saes.kernels import decode_with_triton_spmm_kernel
             
             contribution = decode_with_triton_spmm_kernel(
-                feature_acts_per_layer.flatten(start_dim=-2), # (batch, layer_to+1 * d_sae)
-                decoder_weights_local.flatten(end_dim=-2), # (layer_to+1 * d_sae, d_model)
+                feature_acts_per_layer.flatten(start_dim=-2),  # (batch, layer_to+1 * d_sae)
+                decoder_weights_local.flatten(end_dim=-2),  # (layer_to+1 * d_sae, d_model)
                 dynamic_k=True,
                 sparsity_threshold=self.cfg.sparsity_threshold_for_triton_spmm_kernel,
-            ) # (batch, d_model)
+            )  # (batch, d_model)
         else:
             contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights_local)
         
-        if self.device_mesh is not None:
-            # sum contributions from all devices
-            contributions = DTensor.from_local(
-                contribution.unsqueeze(-2),
-                device_mesh=self.device_mesh,
-                placements=self.dim_maps()["W_D"].placements(self.device_mesh)
-            )
-            contribution = contributions.sum(dim=1)
+        # Sum contributions from all devices
+        contributions = DTensor.from_local(
+            contribution.unsqueeze(-2),
+            device_mesh=self.device_mesh,
+            placements=self.dim_maps()["W_D"].placements(self.device_mesh)
+        )
+        contribution = contributions.sum(dim=1)
+
+        return contribution
+    
+    def _decode_single_output_layer_single_gpu(
+        self, 
+        feature_acts: Union[
+            Float[torch.Tensor, "batch n_layers d_sae"],
+            Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+        ], 
+        layer_to: int
+    ) -> Union[
+        Float[torch.Tensor, "batch d_model"],
+        Float[torch.Tensor, "batch seq_len d_model"],
+    ]:
+        """Single GPU decoding implementation for a single output layer."""
+        decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
+        feature_acts_per_layer = feature_acts[..., : layer_to + 1, :]
+
+        if self.cfg.use_triton_kernel:
+            from lm_saes.kernels import decode_with_triton_spmm_kernel
+            
+            contribution = decode_with_triton_spmm_kernel(
+                feature_acts_per_layer.flatten(start_dim=-2),  # (batch, layer_to+1 * d_sae)
+                decoder_weights.flatten(end_dim=-2),  # (layer_to+1 * d_sae, d_model)
+                dynamic_k=True,
+                sparsity_threshold=self.cfg.sparsity_threshold_for_triton_spmm_kernel,
+            )  # (batch, d_model)
+        else:
+            contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights)
 
         return contribution
     
