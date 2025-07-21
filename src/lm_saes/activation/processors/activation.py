@@ -143,11 +143,18 @@ class ActivationGenerator(BaseActivationProcessor[Iterable[dict[str, Any]], Iter
                 - Original info field if present in input
         """
         for d in self.batched(data):
-            activations = model.to_activations(d, self.hook_points, n_context=self.n_context)
-            if "meta" in d:
-                activations = activations | {"meta": [m | {"model_name": model_name} for m in d["meta"]]}
-            else:
-                activations = activations | {"meta": [{"model_name": model_name} for _ in range(len(d["text"]))]}
+            # for specific models like LLaDA, we need to preprocess the raw data, e.g. add mask tokens to the raw[text] and replace the raw[text] with the masked text
+            d = model.preprocess_raw_data(d)
+            activations, extra_info = model.to_activations(d, self.hook_points, n_context=self.n_context)
+            # merge meta information
+            extra_info = extra_info if extra_info is not None else [{} for _ in range(len(d["text"]))]
+            existing_meta = d.get("meta", [{} for _ in range(len(d["text"]))])
+            activations = {
+                **activations,
+                "meta": [
+                    {"model_name": model_name} | existing_meta[i] | extra_info[i] for i in range(len(extra_info))
+                ],
+            }
             yield activations
 
 

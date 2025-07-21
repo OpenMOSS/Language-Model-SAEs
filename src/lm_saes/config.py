@@ -12,6 +12,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PlainSerializer,
+    root_validator,
     WithJsonSchema,
 )
 
@@ -98,6 +99,10 @@ class BaseSAEConfig(BaseModelConfig, ABC):
             sae_config = json.load(f)
         sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
         sae_config["strict_loading"] = strict_loading
+        if sae_config['sae_type'] == 'sae':
+            if sae_config['proj_data'] is True:
+                sae_config['proj_data'] = False
+                sae_config['d_feature'] = sae_config['d_model']
         return cls.model_validate({**sae_config, **kwargs})
 
     def save_hyperparameters(self, sae_path: Path | str, remove_loading_info: bool = True):
@@ -121,6 +126,29 @@ class SAEConfig(BaseSAEConfig):
     hook_point_in: str
     hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
     use_glu_encoder: bool = False
+    d_feature: Optional[int] = None
+    init_with_svd: bool = True
+    proj_data: bool = False
+    fold_data_proj_into_sae_step: float = 2.0  # >1.0 means not fold
+
+    @root_validator(pre=True)
+    def validate_proj_data_and_svd(cls, values: dict[str, any]) -> dict[str, any]:
+        """Validate projection data and SVD settings, and set d_feature to d_model if d_feature is None."""
+        d_feature = values.get("d_feature")
+        d_model = values.get("d_model")
+        proj_data = values.get("proj_data", False)
+        init_with_svd = values.get("init_with_svd", True)
+
+        # Set d_feature to d_model if d_feature is None
+        if d_feature is None:
+            values["d_feature"] = d_model
+            d_feature = d_model
+
+        # Validate projection data and SVD configuration
+        if d_feature != d_model and proj_data and not init_with_svd:
+            raise ValueError("When using projection data (proj_data=True) and d_feature != d_model, SVD initialization (init_with_svd=True) is required.")
+
+        return values
 
     @property
     def associated_hook_points(self) -> list[str]:
@@ -195,9 +223,13 @@ class TrainerConfig(BaseConfig):
     use_batch_norm_mse: bool = True
 
     lr: float | dict[str, float] = 0.0004
+    lr_fold: float | None = None
     expected_l0: int = 100
     update_decoder_lr_with_l0: bool = True
+    optimizer_type: Literal["adam", "sgd", 'lazyadam'] = "adam"
     betas: Tuple[float, float] = (0.9, 0.999)
+    momentum: float = 0.9
+    weight_decay: float = 0.0
     lr_scheduler_name: Literal[
         "constant",
         "constantwithwarmup",
@@ -363,6 +395,9 @@ class LanguageModelConfig(BaseModelConfig):
     backend: Literal["huggingface", "transformer_lens", "auto"] = "auto"
     """ The backend to use for the language model. """
     load_ckpt: bool = True
+    
+    prepend_bos: bool = True
+    """ Whether to prepend the BOS token to the input. """
 
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):

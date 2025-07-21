@@ -409,7 +409,11 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
     def get_parameters(self) -> list[dict[str, Any]]:
         """Get the parameters of the model for optimization."""
-        return [{"params": self.parameters()}]
+        jumprelu_params = (
+            list(self.activation_function.parameters()) if isinstance(self.activation_function, JumpReLU) else []
+        )
+        other_params = [p for p in self.parameters() if not any(p is param for param in jumprelu_params)]
+        return [{"params": other_params, "name": "others"}, {"params": jumprelu_params, "name": "jumprelu"}]
 
     def load_full_state_dict(self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh | None = None) -> None:
         # Extract and set dataset_average_activation_norm if present
@@ -564,11 +568,31 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     Float[torch.Tensor, "batch seq_len d_sae"],
                 ],
             ):
-                x = torch.clamp(x, min=0.0)
-                k = x.shape[-1] - self.current_k + 1
-                k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
-                k_th_value = k_th_value.unsqueeze(dim=-1)
-                return x.ge(k_th_value)
+                if self.device_mesh is not None:
+                    local_x = x.to_local()
+                    local_topk_values, _ = local_x.topk(k=self.current_k, dim=-1)
+                    world_size = torch.distributed.get_world_size()
+                    global_topk_values = [
+                        torch.zeros_like(local_topk_values) for _ in range(world_size)
+                    ]
+                    
+                    torch.distributed.all_gather(global_topk_values, local_topk_values)
+                    
+                    global_topk_values = torch.cat(global_topk_values, dim=-1)
+                    k = global_topk_values.shape[-1] - self.current_k + 1
+                    k_th_value, _ = torch.kthvalue(global_topk_values, k=k, dim=-1)
+                    k_th_value = k_th_value.unsqueeze(dim=-1)
+                    return DTensor.from_local(
+                        local_x.ge(k_th_value),
+                        device_mesh=self.device_mesh,
+                        placements=x.placements,
+                    )
+                else:
+                    x = torch.clamp(x, min=0.0)
+                    k = x.shape[-1] - self.current_k + 1
+                    k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
+                    k_th_value = k_th_value.unsqueeze(dim=-1)
+                    return x.ge(k_th_value)
 
             return topk_activation
 
@@ -685,13 +709,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
             if sparsity_loss_type is not None:
                 with timer.time("sparsity_loss_calculation"):
+                    decoder_norm = self.decoder_norm() if self.cfg.sparsity_include_decoder_norm else 1.0
                     if sparsity_loss_type == "power":
-                        l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
+                        l_s = torch.norm(feature_acts * decoder_norm, p=p, dim=-1)
                     elif sparsity_loss_type == "tanh":
-                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
+                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm).sum(dim=-1)
                     elif sparsity_loss_type == "tanh-quad":
                         approx_frequency = einops.reduce(
-                            torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()),
+                            torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm),
                             "... d_sae -> d_sae",
                             "mean",
                         )

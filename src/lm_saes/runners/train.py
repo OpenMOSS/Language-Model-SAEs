@@ -139,7 +139,7 @@ def train_sae(settings: TrainSAESettings) -> None:
         else None
     )
 
-    activation_factory = ActivationFactory(settings.activation_factory)
+    activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
     logger.info("Processing activations stream")
     activations_stream = activation_factory.process(

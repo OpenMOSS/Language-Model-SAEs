@@ -6,14 +6,14 @@ import torch
 import torch.optim.lr_scheduler as lr_scheduler
 from torch import Tensor
 from torch.distributed.tensor import DTensor
-from torch.optim import Adam, Optimizer
+from torch.optim import Adam, SGD, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.optim import get_scheduler
+from lm_saes.optim import get_scheduler, LazyAdam
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
@@ -61,7 +61,7 @@ class Trainer:
             if self.cfg.check_point_save_mode == "linear":
                 self.checkpoint_thresholds = list(
                     range(0, self.cfg.total_training_tokens, self.cfg.total_training_tokens // self.cfg.n_checkpoints)
-                )[1:]
+                )
             elif self.cfg.check_point_save_mode == "log":
                 self.checkpoint_thresholds = [
                     math.ceil(2 ** (i / self.cfg.n_checkpoints * math.log2(self.total_training_steps))) * bs
@@ -79,17 +79,104 @@ class Trainer:
     @timer.time("initialize_optimizer")
     def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
         assert isinstance(self.cfg.lr, float)
-        optimizer = Adam(sae.get_parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
+        
+        if self.cfg.optimizer_type == "adam":
+            optimizer = Adam(
+                sae.get_parameters(), 
+                lr=self.cfg.lr, 
+                betas=self.cfg.betas,
+                weight_decay=self.cfg.weight_decay
+            )
+        elif self.cfg.optimizer_type == "sgd":
+            optimizer = SGD(
+                sae.get_parameters(), 
+                lr=self.cfg.lr, 
+                momentum=self.cfg.momentum,
+                weight_decay=self.cfg.weight_decay
+            )
+        elif self.cfg.optimizer_type == "lazyadam":
+            optimizer = LazyAdam(
+                sae.get_parameters(), 
+                lr=self.cfg.lr, 
+                betas=self.cfg.betas,
+                weight_decay=self.cfg.weight_decay
+            )
+        else:
+            raise ValueError(f"不支持的优化器类型: {self.cfg.optimizer_type}")
+            
         scheduler = get_scheduler(
             scheduler_name=self.cfg.lr_scheduler_name,
             optimizer=optimizer,
             warm_up_steps=self.lr_warm_up_steps,
             cool_down_steps=self.lr_cool_down_steps,
-            training_steps=self.total_training_steps,
+            training_steps=(self.total_training_steps * sae.cfg.fold_data_proj_into_sae_step) if sae.cfg.proj_data else self.total_training_steps,
             lr_end_ratio=self.cfg.lr_end_ratio,
         )
         self.optimizer = optimizer
         self.scheduler = scheduler
+
+    def _reinitialize_optimizer_after_param_change(self, sae: AbstractSparseAutoEncoder):
+        """Reinitialize optimizer after parameter change.
+        
+        When the parameter structure of the SAE model changes (deletion or addition of parameters), 
+        this method needs to be called to rebind the optimizer to the new parameter list.
+        
+        Args:
+            sae: SAE model instance
+        """
+        assert self.optimizer is not None, "Original optimizer must be initialized"
+        assert isinstance(self.cfg.lr, float)
+        
+        if self.cfg.optimizer_type == "adam":
+            new_optimizer = Adam(
+                sae.get_parameters(), 
+                lr=self.cfg.lr_fold,
+                betas=self.cfg.betas,
+                weight_decay=self.cfg.weight_decay
+            )
+            new_scheduler = get_scheduler(
+                scheduler_name=self.cfg.lr_scheduler_name,
+                optimizer=new_optimizer,
+                warm_up_steps=self.lr_warm_up_steps,
+                cool_down_steps=self.lr_cool_down_steps,
+                training_steps=self.total_training_steps * (1 - sae.cfg.fold_data_proj_into_sae_step),
+                lr_end_ratio=self.cfg.lr_end_ratio,
+            )
+        elif self.cfg.optimizer_type == "sgd":
+            new_optimizer = SGD(
+                sae.get_parameters(), 
+                lr=self.cfg.lr_fold,
+                momentum=self.cfg.momentum,
+                weight_decay=self.cfg.weight_decay
+            )
+            new_scheduler = get_scheduler(
+                scheduler_name=self.cfg.lr_scheduler_name,
+                optimizer=new_optimizer,
+                warm_up_steps=self.lr_warm_up_steps,
+                cool_down_steps=self.lr_cool_down_steps,
+                training_steps=self.total_training_steps * (1 - sae.cfg.fold_data_proj_into_sae_step),
+                lr_end_ratio=self.cfg.lr_end_ratio,
+            )
+        elif self.cfg.optimizer_type == "lazyadam":
+            new_optimizer = LazyAdam(
+                sae.get_parameters(), 
+                lr=self.cfg.lr_fold,
+                betas=self.cfg.betas,
+                weight_decay=self.cfg.weight_decay
+            )
+            new_scheduler = get_scheduler(
+                scheduler_name=self.cfg.lr_scheduler_name,
+                optimizer=new_optimizer,
+                warm_up_steps=self.lr_warm_up_steps,
+                cool_down_steps=self.lr_cool_down_steps,
+                training_steps=self.total_training_steps * (1 - sae.cfg.fold_data_proj_into_sae_step),
+                lr_end_ratio=self.cfg.lr_end_ratio,
+            )
+        else:
+            raise ValueError(f"Unsupported optimizer type: {self.cfg.optimizer_type}")
+        
+        self.scheduler = new_scheduler
+        self.optimizer = new_optimizer
 
     @timer.time("training_step")
     def _training_step(
@@ -153,6 +240,7 @@ class Trainer:
                 "sparsity/above_1e-2": (feature_sparsity > 1e-2).sum().item(),
                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
+                "sparsity/below_1e-7": (feature_sparsity < 1e-7).sum().item(),
             }
             if self.wandb_logger is not None:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
@@ -174,9 +262,10 @@ class Trainer:
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
 
-            l_s = log_info["l_s"]
-            if isinstance(l_s, DTensor):
-                l_s = l_s.full_tensor()
+            if log_info.get("l_s", None) is not None:
+                l_s = log_info["l_s"]
+                if isinstance(l_s, DTensor):
+                    l_s = l_s.full_tensor()
 
             per_token_l2_loss = (
                 (log_info["reconstructed"] - label).pow(2).sum(dim=-1)
@@ -189,6 +278,8 @@ class Trainer:
             explained_variance = (
                 1 - per_token_l2_loss / total_variance
             )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
+            if sae.cfg.proj_data:
+                explained_variance = explained_variance * sae.variance_factor
             if isinstance(explained_variance, DTensor):
                 explained_variance = explained_variance.full_tensor()
             if isinstance(l2_norm_error, DTensor):
@@ -199,7 +290,7 @@ class Trainer:
             grad_norm = log_info["grad_norm"]
             if isinstance(grad_norm, DTensor):
                 grad_norm = grad_norm.full_tensor()
-
+            
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.mean().item(),
@@ -280,6 +371,7 @@ class Trainer:
 
         self._initialize_trainer(sae, activation_stream, wandb_logger)
         self._initialize_optimizer(sae)
+        self._save_checkpoint(sae)
         assert self.optimizer is not None
         assert self.scheduler is not None
         log_info = {
@@ -290,6 +382,12 @@ class Trainer:
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
         for batch in activation_stream:
             with timer.time("training_iteration"):
+                if sae.cfg.proj_data and self.cur_step / self.total_training_steps >= sae.cfg.fold_data_proj_into_sae_step:
+                    sae.fold_data_proj_into_sae()
+                    
+                    self._reinitialize_optimizer_after_param_change(sae)
+                    logger.info(f"Fold up proj into decoder at step {self.cur_step}")
+
                 proc_bar.update(1)
 
                 batch = sae.normalize_activations(batch)
@@ -297,9 +395,8 @@ class Trainer:
                 sae.train()
 
                 self.optimizer.zero_grad()
-
-                loss_dict = self._training_step(sae, batch)
-
+                with torch.autocast('cuda', dtype=torch.bfloat16):
+                    loss_dict = self._training_step(sae, batch)
                 if self.cfg.update_decoder_lr_with_l0:
                     l0 = (loss_dict["feature_acts"] > 0).float().sum(-1).mean().item()
                     self._update_decoder_learning_rate(l0)
