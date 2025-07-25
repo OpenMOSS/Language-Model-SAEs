@@ -8,10 +8,12 @@ class Graph:
     input_string: str
     input_tokens: torch.Tensor
     logit_tokens: torch.Tensor
-    active_features: torch.Tensor
+    lorsa_active_features: torch.Tensor
+    lorsa_activation_values: torch.Tensor
+    clt_active_features: torch.Tensor
+    clt_activation_values: torch.Tensor
     adjacency_matrix: torch.Tensor
     selected_features: torch.Tensor
-    activation_values: torch.Tensor
     logit_probabilities: torch.Tensor
     cfg: HookedTransformerConfig
     scan: Optional[Union[str, List[str]]]
@@ -20,47 +22,46 @@ class Graph:
         self,
         input_string: str,
         input_tokens: torch.Tensor,
-        active_features: torch.Tensor,
-        adjacency_matrix: torch.Tensor,
-        cfg: HookedTransformerConfig,
         logit_tokens: torch.Tensor,
         logit_probabilities: torch.Tensor,
+        lorsa_active_features: torch.Tensor,
+        lorsa_activation_values: torch.Tensor,
+        clt_active_features: torch.Tensor,
+        clt_activation_values: torch.Tensor,
         selected_features: torch.Tensor,
-        activation_values: torch.Tensor,
+        adjacency_matrix: torch.Tensor,
+        cfg: HookedTransformerConfig,
         scan: Optional[Union[str, List[str]]] = None,
     ):
         """
         A graph object containing the adjacency matrix describing the direct effect of each
-        node on each other. Nodes are either non-zero transcoder features, transcoder errors,
-        tokens, or logits. They are stored in the order [active_features[0], ...,
-        active_features[n-1], error[layer0][position0], error[layer0][position1], ...,
-        error[layer l - 1][position t-1], tokens[0], ..., tokens[t-1], logits[top-1 logit],
-        ..., logits[top-k logit]].
+        node on each other. Nodes are either non-zero transcoder features (LORSA or CLT), transcoder errors,
+        tokens, or logits. They are stored in the order [lorsa_active_features[0], ..., clt_active_features[-1],
+        error[layer0][position0], ..., tokens[0], ..., logits[top-1 logit], ...].
 
         Args:
             input_string (str): The input string attributed.
-            input_tokens (List[str]): The input tokens attributed.
-            active_features (torch.Tensor): A tensor of shape (n_active_features, 3)
-                containing the indices (layer, pos, feature_idx) of the non-zero features
-                of the model on the given input string.
+            input_tokens (torch.Tensor): The input tokens attributed.
+            logit_tokens (torch.Tensor): The logit tokens attributed from.
+            logit_probabilities (torch.Tensor): The probabilities of each logit token, given the input string.
+            lorsa_active_features (torch.Tensor): Indices (layer, pos, feature_idx) of non-zero LORSA features.
+            lorsa_activation_values (torch.Tensor): Activation values for LORSA features.
+            clt_active_features (torch.Tensor): Indices (layer, pos, feature_idx) of non-zero CLT features.
+            clt_activation_values (torch.Tensor): Activation values for CLT features.
+            selected_features (torch.Tensor): Indices of selected features (for pruning, etc).
             adjacency_matrix (torch.Tensor): The adjacency matrix. Organized as
-                [active_features, error_nodes, embed_nodes, logit_nodes], where there are
-                model.cfg.n_layers * len(input_tokens) error nodes, len(input_tokens) embed
-                nodes, len(logit_tokens) logit nodes. The rows represent target nodes, while
-                columns represent source nodes.
+                [lorsa_active_features, clt_active_features, error_nodes, embed_nodes, logit_nodes].
             cfg (HookedTransformerConfig): The cfg of the model.
-            logit_tokens (List[str]): The logit tokens attributed from.
-            logit_probabilities (torch.Tensor): The probabilities of each logit token, given
-                the input string.
-            scan (Optional[Union[str,List[str]]], optional): The identifier of the
-                transcoders used in the graph. Without a scan, the graph cannot be uploaded
-                (since we won't know what transcoders were used). Defaults to None
+            scan (Optional[Union[str,List[str]]], optional): The identifier of the transcoders used in the graph.
         """
         self.input_string = input_string
         self.adjacency_matrix = adjacency_matrix
         self.cfg = cfg
         self.n_pos = len(input_tokens)
-        self.active_features = active_features
+        self.lorsa_active_features = lorsa_active_features
+        self.lorsa_activation_values = lorsa_activation_values
+        self.clt_active_features = clt_active_features
+        self.clt_activation_values = clt_activation_values
         self.logit_tokens = logit_tokens
         self.logit_probabilities = logit_probabilities
         self.input_tokens = input_tokens
@@ -68,51 +69,40 @@ class Graph:
             print("Graph loaded without scan to identify it. Uploading will not be possible.")
         self.scan = scan
         self.selected_features = selected_features
-        self.activation_values = activation_values
 
     def to(self, device):
-        """Send all relevant tensors to the device (cpu, cuda, etc.)
-
-        Args:
-            device (_type_): device to send tensors
-        """
+        """Send all relevant tensors to the device (cpu, cuda, etc.)"""
         self.adjacency_matrix = self.adjacency_matrix.to(device)
-        self.active_features = self.active_features.to(device)
+        self.lorsa_active_features = self.lorsa_active_features.to(device)
+        self.lorsa_activation_values = self.lorsa_activation_values.to(device)
+        self.clt_active_features = self.clt_active_features.to(device)
+        self.clt_activation_values = self.clt_activation_values.to(device)
         self.logit_tokens = self.logit_tokens.to(device)
         self.logit_probabilities = self.logit_probabilities.to(device)
+        self.selected_features = self.selected_features.to(device)
+        self.input_tokens = self.input_tokens.to(device)
 
     def to_pt(self, path: str):
-        """Saves the graph at the given path
-
-        Args:
-            path (str): The path where the graph will be saved. Should end in .pt
-        """
+        """Saves the graph at the given path"""
         d = {
             "input_string": self.input_string,
             "adjacency_matrix": self.adjacency_matrix,
             "cfg": self.cfg,
-            "active_features": self.active_features,
+            "lorsa_active_features": self.lorsa_active_features,
+            "lorsa_activation_values": self.lorsa_activation_values,
+            "clt_active_features": self.clt_active_features,
+            "clt_activation_values": self.clt_activation_values,
             "logit_tokens": self.logit_tokens,
             "logit_probabilities": self.logit_probabilities,
             "input_tokens": self.input_tokens,
             "selected_features": self.selected_features,
-            "activation_values": self.activation_values,
             "scan": self.scan,
         }
         torch.save(d, path)
 
     @staticmethod
     def from_pt(path: str, map_location="cpu") -> "Graph":
-        """Load a graph (saved using graph.to_pt) from a .pt file at the given path.
-
-        Args:
-            path (str): The path of the Graph to load
-            map_location (str, optional): the device to load the graph onto.
-                Defaults to 'cpu'.
-
-        Returns:
-            Graph: the Graph saved at the specified path
-        """
+        """Load a graph (saved using graph.to_pt) from a .pt file at the given path."""
         d = torch.load(path, weights_only=False, map_location=map_location)
         return Graph(**d)
 

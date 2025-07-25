@@ -6,7 +6,8 @@ from torch._tensor import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Placement, distribute_tensor
 from torch.distributed.tensor.placement_types import Replicate, Shard
-from lm_saes.utils.timer import timer
+from typing import Any, Union, Optional, Tuple
+from jaxtyping import Float
 
 
 class DimMap:
@@ -147,218 +148,105 @@ class DimMap:
         """Merge this DimMap with another DimMap or dictionary."""
         return DimMap(self.to_dict() | other.to_dict())
 
-@torch.no_grad()
-def distributed_batch_kthvalue_clt(
+def distributed_kthvalue(
     x: Float[DTensor, "batch n_layers d_sae"],
     k: int,
-    device_mesh: Optional[DeviceMesh] = None,  ## TODO: type
+    device_mesh: DeviceMesh,
+    dim: Union[int, Tuple[int, ...]] = -1,
+    tolerance: int = 1,
+    max_iterations: int = 50,
     mesh_dim_name: str = "model",
-) -> tuple[DTensor, Optional[DTensor]]:
-    """
-    Perform distributed batch kthvalue operation on a DTensor sharded along the specified dimension.
-    """
-    if not isinstance(x, DTensor):
-        # For regular tensors, use standard kthvalue
-        raise ValueError("x must be a DTensor")
-    
-    if x.dim() != 3:
-        raise ValueError("x must be a 3D DTensor")
-    
-    if device_mesh is None:
-        raise ValueError("device_mesh must be provided when x is a DTensor")
-    
-    # Get local tensor and placements
-    local_tensor = x.to_local()
-    placements = x.placements
-    
-    # Find the placement indices for the specified dimensions
-    mesh_dim_idx = None
-    if device_mesh.mesh_dim_names is not None:
-        try:
-            mesh_dim_idx = device_mesh.mesh_dim_names.index(mesh_dim_name)
-        except ValueError:
-            raise ValueError(f"Mesh dimension '{mesh_dim_name}' not found in device mesh")
-    
-    # Check if the tensor is sharded along the specified dimensions
-    if mesh_dim_idx is None or not isinstance(placements[mesh_dim_idx], Shard):
-        # If not sharded along the specified dimensions, use standard kthvalue
-        raise ValueError("x must be sharded along the specified dimension")
-    
-    shard_dim: Any = placements[mesh_dim_idx].dim  # type: ignore
-    if shard_dim != 1 and shard_dim != 2:  # also consider negative dims
-        # If sharded along a different dimension, use standard kthvalue
-        raise ValueError("x must be sharded along the specified dimension")
-    
-    # Get the groups for the mesh dimensions
-    group = device_mesh.get_group(mesh_dim_name)
-    world_size = group.size()
-    
-    # approximate top-k based on divide and conquer
-    # hardcoded parameters
-    with timer.time("kthvalue"):
-        divide_batch = 65536
-        bucket_size = 8192
-        batch_k = 16
-        # divide_batch = 131072
-        # bucket_size = 8192
-        # batch_k = 16
-        batch_size, n_layers, d_sae = local_tensor.shape
-        # local_tensor = local_tensor[local_tensor.gt(0)]  ## TODO
-
-        # local_tensor = local_tensor.reshape((divide_batch, bucket_size))
-        local_tensor = local_tensor.reshape((bucket_size, divide_batch)).transpose(0, 1)
-        # Top-t in each row
-        topkbs, _ = torch.topk(local_tensor, k=batch_k, dim=1)
-        # Flatten to 1D
-        topkbs = topkbs.flatten()
-        # kthvalue among these elements
-        candidates, _ = torch.kthvalue(topkbs, k=topkbs.shape[-1] - k * batch_size * n_layers // world_size + 1, dim=-1)
-        candidates = candidates.unsqueeze(0)
-
-
-    # rigorous top-k
-    # with timer.time("kthvalue"):
-    #     # Compute kthvalue on local tensor
-    #     batch_size, n_layers, d_sae = local_tensor.shape
-    #     local_tensor = local_tensor.flatten()
-    #     # local_tensor = local_tensor[local_tensor.gt(0)]
-
-    #     candidates, _ = torch.kthvalue(local_tensor, k=local_tensor.shape[-1] - k * batch_size * n_layers // world_size + 1, dim=-1)
-    #     candidates = candidates.unsqueeze(0)
-
-    # Gather all local kthvalue results
-    gathered_values = [torch.empty_like(candidates) for _ in range(world_size)]
-    # print(candidates)
-    # print(gathered_values[0])
-    torch.distributed.all_gather(gathered_values, candidates, group=group)
-    
-    # Concatenate all gathered results along the specified dimension
-    all_values = torch.cat(gathered_values, dim=-1)
-    
-    # Compute global kthvalue on the concatenated results
-    # result_values, _ = torch.kthvalue(all_values, k=all_values.shape[-1] - k * batch_size * n_layers + 1, dim=-1)
-    result_values = all_values.mean()
-    # place the result_values back to DTensor (Replicate)
-    result_values = DTensor.from_local(result_values, device_mesh=device_mesh, placements=[Replicate() for _ in range(len(placements))])
-    return result_values, None
-
-@torch.no_grad()
-def distributed_batch_kthvalue_clt_binary_search(
-    x: Float[DTensor, "batch n_layers d_sae"],
-    k_range: tuple[int, int],
-    device_mesh: Optional[DeviceMesh] = None,  
-    mesh_dim_name: str = "model",
-) -> float:
+) -> DTensor:
     """
     Perform distributed batch kthvalue operation on a DTensor using binary search.
     
     Args:
         x: Input tensor of shape (batch, n_layers, d_sae)
+        k: Target number of top elements to keep
         k_range: Acceptable range for the number of elements above threshold (lower_bound, upper_bound)
         device_mesh: Device mesh for distributed training
         mesh_dim_name: Name of the mesh dimension to shard along
         
     Returns:
-        Threshold value that gives acceptable k elements within the specified range
+        Tuple of (threshold, None) where threshold is a scalar value that gives acceptable k elements
     """
-    if not isinstance(x, DTensor):
-        raise ValueError("x must be a DTensor")
-
-    if x.dim() != 3:
-        raise ValueError("x must be a 3D DTensor")
+    if not isinstance(x, DTensor) or device_mesh is None:
+        raise ValueError("x must be a DTensor and device_mesh must be provided")
     
-    if device_mesh is None:
-        raise ValueError("device_mesh must be provided when x is a DTensor")
-    
-    # Get local tensor and placements
     local_tensor = x.to_local()
     placements = x.placements
-    
-    # Find the placement indices for the specified dimensions
-    mesh_dim_idx = None
-    if device_mesh.mesh_dim_names is not None:
-        try:
-            mesh_dim_idx = device_mesh.mesh_dim_names.index(mesh_dim_name)
-        except ValueError:
-            raise ValueError(f"Mesh dimension '{mesh_dim_name}' not found in device mesh")
-    
-    # Check if the tensor is sharded along the specified dimensions
-    if mesh_dim_idx is None or not isinstance(placements[mesh_dim_idx], Shard):
-        raise ValueError("x must be sharded along the specified dimension")
-    
-    shard_dim: Any = placements[mesh_dim_idx].dim  # type: ignore
-    if shard_dim != 1 and shard_dim != 2:  # also consider negative dims
-        raise ValueError("x must be sharded along the specified dimension")
-    
-    # Get the groups for the mesh dimensions
-    group = device_mesh.get_group(mesh_dim_name)
-    world_size = group.size()
 
-    batch_size, n_layers, d_sae = local_tensor.shape
-    k_range_overall = (k_range[0] * batch_size * n_layers, k_range[1] * batch_size * n_layers)
-    
-    with timer.time("kthvalue"):
-        # Flatten the local tensor for easier processing
-        local_tensor_flat = local_tensor.flatten()
+    with torch.no_grad():
+        mesh_dim_idx = None
+        if device_mesh.mesh_dim_names is not None:
+            try:
+                mesh_dim_idx = device_mesh.mesh_dim_names.index(mesh_dim_name)
+            except ValueError:
+                raise ValueError(f"Mesh dimension '{mesh_dim_name}' not found in device mesh")
         
-        # Binary search parameters
-        lower_bound, upper_bound = k_range_overall
-        search_low = 0.0
-        search_high = 10.0
-        max_iterations = 50
-        tolerance = 1e-6
+        # Check if the tensor is sharded along the specified dimensions
+        if mesh_dim_idx is None or not isinstance(placements[mesh_dim_idx], Shard):
+            raise ValueError("x must be sharded along the specified dimension")
         
-        # First check if 10 is a reasonable upper bound
-        count_above_high = (local_tensor_flat > search_high).sum()
-        torch.distributed.all_reduce(count_above_high, group=group)
+        shard_dim: Tuple[int] = (placements[mesh_dim_idx].dim,)  # type: ignore
+        if isinstance(dim, int):
+            dim = (dim,)
         
-        if count_above_high > upper_bound:
-            # Need to increase search space
-            search_high *= 2
-            count_above_high = (local_tensor_flat > search_high).sum()
-            torch.distributed.all_reduce(count_above_high, group=group)
+        def _ensure_positive_dim(dim: Tuple[int, ...]) -> Tuple[int, ...]:
+            """We want to ensure that the dims are positive"""
+            return tuple(d if d >= 0 else d + local_tensor.ndim for d in dim)
         
-        # Check if we can directly use 0 as threshold
-        count_above_0 = (local_tensor_flat > 0).sum()
-        torch.distributed.all_reduce(count_above_0, group=group)
+        dim = _ensure_positive_dim(dim)
         
-        if count_above_0 <= upper_bound:
-            # Directly use 0 as threshold
-            threshold = torch.tensor(0.0, device=local_tensor.device, dtype=local_tensor.dtype)
-        else:
-            # Binary search for the optimal threshold
-            threshold = None
-            for iteration in range(max_iterations):
-                threshold = (search_low + search_high) / 2
-                
-                # Count elements above threshold on this rank
-                count_above_threshold = (local_tensor_flat > threshold).sum()
-                
-                # All-reduce to get total count across all ranks
-                torch.distributed.all_reduce(count_above_threshold, group=group)
-                
-                if lower_bound <= count_above_threshold <= upper_bound:
-                    # Found acceptable threshold
-                    break
-                elif count_above_threshold > upper_bound:
-                    # Too many elements above threshold, increase threshold
-                    search_low = threshold
-                else:
-                    # Too few elements above threshold, decrease threshold
-                    search_high = threshold
-                
-                # Check for convergence
-                if search_high - search_low < tolerance:
-                    break
+        if not any(d in shard_dim for d in dim):
+            raise ValueError("At least one of the specified dimensions must be sharded")
+        
+        constant_dims = tuple(d for d in range(local_tensor.ndim) if d not in dim)
+        constant_dim_size = tuple(local_tensor.size(d) for d in constant_dims)
+
+        k_lower_bound, k_upper_bound = k - tolerance, k + tolerance
+        search_low_val = torch.zeros(constant_dim_size, device=local_tensor.device)
+        search_high_val = torch.full(constant_dim_size, local_tensor.max(), device=local_tensor.device)
+        
+        local_tensor_flat = local_tensor.flatten(start_dim=len(constant_dims))
+
+        group = device_mesh.get_group(mesh_dim_name)
+        
+        
+        for _ in range(max_iterations):
+            threshold = (search_low_val + search_high_val) / 2
+            torch.distributed.all_reduce(threshold, group=group, op=torch.distributed.ReduceOp.AVG)
             
-            # If we didn't find a threshold in range, use the best approximation
-            if threshold is None:
-                threshold = search_low  # Use the lower bound as a fallback
+            count_above_threshold = (local_tensor_flat > threshold.unsqueeze(-1)).sum(-1)
+            # All-reduce to get total count across all ranks
+            torch.distributed.all_reduce(count_above_threshold, group=group)
+            
+            if (
+                (k_lower_bound <= count_above_threshold) * (count_above_threshold <= k_upper_bound)
+            ).all():
+                break
+
+            to_increase = count_above_threshold > k_upper_bound
+            to_decrease = count_above_threshold < k_lower_bound
+
+            if to_increase.any():
+                search_low_val = torch.where(to_increase, threshold, search_low_val)
+            if to_decrease.any():
+                search_high_val = torch.where(to_decrease, threshold, search_high_val)
+            
+            # Check for convergence
+            if (search_high_val - search_low_val < 1e-6).all():
+                break
+        
+        while threshold.ndim < local_tensor.ndim:
+            threshold = threshold[..., None]
     
-    # Ensure threshold is a scalar value
-    if isinstance(threshold, torch.Tensor):
-        threshold_value = threshold.item()
-    else:
-        threshold_value = threshold
+    local_tensor = local_tensor * local_tensor.ge(threshold)
     
-    return threshold_value
+    result = DTensor.from_local(
+        local_tensor,
+        device_mesh=device_mesh,
+        placements=placements,
+    )
+    
+    return result

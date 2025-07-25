@@ -2,6 +2,7 @@ from .activation import ActivationFactory, ActivationWriter
 from .activation_functions import JumpReLU
 from .analysis import FeatureAnalyzer
 from .clt import CrossLayerTranscoder
+from .lorsa import LowRankSparseAttention
 from .config import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
@@ -20,6 +21,7 @@ from .config import (
     SAEConfig,
     TrainerConfig,
     WandbConfig,
+    LorsaConfig,
 )
 from .crosscoder import CrossCoder
 from .database import MongoClient
@@ -32,6 +34,8 @@ from .runners import (
     EvaluateCrossCoderSettings,
     EvaluateSAESettings,
     GenerateActivationsSettings,
+    TrainLorsaSettings,
+    train_lorsa,
     SweepingItem,
     SweepSAESettings,
     TrainCLTSettings,
@@ -104,4 +108,8 @@ __all__ = [
     "train_crosscoder",
     "ReplacementModel",
     "attribute",
+    "LowRankSparseAttention",
+    "TrainLorsaSettings",
+    "train_lorsa",
+    "LorsaConfig",
 ]

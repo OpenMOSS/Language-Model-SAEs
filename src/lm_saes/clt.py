@@ -542,6 +542,17 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         reconstructed = torch.stack(reconstructed, dim=1 if batch_first else 0)
 
         return reconstructed
+
+    def _use_triton_kernel(self, feature_acts: Union[
+        Float[torch.Tensor, "batch n_layers d_sae"],
+        Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+        Float[torch.sparse.Tensor, "batch n_layers d_sae"],
+    ]) -> bool:
+        is_sparse = isinstance(feature_acts, torch.sparse.Tensor)
+        is_sparse = is_sparse or (
+            (feature_acts.ne(0).sum() / feature_acts.numel()).item() < 1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel
+        )
+        return is_sparse and self.cfg.use_triton_kernel
     
     def _decode_single_output_layer(self, feature_acts: Union[
         Float[torch.Tensor, "batch n_layers d_sae"],
@@ -580,11 +591,12 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             from lm_saes.kernels import decode_with_triton_spmm_kernel
             
             contribution = decode_with_triton_spmm_kernel(
-                feature_acts_per_layer.flatten(start_dim=-2),  # (batch, layer_to+1 * d_sae)
-                decoder_weights_local.flatten(end_dim=-2),  # (layer_to+1 * d_sae, d_model)
-                dynamic_k=True,
-                sparsity_threshold=self.cfg.sparsity_threshold_for_triton_spmm_kernel,
-            )  # (batch, d_model)
+                feature_acts.flatten(start_dim=-2), # (batch, layer_to+1 * d_sae)
+                decoder_weights_local.flatten(end_dim=-2), # (layer_to+1 * d_sae, d_model)
+                dynamic_k=True
+            ) # (batch, d_model)
+
+
         else:
             contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights_local)
         
@@ -745,13 +757,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
     @override
     @torch.no_grad()
-    def standardize_parameters_of_dataset_norm(self, dataset_average_activation_norm: "dict[str, float] | None"):
+    def standardize_parameters_of_dataset_norm(self):
         """Standardize parameters for dataset-wise normalization during inference."""
         assert self.cfg.norm_activation == "dataset-wise"
-        assert self.dataset_average_activation_norm is not None or dataset_average_activation_norm is not None
-
-        if dataset_average_activation_norm is not None:
-            self.set_dataset_average_activation_norm(dataset_average_activation_norm)
         assert self.dataset_average_activation_norm is not None
 
         # For CLT, we need to handle multiple input and output layers
@@ -760,8 +768,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             hook_point_out = self.cfg.hook_points_out[layer_idx]
 
             # Input normalization factor for this layer (from hook_points_in)
-            input_norm_factor: float = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point_in]
-
+            input_norm_factor: float = (
+                math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point_in]
+            )
             # Output normalization factor for this layer (from hook_points_out)
             output_norm_factor: float = (
                 math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point_out]
@@ -978,9 +987,11 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         cls,
         pretrained_name_or_path: str,
         strict_loading: bool = True,
+        fold_activation_scale: bool = True,
         **kwargs,
     ):
-        """Load a pretrained CLT model."""
         cfg = CLTConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
         model = cls.from_config(cfg)
+        if fold_activation_scale:
+            model.standardize_parameters_of_dataset_norm()
         return model

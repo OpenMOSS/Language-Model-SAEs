@@ -11,6 +11,7 @@ from lm_saes.activation_functions import JumpReLU
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
@@ -137,6 +138,8 @@ class Initializer:
             sae: AbstractSparseAutoEncoder = CrossCoder.from_config(cfg, device_mesh=device_mesh)
         elif cfg.sae_type == "clt":
             sae: AbstractSparseAutoEncoder = CrossLayerTranscoder.from_config(cfg, device_mesh=device_mesh)
+        elif cfg.sae_type == "lorsa":
+            sae: AbstractSparseAutoEncoder = LowRankSparseAttention.from_config(cfg, device_mesh=device_mesh)
         else:
             raise ValueError(f"SAE type {cfg.sae_type} not supported.")
         if self.cfg.state == "training":

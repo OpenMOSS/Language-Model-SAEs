@@ -72,4 +72,5 @@ def batch_size(tensor_dict: dict[str, torch.Tensor]) -> int:
     """
     Get the batch size of a dictionary of tensors.
     """
-    return len(tensor_dict[list(tensor_dict.keys())[0]])
+    first_value_tensor = tensor_dict[list(tensor_dict.keys())[0]]
+    return first_value_tensor.numel() // first_value_tensor.size(-1)
