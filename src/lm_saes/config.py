@@ -41,7 +41,7 @@ class BaseModelConfig(BaseModel):
             },
             mode="serialization",
         ),
-    ] = Field(default=torch.bfloat16, exclude=True, validate_default=False)
+    ] = Field(default=torch.float32, exclude=True, validate_default=False)
 
 
 class BaseSAEConfig(BaseModelConfig, ABC):
@@ -51,7 +51,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt"]
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa"]
     d_model: int
     expansion_factor: int
     use_decoder_bias: bool = True
@@ -114,7 +114,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
 
 class SAEConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "clt"] = "sae"
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "sae"
     hook_point_in: str
     hook_point_out: str
     use_glu_encoder: bool = False
@@ -124,6 +124,57 @@ class SAEConfig(BaseSAEConfig):
         return [self.hook_point_in, self.hook_point_out]
 
 
+class LorsaConfig(BaseSAEConfig):
+    """Configuration for Low Rank Sparse Attention."""
+    
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "lorsa"
+
+    hook_point_in: str
+    hook_point_out: str
+    
+    # Attention dimensions
+    n_qk_heads: int
+    d_qk_head: int
+    positional_embedding_type: Literal["rotary", "none"] = "rotary"
+    rotary_dim: int
+    rotary_base: int = 10000
+    rotary_adjacent_pairs: bool = True
+    rotary_scale: int = 1
+    use_NTK_by_parts_rope: bool = False
+    NTK_by_parts_factor: float = 1.0
+    NTK_by_parts_low_freq_factor: float = 1.0
+    NTK_by_parts_high_freq_factor: float = 1.0
+    old_context_len: int = 2048
+
+    n_ctx: int
+    skip_bos: bool = False
+    
+    # Attention settings
+    attn_scale: Optional[float] = None
+    
+    @property
+    def n_ov_heads(self) -> int:
+        return self.d_sae
+    
+    @property
+    def associated_hook_points(self) -> list[str]:
+        """All hook points used by Lorsa."""
+        return [self.hook_point_in, self.hook_point_out]
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        assert self.hook_point_in is not None and self.hook_point_out is not None, (
+            "hook_point_in and hook_point_out must be set"
+        )
+        assert self.hook_point_in != self.hook_point_out, (
+            "hook_point_in and hook_point_out must be different"
+        )
+        assert self.n_ov_heads % self.n_qk_heads == 0, (
+            "n_ov_heads must be divisible by n_qk_heads"
+        )
+
+
+
 class CLTConfig(BaseSAEConfig):
     """Configuration for Cross Layer Transcoder (CLT).
 
@@ -131,7 +182,7 @@ class CLTConfig(BaseSAEConfig):
     reads from the residual stream at that layer and can decode to layers L through L-1.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt"] = "clt"
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "clt"
     hook_points_in: list[str]
     """List of hook points to capture input activations from, one for each layer."""
     hook_points_out: list[str]
@@ -162,7 +213,7 @@ class CLTConfig(BaseSAEConfig):
 
 
 class CrossCoderConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "clt"] = "crosscoder"
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "crosscoder"
     hook_points: list[str]
 
     @property

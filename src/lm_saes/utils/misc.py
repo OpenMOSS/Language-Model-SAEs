@@ -1,11 +1,12 @@
 import os
 import warnings
-from typing import Any, Iterable, Optional, cast
+from typing import Any, Iterable, Optional, Union, cast
 
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.nn.functional import all_reduce
+from jaxtyping import Float
 
 from lm_saes.utils.distributed import DimMap
 
@@ -145,7 +146,14 @@ def assert_tensor_consistency(tensor):
 
 
 def calculate_activation_norm(
-    activation_stream: Iterable[dict[str, torch.Tensor]],
+    activation_stream: Iterable[
+        dict[
+            str, Union[
+                Float[torch.Tensor, "batch seq_len d_model"],
+                Float[torch.Tensor, "batch d_model"],
+            ]
+        ]
+    ],
     hook_points: list[str],
     batch_num: int = 8,
     device_mesh: DeviceMesh | None = None,
@@ -163,9 +171,9 @@ def calculate_activation_norm(
             break
         for key in hook_points:
             if key not in activation_norm:
-                activation_norm[key] = batch[key].norm(p=2, dim=1)
+                activation_norm[key] = batch[key].norm(p=2, dim=-1)
             else:
-                activation_norm[key] = torch.cat((activation_norm[key], batch[key].norm(p=2, dim=1)), dim=0)
+                activation_norm[key] = torch.cat((activation_norm[key], batch[key].norm(p=2, dim=-1)), dim=0)
         batch_num -= 1
     for key in activation_norm:
         activation_norm[key] = activation_norm[key].mean().item()

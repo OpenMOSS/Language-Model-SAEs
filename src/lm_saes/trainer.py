@@ -143,6 +143,8 @@ class Trainer:
         elif sae.cfg.sae_type == "clt":
             log_info["reconstructed"] = log_info["reconstructed"].permute(1, 0, 2)
             label = label.permute(1, 0, 2)
+        elif sae.cfg.sae_type == "lorsa":
+            act_freq_scores = act_freq_scores.sum(0)
         if isinstance(act_freq_scores, DTensor):
             act_freq_scores = act_freq_scores.full_tensor()
 
@@ -207,7 +209,7 @@ class Trainer:
                 (log_info["reconstructed"] - label).pow(2).sum(dim=-1)
             )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
             total_variance = (
-                (label - label.mean(0)).pow(2).sum(dim=-1)
+                (label - label.mean(dim=0)).pow(2).sum(dim=-1)
             )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
             l2_norm_error = per_token_l2_loss.sqrt().mean()
             l2_norm_error_ratio = l2_norm_error / label.norm(p=2, dim=-1).mean()

@@ -95,7 +95,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
     @abstractmethod
     @torch.no_grad()
-    def standardize_parameters_of_dataset_norm(self, dataset_average_activation_norm: dict[str, float] | None):
+    def standardize_parameters_of_dataset_norm(self):
         """Standardize the parameters of the model to account for dataset_norm during inference."""
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -327,7 +327,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             self.load_distributed_state_dict(state_dict, device_mesh)
 
     @classmethod
-    def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None) -> Self:
+    def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = True) -> Self:
         model = cls(cfg, device_mesh)
         if cfg.sae_pretrained_name_or_path is None:
             return model
@@ -384,7 +384,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             state_dict = model.full_state_dict()
             dcp.load(state_dict, storage_reader=fs_reader)
         else:
-            raise ValueError(f"Unsupported checkpoint format: {ckpt_path}")
+            raise ValueError(f"Unsupported checkpoint format: {ckpt_path}")                
 
         model.load_full_state_dict(state_dict, device_mesh)
         return model
@@ -446,7 +446,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             "batchtopk",
         ], f"Not implemented activation function {self.cfg.act_fn}"
         if self.cfg.act_fn.lower() == "relu":
-            return lambda x: x.gt(0).to(x.dtype)
+            return lambda x: x * x.gt(0).to(x.dtype)
         elif self.cfg.act_fn.lower() == "jumprelu":
             return JumpReLU(
                 self.cfg.jumprelu_threshold_window,
@@ -458,44 +458,64 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
         elif self.cfg.act_fn.lower() == "topk":
 
-            def topk_activation(
-                x: Union[
-                    Float[torch.Tensor, "batch d_sae"],
-                    Float[torch.Tensor, "batch seq_len d_sae"],
-                ],
-            ):
-                x = torch.clamp(x, min=0.0)
-                k = x.shape[-1] - self.current_k + 1
+            if self.device_mesh is not None:
+                from lm_saes.utils.distributed import distributed_kthvalue
                 
-                k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
-                if isinstance(k_th_value, DTensor):
-                    k_th_value = k_th_value.full_tensor()
-                k_th_value = k_th_value.unsqueeze(dim=-1)
-                return x.ge(k_th_value)
+                def topk_activation(x: Union[
+                        Float[torch.Tensor, "batch d_sae"],
+                        Float[torch.Tensor, "batch seq_len d_sae"],
+                    ],
+                ):
+                    return distributed_kthvalue(x, k=self.current_k, device_mesh=self.device_mesh, dim=-1, mesh_dim_name="model")
+            else:
+                def topk_activation(
+                    x: Union[
+                        Float[torch.Tensor, "batch d_sae"],
+                        Float[torch.Tensor, "batch seq_len d_sae"],
+                    ],
+                ):
+                    x = torch.clamp(x, min=0.0)
+                    k = x.shape[-1] - self.current_k + 1
+                    
+                    k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
+                    if isinstance(k_th_value, DTensor):
+                        k_th_value = k_th_value.full_tensor()
+                    k_th_value = k_th_value.unsqueeze(dim=-1)
+                    return x * x.ge(k_th_value)
 
             return topk_activation
 
         elif self.cfg.act_fn.lower() == "batchtopk":
 
-            def topk_activation(x: Union[
-                    Float[torch.Tensor, "batch d_sae"],
-                    Float[torch.Tensor, "batch seq_len d_sae"],
-                ],):
-                assert x.dim() == 2, f"It is advised to use JumpReLU function to evaluate models trained with batchtopk activation function, expected 2 dimensions, got {x.dim()} dimensions with shape {x.shape}"
-                
-                batch_size = x.size(0)
-                x = torch.clamp(x, min=0.0)
+            if self.device_mesh is not None:
+                from lm_saes.utils.distributed import distributed_topk
 
-                flattened_x = x.flatten()
-                non_zero_entries = flattened_x[flattened_x.gt(0)]
+                def topk_activation(x: Union[
+                        Float[torch.Tensor, "batch d_sae"],
+                        Float[torch.Tensor, "batch seq_len d_sae"],
+                    ],):
+                    return distributed_topk(x, k=self.current_k * x.size(-2), device_mesh=self.device_mesh, dim=(-2, -1), mesh_dim_name="model")
+            else:
+                def topk_activation(x: Union[
+                        Float[torch.Tensor, "batch d_sae"],
+                        Float[torch.Tensor, "batch seq_len d_sae"],
+                    ],):
+                    assert x.dim() == 2, f"It is advised to use JumpReLU function to evaluate models trained with batchtopk activation function, expected 2 dimensions, got {x.dim()} dimensions with shape {x.shape}"
+                    
+                    batch_size = x.size(0)
+                    x = torch.clamp(x, min=0.0)
 
-                if non_zero_entries.numel() < batch_size * self.current_k:
-                    return x.gt(0)
-                else:
-                    k = non_zero_entries.numel() - self.current_k + 1
+                    flattened_x = x.flatten()
+                    non_zero_entries = flattened_x[flattened_x.gt(0)]
 
-                    k_th_value, _ = torch.kthvalue(non_zero_entries, k=k, dim=-1)
-                    return x.ge(k_th_value)
+                    if non_zero_entries.numel() < batch_size * self.current_k:
+                        return x.gt(0)
+                    else:
+                        k = non_zero_entries.numel() - self.current_k + 1
+
+                        k_th_value, _ = torch.kthvalue(non_zero_entries, k=k, dim=-1)
+                        return x * x.ge(k_th_value)
+            
 
             return topk_activation
 
@@ -576,8 +596,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         with timer.time("decode"):
             reconstructed = self.decode(feature_acts, **kwargs)
         
-        print(reconstructed.norm(p=2,dim=-1).mean())
-
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
             if use_batch_norm_mse:
