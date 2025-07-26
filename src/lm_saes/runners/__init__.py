@@ -2,9 +2,11 @@
 
 from .analyze import (
     AnalyzeCrossCoderSettings,
+    AnalyzeDecoderSettings,
     AnalyzeSAESettings,
     DirectLogitAttributeSettings,
     analyze_crosscoder,
+    analyze_decoder,
     analyze_sae,
     direct_logit_attribute,
 )
@@ -61,4 +63,6 @@ __all__ = [
     "evaluate_crosscoder",
     "EvaluateSAESettings",
     "evaluate_sae",
+    "AnalyzeDecoderSettings",
+    "analyze_decoder",
 ]

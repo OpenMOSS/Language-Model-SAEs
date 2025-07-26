@@ -27,6 +27,7 @@ from .evaluator import EvalConfig, Evaluator
 from .resource_loaders import load_dataset, load_model
 from .runners import (
     AnalyzeCrossCoderSettings,
+    AnalyzeDecoderSettings,
     AnalyzeSAESettings,
     AutoInterpSettings,
     CheckActivationConsistencySettings,
@@ -40,6 +41,7 @@ from .runners import (
     TrainCrossCoderSettings,
     TrainSAESettings,
     analyze_crosscoder,
+    analyze_decoder,
     analyze_sae,
     auto_interp,
     check_activation_consistency,
@@ -109,4 +111,6 @@ __all__ = [
     "DirectLogitAttributeSettings",
     "direct_logit_attribute",
     "DirectLogitAttributorConfig",
+    "AnalyzeDecoderSettings",
+    "analyze_decoder",
 ]

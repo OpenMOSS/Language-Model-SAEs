@@ -67,9 +67,13 @@ export const FeatureSchema = z.object({
   dictionaryName: z.string(),
   analysisName: z.string(),
   featureActivationHistogram: z.any().nullish(),
-  decoderNorms: z.array(z.number()).nullish(),
-  decoderSimilarityMatrix: z.array(z.array(z.number())).nullish(),
-  decoderInnerProductMatrix: z.array(z.array(z.number())).nullish(),
+  decoderAnalysis: z
+    .object({
+      decoderNorms: z.array(z.number()),
+      decoderSimilarityMatrix: z.array(z.array(z.number())),
+      decoderProjectionMatrix: z.array(z.array(z.number())),
+    })
+    .nullish(),
   actTimes: z.number(),
   maxFeatureAct: z.number(),
   nAnalyzedTokens: z.number().nullish(),

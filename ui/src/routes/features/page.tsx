@@ -300,8 +300,8 @@ export const FeaturesPage = () => {
       id: "DecoderSimilarityMatrix",
     },
     {
-      title: "Inner Product Matrix",
-      id: "DecoderInnerProductMatrix",
+      title: "Projection Matrix",
+      id: "DecoderProjectionMatrix",
     },
     {
       title: "Logits",

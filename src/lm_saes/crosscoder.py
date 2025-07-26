@@ -565,6 +565,13 @@ class CrossCoder(AbstractSparseAutoEncoder):
         decoder_norm_products = einops.einsum(decoder_norms, decoder_norms, "i d_sae, j d_sae -> d_sae i j")
         return inner_product_matrices / decoder_norm_products
 
+    @torch.no_grad()
+    @timer.time("decoder_projection_matrices")
+    def decoder_projection_matrices(self) -> Float[torch.Tensor, "d_sae n_head n_head"]:
+        inner_product_matrices = self.decoder_inner_product_matrices()
+        decoder_norms = self.decoder_norm()
+        return inner_product_matrices / einops.rearrange(decoder_norms, "i d_sae -> d_sae i 1")
+
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
         cfg = CrossCoderConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)

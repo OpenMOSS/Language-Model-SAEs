@@ -189,42 +189,39 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
 
           <FeatureInterpretation feature={feature} />
 
-          {feature.decoderNorms && (
-            <div id="DecoderNorms" className="flex flex-col w-full gap-4">
-              <p className="font-bold">Decoder Norms</p>
-              <Plot
-                data={[
-                  {
-                    x: Array.from({ length: feature.decoderNorms.length }, (_, i) => i),
-                    y: feature.decoderNorms,
-                    type: "bar",
-                    marker: { color: "#636EFA" },
-                    hovertemplate: "Index: %{x}<br>Norm: %{y}<extra></extra>",
-                  },
-                ]}
-                layout={{
-                  xaxis: { title: "Output Feature Index" },
-                  yaxis: { title: "Norm" },
-                  bargap: 0.2,
-                  margin: { t: 0, b: 40 },
-                  showlegend: false,
-                  height: 300,
-                }}
-                config={{ responsive: true }}
-              />
-            </div>
-          )}
-
-          {(feature.decoderSimilarityMatrix || feature.decoderInnerProductMatrix) && (
-            <div className="flex flex-col w-full gap-4">
-              <div className="flex justify-between gap-4">
-                {feature.decoderSimilarityMatrix && (
+          {feature.decoderAnalysis && (
+            <>
+              <div id="DecoderNorms" className="flex flex-col w-full gap-4">
+                <p className="font-bold">Decoder Norms</p>
+                <Plot
+                  data={[
+                    {
+                      x: Array.from({ length: feature.decoderAnalysis.decoderNorms.length }, (_, i) => i),
+                      y: feature.decoderAnalysis.decoderNorms,
+                      type: "bar",
+                      marker: { color: "#636EFA" },
+                      hovertemplate: "Index: %{x}<br>Norm: %{y}<extra></extra>",
+                    },
+                  ]}
+                  layout={{
+                    xaxis: { title: "Output Feature Index" },
+                    yaxis: { title: "Norm" },
+                    bargap: 0.2,
+                    margin: { t: 0, b: 40 },
+                    showlegend: false,
+                    height: 300,
+                  }}
+                  config={{ responsive: true }}
+                />
+              </div>
+              <div className="flex flex-col w-full gap-4">
+                <div className="flex justify-between gap-4">
                   <div id="DecoderSimilarityMatrix" className="flex flex-col w-1/2 gap-2">
                     <p className="font-bold">Decoder Similarity Matrix</p>
                     <Plot
                       data={[
                         {
-                          z: feature.decoderSimilarityMatrix,
+                          z: feature.decoderAnalysis.decoderSimilarityMatrix,
                           type: "heatmap",
                           colorscale: "Viridis",
                           hovertemplate: "Row: %{y}<br>Column: %{x}<br>Value: %{z}<extra></extra>",
@@ -248,15 +245,12 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                       config={{ responsive: true }}
                     />
                   </div>
-                )}
-
-                {feature.decoderInnerProductMatrix && (
-                  <div id="DecoderInnerProductMatrix" className="flex flex-col w-1/2 gap-2">
-                    <p className="font-bold">Decoder Inner Product Matrix</p>
+                  <div id="DecoderProjectionMatrix" className="flex flex-col w-1/2 gap-2">
+                    <p className="font-bold">Decoder Projection Matrix</p>
                     <Plot
                       data={[
                         {
-                          z: feature.decoderInnerProductMatrix,
+                          z: feature.decoderAnalysis.decoderProjectionMatrix,
                           type: "heatmap",
                           colorscale: "Viridis",
                           hovertemplate: "Row: %{y}<br>Column: %{x}<br>Value: %{z}<extra></extra>",
@@ -280,9 +274,9 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                       config={{ responsive: true }}
                     />
                   </div>
-                )}
+                </div>
               </div>
-            </div>
+            </>
           )}
 
           {feature.featureActivationHistogram && (

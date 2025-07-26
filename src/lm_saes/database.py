@@ -1,3 +1,4 @@
+import random
 from datetime import datetime
 from typing import Any, Optional
 
@@ -40,13 +41,16 @@ class FeatureAnalysis(BaseModel):
     name: str
     act_times: int
     max_feature_acts: float
-    decoder_norms: Optional[list[float]] = None
-    decoder_similarity_matrix: Optional[list[list[float]]] = None
-    decoder_inner_product_matrix: Optional[list[list[float]]] = None
     n_analyzed_tokens: Optional[int] = None
     act_times_modalities: Optional[dict[str, float]] = None
     max_feature_acts_modalities: Optional[dict[str, float]] = None
     samplings: list[FeatureAnalysisSampling]
+
+
+class DecoderAnalysis(BaseModel):
+    decoder_norms: list[float]
+    decoder_similarity_matrix: list[list[float]]
+    decoder_projection_matrix: list[list[float]]
 
 
 class FeatureRecord(BaseModel):
@@ -57,6 +61,8 @@ class FeatureRecord(BaseModel):
     logits: Optional[dict[str, list[dict[str, Any]]]] = None
     interpretation: Optional[dict[str, Any]] = None
     metric: Optional[dict[str, float]] = None
+    results: Optional[dict[str, Any]] = None
+    decoder_analysis: Optional[DecoderAnalysis] = None
 
 
 class AnalysisRecord(BaseModel):
@@ -236,6 +242,13 @@ class MongoClient:
             return None
         return SAERecord.model_validate(sae)
 
+    def get_random_feature(self, sae_name: str, sae_series: str) -> Optional[FeatureRecord]:
+        feature_count = self.feature_collection.count_documents({"sae_name": sae_name, "sae_series": sae_series})
+        if feature_count == 0:
+            return None
+        feature_index = random.randint(0, feature_count - 1)
+        return self.get_feature(sae_name, sae_series, feature_index)
+
     def get_random_alive_feature(
         self,
         sae_name: str,
@@ -254,29 +267,41 @@ class MongoClient:
         Returns:
             A random feature record with non-zero activation, or None if no such feature exists
         """
-        elem_match: dict[str, Any] = {"max_feature_acts": {"$gt": 0}}
-        if name is not None:
-            elem_match["name"] = name
 
-        match_filter: dict[str, Any] = {
-            "sae_name": sae_name,
-            "sae_series": sae_series,
-            "analyses": {"$elemMatch": elem_match},
-        }
+        if metric_filters is not None:
+            elem_match: dict[str, Any] = {"max_feature_acts": {"$gt": 0}}
+            if name is not None:
+                elem_match["name"] = name
 
-        # Add metric filters if provided
-        if metric_filters:
-            for metric_name, filters in metric_filters.items():
-                match_filter[f"metric.{metric_name}"] = filters
+            match_filter: dict[str, Any] = {
+                "sae_name": sae_name,
+                "sae_series": sae_series,
+                "analyses": {"$elemMatch": elem_match},
+            }
 
-        pipeline = [
-            {"$match": match_filter},
-            {"$sample": {"size": 1}},
-        ]
-        feature = next(self.feature_collection.aggregate(pipeline), None)
-        if feature is None:
+            # Add metric filters if provided
+            if metric_filters:
+                for metric_name, filters in metric_filters.items():
+                    match_filter[f"metric.{metric_name}"] = filters
+
+            pipeline = [
+                {"$match": match_filter},
+                {"$sample": {"size": 1}},
+            ]
+            # Use allowDiskUse for better performance with large datasets
+            feature = next(self.feature_collection.aggregate(pipeline, allowDiskUse=True), None)
+            if feature is None:
+                return None
+            return FeatureRecord.model_validate(feature)
+        else:
+            for _ in range(5):
+                feature = self.get_random_feature(sae_name, sae_series)
+                if feature is None:
+                    return None
+                analyses = [analysis for analysis in feature.analyses if analysis.name == name or name is None]
+                if any(analysis.max_feature_acts > 0 for analysis in analyses):
+                    return feature
             return None
-        return FeatureRecord.model_validate(feature)
 
     def get_alive_feature_count(self, sae_name: str, sae_series: str, name: str = "default"):
         pipeline = [

@@ -61,7 +61,7 @@ class Trainer:
             if self.cfg.check_point_save_mode == "linear":
                 self.checkpoint_thresholds = list(
                     range(0, self.cfg.total_training_tokens, self.cfg.total_training_tokens // self.cfg.n_checkpoints)
-                )[1:]
+                )
             elif self.cfg.check_point_save_mode == "log":
                 self.checkpoint_thresholds = [
                     math.ceil(2 ** (i / self.cfg.n_checkpoints * math.log2(self.total_training_steps))) * bs

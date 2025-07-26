@@ -350,9 +350,9 @@ def get_feature(
         "interpretation": feature.interpretation,
         "dictionary_name": feature.sae_name,
         "logits": feature.logits,
-        "decoder_norms": analysis.decoder_norms,
-        "decoder_similarity_matrix": analysis.decoder_similarity_matrix,
-        "decoder_inner_product_matrix": analysis.decoder_inner_product_matrix,
+        "decoder_analysis": (
+            feature.decoder_analysis.model_dump(mode="json") if feature.decoder_analysis is not None else None
+        ),
         "act_times": analysis.act_times,
         "max_feature_act": analysis.max_feature_acts,
         "n_analyzed_tokens": analysis.n_analyzed_tokens,

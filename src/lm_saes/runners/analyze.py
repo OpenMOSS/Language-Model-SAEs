@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory
+from lm_saes.analysis.decoder_analyzer import DecoderAnalyzer
 from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
 from lm_saes.backend.language_model import TransformerLensLanguageModel
@@ -305,3 +306,87 @@ def direct_logit_attribute(settings: DirectLogitAttributeSettings) -> None:
             start_idx=0,
         )
     logger.info("Direct logit attribution completed successfully")
+
+
+class AnalyzeDecoderSettings(BaseSettings):
+    """Settings for analyzing decoder of a CrossCoder model."""
+
+    sae: CrossCoderConfig
+    """Configuration for the CrossCoder model architecture and parameters"""
+
+    sae_name: str
+    """Name of the SAE model. Use as identifier for the SAE model in the database."""
+
+    sae_series: str
+    """Series of the SAE model. Use as identifier for the SAE model in the database."""
+
+    mongo: MongoDBConfig
+    """Configuration for the MongoDB database."""
+
+    parallel_size: int = 1
+    """Size of model parallel (tensor parallel) mesh"""
+
+    device_type: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+
+
+@torch.no_grad()
+def analyze_decoder(settings: AnalyzeDecoderSettings) -> None:
+    """Analyze decoder norms of a CrossCoder model.
+
+    This function computes decoder norms, similarity matrices, and inner product
+    matrices for CrossCoder SAEs without requiring additional dataset sampling.
+
+    Args:
+        settings: Configuration settings for decoder norm analysis
+    """
+    # Set up logging
+    setup_logging(level="INFO")
+
+    device_mesh = (
+        init_device_mesh(
+            device_type=settings.device_type,
+            mesh_shape=(settings.parallel_size,),
+            mesh_dim_names=("model",),
+        )
+        if settings.parallel_size > 1
+        else None
+    )
+
+    crosscoder_device_mesh = (
+        init_device_mesh(
+            device_type=settings.device_type,
+            mesh_shape=(settings.parallel_size,),
+            mesh_dim_names=("head",),
+        )
+        if settings.parallel_size > 1
+        else None
+    )
+
+    logger.info(f"Device mesh initialized: {device_mesh}")
+
+    mongo_client = MongoClient(settings.mongo)
+    logger.info("MongoDB client initialized")
+
+    logger.info("Loading CrossCoder model")
+    sae = CrossCoder.from_config(settings.sae, device_mesh=crosscoder_device_mesh)
+    logger.info(f"CrossCoder model loaded with {settings.sae.d_sae} features")
+
+    logger.info("Initializing decoder norm analyzer")
+    analyzer = DecoderAnalyzer()
+
+    logger.info("Analyzing decoder norms")
+    result = analyzer.analyze(sae=sae, d_sae=settings.sae.d_sae, device_mesh=device_mesh)
+
+    logger.info("Decoder norm analysis completed, saving results to MongoDB")
+    start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
+
+    if device_mesh is None or device_mesh.get_local_rank("model") == 0:
+        mongo_client.update_features(
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            update_data=[{"decoder_analysis": result} for result in result],
+            start_idx=start_idx,
+        )
+
+    logger.info("Decoder norm analysis completed successfully")
