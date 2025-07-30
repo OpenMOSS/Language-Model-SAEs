@@ -262,6 +262,7 @@ class TrainerConfig(BaseConfig):
 
     lr: float | dict[str, float] = 0.0004
     betas: Tuple[float, float] = (0.9, 0.999)
+    optimizer_class: Literal["adam", "sparseadam"] = "adam"
     lr_scheduler_name: Literal[
         "constant",
         "constantwithwarmup",
@@ -497,13 +498,16 @@ class FeatureAnalyzerConfig(BaseConfig):
         - `n_samples`: Number of samples to keep
     """
 
-    non_activating_subsample: dict[str, int | float] = Field(
+    non_activating_subsample: dict[str, int | float] | None = Field(
         default_factory=lambda: {"threshold": 0.3, "n_samples": 10, "max_length": 50}
     )
     """ Parameters for non-activating subsample:
         - `threshold`: Threshold of max activation to consider
         - `n_samples`: Number of samples to keep
     """
+
+    clt_layer: int | None = None
+    """ Layer to analyze for CLT. Provided iff analyzing CLT. """
 
 
 class WandbConfig(BaseConfig):

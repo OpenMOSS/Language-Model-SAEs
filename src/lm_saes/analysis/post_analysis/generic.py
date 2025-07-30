@@ -1,0 +1,38 @@
+"""Generic post-analysis processor for standard SAE types.
+
+This module provides a generic post-processing functionality for SAE types
+that don't require special handling beyond the basic analysis results.
+"""
+import torch
+from torch.distributed.device_mesh import DeviceMesh
+
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.utils.discrete import KeyedDiscreteMapper
+
+from . import PostAnalysisProcessor, register_post_analysis_processor
+
+
+class GenericPostAnalysisProcessor(PostAnalysisProcessor):
+    """Generic post-analysis processor for standard SAE types.
+    
+    This processor provides basic post-processing functionality for SAE types
+    that don't require special handling beyond the standard analysis results.
+    """
+    
+    def _process_tensors(
+        self,
+        sae: AbstractSparseAutoEncoder,
+        act_times: torch.Tensor,
+        n_analyzed_tokens: int,
+        max_feature_acts: torch.Tensor,
+        sample_result: dict[str, dict[str, torch.Tensor]],
+        mapper: KeyedDiscreteMapper,
+        device_mesh: DeviceMesh | None = None,
+    ) -> dict[str, dict[str, torch.Tensor]]:
+        """Generic processor doesn't add any additional tensor data."""
+        return sample_result
+
+
+# Register the processor for generic SAE types
+register_post_analysis_processor("sae", GenericPostAnalysisProcessor)
+register_post_analysis_processor("generic", GenericPostAnalysisProcessor) 

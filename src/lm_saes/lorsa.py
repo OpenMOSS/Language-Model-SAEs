@@ -6,6 +6,9 @@ inheriting from AbstractSparseAutoEncoder and supporting head parallelization.
 """
 
 import math
+from torch._tensor import Tensor
+from torch._tensor import Tensor
+from torch._tensor import Tensor
 from typing import Dict, Optional, Tuple, Union, Any, Literal, overload, Sequence
 import torch
 import torch.nn as nn
@@ -16,7 +19,7 @@ from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 import einops
-from jaxtyping import Float
+from jaxtyping import Float, Int
 
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import LorsaConfig
@@ -294,6 +297,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         q, k, v = self._compute_qkv(x)
         
         # Attention pattern
+        # n_qk_heads batch q_pos k_pos
         pattern = self._compute_attention_pattern(q, k)
         
         # Head outputs
@@ -347,6 +351,19 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             k = self._apply_rotary(k)
 
         return q, k, v
+    
+    def encode_z_pattern_for_head(
+        self,
+        x: Float[torch.Tensor, "batch seq_len d_model"],
+        head_idx: Int[torch.Tensor, "n_active_features"],
+    ) -> Float[torch.Tensor, "n_active_features k_pos"]:
+        assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
+        qk_idx: Tensor = head_idx // self.cfg.d_qk_head
+        q, k, v = self._compute_qkv(x)
+
+        # (n_active_features, q_pos, k_pos)
+        pattern = self._compute_attention_pattern(q, k)[qk_idx, 0]
+        return pattern * v[0, :, head_idx, None].permute(1, 2, 0)
     
     def _apply_rotary(
         self,
@@ -560,9 +577,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     ):
         """Load pretrained model."""
         cfg = LorsaConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        model = cls.from_config(cfg)
-        if fold_activation_scale:
-            model.standardize_parameters_of_dataset_norm()
+        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale)
         assert model.cfg.dtype == torch.float32
         return model
     

@@ -20,6 +20,8 @@ from lm_saes.config import (
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.evaluator import Evaluator
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 
 logger = get_distributed_logger("runners.eval")
@@ -80,10 +82,14 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
     activation_factory = ActivationFactory(settings.activation_factory)
 
     logger.info("Loading SAE model")
-    if isinstance(settings.sae, CrossCoderConfig):
-        sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
-    else:
-        sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+
+    cls = {
+        "crosscoder": CrossCoder,
+        "sae": SparseAutoEncoder,
+        "clt": CrossLayerTranscoder,
+        "lorsa": LowRankSparseAttention,
+    }[settings.sae.sae_type]
+    sae = cls.from_config(settings.sae, device_mesh=device_mesh)
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
 

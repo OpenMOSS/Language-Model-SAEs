@@ -1,9 +1,7 @@
 from typing import Any, TypeVar, overload
-
 import torch
 
 T = TypeVar("T")
-
 
 def sort_dict_of_tensor(
     tensor_dict: dict[str, torch.Tensor],
@@ -24,10 +22,15 @@ def sort_dict_of_tensor(
         A dictionary of tensors sorted by the values of the specified tensor
     """
     sorted_idx = tensor_dict[sort_key].argsort(dim=sort_dim, descending=descending)
-    return {
-        k: v.gather(sort_dim, sorted_idx.unsqueeze(-1).expand_as(v.reshape(*sorted_idx.shape, -1)).reshape_as(v))
-        for k, v in tensor_dict.items()
-    }
+    for k, v in tensor_dict.items():
+        tmp_sorted_idx = sorted_idx
+        while v.ndim > tmp_sorted_idx.ndim:
+            tmp_sorted_idx = tmp_sorted_idx.unsqueeze(-1)
+        tensor_dict[k] = v.gather(
+            sort_dim,
+            tmp_sorted_idx.expand_as(v)
+        ) 
+    return tensor_dict
 
 
 def concat_dict_of_tensor(*dicts: dict[str, torch.Tensor], dim: int = 0) -> dict[str, torch.Tensor]:
@@ -72,5 +75,4 @@ def batch_size(tensor_dict: dict[str, torch.Tensor]) -> int:
     """
     Get the batch size of a dictionary of tensors.
     """
-    first_value_tensor = tensor_dict[list(tensor_dict.keys())[0]]
-    return first_value_tensor.numel() // first_value_tensor.size(-1)
+    return len(tensor_dict[list(tensor_dict.keys())[0]])

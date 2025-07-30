@@ -33,7 +33,7 @@ class Evaluator:
         self,
         sae: AbstractSparseAutoEncoder,
         log_info: dict[str, torch.Tensor],
-        activation_dict: dict[str, torch.Tensor],
+        batch: dict[str, torch.Tensor],
         useful_token_mask: torch.Tensor,
     ) -> None:
         """Evaluate SAE activations and compute various metrics.
@@ -41,7 +41,7 @@ class Evaluator:
         Args:
             sae: Sparse autoencoder model
             log_info: Dictionary containing logging information and feature activations
-            activation_dict: Dictionary of activation tensors at different hook points
+            batch: Dictionary of activation tensors at different hook points
             useful_token_mask: Boolean mask indicating valid tokens
         """
 
@@ -63,15 +63,16 @@ class Evaluator:
                 log_metric(loss_key, item(log_info.pop(loss_key)))
 
         # 2. Get activations and compute reconstructions
-        batch = sae.normalize_activations(activation_dict)
         x, encode_kwargs = sae.prepare_input(batch)
         label = sae.prepare_label(batch)
         feature_acts = sae.encode(x, **encode_kwargs)
         reconstructed = sae.decode(feature_acts)
 
         # 3. Compute sparsity metrics
-        l0 = (feature_acts > 0).float().sum(-1).mean()
-        log_metric("l0", item(l0))
+        l0 = (feature_acts > 0).float().sum(-1)
+        if sae.cfg.sae_type == "clt":
+            l0 = l0.sum(-1)  # for clt, l0 is the sum of l0s of all layers
+        log_metric("l0", item(l0.mean()))
 
         # 4. Compute reconstruction quality metrics
         # L2 reconstruction error
@@ -117,7 +118,7 @@ class Evaluator:
                 (1e-6, "below_1e-6"),
             ]:
                 comparison = feature_sparsity > threshold if "above" in name else feature_sparsity < threshold
-                log_metric(name, item(comparison.sum()))
+                log_metric(name, item(comparison.sum().float()))
 
             # Reset tracking counters
             log_info["act_freq_scores"].zero_()

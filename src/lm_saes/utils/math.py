@@ -1,5 +1,6 @@
 import torch
-
+from typing import Union, Tuple
+from jaxtyping import Float
 
 def compute_geometric_median(x: torch.Tensor, max_iter=1000) -> torch.Tensor:
     """
@@ -33,85 +34,71 @@ def norm_ratio(a, b):
     b_norm = torch.norm(b, 2, dim=0).mean()
     return a_norm / b_norm
 
-@torch.no_grad()
-def batch_kthvalue_clt_binary_search(
-    x: torch.Tensor,
-    k_range: tuple[int, int],
-    dim: int = -1,
-) -> float:
+def topk(
+    x: Float[torch.Tensor, "batch n_layers d_sae"],
+    k: int,
+    dim: Union[int, Tuple[int, ...]] = -1,
+    tolerance: int = 1,
+    max_iterations: int = 50,
+):
     """
-    Perform batch kthvalue operation on a tensor using binary search.
+    Perform distributed batch kthvalue operation on a DTensor using binary search.
     
     Args:
-        x: Input tensor of shape (batch, n_layers, d_sae) or any 3D tensor
+        x: Input tensor of shape (batch, n_layers, d_sae)
+        k: Target number of top elements to keep
         k_range: Acceptable range for the number of elements above threshold (lower_bound, upper_bound)
-        dim: Dimension to operate on (currently not used, assumes 3D tensor)
+        device_mesh: Device mesh for distributed training
+        mesh_dim_name: Name of the mesh dimension to shard along
         
     Returns:
-        Threshold value that gives acceptable k elements within the specified range
+        Tuple of (threshold, None) where threshold is a scalar value that gives acceptable k elements
     """
-    if x.dim() != 3:
-        raise ValueError("x must be a 3D tensor")
-    
-    batch_size, n_layers, d_sae = x.shape
-    k_range_overall = (k_range[0] * batch_size * n_layers, k_range[1] * batch_size * n_layers)
-    
-    # Flatten the tensor for easier processing
-    x_flat = x.flatten()
-    
-    # Binary search parameters
-    lower_bound, upper_bound = k_range_overall
-    search_low = 0.0
-    search_high = 10.0
-    max_iterations = 50
-    tolerance = 1e-6
-    
-    # First check if 10 is a reasonable upper bound
-    count_above_high = (x_flat > search_high).sum()
-    
-    if count_above_high > upper_bound:
-        # Need to increase search space
-        search_high *= 2
-        count_above_high = (x_flat > search_high).sum()
-    
-    # Check if we can directly use 0 as threshold
-    count_above_0 = (x_flat > 0).sum()
-    
-    if count_above_0 <= upper_bound:
-        # Directly use 0 as threshold
-        threshold = 0.0
-    else:
-        # Binary search for the optimal threshold
-        threshold = None
-        for iteration in range(max_iterations):
-            threshold = (search_low + search_high) / 2
+    with torch.no_grad():
+        if isinstance(dim, int):
+            dim = (dim,)
+        
+        def _ensure_positive_dim(dim: Tuple[int, ...]) -> Tuple[int, ...]:
+            """We want to ensure that the dims are positive"""
+            return tuple(d if d >= 0 else d + x.ndim for d in dim)
+        
+        dim = _ensure_positive_dim(dim)
+        
+        constant_dims = tuple(d for d in range(x.ndim) if d not in dim)
+        constant_dim_size = tuple(x.size(d) for d in constant_dims)
+
+        k_lower_bound, k_upper_bound = k - tolerance, k + tolerance
+        search_low_val = torch.zeros(constant_dim_size, device=x.device)
+        search_high_val = torch.full(constant_dim_size, x.max(), device=x.device)
+        
+        x_flat = x.flatten(start_dim=len(constant_dims))
+        
+        
+        for _ in range(max_iterations):
+            threshold = (search_low_val + search_high_val) / 2
             
-            # Count elements above threshold
-            count_above_threshold = (x_flat > threshold).sum()
+            count_above_threshold = (x_flat > threshold.unsqueeze(-1)).sum(-1)
+            # All-reduce to get total count across all ranks
             
-            if lower_bound <= count_above_threshold <= upper_bound:
-                # Found acceptable threshold
+            if (
+                (k_lower_bound <= count_above_threshold) * (count_above_threshold <= k_upper_bound)
+            ).all():
                 break
-            elif count_above_threshold > upper_bound:
-                # Too many elements above threshold, increase threshold
-                search_low = threshold
-            else:
-                # Too few elements above threshold, decrease threshold
-                search_high = threshold
+
+            to_increase = count_above_threshold > k_upper_bound
+            to_decrease = count_above_threshold < k_lower_bound
+
+            if to_increase.any():
+                search_low_val = torch.where(to_increase, threshold, search_low_val)
+            if to_decrease.any():
+                search_high_val = torch.where(to_decrease, threshold, search_high_val)
             
             # Check for convergence
-            if search_high - search_low < tolerance:
+            if (search_high_val - search_low_val < 1e-6).all():
                 break
         
-        # If we didn't find a threshold in range, use the best approximation
-        if threshold is None:
-            threshold = search_low  # Use the lower bound as a fallback
+        while threshold.ndim < x.ndim:
+            threshold = threshold[..., None]
     
-    # Ensure threshold is a scalar value
-    if isinstance(threshold, torch.Tensor):
-        threshold_value = threshold.item()
-    else:
-        threshold_value = threshold
-    
-    return threshold_value
+    return x * x.ge(threshold)
     

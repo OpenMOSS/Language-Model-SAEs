@@ -8,12 +8,15 @@ from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
+from lm_saes.activation.factory import ActivationFactory
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
+from lm_saes.analysis.post_analysis import get_post_analysis_processor
 
 
 class FeatureAnalyzer:
@@ -139,6 +142,9 @@ class FeatureAnalyzer:
             discrete_meta: Metadata tensors like dataset/context IDs
             sample_result: Current sampling results to update
         """
+        if self.cfg.non_activating_subsample is None:
+            return sample_result
+        
         feature_acts = feature_acts[:, : self.cfg.non_activating_subsample["max_length"], :]
         sample_result_cur = sample_result.get("non_activating", None)
         if sample_result_cur is not None and all(
@@ -200,10 +206,25 @@ class FeatureAnalyzer:
             mask &= tokens != token_id
         return mask
 
+    def get_post_analysis_func(self, sae_type: str):
+        """Get the post-analysis processor for the given SAE type.
+        
+        Args:
+            sae_type: The SAE type identifier
+            
+        Returns:
+            The post-analysis processor instance
+        """
+        try:
+            return get_post_analysis_processor(sae_type)
+        except KeyError:
+            # Fallback to generic processor if no specific processor is registered
+            return get_post_analysis_processor("generic")
+
     @torch.no_grad()
     def analyze_chunk(
         self,
-        activation_stream: Iterable[dict[str, Any]],
+        activation_factory: ActivationFactory,
         sae: AbstractSparseAutoEncoder,
         device_mesh: DeviceMesh | None = None,
     ) -> list[dict[str, Any]]:
@@ -223,6 +244,7 @@ class FeatureAnalyzer:
             - Activation counts and maximums
             - Sampled activations with metadata
         """
+        activation_stream = activation_factory.process()
         n_tokens = n_analyzed_tokens = 0
 
         # Progress tracking
@@ -244,16 +266,18 @@ class FeatureAnalyzer:
         max_feature_acts = torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
         mapper = KeyedDiscreteMapper()
 
+        if sae.cfg.sae_type == "clt":
+            sae.encode = partial(sae.encode, layer=self.cfg.clt_layer)
+
         # Process activation batches
         for batch in activation_stream:
             # Reshape meta to zip outer dimensions to inner
             meta = {k: [m[k] for m in batch["meta"]] for k in batch["meta"][0].keys()}
 
-            batch = sae.normalize_activations(batch)
-
             # Get feature activations from SAE
             x, kwargs = sae.prepare_input(batch)
             feature_acts: torch.Tensor = sae.encode(x, **kwargs)
+            
             if isinstance(feature_acts, DTensor):
                 assert device_mesh is not None, "Device mesh is required for DTensor feature activations"
                 if device_mesh is not feature_acts.device_mesh:
@@ -279,13 +303,19 @@ class FeatureAnalyzer:
             feature_acts *= repeat(ignore_token_masks, "batch_size n_ctx -> batch_size n_ctx 1")
 
             # Update activation statistics
-            act_times += feature_acts.gt(0.0).sum(dim=[0, 1])
+            active_feature_count = feature_acts.gt(0.0).sum(dim=[0, 1])
+            act_times += active_feature_count
             max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
 
-            # TODO: Filter out meta that is not string
-            discrete_meta = {
-                k: torch.tensor(mapper.encode(k, v), device=sae.cfg.device, dtype=torch.int32) for k, v in meta.items()
-            }
+            # Apply discrete mapper encoding only to string metadata, keep others as-is
+            discrete_meta = {}
+            for k, v in meta.items():
+                if all(isinstance(item, str) for item in v):
+                    # Apply discrete mapper encoding to string metadata
+                    discrete_meta[k] = torch.tensor(mapper.encode(k, v), device=sae.cfg.device, dtype=torch.int32)
+                else:
+                    # Keep non-string metadata as-is (assuming they are already tensors or can be converted)
+                    discrete_meta[k] = torch.tensor(v, device=sae.cfg.device)
             sample_result = self._process_batch(feature_acts, discrete_meta, sample_result, max_feature_acts)
             sample_result = self._sample_non_activating_examples(
                 feature_acts, discrete_meta, sample_result, max_feature_acts
@@ -302,15 +332,9 @@ class FeatureAnalyzer:
 
         pbar.close()
 
-        # Filter and rearrange results
+        # Filter out None values and format final per-feature results
         sample_result = {k: v for k, v in sample_result.items() if v is not None}
-        sample_result = {
-            k1: {k2: rearrange(v2, "n_samples d_sae ... -> d_sae n_samples ...") for k2, v2 in v1.items()}
-            for k1, v1 in sample_result.items()
-        }
-
-        # Format final per-feature results
-        return self._format_analysis_results(
+        return self.get_post_analysis_func(sae.cfg.sae_type).process(
             sae=sae,
             act_times=act_times,
             n_analyzed_tokens=n_analyzed_tokens,
@@ -318,126 +342,5 @@ class FeatureAnalyzer:
             sample_result=sample_result,
             mapper=mapper,
             device_mesh=device_mesh,
+            activation_factory=activation_factory,
         )
-
-    def _format_analysis_results(
-        self,
-        sae: AbstractSparseAutoEncoder,
-        act_times: torch.Tensor,
-        n_analyzed_tokens: int,
-        max_feature_acts: torch.Tensor,
-        sample_result: dict[str, dict[str, torch.Tensor]],
-        mapper: KeyedDiscreteMapper,
-        device_mesh: DeviceMesh | None = None,
-    ) -> list[dict[str, Any]]:
-        """Format the analysis results into the final per-feature format.
-
-        Args:
-            sae: The sparse autoencoder model
-            act_times: Tensor of activation times for each feature
-            n_analyzed_tokens: Number of tokens analyzed
-            max_feature_acts: Tensor of maximum activation values for each feature
-            sample_result: Dictionary of sampling results
-            mapper: MetaMapper for encoding/decoding metadata
-
-        Returns:
-            List of dictionaries containing per-feature analysis results
-        """
-        results = []
-
-        if isinstance(sae, CrossCoder):
-            decoder_norms = sae.decoder_norm()
-            if isinstance(decoder_norms, DTensor):
-                assert device_mesh is not None, "Device mesh is required for DTensor decoder norms"
-                if decoder_norms.device_mesh is not device_mesh:
-                    decoder_norms = DTensor.from_local(
-                        decoder_norms.redistribute(
-                            placements=DimMap({"head": -1, "model": -1}).placements(decoder_norms.device_mesh)
-                        ).to_local(),
-                        device_mesh,
-                        placements=DimMap({"model": -1}).placements(device_mesh),
-                    )
-                    # TODO: Remove this once redistributing across device meshes is supported
-
-                decoder_norms = decoder_norms.redistribute(
-                    placements=DimMap({"model": -1}).placements(device_mesh)
-                ).to_local()
-            assert decoder_norms.shape[-1] == len(act_times), (
-                f"decoder_norms.shape: {decoder_norms.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
-            )
-
-            decoder_similarity_matrices = sae.decoder_similarity_matrices()
-            if isinstance(decoder_similarity_matrices, DTensor):
-                assert device_mesh is not None, "Device mesh is required for DTensor decoder similarity matrices"
-                if decoder_similarity_matrices.device_mesh is not device_mesh:
-                    decoder_similarity_matrices = DTensor.from_local(
-                        decoder_similarity_matrices.redistribute(
-                            placements=DimMap({"head": 0, "model": 0}).placements(
-                                decoder_similarity_matrices.device_mesh
-                            )
-                        ).to_local(),
-                        device_mesh,
-                        placements=DimMap({"model": 0}).placements(device_mesh),
-                    )
-                    # TODO: Remove this once redistributing across device meshes is supported
-
-                decoder_similarity_matrices = decoder_similarity_matrices.redistribute(
-                    placements=DimMap({"model": 0}).placements(device_mesh)
-                ).to_local()
-            assert decoder_similarity_matrices.shape[0] == len(act_times), (
-                f"decoder_similarity_matrices.shape: {decoder_similarity_matrices.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
-            )
-
-            decoder_inner_product_matrices = sae.decoder_inner_product_matrices()
-            if isinstance(decoder_inner_product_matrices, DTensor):
-                assert device_mesh is not None, "Device mesh is required for DTensor decoder inner product matrices"
-                if decoder_inner_product_matrices.device_mesh is not device_mesh:
-                    decoder_inner_product_matrices = DTensor.from_local(
-                        decoder_inner_product_matrices.redistribute(
-                            placements=DimMap({"head": 0, "model": 0}).placements(
-                                decoder_inner_product_matrices.device_mesh
-                            )
-                        ).to_local(),
-                        device_mesh,
-                        placements=DimMap({"model": 0}).placements(device_mesh),
-                    )
-                    # TODO: Remove this once redistributing across device meshes is supported
-
-                decoder_inner_product_matrices = decoder_inner_product_matrices.redistribute(
-                    placements=DimMap({"model": 0}).placements(device_mesh)
-                ).to_local()
-            assert decoder_inner_product_matrices.shape[0] == len(act_times), (
-                f"decoder_inner_product_matrices.shape: {decoder_inner_product_matrices.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
-            )
-        else:
-            decoder_norms, decoder_similarity_matrices, decoder_inner_product_matrices = None, None, None
-
-        for i in range(len(act_times)):
-            feature_result = {
-                "act_times": act_times[i].item(),
-                "n_analyzed_tokens": n_analyzed_tokens,
-                "max_feature_acts": max_feature_acts[i].item(),
-                "samplings": [
-                    {
-                        "name": k,
-                        "feature_acts": v["feature_acts"][i].tolist(),
-                        # TODO: Filter out meta that is not string
-                        **{k2: mapper.decode(k2, v[k2][i].tolist()) for k2 in mapper.keys()},
-                    }
-                    for k, v in sample_result.items()
-                ],
-            }
-
-            if isinstance(sae, CrossCoder):
-                assert (
-                    decoder_norms is not None
-                    and decoder_similarity_matrices is not None
-                    and decoder_inner_product_matrices is not None
-                )
-                feature_result["decoder_norms"] = decoder_norms[:, i].tolist()
-                feature_result["decoder_similarity_matrix"] = decoder_similarity_matrices[i, :, :].tolist()
-                feature_result["decoder_inner_product_matrix"] = decoder_inner_product_matrices[i, :, :].tolist()
-
-            results.append(feature_result)
-
-        return results
