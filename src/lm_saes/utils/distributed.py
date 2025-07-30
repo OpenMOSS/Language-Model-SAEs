@@ -148,7 +148,7 @@ class DimMap:
         """Merge this DimMap with another DimMap or dictionary."""
         return DimMap(self.to_dict() | other.to_dict())
 
-def distributed_kthvalue(
+def distributed_topk(
     x: Float[DTensor, "batch n_layers d_sae"],
     k: int,
     device_mesh: DeviceMesh,

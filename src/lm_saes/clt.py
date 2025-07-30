@@ -52,7 +52,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         self.cfg = cfg
 
         # CLT requires specific configuration settings
-        assert not cfg.sparsity_include_decoder_norm, "CLT requires sparsity_include_decoder_norm=False"
+        # assert not cfg.sparsity_include_decoder_norm, "CLT requires sparsity_include_decoder_norm=False"
         assert cfg.use_decoder_bias, "CLT requires use_decoder_bias=True"
 
         # Initialize weights and biases for cross-layer architecture
@@ -154,27 +154,70 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             )
 
         elif self.cfg.act_fn.lower() == "topk":
-            raise NotImplementedError("TopK activation function is not implemented for CLT")
+            if device_mesh is not None:
+                from lm_saes.utils.distributed import distributed_kthvalue
+                
+                def topk_activation(x: Union[
+                        Float[torch.Tensor, "batch n_layer d_sae"],
+                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
+                    ],
+                ):
+                    return distributed_kthvalue(
+                        x,
+                        k=self.current_k,
+                        device_mesh=device_mesh,
+                        dim=-1,
+                        mesh_dim_name="model",
+                    )
+            else:
+                def topk_activation(
+                    x: Union[
+                        Float[torch.Tensor, "batch n_layer d_sae"],
+                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
+                    ],
+                ):
+                    x = torch.clamp(x, min=0.0)
+                    k = x.shape[-1] - self.current_k + 1
+                    
+                    k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
+                    if isinstance(k_th_value, DTensor):
+                        k_th_value = k_th_value.full_tensor()
+                    k_th_value = k_th_value.unsqueeze(dim=-1)
+                    return x * x.ge(k_th_value)
+            
+            return topk_activation
 
         elif self.cfg.act_fn.lower() == "batchtopk":
             if device_mesh is not None:
-                # distributed batchtopk 
-                from lm_saes.utils.distributed import distributed_batch_kthvalue_clt_binary_search
-                def batch_topk(feature_acts: Tensor) -> Tensor:
-                    feature_acts = feature_acts * feature_acts.gt(0).to(feature_acts.dtype)
-                    assert isinstance(feature_acts, DTensor)
-                    k_range = (self.current_k-1, self.current_k)
-                    threshold = distributed_batch_kthvalue_clt_binary_search(feature_acts, k_range, device_mesh)
-                    # threshold is now a scalar, so we can use it directly for comparison
-                    return feature_acts * feature_acts.ge(threshold)
+                from lm_saes.utils.distributed import distributed_topk
+                
+                def batch_topk(x: Union[
+                        Float[torch.Tensor, "batch n_layer d_sae"],
+                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
+                    ],
+                ):
+                    x = x * x.gt(0).to(x.dtype)
+                    return distributed_topk(
+                        x,
+                        k=self.current_k,
+                        device_mesh=device_mesh,
+                        dim=(-2, -1),
+                        mesh_dim_name="model",
+                    )
             else:
                 # single-GPU batchtopk
-                from lm_saes.utils.math import batch_kthvalue_clt_binary_search
-                def batch_topk(feature_acts: Tensor) -> Tensor:
-                    feature_acts = feature_acts * feature_acts.gt(0).to(feature_acts.dtype)
-                    k_range = (self.current_k-1, self.current_k)
-                    threshold = batch_kthvalue_clt_binary_search(feature_acts, k_range)
-                    return feature_acts * feature_acts.ge(threshold)
+                from lm_saes.utils.math import topk
+                def batch_topk(x: Union[
+                        Float[torch.Tensor, "batch n_layer d_sae"],
+                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
+                    ],
+                ):
+                    x = x * x.gt(0).to(x.dtype)
+                    return topk(
+                        x,
+                        k=self.current_k,
+                        dim=(-2, -1),
+                    )
 
             return batch_topk  # type: ignore
 
@@ -395,6 +438,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 placements=self.dim_maps()["W_E"].placements(self.device_mesh),
             )
 
+        if self.cfg.sparsity_include_decoder_norm:
+            hidden_pre = hidden_pre * self.decoder_norm_per_feature()
+
         # Apply activation function (ReLU, TopK, etc.)
         with timer.time("activation_function"):
             feature_acts = self.activation_function(hidden_pre)
@@ -595,8 +641,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 decoder_weights_local.flatten(end_dim=-2), # (layer_to+1 * d_sae, d_model)
                 dynamic_k=True
             ) # (batch, d_model)
-
-
         else:
             contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights_local)
         
@@ -726,6 +770,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         for layer_to, decoder_weights in enumerate(self.W_D):
             decoder_norms[:layer_to + 1] = decoder_norms[:layer_to + 1] + decoder_weights.pow(2).sum(dim=-1)
         decoder_norms = decoder_norms.sqrt()
+        assert decoder_norms.requires_grad
         return decoder_norms
 
     def decoder_norm_per_decoder(self) -> Union[Float[torch.Tensor, "n_decoders"], DTensor]:  # noqa: F821

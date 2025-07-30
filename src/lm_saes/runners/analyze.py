@@ -1,6 +1,6 @@
 """Module for analyzing SAE models."""
 
-from typing import Optional
+from typing import Any, Iterable, Optional
 
 import torch
 from pydantic_settings import BaseSettings
@@ -19,6 +19,8 @@ from lm_saes.config import (
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 
 logger = get_distributed_logger("runners.analyze")
@@ -81,11 +83,13 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
 
     activation_factory = ActivationFactory(settings.activation_factory)
 
-    logger.info("Loading SAE model")
-    if isinstance(settings.sae, CrossCoderConfig):
-        sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
-    else:
-        sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+    logger.info(f"Loading {settings.sae.sae_type} model")
+    model_cls = {
+        "sae": SparseAutoEncoder,
+        "clt": CrossLayerTranscoder,
+        "lorsa": LowRankSparseAttention,
+    }[settings.sae.sae_type]
+    sae = model_cls.from_config(settings.sae, device_mesh=device_mesh)
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
 
@@ -93,8 +97,11 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     logger.info("Feature analyzer initialized")
 
     logger.info("Processing activations for analysis")
-    activations = activation_factory.process()
-    result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
+    result = analyzer.analyze_chunk(
+        activation_factory,
+        sae=sae,
+        device_mesh=device_mesh,
+    )
 
     logger.info("Analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)

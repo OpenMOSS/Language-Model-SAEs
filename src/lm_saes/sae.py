@@ -291,14 +291,12 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
-            sparsity_scores = hidden_pre * self.decoder_norm()
-        else:
-            sparsity_scores = hidden_pre
+            hidden_pre = hidden_pre * self.decoder_norm()
 
         # Apply activation function. The activation function here differs from a common activation function,
         # since it computes a scaling of the input tensor, which is, suppose the common activation function
         # is $f(x)$, then here it computes $f(x) / x$. For simple ReLU case, it computes a mask of 1s and 0s.
-        feature_acts = self.activation_function(sparsity_scores)
+        feature_acts = self.activation_function(hidden_pre)
         feature_acts = self.hook_feature_acts(feature_acts)
 
         if return_hidden_pre:

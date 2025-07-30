@@ -13,7 +13,7 @@ from wandb.sdk.wandb_run import Run
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.optim import get_scheduler
+from lm_saes.optim import get_scheduler, SparseAdam
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
@@ -74,7 +74,11 @@ class Trainer:
     @timer.time("initialize_optimizer")
     def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
         assert isinstance(self.cfg.lr, float)
-        optimizer = Adam(sae.get_parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
+        optim_cls = {
+            "adam": Adam,
+            "sparseadam": SparseAdam,
+        }[self.cfg.optimizer_class]
+        optimizer = optim_cls(sae.get_parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
         scheduler = get_scheduler(
             scheduler_name=self.cfg.lr_scheduler_name,
             optimizer=optimizer,
@@ -226,6 +230,7 @@ class Trainer:
                 clt_per_layer_l0_dict = {
                     f"metrics/l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))
                 }
+                l0 = l0.sum(-1) # [batch_size]
                 ####
                 # per_decoder_norm = sae.decoder_norm_per_decoder()
                 # if isinstance(per_decoder_norm, DTensor):

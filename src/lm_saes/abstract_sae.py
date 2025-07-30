@@ -387,6 +387,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             raise ValueError(f"Unsupported checkpoint format: {ckpt_path}")                
 
         model.load_full_state_dict(state_dict, device_mesh)
+        if fold_activation_scale:
+            model.standardize_parameters_of_dataset_norm()
         return model
 
     @classmethod
