@@ -27,7 +27,7 @@ from lm_saes.resource_loaders import load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import is_master
+from lm_saes.utils.misc import get_mesh_dim_size, is_master
 
 logger = get_distributed_logger("runners.analyze")
 
@@ -377,16 +377,17 @@ def analyze_decoder(settings: AnalyzeDecoderSettings) -> None:
 
     logger.info("Analyzing decoder norms")
     result = analyzer.analyze(sae=sae, d_sae=settings.sae.d_sae, device_mesh=device_mesh)
+    assert len(result) == settings.sae.d_sae // get_mesh_dim_size(device_mesh, "model"), (
+        f"Result length {len(result)} does not match expected length {settings.sae.d_sae // get_mesh_dim_size(device_mesh, 'model')}, with mesh dim size {get_mesh_dim_size(device_mesh, 'model')}"
+    )
 
     logger.info("Decoder norm analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
-
-    if device_mesh is None or device_mesh.get_local_rank("model") == 0:
-        mongo_client.update_features(
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            update_data=[{"decoder_analysis": result} for result in result],
-            start_idx=start_idx,
-        )
+    mongo_client.update_features(
+        sae_name=settings.sae_name,
+        sae_series=settings.sae_series,
+        update_data=[{"decoder_analysis": result} for result in result],
+        start_idx=start_idx,
+    )
 
     logger.info("Decoder norm analysis completed successfully")
