@@ -10,6 +10,7 @@ from .config import (
     BufferShuffleConfig,
     CLTConfig,
     CrossCoderConfig,
+    MOLTConfig,
     DatasetConfig,
     DirectLogitAttributorConfig,
     FeatureAnalyzerConfig,
@@ -22,6 +23,7 @@ from .config import (
     WandbConfig,
 )
 from .crosscoder import CrossCoder
+from .molt import MixtureOfLinearTransform
 from .database import MongoClient
 from .evaluator import EvalConfig, Evaluator
 from .resource_loaders import load_dataset, load_model
@@ -39,6 +41,7 @@ from .runners import (
     TrainCLTSettings,
     TrainCrossCoderSettings,
     TrainSAESettings,
+    TrainMOLTSettings,
     analyze_crosscoder,
     analyze_sae,
     auto_interp,
@@ -51,6 +54,7 @@ from .runners import (
     train_clt,
     train_crosscoder,
     train_sae,
+    train_molt,
 )
 from .sae import SparseAutoEncoder
 
@@ -109,4 +113,8 @@ __all__ = [
     "DirectLogitAttributeSettings",
     "direct_logit_attribute",
     "DirectLogitAttributorConfig",
+    "MOLTConfig",
+    "MixtureOfLinearTransform",
+    "train_molt",
+    "TrainMOLTSettings",
 ]

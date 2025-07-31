@@ -10,6 +10,7 @@ from lm_saes.abstract_sae import AbstractSparseAutoEncoder, JumpReLU
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
+from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
@@ -102,7 +103,11 @@ class Initializer:
         This function is used to initialize the jump_relu_threshold for the SAE.
         """
         batch = sae.normalize_activations(activation_batch)
-        x, kwargs = sae.prepare_input(batch)
+        prepare_result = sae.prepare_input(batch)
+        if len(prepare_result) == 3:
+            x, kwargs, _ = prepare_result  # Ignore decoder_kwargs for this operation
+        else:
+            x, kwargs = prepare_result
         _, hidden_pre = sae.encode(x, **kwargs, return_hidden_pre=True)
         hidden_pre = torch.clamp(hidden_pre, min=0.0)
         hidden_pre = hidden_pre.flatten()
@@ -135,6 +140,8 @@ class Initializer:
             sae: AbstractSparseAutoEncoder = CrossCoder.from_config(cfg, device_mesh=device_mesh)
         elif cfg.sae_type == "clt":
             sae: AbstractSparseAutoEncoder = CrossLayerTranscoder.from_config(cfg, device_mesh=device_mesh)
+        elif cfg.sae_type == "molt":
+            sae: AbstractSparseAutoEncoder = MixtureOfLinearTransform.from_config(cfg, device_mesh=device_mesh)
         else:
             raise ValueError(f"SAE type {cfg.sae_type} not supported.")
         if self.cfg.state == "training":
