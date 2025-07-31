@@ -15,8 +15,17 @@ from .config import MOLTConfig
 class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     """Mixture of Linear Transforms (MOLT) model.
     
-    MOLT uses d_sae linear transforms, each with its own rank for UtVt decomposition.
-    The rank of each transform is determined by the rank_distribution configuration.
+    MOLT is a sparse autoencoder variant that uses d_sae linear transforms, each with 
+    its own rank for UtVt decomposition. This approach provides more flexibility in 
+    modeling complex patterns while maintaining sparsity.
+    
+    Mathematical Formulation:
+    - Encoder: ϕ(et · x - bt) where ϕ is the activation function
+    - Decoder: Σᵢ fᵢ · (Uᵢ @ Vᵢ @ x) where fᵢ are feature activations
+    - Decoder norm: ||UᵢVᵢ||_F for each transform i
+    
+    The rank of each transform is determined by the rank_distribution configuration,
+    allowing for adaptive model capacity allocation.
     """
 
     def __init__(self, cfg: MOLTConfig, device_mesh: DeviceMesh | None = None) -> None:
@@ -56,8 +65,14 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         """Generate rank assignment for each of the d_sae linear transforms."""
         assignments = []
         
+        # Validate rank distribution
+        if not self.cfg.rank_distribution:
+            raise ValueError("rank_distribution cannot be empty")
+        
         # Assign ranks according to proportions
         for rank, proportion in sorted(self.cfg.rank_distribution.items()):
+            if proportion <= 0:
+                raise ValueError(f"Proportion for rank {rank} must be positive, got {proportion}")
             count = int(self.cfg.d_sae * proportion)
             assignments.extend([rank] * count)
         
@@ -70,6 +85,9 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         
         # Truncate if we have too many (shouldn't happen with proper proportions)
         assignments = assignments[:self.cfg.d_sae]
+        
+        # Verify we have exactly d_sae assignments
+        assert len(assignments) == self.cfg.d_sae, f"Expected {self.cfg.d_sae} assignments, got {len(assignments)}"
         
         return assignments
 
@@ -266,8 +284,8 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         # x: (..., d_model), UV_all: (d_sae, d_model, d_model)
         # Result: (..., d_sae, d_model)
         transformed_x_all = einops.einsum(
-            x, UV_all, 
-            '... d_model, d_sae d_model d_model -> ... d_sae d_model'
+            UV_all, x, 
+            'd_sae d_model d_model_out, ... d_model -> ... d_sae d_model_out'
         )
         
         # Weight by feature activations: feature_acts[i] * (U_i @ V_i @ x)
@@ -302,13 +320,21 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         
         # Initialize U and V matrices for each rank group
         for rank_str in self.U_matrices.keys():
+            rank = int(rank_str)
             U = self.U_matrices[rank_str]
             V = self.V_matrices[rank_str]
-            # nn.init.uniform_(U, -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"])
-            # nn.init.uniform_(V, -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"])
-            decoder_bound = 1.0 / math.sqrt(self.cfg.d_model * int(rank_str))
-            nn.init.uniform_(U, -decoder_bound, decoder_bound)
-            nn.init.uniform_(V, -decoder_bound, decoder_bound)
+            
+            # Xavier initialization considering the rank
+            U_bound = 1.0 / math.sqrt(self.cfg.d_model)
+            V_bound = 1.0 / math.sqrt(rank)
+            
+            nn.init.uniform_(U, -U_bound, U_bound)
+            nn.init.uniform_(V, -V_bound, V_bound)
+            # # nn.init.uniform_(U, -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"])
+            # # nn.init.uniform_(V, -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"])
+            # decoder_bound = 1.0 / math.sqrt(self.cfg.d_model * int(rank_str))
+            # nn.init.uniform_(U, -decoder_bound, decoder_bound)
+            # nn.init.uniform_(V, -decoder_bound, decoder_bound)
 
         if self.cfg.use_decoder_bias:
             nn.init.zeros_(self.b_D)

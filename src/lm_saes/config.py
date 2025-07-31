@@ -172,17 +172,22 @@ class MOLTConfig(BaseSAEConfig):
     """Hook point to capture input activations from."""
     hook_point_out: str 
     """Hook point to output activations to."""
-    rank_distribution: dict[int, float] = Field(default_factory=lambda: {32: 0.3, 64: 0.5, 128: 0.2})
-    """Dictionary mapping rank values to their proportions. 
-    Keys are rank values, values are proportions (should sum to 1.0).
-    Example: {32: 0.3, 64: 0.5, 128: 0.2} means 30% rank-32, 50% rank-64, 20% rank-128."""
+    rank_distribution: dict[int, float] = Field(default_factory=lambda: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16})
+    """Dictionary mapping rank values to their ratios. 
+    Keys are rank values, values are ratios that will be automatically normalized to proportions.
+    Example: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16} means ratio 1:2:4:8:16, 
+    which will be normalized to proportions automatically."""
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
-        # Validate rank distribution proportions sum to 1.0
-        total_proportion = sum(self.rank_distribution.values())
-        if abs(total_proportion - 1.0) > 1e-6:
-            raise ValueError(f"Rank distribution proportions must sum to 1.0, got {total_proportion}")
+        # Normalize ratios to proportions
+        total_ratio = sum(self.rank_distribution.values())
+        if total_ratio <= 0:
+            raise ValueError(f"Total ratio must be positive, got {total_ratio}")
+        
+        # Convert ratios to proportions (in-place)
+        for rank in self.rank_distribution:
+            self.rank_distribution[rank] = self.rank_distribution[rank] / total_ratio
 
     @property
     def available_ranks(self) -> list[int]:
