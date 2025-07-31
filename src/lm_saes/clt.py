@@ -155,14 +155,14 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         elif self.cfg.act_fn.lower() == "topk":
             if device_mesh is not None:
-                from lm_saes.utils.distributed import distributed_kthvalue
+                from lm_saes.utils.distributed import distributed_topk
                 
                 def topk_activation(x: Union[
                         Float[torch.Tensor, "batch n_layer d_sae"],
                         Float[torch.Tensor, "batch seq_len n_layer d_sae"],
                     ],
                 ):
-                    return distributed_kthvalue(
+                    return distributed_topk(
                         x,
                         k=self.current_k,
                         device_mesh=device_mesh,
@@ -176,14 +176,12 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                         Float[torch.Tensor, "batch seq_len n_layer d_sae"],
                     ],
                 ):
-                    x = torch.clamp(x, min=0.0)
-                    k = x.shape[-1] - self.current_k + 1
-                    
-                    k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
-                    if isinstance(k_th_value, DTensor):
-                        k_th_value = k_th_value.full_tensor()
-                    k_th_value = k_th_value.unsqueeze(dim=-1)
-                    return x * x.ge(k_th_value)
+                    from lm_saes.utils.math import topk
+                    return topk(
+                        x,
+                        k=self.current_k,
+                        dim=-1,
+                    )
             
             return topk_activation
 

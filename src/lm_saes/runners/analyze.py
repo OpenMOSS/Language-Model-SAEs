@@ -1,6 +1,7 @@
 """Module for analyzing SAE models."""
 
 from typing import Any, Iterable, Optional
+import sys
 
 import torch
 from pydantic_settings import BaseSettings
@@ -103,7 +104,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
         device_mesh=device_mesh,
     )
 
-    logger.info("Analysis completed, saving results to MongoDB")
+    logger.info(f"Analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
     mongo_client.add_feature_analysis(
         name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result, start_idx=start_idx
