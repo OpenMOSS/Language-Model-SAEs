@@ -110,9 +110,9 @@ def make_serializable(obj):
 
 def trim_minimum(
     origins: list[dict[str, Any] | None],
-    feature_acts_indices: list[int],
-    feature_acts_values: list[float],
-) -> tuple[list[dict[str, Any] | None], list[int], list[float]]:
+    feature_acts_indices: np.ndarray,
+    feature_acts_values: np.ndarray,
+) -> tuple[list[dict[str, Any] | None], np.ndarray, np.ndarray]:
     """Trim multiple arrays to the length of the shortest non-None array.
 
     Args:
@@ -124,8 +124,8 @@ def trim_minimum(
         list: List of trimmed arrays
     """
 
-    min_length = min(len(origins), feature_acts_indices[-1])
-    feature_acts_indices_mask = feature_acts_indices[0] <= min_length
+    min_length = min(len(origins), feature_acts_indices[-1] + 10)
+    feature_acts_indices_mask = feature_acts_indices <= min_length
     return origins[:min_length], feature_acts_indices[feature_acts_indices_mask], feature_acts_values[feature_acts_indices_mask]
 
 
@@ -189,9 +189,16 @@ def get_feature(
 
     # Get feature data
     feature = (
-        client.get_random_alive_feature(sae_name=name, sae_series=sae_series, name=feature_analysis_name)
+        client.get_random_alive_feature(
+            sae_name=name,
+            sae_series=sae_series,
+            name=feature_analysis_name,
+        )
         if feature_index == "random"
-        else client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
+        else client.get_feature(
+            sae_name=name,
+            sae_series=sae_series,
+            index=feature_index)
     )
 
     if feature is None:
@@ -201,7 +208,11 @@ def get_feature(
         )
 
     analysis = next(
-        (a for a in feature.analyses if a.name == feature_analysis_name or feature_analysis_name is None), None
+        (
+            a for a in feature.analyses
+            if a.name == feature_analysis_name or feature_analysis_name is None
+        ),
+        None,
     )
     if analysis is None:
         return Response(
@@ -211,11 +222,20 @@ def get_feature(
             status_code=404,
         )
 
-    def process_sample(*, sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx=None, n_shards=None):
+    def process_sample(
+        *,
+        sparse_feature_acts,
+        context_idx,
+        dataset_name,
+        model_name,
+        shard_idx=None,
+        n_shards=None,
+    ):
         """Process a sample to extract and format feature data.
 
         Args:
-            sparse_feature_acts: Sparse feature activations
+            sparse_feature_acts: Sparse feature activations,
+                optional z pattern activations
             decoder_norms: Decoder norms
             context_idx: Context index in the dataset
             dataset_name: Name of the dataset
@@ -233,43 +253,105 @@ def get_feature(
         origins = model.trace({k: [v] for k, v in data.items()})[0]
 
         # Process image data if present
-        image_key = next((key for key in ["image", "images"] if key in data), None)
+        image_key = next(
+            (key for key in ["image", "images"] if key in data),
+            None,
+        )
         if image_key is not None:
             image_urls = [
-                f"/images/{dataset_name}?context_idx={context_idx}&shard_idx={shard_idx}&n_shards={n_shards}&image_idx={img_idx}"
+                f"/images/{dataset_name}?context_idx={context_idx}&"
+                f"shard_idx={shard_idx}&n_shards={n_shards}&"
+                f"image_idx={img_idx}"
                 for img_idx in range(len(data[image_key]))
             ]
             del data[image_key]
             data["images"] = image_urls
 
         # Trim to matching lengths
-        feature_acts_indices, feature_acts_values = sparse_feature_acts
-        origins, feature_acts_indices, feature_acts_values = trim_minimum(origins, feature_acts_indices, feature_acts_values)
-        assert origins is not None and feature_acts_indices is not None and feature_acts_values is not None, "Origins and feature acts must not be None"
+        (
+            feature_acts_indices,
+            feature_acts_values,
+            z_pattern_indices,
+            z_pattern_values,
+        ) = sparse_feature_acts
+
+        origins, feature_acts_indices, feature_acts_values = trim_minimum(
+            origins,
+            feature_acts_indices,
+            feature_acts_values,
+        )
+        assert (
+            origins is not None
+            and feature_acts_indices is not None
+            and feature_acts_values is not None
+        ), "Origins and feature acts must not be None"
 
         # Process text data if present
         if "text" in data:
-            text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
+            text_ranges = [
+                origin["range"] for origin in origins
+                if origin is not None and origin["key"] == "text"
+            ]
             if text_ranges:
                 max_text_origin = max(text_ranges, key=lambda x: x[1])
                 data["text"] = data["text"][: max_text_origin[1]]
 
-        return {**data, "origins": origins, "feature_acts_indices": feature_acts_indices, "feature_acts_values": feature_acts_values}
+        return {
+            **data,
+            "origins": origins,
+            "feature_acts_indices": feature_acts_indices,
+            "feature_acts_values": feature_acts_values,
+            "z_pattern_indices": z_pattern_indices,
+            "z_pattern_values": z_pattern_values,
+        }
     
-    def process_sparse_feature_acts(feature_acts_indices: list[list[int]], feature_acts_values: list[float]) -> list[tuple[list[int], list[float]]]:
+    def process_sparse_feature_acts(
+        feature_acts_indices: np.ndarray,
+        feature_acts_values: np.ndarray,
+        z_pattern_indices: np.ndarray | None = None,
+        z_pattern_values: np.ndarray | None = None,
+    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]]:
         """Process sparse feature acts.
         
         Args:
             feature_acts_indices: Feature acts indices
             feature_acts_values: Feature acts values
+            z_pattern_indices: Z pattern indices
+            z_pattern_values: Z pattern values
         """
-        _, counts = np.unique(feature_acts_indices[0], return_counts=True)
-        sample_ranges = np.concatenate([[0], np.cumsum(counts)])
-        sample_ranges = list(zip(sample_ranges[:-1], sample_ranges[1:]))
-        return [
-            (feature_acts_indices[1, start:end], feature_acts_values[start:end])
-            for start, end in sample_ranges
-        ]
+        _, feature_acts_counts = np.unique(
+            feature_acts_indices[0],
+            return_counts=True,
+        )
+        _, z_pattern_counts = (
+            np.unique(z_pattern_indices[0], return_counts=True)
+            if z_pattern_indices is not None
+            else (None, None)
+        )
+
+        feature_acts_sample_ranges = np.concatenate(
+            [[0], np.cumsum(feature_acts_counts)]
+        )
+        z_pattern_sample_ranges = (
+            np.concatenate([[0], np.cumsum(z_pattern_counts)])
+            if z_pattern_counts is not None
+            else None
+        )
+
+        feature_acts_sample_ranges = list(zip(feature_acts_sample_ranges[:-1], feature_acts_sample_ranges[1:]))
+        z_pattern_sample_ranges = (
+            list(zip(z_pattern_sample_ranges[:-1], z_pattern_sample_ranges[1:]))
+            if z_pattern_sample_ranges is not None
+            else None
+        )
+        assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), "Feature acts and z pattern must have the same number of samples"
+
+        for (feature_acts_start, feature_acts_end), (z_pattern_start, z_pattern_end) in zip(feature_acts_sample_ranges, z_pattern_sample_ranges):
+            feature_acts_indices_i = feature_acts_indices[1, feature_acts_start:feature_acts_end]
+            feature_acts_values_i = feature_acts_values[feature_acts_start:feature_acts_end]
+            z_pattern_indices_i = z_pattern_indices[1:, z_pattern_start:z_pattern_end] if z_pattern_indices is not None else None
+            z_pattern_values_i = z_pattern_values[z_pattern_start:z_pattern_end] if z_pattern_values is not None else None
+            yield feature_acts_indices_i, feature_acts_values_i, z_pattern_indices_i, z_pattern_values_i
 
     # Process all samples for each sampling
     sample_groups = []
@@ -285,7 +367,12 @@ def get_feature(
                 n_shards=n_shards,
             )
             for sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
-                process_sparse_feature_acts(sampling.feature_acts_indices, sampling.feature_acts_values),
+                process_sparse_feature_acts(
+                    sampling.feature_acts_indices,
+                    sampling.feature_acts_values,
+                    sampling.z_pattern_indices,
+                    sampling.z_pattern_values,
+                ),
                 sampling.context_idx,
                 sampling.dataset_name,
                 sampling.model_name,
@@ -300,7 +387,6 @@ def get_feature(
                 "samples": samples,
             }
         )
-
     # Prepare response
     response_data = {
         "feature_index": feature.index,
