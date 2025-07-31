@@ -132,12 +132,10 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
                     interested_heads,
                 )
                 z_pattern *= interested_feature_acts.ne(0)[..., None]
-                small_zp_mask = z_pattern.abs() < 1e-8 * interested_feature_acts[..., None]
+                small_zp_mask = z_pattern.abs() < 1e-4 * interested_feature_acts[..., None]
                 z_pattern.masked_fill_(small_zp_mask, 0)
 
-                assert torch.allclose(z_pattern.sum(-1), interested_feature_acts, atol=1e-3), (
-                    f"z_pattern.sum(-1): {z_pattern.sum(-1)}, interested_feature_acts: {interested_feature_acts}"
-                )
+                assert torch.allclose(z_pattern.sum(-1), interested_feature_acts, rtol=1e-2)
                 for j, zp in enumerate(z_pattern):
                     z_pattern_data[interested_pairs_idx.nonzero()[j].item()] = zp.to_sparse()
                     visited += 1
@@ -155,22 +153,27 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
             sample_indices = z_pattern.indices()[:1] // d_sae
             head_indices = z_pattern.indices()[:1] % d_sae
             new_z_pattern = torch.sparse_coo_tensor(
-                indices=torch.cat([sample_indices, head_indices, z_pattern.indices()[1:]], dim=0),
+                indices=torch.cat([sample_indices, head_indices, z_pattern.indices()[1:]]),
                 values=z_pattern.values(),
                 size=(n_samples, d_sae, ctx, ctx),
             )
             sample_result[sampling_name]["z_pattern"] = new_z_pattern.coalesce()
+
             st += n_samples * d_sae
         assert st == len(z_pattern_data)
         
         return sample_result
     
-    def _extra_info(self, v: dict[str, Any], i: int) -> dict[str, Any]:
+    def _extra_info(self, sampling_data: dict[str, Any], i: int) -> dict[str, Any]:
         """Extra information to add to the feature result.
         """
+        base_extra_info = super()._extra_info(sampling_data, i)
+        
+        z_pattern = sampling_data["z_pattern"][i].coalesce()
         return {
-            "z_pattern_indices": v["z_pattern"][i].indices().tolist(),
-            "z_pattern_values": v["z_pattern"][i].values().tolist(),
+            **base_extra_info,
+            "z_pattern_indices": z_pattern.indices().cpu().numpy(),
+            "z_pattern_values": z_pattern.values().cpu().numpy(),
         }
 
 

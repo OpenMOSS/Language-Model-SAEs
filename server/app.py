@@ -11,7 +11,11 @@ from datasets import Dataset
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from torchvision import transforms
+try:
+    from torchvision import transforms
+except ImportError:
+    transforms = None
+    print("WARNING: torchvision not found, image processing will be disabled")
 
 from lm_saes.backend import LanguageModel
 from lm_saes.config import MongoDBConfig, SAEConfig
@@ -104,24 +108,25 @@ def make_serializable(obj):
     return obj
 
 
-def trim_minimum(*arrs: list[Any] | None) -> list[list[Any] | None]:
+def trim_minimum(
+    origins: list[dict[str, Any] | None],
+    feature_acts_indices: list[int],
+    feature_acts_values: list[float],
+) -> tuple[list[dict[str, Any] | None], list[int], list[float]]:
     """Trim multiple arrays to the length of the shortest non-None array.
 
     Args:
-        *arrs: Arrays to trim
+        origins: Origins
+        feature_acts_indices: Feature acts indices
+        feature_acts_values: Feature acts values
 
     Returns:
         list: List of trimmed arrays
-
-    Example:
-        >>> a = [1, 2, 3, 4]
-        >>> b = [5, 6, 7]
-        >>> c = [8, 9, 10, 11, 12]
-        >>> trim_minimum(a, b, c)
-        [[1, 2, 3], [5, 6, 7], [8, 9, 10]]
     """
-    min_length = min(len(arr) for arr in arrs if arr is not None)
-    return [arr[:min_length] if arr is not None else None for arr in arrs]
+
+    min_length = min(len(origins), feature_acts_indices[-1])
+    feature_acts_indices_mask = feature_acts_indices[0] <= min_length
+    return origins[:min_length], feature_acts_indices[feature_acts_indices_mask], feature_acts_values[feature_acts_indices_mask]
 
 
 @app.exception_handler(AssertionError)
@@ -206,11 +211,11 @@ def get_feature(
             status_code=404,
         )
 
-    def process_sample(*, feature_acts, context_idx, dataset_name, model_name, shard_idx=None, n_shards=None):
+    def process_sample(*, sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx=None, n_shards=None):
         """Process a sample to extract and format feature data.
 
         Args:
-            feature_acts: Feature activations
+            sparse_feature_acts: Sparse feature activations
             decoder_norms: Decoder norms
             context_idx: Context index in the dataset
             dataset_name: Name of the dataset
@@ -222,7 +227,7 @@ def get_feature(
             dict: Processed sample data
         """  # Get model and dataset
         model = get_model(model_name)
-        data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx]
+        data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
 
         # Get origins for the features
         origins = model.trace({k: [v] for k, v in data.items()})[0]
@@ -238,8 +243,9 @@ def get_feature(
             data["images"] = image_urls
 
         # Trim to matching lengths
-        origins, feature_acts = trim_minimum(origins, feature_acts)
-        assert origins is not None and feature_acts is not None, "Origins and feature acts must not be None"
+        feature_acts_indices, feature_acts_values = sparse_feature_acts
+        origins, feature_acts_indices, feature_acts_values = trim_minimum(origins, feature_acts_indices, feature_acts_values)
+        assert origins is not None and feature_acts_indices is not None and feature_acts_values is not None, "Origins and feature acts must not be None"
 
         # Process text data if present
         if "text" in data:
@@ -248,7 +254,22 @@ def get_feature(
                 max_text_origin = max(text_ranges, key=lambda x: x[1])
                 data["text"] = data["text"][: max_text_origin[1]]
 
-        return {**data, "origins": origins, "feature_acts": feature_acts}
+        return {**data, "origins": origins, "feature_acts_indices": feature_acts_indices, "feature_acts_values": feature_acts_values}
+    
+    def process_sparse_feature_acts(feature_acts_indices: list[list[int]], feature_acts_values: list[float]) -> list[tuple[list[int], list[float]]]:
+        """Process sparse feature acts.
+        
+        Args:
+            feature_acts_indices: Feature acts indices
+            feature_acts_values: Feature acts values
+        """
+        _, counts = np.unique(feature_acts_indices[0], return_counts=True)
+        sample_ranges = np.concatenate([[0], np.cumsum(counts)])
+        sample_ranges = list(zip(sample_ranges[:-1], sample_ranges[1:]))
+        return [
+            (feature_acts_indices[1, start:end], feature_acts_values[start:end])
+            for start, end in sample_ranges
+        ]
 
     # Process all samples for each sampling
     sample_groups = []
@@ -256,20 +277,20 @@ def get_feature(
         # Using zip to process correlated data instead of indexing
         samples = [
             process_sample(
-                feature_acts=feature_acts,
+                sparse_feature_acts=sparse_feature_acts,
                 context_idx=context_idx,
                 dataset_name=dataset_name,
                 model_name=model_name,
                 shard_idx=shard_idx,
                 n_shards=n_shards,
             )
-            for feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
-                sampling.feature_acts,
+            for sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
+                process_sparse_feature_acts(sampling.feature_acts_indices, sampling.feature_acts_values),
                 sampling.context_idx,
                 sampling.dataset_name,
                 sampling.model_name,
-                sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts),
-                sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts),
+                sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts_indices),
+                sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts_indices),
             )
         ]
 

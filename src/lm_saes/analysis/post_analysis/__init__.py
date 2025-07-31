@@ -9,12 +9,17 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import torch
+from tqdm import tqdm
 from einops import rearrange
 from torch.distributed.device_mesh import DeviceMesh
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.utils.discrete import KeyedDiscreteMapper
+from lm_saes.utils.logging import get_logger
+
+# Set up logger for this module
+logger = get_logger(__name__)
 
 
 class PostAnalysisProcessor(ABC):
@@ -54,6 +59,7 @@ class PostAnalysisProcessor(ABC):
             List of dictionaries containing per-feature analysis results
         """
         # Step 1: Let subclasses process tensors (add any SAE-specific data)
+        logger.info("[PostAnalysisProcessor] Processing tensors with sae type specific logic.")
         sample_result = self._process_tensors(
             sae,
             act_times,
@@ -73,8 +79,9 @@ class PostAnalysisProcessor(ABC):
         }
         
         # Step 3: Convert to final format
+        logger.info("[PostAnalysisProcessor] Converting results to final per-feature format.")
         results = []
-        for i in range(len(act_times)):
+        for i in tqdm(range(len(act_times)), desc="Converting results to final per-feature format"):
             feature_result = {
                 "act_times": act_times[i].item(),
                 "n_analyzed_tokens": n_analyzed_tokens,
@@ -99,14 +106,18 @@ class PostAnalysisProcessor(ABC):
         """
         feature_acts = feature_acts.to_sparse()
         return {
-            "feature_acts_indices": feature_acts.indices().tolist(),
-            "feature_acts_values": feature_acts.values().tolist(),
+            "feature_acts_indices": feature_acts.indices().cpu().numpy(),
+            "feature_acts_values": feature_acts.values().cpu().numpy(),
         }
     
-    def _extra_info(self, v: dict[str, Any], i: int) -> dict[str, Any]:
+    def _extra_info(self, sampling_data: dict[str, Any], i: int) -> dict[str, Any]:
         """Extra information to add to the feature result.
         """
-        return {}
+        return {
+            "context_idx": sampling_data["context_idx"][i].cpu().numpy(),
+            "shard_idx": sampling_data["shard_idx"][i].cpu().numpy(),
+            "n_shards": sampling_data["n_shards"][i].cpu().numpy(),
+        }
 
     @abstractmethod
     def _process_tensors(
