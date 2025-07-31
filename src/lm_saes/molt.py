@@ -283,23 +283,23 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                 curr_features = feature_acts[..., feature_idx:feature_idx+count]
                 feature_idx += count
                 
+                # ------------------- V @ x -------------------
                 with timer.time("Vx"):
-                    # Compute V @ x in one batched operation: (..., d_model) x (count, rank, d_model)^T
-                    # Result shape: (..., count, rank)
-                    Vx = torch.einsum('... d, crd -> ... c r', x, V)
+                    # Flatten leading batch dimensions to (B, d_model) and run a single matmul
+                    x_flat = x.reshape(-1, x.shape[-1])                           # (B, d_model)
+                    V_flat_t = V.reshape(-1, x.shape[-1]).T                      # (d_model, count*rank)
+                    Vx_flat = torch.matmul(x_flat, V_flat_t)                     # (B, count*rank)
+                    Vx = Vx_flat.view(*x.shape[:-1], count, rank)                # (..., count, rank)
 
-                with timer.time("UVx"):
-                    # Compute U @ (V @ x) in one batched operation
-                    # Result shape: (..., count, d_model)
-                    UVx = torch.einsum('... c r, c d r -> ... c d', Vx, U)
-
-                # Fuse weighting and reduction into a single einsum to avoid the huge intermediate
-                # tensor `weighted` and the extra kernel launch from `einops.reduce`.
+                # ------------------- Weighting and accumulation ---------------
+                # First apply feature weights on the rank dimension, then a single einsum with U projects (count, rank) -> d_model
+                # This avoids generating an intermediate tensor of shape (..., count, d_model).
                 with timer.time("accumulate"):
+                    weighted_Vx = curr_features.unsqueeze(-1) * Vx            # (..., count, rank)
                     reconstruction += torch.einsum(
-                        '... c, ... c d -> ... d',
-                        curr_features,
-                        UVx
+                        '... c r, c d r -> ... d',
+                        weighted_Vx,
+                        U
                     )
         
         if self.cfg.use_decoder_bias:
