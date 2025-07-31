@@ -51,7 +51,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt"]
+    sae_type: Literal["sae", "crosscoder", "clt", "molt"]
     d_model: int
     expansion_factor: int
     use_decoder_bias: bool = True
@@ -114,7 +114,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
 
 class SAEConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "clt"] = "sae"
+    sae_type: Literal["sae", "crosscoder", "clt", "molt"] = "sae"
     hook_point_in: str
     hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
     use_glu_encoder: bool = False
@@ -131,7 +131,7 @@ class CLTConfig(BaseSAEConfig):
     reads from the residual stream at that layer and can decode to layers L through L-1.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt"] = "clt"
+    sae_type: Literal["sae", "crosscoder", "clt", "molt"] = "clt"
     hook_points_in: list[str]
     """List of hook points to capture input activations from, one for each layer."""
     hook_points_out: list[str]
@@ -159,8 +159,48 @@ class CLTConfig(BaseSAEConfig):
         )
 
 
+class MoltConfig(BaseSAEConfig):
+    """Configuration for Mixture of Linear Transforms (MoLT).
+    
+    MoLT is a more efficient alternative to transcoders that sparsely replaces 
+    MLP computation in transformers. It converts dense MLP layers into sparse, 
+    interpretable linear transforms.
+    """
+
+    sae_type: Literal["sae", "crosscoder", "clt", "molt"] = "molt"
+    hook_point_in: str
+    """Hook point to capture input activations from."""
+    hook_point_out: str 
+    """Hook point to output activations to."""
+    rank_distribution: dict[int, float] = Field(default_factory=lambda: {32: 0.3, 64: 0.5, 128: 0.2})
+    """Dictionary mapping rank values to their proportions. 
+    Keys are rank values, values are proportions (should sum to 1.0).
+    Example: {32: 0.3, 64: 0.5, 128: 0.2} means 30% rank-32, 50% rank-64, 20% rank-128."""
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        # Validate rank distribution proportions sum to 1.0
+        total_proportion = sum(self.rank_distribution.values())
+        if abs(total_proportion - 1.0) > 1e-6:
+            raise ValueError(f"Rank distribution proportions must sum to 1.0, got {total_proportion}")
+
+    @property
+    def available_ranks(self) -> list[int]:
+        """Get sorted list of available ranks."""
+        return sorted(self.rank_distribution.keys())
+
+    @property 
+    def num_rank_types(self) -> int:
+        """Number of different rank types."""
+        return len(self.rank_distribution)
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return [self.hook_point_in, self.hook_point_out] 
+
+
 class CrossCoderConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "clt"] = "crosscoder"
+    sae_type: Literal["sae", "crosscoder", "clt", "molt"] = "crosscoder"
     hook_points: list[str]
 
     @property

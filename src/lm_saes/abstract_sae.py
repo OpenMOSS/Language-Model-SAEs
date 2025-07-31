@@ -714,11 +714,17 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Compute the loss for the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
         """
-        x, encoder_kwargs = self.prepare_input(batch)
+        prepare_result = self.prepare_input(batch)
+        if len(prepare_result) == 3:
+            x, encoder_kwargs, decoder_kwargs = prepare_result
+        else:
+            x, encoder_kwargs = prepare_result
+            decoder_kwargs = kwargs
+        
         label = self.prepare_label(batch, **kwargs)
 
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
-        reconstructed = self.decode(feature_acts, **kwargs)
+        reconstructed = self.decode(feature_acts, **decoder_kwargs)
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
@@ -768,9 +774,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         return loss
 
     @abstractmethod
-    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
-        """Prepare the input for the encoder.
-        Returns a tuple of (input, kwargs) where kwargs is a dictionary of additional arguments for the encoder computation.
+    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]] | tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
+        """Prepare the input for the encoder and optionally decoder.
+        Returns a tuple of (input, encoder_kwargs) or (input, encoder_kwargs, decoder_kwargs) 
+        where kwargs are dictionaries of additional arguments for the encoder/decoder computation.
         """
         raise NotImplementedError("Subclasses must implement this method")
 
