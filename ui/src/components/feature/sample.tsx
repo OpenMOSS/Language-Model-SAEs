@@ -7,6 +7,12 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card"
 import { Switch } from "../ui/switch";
 import { Input } from "../ui/input";
 
+// Helper function to get activation value for a given index from COO format
+const getActivationValue = (indices: number[], values: number[], targetIndex: number): number => {
+  const indexPosition = indices.indexOf(targetIndex);
+  return indexPosition !== -1 ? values[indexPosition] : 0;
+};
+
 export const FeatureSampleGroup = ({
   feature,
   sampleGroup,
@@ -25,7 +31,7 @@ export const FeatureSampleGroup = ({
   );
 
   const maxActivation = useMemo(() => 
-    sampleGroup.samples.length > 0 ? Math.max(...sampleGroup.samples[0].featureActs) : 0,
+    sampleGroup.samples.length > 0 ? Math.max(...sampleGroup.samples[0].featureActsValues.flat()) : 0,
     [sampleGroup.samples]
   );
 
@@ -119,10 +125,10 @@ export const FeatureActivationSample = memo(({
     sample.origins
       .map((origin, index) => ({
         origin,
-        featureAct: sample.featureActs[index],
+        featureAct: getActivationValue(sample.featureActsIndices, sample.featureActsValues, index),
       }))
       .filter((item): item is { origin: TextTokenOrigin; featureAct: number } => item.origin?.key === "text"),
-    [sample.origins, sample.featureActs]
+    [sample.origins, sample.featureActsIndices, sample.featureActsValues]
   );
 
   // Memoize max activation highlight
@@ -189,14 +195,14 @@ export const FeatureActivationSample = memo(({
   );
 
   // Memoize image highlights processing
-  const imageHighlights = useMemo(() =>
+  const imageHighlights = useMemo(() => 
     sample.origins
       .map((origin, index) => ({
         origin,
-        featureAct: sample.featureActs[index],
+        featureAct: getActivationValue(sample.featureActsIndices, sample.featureActsValues, index),
       }))
       .filter((item): item is { origin: ImageTokenOrigin; featureAct: number } => item.origin?.key === "image"),
-    [sample.origins, sample.featureActs]
+    [sample.origins, sample.featureActsIndices, sample.featureActsValues]
   );
 
   const [showImageHighlights, setShowImageHighlights] = useState(true);

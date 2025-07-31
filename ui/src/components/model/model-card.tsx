@@ -322,10 +322,10 @@ const ModelSample = ({
       sample.saeInfo.length > 0
         ? zip(
             ...sample.saeInfo.map((sae) =>
-              zip(sae.featureActsIndices, sae.featureActs, sae.maxFeatureActs).map(
-                ([featureActIndex, featureAct, maxFeatureAct]) => ({
+              zip(sae.featureActsIndices, sae.featureActsValues, sae.maxFeatureActs).map(
+                ([featureActIndex, featureActValues, maxFeatureAct]) => ({
                   name: sae.name,
-                  featureActs: zip(featureActIndex, featureAct, maxFeatureAct).map(
+                  featureActs: zip(featureActIndex, featureActValues, maxFeatureAct).map(
                     ([featureActIndex, featureAct, maxFeatureAct]) => ({
                       featureActIndex,
                       featureAct,
