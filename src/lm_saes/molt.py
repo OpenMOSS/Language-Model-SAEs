@@ -285,17 +285,13 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                 
                 # ------------------- V @ x -------------------
                 with timer.time("Vx"):
-                    # Flatten leading batch dimensions to (B, d_model) and run a single matmul
-                    x_flat = x.reshape(-1, x.shape[-1])                           # (B, d_model)
-                    V_flat_t = V.reshape(-1, x.shape[-1]).T                      # (d_model, count*rank)
-                    Vx_flat = torch.matmul(x_flat, V_flat_t)                     # (B, count*rank)
-                    Vx = Vx_flat.view(*x.shape[:-1], count, rank)                # (..., count, rank)
+                    Vx = torch.einsum('... d, c r d -> ... c r', x, V)
 
                 # ------------------- Weighting and accumulation ---------------
-                # First apply feature weights on the rank dimension, then a single einsum with U projects (count, rank) -> d_model
+                # First apply feature weights on the rank dimension, then a single einsum with U projects (count, rank) -> d_model.
                 # This avoids generating an intermediate tensor of shape (..., count, d_model).
                 with timer.time("accumulate"):
-                    weighted_Vx = curr_features.unsqueeze(-1) * Vx            # (..., count, rank)
+                    weighted_Vx = curr_features.unsqueeze(-1) * Vx                # (..., count, rank)
                     reconstruction += torch.einsum(
                         '... c r, c d r -> ... d',
                         weighted_Vx,
