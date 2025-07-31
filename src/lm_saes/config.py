@@ -159,10 +159,10 @@ class CLTConfig(BaseSAEConfig):
         )
 
 
-class MoltConfig(BaseSAEConfig):
-    """Configuration for Mixture of Linear Transforms (MoLT).
+class MOLTConfig(BaseSAEConfig):
+    """Configuration for Mixture of Linear Transforms (MOLT).
     
-    MoLT is a more efficient alternative to transcoders that sparsely replaces 
+    MOLT is a more efficient alternative to transcoders that sparsely replaces 
     MLP computation in transformers. It converts dense MLP layers into sparse, 
     interpretable linear transforms.
     """

@@ -20,6 +20,7 @@ from lm_saes.config import (
     InitializerConfig,
     LanguageModelConfig,
     MongoDBConfig,
+    MOLTConfig,
     TrainerConfig,
     WandbConfig,
 )
@@ -539,6 +540,169 @@ def train_clt(settings: TrainCLTSettings) -> None:
         logger.info("WandB session closed")
 
     logger.info("CLT training completed successfully")
+
+
+class TrainMOLTSettings(BaseSettings):
+    """Settings for training a Mixture of Linear Transforms (MOLT). MOLT is a more efficient alternative to transcoders that sparsely replaces MLP computation in transformers."""
+
+    sae: MOLTConfig
+    """Configuration for the MOLT model architecture and parameters"""
+
+    sae_name: str
+    """Name of the SAE model. Use as identifier for the SAE model in the database."""
+
+    sae_series: str
+    """Series of the SAE model. Use as identifier for the SAE model in the database."""
+
+    initializer: InitializerConfig
+    """Configuration for model initialization"""
+
+    trainer: TrainerConfig
+    """Configuration for training process"""
+
+    activation_factory: ActivationFactoryConfig
+    """Configuration for generating activations"""
+
+    wandb: Optional[WandbConfig] = None
+    """Configuration for Weights & Biases logging"""
+
+    eval: bool = False
+    """Whether to run in evaluation mode"""
+
+    model_parallel_size: int = 1
+    """Size of model parallel (tensor parallel) mesh"""
+
+    mongo: Optional[MongoDBConfig] = None
+    """Configuration for MongoDB"""
+
+    model: Optional[LanguageModelConfig] = None
+    """Configuration for the language model. Required if using dataset sources."""
+
+    model_name: Optional[str] = None
+    """Name of the tokenizer to load. MOLT requires a tokenizer to get the modality indices."""
+
+    datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
+    """Name to dataset config mapping. Required if using dataset sources."""
+
+    device_type: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+
+
+def train_molt(settings: TrainMOLTSettings) -> None:
+    """Train a Mixture of Linear Transforms (MOLT) model.
+
+    Args:
+        settings: Configuration settings for MOLT training
+    """
+    # Set up logging
+    setup_logging(level="INFO")
+
+    device_mesh = (
+        init_device_mesh(
+            device_type=settings.device_type,
+            mesh_shape=(settings.model_parallel_size,),
+            mesh_dim_names=("model",),
+        )
+        if settings.model_parallel_size > 1
+        else None
+    )
+
+    logger.info(f"Device mesh initialized: {device_mesh}")
+
+    mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
+    if mongo_client:
+        logger.info("MongoDB client initialized")
+
+    # Load configurations
+    model_cfg = load_config(
+        config=settings.model,
+        name=settings.model_name,
+        mongo_client=mongo_client,
+        config_type="model",
+        required=False,
+    )
+
+    dataset_cfgs = (
+        {
+            dataset_name: load_config(
+                config=dataset_cfg,
+                name=dataset_name,
+                mongo_client=mongo_client,
+                config_type="dataset",
+            )
+            for dataset_name, dataset_cfg in settings.datasets.items()
+        }
+        if settings.datasets is not None
+        else None
+    )
+
+    # Load model and datasets
+    logger.info("Loading model and datasets")
+    model = load_model(model_cfg) if model_cfg is not None else None
+    datasets = (
+        {
+            dataset_name: load_dataset(dataset_cfg, device_mesh=device_mesh)
+            for dataset_name, dataset_cfg in dataset_cfgs.items()
+        }
+        if dataset_cfgs is not None
+        else None
+    )
+
+    activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
+
+    logger.info("Processing activations stream")
+    activations_stream = activation_factory.process(
+        model=model,
+        model_name=settings.model_name,
+        datasets=datasets,
+    )
+
+    logger.info("Initializing MOLT")
+    initializer = Initializer(settings.initializer)
+
+    wandb_logger = (
+        wandb.init(
+            project=settings.wandb.wandb_project,
+            config=settings.model_dump(),
+            name=settings.wandb.exp_name,
+            entity=settings.wandb.wandb_entity,
+            settings=wandb.Settings(x_disable_stats=True),
+            mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
+        )
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        else None
+    )
+
+    sae = initializer.initialize_sae_from_config(
+        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger
+    )
+
+    logger.info(f"MOLT initialized: {type(sae).__name__}")
+
+    if wandb_logger is not None:
+        logger.info("WandB logger initialized")
+
+    # TODO: implement eval_fn
+    eval_fn = (lambda x: None) if settings.eval else None
+
+    logger.info("Starting MOLT training")
+    trainer = Trainer(settings.trainer)
+    sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
+    trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+
+    logger.info("Training completed, saving MOLT model")
+    sae.save_pretrained(
+        save_path=settings.trainer.exp_result_path,
+        sae_name=settings.sae_name,
+        sae_series=settings.sae_series,
+        mongo_client=mongo_client,
+    )
+
+    if wandb_logger is not None:
+        wandb_logger.finish()
+        logger.info("WandB session closed")
+
+    logger.info("MOLT training completed successfully")
 
 
 class SweepingItem(BaseModel):

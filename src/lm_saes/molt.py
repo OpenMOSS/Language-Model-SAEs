@@ -1,6 +1,7 @@
 import math
 from typing import Any, Literal, Union, overload
 
+import einops
 import torch
 import torch.nn as nn
 from jaxtyping import Float
@@ -8,17 +9,17 @@ from torch.distributed.device_mesh import DeviceMesh
 from typing_extensions import override
 
 from .abstract_sae import AbstractSparseAutoEncoder
-from .config import MoltConfig
+from .config import MOLTConfig
 
 
 class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
-    """Mixture of Linear Transforms (MoLT) model.
+    """Mixture of Linear Transforms (MOLT) model.
     
-    MoLT uses d_sae linear transforms, each with its own rank for UtVt decomposition.
+    MOLT uses d_sae linear transforms, each with its own rank for UtVt decomposition.
     The rank of each transform is determined by the rank_distribution configuration.
     """
 
-    def __init__(self, cfg: MoltConfig, device_mesh: DeviceMesh | None = None) -> None:
+    def __init__(self, cfg: MOLTConfig, device_mesh: DeviceMesh | None = None) -> None:
         super().__init__(cfg, device_mesh=device_mesh)
         self.cfg = cfg
 
@@ -32,8 +33,8 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             
             # Decoder parameters: d_sae linear transforms, each with UtVt decomposition
             # Group by rank for efficient parameter storage
-            self.U_matrices = nn.ModuleDict()
-            self.V_matrices = nn.ModuleDict()
+            self.U_matrices = nn.ParameterDict()
+            self.V_matrices = nn.ParameterDict()
             
             for rank in cfg.available_ranks:
                 count = sum(1 for r in self.rank_assignments if r == rank)
@@ -49,7 +50,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                 self.b_D = nn.Parameter(torch.empty(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
         else:
             # TODO: Implement distributed version if needed
-            raise NotImplementedError("Distributed MoLT is not yet implemented")
+            raise NotImplementedError("Distributed MOLT is not yet implemented")
 
     def _generate_rank_assignments(self) -> list[int]:
         """Generate rank assignment for each of the d_sae linear transforms."""
@@ -80,24 +81,25 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     @override
     def decoder_norm(self, keepdim: bool = False) -> torch.Tensor:
         """Compute the Frobenius norm of each linear transform's UtVt decomposition."""
-        norms = torch.zeros(self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype)
+        # Pre-compute norms for all rank groups and concatenate
+        norm_list = []
         
-        transform_idx = 0
         for rank in self.cfg.available_ranks:
             rank_str = str(rank)
             if rank_str in self.U_matrices:
                 U = self.U_matrices[rank_str]  # (count, d_model, rank)
                 V = self.V_matrices[rank_str]  # (count, rank, d_model)
                 
-                # Compute ||U_i||_F * ||V_i||_F for each transform of this rank
-                U_norms = torch.norm(U, p='fro', dim=(1, 2))  # (count,)
-                V_norms = torch.norm(V, p='fro', dim=(1, 2))  # (count,)
-                UV_norms = U_norms * V_norms  # (count,)
-                
-                # Assign to the corresponding positions
-                count = U.shape[0]
-                norms[transform_idx:transform_idx + count] = UV_norms
-                transform_idx += count
+                # Compute ||U_i @ V_i||_F for each transform (mathematically correct)
+                UV = torch.bmm(U, V)  # (count, d_model, d_model)
+                UV_norms = torch.norm(UV.view(UV.shape[0], -1), p='fro', dim=1)  # (count,)
+                norm_list.append(UV_norms)
+        
+        if not norm_list:
+            norms = torch.zeros(self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype)
+        else:
+            # Concatenate all norms in correct order
+            norms = torch.cat(norm_list, dim=0)  # (d_sae,)
         
         if keepdim:
             return norms.unsqueeze(-1)
@@ -112,17 +114,23 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
     @override
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool) -> None:
-        # For simplicity, scale all U and V matrices proportionally
-        for U, V in zip(self.U_matrices, self.V_matrices):
-            current_norm = torch.norm(U, p='fro') * torch.norm(V, p='fro')
-            scale_factor = (value / current_norm) ** 0.5  # Split the scaling between U and V
-            if force_exact:
-                U.data.mul_(scale_factor)
-                V.data.mul_(scale_factor)
-            else:
-                safe_scale = scale_factor if current_norm >= value else 1.0
-                U.data.mul_(safe_scale)
-                V.data.mul_(safe_scale)
+        # Scale all U and V matrices proportionally
+        for rank_str in self.U_matrices.keys():
+            U = self.U_matrices[rank_str]  # (count, d_model, rank)
+            V = self.V_matrices[rank_str]  # (count, rank, d_model)
+            
+            # Compute current norms for each transform: ||U_i @ V_i||_F
+            UV = torch.bmm(U, V)  # (count, d_model, d_model)
+            current_norms = torch.norm(UV.view(UV.shape[0], -1), p='fro', dim=1)  # (count,)
+            
+            # Compute scale factors (split equally between U and V)
+            scale_factors = (value / current_norms) ** 0.5  # Split between U and V
+            if not force_exact:
+                scale_factors = torch.where(current_norms >= value, scale_factors, 1.0)
+            
+            # Apply scaling
+            U.data.mul_(scale_factors.view(-1, 1, 1))
+            V.data.mul_(scale_factors.view(-1, 1, 1))
 
     @torch.no_grad()
     def set_encoder_to_fixed_norm(self, value: float) -> None:
@@ -130,12 +138,19 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
     @override
     def transform_to_unit_decoder_norm(self) -> None:
-        # Set each expert to unit norm
-        for U, V in zip(self.U_matrices, self.V_matrices):
-            current_norm = torch.norm(U, p='fro') * torch.norm(V, p='fro')
-            scale_factor = (1.0 / current_norm) ** 0.5
-            U.data.mul_(scale_factor)
-            V.data.mul_(scale_factor)
+        # Set each transform to unit norm
+        for rank_str in self.U_matrices.keys():
+            U = self.U_matrices[rank_str]  # (count, d_model, rank)
+            V = self.V_matrices[rank_str]  # (count, rank, d_model)
+            
+            # Compute current norms for each transform: ||U_i @ V_i||_F
+            UV = torch.bmm(U, V)  # (count, d_model, d_model)
+            current_norms = torch.norm(UV.view(UV.shape[0], -1), p='fro', dim=1)  # (count,)
+            
+            # Scale to unit norm (split equally between U and V)
+            scale_factors = (1.0 / current_norms) ** 0.5
+            U.data.mul_(scale_factors.view(-1, 1, 1))
+            V.data.mul_(scale_factors.view(-1, 1, 1))
 
     @override
     def standardize_parameters_of_dataset_norm(self, dataset_average_activation_norm: dict[str, float] | None) -> None:
@@ -159,22 +174,15 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         
         # Scale decoder matrices
         scale_factor = input_norm_factor / output_norm_factor
-        for U, V in zip(self.U_matrices, self.V_matrices):
-            U.data.mul_(scale_factor ** 0.5)
-            V.data.mul_(scale_factor ** 0.5)
+        for rank_str in self.U_matrices.keys():
+            self.U_matrices[rank_str].data.mul_(scale_factor ** 0.5)
+            self.V_matrices[rank_str].data.mul_(scale_factor ** 0.5)
         
         self.cfg.norm_activation = "inference"
 
     @override
-    def init_encoder_with_decoder_transpose(self, factor: float = 1.0) -> None:
-        # For MoLT, we can initialize encoder with the first expert's transpose
-        if self.cfg.num_experts > 0:
-            # Use the first expert (U0 * V0) as initialization
-            U0, V0 = self.U_matrices[0], self.V_matrices[0]
-            decoder_approx = U0 @ V0  # (d_model, d_model)
-            # Take a subset for encoder initialization
-            min_dim = min(self.cfg.d_model, self.cfg.d_sae)
-            self.W_E.data[:, :min_dim] = decoder_approx[:, :min_dim].T * factor
+    def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
+        raise NotImplementedError("init_encoder_with_decoder_transpose does not make sense for MOLT")
 
     @override
     def encode(
@@ -227,42 +235,53 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
-        # MoLT decode: get original input from kwargs
+        # MOLT decode: get original input from kwargs
         if "original_x" not in kwargs:
-            raise ValueError("MoLT decode requires 'original_x' in kwargs")
+            raise ValueError("MOLT decode requires 'original_x' in kwargs")
         
         x = kwargs["original_x"]
         
-        # MoLT decode: sum over i of feature_acts[i] * (U_i @ V_i @ x)
-        reconstruction = torch.zeros_like(x)
+        # Pre-compute all U @ V matrices for better efficiency
+        UV_list = []
+        count_list = []
         
-        transform_idx = 0
-        ###### TODO: do we need a for loop here?
         for rank in self.cfg.available_ranks:
             rank_str = str(rank)
             if rank_str in self.U_matrices:
                 U = self.U_matrices[rank_str]  # (count, d_model, rank)
                 V = self.V_matrices[rank_str]  # (count, rank, d_model)
-                count = U.shape[0]
                 
-                # Get feature activations for this rank group
-                features = feature_acts[..., transform_idx:transform_idx + count]  # (..., count)
-                
-                # Compute U_i @ V_i for each transform
+                # Compute U_i @ V_i for each transform using batch matrix multiplication
                 UV = torch.bmm(U, V)  # (count, d_model, d_model)
-                
-                # Apply each transform to original input x: U_i @ V_i @ x
-                # x: (..., d_model), UV: (count, d_model, d_model)
-                # Result: (..., count, d_model)
-                transformed_x = torch.einsum('...d,cde->...ce', x, UV)  # (..., count, d_model)
-                
-                # Weight by feature activations: feature_acts[i] * (U_i @ V_i @ x)
-                weighted_transforms = features.unsqueeze(-1) * transformed_x  # (..., count, d_model)
-                
-                # Sum over transforms in this rank group
-                reconstruction += weighted_transforms.sum(dim=-2)  # (..., d_model)
-                
-                transform_idx += count
+                UV_list.append(UV)
+                count_list.append(UV.shape[0])
+        
+        if not UV_list:
+            return torch.zeros_like(x)
+        
+        # Concatenate all transforms for batch processing
+        UV_all = torch.cat(UV_list, dim=0)  # (d_sae, d_model, d_model)
+        
+        # Apply all transforms to input x in one operation using einops
+        # x: (..., d_model), UV_all: (d_sae, d_model, d_model)
+        # Result: (..., d_sae, d_model)
+        transformed_x_all = einops.einsum(
+            x, UV_all, 
+            '... d_model, d_sae d_model d_model -> ... d_sae d_model'
+        )
+        
+        # Weight by feature activations: feature_acts[i] * (U_i @ V_i @ x)
+        weighted_transforms = einops.einsum(
+            feature_acts, transformed_x_all,
+            '... d_sae, ... d_sae d_model -> ... d_sae d_model'
+        )
+        
+        # Sum over all transforms to get final reconstruction
+        reconstruction = einops.reduce(
+            weighted_transforms, 
+            '... d_sae d_model -> ... d_model', 
+            'sum'
+        )
         
         if self.cfg.use_decoder_bias:
             reconstruction = reconstruction + self.b_D
@@ -274,16 +293,23 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         super().init_parameters(**kwargs)
         
         # Initialize encoder
-        nn.init.uniform_(self.W_E, -kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"])
+        # nn.init.uniform_(self.W_E, -kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"])
+        # nn.init.zeros_(self.b_E)
+
+        encoder_bound = 1.0 / math.sqrt(self.cfg.d_sae)
+        nn.init.uniform_(self.W_E, -encoder_bound, encoder_bound)
         nn.init.zeros_(self.b_E)
         
         # Initialize U and V matrices for each rank group
         for rank_str in self.U_matrices.keys():
             U = self.U_matrices[rank_str]
             V = self.V_matrices[rank_str]
-            nn.init.uniform_(U, -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"])
-            nn.init.uniform_(V, -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"])
-        
+            # nn.init.uniform_(U, -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"])
+            # nn.init.uniform_(V, -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"])
+            decoder_bound = 1.0 / math.sqrt(self.cfg.d_model * int(rank_str))
+            nn.init.uniform_(U, -decoder_bound, decoder_bound)
+            nn.init.uniform_(V, -decoder_bound, decoder_bound)
+
         if self.cfg.use_decoder_bias:
             nn.init.zeros_(self.b_D)
 
@@ -298,6 +324,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         return batch[self.cfg.hook_point_out]
 
+    @override
     def forward(
         self,
         x: Union[
@@ -310,11 +337,11 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
         feature_acts = self.encode(x, **kwargs)
-        # Pass original x to decode through kwargs for MoLT computation
+        # Pass original x to decode through kwargs for MOLT computation
         reconstructed = self.decode(feature_acts, original_x=x, **kwargs)
         return reconstructed
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
-        cfg = MoltConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
+        cfg = MOLTConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
         return cls.from_config(cfg)
