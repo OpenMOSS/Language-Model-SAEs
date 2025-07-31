@@ -197,7 +197,7 @@ class Trainer:
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
 
-            l_s = log_info["l_s"]
+            l_s = log_info.get("l_s", None)
             if isinstance(l_s, DTensor):
                 l_s = l_s.full_tensor()
 
@@ -226,7 +226,7 @@ class Trainer:
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.mean().item(),
-                **({"losses/sparsity_loss": l_s.mean().item()} if log_info.get("l_s", None) is not None else {}),
+                **({"losses/sparsity_loss": l_s.mean().item()} if l_s is not None else {}),
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
                 "metrics/explained_variance": explained_variance.mean().item(),
