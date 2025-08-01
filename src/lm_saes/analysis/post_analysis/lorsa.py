@@ -54,7 +54,7 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
         mapper: KeyedDiscreteMapper,
         device_mesh: DeviceMesh | None = None,
         activation_factory: ActivationFactory | None = None,
-    ) -> dict[str, dict[str, torch.Tensor]]:
+    ) -> tuple[dict[str, dict[str, torch.Tensor]], list[dict[str, Any]] | None]:
         """Process tensors and add LoRSA-specific data to sample_result.
         
         Args:
@@ -162,7 +162,7 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
             st += n_samples * d_sae
         assert st == len(z_pattern_data)
         
-        return sample_result
+        return sample_result, None
     
     def _extra_info(self, sampling_data: dict[str, Any], i: int) -> dict[str, Any]:
         """Extra information to add to the feature result.

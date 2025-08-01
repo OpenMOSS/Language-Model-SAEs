@@ -318,6 +318,8 @@ def get_feature(
             feature_acts_values: Feature acts values
             z_pattern_indices: Z pattern indices
             z_pattern_values: Z pattern values
+        
+        TODO: This is really ugly, we should find a better way to do this.
         """
         _, feature_acts_counts = np.unique(
             feature_acts_indices[0],
@@ -342,9 +344,10 @@ def get_feature(
         z_pattern_sample_ranges = (
             list(zip(z_pattern_sample_ranges[:-1], z_pattern_sample_ranges[1:]))
             if z_pattern_sample_ranges is not None
-            else None
+            else [(None, None)] * len(feature_acts_sample_ranges)
         )
-        assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), "Feature acts and z pattern must have the same number of samples"
+        if z_pattern_sample_ranges[0][0] is not None:
+            assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), "Feature acts and z pattern must have the same number of samples"
 
         for (feature_acts_start, feature_acts_end), (z_pattern_start, z_pattern_end) in zip(feature_acts_sample_ranges, z_pattern_sample_ranges):
             feature_acts_indices_i = feature_acts_indices[1, feature_acts_start:feature_acts_end]
@@ -387,6 +390,7 @@ def get_feature(
                 "samples": samples,
             }
         )
+
     # Prepare response
     response_data = {
         "feature_index": feature.index,
