@@ -187,8 +187,6 @@ class CLTConfig(BaseSAEConfig):
     """List of hook points to capture input activations from, one for each layer."""
     hook_points_out: list[str]
     """List of hook points to capture output activations from, one for each layer."""
-    k_range: tuple[int, int] = (60, 70)
-    """Acceptable range for the number of elements above threshold in batchtopk activation (lower_bound, upper_bound)."""
 
     @property
     def n_layers(self) -> int:

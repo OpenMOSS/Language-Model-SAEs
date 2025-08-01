@@ -1,14 +1,14 @@
 import warnings
-from typing import Any, Iterable, Mapping, Optional, cast
+from typing import Any, Mapping, Optional, cast
 
 import torch
 from einops import rearrange, repeat
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from tqdm import tqdm
+from functools import partial
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
-from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.activation.factory import ActivationFactory
@@ -267,7 +267,11 @@ class FeatureAnalyzer:
         mapper = KeyedDiscreteMapper()
 
         if sae.cfg.sae_type == "clt":
-            sae.encode = partial(sae.encode, layer=self.cfg.clt_layer)
+            sae.encode = partial(sae.encode_single_layer, layer=self.cfg.clt_layer)
+            sae.prepare_input = partial(sae.prepare_input_single_layer, layer=self.cfg.clt_layer)
+            sae.decoder_norm_per_feature = partial(sae.decoder_norm_per_feature, layer=self.cfg.clt_layer)
+            sae.b_D = None
+            torch.cuda.empty_cache()
 
         # Process activation batches
         for batch in activation_stream:

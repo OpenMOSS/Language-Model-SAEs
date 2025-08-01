@@ -5,8 +5,10 @@ that don't require special handling beyond the basic analysis results.
 """
 import torch
 from torch.distributed.device_mesh import DeviceMesh
+from typing import Any
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.activation.factory import ActivationFactory
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 
 from . import PostAnalysisProcessor, register_post_analysis_processor
@@ -28,9 +30,10 @@ class GenericPostAnalysisProcessor(PostAnalysisProcessor):
         sample_result: dict[str, dict[str, torch.Tensor]],
         mapper: KeyedDiscreteMapper,
         device_mesh: DeviceMesh | None = None,
-    ) -> dict[str, dict[str, torch.Tensor]]:
+        activation_factory: ActivationFactory | None = None,
+    ) -> tuple[dict[str, dict[str, torch.Tensor]], list[dict[str, Any]] | None]:
         """Generic processor doesn't add any additional tensor data."""
-        return sample_result
+        return sample_result, None
 
 
 # Register the processor for generic SAE types

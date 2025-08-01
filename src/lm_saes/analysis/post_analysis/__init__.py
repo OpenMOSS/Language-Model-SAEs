@@ -60,7 +60,7 @@ class PostAnalysisProcessor(ABC):
         """
         # Step 1: Let subclasses process tensors (add any SAE-specific data)
         logger.info("[PostAnalysisProcessor] Processing tensors with sae type specific logic.")
-        sample_result = self._process_tensors(
+        sample_result, decoder_info = self._process_tensors(
             sae,
             act_times,
             n_analyzed_tokens,
@@ -86,6 +86,7 @@ class PostAnalysisProcessor(ABC):
                 "act_times": act_times[i].item(),
                 "n_analyzed_tokens": n_analyzed_tokens,
                 "max_feature_acts": max_feature_acts[i].item(),
+                **(decoder_info[i] if decoder_info is not None else {}),
                 "samplings": [
                     {
                         "name": k,
@@ -130,7 +131,7 @@ class PostAnalysisProcessor(ABC):
         mapper: KeyedDiscreteMapper,
         device_mesh: DeviceMesh | None = None,
         activation_factory: ActivationFactory | None = None,
-    ) -> dict[str, dict[str, torch.Tensor]]:
+    ) -> tuple[dict[str, dict[str, torch.Tensor]], list[dict[str, Any]] | None]:
         """Process tensors and add SAE-specific data to sample_result.
         
         This is the method that subclasses should override to add their specific processing.
@@ -147,7 +148,7 @@ class PostAnalysisProcessor(ABC):
         Returns:
             Updated sample_result with any additional tensor data
         """
-        return sample_result
+        return sample_result, None
 
 
 # Registry for post-analysis processors
@@ -186,6 +187,7 @@ def get_post_analysis_processor(sae_type: str) -> PostAnalysisProcessor:
 from .crosscoder import CrossCoderPostAnalysisProcessor
 from .generic import GenericPostAnalysisProcessor
 from .lorsa import LorsaPostAnalysisProcessor
+from .clt import CLTPostAnalysisProcessor
 
 __all__ = [
     "PostAnalysisProcessor",
@@ -194,4 +196,5 @@ __all__ = [
     "CrossCoderPostAnalysisProcessor",
     "GenericPostAnalysisProcessor",
     "LorsaPostAnalysisProcessor",
+    "CLTPostAnalysisProcessor",
 ] 

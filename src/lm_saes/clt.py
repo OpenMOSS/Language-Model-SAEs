@@ -750,8 +750,15 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         """Set encoder weights to fixed norm."""
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for CLT")
 
-    def decoder_norm_per_feature(self) -> Union[Float[torch.Tensor, "n_layers d_sae"], DTensor]:
-        """Compute the norm of decoder weights for each feature."""
+    def decoder_norm_per_feature(
+        self,
+        layer: int | None = None,
+    ) -> Union[Float[torch.Tensor, "n_layers d_sae"], DTensor]:
+        """
+        Compute the norm of decoder weights for each feature.
+        If layer is not None, only compute the norm for the decoder weights from layer to subsequent layers.
+        """
+
         if self.device_mesh is None:
             decoder_norms = torch.zeros(
                 self.cfg.n_layers, self.cfg.d_sae,
@@ -765,10 +772,14 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 device_mesh=self.device_mesh, 
                 placements=self.dim_maps()["decoder_norms"].placements(self.device_mesh)
             )
-        for layer_to, decoder_weights in enumerate(self.W_D):
-            decoder_norms[:layer_to + 1] = decoder_norms[:layer_to + 1] + decoder_weights.pow(2).sum(dim=-1)
-        decoder_norms = decoder_norms.sqrt()
-        assert decoder_norms.requires_grad
+        if layer is not None:
+            for layer_to, decoder_weights in enumerate(self.W_D[layer:]):
+                layer_to += layer
+                decoder_norms[layer_to] = decoder_weights[layer].pow(2).sum(dim=-1).sqrt()
+        else:
+            for layer_to, decoder_weights in enumerate(self.W_D):
+                decoder_norms[:layer_to + 1] = decoder_norms[:layer_to + 1] + decoder_weights.pow(2).sum(dim=-1)
+            decoder_norms = decoder_norms.sqrt()
         return decoder_norms
 
     def decoder_norm_per_decoder(self) -> Union[Float[torch.Tensor, "n_decoders"], DTensor]:  # noqa: F821
@@ -846,6 +857,17 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             x_layers.append(batch[hook_point])
         x = torch.stack(x_layers, dim=-2)  # (..., n_layers, d_model)
 
+        if isinstance(self.W_E, DTensor) and not isinstance(x, DTensor):
+            assert self.device_mesh is not None
+            x = DTensor.from_local(x, device_mesh=self.device_mesh, placements=[torch.distributed.tensor.Replicate()])
+        return x, {}
+    
+    def prepare_input_single_layer(self, batch: "dict[str, torch.Tensor]", layer: int, **kwargs) -> "tuple[torch.Tensor, dict[str, Any]]":
+        """Prepare input tensor from batch by stacking all layer activations from hook_points_in."""
+        hook_point_in = self.cfg.hook_points_in[layer]
+        if hook_point_in not in batch:
+            raise ValueError(f"Missing hook point {hook_point_in} in batch")
+        x = batch[hook_point_in]
         if isinstance(self.W_E, DTensor) and not isinstance(x, DTensor):
             assert self.device_mesh is not None
             x = DTensor.from_local(x, device_mesh=self.device_mesh, placements=[torch.distributed.tensor.Replicate()])
@@ -1033,8 +1055,13 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         fold_activation_scale: bool = True,
         **kwargs,
     ):
-        cfg = CLTConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        model = cls.from_config(cfg)
-        if fold_activation_scale:
-            model.standardize_parameters_of_dataset_norm()
+        cfg = CLTConfig.from_pretrained(
+            pretrained_name_or_path,
+            strict_loading=strict_loading,
+            **kwargs,
+        )
+        model = cls.from_config(
+            cfg,
+            fold_activation_scale=fold_activation_scale,
+        )
         return model
