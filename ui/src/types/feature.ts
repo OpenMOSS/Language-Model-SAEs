@@ -27,6 +27,10 @@ export const FeatureSampleCompactSchema = z.object({
   featureActsIndices: z.array(z.number()),
   // COO format: corresponding activation values
   featureActsValues: z.array(z.number()),
+  // Z pattern data: indices in COO format for z pattern contributions
+  zPatternIndices: z.array(z.array(z.number())).nullish(),
+  // Z pattern data: corresponding contribution values
+  zPatternValues: z.array(z.number()).nullish(),
 });
 
 export type FeatureSampleCompact = z.infer<typeof FeatureSampleCompactSchema>;
