@@ -9,6 +9,7 @@ import { AttentionHeadPage } from "./routes/attn-heads/page";
 import { DictionaryPage } from "./routes/dictionaries/page";
 import { ModelsPage } from "./routes/models/page";
 import BookmarksPage from "./routes/bookmarks/page";
+import { CircuitsPage } from "./routes/circuits/page";
 
 const router = createBrowserRouter([
   {
@@ -30,6 +31,10 @@ const router = createBrowserRouter([
   {
     path: "/bookmarks",
     element: <BookmarksPage />,
+  },
+  {
+    path: "/circuits",
+    element: <CircuitsPage />,
   },
   {
     path: "/",
