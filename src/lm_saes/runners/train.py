@@ -569,6 +569,9 @@ class TrainMOLTSettings(BaseSettings):
     eval: bool = False
     """Whether to run in evaluation mode"""
 
+    data_parallel_size: int = 1
+    """Size of data parallel mesh"""
+
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
 
@@ -600,10 +603,10 @@ def train_molt(settings: TrainMOLTSettings) -> None:
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
-            mesh_shape=(settings.model_parallel_size,),
-            mesh_dim_names=("model",),
+            mesh_shape=(settings.model_parallel_size, settings.data_parallel_size),
+            mesh_dim_names=("model", "data"),
         )
-        if settings.model_parallel_size > 1
+        if settings.model_parallel_size > 1 or settings.data_parallel_size > 1
         else None
     )
 

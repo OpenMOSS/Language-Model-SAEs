@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Tuple
+from typing_extensions import override
 
 import torch
 from pydantic import (
@@ -172,22 +173,192 @@ class MOLTConfig(BaseSAEConfig):
     """Hook point to capture input activations from."""
     hook_point_out: str 
     """Hook point to output activations to."""
-    rank_distribution: dict[int, float] = Field(default_factory=lambda: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16})
-    """Dictionary mapping rank values to their ratios. 
-    Keys are rank values, values are ratios that will be automatically normalized to proportions.
-    Example: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16} means ratio 1:2:4:8:16, 
+    rank_distribution: dict[int, int] = Field(default_factory=lambda: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16})
+    """Dictionary mapping rank values to their integer ratios. 
+    Keys are rank values, values are integer ratios that will be automatically normalized to proportions.
+    Example: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16} means ratio 1:2:4:8:16 which means a proportion of 1/32, 2/32, 4/32, 8/32, 16/32, 
     which will be normalized to proportions automatically."""
+    model_parallel_size: int = 1
+    """Number of model parallel devices for distributed training."""
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
-        # Normalize ratios to proportions
-        total_ratio = sum(self.rank_distribution.values())
-        if total_ratio <= 0:
-            raise ValueError(f"Total ratio must be positive, got {total_ratio}")
+        # Validate ratios
+        assert self.rank_distribution, "rank_distribution cannot be empty"
         
-        # Convert ratios to proportions (in-place)
-        for rank in self.rank_distribution:
-            self.rank_distribution[rank] = self.rank_distribution[rank] / total_ratio
+        total_ratio = sum(self.rank_distribution.values())
+        assert total_ratio > 0, f"Total ratio must be positive, got {total_ratio}"
+            
+        for rank, ratio in self.rank_distribution.items():
+            assert ratio > 0, f"Ratio for rank {rank} must be positive, got {ratio}"
+        
+        # Store normalized proportions for internal use
+        self._normalized_proportions = {
+            rank: ratio / total_ratio 
+            for rank, ratio in self.rank_distribution.items()
+        }
+
+    def generate_rank_assignments(self) -> list[int]:
+        """Generate rank assignment for each of the d_sae linear transforms.
+        
+        Returns:
+            List of rank assignments for each transform.
+        """
+        # Validate rank distribution
+        assert self.rank_distribution, "rank_distribution cannot be empty"
+        
+        # Calculate base d_sae
+        base_d_sae = self.d_model * self.expansion_factor
+        
+        # For distributed training, use special logic to ensure consistency
+        if self.model_parallel_size > 1:
+            return self._generate_distributed_rank_assignments(base_d_sae)
+        else:
+            return self._generate_rank_assignments_single_gpu(base_d_sae)
+
+    def _generate_rank_assignments_single_gpu(self, base_d_sae: int) -> list[int]:
+        """Generate rank assignments for single GPU training.
+        
+        Args:
+            base_d_sae: Target number of total transforms
+            
+        Returns:
+            List of rank assignments for each transform.
+        """
+        assignments = []
+        
+        # Distribute transforms based on normalized proportions
+        for rank, proportion in sorted(self._normalized_proportions.items()):
+            count = int(base_d_sae * proportion)
+            assignments.extend([rank] * count)
+        
+        # Handle any remaining transforms due to rounding
+        while len(assignments) < base_d_sae:
+            # Assign remaining to the most common rank (by original ratio)
+            most_common_rank = max(
+                self.rank_distribution.keys(), 
+                key=lambda k: self.rank_distribution[k]
+            )
+            assignments.append(most_common_rank)
+        
+        # Truncate if we have too many (shouldn't happen with proper proportions)
+        assignments = assignments[:base_d_sae]
+        
+        # Verify we have exactly base_d_sae assignments
+        assert len(assignments) == base_d_sae, (
+            f"Expected {base_d_sae} assignments, got {len(assignments)}"
+        )
+        
+        return assignments
+
+    def _generate_distributed_rank_assignments(self, base_d_sae: int) -> list[int]:
+        """Generate rank assignments optimized for distributed training.
+        
+        Ensures each rank type has count divisible by model_parallel_size.
+        
+        Args:
+            base_d_sae: Target number of total transforms
+            
+        Returns:
+            List of rank assignments for each transform.
+        """
+        assignments = []
+        total_ratio = sum(self.rank_distribution.values())
+        
+        # Ensure minimum requirement: each rank gets at least model_parallel_size
+        # transforms
+        min_total_needed = len(self.rank_distribution) * self.model_parallel_size
+        assert base_d_sae >= min_total_needed, (
+            f"base_d_sae ({base_d_sae}) must be >= min_total_needed "
+            f"({min_total_needed}) for distributed training with "
+            f"{len(self.rank_distribution)} rank types"
+        )
+        
+        # Calculate proportional distribution
+        for rank in sorted(self.rank_distribution.keys()):
+            rank_ratio = self.rank_distribution[rank]
+            raw_count = int(base_d_sae * rank_ratio / total_ratio)
+            
+            # Ensure count is divisible by model_parallel_size
+            count = max(
+                self.model_parallel_size,  # minimum requirement
+                (raw_count // self.model_parallel_size) * self.model_parallel_size,
+            )
+            assignments.extend([rank] * count)
+        
+        # Handle any remaining transforms due to rounding
+        while len(assignments) < base_d_sae:
+            # Assign remaining to the most common rank (by original ratio)
+            most_common_rank = max(
+                self.rank_distribution.keys(),
+                key=lambda k: self.rank_distribution[k]
+            )
+            # Add model_parallel_size transforms at a time for divisibility
+            remaining = base_d_sae - len(assignments)
+            to_add = min(self.model_parallel_size, remaining)
+            assignments.extend([most_common_rank] * to_add)
+        
+        # Truncate if we have too many (shouldn't happen normally)
+        assignments = assignments[:base_d_sae]
+        
+        # Verify divisibility constraint
+        rank_counts = {}
+        for rank in assignments:
+            rank_counts[rank] = rank_counts.get(rank, 0) + 1
+        
+        for rank, count in rank_counts.items():
+            assert count % self.model_parallel_size == 0, (
+                f"Rank {rank} count {count} not divisible by "
+                f"model_parallel_size {self.model_parallel_size}"
+            )
+        
+        return assignments
+
+    def get_local_rank_assignments(self, local_rank: int, model_parallel_size: int) -> list[int]:
+        """Get rank assignments for a specific local rank in distributed training.
+        
+        Each device gets all rank groups, with each group evenly divided across devices.
+        This ensures consistent encoder/decoder sharding without feature_acts redistribution.
+        
+        Args:
+            local_rank: The local rank of this process  
+            model_parallel_size: Number of model parallel devices
+            
+        Returns:
+            List of rank assignments for this local rank
+        """
+        # Generate global assignments to get total counts per rank
+        global_assignments = self.generate_rank_assignments()
+        
+        # Count transforms per rank type globally
+        global_rank_counts = {}
+        for rank in global_assignments:
+            global_rank_counts[rank] = global_rank_counts.get(rank, 0) + 1
+        
+        # Each device gets count/model_parallel_size transforms of each rank type
+        local_assignments = []
+        for rank in sorted(self.rank_distribution.keys()):
+            global_count = global_rank_counts[rank]
+            local_count = global_count // model_parallel_size
+            
+            # Verify even division (should be guaranteed by _generate_distributed_rank_assignments)
+            assert global_count % model_parallel_size == 0, (
+                f"Rank {rank} global count {global_count} not divisible by "
+                f"model_parallel_size {model_parallel_size}"
+            )
+            
+            # Add local_count transforms of this rank type
+            local_assignments.extend([rank] * local_count)
+        
+        return local_assignments
+
+    @property
+    @override
+    def d_sae(self) -> int:
+        """Calculate d_sae based on rank assignments with padding for distributed training."""
+        # Generate rank assignments and return the length
+        rank_assignments = self.generate_rank_assignments()
+        return len(rank_assignments)
 
     @property
     def available_ranks(self) -> list[int]:
