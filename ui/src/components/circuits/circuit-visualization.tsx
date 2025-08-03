@@ -72,52 +72,6 @@ export const CircuitVisualization = () => {
       <div className="border rounded-lg p-4 bg-white">
         <LinkGraphContainer data={linkGraphData} />
       </div>
-
-      {/* Circuit Information */}
-      <div className="border rounded-lg p-4 bg-white">
-        <h3 className="text-lg font-semibold mb-4">Circuit Information</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <h4 className="font-medium mb-2">Nodes ({linkGraphData.nodes.length})</h4>
-            <ul className="space-y-1 text-sm max-h-40 overflow-y-auto">
-              {linkGraphData.nodes.slice(0, 10).map((node) => (
-                <li key={node.id} className="flex justify-between">
-                  <span>{node.feature_type} ({node.nodeId})</span>
-                  <span className="text-gray-500">ctx: {node.ctx_idx}</span>
-                </li>
-              ))}
-              {linkGraphData.nodes.length > 10 && (
-                <li className="text-gray-500 text-xs">... and {linkGraphData.nodes.length - 10} more nodes</li>
-              )}
-            </ul>
-          </div>
-          <div>
-            <h4 className="font-medium mb-2">Links ({linkGraphData.links.length})</h4>
-            <ul className="space-y-1 text-sm max-h-40 overflow-y-auto">
-              {linkGraphData.links.slice(0, 10).map((link, index) => (
-                <li key={index} className="flex justify-between">
-                  <span>{link.source} → {link.target}</span>
-                  <span className="text-gray-500">width: {link.strokeWidth.toFixed(1)}</span>
-                </li>
-              ))}
-              {linkGraphData.links.length > 10 && (
-                <li className="text-gray-500 text-xs">... and {linkGraphData.links.length - 10} more links</li>
-              )}
-            </ul>
-          </div>
-        </div>
-      </div>
-
-      {/* Instructions */}
-      <div className="border rounded-lg p-4 bg-blue-50">
-        <h3 className="text-lg font-semibold mb-2 text-blue-800">How to Use</h3>
-        <ul className="text-sm text-blue-700 space-y-1">
-          <li>• Click on nodes to select them</li>
-          <li>• Hold Ctrl/Cmd and click to pin nodes</li>
-          <li>• Use the link type selector to filter connections</li>
-          <li>• Hover over nodes to see details</li>
-        </ul>
-      </div>
     </div>
   );
 }; 

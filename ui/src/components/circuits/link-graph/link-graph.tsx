@@ -279,7 +279,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       } else if (layerIdx === yNumTicks - 1) {
         label = "Logit";
       } else {
-        label = `L${layerIdx}`;
+        label = `L${layerIdx - 1}`;
       }
       
       svg.append("line")
@@ -369,6 +369,61 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       .attr("stroke-dasharray", "2 2")
       .attr("fill", "none")
       .style("display", (d: any) => d.nodeId === visState.hoveredId ? "" : "none");
+
+    // Draw clerp tooltips for hovered nodes
+    svg.selectAll(".clerp-tooltip").remove();
+    
+    if (visState.hoveredId) {
+      const hoveredNode = positionedNodes.find((d: any) => d.nodeId === visState.hoveredId);
+      if (hoveredNode && (hoveredNode.localClerp || hoveredNode.remoteClerp)) {
+        const tooltip = svg.append("g")
+          .attr("class", "clerp-tooltip");
+        
+        // Calculate tooltip dimensions based on text content
+        const clerpText = hoveredNode.localClerp || "";
+        const textWidth = clerpText.length * 6; // Approximate character width
+        const tooltipWidth = Math.max(80, textWidth + 10); // Minimum 80px, or text width + padding
+        const tooltipHeight = 20;
+        const padding = 10;
+        
+        let tooltipX = hoveredNode.pos[0] + padding;
+        let tooltipY = hoveredNode.pos[1] - 15;
+        
+        // If tooltip would go off the right edge, position it to the left of the node
+        if (tooltipX + tooltipWidth > dimensions.width - padding) {
+          tooltipX = hoveredNode.pos[0] - tooltipWidth - padding;
+        }
+        
+        // If tooltip would go off the top edge, position it below the node
+        if (tooltipY < padding) {
+          tooltipY = hoveredNode.pos[1] + padding;
+        }
+        
+        // If tooltip would go off the bottom edge, position it above the node
+        if (tooltipY + tooltipHeight > dimensions.height - BOTTOM_PADDING - padding) {
+          tooltipY = hoveredNode.pos[1] - tooltipHeight - padding;
+        }
+        
+        // Background rectangle
+        tooltip.append("rect")
+          .attr("x", tooltipX)
+          .attr("y", tooltipY)
+          .attr("width", tooltipWidth)
+          .attr("height", tooltipHeight)
+          .attr("fill", "rgba(0, 0, 0, 0.8)")
+          .attr("rx", 2);
+        
+        // Local clerp
+        if (hoveredNode.localClerp) {
+          tooltip.append("text")
+            .attr("x", tooltipX + 5)
+            .attr("y", tooltipY + 13)
+            .attr("fill", "white")
+            .attr("font-size", "10px")
+            .text(hoveredNode.localClerp);
+        }
+      }
+    }
 
     // Draw prompt tokens at the bottom
     if (tokenData.length > 0) {
