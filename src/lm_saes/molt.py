@@ -1,5 +1,4 @@
 import math
-from collections import Counter
 from typing import Any, Union
 
 import torch
@@ -21,11 +20,10 @@ logger = get_distributed_logger("molt")
 
 class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     """Mixture of Linear Transforms (MOLT) model.
-    
-    MOLT is a sparse autoencoder variant that uses d_sae linear transforms, each with 
-    its own rank for UtVt decomposition. This approach provides more flexibility in 
-    modeling complex patterns while maintaining sparsity.
-    
+
+    MOLT is a sparse autoencoder variant that uses d_sae linear transforms,
+    each with its own rank for UtVt decomposition.
+
     Mathematical Formulation:
     - Encoder: ϕ(et · x - bt) where ϕ is the activation function
     - Decoder: Σᵢ fᵢ · (Uᵢ @ Vᵢ @ x) where fᵢ are feature activations
@@ -46,19 +44,30 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             model_dim_index = device_mesh.mesh_dim_names.index("model")
             local_rank = device_mesh.get_local_rank(mesh_dim=model_dim_index)
             model_parallel_size = device_mesh.size(mesh_dim=model_dim_index)
+            assert cfg.model_parallel_size == model_parallel_size, "cfg.model_parallel_size and training model_parallel_size are not aligned"
+            
             self.rank_assignments = cfg.get_local_rank_assignments(
                 local_rank, model_parallel_size
             )
-            print(f"[DEBUG] Local rank {local_rank}: {len(self.rank_assignments)} assignments, "
-                  f"rank counts: {dict(sorted(Counter(self.rank_assignments).items()))}")
+
+            # Cache global rank counts to avoid recomputation in parameter creation
+            global_assignments = cfg.generate_rank_assignments()
+            self._global_rank_count_map = {
+                r: global_assignments.count(r) for r in cfg.available_ranks
+            }
+
         else:
             # Non-distributed case
             self.rank_assignments = cfg.generate_rank_assignments()
 
         # Encoder parameters (standard SAE encoder)
         if device_mesh is None:
-            self.W_E = nn.Parameter(torch.empty(cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
-            self.b_E = nn.Parameter(torch.empty(cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+            self.W_E = nn.Parameter(torch.empty(
+                cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype
+            ))
+            self.b_E = nn.Parameter(torch.empty(
+                cfg.d_sae, device=cfg.device, dtype=cfg.dtype
+            ))
             
             # Decoder parameters: d_sae linear transforms, each with UtVt decomposition
             # Group by rank for efficient parameter storage
@@ -83,11 +92,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             # Distributed initialization
             w_e_placements = self.dim_maps()["W_E"].placements(device_mesh)
             b_e_placements = self.dim_maps()["b_E"].placements(device_mesh)
-            print(f"[DEBUG] W_E placements: {w_e_placements}")
-            print(f"[DEBUG] b_E placements: {b_e_placements}")
-            print(f"[DEBUG] Device mesh: {device_mesh}")
-            print(f"[DEBUG] dim_maps: {self.dim_maps()}")
-            
             self.W_E = nn.Parameter(
                 torch.distributed.tensor.empty(
                     cfg.d_model,
@@ -107,9 +111,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                 )
             )
             
-            print(f"[DEBUG] W_E local shape: {self.W_E.to_local().shape}")
-            print(f"[DEBUG] b_E local shape: {self.b_E.to_local().shape}")
-            
             # Decoder parameters: d_sae linear transforms, each with UtVt decomposition
             # Group by rank for efficient parameter storage
             self.U_matrices = nn.ParameterDict()
@@ -119,20 +120,19 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                 # CRITICAL FIX: Use GLOBAL count for DTensor creation!
                 # DTensor expects global shape at creation time, then shards automatically
                 local_count = sum(1 for r in self.rank_assignments if r == rank)
-                global_count = sum(1 for r in cfg.generate_rank_assignments() if r == rank)
+                global_count = self._global_rank_count_map[rank]
                 
-                # Get model parallel size from config instead of device_mesh to avoid API issues
-                model_parallel_size = getattr(cfg, 'model_parallel_size', 1)   ## TODO: change this 
+                model_parallel_size = cfg.model_parallel_size
                 
                 # Sanity checks
                 assert local_count > 0, f"Rank {rank} has local_count=0, sharding logic error"
                 assert global_count % model_parallel_size == 0, f"global_count ({global_count}) must be divisible by model_parallel_size ({model_parallel_size})"
                 assert local_count == global_count // model_parallel_size, f"Local count mismatch for rank {rank}: {local_count} != {global_count}//{model_parallel_size}"
                 
-                # Create DTensor with GLOBAL shape - PyTorch will handle sharding
+                # Create DTensor with GLOBAL shape
                 self.U_matrices[str(rank)] = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        global_count,  # Use global count!
+                        global_count,
                         cfg.d_model,
                         rank,
                         dtype=cfg.dtype,
@@ -143,7 +143,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                 
                 self.V_matrices[str(rank)] = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        global_count,  # Use global count!
+                        global_count,
                         rank,
                         cfg.d_model,
                         dtype=cfg.dtype,
@@ -213,6 +213,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                 U = self.U_matrices[rank_str]  # (count, d_model, rank)
                 V = self.V_matrices[rank_str]  # (count, rank, d_model)
                 
+                assert isinstance(U, DTensor) == isinstance(V, DTensor), "U and V must have the same type"
                 # Handle DTensor case - work with local shards
                 if isinstance(U, DTensor) and isinstance(V, DTensor):
                     U_local = U.to_local()
@@ -249,13 +250,17 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         else:
             # Concatenate all norms in correct order
             if isinstance(norm_list[0], DTensor):
-                # For DTensor, we need to gather all shards before concatenating
-                # The concatenation will happen across the sharded dimension
-                norms = torch.cat([norm.full_tensor() for norm in norm_list], dim=0)
-                # Convert back to DTensor with proper sharding
+                # CRITICAL FIX: Avoid full_tensor() to prevent numerical errors
+                # Instead, directly concatenate the DTensors which preserves numerical precision
                 assert self.device_mesh is not None
+                
+                # Convert each DTensor norm to local tensor and concatenate locally
+                local_norms = [norm.to_local() for norm in norm_list]
+                
+                # Concatenate local norms and convert back to DTensor
+                norms_local = torch.cat(local_norms, dim=0)
                 norms = DTensor.from_local(
-                    norms if not isinstance(norms, DTensor) else norms.to_local(),
+                    norms_local,
                     device_mesh=self.device_mesh,
                     placements=self.dim_maps()["b_E"].placements(self.device_mesh),  # Same as b_E (d_sae dimension)
                 )
@@ -436,8 +441,14 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                     weighted_Vx = curr_features.unsqueeze(-1) * Vx
                     
                     # Step 3: U @ (weighted V @ x)
-                    reconstruction += torch.einsum('... c r, c d r -> ... d', weighted_Vx, U)
-        
+                    local_reconstruction = torch.einsum('... c r, c d r -> ... d', weighted_Vx, U)
+                    
+                    reconstruction += local_reconstruction
+
+        # Add decoder bias if configured
+        if self.cfg.use_decoder_bias:
+            reconstruction = reconstruction + self.b_D
+
         return reconstruction
 
     def _decode_distributed(
@@ -459,50 +470,65 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         With consistent encoder/decoder sharding, feature_acts from encoder
         directly matches decoder sharding without redistribution needed.
         """
-        reconstruction = torch.zeros_like(x)
-        feature_idx = 0
+        x_local = x.to_local() if isinstance(x, DTensor) else x
+        reconstruction_local = torch.zeros_like(x_local)     # (..., d_model)
+        
+        # Convert feature_acts to local tensor for processing
+        assert isinstance(feature_acts, DTensor), "feature_acts was expected to be a DTensor"
+        feature_acts_local = feature_acts.to_local()
+        
+        # Track local feature index within this GPU's shard
+        local_feature_idx = 0
         
         for rank in self.cfg.available_ranks:
             rank_str = str(rank)
-            if rank_str in self.V_matrices:
-                V = self.V_matrices[rank_str]  # (local_count, rank, d_model)
-                U = self.U_matrices[rank_str]  # (local_count, d_model, rank)
-                
-                # Get local count from distributed tensor
-                local_count = V.to_local().shape[0]
-                
-                if local_count > 0:
-                    # Extract features for this rank group
-                    curr_features = feature_acts[..., feature_idx:feature_idx+local_count]
-                    feature_idx += local_count
-                    
-                    # Convert to local tensors for computation
-                    V_local = V.to_local()
-                    U_local = U.to_local()
-                    x_local = x.to_local()
-                    curr_features_local = curr_features.to_local()
-                    
-                    # Compute: f_i * (U_i @ V_i @ x)
-                    # Step 1: V @ x (project input through V matrices)
-                    Vx = torch.einsum('... d, c r d -> ... c r', x_local, V_local)
-                    
-                    # Step 2: Weight by feature activations
-                    weighted_Vx = curr_features_local.unsqueeze(-1) * Vx
-                    
-                    # Step 3: U @ (weighted V @ x)
-                    local_reconstruction = torch.einsum('... c r, c d r -> ... d', weighted_Vx, U_local)
-                    
-                    # Convert back to DTensor if needed
-                    if isinstance(reconstruction, DTensor):
-                        local_reconstruction = DTensor.from_local(
-                            local_reconstruction,
-                            device_mesh=self.device_mesh,
-                            placements=reconstruction.placements,
-                        )
-                    
-                    reconstruction += local_reconstruction
+            assert rank_str in self.V_matrices and rank_str in self.U_matrices, f"rank_str {rank_str} not in V_matrices or U_matrices"
+
+            V = self.V_matrices[rank_str]  # (local_count, rank, d_model)
+            U = self.U_matrices[rank_str]  # (local_count, d_model, rank)
+            
+            # Get local count from distributed tensor
+            V_local = V.to_local()
+            U_local = U.to_local()
+            local_count = V_local.shape[0]
+            
+            assert local_count > 0, f"local_count is 0 for rank {rank}"
+
+            # Extract features from LOCAL shard (not global indexing!)
+            curr_features_local = feature_acts_local[..., local_feature_idx : local_feature_idx + local_count]
+            local_feature_idx += local_count
+            
+            # Compute: f_i * (U_i @ V_i @ x)
+            # Step 1: V @ x (project input through V matrices)
+            Vx = torch.einsum('... d, c r d -> ... c r', x_local, V_local)
+            
+            # Step 2: Weight by feature activations
+            weighted_Vx = curr_features_local.unsqueeze(-1) * Vx
+            
+            # Step 3: U @ (weighted V @ x)
+            reconstruction_local += torch.einsum('... c r, c d r -> ... d', weighted_Vx, U_local)
+
+        # Add decoder bias prior to creating DTensor to avoid distributed broadcasting issues
+        if self.cfg.use_decoder_bias:
+            bias_local = (
+                self.b_D.to_local() if isinstance(self.b_D, DTensor) else self.b_D
+            )
+            while bias_local.ndim < reconstruction_local.ndim:
+                bias_local = bias_local.unsqueeze(0)  # align dimensions for broadcasting
+            reconstruction_local = reconstruction_local + bias_local
         
-        return reconstruction
+        # All-reduce(sum) within model parallel shards
+        model_group = self.device_mesh.get_group('model')
+        torch.distributed.all_reduce(reconstruction_local, op=torch.distributed.ReduceOp.SUM, group=model_group)
+        
+        # Convert to DTensor with proper sharding (sharding along data dimension, replicated along model dimension)
+        reconstruction_dt = DTensor.from_local(
+            reconstruction_local,
+            device_mesh=self.device_mesh,
+            placements=DimMap({"data": 0}).placements(self.device_mesh)  # = [Shard(0), Replicate()]
+        )
+        
+        return reconstruction_dt
 
     @override
     @timer.time("decode")
@@ -541,10 +567,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             reconstruction = self._decode_distributed(feature_acts, x)
         else:
             reconstruction = self._decode_single_gpu(feature_acts, x)
-        
-        # Add decoder bias if configured
-        if self.cfg.use_decoder_bias:
-            reconstruction = reconstruction + self.b_D
             
         return reconstruction
 
@@ -576,7 +598,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         
         # Initialize U and V matrices for each rank group
         for rank_str in self.U_matrices.keys():
-            rank = int(rank_str)
             U = self.U_matrices[rank_str]
             V = self.V_matrices[rank_str]
             
@@ -599,27 +620,8 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                 # Initialize local shards with proper uniform distribution
                 U_local_shard.uniform_(-U_bound, U_bound)
                 V_local_shard.uniform_(-V_bound, V_bound)
-                
-                # No need to copy - we initialized in place on the DTensor
-                print(f"[DEBUG] Rank {rank_str} - DTensor global shape: {U.shape}, local shard shape: {U_local_shard.shape}")
 
-        # Debug: Print initialization statistics
-        print("\n=== MOLT INITIALIZATION DEBUG ===")
-        print(f"Device mesh: {self.device_mesh}")
-        if self.device_mesh is not None:
-            model_parallel_size = getattr(self.cfg, 'model_parallel_size', 1)
-            print(f"Model parallel size: {model_parallel_size}")
-        
-        for rank_str in self.U_matrices.keys():
-            U = self.U_matrices[rank_str]
-            V = self.V_matrices[rank_str]
-            if isinstance(U, DTensor):
-                print(f"Rank {rank_str} - DTensor global shape: {U.shape}, local shape: {U.to_local().shape}")
-                print(f"Rank {rank_str} - U norm: {U.to_local().norm().item():.6f}, V norm: {V.to_local().norm().item():.6f}")
-            else:
-                print(f"Rank {rank_str} - Tensor shape: {U.shape}")
-                print(f"Rank {rank_str} - U norm: {U.norm().item():.6f}, V norm: {V.norm().item():.6f}")
-        print("==============================\n")
+                # No need to copy - we initialized in place on the DTensor
 
         if self.cfg.use_decoder_bias:
             if self.device_mesh is None:
