@@ -197,9 +197,9 @@ class Trainer:
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
 
-            l_s = log_info["l_s"]
-            if isinstance(l_s, DTensor):
-                l_s = l_s.full_tensor()
+            # l_s = log_info["l_s"]
+            # if isinstance(l_s, DTensor):
+            #     l_s = l_s.full_tensor()
 
             per_token_l2_loss = (
                 (log_info["reconstructed"] - label).pow(2).sum(dim=-1)

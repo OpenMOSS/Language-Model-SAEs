@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>国际象棋棋盘演示 - Best Move箭头显示</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .chess-board {
+            position: relative;
+            border: 2px solid #333;
+            display: inline-block;
+            margin: 20px;
+        }
+        .square {
+            position: absolute;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            border: 1px solid #ccc;
+            box-sizing: border-box;
+        }
+        .square.light {
+            background-color: #f0d9b5;
+        }
+        .square.dark {
+            background-color: #b58863;
+        }
+        .piece {
+            color: #000;
+        }
+        .piece.white {
+            color: #fff;
+            text-shadow: 1px 1px 2px #000;
+        }
+        .coord {
+            position: absolute;
+            bottom: 2px;
+            right: 2px;
+            font-size: 10px;
+            color: #666;
+            opacity: 0.7;
+        }
+        .move-info {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .demo-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .demo-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        .description {
+            margin: 10px 0;
+            color: #666;
+            line-height: 1.5;
+        }
+        .longfen-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            margin: 10px 0;
+        }
+        .parse-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        .parse-btn:hover {
+            background: #0056b3;
+        }
+        .error {
+            color: #dc3545;
+            background: #f8d7da;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>国际象棋棋盘演示 - Best Move箭头显示</h1>
+        
+        <div class="description">
+            这个演示展示了如何在国际象棋棋盘上显示最佳移动的箭头。当特征分析系统检测到棋类样本时，
+            会自动解析longfen格式的棋局数据，并在棋盘上显示相应的移动箭头。
+        </div>
+
+        <div class="demo-section">
+            <div class="demo-title">示例1: 标准开局移动 (e2e4)</div>
+            <div class="description">
+                白方从e2移动到e4，这是国际象棋中最常见的开局之一。
+            </div>
+            <div id="board1" class="chess-board"></div>
+        </div>
+
+        <div class="demo-section">
+            <div class="demo-title">示例2: 王车易位 (O-O)</div>
+            <div class="description">
+                白方进行王翼王车易位，国王从e1移动到g1，车从h1移动到f1。
+            </div>
+            <div id="board2" class="chess-board"></div>
+        </div>
+
+        <div class="demo-section">
+            <div class="demo-title">示例3: 升变移动 (e7e8q)</div>
+            <div class="description">
+                黑方兵从e7移动到e8并升变为后。
+            </div>
+            <div id="board3" class="chess-board"></div>
+        </div>
+
+        <div class="demo-section">
+            <div class="demo-title">自定义longfen解析</div>
+            <div class="description">
+                输入longfen格式的棋局数据，查看棋盘和移动箭头：
+            </div>
+            <textarea id="longfenInput" class="longfen-input" rows="3" placeholder="输入longfen格式数据，例如: wrnbqkbnrpppppppp................................PPPPPPPPRNBQKBNRKQkq..0..1..e2e40"></textarea>
+            <button class="parse-btn" onclick="parseCustomLongfen()">解析并显示</button>
+            <div id="customBoard" class="chess-board"></div>
+        </div>
+
+        <div class="demo-section">
+            <div class="demo-title">longfen格式说明</div>
+            <div class="description">
+                longfen格式包含以下部分：
+                <ul>
+                    <li>第1个字符：当前走棋方 (w=白方, b=黑方)</li>
+                    <li>第2-65个字符：棋盘位置 (64个字符)</li>
+                    <li>第66-69个字符：王车易位权利 (KQkq)</li>
+                    <li>第70-71个字符：过路兵目标格</li>
+                    <li>第72-74个字符：半回合计数</li>
+                    <li>第75-77个字符：全回合计数</li>
+                    <li>第78-81个字符：移动 (UCI格式)</li>
+                    <li>第82个字符：结束标记 (0)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 棋子符号映射
+        const PIECE_SYMBOLS = {
+            'P': { type: 'pawn', color: 'white', symbol: '♙' },
+            'R': { type: 'rook', color: 'white', symbol: '♖' },
+            'N': { type: 'knight', color: 'white', symbol: '♘' },
+            'B': { type: 'bishop', color: 'white', symbol: '♗' },
+            'Q': { type: 'queen', color: 'white', symbol: '♕' },
+            'K': { type: 'king', color: 'white', symbol: '♔' },
+            'p': { type: 'pawn', color: 'black', symbol: '♟' },
+            'r': { type: 'rook', color: 'black', symbol: '♜' },
+            'n': { type: 'knight', color: 'black', symbol: '♞' },
+            'b': { type: 'bishop', color: 'black', symbol: '♝' },
+            'q': { type: 'queen', color: 'black', symbol: '♛' },
+            'k': { type: 'king', color: 'black', symbol: '♚' },
+        };
+
+        // 解析longfen字符串
+        function parseLongfen(longfen) {
+            const cleanLongfen = longfen.replace(/\d+$/, '');
+            const parts = cleanLongfen.split('.');
+            
+            // 初始化8x8棋盘
+            const board = Array(8).fill(null).map(() => Array(8).fill(null));
+            
+            // 解析棋盘部分
+            const boardPart = parts.slice(0, 8).join('.');
+            let position = 0;
+            
+            for (let i = 0; i < boardPart.length; i++) {
+                const char = boardPart[i];
+                
+                if (char === '.') {
+                    continue;
+                }
+                
+                if (char in PIECE_SYMBOLS) {
+                    const row = Math.floor(position / 8);
+                    const col = position % 8;
+                    if (row < 8 && col < 8) {
+                        board[row][col] = PIECE_SYMBOLS[char];
+                    }
+                    position++;
+                } else if (char >= '1' && char <= '8') {
+                    position += parseInt(char);
+                }
+            }
+            
+            return board;
+        }
+
+        // 解析UCI移动
+        function parseUciMove(uciMove) {
+            if (uciMove.length < 4) return null;
+            
+            const fromFile = uciMove.charCodeAt(0) - 97;
+            const fromRank = 8 - parseInt(uciMove[1]);
+            const toFile = uciMove.charCodeAt(2) - 97;
+            const toRank = 8 - parseInt(uciMove[3]);
+            
+            const move = {
+                from: { row: fromRank, col: fromFile },
+                to: { row: toRank, col: toFile }
+            };
+            
+            if (uciMove.length === 5) {
+                move.promotion = uciMove[4];
+            }
+            
+            return move;
+        }
+
+        // 从longfen中提取移动
+        function extractMoveFromLongfen(longfen) {
+            if (longfen.length < 5) return null;
+            
+            const movePart = longfen.slice(-5);
+            const uciMove = movePart.replace(/0$/, '');
+            
+            return parseUciMove(uciMove);
+        }
+
+        // 检查是否为浅色格子
+        function isLightSquare(row, col) {
+            return (row + col) % 2 === 0;
+        }
+
+        // 创建棋盘元素
+        function createChessBoard(containerId, longfen, size = 400) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            
+            container.innerHTML = '';
+            container.style.width = size + 'px';
+            container.style.height = size + 'px';
+            
+            const board = parseLongfen(longfen);
+            const move = extractMoveFromLongfen(longfen);
+            const squareSize = size / 8;
+            
+            // 创建棋盘格子
+            for (let row = 0; row < 8; row++) {
+                for (let col = 0; col < 8; col++) {
+                    const isLight = isLightSquare(row, col);
+                    const squareName = `${String.fromCharCode(97 + col)}${8 - row}`;
+                    
+                    const square = document.createElement('div');
+                    square.className = `square ${isLight ? 'light' : 'dark'}`;
+                    square.style.left = col * squareSize + 'px';
+                    square.style.top = row * squareSize + 'px';
+                    square.style.width = squareSize + 'px';
+                    square.style.height = squareSize + 'px';
+                    
+                    if (board[row][col]) {
+                        const piece = document.createElement('span');
+                        piece.className = `piece ${board[row][col].color}`;
+                        piece.textContent = board[row][col].symbol;
+                        square.appendChild(piece);
+                    }
+                    
+                    const coord = document.createElement('span');
+                    coord.className = 'coord';
+                    coord.textContent = squareName;
+                    square.appendChild(coord);
+                    
+                    container.appendChild(square);
+                }
+            }
+            
+            // 创建移动箭头
+            if (move) {
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('width', size);
+                svg.setAttribute('height', size);
+                svg.style.position = 'absolute';
+                svg.style.top = '0';
+                svg.style.left = '0';
+                svg.style.pointerEvents = 'none';
+                
+                // 箭头定义
+                const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+                const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+                marker.setAttribute('id', 'arrowhead');
+                marker.setAttribute('markerWidth', '10');
+                marker.setAttribute('markerHeight', '7');
+                marker.setAttribute('refX', '9');
+                marker.setAttribute('refY', '3.5');
+                marker.setAttribute('orient', 'auto');
+                
+                const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                polygon.setAttribute('points', '0 0, 10 3.5, 0 7');
+                polygon.setAttribute('fill', '#ff4444');
+                polygon.setAttribute('stroke', '#cc0000');
+                polygon.setAttribute('stroke-width', '1');
+                
+                marker.appendChild(polygon);
+                defs.appendChild(marker);
+                svg.appendChild(defs);
+                
+                // 箭头线
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', (move.from.col * squareSize + squareSize / 2));
+                line.setAttribute('y1', (move.from.row * squareSize + squareSize / 2));
+                line.setAttribute('x2', (move.to.col * squareSize + squareSize / 2));
+                line.setAttribute('y2', (move.to.row * squareSize + squareSize / 2));
+                line.setAttribute('stroke', '#ff4444');
+                line.setAttribute('stroke-width', '3');
+                line.setAttribute('marker-end', 'url(#arrowhead)');
+                line.setAttribute('opacity', '0.8');
+                
+                svg.appendChild(line);
+                
+                // 起点圆圈
+                const fromCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                fromCircle.setAttribute('cx', (move.from.col * squareSize + squareSize / 2));
+                fromCircle.setAttribute('cy', (move.from.row * squareSize + squareSize / 2));
+                fromCircle.setAttribute('r', '8');
+                fromCircle.setAttribute('fill', 'none');
+                fromCircle.setAttribute('stroke', '#ff4444');
+                fromCircle.setAttribute('stroke-width', '2');
+                fromCircle.setAttribute('opacity', '0.8');
+                
+                svg.appendChild(fromCircle);
+                
+                // 终点圆圈
+                const toCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                toCircle.setAttribute('cx', (move.to.col * squareSize + squareSize / 2));
+                toCircle.setAttribute('cy', (move.to.row * squareSize + squareSize / 2));
+                toCircle.setAttribute('r', '6');
+                toCircle.setAttribute('fill', '#ff4444');
+                toCircle.setAttribute('opacity', '0.6');
+                
+                svg.appendChild(toCircle);
+                
+                container.appendChild(svg);
+                
+                // 移动信息
+                const moveInfo = document.createElement('div');
+                moveInfo.className = 'move-info';
+                moveInfo.textContent = `${String.fromCharCode(97 + move.from.col)}${8 - move.from.row}${String.fromCharCode(97 + move.to.col)}${8 - move.to.row}${move.promotion || ''}`;
+                
+                container.appendChild(moveInfo);
+            }
+        }
+
+        // 解析自定义longfen
+        function parseCustomLongfen() {
+            const input = document.getElementById('longfenInput').value.trim();
+            if (!input) {
+                alert('请输入longfen数据');
+                return;
+            }
+            
+            try {
+                createChessBoard('customBoard', input, 400);
+            } catch (error) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error';
+                errorDiv.textContent = '解析错误: ' + error.message;
+                document.getElementById('customBoard').innerHTML = '';
+                document.getElementById('customBoard').appendChild(errorDiv);
+            }
+        }
+
+        // 初始化示例棋盘
+        window.onload = function() {
+            // 示例1: e2e4
+            createChessBoard('board1', 'wrnbqkbnrpppppppp................................PPPPPPPPRNBQKBNRKQkq..0..1..e2e40', 300);
+            
+            // 示例2: O-O (王车易位)
+            createChessBoard('board2', 'wrnbqkbnrpppppppp................................PPPPPPPPRNBQKBNRKQkq..0..1..e1g10', 300);
+            
+            // 示例3: e7e8q (升变)
+            createChessBoard('board3', 'wrnbqkbnrpppppppp................................PPPPPPPPRNBQKBNRKQkq..0..1..e7e8q0', 300);
+        };
+    </script>
+</body>
+</html> 

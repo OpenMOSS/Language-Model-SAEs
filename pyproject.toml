@@ -1,5 +1,5 @@
 [project]
-name = "lm-saes"
+name = "chess-saes"
 version = "0.1.0"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
