@@ -172,6 +172,7 @@ def calculate_activation_norm(
             break
         for key in hook_points:
             if key not in activation_norm:
+                print(f"batch[{key}] = {batch[key]}")
                 activation_norm[key] = batch[key].norm(p=2, dim=1)
             else:
                 activation_norm[key] = torch.cat((activation_norm[key], batch[key].norm(p=2, dim=1)), dim=0)

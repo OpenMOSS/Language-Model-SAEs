@@ -131,22 +131,6 @@ interface RuleStatistics {
   phase_late_middlegame: number;   // 晚期中局 (21-30步)
   phase_early_endgame: number;     // 早期残局 (31-40步)
   phase_late_endgame: number;      // 晚期残局 (40步以后)
-  // 激活位置棋子类型统计 - 己方棋子
-  activated_own_pawn: number;      // 激活位置的己方兵
-  activated_own_knight: number;    // 激活位置的己方马
-  activated_own_bishop: number;    // 激活位置的己方象
-  activated_own_rook: number;      // 激活位置的己方车
-  activated_own_queen: number;     // 激活位置的己方后
-  activated_own_king: number;      // 激活位置的己方王
-  // 激活位置棋子类型统计 - 对方棋子
-  activated_opp_pawn: number;      // 激活位置的对方兵
-  activated_opp_knight: number;    // 激活位置的对方马
-  activated_opp_bishop: number;    // 激活位置的对方象
-  activated_opp_rook: number;      // 激活位置的对方车
-  activated_opp_queen: number;     // 激活位置的对方后
-  activated_opp_king: number;      // 激活位置的对方王
-  // 激活位置空格
-  activated_piece_empty: number;   // 激活位置的空格
 }
 
 interface MaterialStatistics {
@@ -260,22 +244,6 @@ class StatisticsManager {
     phase_late_middlegame: 0,
     phase_early_endgame: 0,
     phase_late_endgame: 0,
-    // 激活位置棋子类型统计 - 己方棋子
-    activated_own_pawn: 0,
-    activated_own_knight: 0,
-    activated_own_bishop: 0,
-    activated_own_rook: 0,
-    activated_own_queen: 0,
-    activated_own_king: 0,
-    // 激活位置棋子类型统计 - 对方棋子
-    activated_opp_pawn: 0,
-    activated_opp_knight: 0,
-    activated_opp_bishop: 0,
-    activated_opp_rook: 0,
-    activated_opp_queen: 0,
-    activated_opp_king: 0,
-    // 激活位置空格
-    activated_piece_empty: 0,
     material: {
       majorAdvantage: 0,
       moderateAdvantage: 0,
@@ -402,22 +370,6 @@ class StatisticsManager {
       phase_late_middlegame: 0,
       phase_early_endgame: 0,
       phase_late_endgame: 0,
-      // 激活位置棋子类型统计 - 己方棋子
-      activated_own_pawn: 0,
-      activated_own_knight: 0,
-      activated_own_bishop: 0,
-      activated_own_rook: 0,
-      activated_own_queen: 0,
-      activated_own_king: 0,
-      // 激活位置棋子类型统计 - 对方棋子
-      activated_opp_pawn: 0,
-      activated_opp_knight: 0,
-      activated_opp_bishop: 0,
-      activated_opp_rook: 0,
-      activated_opp_queen: 0,
-      activated_opp_king: 0,
-      // 激活位置空格
-      activated_piece_empty: 0,
       material: {
         majorAdvantage: 0,
         moderateAdvantage: 0,
@@ -823,109 +775,6 @@ class StatisticsManager {
       this.statistics.wdl.averageWinProb = this.wdlAccumulator.totalWinProb / this.wdlAccumulator.count;
       this.statistics.wdl.averageDrawProb = this.wdlAccumulator.totalDrawProb / this.wdlAccumulator.count;
       this.statistics.wdl.averageLossProb = this.wdlAccumulator.totalLossProb / this.wdlAccumulator.count;
-    }
-    
-    this.notifyListeners();
-  }
-
-  // 统计激活位置的棋子类型
-  updateActivationStatistics(fen: string, activations: number[]) {
-    if (!fen || !activations || activations.length !== 64) {
-      return;
-    }
-
-    // 解析FEN字符串获取棋盘状态和行棋方
-    const fenParts = fen.split(' ');
-    const boardFen = fenParts[0];
-    const activeColor = fenParts[1] || 'w'; // 当前行棋方
-    
-    // 构建棋盘状态数组
-    const board: string[][] = Array(8).fill(null).map(() => Array(8).fill(''));
-    const rows = boardFen.split('/');
-    
-    if (rows.length === 8) {
-      for (let i = 0; i < 8; i++) {
-        let col = 0;
-        for (const char of rows[i]) {
-          if (/\d/.test(char)) {
-            col += parseInt(char);
-          } else {
-            if (col < 8) {
-              board[i][col] = char;
-              col++;
-            }
-          }
-        }
-      }
-      
-      // 检查每个位置的激活值和对应的棋子
-      for (let i = 0; i < 8; i++) {
-        for (let j = 0; j < 8; j++) {
-          // 激活值数组索引（从左下角开始，按行优先）
-          const activationIndex = (7 - i) * 8 + j;
-          const activation = activations[activationIndex];
-          
-          // 只统计激活值不为0的位置
-          if (activation !== 0) {
-            const piece = board[i][j];
-            if (piece === '') {
-              // 空格
-              this.statistics.activated_piece_empty++;
-            } else {
-              // 有棋子，判断是己方还是对方，然后根据类型统计
-              const isWhitePiece = piece >= 'A' && piece <= 'Z';
-              const isOwnPiece = (activeColor === 'w' && isWhitePiece) || (activeColor === 'b' && !isWhitePiece);
-              const pieceLower = piece.toLowerCase();
-              
-              if (isOwnPiece) {
-                // 己方棋子
-                switch (pieceLower) {
-                  case 'p':
-                    this.statistics.activated_own_pawn++;
-                    break;
-                  case 'n':
-                    this.statistics.activated_own_knight++;
-                    break;
-                  case 'b':
-                    this.statistics.activated_own_bishop++;
-                    break;
-                  case 'r':
-                    this.statistics.activated_own_rook++;
-                    break;
-                  case 'q':
-                    this.statistics.activated_own_queen++;
-                    break;
-                  case 'k':
-                    this.statistics.activated_own_king++;
-                    break;
-                }
-              } else {
-                // 对方棋子
-                switch (pieceLower) {
-                  case 'p':
-                    this.statistics.activated_opp_pawn++;
-                    break;
-                  case 'n':
-                    this.statistics.activated_opp_knight++;
-                    break;
-                  case 'b':
-                    this.statistics.activated_opp_bishop++;
-                    break;
-                  case 'r':
-                    this.statistics.activated_opp_rook++;
-                    break;
-                  case 'q':
-                    this.statistics.activated_opp_queen++;
-                    break;
-                  case 'k':
-                    this.statistics.activated_opp_king++;
-                    break;
-                }
-              }
-            }
-          }
-        }
-      }
     }
     
     this.notifyListeners();
@@ -1378,79 +1227,6 @@ const RuleStatisticsCard = ({ maxActivationTimes = 0 }: { maxActivationTimes?: n
               {statistics.wdl.matePositions > 0 && ` | 将死局面: ${statistics.wdl.matePositions}`}
             </div>
           </div>
-
-          {/* 激活位置棋子类型统计 */}
-          <div>
-            <h4 className="text-sm font-bold text-gray-700 mb-2">🎯 激活位置棋子分布</h4>
-            <div className="grid grid-cols-4 lg:grid-cols-7 xl:grid-cols-13 gap-1">
-              {(() => {
-                // 计算总激活位置数
-                const totalActivated = statistics.activated_own_pawn + statistics.activated_own_knight + 
-                                      statistics.activated_own_bishop + statistics.activated_own_rook + 
-                                      statistics.activated_own_queen + statistics.activated_own_king +
-                                      statistics.activated_opp_pawn + statistics.activated_opp_knight + 
-                                      statistics.activated_opp_bishop + statistics.activated_opp_rook + 
-                                      statistics.activated_opp_queen + statistics.activated_opp_king +
-                                      statistics.activated_piece_empty;
-
-                // 所有棋子类型的配置
-                const allPieces = [
-                  // 己方棋子（蓝色系）
-                  { key: 'activated_own_pawn', label: '己方兵', icon: '♙', color: '#3B82F6', bgColor: 'bg-blue-50' },
-                  { key: 'activated_own_knight', label: '己方马', icon: '♘', color: '#1E40AF', bgColor: 'bg-blue-50' },
-                  { key: 'activated_own_bishop', label: '己方象', icon: '♗', color: '#1D4ED8', bgColor: 'bg-blue-50' },
-                  { key: 'activated_own_rook', label: '己方车', icon: '♖', color: '#2563EB', bgColor: 'bg-blue-50' },
-                  { key: 'activated_own_queen', label: '己方后', icon: '♕', color: '#3B82F6', bgColor: 'bg-blue-50' },
-                  { key: 'activated_own_king', label: '己方王', icon: '♔', color: '#1E3A8A', bgColor: 'bg-blue-50' },
-                  // 对方棋子（红色系）
-                  { key: 'activated_opp_pawn', label: '对方兵', icon: '♟', color: '#DC2626', bgColor: 'bg-red-50' },
-                  { key: 'activated_opp_knight', label: '对方马', icon: '♞', color: '#B91C1C', bgColor: 'bg-red-50' },
-                  { key: 'activated_opp_bishop', label: '对方象', icon: '♝', color: '#991B1B', bgColor: 'bg-red-50' },
-                  { key: 'activated_opp_rook', label: '对方车', icon: '♜', color: '#7F1D1D', bgColor: 'bg-red-50' },
-                  { key: 'activated_opp_queen', label: '对方后', icon: '♛', color: '#6B1D1D', bgColor: 'bg-red-50' },
-                  { key: 'activated_opp_king', label: '对方王', icon: '♚', color: '#450A0A', bgColor: 'bg-red-50' },
-                  // 空格
-                  { key: 'activated_piece_empty', label: '空格', icon: '⬜', color: '#6B7280', bgColor: 'bg-gray-50' }
-                ];
-
-                return allPieces.map(item => {
-                  const count = statistics[item.key as keyof RuleStatistics] as number;
-                  const percentage = totalActivated > 0 ? ((count / totalActivated) * 100).toFixed(1) : '0';
-                  
-                  return (
-                    <div key={item.key} className={`flex flex-col items-center p-1 ${item.bgColor} rounded-md`}>
-                      <div className="flex items-center gap-1 mb-1">
-                        <span style={{ fontSize: '12px' }}>{item.icon}</span>
-                        <span className="text-xs font-medium text-gray-700">{item.label}</span>
-                      </div>
-                      <div className="text-sm font-bold" style={{ color: item.color }}>
-                        {percentage}%
-                      </div>
-                      <div className="text-xs text-gray-500">{count}</div>
-                      <div className="w-full bg-gray-200 rounded-full h-1 mt-1">
-                        <div 
-                          className="h-1 rounded-full transition-all duration-300"
-                          style={{ 
-                            width: `${percentage}%`,
-                            backgroundColor: item.color
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-            <div className="mt-2 text-xs text-gray-600 text-center">
-              总激活位置: {statistics.activated_own_pawn + statistics.activated_own_knight + 
-                         statistics.activated_own_bishop + statistics.activated_own_rook + 
-                         statistics.activated_own_queen + statistics.activated_own_king +
-                         statistics.activated_opp_pawn + statistics.activated_opp_knight + 
-                         statistics.activated_opp_bishop + statistics.activated_opp_rook + 
-                         statistics.activated_opp_queen + statistics.activated_opp_king +
-                         statistics.activated_piece_empty} (100%)
-            </div>
-          </div>
         </div>
       )}
     </div>
@@ -1458,484 +1234,60 @@ const RuleStatisticsCard = ({ maxActivationTimes = 0 }: { maxActivationTimes?: n
 };
 
 // 支持渐进式加载的棋盘分析组件
-
-
-// Self-play 棋盘组件
-// 统一的分析状态管理
-interface UnifiedAnalysisState {
-  stockfishAnalysis: any;
-  selfplayData: any;
-  isStockfishLoading: boolean;
-  isSelfplayLoading: boolean;
-  stockfishCompleted: boolean;
-  selfplayCompleted: boolean;
-  currentStep: number;
-  currentMode: 'analysis' | 'selfplay';
-  taskId?: string;  // 用于任务管理
-}
-
-class UnifiedAnalysisManager {
-  private states = new Map<string, UnifiedAnalysisState>();
-  
-  getState(key: string): UnifiedAnalysisState {
-    if (!this.states.has(key)) {
-      this.states.set(key, {
-        stockfishAnalysis: null,
-        selfplayData: null,
-        isStockfishLoading: false,
-        isSelfplayLoading: false,
-        stockfishCompleted: false,
-        selfplayCompleted: false,
-        currentStep: 0,
-        currentMode: 'analysis'
-      });
-    }
-    return this.states.get(key)!;
-  }
-  
-  setState(key: string, updates: Partial<UnifiedAnalysisState>) {
-    const current = this.getState(key);
-    this.states.set(key, { ...current, ...updates });
-  }
-  
-  clear() {
-    this.states.clear();
-  }
-}
-
-const globalUnifiedAnalysisManager = new UnifiedAnalysisManager();
-
-// 统一的棋盘分析组件
-const UnifiedChessBoard = ({ fen, activations, sampleIndex, analysisName, contextId, delayMs = 0, autoAnalyze = true, includeInStats = false, globalAnalysisCollapsed = false }: {
-  fen: string;
-  activations?: number[];
-  sampleIndex?: number;
-  analysisName?: string;
-  contextId?: number;
-  delayMs?: number;
-  autoAnalyze?: boolean;
-  includeInStats?: boolean;
-  globalAnalysisCollapsed?: boolean;
+// Self-play 步骤悬浮窗组件
+const SelfPlayStepPopover = ({ step, onClose, position, initialActiveColor }: {
+  step: any;
+  onClose: () => void;
+  position: { x: number; y: number };
+  initialActiveColor: string;
 }) => {
-  const analysisKey = `${fen}_${sampleIndex}_${contextId}`;
+  // 在悬浮窗中显示这一步的走法
+  const selfplayMoves = { lastMove: undefined, nextMove: step.move };
+  const boardHTML = generateFENChessBoard(step.fen_before, undefined, undefined, "selfplay-step", undefined, undefined, false, initialActiveColor, selfplayMoves);
   
-  // 从统一管理器获取状态
-  const initialState = globalUnifiedAnalysisManager.getState(analysisKey);
-  
-  const [state, setState] = useState<UnifiedAnalysisState>(initialState);
-  const [isAnalysisCollapsed, setIsAnalysisCollapsed] = useState<boolean>(globalAnalysisCollapsed);
-  
-  // 更新状态的辅助函数
-  const updateState = (updates: Partial<UnifiedAnalysisState>) => {
-    const newState = { ...state, ...updates };
-    setState(newState);
-    globalUnifiedAnalysisManager.setState(analysisKey, newState);
-  };
-
-  // 执行Stockfish分析
-  const performStockfishAnalysis = async () => {
-    if (state.stockfishCompleted && state.stockfishAnalysis) {
-      console.log(`💰 使用已缓存的Stockfish分析结果: ${fen.substring(0, 20)}...`);
-      return;
-    }
-
-    updateState({ isStockfishLoading: true });
-    
-    try {
-      console.log(`📡 发送Stockfish请求: ${fen.substring(0, 20)}...`);
-      
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/stockfish`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fen }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-
-      const result = await response.json();
-      
-      console.log(`✅ Stockfish分析完成: ${fen.substring(0, 20)}...`, {
-        bestMove: result.best_move || result.bestMove,
-        status: result.status
-      });
-      
-      const normalizedResult = {
-        ...result,
-        bestMove: result.best_move || result.bestMove,
-        ponder: result.ponder,
-        status: result.status || 'success',
-        error: result.error,
-        fen: result.fen || fen,
-        isCheck: result.is_check || result.isCheck,
-        rules: result.rules,
-        material: result.material,
-        wdl: result.wdl
-      };
-      
-      updateState({ 
-        stockfishAnalysis: normalizedResult,
-        isStockfishLoading: false,
-        stockfishCompleted: true
-      });
-      
-      // 上报统计数据
-      if (includeInStats && normalizedResult.status === 'success') {
-        globalStatsManager.updateAnalysis(normalizedResult);
-        
-        if (activations) {
-          globalStatsManager.updateActivationStatistics(fen, activations);
-        }
-      }
-      
-    } catch (error: any) {
-      console.error('Stockfish分析失败:', error);
-      updateState({ isStockfishLoading: false });
-    }
-  };
-
-  // 取消相关任务的辅助函数
-  const cancelRelatedTasks = async (pattern: string) => {
-    try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/tasks/cancel`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pattern }),
-      });
-      
-      if (response.ok) {
-        const result = await response.json();
-        console.log(`⚡ 已取消相关任务: ${result.cancelled_count} 个`);
-        return result.cancelled_count;
-      }
-    } catch (error) {
-      console.warn('取消任务失败:', error);
-    }
-    return 0;
-  };
-
-  // 执行Self-play分析（带任务管理）
-  const performSelfplayAnalysis = async (isHighPriority = false) => {
-    if (state.selfplayCompleted && state.selfplayData && !isHighPriority) {
-      console.log(`💰 使用已缓存的Self-play分析结果: ${fen.substring(0, 20)}...`);
-      return;
-    }
-
-    // 如果是高优先级请求（如分支推演），先取消相关任务
-    if (isHighPriority) {
-      await cancelRelatedTasks(fen.substring(0, 20));
-    }
-
-    updateState({ isSelfplayLoading: true });
-    
-    try {
-      console.log(`🎮 发送Self-play请求 (${isHighPriority ? '高优先级' : '普通'}): ${fen.substring(0, 20)}...`);
-      
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/selfplay`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          fen,
-          max_moves: 10,
-          temperature: 1.0,
-          priority: isHighPriority ? 10 : 1
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-
-      const result = await response.json();
-      
-      // 检查是否被取消
-      if (result.selfplay?.cancelled) {
-        console.log(`⚡ Self-play任务被取消: ${fen.substring(0, 20)}...`);
-        updateState({ isSelfplayLoading: false });
-        return;
-      }
-      
-      console.log(`✅ Self-play分析完成: ${fen.substring(0, 20)}...`);
-      
-      updateState({ 
-        selfplayData: result.selfplay,
-        isSelfplayLoading: false,
-        selfplayCompleted: true,
-        currentStep: 0,
-        taskId: result.selfplay?.task_id
-      });
-      
-    } catch (error: any) {
-      console.error('Self-play分析失败:', error);
-      updateState({ isSelfplayLoading: false });
-    }
-  };
-
-  // 切换模式（仅显示，不触发新请求）
-  const switchMode = (mode: 'analysis' | 'selfplay') => {
-    console.log(`🔄 切换显示模式: ${mode}`);
-    updateState({ currentMode: mode });
-    
-    // 不再在切换时触发新的分析请求
-    // 所有分析都在后台自动进行
-  };
-
-  // 处理分支推演（高优先级）
-  const handleBranchSelfplay = async (selectedMove: string) => {
-    console.log(`🎯 开始高优先级分支推演: ${selectedMove}`);
-    
-    // 取消当前的低优先级任务
-    if (state.taskId) {
-      await cancelRelatedTasks(fen.substring(0, 20));
-    }
-    
-    // 执行高优先级分支推演
-    try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/selfplay/branch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          initial_fen: fen,
-          game_history: state.selfplayData?.game_history || [],
-          branch_step: state.currentStep,
-          selected_move: selectedMove,
-          max_moves: 10,
-          temperature: 1.0,
-          priority: 10  // 高优先级
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-
-      const result = await response.json();
-      
-      if (result.status === 'success' && result.branch) {
-        // 更新为分支结果
-        updateState({ 
-          selfplayData: result.branch,
-          currentStep: state.currentStep,
-          taskId: result.branch?.task_id
-        });
-        console.log(`✅ 分支推演完成: 从第${state.currentStep}步重新推演`);
-      }
-      
-    } catch (error: any) {
-      console.error('分支推演失败:', error);
-    }
-  };
-
-
-
-  // 自动分析逻辑：同时启动推演和分析
-  useEffect(() => {
-    if (!autoAnalyze) return;
-    
-    const timer = setTimeout(() => {
-      console.log(`🚀 启动统一分析 (延迟${delayMs}ms): ${fen.substring(0, 30)}...`);
-      
-      // 并行启动两种分析
-      const promises = [];
-      
-      if (!state.stockfishCompleted) {
-        promises.push(performStockfishAnalysis());
-      }
-      
-      if (!state.selfplayCompleted) {
-        promises.push(performSelfplayAnalysis(false)); // 后台推演，非高优先级
-      }
-      
-      // 并行执行，不等待结果
-      Promise.allSettled(promises).then(() => {
-        console.log(`✅ 统一分析完成: ${fen.substring(0, 30)}...`);
-      });
-    }, delayMs);
-    
-    return () => clearTimeout(timer);
-  }, [autoAnalyze, delayMs, fen]);
-
-  // 渲染模式选择器（显示后台进度）
-  const renderModeSelector = () => (
-    <div className="flex space-x-2 mb-4">
-      <button
-        onClick={() => switchMode('analysis')}
-        className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-          state.currentMode === 'analysis'
-            ? 'bg-blue-500 text-white'
-            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-        }`}
-      >
-        静态分析
-        {state.isStockfishLoading && <span className="ml-2 animate-spin">⏳</span>}
-        {!state.isStockfishLoading && state.stockfishCompleted && <span className="ml-2">✅</span>}
-        {!state.isStockfishLoading && !state.stockfishCompleted && <span className="ml-2">⭕</span>}
-      </button>
-      <button
-        onClick={() => switchMode('selfplay')}
-        className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-          state.currentMode === 'selfplay'
-            ? 'bg-green-500 text-white'
-            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-        }`}
-      >
-        推演分析
-        {state.isSelfplayLoading && <span className="ml-2 animate-spin">⏳</span>}
-        {!state.isSelfplayLoading && state.selfplayCompleted && <span className="ml-2">✅</span>}
-        {!state.isSelfplayLoading && !state.selfplayCompleted && <span className="ml-2">⭕</span>}
-      </button>
-    </div>
-  );
-
-  const renderContent = () => {
-    if (state.currentMode === 'analysis') {
-      // 渲染静态分析内容
-      return (
-        <div>
-                      {!state.stockfishAnalysis && (
-              <div className="flex items-center justify-center p-4">
-                <div className="text-blue-600">
-                  {state.isStockfishLoading ? (
-                    <>🔍 正在后台分析中...（您可以切换到推演模式查看其他结果）</>
-                  ) : (
-                    <>⏰ 静态分析将在后台自动开始...</>
-                  )}
-                </div>
-              </div>
-            )}
-          
-          {state.stockfishAnalysis ? (
-            <div className="mt-4">
-              {generateFENChessBoard(fen, activations, sampleIndex, analysisName, contextId, state.stockfishAnalysis, isAnalysisCollapsed)}
-            </div>
-          ) : (
-            <div className="mt-4">
-              <div className="text-gray-500 text-center p-8">
-                等待分析结果... 
-                {state.isStockfishLoading && <span className="ml-2">分析进行中</span>}
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    } else {
-      // 渲染推演分析内容  
-      return (
-        <div>
-          {!state.selfplayData && (
-            <div className="flex items-center justify-center p-4">
-              <div className="text-green-600">
-                {state.isSelfplayLoading ? (
-                  <>🎮 正在后台推演中...（您可以切换到分析模式查看其他结果）</>
-                ) : (
-                  <>⏰ 推演分析将在后台自动开始...</>
-                )}
-              </div>
-            </div>
-          )}
-          
-          {state.selfplayData ? (
-            <div className="mt-4">
-              <div className="flex justify-between items-center mb-4">
-                <h4 className="text-md font-semibold">
-                  推演结果 ({state.selfplayData.total_moves || 0} 步)
-                  {state.isSelfplayLoading && <span className="ml-2 text-sm text-gray-500">（后台继续推演中）</span>}
-                </h4>
-                <div className="flex items-center space-x-4">
-                  {state.isSelfplayLoading && state.taskId && (
-                    <button
-                      onClick={() => cancelRelatedTasks(fen.substring(0, 20))}
-                      className="px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600"
-                    >
-                      取消推演
-                    </button>
-                  )}
-                  <input
-                    type="range"
-                    min="0"
-                    max={(state.selfplayData.game_history?.length || 0)}
-                    value={state.currentStep}
-                    onChange={(e) => updateState({ currentStep: parseInt(e.target.value) })}
-                    className="w-32"
-                  />
-                  <span className="text-sm text-gray-600">第 {state.currentStep} 步</span>
-                </div>
-              </div>
-              
-              {/* 显示候选移动（用于分支推演） */}
-              {state.currentStep > 0 && state.selfplayData.game_history?.[state.currentStep - 1]?.top_moves && (
-                <div className="mb-4">
-                  <h5 className="text-sm font-medium mb-2">候选移动（点击分支推演）:</h5>
-                  <div className="flex flex-wrap gap-2">
-                    {state.selfplayData.game_history[state.currentStep - 1].top_moves.slice(0, 5).map((move: any, idx: number) => (
-                      <button
-                        key={idx}
-                        onClick={() => handleBranchSelfplay(move.uci)}
-                        className={`px-2 py-1 text-xs rounded border ${
-                          move.uci === state.selfplayData.game_history[state.currentStep - 1].move
-                            ? 'bg-blue-100 border-blue-500 text-blue-700'
-                            : 'bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200'
-                        }`}
-                        disabled={state.isSelfplayLoading}
-                      >
-                        {move.san} ({move.probability?.toFixed(1)}%)
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              {generateFENChessBoard(
-                state.currentStep === 0 ? fen : state.selfplayData.game_history?.[state.currentStep - 1]?.fen_after || fen,
-                activations,
-                sampleIndex,
-                analysisName,
-                contextId,
-                null,
-                isAnalysisCollapsed,
-                undefined,
-                state.currentStep > 0 ? {
-                  lastMove: state.selfplayData.game_history?.[state.currentStep - 1]?.move,
-                  nextMove: state.selfplayData.game_history?.[state.currentStep]?.move
-                } : undefined
-              )}
-            </div>
-          ) : (
-            <div className="mt-4">
-              <div className="text-gray-500 text-center p-8">
-                等待推演结果... 
-                {state.isSelfplayLoading && <span className="ml-2">推演进行中</span>}
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-  };
-
   return (
-    <div className="border rounded-lg p-4 bg-white shadow-sm">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold">棋局分析</h3>
-        <button
-          onClick={() => setIsAnalysisCollapsed(!isAnalysisCollapsed)}
+    <div 
+      className="fixed z-50 bg-white border border-gray-300 rounded-lg shadow-lg p-4"
+      style={{
+        left: `${position.x}px`,
+        top: `${position.y}px`,
+        minWidth: '400px',
+        maxWidth: '500px'
+      }}
+    >
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="text-sm font-semibold">第{step.move_number}步 - {step.player === 'white' ? '白棋' : '黑棋'}</h3>
+        <button 
+          onClick={onClose}
           className="text-gray-500 hover:text-gray-700"
         >
-          {isAnalysisCollapsed ? '📖' : '📕'}
+          ✕
         </button>
       </div>
       
-      {!isAnalysisCollapsed && (
-        <>
-          {renderModeSelector()}
-          {renderContent()}
-        </>
-      )}
+      <div dangerouslySetInnerHTML={{ __html: boardHTML }} />
+      
+      <div className="mt-2 text-xs">
+        <div><strong>选择走法:</strong> {step.move_san} ({step.move})</div>
+        <div><strong>概率:</strong> {(step.probability * 100).toFixed(1)}%</div>
+        <div><strong>FEN:</strong> {step.fen_before}</div>
+        
+        {step.top_moves && (
+          <div className="mt-2">
+            <div><strong>前5候选:</strong></div>
+            {step.top_moves.slice(0, 3).map((move: any, idx: number) => (
+              <div key={idx} className="text-xs">
+                {idx + 1}. {move[0]} ({(move[1] * 100).toFixed(1)}%)
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
 
+// Self-play 棋盘组件
 const SelfPlayChessBoard = ({ fen, activations, sampleIndex, analysisName, contextId, delayMs = 0, autoAnalyze = true, includeInStats = false, globalAnalysisCollapsed = false }: {
   fen: string;
   activations?: number[];
@@ -1950,7 +1302,9 @@ const SelfPlayChessBoard = ({ fen, activations, sampleIndex, analysisName, conte
   const [selfplayData, setSelfplayData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [currentStep, setCurrentStep] = useState<number>(0);
-  const [isBranching, setIsBranching] = useState<boolean>(false);
+  const [showStepPopover, setShowStepPopover] = useState<boolean>(false);
+  const [popoverPosition, setPopoverPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [popoverStep, setPopoverStep] = useState<any>(null);
 
   // 启动self-play分析
   const startSelfplayAnalysis = async () => {
@@ -1980,54 +1334,6 @@ const SelfPlayChessBoard = ({ fen, activations, sampleIndex, analysisName, conte
     }
   };
 
-  // 处理分支推演
-  const handleBranchSelfplay = async (branchStep: number, selectedMove: string) => {
-    if (!selfplayData) return;
-    
-    setIsBranching(true);
-    try {
-      console.log(`🎯 开始分支推演: 第${branchStep}步选择走法 ${selectedMove}`);
-      
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/selfplay/branch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          initial_fen: fen,
-          game_history: selfplayData.game_history,
-          branch_step: branchStep,
-          selected_move: selectedMove,
-          max_moves: 10,
-          temperature: 1.0
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-
-      const result = await response.json();
-      
-      if (result.status === 'success' && result.branch) {
-        // 更新self-play数据为分支结果
-        setSelfplayData(result.branch);
-        // 保持当前步骤在分支点
-        setCurrentStep(branchStep);
-        console.log(`✅ 分支推演成功: 从第${branchStep}步重新推演`);
-        console.log(`   - 选择走法: ${result.branch.selected_move}`);
-        console.log(`   - 新增步数: ${result.branch.branch_info?.new_moves_count || 0}`);
-        console.log(`   - 总步数: ${result.branch.total_moves}`);
-        console.log(`   - 剩余可用步数: ${result.branch.branch_info?.remaining_moves_used || 0}`);
-      } else {
-        throw new Error(result.branch?.error || '分支推演失败');
-      }
-    } catch (error: any) {
-      console.error('分支推演失败:', error);
-      alert(`分支推演失败: ${error.message}`);
-    } finally {
-      setIsBranching(false);
-    }
-  };
-
   useEffect(() => {
     if (autoAnalyze && !selfplayData && !isLoading) {
       const timer = setTimeout(() => {
@@ -2042,7 +1348,22 @@ const SelfPlayChessBoard = ({ fen, activations, sampleIndex, analysisName, conte
     setCurrentStep(parseInt(event.target.value));
   };
 
-
+  // 处理滑动轴点击（显示悬浮窗）
+  const handleSliderClick = (event: React.MouseEvent<HTMLInputElement>) => {
+    if (!selfplayData?.game_history) return;
+    
+    const rect = event.currentTarget.getBoundingClientRect();
+    const step = parseInt(event.currentTarget.value);
+    
+    if (step > 0 && step <= selfplayData.game_history.length) {
+      setPopoverStep(selfplayData.game_history[step - 1]);
+      setPopoverPosition({
+        x: event.clientX,
+        y: event.clientY - 200
+      });
+      setShowStepPopover(true);
+    }
+  };
 
   // 获取当前显示的FEN
   const getCurrentFen = () => {
@@ -2059,136 +1380,6 @@ const SelfPlayChessBoard = ({ fen, activations, sampleIndex, analysisName, conte
       return { player: 'initial', move: '初始局面', probability: 0 };
     }
     return selfplayData.game_history[currentStep - 1];
-  };
-
-  // 获取当前步骤的WDL信息
-  const getCurrentWDL = () => {
-    if (!selfplayData?.wdl_history) return null;
-    
-    if (currentStep === 0) {
-      // 初始局面的WDL
-      return selfplayData.wdl_history[0]?.wdl;
-    } else if (currentStep <= selfplayData.wdl_history.length - 1) {
-      // 移动后的WDL
-      return selfplayData.wdl_history[currentStep]?.wdl;
-    }
-    
-    return null;
-  };
-
-  // 格式化WDL显示
-  const formatWDL = (wdl: any) => {
-    if (!wdl) return "无数据";
-    
-    if (wdl.error) {
-      return `错误: ${wdl.error}`;
-    }
-    
-    return `白胜${wdl.white_win_prob}% | 和${wdl.draw_prob}% | 黑胜${wdl.black_win_prob}%`;
-  };
-
-  // 生成WDL变化的小图表
-  const generateWDLChart = () => {
-    if (!selfplayData?.wdl_history || selfplayData.wdl_history.length === 0) {
-      return null;
-    }
-
-    const chartData = selfplayData.wdl_history.map((entry: any, index: number) => ({
-      step: index,
-      white: entry.wdl?.white_win_prob || 0,
-      draw: entry.wdl?.draw_prob || 0,
-      black: entry.wdl?.black_win_prob || 0
-    }));
-
-    const maxSteps = chartData.length;
-    const chartWidth = Math.max(200, maxSteps * 20);
-    const chartHeight = 80;
-
-    return (
-      <div className="mt-2">
-        <div className="text-xs font-semibold mb-1">WDL变化趋势:</div>
-        <div className="bg-gray-50 p-2 rounded" style={{ overflowX: 'auto' }}>
-          <svg width={chartWidth} height={chartHeight} className="border border-gray-200">
-            {/* 背景网格 */}
-            {[0, 25, 50, 75, 100].map(y => (
-              <line 
-                key={y} 
-                x1="0" 
-                y1={chartHeight - (y / 100) * chartHeight} 
-                x2={chartWidth} 
-                y2={chartHeight - (y / 100) * chartHeight} 
-                stroke="#e0e0e0" 
-                strokeWidth="0.5"
-              />
-            ))}
-            
-            {/* WDL数据线 */}
-            {chartData.length > 1 && (
-              <>
-                                 {/* 白方胜率线 (蓝色) */}
-                 <polyline
-                   fill="none"
-                   stroke="#2563eb"
-                   strokeWidth="2"
-                   points={chartData.map((d: any, i: number) => 
-                     `${(i / (maxSteps - 1)) * chartWidth},${chartHeight - (d.white / 100) * chartHeight}`
-                   ).join(' ')}
-                 />
-                 
-                 {/* 和棋概率线 (橙色) */}
-                 <polyline
-                   fill="none"
-                   stroke="#ea580c"
-                   strokeWidth="2"
-                   points={chartData.map((d: any, i: number) => 
-                     `${(i / (maxSteps - 1)) * chartWidth},${chartHeight - (d.draw / 100) * chartHeight}`
-                   ).join(' ')}
-                 />
-                 
-                 {/* 黑方胜率线 (红色) */}
-                 <polyline
-                   fill="none"
-                   stroke="#dc2626"
-                   strokeWidth="2"
-                   points={chartData.map((d: any, i: number) => 
-                     `${(i / (maxSteps - 1)) * chartWidth},${chartHeight - (d.black / 100) * chartHeight}`
-                   ).join(' ')}
-                 />
-              </>
-            )}
-            
-            {/* 当前步骤指示器 */}
-            {currentStep < chartData.length && (
-              <line
-                x1={(currentStep / (maxSteps - 1)) * chartWidth}
-                y1="0"
-                x2={(currentStep / (maxSteps - 1)) * chartWidth}
-                y2={chartHeight}
-                stroke="#666"
-                strokeWidth="2"
-                strokeDasharray="3,3"
-              />
-            )}
-          </svg>
-          
-          {/* 图例 */}
-          <div className="flex justify-center gap-4 mt-1 text-xs">
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-0.5 bg-blue-600"></div>
-              <span>白胜</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-0.5 bg-orange-600"></div>
-              <span>和棋</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-0.5 bg-red-600"></div>
-              <span>黑胜</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
   };
 
   const currentStepInfo = getCurrentStepInfo();
@@ -2243,188 +1434,48 @@ const SelfPlayChessBoard = ({ fen, activations, sampleIndex, analysisName, conte
         <div className="mt-4">
           <div className="flex items-center space-x-2 mb-2">
             <span className="text-xs text-gray-600">步骤:</span>
-                         <input
-               type="range"
-               min="0"
-               max={selfplayData.game_history?.length || 0}
-               value={currentStep}
-               onChange={handleStepChange}
-               className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-               style={{
-                 background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(currentStep / (selfplayData.game_history?.length || 1)) * 100}%, #e5e7eb ${(currentStep / (selfplayData.game_history?.length || 1)) * 100}%, #e5e7eb 100%)`
-               }}
-             />
+            <input
+              type="range"
+              min="0"
+              max={selfplayData.game_history?.length || 0}
+              value={currentStep}
+              onChange={handleStepChange}
+              onClick={handleSliderClick}
+              className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              style={{
+                background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(currentStep / (selfplayData.game_history?.length || 1)) * 100}%, #e5e7eb ${(currentStep / (selfplayData.game_history?.length || 1)) * 100}%, #e5e7eb 100%)`
+              }}
+            />
             <span className="text-xs text-gray-600 min-w-[60px]">
               {currentStep}/{selfplayData.game_history?.length || 0}
             </span>
           </div>
           
-                               {/* 当前步骤信息 */}
-          <div className="text-xs bg-gray-50 p-2 rounded">
-            {currentStep === 0 ? (
-              <div>
-                <div><strong>初始局面</strong></div>
-                <div className="mt-1">
-                  <strong>WDL:</strong> {formatWDL(getCurrentWDL())}
-                </div>
-              </div>
-            ) : (
-              <div>
-                <div><strong>第{currentStep}步</strong> - {currentStepInfo.player === 'white' ? '白棋' : '黑棋'}</div>
-                <div>走法: {currentStepInfo.move_san} ({currentStepInfo.move})</div>
-                <div>概率: {(currentStepInfo.probability * 100).toFixed(1)}%</div>
-                <div className="mt-1">
-                  <strong>WDL:</strong> {formatWDL(getCurrentWDL())}
-                </div>
-                
-                {/* 显示WDL变化 */}
-                {currentStepInfo.wdl_before && currentStepInfo.wdl_after && (
-                  <div className="mt-2 p-2 bg-blue-50 rounded">
-                    <div className="font-semibold">WDL变化:</div>
-                    <div className="text-xs">
-                      <div>移动前: {formatWDL(currentStepInfo.wdl_before)}</div>
-                      <div>移动后: {formatWDL(currentStepInfo.wdl_after)}</div>
-                      
-                      {/* 计算并显示变化量 */}
-                      {(() => {
-                        const before = currentStepInfo.wdl_before;
-                        const after = currentStepInfo.wdl_after;
-                        if (before && after && !before.error && !after.error) {
-                          const whiteDiff = after.white_win_prob - before.white_win_prob;
-                          const drawDiff = after.draw_prob - before.draw_prob;
-                          const blackDiff = after.black_win_prob - before.black_win_prob;
-                          
-                          return (
-                            <div className="mt-1 font-medium">
-                              变化: 白{whiteDiff >= 0 ? '+' : ''}{whiteDiff.toFixed(1)}% | 
-                              和{drawDiff >= 0 ? '+' : ''}{drawDiff.toFixed(1)}% | 
-                              黑{blackDiff >= 0 ? '+' : ''}{blackDiff.toFixed(1)}%
-                            </div>
-                          );
-                        }
-                        return null;
-                      })()}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-          
-                    {/* WDL变化趋势图 */}
-          {generateWDLChart()}
-          
-          {/* 候选走法对比卡片 */}
-          {currentStep > 0 && currentStepInfo.top_moves && (
-            <div className="mt-2">
-              <div className="text-xs bg-green-50 p-3 rounded border">
-                <div className="font-semibold mb-2 text-green-800 flex items-center gap-2">
-                  🎯 第{currentStep}步候选走法对比
-                  {isBranching && (
-                    <span className="text-blue-600 text-xs animate-pulse">
-                      正在重新推演...
-                    </span>
-                  )}
-                </div>
-                
-                {!isBranching && (
-                  <div className="text-xs text-green-600 mb-2 italic">
-                    💡 点击其他候选走法可重新推演
-                  </div>
-                )}
-                
-                <div className="space-y-1">
-                  {currentStepInfo.top_moves.slice(0, 5).map((move: any, idx: number) => {
-                    const isSelected = move[0] === currentStepInfo.move;
-                    return (
-                      <div 
-                        key={idx} 
-                        className={`flex justify-between items-center p-2 rounded text-xs transition-all duration-200 ${
-                          isSelected 
-                            ? 'bg-yellow-100 border border-yellow-300 font-bold' 
-                            : isBranching 
-                              ? 'bg-gray-100 border border-gray-200 cursor-not-allowed' 
-                              : 'bg-white border border-gray-200 hover:bg-blue-50 hover:border-blue-300 cursor-pointer'
-                        }`}
-                        onClick={() => {
-                          if (!isSelected && !isBranching && selfplayData) {
-                            handleBranchSelfplay(currentStep, move[0]);
-                          }
-                        }}
-                        title={
-                          isSelected 
-                            ? '当前选择的走法' 
-                            : isBranching 
-                              ? '正在重新推演中...' 
-                              : `点击选择 ${move[0]} 并重新推演`
-                        }
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs ${
-                            isSelected 
-                              ? 'bg-yellow-500 text-white' 
-                              : 'bg-gray-300 text-gray-700'
-                          }`}>
-                            {idx + 1}
-                          </span>
-                          <span className="font-medium">
-                            {move[0]}
-                          </span>
-                          {isSelected && (
-                            <span className="text-yellow-600 font-bold">← 已选择</span>
-                          )}
-                          {!isSelected && !isBranching && (
-                            <span className="text-blue-600 text-xs opacity-70 hover:opacity-100 transition-opacity">
-                              点击重新推演
-                            </span>
-                          )}
-                          {isBranching && (
-                            <span className="text-gray-500 text-xs">
-                              推演中...
-                            </span>
-                          )}
-                        </div>
-                        
-                        <div className="flex items-center gap-3">
-                          <span className="text-blue-600 font-medium">
-                            {(move[1] * 100).toFixed(1)}%
-                          </span>
-                          <span className="text-gray-500 text-xs">
-                            索引: {move[2]}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                
-                {/* 统计信息 */}
-                <div className="mt-2 pt-2 border-t border-green-200 text-xs text-green-700">
-                  <div className="flex justify-between">
-                    <span>选择概率: {(currentStepInfo.probability * 100).toFixed(1)}%</span>
-                    <span>选择排名: {(() => {
-                      const selectedMove = currentStepInfo.move;
-                      const rank = currentStepInfo.top_moves.findIndex((move: any) => move[0] === selectedMove) + 1;
-                      return rank > 0 ? `第${rank}名` : '未在前5名';
-                    })()}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-            
-            {/* 箭头图例 */}
-            <div className="text-xs bg-blue-50 p-2 rounded">
-              <div className="font-semibold mb-1">箭头说明:</div>
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-4 h-1 bg-green-500"></div>
-                <span>绿色: 上一步走法</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-1 bg-blue-500" style={{backgroundImage: 'linear-gradient(to right, rgb(59 130 246) 50%, transparent 50%)', backgroundSize: '4px 1px'}}></div>
-                <span>蓝色虚线: 下一步走法</span>
-              </div>
-            </div>
+                     {/* 当前步骤信息 */}
+           <div className="text-xs bg-gray-50 p-2 rounded">
+             {currentStep === 0 ? (
+               <div>初始局面</div>
+             ) : (
+               <div>
+                 <div><strong>第{currentStep}步</strong> - {currentStepInfo.player === 'white' ? '白棋' : '黑棋'}</div>
+                 <div>走法: {currentStepInfo.move_san} ({currentStepInfo.move})</div>
+                 <div>概率: {(currentStepInfo.probability * 100).toFixed(1)}%</div>
+               </div>
+             )}
+           </div>
+           
+           {/* 箭头图例 */}
+           <div className="text-xs bg-blue-50 p-2 rounded">
+             <div className="font-semibold mb-1">箭头说明:</div>
+             <div className="flex items-center gap-2 mb-1">
+               <div className="w-4 h-1 bg-green-500"></div>
+               <span>绿色: 上一步走法</span>
+             </div>
+             <div className="flex items-center gap-2">
+               <div className="w-4 h-1 bg-blue-500" style={{backgroundImage: 'linear-gradient(to right, rgb(59 130 246) 50%, transparent 50%)', backgroundSize: '4px 1px'}}></div>
+               <span>蓝色虚线: 下一步走法</span>
+             </div>
+           </div>
           
           {/* 游戏结果 */}
           {selfplayData.result && (
@@ -2446,7 +1497,15 @@ const SelfPlayChessBoard = ({ fen, activations, sampleIndex, analysisName, conte
         </div>
       )}
 
-      
+             {/* 悬浮窗 */}
+       {showStepPopover && popoverStep && (
+         <SelfPlayStepPopover
+           step={popoverStep}
+           position={popoverPosition}
+           onClose={() => setShowStepPopover(false)}
+           initialActiveColor={initialActiveColor}
+         />
+       )}
     </div>
   );
 };
@@ -2551,11 +1610,6 @@ const SimpleChessBoard = ({ fen, activations, sampleIndex, analysisName, context
            // 上报综合分析数据（仅当包含在统计中时）
            if (includeInStats && normalizedResult.status === 'success') {
              globalStatsManager.updateAnalysis(normalizedResult);
-             
-             // 统计激活位置的棋子类型（如果有激活值数据）
-             if (activations && activations.length === 64) {
-               globalStatsManager.updateActivationStatistics(fen, activations);
-             }
            }
           
         } catch (error: any) {
@@ -3532,7 +2586,6 @@ export const FeaturesPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [globalAnalysisCollapsed, setGlobalAnalysisCollapsed] = useState<boolean>(false);  // 全局分析折叠状态
   const [showSelfplay, setShowSelfplay] = useState<boolean>(false);  // Self-play显示状态
-  const [currentFeatureKey, setCurrentFeatureKey] = useState<string | null>(null);  // 跟踪当前feature
   
   // 优化全局折叠按钮的点击处理函数
   const handleGlobalAnalysisToggle = useCallback(() => {
@@ -3549,59 +2602,6 @@ export const FeaturesPage = () => {
     globalStatsManager.reset(0);
   }, []);
   
-  // 取消所有feature相关的推演任务
-  const cancelAllFeatureTasks = async () => {
-    try {
-      console.log('🔄 开始取消所有feature相关的推演任务...');
-      console.log('🔄 发送取消请求到:', `${import.meta.env.VITE_BACKEND_URL}/tasks/cancel`);
-      console.log('🔄 请求体:', { pattern: 'selfplay_' });
-      
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/tasks/cancel`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pattern: 'selfplay_' })  // 取消所有推演任务
-      });
-      
-      console.log('🔄 取消请求响应状态:', response.status);
-      
-      if (response.ok) {
-        const result = await response.json();
-        console.log(`🛑 切换feature时取消了 ${result.cancelled_count} 个推演任务`);
-        console.log('🛑 取消任务完整响应:', result);
-        return result.cancelled_count;
-      } else {
-        console.error('❌ 取消任务失败，HTTP状态:', response.status);
-        const errorText = await response.text();
-        console.error('❌ 错误详情:', errorText);
-      }
-    } catch (error) {
-      console.error('❌ 取消feature任务失败:', error);
-      console.error('❌ 错误堆栈:', error.stack);
-    }
-    return 0;
-  };
-  
-  // 强制清理所有任务（紧急情况使用）
-  const forceCleanAllTasks = async () => {
-    try {
-      console.log('🚨 强制清理所有任务...');
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/tasks/force_clear`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      
-      if (response.ok) {
-        const result = await response.json();
-        console.log(`🚨 强制清理了 ${result.cleared_count} 个任务`);
-        return result.cleared_count;
-      } else {
-        console.error('❌ 强制清理失败，HTTP状态:', response.status);
-      }
-    } catch (error) {
-      console.error('❌ 强制清理任务失败:', error);
-    }
-    return 0;
-  };
 
 
   const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
@@ -3649,16 +2649,6 @@ export const FeaturesPage = () => {
   const [featureIndex, setFeatureIndex] = useState<number>(0);
   const [inputValue, setInputValue] = useState<string>("0");
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
-  
-  // 当dictionary改变时清理所有任务和状态
-  useEffect(() => {
-    if (selectedDictionary) {
-      console.log('📚 Dictionary变化，清理所有任务和状态');
-      // 清理分析状态
-      globalAnalysisStateManager.clear();
-      globalStatsManager.reset(0);
-    }
-  }, [selectedDictionary]);
   
   // 当特征改变时清理分析状态
   useEffect(() => {
@@ -3759,9 +2749,6 @@ export const FeaturesPage = () => {
       }
 
              console.log('🚀 开始切换到新feature:', featureIndex);
-       
-       // 切换feature时，取消之前所有的推演任务
-       await cancelAllFeatureTasks();
        
        // 重置规则统计（暂时不知道新feature的激活次数，在渲染时会重新设置）
        globalStatsManager.reset(0);
@@ -3939,10 +2926,7 @@ export const FeaturesPage = () => {
           <Select
             disabled={dictionariesState.loading || featureState.loading}
             value={selectedDictionary || undefined}
-            onValueChange={async (value) => {
-              console.log('📚 切换Dictionary:', value);
-              // 切换dictionary时取消所有正在进行的任务
-              await cancelAllFeatureTasks();
+            onValueChange={(value) => {
               setSelectedDictionary(value);
             }}
           >

@@ -226,3 +226,9 @@ results_tmux/config.json
 results_tmux/sae_weights.safetensors
 results_tmux/checkpoints/156250.safetensors
 run.sh
+results_distributed_train/checkpoints/58594.safetensors
+
+
+activations_lc0/*
+.gitignore
+

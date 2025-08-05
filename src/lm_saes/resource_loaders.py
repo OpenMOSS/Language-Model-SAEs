@@ -7,10 +7,12 @@ from torch.distributed.device_mesh import DeviceMesh
 from lm_saes.backend.language_model import (
     LanguageModel,
     LLaDALanguageModel,
-    SearchlessChessModel,
+    # SearchlessChessModel,
+    SearchlessChessBehavioralCloningModel,
     QwenLanguageModel,
     QwenVLLanguageModel,
     TransformerLensLanguageModel,
+    LeelaChessModel,
 )
 from lm_saes.config import DatasetConfig, LanguageModelConfig, LLaDAConfig
 
@@ -94,10 +96,13 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
         if cfg.model_name.startswith("GSAI-ML/LLaDA"):
             assert isinstance(cfg, LLaDAConfig), "cfg is not a LLaDAConfig"
             return LLaDALanguageModel(cfg)
-        elif cfg.model_name.startswith("google/searchless-chess-270M"):
+        elif cfg.model_name.startswith("google/searchless-chess"):
             print("loading a searchless_chess model, welcome to play chess with me.  ^^")
             # assert isinstance(cfg, SearchlessChessConfig), "cfg is not a SearchlessChessConfig"
-            return SearchlessChessModel(cfg)
+            return SearchlessChessBehavioralCloningModel(cfg)
+        elif cfg.model_name.startswith("lc0/T82-768x15x24h"):
+            print("loading a leela chess model, welcome to play chess with me.  ^^")
+            return LeelaChessModel(cfg)
         else:
             return TransformerLensLanguageModel(cfg)
     else:

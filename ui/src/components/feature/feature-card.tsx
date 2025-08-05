@@ -1,7 +1,7 @@
 import { Feature, FeatureSampleCompactSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Plot from "react-plotly.js";
 import { useAsyncFn } from "react-use";
 import { Button } from "../ui/button";
@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
 import { FeatureInterpretation } from "./interpret";
 import { FeatureActivationSample, FeatureSampleGroup } from "./sample";
+import { createChessBoardElement } from "../chess";
 
 const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
   const [customInput, setCustomInput] = useState<string>("");
@@ -113,6 +114,8 @@ const FeatureBookmarkButton = ({ feature }: { feature: Feature }) => {
 };
 
 export const FeatureCard = ({ feature }: { feature: Feature }) => {
+  const chessBoardRef = useRef<HTMLDivElement>(null);
+  
   const analysisNameMap = (analysisName: string) => {
     if (analysisName === "top_activations") {
       return "Top Activations";
@@ -126,6 +129,49 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
   };
 
   const [showCustomInput, setShowCustomInput] = useState<boolean>(false);
+
+  // 检查是否为棋类特征
+  const isChessFeature = useMemo(() => {
+    // 检查样本组中是否有棋类样本
+    return feature.sampleGroups.some(group => 
+      group.samples.some(sample => 
+        sample.text && sample.text.length > 77 && 
+        /^[wb][rnbqkbnrpppppppp\.]{64}[KQkq\.]{4}[a-h][1-8]?\.{0,2}\d{1,3}\.\d{1,3}[a-h][1-8][a-h][1-8][qrbn]?0$/.test(sample.text)
+      )
+    );
+  }, [feature.sampleGroups]);
+
+  // 获取第一个棋类样本的longfen
+  const firstChessLongfen = useMemo(() => {
+    if (!isChessFeature) return null;
+    
+    for (const group of feature.sampleGroups) {
+      for (const sample of group.samples) {
+        if (sample.text && sample.text.length > 77 && 
+            /^[wb][rnbqkbnrpppppppp\.]{64}[KQkq\.]{4}[a-h][1-8]?\.{0,2}\d{1,3}\.\d{1,3}[a-h][1-8][a-h][1-8][qrbn]?0$/.test(sample.text)) {
+          return sample.text;
+        }
+      }
+    }
+    return null;
+  }, [isChessFeature, feature.sampleGroups]);
+
+  // 创建棋盘元素
+  useEffect(() => {
+    if (isChessFeature && firstChessLongfen && chessBoardRef.current) {
+      // 清空现有内容
+      chessBoardRef.current.innerHTML = '';
+      
+      // 创建棋盘元素
+      const chessBoardElement = createChessBoardElement({
+        longfen: firstChessLongfen,
+        size: 350,
+        className: "mx-auto"
+      });
+      
+      chessBoardRef.current.appendChild(chessBoardElement);
+    }
+  }, [isChessFeature, firstChessLongfen]);
 
   const activationTimesSpan = feature.nAnalyzedTokens ? (
     <span className="font-medium">
@@ -186,6 +232,17 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
       <CardContent>
         <div className="flex flex-col gap-4">
           {showCustomInput && <FeatureCustomInputArea feature={feature} />}
+
+          {/* 棋盘显示 */}
+          {isChessFeature && firstChessLongfen && (
+            <div className="flex flex-col gap-2 border rounded p-4 bg-gray-50">
+              <div className="text-lg font-bold text-center">Chess Position & Best Move</div>
+              <div ref={chessBoardRef} className="flex justify-center"></div>
+              <div className="text-sm text-gray-600 text-center">
+                显示当前特征激活最高的棋类样本的棋盘位置和移动
+              </div>
+            </div>
+          )}
 
           <FeatureInterpretation feature={feature} />
 
