@@ -13,6 +13,7 @@ from wandb.sdk.wandb_run import Run
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
 from lm_saes.crosscoder import CrossCoder
+from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.optim import get_scheduler
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
@@ -177,6 +178,35 @@ class Trainer:
                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum().item(),
                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum().item(),
             }
+            
+            # Add MOLT-specific rank-based sparsity metrics
+            if isinstance(sae, MixtureOfLinearTransform):
+                feature_idx = 0
+                for rank in sae.cfg.available_ranks:
+                    rank_str = str(rank)
+                    if rank_str in sae.U_matrices:
+                        # Get global count for this rank group
+                        if hasattr(sae, '_global_rank_count_map'):
+                            # In distributed case, use global count
+                            global_count = sae._global_rank_count_map[rank]
+                        else:
+                            # Non-distributed case
+                            global_count = sae.U_matrices[rank_str].shape[0]
+                        
+                        if global_count > 0:
+                            # Extract sparsity for this rank group
+                            rank_sparsity = feature_sparsity[feature_idx:feature_idx+global_count]
+                            
+                            # Calculate rank-specific sparsity metrics
+                            wandb_log_dict.update({
+                                f"sparsity/above_1e-1_rank{rank}": (rank_sparsity > 1e-1).sum().item(),
+                                f"sparsity/above_1e-2_rank{rank}": (rank_sparsity > 1e-2).sum().item(),
+                                f"sparsity/below_1e-5_rank{rank}": (rank_sparsity < 1e-5).sum().item(),
+                                f"sparsity/below_1e-6_rank{rank}": (rank_sparsity < 1e-6).sum().item(),
+                            })
+                            
+                            feature_idx += global_count
+            
             if self.wandb_logger is not None:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
             log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
@@ -261,6 +291,48 @@ class Trainer:
                             f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
                         }
                     )
+            elif isinstance(sae, MixtureOfLinearTransform):
+                # MOLT sparsity metrics: track activation per rank group
+                feature_acts_for_rank = feature_acts
+                if isinstance(feature_acts_for_rank, DTensor):
+                    feature_acts_for_rank = feature_acts_for_rank.full_tensor()
+
+                # Calculate l0 per rank group and total rank sum
+                feature_idx = 0
+                total_rank_sum = 0.0
+
+                for rank in sae.cfg.available_ranks:
+                    rank_str = str(rank)
+                    if rank_str in sae.U_matrices:
+                        # Get global count for this rank group
+                        if hasattr(sae, '_global_rank_count_map'):
+                            # In distributed case, use global count
+                            global_count = sae._global_rank_count_map[rank]
+                        else:
+                            # Non-distributed case
+                            global_count = sae.U_matrices[rank_str].shape[0]
+
+                        if global_count > 0:
+                            # Extract features for this rank group
+                            end_idx = feature_idx + global_count
+                            rank_features = feature_acts_for_rank[
+                                ..., feature_idx:end_idx
+                            ]
+
+                            # Count active transforms (l0) for this rank group
+                            rank_l0 = (rank_features > 0).float().sum(-1)
+                            rank_l0_mean = rank_l0.mean().item()
+
+                            # Record metrics
+                            wandb_log_dict[f"molt_metrics/l0_rank{rank}"] = (
+                                rank_l0_mean
+                            )
+                            total_rank_sum += rank_l0_mean * rank
+
+                            feature_idx += global_count
+
+                # Record total rank sum
+                wandb_log_dict["molt_metrics/total_rank_sum"] = total_rank_sum
 
             if is_primary_rank(sae.device_mesh):
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Training Metrics")
