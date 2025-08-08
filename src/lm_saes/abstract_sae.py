@@ -296,8 +296,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """
 
         def normalize_hook_point(hook_point: str, original_tensor: torch.Tensor):
-            input_norm_factor = self.compute_norm_factor(original_tensor, hook_point=hook_point)
-            return original_tensor * input_norm_factor
+            norm_factor = self.compute_norm_factor(original_tensor, hook_point=hook_point)
+            return original_tensor * norm_factor
 
         return {k: normalize_hook_point(k, v) if k in self.cfg.associated_hook_points else v for k, v in batch.items()}
 
@@ -440,7 +440,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
     def activation_function_factory(
         self, device_mesh: DeviceMesh | None = None
-    ) -> Callable[[torch.Tensor], torch.Tensor]:
+    ) -> Callable[[torch.Tensor], torch.Tensor] | JumpReLU:
         assert self.cfg.act_fn.lower() in [
             "relu",
             "topk",

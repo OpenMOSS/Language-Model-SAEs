@@ -43,15 +43,6 @@ class STEFunction(torch.autograd.Function):
 
         x_grad = grad_output * input.gt(jumprelu_threshold)
 
-        # grad_jumprelu_threshold = (
-        #     grad_jumprelu_threshold_unscaled
-        #     / torch.where(
-        #         ((input - jumprelu_threshold).abs() < jumprelu_threshold_window * 0.5) * (input != 0.0),
-        #         (input + 1e-6),
-        #         1.0,
-        #     )
-        #     * grad_output
-        # )
         grad_jumprelu_threshold = grad_jumprelu_threshold.sum(
             dim=tuple(
                 i for i in range(grad_jumprelu_threshold.ndim)
