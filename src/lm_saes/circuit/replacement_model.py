@@ -370,17 +370,21 @@ class ReplacementModel(HookedTransformer):
         apply_activation_function: bool = True,
     ) -> Tuple[List, List[Tuple[str, Callable]]]:
         activation_matrix = [None] * self.cfg.n_layers * 2
+        lorsa_attention_pattern = [None] * self.cfg.n_layers
 
         def cache_activations_attn(acts, hook, layer, zero_bos):
-            lorsa_acts = self.lorsas[layer].encode(
+            encode_result = self.lorsas[layer].encode(
                 acts,
-                return_hidden_pre=not apply_activation_function
+                return_hidden_pre=not apply_activation_function,
+                return_attention_pattern=True
             )
 
             if not apply_activation_function:
-                lorsa_acts = lorsa_acts[1].detach().squeeze(0)
+                lorsa_acts = encode_result[1].detach().squeeze(0)
+                pattern = encode_result[2].detach().squeeze(0)
             else:
-                lorsa_acts = lorsa_acts.detach().squeeze(0)
+                lorsa_acts = encode_result[0].detach().squeeze(0)
+                pattern = encode_result[1].detach().squeeze(0)
             
             if zero_bos:
                 lorsa_acts[0] = 0
@@ -388,7 +392,8 @@ class ReplacementModel(HookedTransformer):
                 lorsa_acts = lorsa_acts.to_sparse()
 
             activation_matrix[layer] = lorsa_acts
-        
+            lorsa_attention_pattern[layer] = pattern
+
         activation_hooks = [
             (
                 f"blocks.{layer}.{self.attn_input_hook}",
@@ -427,13 +432,13 @@ class ReplacementModel(HookedTransformer):
             for layer in range(self.cfg.n_layers)
         ])
 
-        return activation_matrix, activation_hooks
+        return activation_matrix, lorsa_attention_pattern, activation_hooks
     
     def get_activations(
         self,
         inputs: Union[str, torch.Tensor],
         sparse: bool = False,
-        zero_bos: bool = False,
+        zero_bos: bool = True,
         apply_activation_function: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get the transcoder activations for a given prompt
@@ -450,7 +455,7 @@ class ReplacementModel(HookedTransformer):
                 associated activation cache
         """
 
-        activation_cache, activation_hooks = self._get_activation_caching_hooks(
+        activation_cache, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
             sparse=sparse,
             zero_bos=zero_bos,
             apply_activation_function=apply_activation_function,
@@ -458,9 +463,10 @@ class ReplacementModel(HookedTransformer):
         with torch.inference_mode(), self.hooks(activation_hooks):
             logits = self(inputs)
         activation_cache = torch.stack(activation_cache)
+        lorsa_attention_pattern = torch.stack(lorsa_attention_pattern)
         if sparse:
             activation_cache = activation_cache.coalesce()
-        return logits, activation_cache
+        return logits, activation_cache, lorsa_attention_pattern
 
     @contextmanager
     def zero_softcap(self):
@@ -476,7 +482,7 @@ class ReplacementModel(HookedTransformer):
         self,
         inputs: Union[str, torch.Tensor],
         sparse: bool = False,
-        zero_bos: bool = False,
+        zero_bos: bool = True,
     ):
         """Precomputes the transcoder / lorsa activations and error vectors, saving them and the
         token embeddings.
@@ -510,7 +516,7 @@ class ReplacementModel(HookedTransformer):
         )  # == self.tokenizer.bos_token_id
 
         # cache activations and MLP in
-        activation_matrix, activation_hooks = self._get_activation_caching_hooks(
+        activation_matrix, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
             sparse=sparse, zero_bos=zero_bos
         )
         attn_out_cache, attn_out_caching_hooks, _ = self.get_caching_hooks(
@@ -557,13 +563,14 @@ class ReplacementModel(HookedTransformer):
             error_vectors[:, 0] = 0
 
         lorsa_activation_matrix = torch.stack(lorsa_activation_matrix)
+        lorsa_attention_pattern = torch.stack(lorsa_attention_pattern)
         clt_activation_matrix = torch.stack(clt_activation_matrix)
         if sparse:
             lorsa_activation_matrix = lorsa_activation_matrix.coalesce()
             clt_activation_matrix = clt_activation_matrix.coalesce()
 
         token_vectors = self.W_E[tokens].detach()  # (n_pos, d_model)
-        return logits, lorsa_activation_matrix, clt_activation_matrix, error_vectors, token_vectors
+        return logits, lorsa_activation_matrix, lorsa_attention_pattern, clt_activation_matrix, error_vectors, token_vectors
 
     def setup_intervention_with_freeze(
         self, inputs: Union[str, torch.Tensor], direct_effects: bool = False
@@ -659,7 +666,7 @@ class ReplacementModel(HookedTransformer):
             interventions_by_layer[layer].append((pos, feature_idx, value))
 
         # This activation cache will fill up during our forward intervention pass
-        activation_cache, activation_hooks = self._get_activation_caching_hooks(
+        activation_cache, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
             apply_activation_function=apply_activation_function
         )
 
@@ -693,7 +700,7 @@ class ReplacementModel(HookedTransformer):
         )
         all_hooks += activation_hooks + intervention_hooks
 
-        return all_hooks, activation_cache
+        return all_hooks, activation_cache, lorsa_attention_pattern
 
     @torch.no_grad
     def feature_intervention(

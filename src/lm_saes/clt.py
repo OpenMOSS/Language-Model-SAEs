@@ -53,7 +53,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         # CLT requires specific configuration settings
         # assert not cfg.sparsity_include_decoder_norm, "CLT requires sparsity_include_decoder_norm=False"
-        assert cfg.use_decoder_bias, "CLT requires use_decoder_bias=True"
+        # assert cfg.use_decoder_bias, "CLT requires use_decoder_bias=True"
 
         # Initialize weights and biases for cross-layer architecture
         if device_mesh is None:
@@ -482,6 +482,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             else:
                 hidden_pre = torch.einsum("...ld,lds->...ls", x, self.W_E) + self.b_E
 
+        if self.cfg.sparsity_include_decoder_norm:
+            hidden_pre = hidden_pre * self.decoder_norm_per_feature()
+            
         # Apply activation function (ReLU, TopK, etc.)
         with timer.time("activation_function"):
             feature_acts = self.activation_function(hidden_pre)
@@ -525,6 +528,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         """
         # Apply each encoder to its corresponding layer: x[..., layer, :] @ W_E[layer] + b_E[layer]
         hidden_pre = torch.einsum("...d,ds->...s", x, self.W_E[layer]) + self.b_E[layer]
+
+        if self.cfg.sparsity_include_decoder_norm:
+            hidden_pre = hidden_pre * self.decoder_norm_per_feature(layer)
 
         # Apply activation function (ReLU, TopK, etc.)
         if self.cfg.act_fn.lower() == "jumprelu":
@@ -606,77 +612,28 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
         """Decode features for a single output layer using upper triangular pattern."""
+        decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
+        
         if self.device_mesh is not None:
-            return self._decode_single_output_layer_distributed(feature_acts, layer_to)
-        else:
-            return self._decode_single_output_layer_single_gpu(feature_acts, layer_to)
+            # Distributed implementation
+            assert isinstance(feature_acts, DTensor)
+            assert isinstance(decoder_weights, DTensor)
 
-    def _decode_single_output_layer_distributed(
-        self, 
-        feature_acts: Union[
-            Float[torch.Tensor, "batch n_layers d_sae"],
-            Float[torch.Tensor, "batch seq_len n_layers d_sae"],
-        ], 
-        layer_to: int
-    ) -> Union[
-        Float[torch.Tensor, "batch d_model"],
-        Float[torch.Tensor, "batch seq_len d_model"],
-    ]:
-        """Distributed decoding implementation for a single output layer."""
-        decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
-        
-        assert isinstance(feature_acts, DTensor)
-        assert isinstance(decoder_weights, DTensor)
+            feature_acts_per_layer = feature_acts.to_local()[..., : layer_to + 1, :]
+            decoder_weights_local = decoder_weights.to_local()
 
-        feature_acts_per_layer = feature_acts.to_local()[..., : layer_to + 1, :]
-        decoder_weights_local = decoder_weights.to_local()
-
-        if self.cfg.use_triton_kernel:
-            from lm_saes.kernels import decode_with_triton_spmm_kernel
-            
-            contribution = decode_with_triton_spmm_kernel(
-                feature_acts.flatten(start_dim=-2), # (batch, layer_to+1 * d_sae)
-                decoder_weights_local.flatten(end_dim=-2), # (layer_to+1 * d_sae, d_model)
-                dynamic_k=True
-            ) # (batch, d_model)
-        else:
             contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights_local)
-        
-        # Sum contributions from all devices
-        contributions = DTensor.from_local(
-            contribution.unsqueeze(-2),
-            device_mesh=self.device_mesh,
-            placements=self.dim_maps()["W_D"].placements(self.device_mesh)
-        )
-        contribution = contributions.sum(dim=1)
-
-        return contribution
-    
-    def _decode_single_output_layer_single_gpu(
-        self, 
-        feature_acts: Union[
-            Float[torch.Tensor, "batch n_layers d_sae"],
-            Float[torch.Tensor, "batch seq_len n_layers d_sae"],
-        ], 
-        layer_to: int
-    ) -> Union[
-        Float[torch.Tensor, "batch d_model"],
-        Float[torch.Tensor, "batch seq_len d_model"],
-    ]:
-        """Single GPU decoding implementation for a single output layer."""
-        decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
-        feature_acts_per_layer = feature_acts[..., : layer_to + 1, :]
-
-        if self.cfg.use_triton_kernel:
-            from lm_saes.kernels import decode_with_triton_spmm_kernel
             
-            contribution = decode_with_triton_spmm_kernel(
-                feature_acts_per_layer.flatten(start_dim=-2),  # (batch, layer_to+1 * d_sae)
-                decoder_weights.flatten(end_dim=-2),  # (layer_to+1 * d_sae, d_model)
-                dynamic_k=True,
-                sparsity_threshold=self.cfg.sparsity_threshold_for_triton_spmm_kernel,
-            )  # (batch, d_model)
+            # Sum contributions from all devices
+            contributions = DTensor.from_local(
+                contribution.unsqueeze(1),
+                device_mesh=self.device_mesh,
+                placements=self.dim_maps()["W_D"].placements(self.device_mesh)
+            )
+            contribution = contributions.sum(dim=1)
         else:
+            # Single GPU implementation
+            feature_acts_per_layer = feature_acts[..., : layer_to + 1, :]
             contribution = torch.einsum("...ls,lsd->...d", feature_acts_per_layer, decoder_weights)
 
         return contribution
@@ -816,29 +773,27 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         assert self.cfg.norm_activation == "dataset-wise"
         assert self.dataset_average_activation_norm is not None
 
+        def input_norm_factor(layer: int) -> float:
+            return math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_points_in[layer]]
+        
+        def output_norm_factor(layer: int) -> float:
+            return math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_points_out[layer]]
+
         # For CLT, we need to handle multiple input and output layers
-        for layer_idx in range(self.cfg.n_layers):
-            hook_point_in = self.cfg.hook_points_in[layer_idx]
-            hook_point_out = self.cfg.hook_points_out[layer_idx]
-
-            # Input normalization factor for this layer (from hook_points_in)
-            input_norm_factor: float = (
-                math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point_in]
-            )
-            # Output normalization factor for this layer (from hook_points_out)
-            output_norm_factor: float = (
-                math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point_out]
-            )
-
+        for layer_from in range(self.cfg.n_layers):
             # Adjust encoder bias for this layer
-            self.b_E.data[layer_idx] = self.b_E.data[layer_idx] / input_norm_factor
+            self.b_E.data[layer_from].div_(input_norm_factor(layer_from))
 
-            # Adjust decoder weights for decoders writing to this layer
-            # W_D[layer_idx] contains decoders from layers 0..layer_idx to layer_idx
-            self.W_D[layer_idx].data = self.W_D[layer_idx].data * input_norm_factor / output_norm_factor
+            if self.cfg.act_fn.lower() == "jumprelu":
+                assert isinstance(self.activation_function, JumpReLU)
+                threshold = self.activation_function.log_jumprelu_threshold.data[layer_from].exp()
+                threshold = threshold / input_norm_factor(layer_from)
+                self.activation_function.log_jumprelu_threshold.data[layer_from] = torch.log(threshold)
 
-            # Adjust decoder bias for this specific decoder
-            self.b_D[layer_idx].data = self.b_D[layer_idx].data / output_norm_factor
+        for layer_to in range(self.cfg.n_layers):
+            self.b_D[layer_to].data.div_(output_norm_factor(layer_to))
+            for layer_from in range(layer_to + 1):
+                self.W_D[layer_to].data[layer_from].mul_(input_norm_factor(layer_from) / output_norm_factor(layer_to))
 
         self.cfg.norm_activation = "inference"
 

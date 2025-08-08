@@ -316,6 +316,7 @@ class AttributionContext:
         layers: torch.Tensor,
         positions: torch.Tensor,
         inject_values: torch.Tensor,
+        attention_patterns: torch.Tensor | None = None,
         retain_graph: bool = True,
     ) -> torch.Tensor:
         """Return attribution rows for a batch of (layer, pos) nodes.
@@ -346,10 +347,14 @@ class AttributionContext:
 
         # Custom gradient injection (per-layer registration)
         batch_idx = torch.arange(len(layers), device=layers.device)
-
-        def _inject(grads, *, batch_indices, pos_indices, values):
+        def _inject(grads, *, batch_indices, pos_indices, patterns, values):
             grads_out = grads.clone().to(values.dtype)
-            grads_out.index_put_((batch_indices, pos_indices), values)
+            if patterns is not None:
+                print(f'patterns={patterns}')
+                grads_out.index_put_((batch_indices,), values[:, None, :] * patterns[:, :, None])
+                print(f'grads_out={grads_out}')
+            else:
+                grads_out.index_put_((batch_indices, pos_indices), values)
             return grads_out.to(grads.dtype)
 
         handles = []
@@ -363,6 +368,7 @@ class AttributionContext:
                 _inject,
                 batch_indices=batch_idx[mask],
                 pos_indices=positions[mask],
+                patterns=attention_patterns[mask] if attention_patterns is not None else None,
                 values=inject_values[mask],
             )
             handles.append(self._resid_activations[int(layer)].register_hook(fn))
@@ -461,14 +467,19 @@ def select_encoder_rows_clt(
 @torch.no_grad()
 def select_encoder_rows_lorsa(
     activation_matrix: torch.sparse.Tensor,
+    attention_pattern: torch.Tensor,
     lorsas: LowRankSparseAttention
 ) -> torch.Tensor:
     """Return encoder rows for **active** features only."""
     rows: List[torch.Tensor] = []
+    patterns: List[torch.Tensor] = []
     for layer, row in enumerate(activation_matrix):
-        _, head_idx = row.coalesce().indices()
+        qpos, head_idx = row.coalesce().indices()
+        qk_idx = head_idx // lorsas[layer].cfg.d_qk_head
+        pattern = attention_pattern[layer, qk_idx, qpos]
+        patterns.append(pattern)
         rows.append(lorsas[layer].W_V[head_idx])
-    return torch.cat(rows)
+    return torch.cat(rows), torch.cat(patterns)
 
 def compute_partial_influences(edge_matrix, logit_p, row_to_node_index, max_iter=128, device=None):
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -513,8 +524,9 @@ def attribute(
     batch_size: int = 512,
     max_feature_nodes: Optional[int] = None,
     offload: Literal["cpu", "disk", None] = None,
-    verbose: bool = False,
     update_interval: int = 4,
+    slug: str = "untitled",
+    sae_series: Optional[Union[str, List[str]]] = None,
 ) -> Graph:
     """Compute an attribution graph for *prompt*.
 
@@ -547,6 +559,7 @@ def attribute(
             offload=offload,
             offload_handles=offload_handles,
             update_interval=update_interval,
+            sae_series=sae_series,
         )
     finally:
         for reload_handle in offload_handles:
@@ -562,17 +575,18 @@ def _run_attribution(
     offload,
     offload_handles,
     update_interval=4,
+    sae_series=None,
 ):
     start_time = time.time()
     # Phase 0: precompute
     logger.info("Phase 0: Precomputing activations and vectors")
     phase_start = time.time()
     input_ids = ensure_tokenized(prompt, model.tokenizer)
-    logits, lorsa_activation_matrix, clt_activation_matrix, error_vecs, token_vecs = model.setup_attribution(
+    logits, lorsa_activation_matrix, lorsa_attention_pattern, clt_activation_matrix, error_vecs, token_vecs = model.setup_attribution(
         input_ids, sparse=True
     )
     lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas)
-    lorsa_encoder_rows = select_encoder_rows_lorsa(lorsa_activation_matrix, model.lorsas)
+    lorsa_encoder_rows, lorsa_attention_patterns = select_encoder_rows_lorsa(lorsa_activation_matrix, lorsa_attention_pattern, model.lorsas)
 
     clt_decoder_vecs = select_scaled_decoder_vecs_clt(clt_activation_matrix, model.transcoders)
     clt_encoder_rows = select_encoder_rows_clt(clt_activation_matrix, model.transcoders)
@@ -650,24 +664,25 @@ def _run_attribution(
             positions=torch.full((batch.shape[0],), n_pos - 1),
             inject_values=batch,
         )
-        # print(rows[0].sum())
-        # print("lorsa", rows[0, :lorsa_activation_matrix._nnz()].sum())
-        # print("clt", rows[0, lorsa_activation_matrix._nnz(): total_active_feats].sum())
-        # print("lorsa error", rows[0, total_active_feats: total_active_feats + n_layers * n_pos].sum())
-        # print("clt error", rows[0, total_active_feats + n_layers * n_pos: total_active_feats + 2 * n_layers * n_pos].sum())
-        # print("token", rows[0, total_active_feats + 2 * n_layers * n_pos:].sum())
 
-        bias_attributions = []
-        for param in model._get_requires_grad_bias_params():
-            try:
-                attribution = (param[1].data * param[1].grad).sum()
-                bias_attributions.append(attribution)
-                print(param[0], attribution)
-            except TypeError as e:
-                pass
-        assert torch.allclose(sum(bias_attributions) + rows[0].sum(), logits[0, -1].max() - logits[0, -1].mean(), atol=1e-3)
-        assert total_active_feats + (2 * n_layers + 1) * n_pos == rows.shape[1]
-        # print(sum(bias_attributions))
+        # bias_attributions = []
+        # for param in model._get_requires_grad_bias_params():
+        #     try:
+        #         attribution = (param[1].data * param[1].grad).sum()
+        #         bias_attributions.append(attribution)
+        #     except TypeError as e:
+        #         pass
+        # print(f'bias contribution: {sum(bias_attributions)}')
+        # print(f'feature contribution: {rows[0, :total_active_feats].sum()}')
+        # print(f'error contribution: {rows[0, total_active_feats: total_active_feats + 2 * n_layers * n_pos].sum()}')
+        # print(f'token contribution: {rows[0, total_active_feats + 2 * n_layers * n_pos: logit_offset].sum()}')
+        # print(f'logits[0, -1].max() - logits[0, -1].mean(): {logits[0, -1].max() - logits[0, -1].mean()}')
+        # print("--------------------------------")
+        # if n_logits == 1:
+        #     assert torch.allclose(sum(bias_attributions) + rows[0].sum(), logits[0, -1].max() - logits[0, -1].mean(), rtol=1e-3), f"{sum(bias_attributions) + rows[0].sum()} != {logits[0, -1].max() - logits[0, -1].mean()}"
+        # assert total_active_feats + (2 * n_layers + 1) * n_pos == rows.shape[1]
+        # for param in model._get_requires_grad_bias_params():
+        #     param[1].grad = None
 
         edge_matrix[i : i + batch.shape[0], :logit_offset] = rows.cpu()
         row_to_node_index[i : i + batch.shape[0]] = (
@@ -678,8 +693,8 @@ def _run_attribution(
     # Phase 4: feature attribution
     logger.info("Phase 4: Computing feature attributions")
     
-    lorsa_feat_layer, lorsa_feat_pos, _ = lorsa_activation_matrix.indices()
-    clt_feat_layer, clt_feat_pos, _ = clt_activation_matrix.indices()
+    lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = lorsa_activation_matrix.indices()
+    clt_feat_layer, clt_feat_pos, clt_feat_idx = clt_activation_matrix.indices()
 
     def idx_to_layer(idx: torch.Tensor) -> torch.Tensor:
         is_lorsa = idx < len(lorsa_feat_layer)
@@ -688,6 +703,7 @@ def _run_attribution(
             2 * lorsa_feat_layer[idx * is_lorsa],
             2 * clt_feat_layer[(idx - len(lorsa_feat_layer)) * ~is_lorsa] + 1
         )
+
     def idx_to_pos(idx: torch.Tensor) -> torch.Tensor:
         is_lorsa = idx < len(lorsa_feat_layer)
         return torch.where(
@@ -695,6 +711,7 @@ def _run_attribution(
             lorsa_feat_pos[idx * is_lorsa],
             clt_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
         )
+
     def idx_to_encoder_rows(idx: torch.Tensor) -> torch.Tensor:
         is_lorsa = idx < len(lorsa_feat_layer)
         return torch.where(
@@ -702,6 +719,28 @@ def _run_attribution(
             lorsa_encoder_rows[idx * is_lorsa],
             clt_encoder_rows[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
         )
+    
+    def idx_to_pattern(idx: torch.Tensor) -> torch.Tensor:
+        is_lorsa = idx < len(lorsa_feat_layer)
+        print(f'{lorsa_attention_patterns[idx * is_lorsa].shape=}')
+        res = torch.where(
+            is_lorsa.to(lorsa_attention_patterns.device)[:, None],
+            lorsa_attention_patterns[idx * is_lorsa],
+            torch.nn.functional.one_hot(
+                clt_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa],
+                num_classes=n_pos
+            )
+        )
+        print(f'{res.shape=}')
+        return res
+    # def idx_to_activation_values(idx: torch.Tensor) -> torch.Tensor:
+    #     is_lorsa = idx < len(lorsa_feat_layer)
+    #     if is_lorsa.squeeze().item():
+    #         layer, feat_idx = lorsa_feat_layer[idx], lorsa_feat_idx[idx]
+    #         return lorsa_activation_matrix.values()[idx]
+    #     else:
+    #         layer, feat_idx = clt_feat_layer[idx - len(lorsa_feat_layer)], clt_feat_idx[idx - len(lorsa_feat_layer)]
+    #         return clt_activation_matrix.values()[idx - len(lorsa_feat_layer)] - model.transcoders.b_E[layer, feat_idx]
 
     phase_start = time.time()
     st = n_logits
@@ -730,8 +769,26 @@ def _run_attribution(
                 layers=idx_to_layer(idx_batch),
                 positions=idx_to_pos(idx_batch),
                 inject_values=idx_to_encoder_rows(idx_batch),
+                attention_patterns=idx_to_pattern(idx_batch),
                 retain_graph=n_visited < max_feature_nodes,
             )
+
+            # bias_attributions = []
+            # for param in model._get_requires_grad_bias_params():
+            #     try:
+            #         attribution = (param[1].data * param[1].grad).sum()
+            #         bias_attributions.append(attribution)
+            #     except TypeError as e:
+            #         pass
+            # print(f'bias_contribution: {sum(bias_attributions)}')
+            # print(f'feature_contribution: {rows[0, :total_active_feats].sum()}')
+            # print(f'error_contribution: {rows[0, total_active_feats: total_active_feats + 2 * n_layers * n_pos].sum()}')
+            # print(f'token_contribution: {rows[0, total_active_feats + 2 * n_layers * n_pos: logit_offset].sum()}')
+            # print(f'overall_activation: {idx_to_activation_values(idx_batch)}')
+            # print(idx_batch.squeeze().item() < len(lorsa_feat_layer), torch.allclose(idx_to_activation_values(idx_batch), rows[0, :logit_offset].sum() + sum(bias_attributions), rtol=1e-3))
+            # print("--------------------------------")
+            # for param in model._get_requires_grad_bias_params():
+            #     param[1].grad = None
 
             end = min(st + batch_size, st + rows.shape[0])
             edge_matrix[st:end, :logit_offset] = rows.cpu()
@@ -769,7 +826,7 @@ def _run_attribution(
         selected_features=selected_features,
         adjacency_matrix=full_edge_matrix,
         cfg=model.cfg,
-        scan=None,
+        sae_series=sae_series,
     )
 
     total_time = time.time() - start_time

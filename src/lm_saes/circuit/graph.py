@@ -16,7 +16,8 @@ class Graph:
     selected_features: torch.Tensor
     logit_probabilities: torch.Tensor
     cfg: HookedTransformerConfig
-    scan: Optional[Union[str, List[str]]]
+    sae_series: Optional[Union[str, List[str]]]
+    slug: str
 
     def __init__(
         self,
@@ -31,7 +32,8 @@ class Graph:
         selected_features: torch.Tensor,
         adjacency_matrix: torch.Tensor,
         cfg: HookedTransformerConfig,
-        scan: Optional[Union[str, List[str]]] = None,
+        slug: str = "untitled",
+        sae_series: Optional[Union[str, List[str]]] = None,
     ):
         """
         A graph object containing the adjacency matrix describing the direct effect of each
@@ -49,10 +51,9 @@ class Graph:
             clt_active_features (torch.Tensor): Indices (layer, pos, feature_idx) of non-zero CLT features.
             clt_activation_values (torch.Tensor): Activation values for CLT features.
             selected_features (torch.Tensor): Indices of selected features (for pruning, etc).
-            adjacency_matrix (torch.Tensor): The adjacency matrix. Organized as
-                [lorsa_active_features, clt_active_features, error_nodes, embed_nodes, logit_nodes].
+            adjacency_matrix (torch.Tensor): The adjacency matrix.
             cfg (HookedTransformerConfig): The cfg of the model.
-            scan (Optional[Union[str,List[str]]], optional): The identifier of the transcoders used in the graph.
+            sae_series (Optional[Union[str,List[str]]], optional): The identifier of the transcoders used in the graph.
         """
         self.input_string = input_string
         self.adjacency_matrix = adjacency_matrix
@@ -65,10 +66,11 @@ class Graph:
         self.logit_tokens = logit_tokens
         self.logit_probabilities = logit_probabilities
         self.input_tokens = input_tokens
-        if scan is None:
-            print("Graph loaded without scan to identify it. Uploading will not be possible.")
-        self.scan = scan
+        if sae_series is None:
+            print("Graph loaded without sae_series to identify it. Uploading will not be possible.")
+        self.sae_series = sae_series
         self.selected_features = selected_features
+        self.slug = slug
 
     def to(self, device):
         """Send all relevant tensors to the device (cpu, cuda, etc.)"""
@@ -96,7 +98,8 @@ class Graph:
             "logit_probabilities": self.logit_probabilities,
             "input_tokens": self.input_tokens,
             "selected_features": self.selected_features,
-            "scan": self.scan,
+            "sae_series": self.sae_series,
+            "slug": self.slug,
         }
         torch.save(d, path)
 
@@ -104,8 +107,7 @@ class Graph:
     def from_pt(path: str, map_location="cpu") -> "Graph":
         """Load a graph (saved using graph.to_pt) from a .pt file at the given path."""
         d = torch.load(path, weights_only=False, map_location=map_location)
-        return Graph(**d)
-
+        return Graph(**d)        
 
 def normalize_matrix(matrix: torch.Tensor) -> torch.Tensor:
     normalized = matrix.abs()
@@ -196,7 +198,7 @@ def prune_graph(
     node_influence = compute_node_influence(graph.adjacency_matrix, logit_weights)
     node_mask = node_influence >= find_threshold(node_influence, node_threshold)
     # Always keep tokens and logits
-    node_mask[-n_logits - n_tokens :] = True
+    node_mask[-n_logits - n_tokens:] = True
 
     # Create pruned matrix with selected nodes
     pruned_matrix = graph.adjacency_matrix.clone()
@@ -208,6 +210,7 @@ def prune_graph(
     edge_scores = compute_edge_influence(pruned_matrix, logit_weights)
 
     edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
+
 
     old_node_mask = node_mask.clone()
     # Ensure feature and error nodes have outgoing edges

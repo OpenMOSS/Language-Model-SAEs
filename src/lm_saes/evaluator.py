@@ -70,8 +70,19 @@ class Evaluator:
 
         # 3. Compute sparsity metrics
         l0 = (feature_acts > 0).float().sum(-1)
+
         if sae.cfg.sae_type == "clt":
+            label = label.permute(1, 0, 2)
+            reconstructed = reconstructed.permute(1, 0, 2)
+
+            l0_dict = {
+                f"l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))
+            }
+            for key, value in l0_dict.items():
+                log_metric(key, value)
+            
             l0 = l0.sum(-1)  # for clt, l0 is the sum of l0s of all layers
+
         log_metric("l0", item(l0.mean()))
 
         # 4. Compute reconstruction quality metrics
@@ -95,10 +106,24 @@ class Evaluator:
         explained_variance = 1 - per_token_l2_loss / total_variance
         log_metric("explained_variance", item(explained_variance.mean()))
 
+        if sae.cfg.sae_type == "clt":
+            per_layer_ev = explained_variance.mean(0)
+            per_layer_ev_dict = {
+                f"explained_variance_layer{l}": per_layer_ev[l].item()
+                for l in range(per_layer_ev.size(0))
+            }
+            for key, value in per_layer_ev_dict.items():
+                log_metric(key, value)
+            
         # 5. Update feature activation tracking
+        if sae.cfg.sae_type == "clt":
+            reduce_str = "... layers d_sae -> layers d_sae"
+        else:
+            reduce_str = "... d_sae -> d_sae"
+
         log_info["act_freq_scores"] += reduce(
             (feature_acts.abs() > 0).float(),
-            "... d_sae -> d_sae",
+            reduce_str,
             "sum",
         )
         log_info["n_frac_active_tokens"] += item(useful_token_mask.sum())
@@ -106,19 +131,36 @@ class Evaluator:
         # 6. Periodic feature sparsity logging
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
+            if sae.cfg.sae_type == "clt":
+                above_1e_1 = (feature_sparsity > 1e-1).sum(-1)
+                above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
+                below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
+                below_1e_6 = (feature_sparsity < 1e-6).sum(-1)
+                sparsity_results = {}
+                
+                for l in range(sae.cfg.n_layers):
+                    sparsity_results[f"above_1e-1_layer{l}"] = above_1e_1[l].item()
+                    sparsity_results[f"above_1e-2_layer{l}"] = above_1e_2[l].item()
 
-            # Log sparsity distribution
-            log_metric("mean_log10_feature_sparsity", item(torch.log10(feature_sparsity + 1e-10).mean()))
+                for l in range(sae.cfg.n_layers):
+                    sparsity_results[f"below_1e-5_layer{l}"] = below_1e_5[l].item()
+                    sparsity_results[f"below_1e-6_layer{l}"] = below_1e_6[l].item()
 
-            # Log sparsity thresholds
-            for threshold, name in [
-                (1e-1, "above_1e-1"),
-                (1e-2, "above_1e-2"),
-                (1e-5, "below_1e-5"),
-                (1e-6, "below_1e-6"),
-            ]:
-                comparison = feature_sparsity > threshold if "above" in name else feature_sparsity < threshold
-                log_metric(name, item(comparison.sum().float()))
+                sparsity_results["above_1e-1"] = above_1e_1.sum().item()
+                sparsity_results["above_1e-2"] = above_1e_2.sum().item()
+                sparsity_results["below_1e-5"] = below_1e_5.sum().item()
+                sparsity_results["below_1e-6"] = below_1e_6.sum().item()
+            
+            else:
+                sparsity_results = {
+                    "above_1e-1": (feature_sparsity > 1e-1).sum(-1).item(),
+                    "above_1e-2": (feature_sparsity > 1e-2).sum(-1).item(),
+                    "below_1e-5": (feature_sparsity < 1e-5).sum(-1).item(),
+                    "below_1e-6": (feature_sparsity < 1e-6).sum(-1).item(),
+                }
+            
+            for key, value in sparsity_results.items():
+                log_metric(key, value)
 
             # Reset tracking counters
             log_info["act_freq_scores"].zero_()
@@ -130,18 +172,22 @@ class Evaluator:
             return item(
                 torch.sum(self.metrics[metric] * self.metrics["n_tokens"]) / torch.sum(self.metrics["n_tokens"])
             )
-
-        self.metrics["mean_log10_feature_sparsity"] = item(self.metrics["mean_log10_feature_sparsity"].mean())
-        self.metrics["above_1e-1"] = item(self.metrics["above_1e-1"].mean())
-        self.metrics["above_1e-2"] = item(self.metrics["above_1e-2"].mean())
-        self.metrics["below_1e-5"] = item(self.metrics["below_1e-5"].mean())
-        self.metrics["below_1e-6"] = item(self.metrics["below_1e-6"].mean())
+        
+        sparsity_metrics = [k for k in self.metrics.keys() if "above_1e" in k or "below_1e" in k]
+        for metric in sparsity_metrics:
+            self.metrics[metric] = self.metrics[metric].float().mean().item()
 
         self.metrics["l_rec"] = calc_mean("l_rec")
-        self.metrics["l0"] = calc_mean("l0")
+        l0_metrics = [k for k in self.metrics.keys() if "l" in k]
+        for metric in l0_metrics:
+            self.metrics[metric] = calc_mean(metric)
+
         self.metrics["l2_norm_error"] = calc_mean("l2_norm_error")
         self.metrics["l2_norm_error_ratio"] = calc_mean("l2_norm_error_ratio")
-        self.metrics["explained_variance"] = calc_mean("explained_variance")
+        ev_metrics = [k for k in self.metrics.keys() if "explained_variance" in k]
+        for metric in ev_metrics:
+            self.metrics[metric] = calc_mean(metric)
+
         for loss_key in [
             "loss_mean",
             "loss_reconstruction_mean",
@@ -151,7 +197,8 @@ class Evaluator:
 
         if wandb_logger is not None:
             wandb_logger.log(self.metrics)
-
+        
+        self.metrics.pop("n_tokens")
         log_metrics(logger.logger, self.metrics, title="Evaluation Metrics")
 
     @torch.no_grad()
@@ -199,14 +246,15 @@ class Evaluator:
         wandb_logger: Run | None = None,
         model: HookedTransformer | None = None,
     ) -> None:
+        act_freq_scores_shape = (sae.cfg.n_layers, sae.cfg.d_sae) if sae.cfg.sae_type == "clt" else (sae.cfg.d_sae,)  # type: ignore
         log_info = {
-            "act_freq_scores": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype)
+            "act_freq_scores": torch.zeros(act_freq_scores_shape, device=sae.cfg.device, dtype=sae.cfg.dtype)
             if sae.device_mesh is None
             else torch.distributed.tensor.zeros(
-                sae.cfg.d_sae,
+                act_freq_scores_shape,
                 dtype=sae.cfg.dtype,
                 device_mesh=sae.device_mesh,
-                placements=DimMap({"model": 0}).placements(sae.device_mesh),
+                placements=DimMap({"model": -1}).placements(sae.device_mesh),
             ),
             "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
         }

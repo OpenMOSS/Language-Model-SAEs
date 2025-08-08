@@ -284,12 +284,18 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         self,
         x: Float[torch.Tensor, "batch seq_len d_model"],
         return_hidden_pre: bool = False,
+        return_attention_pattern: bool = False,
         **kwargs
     ) -> Union[
         Float[torch.Tensor, "batch seq_len d_sae"],
         Tuple[
             Float[torch.Tensor, "batch seq_len d_sae"],
             Float[torch.Tensor, "batch seq_len d_sae"],
+        ],
+        Tuple[
+            Float[torch.Tensor, "batch seq_len d_sae"],
+            Float[torch.Tensor, "batch seq_len d_sae"],
+            Float[torch.Tensor, "batch n_qk_heads q_pos k_pos"],
         ],
     ]:
         """Encode to sparse head activations."""
@@ -304,10 +310,13 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         hidden_pre = self._compute_head_outputs(pattern, v)
 
         feature_acts = self.activation_function(hidden_pre)
-        
+
+        return_values = [feature_acts]
         if return_hidden_pre:
-            return feature_acts, hidden_pre
-        return feature_acts
+            return_values.append(hidden_pre)
+        if return_attention_pattern:
+            return_values.append(pattern.permute(1, 0, 2, 3))
+        return tuple(return_values) if len(return_values) > 1 else return_values[0]
 
     @override
     def decode(self, feature_acts, **kwargs):
