@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Tuple
-from typing_extensions import override
 
 import torch
 from pydantic import (
@@ -15,6 +14,7 @@ from pydantic import (
     PlainSerializer,
     WithJsonSchema,
 )
+from typing_extensions import override
 
 from .utils.huggingface import parse_pretrained_name_or_path
 from .utils.misc import (
