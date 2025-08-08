@@ -178,8 +178,8 @@ class MOLTConfig(BaseSAEConfig):
     Keys are rank values, values are integer ratios that will be automatically normalized to proportions.
     Example: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16} means ratio 1:2:4:8:16 which means a proportion of 1/32, 2/32, 4/32, 8/32, 16/32, 
     which will be normalized to proportions automatically."""
-    model_parallel_size: int = 1
-    """Number of model parallel devices for distributed training."""
+    model_parallel_size_training: int = 1
+    """Number of model parallel devices for distributed training. Distinct from model_parallel_size_running which is the number of model parallel devices in both training and inference."""
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
@@ -203,6 +203,8 @@ class MOLTConfig(BaseSAEConfig):
         
         Returns:
             List of rank assignments for each transform.
+            For example: [1, 1, 1, 1, 2, 2, 4].
+            For distributed case, this method ensures that each rank type is divisible by model_parallel_size_training.
         """
         # Validate rank distribution
         assert self.rank_distribution, "rank_distribution cannot be empty"
@@ -211,7 +213,7 @@ class MOLTConfig(BaseSAEConfig):
         base_d_sae = self.d_model * self.expansion_factor
         
         # For distributed training, use special logic to ensure consistency
-        if self.model_parallel_size > 1:
+        if self.model_parallel_size_training > 1:
             return self._generate_distributed_rank_assignments(base_d_sae)
         else:
             return self._generate_rank_assignments_single_gpu(base_d_sae)
@@ -254,7 +256,7 @@ class MOLTConfig(BaseSAEConfig):
     def _generate_distributed_rank_assignments(self, base_d_sae: int) -> list[int]:
         """Generate rank assignments optimized for distributed training.
         
-        Ensures each rank type has count divisible by model_parallel_size.
+        Ensures each rank type has count divisible by model_parallel_size_training.
         
         Args:
             base_d_sae: Target number of total transforms
@@ -265,9 +267,9 @@ class MOLTConfig(BaseSAEConfig):
         assignments = []
         total_ratio = sum(self.rank_distribution.values())
         
-        # Ensure minimum requirement: each rank gets at least model_parallel_size
+        # Ensure minimum requirement: each rank gets at least model_parallel_size_training
         # transforms
-        min_total_needed = len(self.rank_distribution) * self.model_parallel_size
+        min_total_needed = len(self.rank_distribution) * self.model_parallel_size_training
         assert base_d_sae >= min_total_needed, (
             f"base_d_sae ({base_d_sae}) must be >= min_total_needed "
             f"({min_total_needed}) for distributed training with "
@@ -279,10 +281,10 @@ class MOLTConfig(BaseSAEConfig):
             rank_ratio = self.rank_distribution[rank]
             raw_count = int(base_d_sae * rank_ratio / total_ratio)
             
-            # Ensure count is divisible by model_parallel_size
+            # Ensure count is divisible by model_parallel_size_training
             count = max(
-                self.model_parallel_size,  # minimum requirement
-                (raw_count // self.model_parallel_size) * self.model_parallel_size,
+                self.model_parallel_size_training,  # minimum requirement
+                (raw_count // self.model_parallel_size_training) * self.model_parallel_size_training,
             )
             assignments.extend([rank] * count)
         
@@ -293,9 +295,9 @@ class MOLTConfig(BaseSAEConfig):
                 self.rank_distribution.keys(),
                 key=lambda k: self.rank_distribution[k]
             )
-            # Add model_parallel_size transforms at a time for divisibility
+            # Add model_parallel_size_training transforms at a time for divisibility
             remaining = base_d_sae - len(assignments)
-            to_add = min(self.model_parallel_size, remaining)
+            to_add = min(self.model_parallel_size_training, remaining)
             assignments.extend([most_common_rank] * to_add)
         
         # Truncate if we have too many (shouldn't happen normally)
@@ -307,46 +309,43 @@ class MOLTConfig(BaseSAEConfig):
             rank_counts[rank] = rank_counts.get(rank, 0) + 1
         
         for rank, count in rank_counts.items():
-            assert count % self.model_parallel_size == 0, (
+            assert count % self.model_parallel_size_training == 0, (
                 f"Rank {rank} count {count} not divisible by "
-                f"model_parallel_size {self.model_parallel_size}"
+                f"model_parallel_size_training {self.model_parallel_size_training}"
             )
         
         return assignments
 
-    def get_local_rank_assignments(self, local_rank: int, model_parallel_size: int) -> list[int]:
-        """Get rank assignments for a specific local rank in distributed training.
+    def get_local_rank_assignments(self, local_rank: int, model_parallel_size_running: int) -> list[int]:
+        """Get rank assignments for a specific local device in distributed running (both training and inference).
         
         Each device gets all rank groups, with each group evenly divided across devices.
         This ensures consistent encoder/decoder sharding without feature_acts redistribution.
         
         Args:
             local_rank: The local rank of this process  
-            model_parallel_size: Number of model parallel devices
+            model_parallel_size_running: Number of model parallel devices in running (training and inference)
             
         Returns:
-            List of rank assignments for this local rank
+            List of rank assignments for this local device
+            For example: 
+            global_rank_assignments = [1, 1, 2, 2], model_parallel_size_running = 2 -> local_rank_assignments = [1, 2]
         """
-        # Generate global assignments to get total counts per rank
-        global_assignments = self.generate_rank_assignments()
+        global_rank_counts = {rank: self.generate_rank_assignments().count(rank) for rank in self.available_ranks}
         
-        # Count transforms per rank type globally
-        global_rank_counts = {}
-        for rank in global_assignments:
-            global_rank_counts[rank] = global_rank_counts.get(rank, 0) + 1
-        
-        # Each device gets count/model_parallel_size transforms of each rank type
+        # Each device gets count/model_parallel_size_running transforms of each rank type
         local_assignments = []
         for rank in sorted(self.rank_distribution.keys()):
             global_count = global_rank_counts[rank]
-            local_count = global_count // model_parallel_size
-            
+
             # Verify even division (should be guaranteed by _generate_distributed_rank_assignments)
-            assert global_count % model_parallel_size == 0, (
+            assert global_count % model_parallel_size_running == 0, (
                 f"Rank {rank} global count {global_count} not divisible by "
-                f"model_parallel_size {model_parallel_size}"
+                f"model_parallel_size_running {model_parallel_size_running}"
             )
             
+            local_count = global_count // model_parallel_size_running
+
             # Add local_count transforms of this rank type
             local_assignments.extend([rank] * local_count)
         
@@ -372,7 +371,7 @@ class MOLTConfig(BaseSAEConfig):
 
     @property
     def associated_hook_points(self) -> list[str]:
-        return [self.hook_point_in, self.hook_point_out] 
+        return [self.hook_point_in, self.hook_point_out]
 
 
 class CrossCoderConfig(BaseSAEConfig):

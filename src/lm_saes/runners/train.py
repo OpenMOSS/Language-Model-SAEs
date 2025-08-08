@@ -62,6 +62,9 @@ class TrainSAESettings(BaseSettings):
     eval: bool = False
     """Whether to run in evaluation mode"""
 
+    data_parallel_size: int = 1
+    """Size of data parallel mesh"""
+
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
 
@@ -603,7 +606,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
-            mesh_shape=(settings.model_parallel_size, settings.data_parallel_size),
+            mesh_shape=(settings.model_parallel_size, settings.data_parallel_size),  # TODO: check the order
             mesh_dim_names=("model", "data"),
         )
         if settings.model_parallel_size > 1 or settings.data_parallel_size > 1
@@ -624,6 +627,9 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         config_type="model",
         required=False,
     )
+
+    assert settings.model_parallel_size == settings.model.model_parallel_size_training, "model_parallel_size_training config and model_parallel_size for training are not aligned"
+    # model_parallel_size_training is needed for getting the shape of molt
 
     dataset_cfgs = (
         {

@@ -43,18 +43,13 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             # Use model dimension for tensor parallelism
             model_dim_index = device_mesh.mesh_dim_names.index("model")
             local_rank = device_mesh.get_local_rank(mesh_dim=model_dim_index)
-            model_parallel_size = device_mesh.size(mesh_dim=model_dim_index)
-            assert cfg.model_parallel_size == model_parallel_size, "cfg.model_parallel_size and training model_parallel_size are not aligned"
+            model_parallel_size_running = device_mesh.size(mesh_dim=model_dim_index)  # TODO: move this into training logic to enable inference
             
             self.rank_assignments = cfg.get_local_rank_assignments(
-                local_rank, model_parallel_size
+                local_rank, model_parallel_size_running
             )
-
-            # Cache global rank counts to avoid recomputation in parameter creation
-            global_assignments = cfg.generate_rank_assignments()
-            self._global_rank_count_map = {
-                r: global_assignments.count(r) for r in cfg.available_ranks
-            }
+            self._global_rank_count_map = {rank: self.rank_assignments.count(rank) for rank in self.available_ranks}
+            # Turn the rank assignments list into a map of rank values to their integer counts. For example: [1, 1, 1, 1, 2, 2, 4] -> {1: 4, 2: 2, 4: 1}
 
         else:
             # Non-distributed case
@@ -117,17 +112,10 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             self.V_matrices = nn.ParameterDict()
             
             for rank in cfg.available_ranks:
-                # CRITICAL FIX: Use GLOBAL count for DTensor creation!
-                # DTensor expects global shape at creation time, then shards automatically
-                local_count = sum(1 for r in self.rank_assignments if r == rank)
                 global_count = self._global_rank_count_map[rank]
+                local_count = sum(1 for r in self.rank_assignments if r == rank)
                 
-                model_parallel_size = cfg.model_parallel_size
-                
-                # Sanity checks
                 assert local_count > 0, f"Rank {rank} has local_count=0, sharding logic error"
-                assert global_count % model_parallel_size == 0, f"global_count ({global_count}) must be divisible by model_parallel_size ({model_parallel_size})"
-                assert local_count == global_count // model_parallel_size, f"Local count mismatch for rank {rank}: {local_count} != {global_count}//{model_parallel_size}"
                 
                 # Create DTensor with GLOBAL shape
                 self.U_matrices[str(rank)] = nn.Parameter(
@@ -574,7 +562,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     @timer.time("init_parameters")
     def init_parameters(self, **kwargs) -> None:
         super().init_parameters(**kwargs)
-        
         # Initialize encoder
         encoder_bound = 1.0 / math.sqrt(self.cfg.d_sae)
         
