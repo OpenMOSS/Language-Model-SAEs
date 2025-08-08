@@ -198,11 +198,23 @@ class Trainer:
                             rank_sparsity = feature_sparsity[feature_idx:feature_idx+global_count]
                             
                             # Calculate rank-specific sparsity metrics
+                            above_1e1_count = (rank_sparsity > 1e-1).sum().item()
+                            above_1e2_count = (rank_sparsity > 1e-2).sum().item()
+                            below_1e5_count = (rank_sparsity < 1e-5).sum().item()
+                            below_1e6_count = (rank_sparsity < 1e-6).sum().item()
+                            
                             wandb_log_dict.update({
-                                f"sparsity/above_1e-1_rank{rank}": (rank_sparsity > 1e-1).sum().item(),
-                                f"sparsity/above_1e-2_rank{rank}": (rank_sparsity > 1e-2).sum().item(),
-                                f"sparsity/below_1e-5_rank{rank}": (rank_sparsity < 1e-5).sum().item(),
-                                f"sparsity/below_1e-6_rank{rank}": (rank_sparsity < 1e-6).sum().item(),
+                                f"sparsity/above_1e-1_rank{rank}": above_1e1_count,
+                                f"sparsity/above_1e-2_rank{rank}": above_1e2_count,
+                                f"sparsity/below_1e-5_rank{rank}": below_1e5_count,
+                                f"sparsity/below_1e-6_rank{rank}": below_1e6_count,
+                                # Add ratio metrics
+                                f"sparsityratio/above_1e-1_ratio_rank{rank}": above_1e1_count / global_count,
+                                f"sparsityratio/above_1e-2_ratio_rank{rank}": above_1e2_count / global_count,
+                                f"sparsityratio/below_1e-5_ratio_rank{rank}": below_1e5_count / global_count,
+                                f"sparsityratio/below_1e-6_ratio_rank{rank}": below_1e6_count / global_count,
+
+                                f"frequency/frequency_mean_rank{rank}": rank_sparsity.mean().item(),
                             })
                             
                             feature_idx += global_count
@@ -326,6 +338,9 @@ class Trainer:
                             # Record metrics
                             wandb_log_dict[f"molt_metrics/l0_rank{rank}"] = (
                                 rank_l0_mean
+                            )
+                            wandb_log_dict[f"molt_metrics/l0_rank{rank}_ratio"] = (
+                                rank_l0_mean / global_count
                             )
                             total_rank_sum += rank_l0_mean * rank
 
