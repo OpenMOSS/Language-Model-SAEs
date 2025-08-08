@@ -96,10 +96,10 @@ def train_sae(settings: TrainSAESettings) -> None:
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
-            mesh_shape=(settings.model_parallel_size,),
-            mesh_dim_names=("model",),
+            mesh_shape=(settings.data_parallel_size, settings.model_parallel_size),
+            mesh_dim_names=("data", "model"),
         )
-        if settings.model_parallel_size > 1
+        if settings.data_parallel_size > 1 or settings.model_parallel_size > 1
         else None
     )
 
