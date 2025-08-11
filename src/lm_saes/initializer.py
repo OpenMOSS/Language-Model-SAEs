@@ -4,6 +4,7 @@ from typing import Dict, Iterable, List
 import torch
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
+from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder, JumpReLU
 from lm_saes.clt import CrossLayerTranscoder
@@ -14,7 +15,6 @@ from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
 from lm_saes.utils.tensor_dict import batch_size
-from wandb.sdk.wandb_run import Run
 
 logger = get_distributed_logger("initializer")
 
