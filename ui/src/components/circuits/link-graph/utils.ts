@@ -2,6 +2,40 @@ import { LinkGraphData, Node, Link, VisState } from "./types";
 // @ts-ignore
 import d3 from "../static_js/d3";
 
+// Cantor pairing function utilities
+// The cantor pairing function maps two integers (x, y) to a single integer z
+// This is used to encode layer and feature IDs into a single node ID
+export const cantorPair = (x: number, y: number): number => {
+  return ((x + y) * (x + y + 1)) / 2 + y;
+};
+
+// Reverse the cantor pairing function to extract the original (x, y) from z
+export const cantorUnpair = (z: number): [number, number] => {
+  const w = Math.floor((Math.sqrt(8 * z + 1) - 1) / 2);
+  const t = (w * w + w) / 2;
+  const y = z - t;
+  const x = w - y;
+  return [x, y];
+};
+
+// Extract layer and feature ID from node ID using cantor unpairing
+// Returns null if the node ID is not a valid cantor-paired number
+export const extractLayerAndFeature = (nodeId: string): { layer: number; featureId: number; isLorsa: boolean } | null => {
+  try {
+    const parts = nodeId.split("_");
+    const layer = Math.floor(parseInt(parts[0]) / 2);
+    const isLorsa = parseInt(parts[0]) % 2 === 0;
+    const featureId = parseInt(parts[1]);
+    if (isNaN(layer) || isNaN(featureId)) {
+      return null;
+    }
+    return { layer, featureId, isLorsa };
+  } catch (error) {
+    console.error('Error extracting layer and feature from node ID:', error);
+    return null;
+  }
+};
+
 export const featureTypeToText = (type: string): string => {
   switch (type) {
     case "embedding": return "E";
@@ -16,6 +50,8 @@ export interface CircuitJsonData {
     scan: string;
     prompt_tokens: string[];
     prompt: string;
+    lorsa_analysis_name?: string;
+    clt_analysis_name?: string;
   };
   qParams: {
     linkType: string;
@@ -42,9 +78,6 @@ export interface CircuitJsonData {
 }
 
 export function transformCircuitData(jsonData: CircuitJsonData): LinkGraphData {
-  // Create a map of jsNodeId to node for easy lookup
-  const nodeMap = new Map<string, any>();
-  
   // Transform nodes
   const nodes: Node[] = jsonData.nodes.map((node) => {
     // Generate a color based on feature type
@@ -56,6 +89,8 @@ export function transformCircuitData(jsonData: CircuitJsonData): LinkGraphData {
           return "#69b3a2";
         case "cross layer transcoder":
           return "#4ecdc4";
+        case "lorsa":
+          return "#7a4cff";
         default:
           return "#95a5a6";
       }
@@ -78,7 +113,6 @@ export function transformCircuitData(jsonData: CircuitJsonData): LinkGraphData {
       localClerp: node.clerp,
     };
 
-    nodeMap.set(node.node_id, transformedNode);
     return transformedNode;
   });
   
@@ -86,14 +120,6 @@ export function transformCircuitData(jsonData: CircuitJsonData): LinkGraphData {
   const edges = (jsonData as any).links || [];
   
   const links: Link[] = edges.map((edge: { source: string; target: string; weight: number }) => {
-    const sourceNode = nodeMap.get(edge.source);
-    const targetNode = nodeMap.get(edge.target);
-    
-    if (!sourceNode || !targetNode) {
-      console.warn(`Missing node for edge: ${edge.source} -> ${edge.target}`);
-      return null;
-    }
-
     // Calculate stroke width based on weight
     const strokeWidth = Math.max(0.5, Math.min(3, Math.abs(edge.weight) * 10));
     
@@ -103,34 +129,27 @@ export function transformCircuitData(jsonData: CircuitJsonData): LinkGraphData {
     return {
       source: edge.source,
       target: edge.target,
-      sourceNode,
-      targetNode,
       pathStr: "", // Will be set by the component after positioning
       color,
       strokeWidth,
+      weight: edge.weight,
+      pctInput: Math.abs(edge.weight) * 100, // Convert weight to percentage
     };
-  }).filter(Boolean) as Link[];
+  });
+
+  // Populate sourceLinks and targetLinks for each node
+  nodes.forEach(node => {
+    node.sourceLinks = links.filter(link => link.source === node.nodeId);
+    node.targetLinks = links.filter(link => link.target === node.nodeId);
+  });
 
   return {
     nodes,
     links,
     metadata: {
       prompt_tokens: jsonData.metadata.prompt_tokens,
+      lorsa_analysis_name: jsonData.metadata.lorsa_analysis_name,
+      clt_analysis_name: jsonData.metadata.clt_analysis_name,
     },
   };
-}
-
-export async function loadDefaultCircuitData(): Promise<LinkGraphData> {
-  try {
-    const response = await fetch('/circuits/example_data/capital-state-dallas.json');
-    if (!response.ok) {
-      throw new Error(`Failed to load circuit data: ${response.statusText}`);
-    }
-    
-    const jsonData: CircuitJsonData = await response.json();
-    return transformCircuitData(jsonData);
-  } catch (error) {
-    console.error('Error loading default circuit data:', error);
-    throw error;
-  }
 }

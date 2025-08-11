@@ -3,6 +3,19 @@ import { LinkGraphData, VisState } from "./types";
 // @ts-ignore
 import d3 from "../static_js/d3";
 import "./link-graph.css";
+import {
+  GridLines,
+  RowBackgrounds,
+  YAxis,
+  Links,
+  Nodes,
+  Tooltips,
+  TokenLabels
+} from "./atomic-components";
+
+// Performance optimization: Replaced expensive closest node logic with exact hover detection.
+// Hover tooltips and indicators are preserved but only trigger when mouse is directly over nodes.
+// This provides the same UX with much better performance on large graphs.
 
 interface LinkGraphProps {
   data: LinkGraphData;
@@ -17,11 +30,19 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   onNodeClick,
   onNodeHover,
 }) => {
+  console.log('🔄 LinkGraph recomputed', { 
+    dataNodesCount: data.nodes.length, 
+    dataLinksCount: data.links.length,
+    visState: {
+      clickedId: visState.clickedId,
+      hoveredId: visState.hoveredId,
+      pinnedIdsCount: visState.pinnedIds.length
+    }
+  });
+  // onNodeHover is kept for interface compatibility but not used for performance
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-  const [debugInfo, setDebugInfo] = useState<any>(null);
-  const [ctxCounts, setCtxCounts] = useState<any[]>([]);
   const BOTTOM_PADDING = 50; // Space for token labels
   const SIDE_PADDING = 20; // Space for left and right margins
   
@@ -92,7 +113,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       ];
     });
 
-    // Update link paths
+    // Update link paths and populate node link references
     const positionedLinks = data.links.map((d: any) => {
       const sourceNode = positionedNodes.find((n: any) => n.nodeId === d.source);
       const targetNode = positionedNodes.find((n: any) => n.nodeId === d.target);
@@ -101,76 +122,56 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         const [x2, y2] = targetNode.pos;
         return {
           ...d,
-          sourceNode,
-          targetNode,
           pathStr: `M${x1},${y1}L${x2},${y2}`
         };
       }
-      return d;
-    });
+      // Skip invalid links
+      return null;
+    }).filter(Boolean);
 
     return { calculatedCtxCounts, x, y, positionedNodes, positionedLinks };
   }, [data.nodes, data.links, dimensions.width, dimensions.height]);
 
-  // Memoize hover detection logic with throttling
-  const findClosestNode = useCallback((mouseX: number, mouseY: number, maxDistance: number = 30) => {
-    let closestNode: any = null;
-    let closestDistance = Infinity;
-    
-    // Use a more efficient distance calculation (squared distance to avoid sqrt)
-    positionedNodes.forEach((node) => {
-      const dx = mouseX - node.pos[0];
-      const dy = mouseY - node.pos[1];
-      const distSquared = dx * dx + dy * dy;
-      if (distSquared < closestDistance) {
-        closestNode = node;
-        closestDistance = distSquared;
-      }
-    });
-    
-    // Only apply sqrt to the final closest distance
-    return Math.sqrt(closestDistance) <= maxDistance ? closestNode : null;
-  }, [positionedNodes]);
+  // Handle mouse enter/leave for exact hover detection (much more performant than closest node)
+  const handleNodeMouseEnter = useCallback((nodeId: string) => {
+    onNodeHover(nodeId);
+  }, [onNodeHover]);
 
-  // Throttled mouse move handler for better performance
-  const handleMouseMove = useCallback((event: React.MouseEvent) => {
-    if (event.shiftKey) return;
-    
-    const rect = svgRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
-    
-    // Throttle hover updates to reduce lag
-    requestAnimationFrame(() => {
-      const closestNode = findClosestNode(mouseX, mouseY);
-      const hoveredId = closestNode?.nodeId || null;
+  const handleNodeMouseLeave = useCallback(() => {
+    onNodeHover(null);
+  }, [onNodeHover]);
+
+  // Add document-level mouse event handler as fallback
+  useEffect(() => {
+    const handleDocumentMouseMove = (event: MouseEvent) => {
+      if (!containerRef.current) return;
       
-      if (hoveredId !== visState.hoveredId) {
-        onNodeHover(hoveredId);
+      const rect = containerRef.current.getBoundingClientRect();
+      const isInside = event.clientX >= rect.left && 
+                      event.clientX <= rect.right && 
+                      event.clientY >= rect.top && 
+                      event.clientY <= rect.bottom;
+      
+      if (!isInside && visState.hoveredId) {
+        console.log('🖱️ Document mouse move outside container - clearing hover state');
+        onNodeHover(null);
       }
-    });
-  }, [findClosestNode, visState.hoveredId, onNodeHover]);
+    };
 
-  const handleClick = useCallback((event: React.MouseEvent) => {
-    const rect = svgRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    document.addEventListener('mousemove', handleDocumentMouseMove);
     
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
-    
-    const closestNode = findClosestNode(mouseX, mouseY);
-    
-    if (!closestNode) {
-      onNodeClick("", false);
-    } else {
-      onNodeClick(closestNode.nodeId, event.metaKey || event.ctrlKey);
-    }
-  }, [findClosestNode, onNodeClick]);
+    return () => {
+      document.removeEventListener('mousemove', handleDocumentMouseMove);
+    };
+  }, [visState.hoveredId, onNodeHover]);
+
+  // Click handling is now done directly in the Nodes component
+  // This ensures proper D3.js event binding and data access
 
   // Handle resize
   useEffect(() => {
+    console.log('🔄 LinkGraph: Setting up resize observer and event handlers');
+    
     const updateDimensions = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
@@ -195,8 +196,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       resizeObserver.disconnect();
     };
   }, []);
-
-
 
   // Memoize token data calculation
   const tokenData = useMemo(() => {
@@ -228,318 +227,102 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       });
   }, [data.metadata?.prompt_tokens, positionedNodes, x]);
 
-  // Memoize SVG rendering
-  const renderSVG = useCallback(() => {
-    if (!svgRef.current || !positionedNodes.length) return;
-    
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
-    
-    // Draw background
-    svg.append("rect")
-      .attr("width", dimensions.width)
-      .attr("height", dimensions.height - BOTTOM_PADDING)
-      .attr("fill", "#F5F4EE");
-
-    // Draw grid lines
-    const earliestCtxWithNodes = d3.min(positionedNodes, (d: any) => d.ctx_idx) || 0;
-    
-    calculatedCtxCounts.forEach((ctxData: any) => {
-      if (ctxData.ctx_idx >= earliestCtxWithNodes) {
-        const xPos = x(ctxData.ctx_idx);
-        svg.append("line")
-          .attr("x1", xPos)
-          .attr("y1", 0)
-          .attr("x2", xPos)
-          .attr("y2", dimensions.height - BOTTOM_PADDING)
-          .attr("stroke", "rgba(255, 255, 255, 1)")
-          .attr("stroke-width", "1")
-      }
-    });
-
-    const yNumTicks = d3.max(positionedNodes, (d: any) => d.layerIdx) + 1;
-    d3.range(yNumTicks).forEach((layerIdx: number) => {
-      const yPos = y(layerIdx) + y.bandwidth() / 2;
-      svg.append("line")
-        .attr("x1", 0)
-        .attr("y1", yPos)
-        .attr("x2", dimensions.width)
-        .attr("y2", yPos)
-        .attr("stroke", "rgba(255, 255, 255, 1)")
-        .attr("stroke-width", "1")
-    });
-
-    // Draw Y-axis ticks and labels
-    d3.range(yNumTicks).forEach((layerIdx: number) => {
-      const yPos = y(layerIdx) + y.bandwidth() / 2;
-      
-      let label: string;
-      if (layerIdx === 0) {
-        label = "Emb";
-      } else if (layerIdx === yNumTicks - 1) {
-        label = "Logit";
-      } else {
-        label = `L${layerIdx - 1}`;
-      }
-      
-      svg.append("line")
-        .attr("x1", 0)
-        .attr("y1", yPos)
-        .attr("x2", 8)
-        .attr("y2", yPos)
-        .attr("stroke", "#666")
-        .attr("stroke-width", "1");
-      
-      svg.append("text")
-        .attr("x", 12)
-        .attr("y", yPos + 4)
-        .attr("text-anchor", "start")
-        .attr("font-size", "12px")
-        .attr("font-family", "Arial, sans-serif")
-        .attr("fill", "#666")
-        .text(label);
-    });
-
-    // Draw edges as SVG paths
-    const linkSel = svg.selectAll(".link").data(positionedLinks, (d: any) => `${d.source}-${d.target}`);
-    
-    // Enter: create new paths
-    const linkEnter = linkSel.enter().append("path")
-      .attr("class", "link")
-      .attr("fill", "none")
-      .style("pointer-events", "none");
-    
-    // Merge enter and update selections to apply attributes to both new and existing elements
-    linkSel.merge(linkEnter)
-      .attr("d", (d: any) => d.pathStr)
-      .attr("stroke", (d: any) => {
-        const isConnected = visState.clickedId && 
-          (d.sourceNode.nodeId === visState.clickedId || d.targetNode.nodeId === visState.clickedId);
-        
-        if (isConnected) {
-          return d.color || "#4CAF50";
-        } else {
-          return "#666666";
-        }
-      })
-      .attr("stroke-width", (d: any) => {
-        const isConnected = visState.clickedId && 
-          (d.sourceNode.nodeId === visState.clickedId || d.targetNode.nodeId === visState.clickedId);
-        
-        if (isConnected) {
-          return Math.max(3, (d.strokeWidth || 1) * 2);
-        } else {
-          return d.strokeWidth || 1;
-        }
-      })
-      .attr("opacity", (d: any) => {
-        const isConnected = visState.clickedId && 
-          (d.sourceNode.nodeId === visState.clickedId || d.targetNode.nodeId === visState.clickedId);
-        
-        if (isConnected) {
-          return 0.9;
-        } else {
-          return 0.05;
-        }
-      });
-
-    // Draw nodes
-    const nodeSel = svg.selectAll(".node").data(positionedNodes, (d: any) => d.nodeId);
-    
-    nodeSel.enter().append("circle")
-      .attr("class", "node")
-      .attr("cx", (d: any) => d.pos[0])
-      .attr("cy", (d: any) => d.pos[1])
-      .attr("r", 4)
-      .attr("fill", (d: any) => d.nodeColor)
-      .attr("stroke", "#000")
-      .attr("stroke-width", "0.5")
-      .classed("pinned", (d: any) => visState.pinnedIds.includes(d.nodeId))
-      .classed("clicked", (d: any) => d.nodeId === visState.clickedId);
-
-    // Draw hover indicators
-    svg.selectAll(".hover-indicator").data(positionedNodes, (d: any) => d.nodeId)
-      .enter().append("circle")
-      .attr("class", "hover-indicator")
-      .attr("cx", (d: any) => d.pos[0])
-      .attr("cy", (d: any) => d.pos[1])
-      .attr("r", 6)
-      .attr("stroke", "#f0f")
-      .attr("stroke-width", 2)
-      .attr("stroke-dasharray", "2 2")
-      .attr("fill", "none")
-      .style("display", (d: any) => d.nodeId === visState.hoveredId ? "" : "none");
-
-    // Draw clerp tooltips for hovered nodes
-    svg.selectAll(".clerp-tooltip").remove();
-    
-    if (visState.hoveredId) {
-      const hoveredNode = positionedNodes.find((d: any) => d.nodeId === visState.hoveredId);
-      if (hoveredNode && (hoveredNode.localClerp || hoveredNode.remoteClerp)) {
-        const tooltip = svg.append("g")
-          .attr("class", "clerp-tooltip");
-        
-        // Calculate tooltip dimensions based on text content
-        const clerpText = hoveredNode.localClerp || "";
-        const textWidth = clerpText.length * 6; // Approximate character width
-        const tooltipWidth = Math.max(80, textWidth + 10); // Minimum 80px, or text width + padding
-        const tooltipHeight = 20;
-        const padding = 10;
-        
-        let tooltipX = hoveredNode.pos[0] + padding;
-        let tooltipY = hoveredNode.pos[1] - 15;
-        
-        // If tooltip would go off the right edge, position it to the left of the node
-        if (tooltipX + tooltipWidth > dimensions.width - padding) {
-          tooltipX = hoveredNode.pos[0] - tooltipWidth - padding;
-        }
-        
-        // If tooltip would go off the top edge, position it below the node
-        if (tooltipY < padding) {
-          tooltipY = hoveredNode.pos[1] + padding;
-        }
-        
-        // If tooltip would go off the bottom edge, position it above the node
-        if (tooltipY + tooltipHeight > dimensions.height - BOTTOM_PADDING - padding) {
-          tooltipY = hoveredNode.pos[1] - tooltipHeight - padding;
-        }
-        
-        // Background rectangle
-        tooltip.append("rect")
-          .attr("x", tooltipX)
-          .attr("y", tooltipY)
-          .attr("width", tooltipWidth)
-          .attr("height", tooltipHeight)
-          .attr("fill", "rgba(0, 0, 0, 0.8)")
-          .attr("rx", 2);
-        
-        // Local clerp
-        if (hoveredNode.localClerp) {
-          tooltip.append("text")
-            .attr("x", tooltipX + 5)
-            .attr("y", tooltipY + 13)
-            .attr("fill", "white")
-            .attr("font-size", "10px")
-            .text(hoveredNode.localClerp);
-        }
-      }
-    }
-
-    // Draw prompt tokens at the bottom
-    if (tokenData.length > 0) {
-
-      svg.selectAll(".token-label").remove();
-
-      svg.selectAll(".token-label").data(tokenData, (d: any) => d.ctx_idx)
-        .enter().append("text")
-        .attr("class", "token-label")
-        .attr("x", (d: any) => d.x)
-        .attr("y", dimensions.height - BOTTOM_PADDING + 10)
-        .attr("transform", (d: any) => `rotate(-45, ${d.x}, ${dimensions.height - BOTTOM_PADDING + 10})`)
-        .attr("text-anchor", "end")
-        .text((d: any) => d.token);
-    }
-  }, [positionedNodes, positionedLinks, visState, dimensions, calculatedCtxCounts, x, y, tokenData]);
-
-  // Update ctxCounts for debug info
-  useEffect(() => {
-    setCtxCounts(calculatedCtxCounts);
-  }, [calculatedCtxCounts]);
-
-  // Render the visualization
-  useEffect(() => {
-    // Only render SVG since it's what's actually visible
-    renderSVG();
-  }, [renderSVG]);
+  // Early return if no data or scales
+  if (!positionedNodes.length || !x || !y) {
+    return (
+      <div ref={containerRef} className="link-graph-container">
+        <div>Loading...</div>
+      </div>
+    );
+  }
 
   return (
-    <div ref={containerRef} className="link-graph-container">
+    <div 
+      ref={containerRef} 
+      className="link-graph-container"
+      onMouseLeave={() => {
+        // Clear hover state when mouse leaves the container entirely
+        console.log('🖱️ Container mouse leave - clearing hover state');
+        onNodeHover(null);
+      }}
+      onMouseMove={(event) => {
+        // Debug: log mouse position to ensure events are being received
+        if (visState.hoveredId) {
+          console.log('🖱️ Container mouse move at:', event.clientX, event.clientY);
+        }
+      }}
+    >
       <svg
         ref={svgRef}
         width={dimensions.width}
         height={dimensions.height}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={() => onNodeHover(null)}
-        onClick={handleClick}
+        onClick={(event) => {
+          // Only clear selection if clicking on the SVG background (not on nodes)
+          if (event.target === event.currentTarget) {
+            onNodeClick("", false);
+          }
+        }}
+        onMouseLeave={() => {
+          // Clear hover state when mouse leaves the SVG entirely
+          console.log('🖱️ SVG mouse leave - clearing hover state');
+          onNodeHover(null);
+        }}
+        onMouseMove={(event) => {
+          // Debug: log mouse position to ensure events are being received
+          if (visState.hoveredId) {
+            console.log('🖱️ SVG mouse move at:', event.clientX, event.clientY);
+          }
+        }}
         style={{ position: "relative", zIndex: 1 }}
-      />
-      
-      {/* Debug Info Overlay */}
-      {debugInfo && (
-        <div 
-          style={{
-            position: "absolute",
-            top: "10px",
-            right: "10px",
-            background: "rgba(0, 0, 0, 0.9)",
-            color: "white",
-            padding: "15px",
-            borderRadius: "8px",
-            fontSize: "12px",
-            fontFamily: "monospace",
-            maxWidth: "300px",
-            zIndex: 10,
-            border: "1px solid #666"
+      >
+        {/* Atomic components - each manages its own rendering */}
+        <RowBackgrounds 
+          dimensions={dimensions}
+          positionedNodes={positionedNodes}
+          y={y}
+        />
+        
+        <GridLines 
+          dimensions={dimensions}
+          calculatedCtxCounts={calculatedCtxCounts}
+          x={x}
+          positionedNodes={positionedNodes}
+        />
+        
+        <YAxis 
+          positionedNodes={positionedNodes}
+          y={y}
+        />
+        
+        <Links 
+          positionedLinks={positionedLinks}
+          clickedId={visState.clickedId}
+        />
+        
+        <Nodes 
+          positionedNodes={positionedNodes}
+          positionedLinks={positionedLinks}
+          visState={{
+            clickedId: visState.clickedId,
+            pinnedIds: visState.pinnedIds,
+            hoveredId: visState.hoveredId
           }}
-        >
-          <div style={{ marginBottom: "10px", fontWeight: "bold", borderBottom: "1px solid #666", paddingBottom: "5px" }}>
-            🐛 Node Debug Info
-          </div>
-          <div style={{ marginBottom: "5px" }}>
-            <strong>ID:</strong> {debugInfo.nodeId}
-          </div>
-          <div style={{ marginBottom: "5px" }}>
-            <strong>Feature:</strong> {debugInfo.featureId}
-          </div>
-          <div style={{ marginBottom: "5px" }}>
-            <strong>Type:</strong> {debugInfo.feature_type}
-          </div>
-          <div style={{ marginBottom: "5px" }}>
-            <strong>Context:</strong> {debugInfo.ctx_idx}
-          </div>
-          <div style={{ marginBottom: "5px" }}>
-            <strong>Layer:</strong> {debugInfo.layerIdx}
-          </div>
-          <div style={{ marginBottom: "5px" }}>
-            <strong>Position:</strong> [{debugInfo.pos[0].toFixed(1)}, {debugInfo.pos[1].toFixed(1)}]
-          </div>
-          {debugInfo.logitPct && (
-            <div style={{ marginBottom: "5px" }}>
-              <strong>Logit %:</strong> {(debugInfo.logitPct * 100).toFixed(2)}%
-            </div>
-          )}
-          {debugInfo.logitToken && (
-            <div style={{ marginBottom: "5px" }}>
-              <strong>Logit Token:</strong> {debugInfo.logitToken}
-            </div>
-          )}
-          {debugInfo.localClerp && (
-            <div style={{ marginBottom: "5px" }}>
-              <strong>Local Clerp:</strong> {debugInfo.localClerp}
-            </div>
-          )}
-          <div style={{ marginBottom: "5px" }}>
-            <strong>Links:</strong> {debugInfo.sourceLinks?.length || 0} → {debugInfo.targetLinks?.length || 0}
-          </div>
-          <div style={{ marginBottom: "5px" }}>
-            <strong>Column Width:</strong> {ctxCounts.find((d: any) => d.ctx_idx === debugInfo.ctx_idx)?.maxCount || 0} nodes max
-          </div>
-          <button 
-            onClick={() => setDebugInfo(null)}
-            style={{
-              background: "#666",
-              color: "white",
-              border: "none",
-              padding: "5px 10px",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontSize: "10px"
-            }}
-          >
-            Close
-          </button>
-        </div>
-      )}
+          onNodeMouseEnter={handleNodeMouseEnter}
+          onNodeMouseLeave={handleNodeMouseLeave}
+          onNodeClick={onNodeClick}
+        />
+        
+        <Tooltips 
+          positionedNodes={positionedNodes}
+          visState={{ hoveredId: visState.hoveredId }}
+          dimensions={dimensions}
+        />
+        
+        <TokenLabels 
+          tokenData={tokenData}
+          dimensions={dimensions}
+        />
+      </svg>
     </div>
   );
 };

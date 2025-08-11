@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import "@xyflow/react/dist/style.css";
 import "./globals.css";
 import { RouterProvider, createBrowserRouter } from "react-router-dom";
+import { AppStateProvider } from "./contexts/AppStateContext";
 import { FeaturesPage } from "@/routes/features/page";
 import { RootPage } from "./routes/page";
 import { AttentionHeadPage } from "./routes/attn-heads/page";
@@ -44,6 +45,8 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <AppStateProvider>
+      <RouterProvider router={router} />
+    </AppStateProvider>
   </React.StrictMode>
 );

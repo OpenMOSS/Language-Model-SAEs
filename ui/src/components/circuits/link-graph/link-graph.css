@@ -7,6 +7,16 @@
   overflow: hidden;
 }
 
+.link-graph-container svg {
+  /* Ensure SVG can receive mouse events */
+  pointer-events: auto;
+}
+
+.link-graph-container svg g {
+  /* Ensure all SVG groups can receive mouse events */
+  pointer-events: auto;
+}
+
 .link-graph-container-wrapper {
   width: 100%;
 }
@@ -30,6 +40,13 @@
   font-weight: bold;
   stroke: #ef4444;
   stroke-width: 2;
+}
+
+.node.connected {
+  font-weight: bold;
+  stroke: #10b981;
+  stroke-width: 2;
+  r: 6;
 }
 
 .hover-indicator {

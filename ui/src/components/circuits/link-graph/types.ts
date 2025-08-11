@@ -21,11 +21,11 @@ export interface Node {
 export interface Link {
   source: string;
   target: string;
-  sourceNode: Node;
-  targetNode: Node;
   pathStr: string;
   color: string;
   strokeWidth: number;
+  weight?: number;
+  pctInput?: number;
 }
 
 export interface LinkGraphData {
@@ -33,6 +33,8 @@ export interface LinkGraphData {
   links: Link[];
   metadata: {
     prompt_tokens: string[];
+    lorsa_analysis_name?: string;
+    clt_analysis_name?: string;
   };
 }
 
@@ -40,7 +42,5 @@ export interface VisState {
   pinnedIds: string[];
   clickedId: string | null;
   hoveredId: string | null;
-  linkType: 'input' | 'output' | 'either' | 'both';
   isShowAllLinks: boolean;
-  isHideLayer: boolean;
 } 

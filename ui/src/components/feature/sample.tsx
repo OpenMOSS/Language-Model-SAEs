@@ -303,21 +303,16 @@ export const FeatureActivationSample = memo(({
   // Helper function to determine if a segment should be highlighted
   const getSegmentHighlightClass = (segment: typeof visibleSegments[0]) => {
     if (hoveredTokenIndex !== null) {
-      console.log('getSegmentHighlightClass - hoveredTokenIndex:', hoveredTokenIndex);
-      console.log('getSegmentHighlightClass - hoveredZPattern:', hoveredZPattern);
       
       // Check if this segment contains the hovered token
       const containsHoveredToken = segment.highlights.some(highlight => {
         // Check if this highlight's origin corresponds to the hovered token index
         const hoveredOrigin = sample.origins[hoveredTokenIndex];
-        console.log('Checking hovered token - hoveredTokenIndex:', hoveredTokenIndex, 'hoveredOrigin:', hoveredOrigin, 'highlight.origin:', highlight.origin);
         return hoveredOrigin === highlight.origin;
       });
       
-      console.log('Contains hovered token:', containsHoveredToken);
       
       if (containsHoveredToken) {
-        console.log('Returning orange highlight for hovered token');
         return "bg-orange-500 text-white"; // Keep orange for the hovered token
       }
         
@@ -326,21 +321,16 @@ export const FeatureActivationSample = memo(({
           const containsContributingToken = segment.highlights.some(highlight => {
             // Find the token index for this highlight's origin
             const tokenIndex = sample.origins.findIndex(origin => origin === highlight.origin);
-            console.log('Checking contributing token - tokenIndex:', tokenIndex, 'highlight.origin:', highlight.origin);
             const isContributing = hoveredZPattern.contributingTokens.includes(tokenIndex);
-            console.log('Is contributing:', isContributing);
             return isContributing;
           });
         
-        console.log('Contains contributing token:', containsContributingToken);
         
         if (containsContributingToken) {
-          console.log('Returning green highlight for contributing token');
           return "bg-green-500 text-white"; // Green for contributing tokens
         }
       }
       
-      console.log('Returning no highlight');
       return ""; // No highlight for other tokens when hovering
     }
     
