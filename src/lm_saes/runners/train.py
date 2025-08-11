@@ -628,7 +628,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         required=False,
     )
 
-    assert settings.model_parallel_size == settings.model.model_parallel_size_training, "model_parallel_size_training config and model_parallel_size for training are not aligned"
+    assert settings.model_parallel_size == settings.sae.model_parallel_size_training, "model_parallel_size_training config and model_parallel_size for training are not aligned"
     # model_parallel_size_training is needed for getting the shape of molt
 
     dataset_cfgs = (
