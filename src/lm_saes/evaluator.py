@@ -64,10 +64,10 @@ class Evaluator:
 
         # 2. Get activations and compute reconstructions
         batch = sae.normalize_activations(activation_dict)
-        x, encode_kwargs = sae.prepare_input(batch)
+        x, encode_kwargs, decode_kwargs = sae.prepare_input(batch)
         label = sae.prepare_label(batch)
         feature_acts = sae.encode(x, **encode_kwargs)
-        reconstructed = sae.decode(feature_acts)
+        reconstructed = sae.decode(feature_acts, **decode_kwargs)
 
         # 3. Compute sparsity metrics
         l0 = (feature_acts > 0).float().sum(-1).mean()

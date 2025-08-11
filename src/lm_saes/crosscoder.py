@@ -446,7 +446,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     @override
     @timer.time("prepare_input")
-    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
+    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
         def pad_to_d_model(x: torch.Tensor) -> torch.Tensor:
             # TODO: Support padding for distributed setting
             if x.shape[-1] > self.cfg.d_model:
@@ -462,7 +462,9 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
         # The following code is to stack the activations per head to (batch, ..., n_heads, d_model)
         if self.device_mesh is None or "head" not in cast(tuple[str, ...], self.device_mesh.mesh_dim_names):
-            return torch.stack([pad_to_d_model(batch[hook_point]) for hook_point in self.cfg.hook_points], dim=-2), {}
+            encoder_kwargs = {}
+            decoder_kwargs = {}
+            return torch.stack([pad_to_d_model(batch[hook_point]) for hook_point in self.cfg.hook_points], dim=-2), encoder_kwargs, decoder_kwargs
         else:
             # The following code stacks the activations in a distributed setting. It's a bit complicated so I'll try to explain it in detail.
 
@@ -507,11 +509,13 @@ class CrossCoder(AbstractSparseAutoEncoder):
                     first_hook_point_activations.placements, first_hook_point_activations.device_mesh
                 )
 
+            encoder_kwargs = {}
+            decoder_kwargs = {}
             return DTensor.from_local(
                 per_process_activations,
                 device_mesh=self.device_mesh,
                 placements=output_dim_map.placements(self.device_mesh),
-            ), {}
+            ), encoder_kwargs, decoder_kwargs
 
     @override
     @timer.time("prepare_label")

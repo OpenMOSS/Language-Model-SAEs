@@ -211,8 +211,8 @@ class FeatureAnalyzer:
             batch = sae.normalize_activations(batch)
 
             # Get feature activations from SAE
-            x, kwargs = sae.prepare_input(batch)
-            feature_acts: torch.Tensor = sae.encode(x, **kwargs)
+            x, encoder_kwargs, _ = sae.prepare_input(batch)
+            feature_acts: torch.Tensor = sae.encode(x, **encoder_kwargs)
             if isinstance(feature_acts, DTensor):
                 assert device_mesh is not None, "Device mesh is required for DTensor feature activations"
                 if device_mesh is not feature_acts.device_mesh:

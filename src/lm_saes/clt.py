@@ -415,7 +415,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         raise NotImplementedError("init_encoder_with_decoder_transpose does not make sense for CLT")
 
     @override
-    def prepare_input(self, batch: "dict[str, torch.Tensor]", **kwargs) -> "tuple[torch.Tensor, dict[str, Any]]":
+    def prepare_input(self, batch: "dict[str, torch.Tensor]", **kwargs) -> "tuple[torch.Tensor, dict[str, Any], dict[str, Any]]":
         """Prepare input tensor from batch by stacking all layer activations from hook_points_in."""
         x_layers = []
         for hook_point in self.cfg.hook_points_in:
@@ -427,7 +427,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         if isinstance(self.W_E, DTensor) and not isinstance(x, DTensor):
             assert self.device_mesh is not None
             x = DTensor.from_local(x, device_mesh=self.device_mesh, placements=[torch.distributed.tensor.Replicate()])
-        return x, {}
+        encoder_kwargs = {}
+        decoder_kwargs = {}
+        return x, encoder_kwargs, decoder_kwargs
 
     @override
     def prepare_label(self, batch: "dict[str, torch.Tensor]", **kwargs) -> torch.Tensor:
