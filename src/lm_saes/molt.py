@@ -43,12 +43,18 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             # Use model dimension for tensor parallelism
             model_dim_index = device_mesh.mesh_dim_names.index("model")
             local_rank = device_mesh.get_local_rank(mesh_dim=model_dim_index)
-            model_parallel_size_running = device_mesh.size(mesh_dim=model_dim_index)  # TODO: move this into training logic to enable inference
+            model_parallel_size_running = device_mesh.size(mesh_dim=model_dim_index)
             
             self.rank_assignments = cfg.get_local_rank_assignments(
                 local_rank, model_parallel_size_running
             )
-            self._global_rank_count_map = {rank: self.rank_assignments.count(rank) for rank in self.available_ranks}
+
+            global_assignments = cfg.generate_rank_assignments()
+            self._global_rank_count_map = {
+                r: global_assignments.count(r) for r in cfg.available_ranks
+            }
+            for k, v in self._global_rank_count_map.items():
+                print(f"rank {k} has {v} local ranks")
             # Turn the rank assignments list into a map of rank values to their integer counts. For example: [1, 1, 1, 1, 2, 2, 4] -> {1: 4, 2: 2, 4: 1}
 
         else:
@@ -589,8 +595,8 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             V = self.V_matrices[rank_str]
             
             # Xavier initialization considering the rank
-            U_bound = 1.0 / math.sqrt(self.cfg.d_model)  # TODO: check this
-            V_bound = 1.0 / math.sqrt(self.cfg.d_model)  # TODO: check this
+            U_bound = 1.0 / math.sqrt(self.cfg.d_sae)  # TODO: initialization should have a better solution
+            V_bound = 1.0 / math.sqrt(self.cfg.d_sae)
             
             if self.device_mesh is None:
                 # Non-distributed initialization
