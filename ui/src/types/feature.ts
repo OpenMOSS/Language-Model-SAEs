@@ -33,7 +33,7 @@ export type TokenOrigin = z.infer<typeof TokenOriginSchema>;
 export const FeatureSampleCompactSchema = z.object({
   text: z.string().nullish(),
   predictedText: z.string().nullish(),
-  originalText: z.string().nullish(),
+  maskedText: z.string().nullish(),
   images: z.array(z.string()).nullish(),
   origins: z.array(TokenOriginSchema.nullable()),
   featureActs: z.array(z.number()),

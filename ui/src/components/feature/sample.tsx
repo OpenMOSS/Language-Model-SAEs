@@ -182,9 +182,9 @@ export const FeatureActivationSample = memo(
       if (sample.text) fields.push({ key: "text", label: "Text", text: sample.text });
       if (sample.predictedText)
         fields.push({ key: "predictedText", label: "Predicted Text", text: sample.predictedText });
-      if (sample.originalText) fields.push({ key: "originalText", label: "Original Text", text: sample.originalText });
+      if (sample.maskedText) fields.push({ key: "maskedText", label: "Masked Text", text: sample.maskedText });
       return fields;
-    }, [sample.text, sample.predictedText, sample.originalText]);
+    }, [sample.text, sample.predictedText, sample.maskedText]);
 
     // Get current text content
     const currentText = useMemo(() => {

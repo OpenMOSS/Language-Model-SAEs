@@ -299,13 +299,9 @@ def get_feature(
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx]
         # print(f"data_text: {data['text']}")
         if mask_ratio is not None:
-            processed_data = model.preprocess_raw_data(data, mask_ratio=mask_ratio)
-            data["text"] = processed_data["text"]
-            data["original_text"] = processed_data["original_text"]
-            # print(f"data_text: {data['text']}")
             assert isinstance(model, LLaDALanguageModel), "Predicted tokens are only supported for LLaDA models"
-            predicted_data = model.predict(data)
-            data |= predicted_data
+            enhanced_data = model.enhance_data(data, mask_ratio=mask_ratio)
+            data |= enhanced_data
 
         # print(f"data_keys: {data.keys()}")
         # Get origins for the features
@@ -329,6 +325,9 @@ def get_feature(
         # Process text data if present
         if "text" in data:
             if origins[0].type == "multiple_text":
+                keys = [key for key in data.keys() if "tuples" in key]
+                for key in keys:
+                    del data[key]
                 for key in origins[0].range.keys():
                     text_ranges = [
                         origin.range[key] for origin in origins if origin is not None and origin.type == "multiple_text"
@@ -341,6 +340,16 @@ def get_feature(
                 if text_ranges:
                     max_text_origin = max(text_ranges, key=lambda x: x[1])
                     data["text"] = data["text"][: max_text_origin[1]]
+
+        for origin in origins:
+            if data["masked_text"][origin.range["masked_text"][0] : origin.range["masked_text"][1]] != "<|mdm_mask|>":
+                assert (
+                    data["text"][origin.range["text"][0] : origin.range["text"][1]]
+                    == data["masked_text"][origin.range["masked_text"][0] : origin.range["masked_text"][1]]
+                ), (
+                    f"Original text should be the same as the masked text, but got {data['text'][origin.range['text'][0] : origin.range['text'][1]]} and {data['masked_text'][origin.range['masked_text'][0] : origin.range['masked_text'][1]]}"
+                )
+
         return {
             **data,
             "origins": [origin.model_dump() if origin is not None else None for origin in origins],

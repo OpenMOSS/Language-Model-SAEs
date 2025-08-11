@@ -48,7 +48,7 @@ class FeatureAnalysis(BaseModel):
     act_times_modalities: Optional[dict[str, float]] = None
     max_feature_acts_modalities: Optional[dict[str, float]] = None
     samplings: list[FeatureAnalysisSampling]
-    mask_ratio_state: Optional[list[dict[float, float]]] = None
+    mask_ratio_stats: Optional[dict[float, float]] = None
 
 
 class FeatureRecord(BaseModel):
