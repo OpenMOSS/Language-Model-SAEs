@@ -1,5 +1,5 @@
 import math
-from typing import Any, Union
+from typing import Any, Literal, Union, cast, overload
 
 import torch
 import torch.distributed.tensor
@@ -41,7 +41,11 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         if device_mesh is not None:
             # In distributed training, get local rank assignments
             # Use model dimension for tensor parallelism
-            model_dim_index = device_mesh.mesh_dim_names.index("model")
+            mesh_dim_names = device_mesh.mesh_dim_names
+            if mesh_dim_names is None:
+                model_dim_index = 0
+            else:
+                model_dim_index = mesh_dim_names.index("model") if "model" in mesh_dim_names else 0
             local_rank = device_mesh.get_local_rank(mesh_dim=model_dim_index)
             model_parallel_size_running = device_mesh.size(mesh_dim=model_dim_index)
             
@@ -357,6 +361,37 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
         raise NotImplementedError("init_encoder_with_decoder_transpose does not make sense for MOLT")
 
+    @overload
+    def encode(
+        self,
+        x: Union[
+            Float[torch.Tensor, "batch d_model"],
+            Float[torch.Tensor, "batch seq_len d_model"],
+        ],
+        return_hidden_pre: Literal[False] = False,
+        **kwargs,
+    ) -> Union[Float[torch.Tensor, "batch d_sae"], Float[torch.Tensor, "batch seq_len d_sae"]]: ...
+
+    @overload
+    def encode(
+        self,
+        x: Union[
+            Float[torch.Tensor, "batch d_model"],
+            Float[torch.Tensor, "batch seq_len d_model"],
+        ],
+        return_hidden_pre: Literal[True],
+        **kwargs,
+    ) -> tuple[
+        Union[
+            Float[torch.Tensor, "batch d_sae"],
+            Float[torch.Tensor, "batch seq_len d_sae"],
+        ],
+        Union[
+            Float[torch.Tensor, "batch d_sae"],
+            Float[torch.Tensor, "batch seq_len d_sae"],
+        ],
+    ]: ...
+
     @override
     @timer.time("encode")
     def encode(
@@ -464,6 +499,8 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         With consistent encoder/decoder sharding, feature_acts from encoder
         directly matches decoder sharding without redistribution needed.
         """
+        assert self.device_mesh is not None
+        mesh = cast(DeviceMesh, self.device_mesh)
         x_local = x.to_local() if isinstance(x, DTensor) else x
         reconstruction_local = torch.zeros_like(x_local)     # (..., d_model)
         
@@ -512,14 +549,14 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             reconstruction_local = reconstruction_local + bias_local
         
         # All-reduce(sum) within model parallel shards
-        model_group = self.device_mesh.get_group('model')
+        model_group = mesh.get_group('model')
         torch.distributed.all_reduce(reconstruction_local, op=torch.distributed.ReduceOp.SUM, group=model_group)
         
         # Convert to DTensor with proper sharding (sharding along data dimension, replicated along model dimension)
         reconstruction_dt = DTensor.from_local(
             reconstruction_local,
-            device_mesh=self.device_mesh,
-            placements=DimMap({"data": 0}).placements(self.device_mesh)  # = [Shard(0), Replicate()]
+            device_mesh=mesh,
+            placements=DimMap({"data": 0}).placements(mesh)  # = [Shard(0), Replicate()]
         )
         
         return reconstruction_dt
