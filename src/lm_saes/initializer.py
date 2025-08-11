@@ -103,12 +103,8 @@ class Initializer:
         This function is used to initialize the jump_relu_threshold for the SAE.
         """
         batch = sae.normalize_activations(activation_batch)
-        prepare_result = sae.prepare_input(batch)
-        if len(prepare_result) == 3:
-            x, kwargs, _ = prepare_result  # Ignore decoder_kwargs for this operation
-        else:
-            x, kwargs = prepare_result
-        _, hidden_pre = sae.encode(x, **kwargs, return_hidden_pre=True)
+        x, encoder_kwargs, _ = sae.prepare_input(batch)
+        _, hidden_pre = sae.encode(x, **encoder_kwargs, return_hidden_pre=True)
         hidden_pre = torch.clamp(hidden_pre, min=0.0)
         hidden_pre = hidden_pre.flatten()
         threshold = hidden_pre.topk(k=batch_size(batch) * sae.cfg.top_k).values[-1]
