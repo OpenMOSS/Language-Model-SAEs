@@ -102,23 +102,6 @@ class Initializer:
 
         return sae
 
-    @torch.no_grad()
-    def initialize_jump_relu_threshold(self, sae: AbstractSparseAutoEncoder, activation_batch: Dict[str, Tensor]):
-        """
-        This function is used to initialize the jump_relu_threshold for the SAE.
-        """
-        batch = sae.normalize_activations(activation_batch)
-        x, kwargs = sae.prepare_input(batch)
-        _, hidden_pre = sae.encode(x, **kwargs, return_hidden_pre=True)
-        hidden_pre = torch.clamp(hidden_pre, min=0.0)
-        hidden_pre = hidden_pre.flatten()
-        threshold = hidden_pre.topk(k=batch_size(batch) * sae.cfg.top_k).values[-1]
-        sae.cfg.act_fn = "jumprelu"
-        sae.activation_function = sae.activation_function_factory(sae.device_mesh)
-        assert isinstance(sae.activation_function, JumpReLU)
-        sae.activation_function.log_jumprelu_threshold.data.fill_(math.log(threshold.item()))
-        return sae
-
     def initialize_sae_from_config(
         self,
         cfg: BaseSAEConfig,
@@ -126,6 +109,7 @@ class Initializer:
         activation_norm: dict[str, float] | None = None,
         device_mesh: DeviceMesh | None = None,
         wandb_logger: Run | None = None,
+        fold_activation_scale: bool = False,
     ):
         """
         Initialize the SAE from the SAE config.
@@ -135,19 +119,24 @@ class Initializer:
             activation_norm (dict[str, float] | None): The activation normalization. Used for dataset-wise normalization when self.cfg.norm_activation is "dataset-wise".
             device_mesh (DeviceMesh | None): The device mesh.
         """
-        if cfg.sae_type == "sae":
-            sae: AbstractSparseAutoEncoder = SparseAutoEncoder.from_config(cfg, device_mesh=device_mesh)
-        elif cfg.sae_type == "crosscoder":
-            sae: AbstractSparseAutoEncoder = CrossCoder.from_config(cfg, device_mesh=device_mesh)
-        elif cfg.sae_type == "clt":
-            sae: AbstractSparseAutoEncoder = CrossLayerTranscoder.from_config(cfg, device_mesh=device_mesh)
-        elif cfg.sae_type == "lorsa":
-            sae: AbstractSparseAutoEncoder = LowRankSparseAttention.from_config(cfg, device_mesh=device_mesh)
-        else:
+        try:
+            sae_cls = {
+                "sae": SparseAutoEncoder,
+                "crosscoder": CrossCoder,
+                "clt": CrossLayerTranscoder,
+                "lorsa": LowRankSparseAttention,
+            }[cfg.sae_type]
+        except KeyError:
             raise ValueError(f"SAE type {cfg.sae_type} not supported.")
-        if self.cfg.state == "training":
-            if cfg.sae_pretrained_name_or_path is None:
-                sae = self.initialize_parameters(sae)
+
+        sae: AbstractSparseAutoEncoder = sae_cls.from_config(
+            cfg,
+            device_mesh=device_mesh,
+            fold_activation_scale=fold_activation_scale,
+        )
+        
+        if cfg.sae_pretrained_name_or_path is None:
+            sae = self.initialize_parameters(sae)
             if sae.cfg.norm_activation == "dataset-wise":
                 if activation_norm is None:
                     assert activation_stream is not None, (
@@ -162,19 +151,4 @@ class Initializer:
             assert activation_stream is not None, "Activation iterator must be provided for initialization search"
             activation_batch = next(iter(activation_stream))  # type: ignore
             sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
-
-        elif self.cfg.state == "inference":
-            if sae.cfg.norm_activation == "dataset-wise":
-                sae.standardize_parameters_of_dataset_norm(activation_norm)
-            if sae.cfg.sparsity_include_decoder_norm:
-                sae.transform_to_unit_decoder_norm()
-            if "topk" in sae.cfg.act_fn:
-                logger.info(
-                    "Converting topk activation to jumprelu for inference. Features are set independent to each other."
-                )
-                assert activation_stream is not None, (
-                    "Activation iterator must be provided for jump_relu_threshold initialization"
-                )
-                activation_batch = next(iter(activation_stream))
-                self.initialize_jump_relu_threshold(sae, activation_batch)
         return sae

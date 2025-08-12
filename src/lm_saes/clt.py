@@ -140,6 +140,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             "topk",
             "jumprelu",
             "batchtopk",
+            "batchlayertopk",
         ], f"Not implemented activation function {self.cfg.act_fn}"
         if self.cfg.act_fn.lower() == "relu":
             return lambda x: x.gt(0).to(x.dtype)
@@ -216,8 +217,52 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                         k=self.current_k,
                         dim=(-2, -1),
                     )
+            
+            return batch_topk
+            
+        elif self.cfg.act_fn.lower() == "batchlayertopk":
+            if device_mesh is not None:
+                from lm_saes.utils.distributed import distributed_topk
+                
+                def batch_layer_topk(x: Union[
+                        Float[torch.Tensor, "batch n_layer d_sae"],
+                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
+                    ],
+                ):
+                    x = x * x.gt(0).to(x.dtype)
+                    if x.ndim == 4:
+                        x = x.flatten(end_dim=1)
+                    result = distributed_topk(
+                        x,
+                        k=self.current_k * x.size(0),
+                        device_mesh=device_mesh,
+                        dim=(-3, -2, -1),
+                        mesh_dim_name="model",
+                    )
+                    if x.ndim == 4:
+                        result = result.unflatten(dim=0, sizes=(x.size(0), x.size(1)))
+                    return result
+            else:
+                # single-GPU batchtopk
+                from lm_saes.utils.math import topk
+                def batch_layer_topk(x: Union[
+                        Float[torch.Tensor, "batch n_layer d_sae"],
+                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
+                    ],
+                ):
+                    x = x * x.gt(0).to(x.dtype)
+                    if x.ndim == 4:
+                        x = x.flatten(end_dim=1)
+                    result = topk(
+                        x,
+                        k=self.current_k * x.size(0),
+                        dim=(-3, -2, -1),
+                    )
+                    if x.ndim == 4:
+                        result = result.unflatten(dim=0, sizes=(x.size(0), x.size(1)))
+                    return result
 
-            return batch_topk  # type: ignore
+            return batch_layer_topk  # type: ignore
 
         raise ValueError(f"Not implemented activation function {self.cfg.act_fn}")
         

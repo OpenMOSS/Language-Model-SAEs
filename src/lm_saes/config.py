@@ -183,6 +183,7 @@ class CLTConfig(BaseSAEConfig):
     """
 
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "clt"
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk"] = "relu"
     hook_points_in: list[str]
     """List of hook points to capture input activations from, one for each layer."""
     hook_points_out: list[str]
@@ -231,7 +232,6 @@ class InitializerConfig(BaseConfig):
     init_encoder_with_decoder_transpose_factor: float = 1.0
     init_log_jumprelu_threshold_value: float | None = None
     grid_search_init_norm: bool = False
-    state: Literal["training", "inference"] = "training"
 
 
 class TrainerConfig(BaseConfig):

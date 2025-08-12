@@ -40,6 +40,7 @@ def topk(
     dim: Union[int, Tuple[int, ...]] = -1,
     tolerance: int = 1,
     max_iterations: int = 50,
+    return_threshold: bool = False,
 ):
     """
     Perform distributed batch kthvalue operation on a DTensor using binary search.
@@ -100,5 +101,8 @@ def topk(
         while threshold.ndim < x.ndim:
             threshold = threshold[..., None]
     
-    return x * x.ge(threshold)
+    if return_threshold:
+        return x * x.ge(threshold), threshold
+    else:
+        return x * x.ge(threshold)
     

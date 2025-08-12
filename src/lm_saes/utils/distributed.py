@@ -156,7 +156,8 @@ def distributed_topk(
     tolerance: int = 1,
     max_iterations: int = 50,
     mesh_dim_name: str = "model",
-) -> DTensor:
+    return_threshold: bool = False,
+) -> Union[DTensor, Tuple[DTensor, Float[Tensor, ""]]]:
     """
     Perform distributed batch kthvalue operation on a DTensor using binary search.
     
@@ -249,4 +250,7 @@ def distributed_topk(
         placements=placements,
     )
     
-    return result
+    if return_threshold:
+        return result, threshold
+    else:
+        return result
