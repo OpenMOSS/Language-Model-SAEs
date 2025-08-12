@@ -158,6 +158,8 @@ class AttributionContext:
         """
         _, n_pos, _ = lorsa_activation_matrix.shape
         
+        print(f"{token_vectors.shape = },rlin")
+        
         lorsa_error_vectors = error_vectors[:self.n_layers]
         clt_error_vectors = error_vectors[self.n_layers:]
 
@@ -350,9 +352,7 @@ class AttributionContext:
         def _inject(grads, *, batch_indices, pos_indices, patterns, values):
             grads_out = grads.clone().to(values.dtype)
             if patterns is not None:
-                print(f'patterns={patterns}')
                 grads_out.index_put_((batch_indices,), values[:, None, :] * patterns[:, :, None])
-                print(f'grads_out={grads_out}')
             else:
                 grads_out.index_put_((batch_indices, pos_indices), values)
             return grads_out.to(grads.dtype)
@@ -591,6 +591,8 @@ def _run_attribution(
     clt_decoder_vecs = select_scaled_decoder_vecs_clt(clt_activation_matrix, model.transcoders)
     clt_encoder_rows = select_encoder_rows_clt(clt_activation_matrix, model.transcoders)
 
+    print(f"{token_vecs.shape = }in attributionContext, rlin")
+    
     ctx = AttributionContext(
         lorsa_activation_matrix,
         clt_activation_matrix,
@@ -658,13 +660,13 @@ def _run_attribution(
     phase_start = time.time()
     for i in range(0, len(logit_idx), batch_size):
         batch = logit_vecs[i : i + batch_size]
-        # print(logits[0, -1].max() - logits[0, -1].mean(), logits[0, -1].max())
         rows = ctx.compute_batch(
             layers=torch.full((batch.shape[0],), 2 * n_layers),
             positions=torch.full((batch.shape[0],), n_pos - 1),
             inject_values=batch,
         )
-
+        
+        # '''notations begin'''
         # bias_attributions = []
         # for param in model._get_requires_grad_bias_params():
         #     try:
@@ -683,6 +685,8 @@ def _run_attribution(
         # assert total_active_feats + (2 * n_layers + 1) * n_pos == rows.shape[1]
         # for param in model._get_requires_grad_bias_params():
         #     param[1].grad = None
+        # '''notations end'''    
+        
 
         edge_matrix[i : i + batch.shape[0], :logit_offset] = rows.cpu()
         row_to_node_index[i : i + batch.shape[0]] = (
@@ -695,7 +699,7 @@ def _run_attribution(
     
     lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = lorsa_activation_matrix.indices()
     clt_feat_layer, clt_feat_pos, clt_feat_idx = clt_activation_matrix.indices()
-
+    
     def idx_to_layer(idx: torch.Tensor) -> torch.Tensor:
         is_lorsa = idx < len(lorsa_feat_layer)
         return torch.where(
@@ -722,7 +726,6 @@ def _run_attribution(
     
     def idx_to_pattern(idx: torch.Tensor) -> torch.Tensor:
         is_lorsa = idx < len(lorsa_feat_layer)
-        print(f'{lorsa_attention_patterns[idx * is_lorsa].shape=}')
         res = torch.where(
             is_lorsa.to(lorsa_attention_patterns.device)[:, None],
             lorsa_attention_patterns[idx * is_lorsa],
@@ -731,7 +734,6 @@ def _run_attribution(
                 num_classes=n_pos
             )
         )
-        print(f'{res.shape=}')
         return res
     # def idx_to_activation_values(idx: torch.Tensor) -> torch.Tensor:
     #     is_lorsa = idx < len(lorsa_feat_layer)
@@ -750,7 +752,7 @@ def _run_attribution(
     pbar = tqdm(total=max_feature_nodes, desc="Feature influence computation")
 
     while n_visited < max_feature_nodes:
-        if max_feature_nodes == total_active_feats:
+        if max_feature_nodes >= total_active_feats:
             pending = torch.arange(total_active_feats)
         else:
             influences = compute_partial_influences(

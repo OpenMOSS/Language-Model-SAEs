@@ -224,13 +224,13 @@ class CrossCoderConfig(BaseSAEConfig):
 
 
 class InitializerConfig(BaseConfig):
-    bias_init_method: str = "all_zero"
+    bias_init_method: Literal["all_zero", "geometric_median"] = "all_zero"
     decoder_uniform_bound: float = 1.0
     encoder_uniform_bound: float = 1.0
     init_encoder_with_decoder_transpose: bool = True
     init_encoder_with_decoder_transpose_factor: float = 1.0
     init_log_jumprelu_threshold_value: float | None = None
-    init_search: bool = False
+    grid_search_init_norm: bool = False
     state: Literal["training", "inference"] = "training"
 
 

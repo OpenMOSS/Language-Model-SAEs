@@ -17,7 +17,8 @@ class Metadata(BaseModel):
     prompt: str
     node_threshold: float | None = None
     schema_version: int | None = 1
-
+    lorsa_analysis_name: str | None = None
+    clt_analysis_name: str | None = None
 
 class Node(BaseModel):
     node_id: str
@@ -163,7 +164,7 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores):
                 feat_idx,
                 is_lorsa=is_lorsa,
                 influence=cumulative_scores[node_idx],
-                activation=interested_activation[node_idx],
+                activation=interested_activation[orig_feature_idx],
             )
         elif node_idx in range(n_features, error_end_idx):
             layer, pos = divmod(node_idx - n_features, graph.n_pos)
@@ -229,7 +230,17 @@ def create_used_nodes_and_edges(graph: Graph, nodes, edge_mask):
     return used_nodes, used_edges
 
 
-def build_model(graph: Graph, used_nodes, used_edges, slug, sae_series, node_threshold, tokenizer):
+def build_model(
+    graph: Graph,
+    used_nodes,
+    used_edges,
+    slug,
+    sae_series,
+    node_threshold,
+    tokenizer,
+    lorsa_analysis_name,
+    clt_analysis_name,
+):
     """Build the full model object."""
     start_time = time.time()
 
@@ -239,6 +250,8 @@ def build_model(graph: Graph, used_nodes, used_edges, slug, sae_series, node_thr
         prompt_tokens=[process_token(tokenizer.decode(t)) for t in graph.input_tokens],
         prompt=graph.input_string,
         node_threshold=node_threshold,
+        lorsa_analysis_name=lorsa_analysis_name,
+        clt_analysis_name=clt_analysis_name,
     )
 
     full_model = Model(
@@ -257,10 +270,11 @@ def create_graph_files(
     graph: Graph,
     slug: str,
     output_path,
-    sae_series=None,
     node_threshold=0.8,
     edge_threshold=0.98,
-    prune=True,
+    sae_series=None,
+    lorsa_analysis_name="",
+    clt_analysis_name="",
 ):
     total_start_time = time.time()
 
@@ -282,15 +296,21 @@ def create_graph_files(
     node_mask, edge_mask, cumulative_scores = (
         el.to(device) for el in prune_graph(graph, node_threshold, edge_threshold)
     )
-    if not prune:
-        node_mask = torch.ones_like(node_mask, dtype=torch.bool)
-        edge_mask = torch.ones_like(edge_mask, dtype=torch.bool)
-        cumulative_scores = torch.ones_like(cumulative_scores)
 
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
     nodes = create_nodes(graph, node_mask, tokenizer, cumulative_scores)
     used_nodes, used_edges = create_used_nodes_and_edges(graph, nodes, edge_mask)
-    model = build_model(graph, used_nodes, used_edges, slug, sae_series, node_threshold, tokenizer)
+    model = build_model(
+        graph,
+        used_nodes,
+        used_edges,
+        slug,
+        sae_series,
+        node_threshold,
+        tokenizer,
+        lorsa_analysis_name,
+        clt_analysis_name,
+    )
 
     # Write the output locally
     with open(os.path.join(output_path, f"{slug}.json"), "w") as f:

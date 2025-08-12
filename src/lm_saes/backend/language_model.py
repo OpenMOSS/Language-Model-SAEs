@@ -39,7 +39,7 @@ def get_input_with_manually_prepended_bos(tokenizer, input):
 
 
 def to_tokens(tokenizer, text, max_length, device="cpu"):
-    tokenizer_prepends_bos = len(tokenizer.encode("")) > 0
+    tokenizer_prepends_bos = tokenizer.prepend_bos
     text = text if tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
     tokens = tokenizer(
         text,
@@ -58,6 +58,7 @@ def set_tokens(tokenizer):
         tokenizer.pad_token = tokenizer.eos_token
     if tokenizer.bos_token is None:
         tokenizer.bos_token = tokenizer.eos_token
+    tokenizer.prepend_bos = len(tokenizer.encode("")) > 0
     return tokenizer
 
 
@@ -84,7 +85,7 @@ def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optiona
             # which cannot be decoded separately.
             # TODO: Deal with subword tokens properly
             if not ((token.startswith("<") and token.endswith(">")) or "�" in token):
-                raise ValueError(f"Token {token} not found in input text")
+                raise ValueError(f"Token {token} not found in input text `{text}`")
             token_positions.append(None)
 
     return token_positions
