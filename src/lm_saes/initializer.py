@@ -4,6 +4,7 @@ from typing import Dict, Iterable, List
 import torch
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
@@ -66,33 +67,35 @@ class Initializer:
             best_norm = min(losses, key=losses.get)  # type: ignore
             return best_norm
 
-        best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
-        best_norm_fine_grained = grid_search_best_init_norm(
-            torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
-        )
+        if self.cfg.grid_search_init_norm:
+            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
+            best_norm_fine_grained = grid_search_best_init_norm(
+                torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
+            )
 
-        logger.info(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")
-        if wandb_logger is not None:
-            wandb_logger.log({"best_norm_fine_grained": best_norm_fine_grained})
+            logger.info(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")
+            if wandb_logger is not None:
+                wandb_logger.log({"best_norm_fine_grained": best_norm_fine_grained})
 
-        sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
+            sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
         if self.cfg.bias_init_method == "geometric_median":
-            assert isinstance(sae, SparseAutoEncoder), (
-                "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
-            )
             assert sae.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
-            sae.b_D.copy_(
-                sae.compute_norm_factor(batch[sae.cfg.hook_point_out], hook_point=sae.cfg.hook_point_out)
-                * batch[sae.cfg.hook_point_out]
-            ).mean(0)
-
-            normalized_input = (
-                sae.compute_norm_factor(batch[sae.cfg.hook_point_in], hook_point=sae.cfg.hook_point_in)
-                * batch[sae.cfg.hook_point_in]
-            )
-            normalized_median = normalized_input.mean(0)
-            sae.b_E.copy_(-normalized_median @ sae.W_E)
+            if isinstance(sae, CrossLayerTranscoder):
+                for i in range(sae.cfg.n_layers):
+                    hook_point_out = sae.cfg.hook_points_out[i]
+                    normalized_mean_activation = batch[hook_point_out].mean(0)
+                    if isinstance(sae.b_D[i], DTensor):
+                        normalized_mean_activation = DTensor.from_local(
+                            normalized_mean_activation,
+                            device_mesh=sae.device_mesh,
+                            placements=sae.dim_maps()["b_D"].placements(sae.device_mesh),
+                        )
+                    
+                    sae.b_D[i].copy_(normalized_mean_activation)
+            else:
+                normalized_mean_activation = batch[sae.cfg.hook_point_out].mean(0)
+                sae.b_D.copy_(normalized_mean_activation)
 
         if self.cfg.init_encoder_with_decoder_transpose:
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
@@ -128,7 +131,7 @@ class Initializer:
         Initialize the SAE from the SAE config.
         Args:
             cfg (SAEConfig): The SAE config.
-            activation_iter (Iterable[dict[str, Tensor]] | None): The activation iterator. Used for initialization search when self.cfg.init_search is True.
+            activation_iter (Iterable[dict[str, Tensor]] | None): The activation iterator.
             activation_norm (dict[str, float] | None): The activation normalization. Used for dataset-wise normalization when self.cfg.norm_activation is "dataset-wise".
             device_mesh (DeviceMesh | None): The device mesh.
         """
@@ -156,10 +159,9 @@ class Initializer:
                     )
                 sae.set_dataset_average_activation_norm(activation_norm)
 
-            if self.cfg.init_search:
-                assert activation_stream is not None, "Activation iterator must be provided for initialization search"
-                activation_batch = next(iter(activation_stream))  # type: ignore
-                sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
+            assert activation_stream is not None, "Activation iterator must be provided for initialization search"
+            activation_batch = next(iter(activation_stream))  # type: ignore
+            sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
 
         elif self.cfg.state == "inference":
             if sae.cfg.norm_activation == "dataset-wise":
