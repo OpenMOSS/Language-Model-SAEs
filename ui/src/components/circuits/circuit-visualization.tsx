@@ -250,6 +250,8 @@ export const CircuitVisualization = () => {
               pinnedIds={pinnedIds}
               hiddenIds={hiddenIds}
               onFeatureClick={handleFeatureClick}
+              onFeatureSelect={handleFeatureSelect}
+              onFeatureHover={handleFeatureHover}
             />
           </div>
         </div>

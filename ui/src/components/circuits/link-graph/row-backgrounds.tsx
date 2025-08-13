@@ -13,11 +13,6 @@ export const RowBackgrounds: React.FC<RowBackgroundsProps> = React.memo(({
   positionedNodes,
   y
 }) => {
-  console.log('🔄 RowBackgrounds component recomputed', { 
-    dimensions,
-    positionedNodesCount: positionedNodes.length
-  });
-
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {

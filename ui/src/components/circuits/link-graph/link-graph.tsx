@@ -30,15 +30,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   onNodeClick,
   onNodeHover,
 }) => {
-  console.log('🔄 LinkGraph recomputed', { 
-    dataNodesCount: data.nodes.length, 
-    dataLinksCount: data.links.length,
-    visState: {
-      clickedId: visState.clickedId,
-      hoveredId: visState.hoveredId,
-      pinnedIdsCount: visState.pinnedIds.length
-    }
-  });
   // onNodeHover is kept for interface compatibility but not used for performance
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -141,37 +132,8 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     onNodeHover(null);
   }, [onNodeHover]);
 
-  // Add document-level mouse event handler as fallback
-  useEffect(() => {
-    const handleDocumentMouseMove = (event: MouseEvent) => {
-      if (!containerRef.current) return;
-      
-      const rect = containerRef.current.getBoundingClientRect();
-      const isInside = event.clientX >= rect.left && 
-                      event.clientX <= rect.right && 
-                      event.clientY >= rect.top && 
-                      event.clientY <= rect.bottom;
-      
-      if (!isInside && visState.hoveredId) {
-        console.log('🖱️ Document mouse move outside container - clearing hover state');
-        onNodeHover(null);
-      }
-    };
-
-    document.addEventListener('mousemove', handleDocumentMouseMove);
-    
-    return () => {
-      document.removeEventListener('mousemove', handleDocumentMouseMove);
-    };
-  }, [visState.hoveredId, onNodeHover]);
-
-  // Click handling is now done directly in the Nodes component
-  // This ensures proper D3.js event binding and data access
-
   // Handle resize
   useEffect(() => {
-    console.log('🔄 LinkGraph: Setting up resize observer and event handlers');
-    
     const updateDimensions = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
@@ -240,17 +202,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     <div 
       ref={containerRef} 
       className="link-graph-container"
-      onMouseLeave={() => {
-        // Clear hover state when mouse leaves the container entirely
-        console.log('🖱️ Container mouse leave - clearing hover state');
-        onNodeHover(null);
-      }}
-      onMouseMove={(event) => {
-        // Debug: log mouse position to ensure events are being received
-        if (visState.hoveredId) {
-          console.log('🖱️ Container mouse move at:', event.clientX, event.clientY);
-        }
-      }}
     >
       <svg
         ref={svgRef}
@@ -260,17 +211,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
           // Only clear selection if clicking on the SVG background (not on nodes)
           if (event.target === event.currentTarget) {
             onNodeClick("", false);
-          }
-        }}
-        onMouseLeave={() => {
-          // Clear hover state when mouse leaves the SVG entirely
-          console.log('🖱️ SVG mouse leave - clearing hover state');
-          onNodeHover(null);
-        }}
-        onMouseMove={(event) => {
-          // Debug: log mouse position to ensure events are being received
-          if (visState.hoveredId) {
-            console.log('🖱️ SVG mouse move at:', event.clientX, event.clientY);
           }
         }}
         style={{ position: "relative", zIndex: 1 }}
@@ -296,7 +236,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         
         <Links 
           positionedLinks={positionedLinks}
-          clickedId={visState.clickedId}
         />
         
         <Nodes 
@@ -304,7 +243,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
           positionedLinks={positionedLinks}
           visState={{
             clickedId: visState.clickedId,
-            pinnedIds: visState.pinnedIds,
             hoveredId: visState.hoveredId
           }}
           onNodeMouseEnter={handleNodeMouseEnter}

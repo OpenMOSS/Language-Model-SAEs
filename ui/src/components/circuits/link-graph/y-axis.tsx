@@ -11,10 +11,6 @@ export const YAxis: React.FC<YAxisProps> = React.memo(({
   positionedNodes,
   y
 }) => {
-  console.log('🔄 YAxis component recomputed', { 
-    positionedNodesCount: positionedNodes.length
-  });
-
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {

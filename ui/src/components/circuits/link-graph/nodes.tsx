@@ -7,7 +7,6 @@ interface NodesProps {
   positionedLinks: any[];
   visState: { 
     clickedId: string | null; 
-    pinnedIds: string[];
     hoveredId: string | null;
   };
   onNodeMouseEnter: (nodeId: string) => void;
@@ -23,15 +22,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
   onNodeMouseLeave,
   onNodeClick
 }) => {
-  console.log('🔄 Nodes component recomputed', { 
-    positionedNodesCount: positionedNodes.length,
-    positionedLinksCount: positionedLinks.length,
-    visState: {
-      clickedId: visState.clickedId,
-      hoveredId: visState.hoveredId,
-      pinnedIdsCount: visState.pinnedIds.length
-    }
-  });
 
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -41,7 +31,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
   }, [onNodeMouseEnter]);
 
   const handleMouseLeave = useCallback(() => {
-    console.log('🖱️ Node mouse leave - clearing hover state');
     onNodeMouseLeave();
   }, [onNodeMouseLeave]);
 
@@ -67,7 +56,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       .attr("fill", (d: any) => d.nodeColor)
       .attr("stroke", "#000")
       .attr("stroke-width", "0.5")
-      .classed("pinned", (d: any) => visState.pinnedIds.includes(d.nodeId))
       .classed("clicked", (d: any) => d.nodeId === visState.clickedId)
       .classed("connected", (d: any) => {
         if (!visState.clickedId) return false;
@@ -79,11 +67,9 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       })
       .style("cursor", "pointer")
       .on("mouseenter", function(event: any, d: any) {
-        console.log('🖱️ D3 node mouseenter triggered for node:', d.nodeId);
         handleMouseEnter(d.nodeId);
       })
       .on("mouseleave", function(event: any, d: any) {
-        console.log('🖱️ D3 node mouseleave triggered for node:', d.nodeId);
         handleMouseLeave();
       })
       .on("click", function(event: any, d: any) {
@@ -97,7 +83,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       .attr("cx", (d: any) => d.pos[0])
       .attr("cy", (d: any) => d.pos[1])
       .attr("fill", (d: any) => d.nodeColor)
-      .classed("pinned", (d: any) => visState.pinnedIds.includes(d.nodeId))
       .classed("clicked", (d: any) => d.nodeId === visState.clickedId)
       .classed("connected", (d: any) => {
         if (!visState.clickedId) return false;
@@ -136,7 +121,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
 
     // Cleanup function to clear hover state when component unmounts or nodes change
     return () => {
-      console.log('🔄 Nodes component cleanup - clearing hover state');
       handleMouseLeave();
     };
   }, [positionedNodes, positionedLinks, visState, handleMouseEnter, handleMouseLeave, handleClick]);
@@ -145,11 +129,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
     <g 
       ref={svgRef} 
       className="nodes"
-      onMouseLeave={() => {
-        // Clear hover state when mouse leaves the nodes area entirely
-        console.log('🖱️ Nodes container mouse leave - clearing hover state');
-        onNodeMouseLeave();
-      }}
     />
   );
 });

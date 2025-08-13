@@ -1,5 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { Node, Link, LinkGraphData } from './link-graph/types';
+import { extractLayerAndFeature } from './link-graph/utils';
+import { fetchFeature, getDictionaryName } from "@/utils/api";
+import { Feature } from "@/types/feature";
 
 interface NodeConnectionsProps {
   data: LinkGraphData;
@@ -8,6 +11,8 @@ interface NodeConnectionsProps {
   pinnedIds: string[];
   hiddenIds: string[];
   onFeatureClick: (node: Node, isMetaKey: boolean) => void;
+  onFeatureSelect: (feature: Feature | null) => void;
+  onFeatureHover: (nodeId: string | null) => void;
 }
 
 interface ConnectionSection {
@@ -28,15 +33,9 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
   pinnedIds,
   hiddenIds,
   onFeatureClick,
+  onFeatureSelect,
+  onFeatureHover,
 }) => {  
-  console.log('🔄 NodeConnections recomputed', { 
-    dataNodesCount: data.nodes.length,
-    dataLinksCount: data.links.length,
-    clickedId,
-    hoveredId,
-    pinnedIdsCount: pinnedIds.length,
-    hiddenIdsCount: hiddenIds.length
-  });
 
   // Memoize the clicked node to avoid re-finding it on every render
   const clickedNode = useMemo(() => 
@@ -65,17 +64,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
       clickedNode.sourceLinks && // Ensure clicked node has sourceLinks property
       clickedNode.sourceLinks.some(link => link.target === node.nodeId)
     );
-
-    // Debug logging to verify the fix
-    console.log('🔗 Connection analysis:', {
-      clickedNodeId: clickedNode.nodeId,
-      clickedNodeSourceLinksCount: clickedNode.sourceLinks?.length || 0,
-      clickedNodeTargetLinksCount: clickedNode.targetLinks?.length || 0,
-      inputNodesCount: inputNodes.length,
-      outputNodesCount: outputNodes.length,
-      inputNodeIds: inputNodes.map(n => n.nodeId),
-      outputNodeIds: outputNodes.map(n => n.nodeId)
-    });
 
     return [
       {
@@ -147,12 +135,51 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     return ' ';
   }, []);
 
-  // Memoize the header click handler to prevent unnecessary re-renders
-  const handleHeaderClick = useMemo(() => (event: React.MouseEvent) => {
-    if (!clickedNode) return;
-    const isMetaKey = event.metaKey || event.ctrlKey;
-    onFeatureClick(clickedNode, isMetaKey);
-  }, [clickedNode, onFeatureClick]);
+  const handleNodeClick = useCallback(async (nodeId: string, metaKey: boolean) => {
+    const node = data.nodes.find(n => n.id === nodeId);
+    if (!node) return;
+
+    // Always call parent handler first to update global state
+    onFeatureClick?.(node, metaKey);
+    
+    // If not meta key (not pinning), handle feature selection
+    if (!metaKey) {
+      if (clickedId === nodeId) {
+        // Deselecting the same node
+        onFeatureSelect?.(null);
+      } else {
+        // Only fetch feature data for supported node types
+        if (node.feature_type === 'cross layer transcoder' || node.feature_type === 'lorsa') {
+          const layerAndFeature = extractLayerAndFeature(nodeId);
+          if (layerAndFeature) {
+            const { layer, featureId, isLorsa } = layerAndFeature;
+            const dictionaryName = getDictionaryName(data.metadata, layer, isLorsa);
+
+            if (dictionaryName) {
+              try {
+                const feature = await fetchFeature(dictionaryName, layer, featureId);
+                if (feature) {
+                  onFeatureSelect?.(feature);
+                } else {
+                  onFeatureSelect?.(null);
+                }
+              } catch (error) {
+                console.error('Failed to fetch feature:', error);
+                onFeatureSelect?.(null);
+              }
+            } else {
+              onFeatureSelect?.(null);
+            }
+          } else {
+            onFeatureSelect?.(null);
+          }
+        } else {
+          // For unsupported node types, clear the selection
+          onFeatureSelect?.(null);
+        }
+      }
+    }
+  }, [onFeatureClick, clickedId, data.nodes, data.metadata, onFeatureSelect]);
 
   // Memoize the feature row renderer to avoid recreating the function on every render
   const renderFeatureRow = useMemo(() => (node: Node, type: 'input' | 'output') => {
@@ -180,7 +207,12 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
         } ${isHidden ? 'opacity-50' : ''} ${isHovered ? 'ring-2 ring-blue-300' : ''} ${
           isClicked ? 'ring-2 ring-blue-500' : ''
         }`}
-        onClick={() => onFeatureClick(node, false)}
+        onClick={() => {
+          onFeatureClick(node, false);
+          handleNodeClick(node.nodeId, false);
+        }}
+        onMouseEnter={() => onFeatureHover(node.nodeId)}
+        onMouseLeave={() => onFeatureHover(null)}
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
@@ -230,7 +262,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
       {/* Header */}
       <div 
         className={headerClassName}
-        onClick={handleHeaderClick}
       >
         <span className="inline-block mr-2 font-mono tabular-nums w-20 text-sm">
           {formatFeatureId(clickedNode)}

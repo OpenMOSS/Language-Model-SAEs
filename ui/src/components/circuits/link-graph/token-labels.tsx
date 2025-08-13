@@ -13,11 +13,6 @@ export const TokenLabels: React.FC<TokenLabelsProps> = React.memo(({
   tokenData,
   dimensions
 }) => {
-  console.log('🔄 TokenLabels component recomputed', { 
-    tokenDataCount: tokenData.length,
-    dimensions
-  });
-
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {

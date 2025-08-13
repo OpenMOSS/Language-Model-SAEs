@@ -17,12 +17,6 @@ export const GridLines: React.FC<GridLinesProps> = React.memo(({
   x,
   positionedNodes
 }) => {
-  console.log('🔄 GridLines component recomputed', { 
-    dimensions,
-    calculatedCtxCountsCount: calculatedCtxCounts.length,
-    positionedNodesCount: positionedNodes.length
-  });
-
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {

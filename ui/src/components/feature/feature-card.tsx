@@ -113,14 +113,6 @@ const FeatureBookmarkButton = ({ feature }: { feature: Feature }) => {
 };
 
 export const FeatureCard = ({ feature }: { feature: Feature }) => {
-  console.log('🔄 FeatureCard recomputed', { 
-    featureId: feature.featureIndex,
-    dictionaryName: feature.dictionaryName,
-    analysisName: feature.analysisName,
-    actTimes: feature.actTimes,
-    maxFeatureAct: feature.maxFeatureAct
-  });
-
   const analysisNameMap = (analysisName: string) => {
     if (analysisName === "top_activations") {
       return "Top Activations";

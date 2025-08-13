@@ -15,12 +15,6 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
   visState,
   dimensions
 }) => {
-  console.log('🔄 Tooltips component recomputed', { 
-    positionedNodesCount: positionedNodes.length,
-    hoveredId: visState.hoveredId,
-    dimensions
-  });
-
   const svgRef = useRef<SVGSVGElement>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 

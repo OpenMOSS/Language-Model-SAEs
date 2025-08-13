@@ -28,14 +28,6 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
   hoveredId,
   pinnedIds = []
 }) => {
-  console.log('🔄 LinkGraphContainer recomputed', { 
-    dataNodesCount: data.nodes.length, 
-    dataLinksCount: data.links.length,
-    clickedId, 
-    hoveredId, 
-    pinnedIdsCount: pinnedIds.length 
-  });
-
   // Create visState from props
   const visState: VisState = {
     pinnedIds,
@@ -102,52 +94,6 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
       }
     }
   }, [onNodeClick, clickedId, data.nodes, data.metadata, onFeatureSelect, onConnectedFeaturesSelect, onConnectedFeaturesLoading]);
-
-  // Helper function to fetch features for connected nodes
-  const fetchConnectedFeatures = async (clickedNode: Node, graphData: LinkGraphData): Promise<Feature[]> => {
-    const connectedFeatures: Feature[] = [];
-    
-    // Find all links connected to the clicked node
-    const connectedLinks = graphData.links.filter(
-      link => link.source === clickedNode.nodeId || link.target === clickedNode.nodeId
-    );
-    
-    // Get unique connected node IDs
-    const connectedNodeIds = new Set<string>();
-    connectedLinks.forEach(link => {
-      if (link.source !== clickedNode.nodeId) {
-        connectedNodeIds.add(link.source);
-      }
-      if (link.target !== clickedNode.nodeId) {
-        connectedNodeIds.add(link.target);
-      }
-    });
-    
-    // Fetch features for each connected node
-    for (const nodeId of connectedNodeIds) {
-      const connectedNode = graphData.nodes.find(n => n.id === nodeId);
-      if (connectedNode && (connectedNode.feature_type === 'cross layer transcoder' || connectedNode.feature_type === 'lorsa')) {
-        const layerAndFeature = extractLayerAndFeature(nodeId);
-        if (layerAndFeature) {
-          const { layer, featureId, isLorsa } = layerAndFeature;
-          const dictionaryName = getDictionaryName(graphData.metadata, layer, isLorsa);
-          
-          if (dictionaryName) {
-            try {
-              const feature = await fetchFeature(dictionaryName, layer, featureId);
-              if (feature) {
-                connectedFeatures.push(feature);
-              }
-            } catch (error) {
-              console.error(`Failed to fetch feature for connected node ${nodeId}:`, error);
-            }
-          }
-        }
-      }
-    }
-    
-    return connectedFeatures;
-  };
 
   const handleNodeHover = useCallback((nodeId: string | null) => {
     if (onNodeHover) {
