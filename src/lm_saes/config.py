@@ -188,7 +188,9 @@ class CLTConfig(BaseSAEConfig):
     """List of hook points to capture input activations from, one for each layer."""
     hook_points_out: list[str]
     """List of hook points to capture output activations from, one for each layer."""
-
+    decode_with_csr: bool = False
+    """Whether to decode with CSR matrices. If `True`, will use CSR matrices for decoding. If `False`, will use dense matrices for decoding."""
+    
     @property
     def n_layers(self) -> int:
         """Number of layers in the CLT."""

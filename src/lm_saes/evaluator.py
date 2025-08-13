@@ -70,11 +70,11 @@ class Evaluator:
 
         # 3. Compute sparsity metrics
         l0 = (feature_acts > 0).float().sum(-1)
-
+        if sae.device_mesh is not None:
+            l0 = l0.full_tensor()
         if sae.cfg.sae_type == "clt":
             label = label.permute(1, 0, 2)
             reconstructed = reconstructed.permute(1, 0, 2)
-
             l0_dict = {
                 f"l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))
             }

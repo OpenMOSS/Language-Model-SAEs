@@ -330,6 +330,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = True) -> Self:
         model = cls(cfg, device_mesh)
         if cfg.sae_pretrained_name_or_path is None:
+            print(f"No pretrained model found for {cfg.sae_pretrained_name_or_path}")
             return model
 
         path = parse_pretrained_name_or_path(cfg.sae_pretrained_name_or_path)
