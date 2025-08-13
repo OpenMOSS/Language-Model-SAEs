@@ -4,6 +4,7 @@ from typing import Optional
 
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
+import torch
 from lm_saes.utils.topk_to_jumprelu_conversion import topk_to_jumprelu_conversion
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.activation.factory import ActivationFactory
@@ -58,7 +59,7 @@ class ConvertCLTSettings(BaseSettings):
     exp_result_path: str
     """Path to save the converted CLT model"""
 
-
+@torch.no_grad()
 def convert_clt(settings: ConvertCLTSettings) -> None:
     """Train a Cross Layer Transcoder (CLT) model.
 
@@ -138,6 +139,7 @@ def convert_clt(settings: ConvertCLTSettings) -> None:
     logger.info("Loading CLT")
     sae = CrossLayerTranscoder.from_config(
         settings.sae,
+        device_mesh=device_mesh,
         fold_activation_scale=False,
     )
 
@@ -157,5 +159,6 @@ def convert_clt(settings: ConvertCLTSettings) -> None:
         sae_series=settings.sae_series,
         mongo_client=mongo_client,
     )
+    sae.cfg.save_hyperparameters(settings.exp_result_path)
 
     logger.info("CLT conversion completed successfully")

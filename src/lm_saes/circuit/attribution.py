@@ -158,7 +158,6 @@ class AttributionContext:
         """
         _, n_pos, _ = lorsa_activation_matrix.shape
         
-        print(f"{token_vectors.shape = },rlin")
         
         lorsa_error_vectors = error_vectors[:self.n_layers]
         clt_error_vectors = error_vectors[self.n_layers:]
@@ -268,13 +267,19 @@ class AttributionContext:
         """
         n_layers, n_pos, _ = activation_matrix.shape
         nnz_layers, nnz_positions, _ = activation_matrix.indices()
-
+        
         # Map each layer → slice in flattened active-feature list
-        _, counts = torch.unique_consecutive(nnz_layers, return_counts=True)  # active features per layer
+        def _maybe_pad_for_inactive_layers(layers: torch.Tensor, counts: torch.Tensor) -> torch.Tensor:
+            result = torch.zeros(n_layers, device=layers.device, dtype=counts.dtype)
+            result[layers] = counts
+            return result
+        
+        layers, counts = torch.unique_consecutive(nnz_layers, return_counts=True)  # active features per layer
+        counts = _maybe_pad_for_inactive_layers(layers, counts)
         edges = counts.cumsum(0)  # n_layers
         decoder_layer_spans = [0] + edges.cumsum(0).tolist()
         assert edges[-1] == activation_matrix._nnz(), f'got {edges[-1]} but expected {activation_matrix._nnz()}'
-        assert decoder_layer_spans[-1] == decoder_vecs.size(0), f'got {len(decoder_layer_spans)} but expected {decoder_vecs.size(0)}'
+        assert decoder_layer_spans[-1] == decoder_vecs.size(0), f'got {decoder_layer_spans[-1]} but expected {decoder_vecs.size(0)}'
         decoder_layer_spans = [slice(start, end) for start, end in zip(decoder_layer_spans[:-1], decoder_layer_spans[1:])]
 
         # Feature nodes
@@ -591,8 +596,6 @@ def _run_attribution(
     clt_decoder_vecs = select_scaled_decoder_vecs_clt(clt_activation_matrix, model.transcoders)
     clt_encoder_rows = select_encoder_rows_clt(clt_activation_matrix, model.transcoders)
 
-    print(f"{token_vecs.shape = }in attributionContext, rlin")
-    
     ctx = AttributionContext(
         lorsa_activation_matrix,
         clt_activation_matrix,
