@@ -56,6 +56,7 @@ class FeatureRecord(BaseModel):
     sae_series: str
     index: int
     analyses: list[FeatureAnalysis] = []
+    logits: Optional[dict[str, list[dict[str, Any]]]] = None
     interpretation: Optional[dict[str, Any]] = None
     metric: Optional[dict[str, float]] = None
 
@@ -407,6 +408,17 @@ class MongoClient:
         )
 
         return result
+
+    def update_features(self, sae_name: str, sae_series: str, update_data: list[dict], start_idx: int = 0):
+        operations = []
+        for i, feature_update in enumerate(update_data):
+            update_operation = pymongo.UpdateOne(
+                {"sae_name": sae_name, "sae_series": sae_series, "index": start_idx + i},
+                {"$set": feature_update},
+            )
+            operations.append(update_operation)
+        if operations:
+            self.feature_collection.bulk_write(operations)
 
     def add_bookmark(
         self,

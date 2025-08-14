@@ -405,6 +405,7 @@ def get_feature(
         "n_analyzed_tokens": analysis.n_analyzed_tokens,
         "sample_groups": sample_groups,
         "is_bookmarked": client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature.index),
+        "logits": feature.logits,
     }
 
     # print(f"response_data: \n{response_data}\nresponse_data type: {type(response_data)}")
