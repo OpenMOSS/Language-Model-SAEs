@@ -54,6 +54,7 @@ export const FeatureSampleGroup = ({
           <div className="text-sm font-bold min-w-[120px]">Visible Range:</div>
           <Input
             type="number"
+            id="visible-range"
             value={visibleRange.toString()}
             onChange={handleRangeChange}
             className="w-[100px]"
@@ -103,75 +104,6 @@ export const TokenInfo = ({ featureAct, maxFeatureAct, origin }: TokenInfoProps)
       <div className="text-sm font-bold">Activation:</div>
       <div className={cn("text-sm", getAccentClassname(featureAct, maxFeatureAct, "text"))}>
         {featureAct.toFixed(3)}
-      </div>
-    </div>
-  );
-};
-
-// New component for displaying z pattern information
-export const ZPatternInfo = ({ 
-  contributingTokens, 
-  contributions, 
-  sample 
-}: { 
-  contributingTokens: number[]; 
-  contributions: number[]; 
-  sample: FeatureSampleCompact;
-}) => {
-  if (contributingTokens.length === 0) {
-    return <div className="text-sm text-muted-foreground">No z pattern data available</div>;
-  }
-
-  // Calculate total contribution
-  const totalContribution = contributions.reduce((sum, contribution) => sum + contribution, 0);
-
-  // Helper function to get text content for a token
-  const getTokenText = (tokenIndex: number): string => {
-    const origin = sample.origins[tokenIndex];
-    if (origin?.key === "text" && sample.text) {
-      const [start, end] = origin.range;
-      return sample.text.slice(start, end);
-    }
-    return "";
-  };
-
-  return (
-    <div className="flex flex-col gap-2 border-t pt-2">
-      <div className="flex items-center gap-2">
-        <div className="text-sm font-bold text-green-700">Z Pattern Contributions:</div>
-        <div className="text-xs text-muted-foreground">
-          Total: {totalContribution.toFixed(3)}
-        </div>
-      </div>
-      <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
-        {contributingTokens.map((tokenIndex, i) => {
-          const origin = sample.origins[tokenIndex];
-          const contribution = contributions[i];
-          const percentage = (contribution / totalContribution * 100).toFixed(1);
-          const tokenText = getTokenText(tokenIndex);
-          
-          return (
-            <div key={i} className="flex flex-col gap-1 p-2 bg-gray-50 rounded">
-              <div className="flex items-center justify-between gap-2 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs">Token {tokenIndex}:</span>
-                  <span className="text-green-600 font-bold">{contribution.toFixed(3)}</span>
-                  <span className="text-xs text-muted-foreground">({percentage}%)</span>
-                </div>
-                {origin?.key === "text" && (
-                  <span className="text-xs text-muted-foreground">
-                    range: {origin.range.join("-")}
-                  </span>
-                )}
-              </div>
-              {tokenText && (
-                <div className="text-xs text-muted-foreground font-mono bg-white px-1 py-0.5 rounded">
-                  "{tokenText.replaceAll("\n", "↵").replaceAll("\t", "→")}"
-                </div>
-              )}
-            </div>
-          );
-        })}
       </div>
     </div>
   );
@@ -302,33 +234,28 @@ export const FeatureActivationSample = memo(({
 
   // Helper function to determine if a segment should be highlighted
   const getSegmentHighlightClass = (segment: typeof visibleSegments[0]) => {
-    if (hoveredTokenIndex !== null) {
-      
+    if (hoveredTokenIndex !== null) {        
+      // Check if this segment contains contributing tokens
+      if (hoveredZPattern) {
+          const Contribution = segment.highlights.map(highlight => {
+            // Find the token index for this highlight's origin
+            const tokenIndex = sample.origins.findIndex(origin => origin === highlight.origin);
+            const isContributing = hoveredZPattern.contributingTokens.includes(tokenIndex);
+            return isContributing ? hoveredZPattern.contributions[hoveredZPattern.contributingTokens.indexOf(tokenIndex)] : 0;
+          });
+        
+        return getAccentClassname(Contribution.reduce((a, b) => a + b, 0), maxFeatureAct, "zpattern"); // Green for contributing tokens
+      }
+
       // Check if this segment contains the hovered token
       const containsHoveredToken = segment.highlights.some(highlight => {
         // Check if this highlight's origin corresponds to the hovered token index
         const hoveredOrigin = sample.origins[hoveredTokenIndex];
         return hoveredOrigin === highlight.origin;
       });
-      
-      
+
       if (containsHoveredToken) {
         return "bg-orange-500 text-white"; // Keep orange for the hovered token
-      }
-        
-        // Check if this segment contains contributing tokens
-        if (hoveredZPattern) {
-          const containsContributingToken = segment.highlights.some(highlight => {
-            // Find the token index for this highlight's origin
-            const tokenIndex = sample.origins.findIndex(origin => origin === highlight.origin);
-            const isContributing = hoveredZPattern.contributingTokens.includes(tokenIndex);
-            return isContributing;
-          });
-        
-        
-        if (containsContributingToken) {
-          return "bg-green-500 text-white"; // Green for contributing tokens
-        }
       }
       
       return ""; // No highlight for other tokens when hovering
@@ -360,12 +287,11 @@ export const FeatureActivationSample = memo(({
 
                   return (
                     <span key={index}>
-                      {segment.maxSegmentAct > 0 ? (
                         <HoverCard>
                           <HoverCardTrigger>
                             <span
                               className={cn(
-                                "relative cursor-help",
+                                "relative",
                                 getSegmentHighlightClass(segment)
                               )}
                               onMouseEnter={() => {
@@ -413,9 +339,6 @@ export const FeatureActivationSample = memo(({
                             </div>
                           </HoverCardContent>
                         </HoverCard>
-                      ) : (
-                        <span>{segmentText.replaceAll("\n", "↵").replaceAll("\t", "→")}</span>
-                      )}
                     </span>
                   );
                 })}
