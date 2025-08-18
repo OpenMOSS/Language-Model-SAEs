@@ -256,8 +256,7 @@ def all_gather_dict(
     for k in sorted_keys:
         v = data[k]
         if isinstance(v, torch.Tensor):
-            expected_device = torch.device(f"cuda:{dist.get_rank(group=group)}")
-            v = v.to(expected_device)
+            v = v.cuda()
             # Prepare list for gathered tensors
             output = [torch.empty_like(v) for _ in range(world_size)]
             dist.all_gather(output, v, group=group)

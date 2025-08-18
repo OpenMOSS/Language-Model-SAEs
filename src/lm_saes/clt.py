@@ -14,6 +14,7 @@ from typing import Any, Callable, Literal, Optional, Union, overload, List
 
 import einops
 import torch
+import torch.distributed as dist
 import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
@@ -27,6 +28,8 @@ from lm_saes.config import CLTConfig
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.timer import timer
+from lm_saes.kernels.kernels import TritonDecoderAutogradTopK
+from lm_saes.kernels.kernels import get_sparse_representation
 
 logger = get_distributed_logger("clt")
 
@@ -432,7 +435,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         if self.cfg.sparsity_include_decoder_norm:
             decoder_norms = self.decoder_norm_per_feature()
             hidden_pre = hidden_pre * decoder_norms
-            
+        
         # Apply activation function (ReLU, TopK, etc.)
         with timer.time("activation_function"):
             feature_acts = self.activation_function(hidden_pre)
@@ -523,16 +526,19 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             Reconstructed activations for all layers (..., n_layers, d_model)
         """
         reconstructed = []
-
+        batch_size = feature_acts.size(0)
+        feature_acts = [
+            fa.to_sparse_csr() for fa in feature_acts.to_local().permute(1, 0, 2)
+        ]
         # For each output layer L
         for layer_to in range(self.cfg.n_layers):
             decoder_bias = self.get_decoder_bias(layer_to)  # (d_model,)
 
             # we only compute W_D @ feature_acts here, without b_D
-            if isinstance(feature_acts, list) and feature_acts[0].layout == torch.sparse_coo:
+            if isinstance(feature_acts, list) and isinstance(feature_acts[0], torch.Tensor) and feature_acts[0].layout == torch.sparse_coo:
                 contribution = self._decode_single_output_layer_coo(feature_acts, layer_to)
             elif self.cfg.decode_with_csr:
-                contribution = self._decode_single_output_layer_csr(feature_acts, layer_to)
+                contribution = self._decode_single_output_layer_csr(feature_acts, layer_to, batch_size=batch_size)
             else:
                 contribution = self._decode_single_output_layer_dense(feature_acts, layer_to)
 
@@ -557,42 +563,39 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         contribution = feature_acts_per_layer.permute(1, 0, 2) @ decoder_weights
         return contribution.sum(0)
     
+    @torch.autocast(device_type="cuda", dtype=torch.float32)
     def _decode_single_output_layer_csr(self, feature_acts: Union[
         Float[torch.Tensor, "batch n_layers d_sae"],
         Float[torch.Tensor, "batch seq_len n_layers d_sae"],
-    ], layer_to: int) -> Union[
+    ], layer_to: int, batch_size: int) -> Union[
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
         """Decode features for a single output layer using upper triangular pattern."""
         decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
+        if self.device_mesh is not None:
+            decoder_weights = decoder_weights.to_local()
 
-        def _maybe_local_tensors():
-            if isinstance(feature_acts, DTensor):
-                feature_acts_per_layer = feature_acts.to_local()[..., : layer_to + 1, :]
-                decoder_weights_local = decoder_weights.to_local()
-            else:
-                feature_acts_per_layer = feature_acts[..., : layer_to + 1, :]
-                decoder_weights_local = decoder_weights
-            return feature_acts_per_layer, decoder_weights_local
+        contribution = torch.zeros(
+            batch_size,
+            decoder_weights.size(-1),
+            device=self.cfg.device,
+            dtype=self.cfg.dtype,
+        )
         
-        feature_acts_per_layer, decoder_weights_local = _maybe_local_tensors()
-        feature_acts_per_layer = feature_acts_per_layer.permute(1, 0, 2)
-        contribution: torch.Tensor = sum([
-            torch.sparse.mm(
-                feature_acts_per_layer[i].to_sparse_csr(),
-                decoder_weights_local[i],
-            )
-            for i in range(layer_to + 1)
-        ])
+        for i in range(layer_to + 1):
+            contribution = contribution + torch.sparse.mm(
+                feature_acts[i],
+                decoder_weights[i],
+            )  # type: ignore
 
         if self.device_mesh is not None:
-            contributions = DTensor.from_local(
+            contribution = DTensor.from_local(
                 contribution.unsqueeze(1),
                 device_mesh=self.device_mesh,
                 placements=self.dim_maps()["W_D"].placements(self.device_mesh)
             )
-            contribution = contributions.sum(dim=1)
+            contribution = contribution.sum(dim=1)
 
         return contribution
     
@@ -863,7 +866,8 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         label = self.prepare_label(batch, **kwargs)
 
         with timer.time("encode"):
-            feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
+            feature_acts = self.encode(x, **encoder_kwargs)
+
         with timer.time("decode"):
             reconstructed = self.decode(feature_acts, **kwargs)
 
@@ -872,7 +876,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             if use_batch_norm_mse:
                 l_rec = (
                     l_rec
-                    / (label - label.mean(dim=1, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+                    / (label - label.mean(dim=1, keepdim=True)).pow_(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
                 )
             l_rec = l_rec.sum(dim=-1)
             if isinstance(l_rec, DTensor):
@@ -911,7 +915,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             aux_data = {
                 "feature_acts": feature_acts,
                 "reconstructed": reconstructed,
-                "hidden_pre": hidden_pre,
             }
             return loss, (loss_dict, aux_data)
         return loss

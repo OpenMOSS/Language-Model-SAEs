@@ -94,7 +94,9 @@ class Initializer:
                     
                     sae.b_D[i].copy_(normalized_mean_activation)
             else:
-                normalized_mean_activation = batch[sae.cfg.hook_point_out].mean(0)
+                normalized_mean_activation = batch[sae.cfg.hook_point_out].mean(
+                    dim=list(range((batch[sae.cfg.hook_point_out].ndim - 1)))
+                )
                 sae.b_D.copy_(normalized_mean_activation)
 
         if self.cfg.init_encoder_with_decoder_transpose:

@@ -188,7 +188,7 @@ def distributed_topk(
         # Check if the tensor is sharded along the specified dimensions
         if mesh_dim_idx is None or not isinstance(placements[mesh_dim_idx], Shard):
             raise ValueError("x must be sharded along the specified dimension")
-        
+
         shard_dim: Tuple[int] = (placements[mesh_dim_idx].dim,)  # type: ignore
         if isinstance(dim, int):
             dim = (dim,)

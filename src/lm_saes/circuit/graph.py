@@ -208,10 +208,7 @@ def prune_graph(
 
     # Calculate edge influence and apply threshold
     edge_scores = compute_edge_influence(pruned_matrix, logit_weights)
-
     edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
-
-
     old_node_mask = node_mask.clone()
     # Ensure feature and error nodes have outgoing edges
     node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)

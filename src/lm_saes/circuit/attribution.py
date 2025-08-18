@@ -41,6 +41,7 @@ from ..utils.logging import get_distributed_logger
 
 logger = get_distributed_logger("attribution")
 
+
 class AttributionContext:
     """Manage hooks for computing attribution rows.
 

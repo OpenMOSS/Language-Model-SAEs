@@ -56,7 +56,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             self.b_Q = _get_param_with_shape((self.cfg.n_qk_heads, self.cfg.d_qk_head))
             self.b_K = _get_param_with_shape((self.cfg.n_qk_heads, self.cfg.d_qk_head))
             if self.cfg.use_decoder_bias:
-                self.b_O = _get_param_with_shape((self.cfg.d_model,))
+                self.b_D = _get_param_with_shape((self.cfg.d_model,))
         else:
             # Distributed parameters with head sharding
             dim_maps = self.dim_maps()
@@ -76,7 +76,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             self.b_Q = _get_param_with_shape((self.cfg.n_qk_heads, self.cfg.d_qk_head), placements=dim_maps["b_Q"].placements(device_mesh))
             self.b_K = _get_param_with_shape((self.cfg.n_qk_heads, self.cfg.d_qk_head), placements=dim_maps["b_K"].placements(device_mesh))
             if self.cfg.use_decoder_bias:
-                self.b_O = _get_param_with_shape((self.cfg.d_model,), placements=dim_maps["b_O"].placements(device_mesh))
+                self.b_D = _get_param_with_shape((self.cfg.d_model,), placements=dim_maps["b_D"].placements(device_mesh))
         
          # Attention mask
         mask = torch.tril(
@@ -131,7 +131,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         torch.nn.init.zeros_(self.b_K)
 
         if self.cfg.use_decoder_bias:
-            torch.nn.init.zeros_(self.b_O)
+            torch.nn.init.zeros_(self.b_D)
     
     def _calculate_sin_cos_rotary(
         self,
@@ -220,7 +220,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Norm of decoder bias."""
         if not self.cfg.use_decoder_bias:
             raise ValueError("Decoder bias not used")
-        return torch.norm(self.b_O, p=2, dim=0, keepdim=True)
+        return torch.norm(self.b_D, p=2, dim=0, keepdim=True)
 
     @override
     @torch.no_grad()
@@ -249,7 +249,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         self.b_K.data *= input_norm_factor
 
         self.W_O.data = self.W_O.data * input_norm_factor / output_norm_factor
-        self.b_O.data = self.b_O.data / output_norm_factor
+        self.b_D.data = self.b_D.data / output_norm_factor
         
         self.cfg.norm_activation = "inference"
 
@@ -322,10 +322,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def decode(self, feature_acts, **kwargs):
         """Decode head activations to output."""
         if feature_acts.layout == torch.sparse_coo:
-            return torch.sparse.mm(feature_acts, self.W_O) + self.b_O
+            return torch.sparse.mm(feature_acts, self.W_O) + self.b_D
         out = torch.einsum("bps,sd->bpd", feature_acts, self.W_O)
         if self.cfg.use_decoder_bias:
-            out = out + self.b_O
+            out = out + self.b_D
         if isinstance(out, DTensor):
             out = out.full_tensor()
         if self.cfg.skip_bos:
@@ -602,7 +602,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             "W_O": DimMap({"model": 0}),
             "b_Q": DimMap({"model": 0}),
             "b_K": DimMap({"model": 0}),
-            "b_O": DimMap({}),
+            "b_D": DimMap({}),
         }
     
     @override

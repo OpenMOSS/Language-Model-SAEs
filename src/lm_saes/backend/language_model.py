@@ -40,6 +40,7 @@ def get_input_with_manually_prepended_bos(tokenizer, input):
 
 def to_tokens(tokenizer, text, max_length, device="cpu"):
     tokenizer_prepends_bos = tokenizer.prepend_bos
+    print(tokenizer_prepends_bos)
     text = text if tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
     tokens = tokenizer(
         text,
@@ -51,14 +52,23 @@ def to_tokens(tokenizer, text, max_length, device="cpu"):
     return tokens.to(device)
 
 
-def set_tokens(tokenizer):
+def set_tokens(tokenizer, bos_token_id, eos_token_id, pad_token_id, prepend_bos=True):
     if tokenizer.eos_token is None:
-        tokenizer.eos_token = "<|endoftext|>"
+        if eos_token_id is None:
+            tokenizer.eos_token = "<|endoftext|>"
+        else:
+            tokenizer.eos_token = tokenizer.decode(eos_token_id)
     if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+        if pad_token_id is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        else:
+            tokenizer.pad_token = tokenizer.decode(pad_token_id)
     if tokenizer.bos_token is None:
-        tokenizer.bos_token = tokenizer.eos_token
-    tokenizer.prepend_bos = len(tokenizer.encode("")) > 0
+        if bos_token_id is None:
+            tokenizer.bos_token = tokenizer.eos_token
+        else:
+            tokenizer.bos_token = tokenizer.decode(bos_token_id)
+    tokenizer.prepend_bos = prepend_bos
     return tokenizer
 
 
@@ -127,6 +137,9 @@ class LanguageModel(ABC):
         """
         pass
 
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+
     @property
     @abstractmethod
     def eos_token_id(self) -> int | None:
@@ -174,7 +187,13 @@ class TransformerLensLanguageModel(LanguageModel):
             add_bos_token=True,
             local_files_only=cfg.local_files_only,
         )
-        self.tokenizer = set_tokens(hf_tokenizer)
+        self.tokenizer = set_tokens(
+            hf_tokenizer,
+            cfg.bos_token_id,
+            cfg.eos_token_id,
+            cfg.pad_token_id,
+            cfg.prepend_bos,
+        )
         self.model = (
             HookedTransformer.from_pretrained_no_processing(
                 cfg.model_name,
@@ -238,6 +257,12 @@ class TransformerLensLanguageModel(LanguageModel):
         with timer.time("run_with_cache_until"):
             _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
         return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
+    
+    def to_tokens(self, text: str | list[str], prepend_bos: bool = True) -> torch.Tensor:
+        return self.model.to_tokens(text, prepend_bos=prepend_bos)
+    
+    def forward(self, *args, **kwargs):
+        return self.model(*args, **kwargs)
 
 
 class HuggingFaceLanguageModel(LanguageModel):

@@ -23,7 +23,6 @@ from safetensors import safe_open
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
-from torch.distributed.tensor.placement_types import Shard
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.database import MongoClient
@@ -330,7 +329,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = True) -> Self:
         model = cls(cfg, device_mesh)
         if cfg.sae_pretrained_name_or_path is None:
-            print(f"No pretrained model found for {cfg.sae_pretrained_name_or_path}")
+            total_params = sum(param.numel() for param in model.parameters()) / 1e9
+            logger.info(f"Initializing {cfg.sae_type} from scratch with {total_params:.2f} B parameters")
             return model
 
         path = parse_pretrained_name_or_path(cfg.sae_pretrained_name_or_path)
