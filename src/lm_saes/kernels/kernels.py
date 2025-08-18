@@ -297,8 +297,8 @@ def triton_dense_dense_sparseout_matmul(
     assert dense1.stride(1) == 1, "dense1 must be contiguous along B"
     assert dense2.stride(0) == 1, "dense2 must be contiguous along B"
 
-    if K > 512:
-        logger.warning("Using naive matmul for large K")
+    if K > 2048:
+        logger.warning(f"Using naive matmul for large K: {K}")
         # naive is more efficient for large K
         return (dense1 @ dense2).gather(1, at_indices)
 
@@ -541,72 +541,6 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
         
         return grad_x, grad_W_E, grad_b_E, None
 
-
-class TritonDecoderAutogradDynamicK(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, feature_acts, decoder_weight, sparsity_threshold):
-        """
-        Forward pass: feature_acts @ decoder_weight with sparsity-aware kernel selection.
-        
-        Args:
-            ctx: autograd context
-            feature_acts: (batch, d_sae) - Feature activations (potentially sparse)
-            decoder_weight: (d_model, d_sae) - Decoder weights
-            sparsity_threshold: (float) - Sparsity threshold for using sparse kernels
-            
-        Returns:
-            output: (batch, d_model) - Decoded activations
-        """
-        # Check sparsity ratio of feature_acts
-        sparsity_ratio = (feature_acts == 0).float().mean().item()
-        use_sparse_kernels = sparsity_ratio > sparsity_threshold
-        
-        if use_sparse_kernels:
-            # Use triton sparse kernels
-            sparse_indices, sparse_values = get_sparse_representation(feature_acts)
-            ctx.save_for_backward(sparse_indices, sparse_values, decoder_weight)
-            ctx.use_sparse_kernels = True
-            ctx.sparsity_threshold = sparsity_threshold
-            return triton_sparse_dense_matmul(sparse_indices, sparse_values, decoder_weight.T)
-        else:
-            # Fall back to dense operations
-            ctx.save_for_backward(feature_acts, decoder_weight)
-            ctx.use_sparse_kernels = False
-            ctx.sparsity_threshold = sparsity_threshold
-            return torch.mm(feature_acts, decoder_weight.T)
-
-    @staticmethod
-    def backward(ctx, *grad_outputs, **args):
-        assert len(grad_outputs) == 1, "grad_outputs must be a single tensor"
-        grad_output = grad_outputs[0]
-        
-        assert grad_output.is_contiguous(), (
-            "grad_output must be contiguous; this is probably because the subsequent op was a .sum() or something like that, which returns a non contiguous gradient"
-        )
-
-        if ctx.use_sparse_kernels:
-            # Backward using sparse kernels (original logic)
-            sparse_indices, sparse_values, decoder_weight = ctx.saved_tensors
-            
-            decoder_grad = triton_sparse_transpose_dense_matmul(
-                sparse_indices, sparse_values, grad_output, N=decoder_weight.size(1)
-            ).T
-
-            # decoder is contiguous when transposed so this is a matching layout
-            return grad_output @ decoder_weight, decoder_grad, None
-        else:
-            # Backward using dense operations
-            feature_acts, decoder_weight = ctx.saved_tensors
-            
-            # grad_feature_acts = grad_output @ decoder_weight
-            grad_feature_acts = grad_output @ decoder_weight
-            
-            # grad_decoder_weight = (feature_acts.T @ grad_output).T = grad_output.T @ feature_acts
-            grad_decoder_weight = grad_output.T @ feature_acts  # equivalent to (feature_acts.T @ grad_output).T
-            
-            return grad_feature_acts, grad_decoder_weight, None
-
-
 class TritonDecoderAutogradTopK(torch.autograd.Function):
     @staticmethod
     def forward(ctx, sparse_indices, sparse_values, decoder_weight):
@@ -627,5 +561,8 @@ class TritonDecoderAutogradTopK(torch.autograd.Function):
             sparse_indices, sparse_values, grad_output, N=decoder_weight.size(1)
         ).T
 
+        feature_acts_grad = triton_dense_dense_sparseout_matmul(grad_output, decoder_weight, sparse_indices)
+        feature_acts_grad *= sparse_values.ne(0).to(feature_acts_grad.dtype)
+
         # decoder is contiguous when transposed so this is a matching layout
-        return None, triton_dense_dense_sparseout_matmul(grad_output, decoder_weight, sparse_indices), decoder_grad
+        return None, feature_acts_grad, decoder_grad

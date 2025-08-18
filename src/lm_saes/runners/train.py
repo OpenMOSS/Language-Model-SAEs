@@ -418,6 +418,9 @@ class TrainCLTSettings(BaseSettings):
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
+    save_trainer_state: bool = False
+    """Whether to save trainer state during training"""
+
 
 def train_clt(settings: TrainCLTSettings) -> None:
     """Train a Cross Layer Transcoder (CLT) model.
@@ -505,10 +508,15 @@ def train_clt(settings: TrainCLTSettings) -> None:
     )
 
     sae = initializer.initialize_sae_from_config(
-        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger
+        settings.sae,
+        activation_stream=activations_stream,
+        device_mesh=device_mesh,
+        wandb_logger=wandb_logger,
+        fold_activation_scale=False,
     )
 
-    logger.info(f"CLT initialized: {type(sae).__name__}")
+    n_params = sum(p.numel() for p in sae.parameters())
+    logger.info(f"CLT initialized with {n_params / 1e9:.2f}B parameters")
 
     if wandb_logger is not None:
         logger.info("WandB logger initialized")
@@ -517,17 +525,29 @@ def train_clt(settings: TrainCLTSettings) -> None:
     eval_fn = (lambda x: None) if settings.eval else None
 
     logger.info("Starting CLT training")
-    trainer = Trainer(settings.trainer)
+    if settings.trainer.from_pretrained_path is not None:
+        trainer = Trainer.from_checkpoint(
+            sae,
+            settings.trainer.from_pretrained_path,
+        )
+    else:
+        trainer = Trainer(settings.trainer)
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
-    trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+    end_of_stream = trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
 
-    logger.info("Training completed, saving CLT model")
-    sae.save_pretrained(
-        save_path=settings.trainer.exp_result_path,
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        mongo_client=mongo_client,
-    )
+    if not settings.save_trainer_state:
+        logger.info("Training completed, saving CLT model")
+        sae.save_pretrained(
+            save_path=settings.trainer.exp_result_path,
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            mongo_client=mongo_client,
+        )
+    elif end_of_stream:
+        trainer.save_checkpoint(
+            sae=sae,
+            checkpoint_path=settings.trainer.exp_result_path,
+        )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -671,7 +691,8 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
         settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger
     )
 
-    logger.info(f"lorsa initialized: {type(sae).__name__}")
+    n_params = sum(p.numel() for p in sae.parameters())
+    logger.info(f"lorsa initialized with {n_params / 1e9:.2f}B parameters")
 
     if wandb_logger is not None:
         logger.info("WandB logger initialized")

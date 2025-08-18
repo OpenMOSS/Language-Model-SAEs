@@ -1,11 +1,15 @@
 import math
 import os
-from typing import Callable, Iterable
+from typing import Any, Any, Callable, Iterable
+from pathlib import Path
 
 import torch
 import torch.optim.lr_scheduler as lr_scheduler
 from torch import Tensor
 from torch.distributed.tensor import DTensor
+from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
+import torch.distributed.checkpoint as dcp
+import torch.distributed as dist
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
@@ -37,6 +41,154 @@ class Trainer:
         self.optimizer: Optimizer | None = None
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
+
+    def save_checkpoint(
+        self, sae: AbstractSparseAutoEncoder, checkpoint_path: str
+    ) -> None:
+        """
+        Save a complete checkpoint including model, optimizer, scheduler, and 
+        trainer state.
+        
+        Args:
+            sae: The sparse autoencoder model to save
+            checkpoint_path: Path where to save the checkpoint (without extension)
+        """
+            
+        # Create checkpoint directory if it doesn't exist
+        checkpoint_dir = Path(checkpoint_path) / "checkpoints" / f"step_{self.cur_step}"
+
+        if (checkpoint_dir and not os.path.exists(checkpoint_dir)):
+            os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        sae.cfg.save_hyperparameters(checkpoint_dir)
+        # Save model state
+        if sae.device_mesh is None:
+            sae.save_checkpoint(Path(checkpoint_dir) / "sae_weights.safetensors")
+        else:
+            sae.save_checkpoint(Path(checkpoint_dir) / "sae_weights.dcp")
+
+        if is_primary_rank(sae.device_mesh):
+            # Prepare trainer state
+            trainer_state = {
+                "cur_step": self.cur_step,
+                "cur_tokens": self.cur_tokens,
+                "total_training_steps": self.total_training_steps,
+                "lr_warm_up_steps": self.lr_warm_up_steps,
+                "lr_cool_down_steps": self.lr_cool_down_steps,
+                "k_warmup_steps": self.k_warmup_steps,
+                "k_cold_booting_steps": self.k_cold_booting_steps,
+                "l1_coefficient_warmup_steps": self.l1_coefficient_warmup_steps,
+                "checkpoint_thresholds": self.checkpoint_thresholds,
+                "cfg": self.cfg,
+            }
+
+            # Save trainer state
+            trainer_path = checkpoint_dir / "trainer.pt"
+            torch.save(trainer_state, trainer_path)
+
+        # Save optimizer state - handle distributed tensors
+        if self.optimizer is not None:
+            if sae.device_mesh is None:
+                if is_primary_rank(sae.device_mesh):
+                    optimizer_path = checkpoint_dir / "optimizer.pt"
+                    optimizer_state = self.optimizer.state_dict()
+                    torch.save(optimizer_state, optimizer_path)
+            else:
+                optimizer_path = checkpoint_dir / "optimizer.dcp"
+                optimizer_state = self.optimizer.state_dict()
+                fs_writer = FileSystemWriter(optimizer_path)
+                dcp.save(optimizer_state, storage_writer=fs_writer)
+        
+        # Save scheduler state - handle distributed tensors
+        if self.scheduler is not None:
+            if sae.device_mesh is None:
+                if is_primary_rank(sae.device_mesh):
+                    scheduler_path = checkpoint_dir / "scheduler.pt"
+                    scheduler_state = self.scheduler.state_dict()
+                    torch.save(scheduler_state, scheduler_path)
+            else:
+                scheduler_path = checkpoint_dir / "scheduler.dcp"
+                scheduler_state = self.scheduler.state_dict()
+                fs_writer = FileSystemWriter(scheduler_path)
+                dcp.save(scheduler_state, storage_writer=fs_writer)
+            
+            
+        logger.info(f"Checkpoint saved to {checkpoint_path}")
+
+    @classmethod
+    def from_checkpoint(
+        cls, sae: AbstractSparseAutoEncoder, checkpoint_path: str,
+    ) -> "Trainer":
+        """
+        Load a complete checkpoint including model, optimizer, scheduler, and 
+        trainer state.
+        
+        Args:
+            device_mesh: The device mesh to load the model into
+            checkpoint_path: Path where the checkpoint was saved (without extension)
+            
+        Returns:
+            Trainer: A new trainer instance with loaded state
+        """            
+        # Load trainer state first to get the config
+        checkpoint_dir = Path(checkpoint_path)
+        trainer_path = checkpoint_dir / "trainer.pt"
+        if os.path.exists(trainer_path):
+            trainer_state = torch.load(trainer_path, map_location='cpu', weights_only=False)
+            cfg = trainer_state.get("cfg")
+            if cfg is None:
+                raise ValueError("Checkpoint does not contain trainer config")
+            
+            # Create trainer instance with loaded config
+            trainer = cls(cfg)
+            
+            # Restore trainer state variables
+            trainer.cur_step = trainer_state["cur_step"]
+            trainer.cur_tokens = trainer_state["cur_tokens"]
+            trainer.total_training_steps = trainer_state["total_training_steps"]
+            trainer.lr_warm_up_steps = trainer_state["lr_warm_up_steps"]
+            trainer.lr_cool_down_steps = trainer_state["lr_cool_down_steps"]
+            trainer.k_warmup_steps = trainer_state["k_warmup_steps"]
+            trainer.k_cold_booting_steps = trainer_state["k_cold_booting_steps"]
+            trainer.l1_coefficient_warmup_steps = trainer_state["l1_coefficient_warmup_steps"]
+            trainer.checkpoint_thresholds = trainer_state["checkpoint_thresholds"]
+            
+            logger.info(f"Loaded trainer state from step {trainer.cur_step}")
+        else:
+            raise ValueError(f"Trainer checkpoint not found at {trainer_path}")
+        
+        trainer._initialize_optimizer(sae)
+        
+        # Load optimizer state
+        if sae.device_mesh is None:
+            optimizer_path = checkpoint_dir / "optimizer.pt"
+            optimizer_state = torch.load(optimizer_path, map_location='cpu')
+            trainer.optimizer.load_state_dict(optimizer_state)
+            logger.info("Loaded optimizer state")
+        else:
+            optimizer_path = checkpoint_dir / "optimizer.dcp"
+            fs_reader = FileSystemReader(str(optimizer_path))
+            optimizer_state = trainer.optimizer.state_dict()
+            dcp.load(optimizer_state, storage_reader=fs_reader)
+            trainer.optimizer.load_state_dict(optimizer_state)
+            logger.info("Loaded optimizer state")
+        
+        # Load scheduler state
+        if sae.device_mesh is None:
+            scheduler_path = checkpoint_dir / "scheduler.pt"
+            scheduler_state = torch.load(scheduler_path, map_location='cpu')
+            trainer.scheduler.load_state_dict(scheduler_state)
+            logger.info("Loaded scheduler state")
+        else:
+            scheduler_path = checkpoint_dir / "scheduler.dcp"
+            fs_reader = FileSystemReader(str(scheduler_path))
+            scheduler_state = trainer.scheduler.state_dict()
+            dcp.load(scheduler_state, storage_reader=fs_reader)
+            trainer.scheduler.load_state_dict(scheduler_state)
+            logger.info("Loaded scheduler state")
+            
+        logger.info(f"Checkpoint loaded from {checkpoint_path}")
+        return trainer
 
     @timer.time("initialize_trainer")
     def _initialize_trainer(
@@ -78,7 +230,12 @@ class Trainer:
             "adam": Adam,
             "sparseadam": SparseAdam,
         }[self.cfg.optimizer_class]
-        optimizer = optim_cls(sae.get_parameters(), lr=self.cfg.lr, betas=self.cfg.betas)
+        optimizer = optim_cls(
+            sae.get_parameters(),
+            lr=self.cfg.lr,
+            betas=self.cfg.betas,
+            foreach=self.cfg.optimizer_foreach,
+        )
         scheduler = get_scheduler(
             scheduler_name=self.cfg.lr_scheduler_name,
             optimizer=optimizer,
@@ -117,15 +274,21 @@ class Trainer:
             else 1.0
         )
 
-        loss, (loss_data, aux_data) = sae.compute_loss(
+        result = sae.compute_loss(
             batch,
             sparsity_loss_type=self.cfg.sparsity_loss_type,
             tanh_stretch_coefficient=self.cfg.tanh_stretch_coefficient,
             p=self.cfg.p,
             use_batch_norm_mse=self.cfg.use_batch_norm_mse,
-            return_aux_data=True,
+            return_aux_data=not self.cfg.skip_metrics_calculation,
             l1_coefficient=l1_coefficient,
         )
+        if not self.cfg.skip_metrics_calculation:
+            loss, (loss_data, aux_data) = result
+        else:
+            loss = result
+            loss_data = {}
+            aux_data = {}
         loss_dict = (
             {"loss": loss, "batch_size": batch_size(batch), "l1_coefficient": l1_coefficient} | loss_data | aux_data
         )
@@ -209,6 +372,9 @@ class Trainer:
             if isinstance(l_s, DTensor):
                 l_s = l_s.full_tensor()
 
+            if sae.cfg.sae_type == "lorsa":
+                label = label.flatten(0, 1)
+                log_info["reconstructed"] = log_info["reconstructed"].flatten(0, 1)
             per_token_l2_loss = (
                 (log_info["reconstructed"] - label).pow(2).sum(dim=-1)
             )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
@@ -304,7 +470,7 @@ class Trainer:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
 
     @timer.time("save_checkpoint")
-    def _save_checkpoint(self, sae: AbstractSparseAutoEncoder):
+    def _maybe_save_sae_checkpoint(self, sae: AbstractSparseAutoEncoder):
         if len(self.checkpoint_thresholds) > 0 and self.cur_tokens >= self.checkpoint_thresholds[0]:
             suffix = "safetensors" if sae.device_mesh is None else "dcp"
             path = os.path.join(
@@ -320,8 +486,8 @@ class Trainer:
         sae: AbstractSparseAutoEncoder,
         activation_stream: Iterable[dict[str, Tensor]],
         eval_fn: Callable[[AbstractSparseAutoEncoder], None] | None = None,
-        wandb_logger: Run | None = None,
-    ):
+        wandb_logger: Run | None = None,    
+    ) -> bool | None:
         # Reset timer at the start of training
         timer.reset()
 
@@ -329,53 +495,77 @@ class Trainer:
         self._initialize_optimizer(sae)
         assert self.optimizer is not None
         assert self.scheduler is not None
-        act_freq_scores_shape = (sae.cfg.n_layers, sae.cfg.d_sae) if sae.cfg.sae_type == "clt" else (sae.cfg.d_sae,)  # type: ignore
+
+        maybe_local_d_sae = sae.cfg.d_sae if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
+        if sae.cfg.sae_type == "clt":
+            act_freq_scores_shape = (
+                sae.cfg.n_layers,  # type: ignore
+                maybe_local_d_sae,
+            )
+        else:
+            act_freq_scores_shape = (maybe_local_d_sae,)  # type: ignore
         log_info = {
             "act_freq_scores": torch.zeros(act_freq_scores_shape, device=sae.cfg.device, dtype=sae.cfg.dtype),
             "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
         }
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
-        for batch in activation_stream:
-            with timer.time("training_iteration"):
-                proc_bar.update(1)
 
-                batch = sae.normalize_activations(batch)
+        try:
+            activation_stream = iter(activation_stream)
+            batch = next(activation_stream)
+            while True:
+                with timer.time("training_iteration"):
+                    proc_bar.update(1)
 
-                sae.train()
+                    batch = sae.normalize_activations(batch)
 
-                self.optimizer.zero_grad()
+                    sae.train()
 
-                with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
-                    loss_dict = self._training_step(sae, batch)
+                    with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
+                        loss_dict = self._training_step(sae, batch)
+                    
+                    log_info.update(loss_dict)
+                    proc_bar.set_description(f"loss: {log_info['loss'].item()}")
+                    
+                    if timer.enabled:
+                        logger.info(f"\nTimer Summary:\n{timer.summary()}\n")
 
-                with timer.time("backward"):
-                    loss_dict["loss"].backward()
+                    if not self.cfg.skip_metrics_calculation:
+                        self._log(sae, log_info, batch)
 
-                with timer.time("clip_grad_norm"):
-                    # exclude the grad of the jumprelu threshold
-                    loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
-                        [param for name, param in sae.named_parameters() if param.grad is not None and 'log_jumprelu_threshold' not in name],
-                        max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
-                    )
+                    with timer.time("refresh_batch"):
+                        del batch
+                        batch = next(activation_stream)
 
-                with timer.time("optimizer_step"):
-                    self.optimizer.step()
+                    with timer.time("backward"):
+                        loss_dict["loss"].backward()
 
-                log_info.update(loss_dict)
-                proc_bar.set_description(f"loss: {log_info['loss'].item()}")
-                
+                    with timer.time("clip_grad_norm"):
+                        # exclude the grad of the jumprelu threshold
+                        loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
+                            [param for name, param in sae.named_parameters() if param.grad is not None and 'log_jumprelu_threshold' not in name],
+                            max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
+                        )
 
-                self._log(sae, log_info, batch)
+                    with timer.time("optimizer_step"):
+                        self.optimizer.step()
+                        self.optimizer.zero_grad()
 
-                if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
-                    with timer.time("evaluation"):
-                        eval_fn(sae)
+                    if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
+                        with timer.time("evaluation"):
+                            eval_fn(sae)
 
-                self._save_checkpoint(sae)
-                with timer.time("scheduler_step"):
-                    self.scheduler.step()
+                    self._maybe_save_sae_checkpoint(sae)
+                    with timer.time("scheduler_step"):
+                        self.scheduler.step()
 
-                self.cur_step += 1
-                self.cur_tokens += batch_size(batch)
-                if self.cur_tokens >= self.cfg.total_training_tokens:
-                    break
+                    self.cur_step += 1
+                    self.cur_tokens += batch_size(batch)
+                    if self.cur_tokens >= self.cfg.total_training_tokens:
+                        break
+        except StopIteration as e:
+            logger.info(f"the current stream has ended")
+            return True
+        except Exception as e:
+            logger.error(f"Training failed: {e}")
+            raise e

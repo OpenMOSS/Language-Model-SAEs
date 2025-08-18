@@ -259,10 +259,13 @@ class TrainerConfig(BaseConfig):
     k_warmup_steps: int | float = 0.1
     k_cold_booting_steps: int | float = 0
     use_batch_norm_mse: bool = True
-
+    skip_metrics_calculation: bool = False
+    gradient_accumulation_steps: int = 1
+    
     lr: float | dict[str, float] = 0.0004
     betas: Tuple[float, float] = (0.9, 0.999)
     optimizer_class: Literal["adam", "sparseadam"] = "adam"
+    optimizer_foreach: bool = True
     lr_scheduler_name: Literal[
         "constant",
         "constantwithwarmup",
@@ -283,6 +286,7 @@ class TrainerConfig(BaseConfig):
     n_checkpoints: int = 10
     check_point_save_mode: Literal["log", "linear"] = "log"
 
+    from_pretrained_path: Optional[str] = None
     exp_result_path: Path = Path("results")
 
     def model_post_init(self, __context):
@@ -290,6 +294,9 @@ class TrainerConfig(BaseConfig):
         self.exp_result_path.mkdir(parents=True, exist_ok=True)
         self.exp_result_path.joinpath("checkpoints").mkdir(parents=True, exist_ok=True)
         assert self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
+
+        if self.from_pretrained_path is not None:
+            assert os.path.exists(self.from_pretrained_path), f"from_pretrained_path {self.from_pretrained_path} does not exist"
 
 
 class EvalConfig(BaseConfig):
@@ -431,6 +438,12 @@ class LanguageModelConfig(BaseModelConfig):
 
     prepend_bos: bool = True
     """ Whether to prepend the BOS token to the input. """
+    bos_token_id: Optional[int] = None
+    """ The ID of the BOS token. If `None`, will use the default BOS token. """
+    eos_token_id: Optional[int] = None
+    """ The ID of the EOS token. If `None`, will use the default EOS token. """
+    pad_token_id: Optional[int] = None
+    """ The ID of the padding token. If `None`, will use the default padding token. """
 
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):

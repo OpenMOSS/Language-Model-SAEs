@@ -1,9 +1,9 @@
-from typing import Union
+from typing import Any, Any, Union
 
 import torch
 from jaxtyping import Float
 
-from .kernels import TritonDecoderAutogradDynamicK, TritonDecoderAutogradTopK, TritonEncoderAutogradDynamicK
+from .kernels import TritonDecoderAutogradTopK, TritonEncoderAutogradDynamicK
 from .kernels import get_sparse_representation
 
 from lm_saes.utils.logging import get_logger
@@ -16,9 +16,7 @@ def decode_with_triton_spmm_kernel(
         Float[torch.Tensor, "batch d_sae"],
         Float[torch.sparse.Tensor, "batch d_sae"]
     ],
-    decoder_weight: Float[torch.Tensor, "d_sae d_model"], ## TODO: check if this is correct, this is compatible with current situation
-    dynamic_k: bool = True,
-    sparsity_threshold: float = 0.996,
+    decoder_weight: Float[torch.Tensor, "d_sae d_model"],
 ) -> Union[
     Float[torch.Tensor, "batch d_model"],
     Float[torch.Tensor, "batch n_layers d_model"],
@@ -38,15 +36,9 @@ def decode_with_triton_spmm_kernel(
     """
     if feature_acts.is_sparse:
         sparse_indices, sparse_values = feature_acts.indices(), feature_acts.values()
-        output = TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.contiguous().T)
-        return output  # type: ignore[return-value]
-    
-    if dynamic_k:
-        output = TritonDecoderAutogradDynamicK.apply(feature_acts, decoder_weight.contiguous().T, sparsity_threshold)
     else:
         sparse_indices, sparse_values = get_sparse_representation(feature_acts)
-        output = TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.contiguous().T)
-    return output  # type: ignore[return-value]
+    return TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.contiguous().T)  # type: ignore[return-value]
 
 def encode_with_triton_spmm_kernel(
     x: Float[torch.Tensor, "batch n_layers d_model"],
@@ -69,7 +61,7 @@ def encode_with_triton_spmm_kernel(
     Returns:
         output: (batch, n_layers, d_sae) - The encoded output for all layers.
     """
-    batch_size, n_layers, d_model = x.shape
+    batch_size, n_layers, _ = x.shape
     d_sae = W_E.shape[2]
     
     # For-loop implementation as originally requested
@@ -124,7 +116,7 @@ if __name__ == "__main__":
         grad_output = torch.randn((B, d_model), dtype=dtype, device="cuda")
 
         # Run forward pass with Triton
-        triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight, require_precise_feature_acts_grad)
+        triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight)
         assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
 
         triton_output.backward(grad_output)
