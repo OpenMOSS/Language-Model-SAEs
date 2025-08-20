@@ -121,11 +121,15 @@ class Evaluator:
         else:
             reduce_str = "... d_sae -> d_sae"
 
-        log_info["act_freq_scores"] += reduce(
-            (feature_acts.abs() > 0).float(),
+        act_freq_scores = reduce(
+            (feature_acts.abs().gt(0)).float(),
             reduce_str,
             "sum",
         )
+        if isinstance(act_freq_scores, DTensor):
+            act_freq_scores = act_freq_scores.full_tensor()
+
+        log_info["act_freq_scores"] += act_freq_scores
         log_info["n_frac_active_tokens"] += item(useful_token_mask.sum())
 
         # 6. Periodic feature sparsity logging
@@ -248,18 +252,13 @@ class Evaluator:
     ) -> None:
         act_freq_scores_shape = (sae.cfg.n_layers, sae.cfg.d_sae) if sae.cfg.sae_type == "clt" else (sae.cfg.d_sae,)  # type: ignore
         log_info = {
-            "act_freq_scores": torch.zeros(act_freq_scores_shape, device=sae.cfg.device, dtype=sae.cfg.dtype)
-            if sae.device_mesh is None
-            else torch.distributed.tensor.zeros(
-                act_freq_scores_shape,
-                dtype=sae.cfg.dtype,
-                device_mesh=sae.device_mesh,
-                placements=DimMap({"model": -1}).placements(sae.device_mesh),
-            ),
+            "act_freq_scores": torch.zeros(act_freq_scores_shape, device=sae.cfg.device, dtype=sae.cfg.dtype),
             "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
         }
         proc_bar = tqdm(total=self.cfg.total_eval_tokens)
         for batch in data_stream:
+            if not self.cfg.fold_activation_scale:
+                batch = sae.normalize_activations(batch)
             if not self.cfg.use_cached_activations:
                 assert model is not None, "Model is required for token input"
                 assert isinstance(sae, SparseAutoEncoder), "Must be a SparseAutoEncoder for token input"

@@ -234,6 +234,8 @@ class InitializerConfig(BaseConfig):
     init_encoder_with_decoder_transpose_factor: float = 1.0
     init_log_jumprelu_threshold_value: float | None = None
     grid_search_init_norm: bool = False
+    initialize_W_D_with_active_subspace: bool = False
+    d_active_subspace: int | None = None
 
 
 class TrainerConfig(BaseConfig):
@@ -304,6 +306,8 @@ class EvalConfig(BaseConfig):
     total_eval_tokens: int = 1000000
     use_cached_activations: bool = False
     device: str = "cpu"
+    fold_activation_scale: bool = True
+    """Whether to fold the activation scale into the SAE model"""
 
 
 class DatasetConfig(BaseConfig):

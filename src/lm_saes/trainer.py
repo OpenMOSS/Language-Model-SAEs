@@ -141,6 +141,7 @@ class Trainer:
             
             # Create trainer instance with loaded config
             trainer = cls(cfg)
+            trainer.cfg.from_pretrained_path = checkpoint_path
             
             # Restore trainer state variables
             trainer.cur_step = trainer_state["cur_step"]
@@ -172,6 +173,7 @@ class Trainer:
             dcp.load(optimizer_state, storage_reader=fs_reader)
             trainer.optimizer.load_state_dict(optimizer_state)
             logger.info("Loaded optimizer state")
+            logger.info(f"trainer.optimizer.state_dict(): {trainer.optimizer.state_dict()}")
         
         # Load scheduler state
         if sae.device_mesh is None:
@@ -186,7 +188,8 @@ class Trainer:
             dcp.load(scheduler_state, storage_reader=fs_reader)
             trainer.scheduler.load_state_dict(scheduler_state)
             logger.info("Loaded scheduler state")
-            
+            logger.info(f"trainer.scheduler.state_dict(): {trainer.scheduler.state_dict()}")
+
         logger.info(f"Checkpoint loaded from {checkpoint_path}")
         return trainer
 
@@ -311,7 +314,7 @@ class Trainer:
             log_info["reconstructed"] = log_info["reconstructed"].permute(1, 0, 2)
             label = label.permute(1, 0, 2)
         elif sae.cfg.sae_type == "lorsa":
-            act_freq_scores = act_freq_scores.sum(0)
+            act_freq_scores = act_freq_scores.mean(0)
         if isinstance(act_freq_scores, DTensor):
             act_freq_scores = act_freq_scores.full_tensor()
 
@@ -414,9 +417,9 @@ class Trainer:
             if isinstance(l2_norm_error_ratio, DTensor):
                 l2_norm_error_ratio = l2_norm_error_ratio.full_tensor()
 
-            grad_norm = log_info["grad_norm"]
-            if isinstance(grad_norm, DTensor):
-                grad_norm = grad_norm.full_tensor()
+            # grad_norm = log_info["grad_norm"]
+            # if isinstance(grad_norm, DTensor):
+            #     grad_norm = grad_norm.full_tensor()
             
             
             wandb_log_dict = {
@@ -435,7 +438,7 @@ class Trainer:
                 "metrics/l2_norm_error": l2_norm_error.item(),
                 "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
                 # norm
-                "metrics/gradients_norm": grad_norm.item(),
+                # "metrics/gradients_norm": grad_norm.item(),
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
                 "details/l1_coefficient": log_info["l1_coefficient"],
@@ -491,10 +494,12 @@ class Trainer:
         # Reset timer at the start of training
         timer.reset()
 
-        self._initialize_trainer(sae, activation_stream, wandb_logger)
-        self._initialize_optimizer(sae)
-        assert self.optimizer is not None
-        assert self.scheduler is not None
+        if self.cfg.from_pretrained_path is None:
+            logger.info("Initializing trainer and optimizer")
+            self._initialize_trainer(sae, activation_stream, wandb_logger)
+            self._initialize_optimizer(sae)
+            assert self.optimizer is not None
+            assert self.scheduler is not None
 
         maybe_local_d_sae = sae.cfg.d_sae if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
         if sae.cfg.sae_type == "clt":
@@ -509,6 +514,7 @@ class Trainer:
             "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
         }
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
+        proc_bar.update(self.cur_step)
 
         try:
             activation_stream = iter(activation_stream)
@@ -525,7 +531,7 @@ class Trainer:
                         loss_dict = self._training_step(sae, batch)
                     
                     log_info.update(loss_dict)
-                    proc_bar.set_description(f"loss: {log_info['loss'].item()}")
+                    proc_bar.set_description(f"loss: {log_info['loss'].item()}, learning rate: {self.optimizer.param_groups[0]['lr']}")
                     
                     if timer.enabled:
                         logger.info(f"\nTimer Summary:\n{timer.summary()}\n")

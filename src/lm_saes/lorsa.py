@@ -133,6 +133,22 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         if self.cfg.use_decoder_bias:
             torch.nn.init.zeros_(self.b_D)
     
+    @override
+    @torch.no_grad()
+    def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
+        """Initialize W_D with the active subspace.
+        
+        Args:
+            activation_batch: The activation batch.
+            d_active_subspace: The dimension of the active subspace.
+        """
+        label = self.prepare_label(activation_batch)
+        flattened_label = label.flatten(0, 1)
+        demeaned_label = flattened_label - flattened_label.mean(dim=0)
+        U, S, V = torch.svd(demeaned_label.T.to(torch.float32))
+        proj_weight = U[:, :d_active_subspace] # [d_model, d_active_subspace]
+        self.W_O.data = self.W_O.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype)
+
     def _calculate_sin_cos_rotary(
         self,
         rotary_dim: int,

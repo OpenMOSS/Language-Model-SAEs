@@ -343,6 +343,11 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         for layer_to, W_D_layer in enumerate(W_D_initialized):
             self.W_D[layer_to].copy_(W_D_layer)
+    
+    def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
+        """Initialize the W and D parameters with the active subspace."""
+        raise NotImplementedError("Subclasses must implement this method")
+        
 
     def get_decoder_weights(self, layer_to: int) -> torch.Tensor:
         """Get decoder weights for all layers from 0..layer_to to layer_to.
