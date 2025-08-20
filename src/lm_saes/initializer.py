@@ -16,7 +16,7 @@ from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
-from lm_saes.utils.tensor_dict import batch_size
+from lm_saes.utils.tensor_dict import batch_size, concat_dict_of_tensor
 
 logger = get_distributed_logger("initializer")
 
@@ -153,4 +153,8 @@ class Initializer:
             assert activation_stream is not None, "Activation iterator must be provided for initialization search"
             activation_batch = next(iter(activation_stream))  # type: ignore
             sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
+
+            if self.cfg.initialize_W_D_with_active_subspace:
+                activation_batch = sae.normalize_activations(activation_batch)
+                sae.init_W_D_with_active_subspace(activation_batch, self.cfg.d_active_subspace)
         return sae

@@ -89,7 +89,11 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
         "clt": CrossLayerTranscoder,
         "lorsa": LowRankSparseAttention,
     }[settings.sae.sae_type]
-    sae = cls.from_config(settings.sae, device_mesh=device_mesh)
+    sae = cls.from_config(
+        settings.sae,
+        device_mesh=device_mesh,
+        fold_activation_scale=settings.eval.fold_activation_scale,
+    )
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
 
