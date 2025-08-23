@@ -1,5 +1,5 @@
 from .activation import ActivationFactory, ActivationWriter
-from .analysis import FeatureAnalyzer
+from .analysis import AutoInterpConfig, FeatureAnalyzer
 from .clt import CrossLayerTranscoder
 from .config import (
     ActivationFactoryActivationsSource,
@@ -113,4 +113,5 @@ __all__ = [
     "DirectLogitAttributorConfig",
     "AnalyzeDecoderSettings",
     "analyze_decoder",
+    "AutoInterpConfig",
 ]

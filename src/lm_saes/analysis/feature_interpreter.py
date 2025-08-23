@@ -14,7 +14,7 @@ import random
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Generator, Literal, Optional
+from typing import Any, Callable, Generator, Literal, Optional, cast
 
 import json_repair
 import torch
@@ -128,6 +128,10 @@ class AutoInterpConfig(BaseConfig):
     openai_base_url: Optional[str] = None
     openai_proxy: Optional[str] = None
 
+    # Cost calculation settings (pricing per 1K tokens in USD)
+    openai_input_price_per_1k: Optional[float] = None  # Set to enable cost calculation
+    openai_output_price_per_1k: Optional[float] = None  # Set to enable cost calculation
+
     # Activation retrieval settings
     n_activating_examples: int = 7
     n_non_activating_examples: int = 20
@@ -221,6 +225,8 @@ class TokenizedSample:
                 )
             except Exception:
                 logger.error(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n")
+                # logger.error(f"Origins: {origins}")
+                logger.error(f"Origin Length: {len(origins)}, Activations Length: {len(activations)}")
                 continue
             segments.append(Segment(text[start:end], segment_activation))
 
@@ -253,14 +259,12 @@ def generate_activating_examples(
 
     # Get examples from each sampling
     sampling = analysis.samplings[0]
-    for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts) in enumerate(
-        zip(
-            sampling.dataset_name,
-            sampling.shard_idx if sampling.shard_idx else [0] * len(sampling.dataset_name),
-            sampling.n_shards if sampling.n_shards else [1] * len(sampling.dataset_name),
-            sampling.context_idx,
-            sampling.feature_acts,
-        )
+    for dataset_name, shard_idx, n_shards, context_idx, feature_acts in zip(
+        sampling.dataset_name,
+        sampling.shard_idx if sampling.shard_idx else [0] * len(sampling.dataset_name),
+        sampling.n_shards if sampling.n_shards else [1] * len(sampling.dataset_name),
+        sampling.context_idx,
+        sampling.feature_acts,
     ):
         try:
             dataset = datasets(dataset_name, shard_idx, n_shards)
@@ -320,14 +324,12 @@ def generate_non_activating_examples(
 
     sampling = analysis.samplings[-1]
     assert sampling.name == "non_activating", f"{error_prefix} Sampling {sampling.name} is not non_activating"
-    for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts) in enumerate(
-        zip(
-            sampling.dataset_name,
-            sampling.shard_idx if sampling.shard_idx else [0] * len(sampling.dataset_name),
-            sampling.n_shards if sampling.n_shards else [1] * len(sampling.dataset_name),
-            sampling.context_idx,
-            sampling.feature_acts,
-        )
+    for dataset_name, shard_idx, n_shards, context_idx, feature_acts in zip(
+        sampling.dataset_name,
+        sampling.shard_idx if sampling.shard_idx else [0] * len(sampling.dataset_name),
+        sampling.n_shards if sampling.n_shards else [1] * len(sampling.dataset_name),
+        sampling.context_idx,
+        sampling.feature_acts,
     ):
         try:
             dataset = datasets(dataset_name, shard_idx, n_shards)
@@ -373,6 +375,91 @@ class FeatureInterpreter:
 
         # Set up LLM client for explanation generation
         self._setup_llm_clients()
+
+    def _calculate_cost(self, response) -> dict[str, Any]:
+        """Calculate the cost of an OpenAI API call.
+
+        Args:
+            response: OpenAI response object with usage information
+
+        Returns:
+            Dictionary with cost breakdown (includes costs only if pricing is configured)
+        """
+        result: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0}
+
+        if not hasattr(response, "usage") or response.usage is None:
+            if self.cfg.openai_input_price_per_1k is not None and self.cfg.openai_output_price_per_1k is not None:
+                result.update({"input_cost": 0.0, "output_cost": 0.0, "total_cost": 0.0})
+            return result
+
+        usage = response.usage
+        input_tokens = usage.prompt_tokens
+        output_tokens = usage.completion_tokens
+        result.update({"input_tokens": input_tokens, "output_tokens": output_tokens})
+
+        # Only calculate costs if pricing is configured
+        if self.cfg.openai_input_price_per_1k is not None and self.cfg.openai_output_price_per_1k is not None:
+            input_cost = (input_tokens / 1000) * self.cfg.openai_input_price_per_1k
+            output_cost = (output_tokens / 1000) * self.cfg.openai_output_price_per_1k
+            total_cost = input_cost + output_cost
+            result.update(
+                {
+                    "input_cost": input_cost,
+                    "output_cost": output_cost,
+                    "total_cost": total_cost,
+                }
+            )
+
+        return result
+
+    def _build_cost_summary(
+        self,
+        cost_enabled: bool,
+        total_cost: float,
+        explanation_result: dict[str, Any],
+        detection_result: Optional[dict[str, Any]],
+        fuzzing_result: Optional[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build cost summary with token counts and optional pricing.
+
+        Args:
+            cost_enabled: Whether cost calculation is enabled
+            total_cost: Total cost across all operations
+            explanation_result: Result from explanation generation
+            detection_result: Result from detection evaluation (optional)
+            fuzzing_result: Result from fuzzing evaluation (optional)
+
+        Returns:
+            Dictionary with cost/token information
+        """
+        cost_info = {
+            "tokens": {
+                "explanation": {
+                    "input_tokens": explanation_result["cost"]["input_tokens"],
+                    "output_tokens": explanation_result["cost"]["output_tokens"],
+                },
+                "detection": {
+                    "input_tokens": detection_result["cost"]["input_tokens"] if detection_result else 0,
+                    "output_tokens": detection_result["cost"]["output_tokens"] if detection_result else 0,
+                },
+                "fuzzing": {
+                    "input_tokens": fuzzing_result["cost"]["input_tokens"] if fuzzing_result else 0,
+                    "output_tokens": fuzzing_result["cost"]["output_tokens"] if fuzzing_result else 0,
+                },
+            }
+        }
+
+        if cost_enabled:
+            cost_info["pricing"] = {
+                "total_cost": total_cost,
+                "breakdown": {
+                    "explanation": explanation_result["cost"]["total_cost"],
+                    "detection": detection_result["cost"]["total_cost"] if detection_result else 0.0,
+                    "fuzzing": fuzzing_result["cost"]["total_cost"] if fuzzing_result else 0.0,
+                },
+            }
+
+        return cost_info
 
     def _setup_llm_clients(self):
         """Set up OpenAI client for explanation generation and evaluation."""
@@ -488,7 +575,7 @@ Third, Assess Feature Complexity: Based on your summary and the nature of the ac
 4: Feature relating to high-level semantic structure, e.g., "return statements in code"
 3: Moderate complexity, such as a phrase, category, or tracking sentence structure, e.g., "website URLs"
 2: Single word or token feature but including multiple languages or spelling, e.g., "mentions of dog"
-1: Single token feature, e.g., "the token '('"
+1: Single word or token feature, e.g., "the token '('" or "the word 'dog'"
 
 Your output should be a JSON object that has the following fields: `steps`, `final_explanation`, `activation_consistency`, `complexity`. `steps` should be an array of strings with a length not exceeding 3, each representing a step in the chain-of-thought process. `final_explanation` should be a string in the form of 'This feature activates on... '. `activation_consistency` should be an integer between 1 and 5, representing the consistency of the feature. `complexity` should be an integer between 1 and 5, representing the complexity of the feature.
 
@@ -530,11 +617,14 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
         )
         explanation = json_repair.loads(response.choices[0].message.content)
         response_time = time.time() - start_time
+        cost_info = self._calculate_cost(response)
+
         return {
             "user_prompt": user_prompt,
             "system_prompt": system_prompt,
             "response": explanation,
             "time": response_time,
+            "cost": cost_info,
         }
 
     def _generate_detection_prompt(
@@ -624,9 +714,9 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             f"No detection response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
         )
         detection_response: dict[str, Any] = json_repair.loads(response.choices[0].message.content)  # type: ignore
-        # print(f"Detection for feature :\n{detection_response}\n\n")
         predictions: list[bool] = detection_response["evaluation_results"]
         response_time = time.time() - start_time
+        cost_info = self._calculate_cost(response)
 
         # Pad predictions if needed
         predictions = predictions[: len(ground_truth)]
@@ -660,6 +750,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             },
             "passed": balanced_accuracy >= 0.7,  # Arbitrary threshold for passing
             "time": response_time,
+            "cost": cost_info,
         }
 
     def _generate_fuzzing_prompt(
@@ -783,11 +874,13 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         assert response.choices[0].message.content is not None, (
             f"No fuzzing response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
         )
-        fuzzing_response: dict[str, Any] = json_repair.loads(response.choices[0].message.content)  # type: ignore
-        # print(f"Fuzzing for feature :\n{fuzzing_response}\n\n")
+        fuzzing_response = cast(dict[str, Any], json_repair.loads(response.choices[0].message.content))
+
         # Parse response (CORRECT/INCORRECT for each example)
         predictions: list[bool] = fuzzing_response["evaluation_results"]
         response_time = time.time() - start_time
+        cost_info = self._calculate_cost(response)
+
         # Pad predictions if needed
         predictions = predictions[: len(examples_with_labels)]
         if len(predictions) < len(examples_with_labels):
@@ -823,6 +916,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             },
             "passed": balanced_accuracy >= 0.7,  # Arbitrary threshold for passing
             "time": response_time,
+            "cost": cost_info,
         }
 
     def interpret_single_feature(
@@ -846,6 +940,10 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
 
         start_time = time.time()
         response_time = 0
+        total_cost = 0.0
+        cost_enabled = (
+            self.cfg.openai_input_price_per_1k is not None and self.cfg.openai_output_price_per_1k is not None
+        )
 
         activating_examples, non_activating_examples = self.get_feature_examples(
             feature=feature,
@@ -859,23 +957,29 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         explanation_result = self.generate_explanation(activating_examples)
         explanation: dict[str, Any] = explanation_result["response"]
         response_time += explanation_result["time"]
-        # print(f"Explanation for feature {feature.index}:\n{explanation}\n\n")
+        if cost_enabled:
+            total_cost += explanation_result["cost"]["total_cost"]
+
         # Evaluate explanation
         evaluation_results = []
+        detection_result = None
+        fuzzing_result = None
 
         if ScorerType.DETECTION in self.cfg.scorer_type:
             detection_result = self.evaluate_explanation_detection(
                 explanation, activating_examples, non_activating_examples
             )
-            # print(f"Detection result for feature {feature.index}:\n{detection_result}\n\n")
             evaluation_results.append(detection_result)
             response_time += detection_result["time"]
+            if cost_enabled:
+                total_cost += detection_result["cost"]["total_cost"]
 
         if ScorerType.FUZZING in self.cfg.scorer_type:
             fuzzing_result = self.evaluate_explanation_fuzzing(explanation, activating_examples)
-            # print(f"Fuzzing result for feature {feature.index}:\n{fuzzing_result}\n\n")
             evaluation_results.append(fuzzing_result)
             response_time += fuzzing_result["time"]
+            if cost_enabled:
+                total_cost += fuzzing_result["cost"]["total_cost"]
 
         total_time = time.time() - start_time
 
@@ -896,6 +1000,9 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
                 "total": total_time,
                 "response": response_time,
             },
+            "cost": self._build_cost_summary(
+                cost_enabled, total_cost, explanation_result, detection_result, fuzzing_result
+            ),
         }
 
     def interpret_features(
@@ -923,7 +1030,14 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
 
         for feature_index in feature_indices:
             feature = self.mongo_client.get_feature(sae_name, sae_series, feature_index)
-            if feature is not None and feature.interpretation is None:
+            if feature is None:
+                continue
+
+            analysis = next((a for a in feature.analyses if a.name == analysis_name), None)
+            if analysis is None:
+                continue
+
+            if feature.interpretation is None and analysis.act_times > 0:
                 yield {
                     "feature_index": feature.index,
                     "sae_name": sae_name,

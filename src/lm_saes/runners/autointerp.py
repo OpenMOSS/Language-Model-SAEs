@@ -1,11 +1,12 @@
 """Module for automatic interpretation of SAE features."""
 
-import concurrent.futures
+import os
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Optional
 
 from datasets import Dataset
 from pydantic_settings import BaseSettings
+from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 from lm_saes.analysis.feature_interpreter import AutoInterpConfig, FeatureInterpreter
 from lm_saes.config import LanguageModelConfig, MongoDBConfig
@@ -40,7 +41,7 @@ class AutoInterpSettings(BaseSettings):
     features: Optional[list[int]] = None
     """List of specific feature indices to interpret. If None, will interpret all features."""
 
-    feature_range: Optional[list[int]] = None
+    feature_range: Optional[tuple[int, int]] = None
     """Range of feature indices to interpret [start, end]. If None, will interpret all features."""
 
     top_k_features: Optional[int] = None
@@ -49,13 +50,21 @@ class AutoInterpSettings(BaseSettings):
     analysis_name: str = "default"
     """Name of the analysis to use for interpretation."""
 
-    max_workers: int = 10
-    """Maximum number of workers to use for interpretation."""
 
+def interpret_feature(
+    settings: AutoInterpSettings,
+    feature_indices: list[int],
+    mongo_client: MongoClient,
+    device_mesh: Optional[DeviceMesh],
+) -> None:
+    """Interpret a feature using the language model.
 
-def interpret_feature(args: dict[str, Any]):
-    settings: AutoInterpSettings = args["settings"]
-    feature_indices: list[int] = args["feature_indices"]
+    Args:
+        settings: Configuration settings for auto-interpretation
+        feature_indices: List of feature indices to interpret
+        mongo_client: MongoDB client
+        device_mesh: Device mesh
+    """
 
     @lru_cache(maxsize=None)
     def get_dataset(dataset_name: str, shard_idx: int, n_shards: int) -> Dataset:
@@ -64,7 +73,6 @@ def interpret_feature(args: dict[str, Any]):
         dataset = load_dataset_shard(dataset_cfg, shard_idx, n_shards)
         return dataset
 
-    mongo_client = MongoClient(settings.mongo)
     language_model = load_model(settings.model)
     interpreter = FeatureInterpreter(settings.auto_interp, mongo_client)
     for result in interpreter.interpret_features(
@@ -103,6 +111,17 @@ def auto_interp(settings: AutoInterpSettings) -> None:
     """
     setup_logging(level="INFO")
 
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    device_mesh = (
+        init_device_mesh(
+            device_type="cpu",
+            mesh_shape=(world_size,),
+            mesh_dim_names=("model",),
+        )
+        if world_size > 1
+        else None
+    )
+
     # Set up MongoDB client
     mongo_client = MongoClient(settings.mongo)
 
@@ -133,11 +152,11 @@ def auto_interp(settings: AutoInterpSettings) -> None:
     logger.info(f"Loading SAE model: {settings.sae_name}/{settings.sae_series}")
     logger.info(f"Loading language model: {settings.model_name}")
 
-    chunk_size = len(feature_indices) // settings.max_workers + 1
-    feature_batches = [feature_indices[i : i + chunk_size] for i in range(0, len(feature_indices), chunk_size)]
-    args_batches = [{"feature_indices": feature_indices, "settings": settings} for feature_indices in feature_batches]
+    if device_mesh is not None:
+        local_feature_indices = feature_indices[device_mesh.get_rank() :: world_size]
+    else:
+        local_feature_indices = feature_indices
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=settings.max_workers) as executor:
-        list(executor.map(interpret_feature, args_batches))
+    interpret_feature(settings, local_feature_indices, mongo_client, device_mesh)
 
     logger.info("Done!")

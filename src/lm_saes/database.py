@@ -1,3 +1,4 @@
+import functools
 import random
 from datetime import datetime
 from typing import Any, Optional
@@ -654,12 +655,15 @@ class MongoClient:
             "metric": 1,
         }
 
-        first_feature = self.feature_collection.find_one({"sae_name": sae_name, "sae_series": sae_series}, projection)
+        features = list(
+            self.feature_collection.find({"sae_name": sae_name, "sae_series": sae_series}, projection, limit=10)
+        )
 
-        if first_feature is None or first_feature.get("metric") is None:
-            return []
+        metrics = functools.reduce(
+            lambda acc, feature: acc.union(feature["metric"].keys()) if "metric" in feature else acc, features, set()
+        )
 
-        return list(first_feature["metric"].keys())
+        return list(metrics)
 
     def count_features_with_filters(
         self,
