@@ -53,7 +53,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         """
         super().__init__(cfg, device_mesh)
         self.cfg = cfg
-
         # CLT requires specific configuration settings
         # assert not cfg.sparsity_include_decoder_norm, "CLT requires sparsity_include_decoder_norm=False"
         # assert cfg.use_decoder_bias, "CLT requires use_decoder_bias=True"
@@ -531,10 +530,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             Reconstructed activations for all layers (..., n_layers, d_model)
         """
         reconstructed = []
-        batch_size = feature_acts.size(0)
-        feature_acts = [
-            fa.to_sparse_csr() for fa in feature_acts.to_local().permute(1, 0, 2)
-        ]
         # For each output layer L
         for layer_to in range(self.cfg.n_layers):
             decoder_bias = self.get_decoder_bias(layer_to)  # (d_model,)
@@ -543,7 +538,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             if isinstance(feature_acts, list) and isinstance(feature_acts[0], torch.Tensor) and feature_acts[0].layout == torch.sparse_coo:
                 contribution = self._decode_single_output_layer_coo(feature_acts, layer_to)
             elif self.cfg.decode_with_csr:
-                contribution = self._decode_single_output_layer_csr(feature_acts, layer_to, batch_size=batch_size)
+                contribution = self._decode_single_output_layer_csr(feature_acts, layer_to)
             else:
                 contribution = self._decode_single_output_layer_dense(feature_acts, layer_to)
 
@@ -572,15 +567,22 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     def _decode_single_output_layer_csr(self, feature_acts: Union[
         Float[torch.Tensor, "batch n_layers d_sae"],
         Float[torch.Tensor, "batch seq_len n_layers d_sae"],
-    ], layer_to: int, batch_size: int) -> Union[
+    ], layer_to: int) -> Union[
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
         """Decode features for a single output layer using upper triangular pattern."""
         decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
+        batch_size = feature_acts.size(0)
         if self.device_mesh is not None:
             decoder_weights = decoder_weights.to_local()
-
+        if isinstance(feature_acts, DTensor):
+            feature_acts = feature_acts.to_local()
+        if feature_acts.layout != torch.sparse_csr:
+            feature_acts = [
+                fa.to_sparse_csr() for fa in feature_acts.permute(1, 0, 2)
+            ]
+        
         contribution = torch.zeros(
             batch_size,
             decoder_weights.size(-1),
@@ -674,6 +676,16 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for CLT")
 
     @torch.no_grad()
+    def keep_only_decoders_for_layer_from(self, layer_from: int):
+        """Keep only the decoder norm for the given layer."""
+        new_W_D = []
+        for layer_to, decoder_weights in enumerate(self.W_D):
+            if layer_to >= layer_from:
+                new_W_D.append(decoder_weights[layer_from])
+        self.decoders_for_layer_from = (layer_from, new_W_D)
+        torch.cuda.empty_cache()
+
+    @torch.no_grad()
     def decoder_norm_per_feature(
         self,
         layer: int | None = None,
@@ -697,9 +709,16 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 placements=self.dim_maps()["decoder_norms"].placements(self.device_mesh)
             )
         if layer is not None:
-            for layer_to, decoder_weights in enumerate(self.W_D[layer:]):
-                layer_to += layer
-                decoder_norms[layer_to] = decoder_weights[layer].pow(2).sum(dim=-1).sqrt()
+            if getattr(self, "decoders_for_layer_from", None) is not None:
+                kept_layer_from, kept_decoders = getattr(self, "decoders_for_layer_from")
+                assert kept_layer_from == layer
+                for layer_to, decoder_weights in enumerate(kept_decoders):
+                    layer_to += layer
+                    decoder_norms[layer_to] = decoder_weights.pow(2).sum(dim=-1).sqrt()
+            else:
+                for layer_to, decoder_weights in enumerate(self.W_D[layer:]):
+                    layer_to += layer
+                    decoder_norms[layer_to] = decoder_weights[layer].pow(2).sum(dim=-1).sqrt()
         else:
             for layer_to, decoder_weights in enumerate(self.W_D):
                 decoder_norms[:layer_to + 1] = decoder_norms[:layer_to + 1] + decoder_weights.pow(2).sum(dim=-1)
@@ -975,6 +994,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         pretrained_name_or_path: str,
         strict_loading: bool = True,
         fold_activation_scale: bool = True,
+        device_mesh: DeviceMesh | None = None,
         **kwargs,
     ):
         cfg = CLTConfig.from_pretrained(
@@ -985,5 +1005,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         model = cls.from_config(
             cfg,
             fold_activation_scale=fold_activation_scale,
+            device_mesh=device_mesh,
         )
         return model

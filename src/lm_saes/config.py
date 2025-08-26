@@ -391,6 +391,9 @@ class BufferShuffleConfig(BaseConfig):
 
 
 class ActivationFactoryConfig(BaseConfig):
+    model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
+
+
     sources: list[ActivationFactoryDatasetSource | ActivationFactoryActivationsSource]
     """ List of sources to use for activations. Can be a dataset or a path to activations. """
     target: ActivationFactoryTarget
@@ -409,6 +412,20 @@ class ActivationFactoryConfig(BaseConfig):
         else None
     )
     """ The batch size to use for outputting `activations-1d`. """
+    override_dtype: Optional[
+        Annotated[
+            torch.dtype,
+            BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+            PlainSerializer(convert_torch_dtype_to_str),
+            WithJsonSchema(
+                {
+                    "type": "string",
+                },
+                mode="serialization",
+            ),
+        ]
+    ] = None
+    """ The dtype to use for outputting activations. If `None`, will not override the dtype. """
     buffer_size: Optional[int] = Field(
         default_factory=lambda validated_model: 500_000
         if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
@@ -439,7 +456,8 @@ class LanguageModelConfig(BaseModelConfig):
     backend: Literal["huggingface", "transformer_lens", "auto"] = "auto"
     """ The backend to use for the language model. """
     load_ckpt: bool = True
-
+    tokenizer_only: bool = False
+    """ Whether to only load the tokenizer. """
     prepend_bos: bool = True
     """ Whether to prepend the BOS token to the input. """
     bos_token_id: Optional[int] = None
@@ -491,6 +509,7 @@ class ActivationWriterConfig(BaseConfig):
 
 
 class FeatureAnalyzerConfig(BaseConfig):
+    model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
     total_analyzing_tokens: int
     """ Total number of tokens to analyze """
 
@@ -498,7 +517,6 @@ class FeatureAnalyzerConfig(BaseConfig):
     """ Whether to use weighted sampling for selecting activations. 
         If `False`, will only keep top activations (below the subsample threshold). 
     """
-
     sample_weight_exponent: float = 2.0
     """ Exponent for weighting samples by activation value """
 

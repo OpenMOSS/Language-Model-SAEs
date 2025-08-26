@@ -388,7 +388,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         # (n_active_features, q_pos, k_pos)
         pattern = self._compute_attention_pattern(q, k)[qk_idx, 0]
-        return pattern * v[0, :, head_idx, None].permute(1, 2, 0)
+        return pattern.mul_(v[0, :, head_idx, None].permute(1, 2, 0))
     
     def _apply_rotary(
         self,

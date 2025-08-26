@@ -9,6 +9,7 @@ from tqdm import tqdm
 from functools import partial
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.activation.factory import ActivationFactory
@@ -227,6 +228,7 @@ class FeatureAnalyzer:
         activation_factory: ActivationFactory,
         sae: AbstractSparseAutoEncoder,
         device_mesh: DeviceMesh | None = None,
+        activation_factory_process_kwargs: dict[str, Any] = {},
     ) -> list[dict[str, Any]]:
         """Analyze feature activations for a chunk of the SAE.
 
@@ -236,15 +238,19 @@ class FeatureAnalyzer:
         3. Organize results by feature
 
         Args:
-            activation_stream: Iterator yielding activation batches with metadata
+            activation_factory: The activation factory to use
             sae: The sparse autoencoder model
+            device_mesh: The device mesh to use
+            activation_factory_process_kwargs: Keyword arguments to pass to the activation factory's process method
 
         Returns:
             List of dictionaries containing per-feature analysis results:
             - Activation counts and maximums
             - Sampled activations with metadata
         """
-        activation_stream = activation_factory.process()
+        activation_stream = activation_factory.process(
+            **activation_factory_process_kwargs
+        )
         n_tokens = n_analyzed_tokens = 0
 
         # Progress tracking
@@ -270,7 +276,7 @@ class FeatureAnalyzer:
             sae.encode = partial(sae.encode_single_layer, layer=self.cfg.clt_layer)
             sae.prepare_input = partial(sae.prepare_input_single_layer, layer=self.cfg.clt_layer)
             sae.decoder_norm_per_feature = partial(sae.decoder_norm_per_feature, layer=self.cfg.clt_layer)
-            sae.b_D = None
+            sae.keep_only_decoders_for_layer_from(self.cfg.clt_layer)
             torch.cuda.empty_cache()
 
         # Process activation batches
@@ -298,6 +304,8 @@ class FeatureAnalyzer:
                 ).to_local()
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.max(dim=-2).values
+            if isinstance(sae, LowRankSparseAttention) and sae.cfg.skip_bos:
+                feature_acts[:, 0, :] = 0
             assert feature_acts.shape == (batch["tokens"].shape[0], batch["tokens"].shape[1], d_sae_local), (
                 f"feature_acts.shape: {feature_acts.shape}, expected: {(batch['tokens'].shape[0], batch['tokens'].shape[1], d_sae_local)}"
             )
@@ -347,4 +355,5 @@ class FeatureAnalyzer:
             mapper=mapper,
             device_mesh=device_mesh,
             activation_factory=activation_factory,
+            activation_factory_process_kwargs=activation_factory_process_kwargs,
         )

@@ -39,6 +39,7 @@ class PostAnalysisProcessor(ABC):
         mapper: KeyedDiscreteMapper,
         device_mesh: DeviceMesh | None = None,
         activation_factory: ActivationFactory | None = None,
+        activation_factory_process_kwargs: dict[str, Any] = {},
     ) -> list[dict[str, Any]]:
         """Process analysis results into the final per-feature format.
         
@@ -68,15 +69,16 @@ class PostAnalysisProcessor(ABC):
             sample_result,
             mapper,
             device_mesh,
-            activation_factory
+            activation_factory,
+            activation_factory_process_kwargs=activation_factory_process_kwargs,
         )
         
         # Step 2: Apply standard rearrangement and conversion
         sample_result = {k: v for k, v in sample_result.items() if v is not None}
-        sample_result = {
-            k1: {k2: rearrange(v2, "n_samples d_sae ... -> d_sae n_samples ...") for k2, v2 in v1.items()}
-            for k1, v1 in sample_result.items()
-        }
+        # sample_result = {
+        #     k1: {k2: rearrange(v2, "n_samples d_sae ... -> d_sae n_samples ...") for k2, v2 in v1.items()}
+        #     for k1, v1 in sample_result.items()
+        # }
         
         # Step 3: Convert to final format
         logger.info("[PostAnalysisProcessor] Converting results to final per-feature format.")
@@ -90,10 +92,9 @@ class PostAnalysisProcessor(ABC):
                 "samplings": [
                     {
                         "name": k,
-                        **self._sparsify_feature_acts(v["feature_acts"][i]),
+                        **self._sparsify_feature_acts(v["feature_acts"][:, i]),
                         **self._extra_info(v, i),
-                        # TODO: Filter out meta that is not string
-                        **{k2: mapper.decode(k2, v[k2][i].tolist()) for k2 in mapper.keys()},
+                        **{k2: mapper.decode(k2, v[k2][:, i].tolist()) for k2 in mapper.keys()},
                     }
                     for k, v in sample_result.items()
                 ],
@@ -107,17 +108,17 @@ class PostAnalysisProcessor(ABC):
         """
         feature_acts = feature_acts.to_sparse()
         return {
-            "feature_acts_indices": feature_acts.indices().cpu().numpy(),
-            "feature_acts_values": feature_acts.values().cpu().numpy(),
+            "feature_acts_indices": feature_acts.indices().cpu().float().numpy(),
+            "feature_acts_values": feature_acts.values().cpu().float().numpy(),
         }
     
     def _extra_info(self, sampling_data: dict[str, Any], i: int) -> dict[str, Any]:
         """Extra information to add to the feature result.
         """
         return {
-            "context_idx": sampling_data["context_idx"][i].cpu().numpy(),
-            "shard_idx": sampling_data["shard_idx"][i].cpu().numpy(),
-            "n_shards": sampling_data["n_shards"][i].cpu().numpy(),
+            "context_idx": sampling_data["context_idx"][:, i].cpu().numpy(),
+            "shard_idx": sampling_data["shard_idx"][:, i].cpu().numpy(),
+            "n_shards": sampling_data["n_shards"][:, i].cpu().numpy(),
         }
 
     @abstractmethod
@@ -131,6 +132,7 @@ class PostAnalysisProcessor(ABC):
         mapper: KeyedDiscreteMapper,
         device_mesh: DeviceMesh | None = None,
         activation_factory: ActivationFactory | None = None,
+        activation_factory_process_kwargs: dict[str, Any] = {},
     ) -> tuple[dict[str, dict[str, torch.Tensor]], list[dict[str, Any]] | None]:
         """Process tensors and add SAE-specific data to sample_result.
         
@@ -144,7 +146,8 @@ class PostAnalysisProcessor(ABC):
             sample_result: Dictionary of sampling results
             mapper: KeyedDiscreteMapper for encoding/decoding metadata
             device_mesh: Device mesh for distributed tensors
-            
+            activation_factory: Activation factory
+            activation_factory_process_kwargs: Keyword arguments for activation factory process
         Returns:
             Updated sample_result with any additional tensor data
         """
