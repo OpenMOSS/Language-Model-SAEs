@@ -317,3 +317,14 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
             pbar.update(len(buffer) - pbar.n)
             yield cast(dict[str, torch.Tensor], batch)
         pbar.close()
+
+class OverrideDtypeProcessor(BaseActivationProcessor[Iterable[dict[str, Any]], Iterable[dict[str, Any]]]):
+    def __init__(self, dtype: torch.dtype):
+        self.dtype = dtype
+
+    def process(self, data: Iterable[dict[str, Any]], **kwargs: Any) -> Iterable[dict[str, Any]]:
+        for activation in data:
+            for key, value in activation.items():
+                if isinstance(value, torch.Tensor):
+                    activation[key] = value.to(self.dtype)
+            yield activation

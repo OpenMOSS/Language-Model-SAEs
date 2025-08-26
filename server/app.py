@@ -31,6 +31,9 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 client = MongoClient(MongoDBConfig())
 sae_series = os.environ.get("SAE_SERIES", "default")
+tokenizer_only = os.environ.get("TOKENIZER_ONLY", "false").lower() == "true"
+if tokenizer_only:
+    print("WARNING: Tokenizer only mode is enabled, some features may not be available")
 
 # Remove global caches in favor of LRU cache
 # sae_cache: dict[str, SparseAutoEncoder] = {}
@@ -54,6 +57,7 @@ def get_model(name: str) -> LanguageModel:
     cfg = client.get_model_cfg(name)
     if cfg is None:
         raise ValueError(f"Model {name} not found")
+    cfg.tokenizer_only = tokenizer_only
     return load_model(cfg)
 
 
@@ -126,7 +130,7 @@ def trim_minimum(
 
     min_length = min(len(origins), feature_acts_indices[-1] + 10)
     feature_acts_indices_mask = feature_acts_indices <= min_length
-    return origins[:min_length], feature_acts_indices[feature_acts_indices_mask], feature_acts_values[feature_acts_indices_mask]
+    return origins[:int(min_length)], feature_acts_indices[feature_acts_indices_mask], feature_acts_values[feature_acts_indices_mask]
 
 
 @app.exception_handler(AssertionError)

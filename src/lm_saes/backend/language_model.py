@@ -39,9 +39,8 @@ def get_input_with_manually_prepended_bos(tokenizer, input):
 
 
 def to_tokens(tokenizer, text, max_length, device="cpu"):
-    tokenizer_prepends_bos = tokenizer.prepend_bos
-    print(tokenizer_prepends_bos)
-    text = text if tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
+    # tokenizer_prepends_bos = tokenizer.prepend_bos
+    # text = text if tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
     tokens = tokenizer(
         text,
         return_tensors="pt",
@@ -177,7 +176,7 @@ class TransformerLensLanguageModel(LanguageModel):
                 torch_dtype=cfg.dtype,
                 trust_remote_code=True,
             )
-            if cfg.load_ckpt
+            if cfg.load_ckpt and not cfg.tokenizer_only
             else None
         )
         hf_tokenizer = AutoTokenizer.from_pretrained(
@@ -205,7 +204,7 @@ class TransformerLensLanguageModel(LanguageModel):
                 tokenizer=hf_tokenizer,
                 dtype=cfg.dtype,  # type: ignore ; issue with transformer_lens
             )
-            if hf_model
+            if hf_model and not cfg.tokenizer_only
             else None
         )
 

@@ -15,6 +15,7 @@ class Metadata(BaseModel):
     sae_series: str
     prompt_tokens: List[str]
     prompt: str
+    
     node_threshold: float | None = None
     schema_version: int | None = 1
     lorsa_analysis_name: str | None = None

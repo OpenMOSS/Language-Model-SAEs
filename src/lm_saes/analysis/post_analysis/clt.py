@@ -40,6 +40,7 @@ class CLTPostAnalysisProcessor(PostAnalysisProcessor):
         mapper: KeyedDiscreteMapper,
         device_mesh: DeviceMesh | None = None,
         activation_factory: ActivationFactory | None = None,
+        activation_factory_process_kwargs: dict[str, Any] = {},
     ) -> tuple[dict[str, dict[str, torch.Tensor]], list[dict[str, Any]] | None]:
         """Process CLT-specific tensors and add decoder norms.
         
@@ -63,7 +64,7 @@ class CLTPostAnalysisProcessor(PostAnalysisProcessor):
         # Compute decoder norms for the specified layer
         decoder_norms = sae.decoder_norm_per_feature()
         decoder_norms = [
-            {"decoder_norms": dn.cpu().numpy()}
+            {"decoder_norms": dn.cpu().float().numpy()}
             for dn in decoder_norms.t()
         ]
         

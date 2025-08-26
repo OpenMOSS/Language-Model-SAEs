@@ -481,8 +481,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     k = x.shape[-1] - self.current_k + 1
                     
                     k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
-                    if isinstance(k_th_value, DTensor):
-                        k_th_value = k_th_value.full_tensor()
                     k_th_value = k_th_value.unsqueeze(dim=-1)
                     return x * x.ge(k_th_value)
 
