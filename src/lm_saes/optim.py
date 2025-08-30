@@ -5,8 +5,146 @@ Took the LR scheduler from: https://github.com/jbloomAus/DecisionTransformerInte
 import math
 from typing import Any, Optional
 
+import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
+from torch import Tensor
+from torch.optim.optimizer import Optimizer
+
+
+class LazyAdam(Optimizer):
+    """
+    Implements LazyAdam algorithm, which only updates parameters and their momentum
+    when their gradients are non-zero.
+    
+    This optimizer is specifically designed for Sparse Autoencoders (SAE) training,
+    with the following key features:
+    1. Only updates parameters and momentum when gradients are non-zero
+    2. Prevents gradient amplification for long-inactive features when they suddenly activate
+    
+    Args:
+        params: Iterable of parameters to optimize
+        lr: Learning rate (default: 1e-3)
+        betas: Coefficients for computing running averages (default: (0.9, 0.999))
+        eps: Term added for numerical stability (default: 1e-8)
+        weight_decay: Weight decay coefficient (default: 0)
+        update_param_on_zero_grad: Whether to update parameter itself when grad is zero (default: False)
+        update_exp_avg_on_zero_grad: Whether to update first moment (exp_avg) when grad is zero (default: False)
+        update_exp_avg_sq_on_zero_grad: Whether to update second moment (exp_avg_sq) when grad is zero (default: False)
+    """
+
+    def __init__(
+        self,
+        params,
+        lr: float = 1e-3,
+        betas: tuple[float, float] = (0.9, 0.999),
+        eps: float = 1e-8,
+        weight_decay: float = 0,
+        update_param_on_zero_grad: bool = False,
+        update_exp_avg_on_zero_grad: bool = False,
+        update_exp_avg_sq_on_zero_grad: bool = False,
+    ):
+        """
+        Args:
+            params: Iterable of parameters to optimize
+            lr: Learning rate (default: 1e-3)
+            betas: Coefficients for computing running averages (default: (0.9, 0.999))
+            eps: Term added for numerical stability (default: 1e-8)
+            weight_decay: Weight decay coefficient (default: 0)
+            update_param_on_zero_grad: Whether to update parameter itself when grad is zero (default: False)
+            update_exp_avg_on_zero_grad: Whether to update first moment (exp_avg) when grad is zero (default: False)
+            update_exp_avg_sq_on_zero_grad: Whether to update second moment (exp_avg_sq) when grad is zero (default: False)
+        """
+        if not 0.0 <= lr:
+            raise ValueError(f"Invalid learning rate: {lr}")
+        if not 0.0 <= eps:
+            raise ValueError(f"Invalid epsilon value: {eps}")
+        if not 0.0 <= betas[0] < 1.0:
+            raise ValueError(f"Invalid beta parameter at index 0: {betas[0]}")
+        if not 0.0 <= betas[1] < 1.0:
+            raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
+        if not 0.0 <= weight_decay:
+            raise ValueError(f"Invalid weight_decay value: {weight_decay}")
+
+        defaults = dict(
+            lr=lr,
+            betas=betas,
+            eps=eps,
+            weight_decay=weight_decay,
+            update_param_on_zero_grad=update_param_on_zero_grad,
+            update_exp_avg_on_zero_grad=update_exp_avg_on_zero_grad,
+            update_exp_avg_sq_on_zero_grad=update_exp_avg_sq_on_zero_grad,
+        )
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        """Performs a single optimization step."""
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            beta1, beta2 = group["betas"]
+            lr = group["lr"]
+            weight_decay = group["weight_decay"]
+            eps = group["eps"]
+            update_param_on_zero_grad = group.get("update_param_on_zero_grad", False)
+            update_exp_avg_on_zero_grad = group.get("update_exp_avg_on_zero_grad", False)
+            update_exp_avg_sq_on_zero_grad = group.get("update_exp_avg_sq_on_zero_grad", False)
+
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                
+                grad = p.grad
+                
+                # Skip if all gradients are zero
+                if not grad.any():
+                    continue
+                    
+                state = self.state[p]
+
+                # State initialization
+                if len(state) == 0:
+                    state["step"] = 0
+                    # Momentum buffer
+                    state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                    # Squared momentum buffer
+                    state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+
+                exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
+                
+                state["step"] += 1
+                bias_correction1 = 1 - beta1 ** state["step"]
+                bias_correction2 = 1 - beta2 ** state["step"]
+
+                if weight_decay != 0:
+                    grad = grad.add(p, alpha=weight_decay)
+
+                mask = grad != 0
+                exp_avg = exp_avg * beta1
+                if update_exp_avg_on_zero_grad:
+                    exp_avg = exp_avg + (1 - beta1) * grad
+                else:
+                    exp_avg = torch.where(mask, exp_avg + (1 - beta1) * grad, exp_avg)
+                exp_avg_sq = exp_avg_sq * beta2
+                if update_exp_avg_sq_on_zero_grad:
+                    exp_avg_sq = exp_avg_sq + (1 - beta2) * grad * grad
+                else:
+                    exp_avg_sq = torch.where(mask, exp_avg_sq + (1 - beta2) * grad * grad, exp_avg_sq)
+                state["exp_avg"] = exp_avg
+                state["exp_avg_sq"] = exp_avg_sq
+                step_size = lr * math.sqrt(bias_correction2) / bias_correction1
+                denom = exp_avg_sq.sqrt().add_(eps)
+                if update_param_on_zero_grad:
+                    update = step_size * exp_avg / denom
+                else:
+                    update = torch.where(mask, step_size * exp_avg / denom, torch.zeros_like(p))
+                p.data.sub_(update)
+
+        return loss
 
 
 #  None
@@ -130,3 +268,111 @@ def get_scheduler(scheduler_name: Optional[str], optimizer: optim.Optimizer, **k
         return lr_scheduler.LambdaLR(optimizer, lr_lambda)
     else:
         raise ValueError(f"Unsupported scheduler: {scheduler_name}")
+
+class SparseAdam(Optimizer):
+    """
+    Implements SparseAdam algorithm, which only updates parameters and their momentum
+    when their gradients are non-zero.
+    
+    This optimizer is specifically designed for Sparse Autoencoders (SAE) training,
+    with the following key features:
+    1. Only updates parameters and momentum when gradients are non-zero
+    2. Prevents gradient amplification for long-inactive features when they suddenly activate
+    
+    Args:
+        params: Iterable of parameters to optimize
+        lr: Learning rate (default: 1e-3)
+        betas: Coefficients for computing running averages (default: (0.9, 0.999))
+        eps: Term added for numerical stability (default: 1e-8)
+        weight_decay: Weight decay coefficient (default: 0)
+    """
+
+    def __init__(
+        self,
+        params,
+        lr: float = 1e-3,
+        betas: tuple[float, float] = (0.9, 0.999),
+        eps: float = 1e-8,
+        weight_decay: float = 0,
+    ):
+        if not 0.0 <= lr:
+            raise ValueError(f"Invalid learning rate: {lr}")
+        if not 0.0 <= eps:
+            raise ValueError(f"Invalid epsilon value: {eps}")
+        if not 0.0 <= betas[0] < 1.0:
+            raise ValueError(f"Invalid beta parameter at index 0: {betas[0]}")
+        if not 0.0 <= betas[1] < 1.0:
+            raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
+        if not 0.0 <= weight_decay:
+            raise ValueError(f"Invalid weight_decay value: {weight_decay}")
+
+        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        """Performs a single optimization step."""
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            beta1, beta2 = group["betas"]
+            lr = group["lr"]
+            weight_decay = group["weight_decay"]
+            eps = group["eps"]
+
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                
+                grad = p.grad
+                
+                # Skip if all gradients are zero
+                if not grad.any():
+                    continue
+                    
+                state = self.state[p]
+
+                # State initialization
+                if len(state) == 0:
+                    state["step"] = 0
+                    # Momentum buffer
+                    state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                    # Squared momentum buffer
+                    state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+
+                exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
+                
+                state["step"] += 1
+                bias_correction1 = 1 - beta1 ** state["step"]
+                bias_correction2 = 1 - beta2 ** state["step"]
+
+                if weight_decay != 0:
+                    grad = grad.add(p, alpha=weight_decay)
+
+                # Only update momentum for non-zero gradients
+                mask = grad != 0
+                
+                # Update momentum
+                exp_avg = exp_avg * beta1
+                exp_avg = torch.where(mask, exp_avg + (1 - beta1) * grad, exp_avg)
+                
+                # Update squared momentum
+                exp_avg_sq = exp_avg_sq * beta2
+                exp_avg_sq = torch.where(mask, exp_avg_sq + (1 - beta2) * grad * grad, exp_avg_sq)
+                
+                # Save back to state
+                state["exp_avg"] = exp_avg
+                state["exp_avg_sq"] = exp_avg_sq
+
+                # Compute step size
+                step_size = lr * math.sqrt(bias_correction2) / bias_correction1
+                
+                # Apply updates
+                denom = exp_avg_sq.sqrt().add_(eps)
+                update = torch.where(mask, step_size * exp_avg / denom, torch.zeros_like(p))
+                p.data.sub_(update)
+
+        return loss

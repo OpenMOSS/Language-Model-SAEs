@@ -20,6 +20,8 @@ from lm_saes.config import (
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.evaluator import Evaluator
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from lm_saes.utils.misc import get_mesh_rank
 
@@ -81,10 +83,18 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
     activation_factory = ActivationFactory(settings.activation_factory)
 
     logger.info("Loading SAE model")
-    if isinstance(settings.sae, CrossCoderConfig):
-        sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
-    else:
-        sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+
+    cls = {
+        "crosscoder": CrossCoder,
+        "sae": SparseAutoEncoder,
+        "clt": CrossLayerTranscoder,
+        "lorsa": LowRankSparseAttention,
+    }[settings.sae.sae_type]
+    sae = cls.from_config(
+        settings.sae,
+        device_mesh=device_mesh,
+        fold_activation_scale=settings.eval.fold_activation_scale,
+    )
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
 
@@ -97,7 +107,7 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
         else None
     )
 

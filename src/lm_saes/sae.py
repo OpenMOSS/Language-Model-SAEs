@@ -12,6 +12,7 @@ from typing_extensions import override
 
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.timer import timer
 
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import SAEConfig
@@ -92,6 +93,25 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         self.hook_hidden_pre = HookPoint()
         self.hook_feature_acts = HookPoint()
         self.hook_reconstructed = HookPoint()
+        
+        # Initialize dead latents tracking buffers after all parameters are set up
+        if self.cfg.use_auxk and self.cfg.act_fn == "topk":
+            if device_mesh is None:
+                self.register_buffer('tokens_since_last_activation', torch.zeros(self.cfg.d_sae, device=cfg.device, dtype=torch.long))
+                self.register_buffer('is_dead', torch.zeros(self.cfg.d_sae, device=cfg.device, dtype=torch.bool))
+            else:
+                self.register_buffer('tokens_since_last_activation', torch.distributed.tensor.zeros(
+                    self.cfg.d_sae,
+                    dtype=torch.long,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["tokens_since_last_activation"].placements(device_mesh),
+                ))
+                self.register_buffer('is_dead', torch.distributed.tensor.zeros(
+                    self.cfg.d_sae,
+                    dtype=torch.bool,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["is_dead"].placements(device_mesh),
+                ))
 
     @override
     def encoder_norm(self, keepdim: bool = False):
@@ -170,7 +190,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @torch.no_grad()
     def standardize_parameters_of_dataset_norm(
-        self, dataset_average_activation_norm: dict[str, float] | None
+        self, dataset_average_activation_norm: dict[str, float] | None = None
     ):  # should be overridden by subclasses due to side effects
         """
         Standardize the parameters of the model to account for dataset_norm during inference.
@@ -316,7 +336,17 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:  # may be overridden by subclasses
-        max_l0_in_batch = feature_acts.gt(0).to(feature_acts).sum(dim=-1).max()
+        # print(f"Indices: {feature_acts.indices().shape}") # [2,2240]
+        # print(f"Values: {feature_acts.values().shape}") # [2240]
+        # max_l0_in_batch = feature_acts.gt(0).to(feature_acts).sum(dim=-1).max()
+        
+        # 检查feature_acts是否为稀疏张量，如果不是则转换为稀疏张量
+        if not feature_acts.is_sparse:
+            feature_acts = feature_acts.to_sparse()
+        
+        non_zero_values = feature_acts.values()
+        
+        max_l0_in_batch = non_zero_values.gt(0).sum().max()
         sparsity_threshold = self.cfg.d_sae * (1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel)
         if (
             self.cfg.use_triton_kernel and 0 < max_l0_in_batch < sparsity_threshold
@@ -328,7 +358,8 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
                 feature_acts, self.W_D.T.contiguous(), require_precise_feature_acts_grad
             )  # TODO: remove the transpose
         else:
-            reconstructed = feature_acts @ self.W_D
+            # reconstructed = feature_acts @ self.W_D
+            reconstructed = torch.matmul(feature_acts.to_dense(), self.W_D)
 
         assert reconstructed is not None, "Reconstructed cannot be None"
         if self.cfg.use_decoder_bias:
@@ -356,9 +387,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         return reconstructed
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, fold_activation_scale: bool = False, **kwargs):
         cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        return cls.from_config(cfg)
+        return cls.from_config(cfg, fold_activation_scale=fold_activation_scale)
 
     @torch.no_grad()
     def _init_encoder_with_decoder_transpose(
@@ -418,3 +449,127 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         label = batch[self.cfg.hook_point_out]
         return label
+    
+    
+    @override
+    def compute_loss(
+        self,
+        batch: dict[str, torch.Tensor],
+        label: (
+            Union[
+                Float[torch.Tensor, "batch d_model"],
+                Float[torch.Tensor, "batch seq_len d_model"],
+            ]
+            | None
+        ) = None,
+        *,
+        use_batch_norm_mse: bool = False,
+        sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
+        tanh_stretch_coefficient: float = 4.0,
+        frequency_scale: float = 0.01,
+        p: int = 1,
+        l1_coefficient: float = 1.0,
+        return_aux_data: bool = True,
+        log_info: dict = {},
+        **kwargs,
+    ) -> Union[
+        Float[torch.Tensor, " batch"],
+        tuple[
+            Float[torch.Tensor, " batch"],
+            tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
+        ],
+    ]:
+        """Compute the loss for the autoencoder with optional AuxK auxiliary loss.
+        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
+        """
+        x, encoder_kwargs = self.prepare_input(batch)
+        label = self.prepare_label(batch, **kwargs)
+
+        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
+        reconstructed = self.decode(feature_acts, **kwargs)
+
+        with timer.time("loss_calculation"):
+            l_rec = (reconstructed - label).pow(2)
+            if use_batch_norm_mse:
+                l_rec = (
+                    l_rec
+                    / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
+                )
+            l_rec = l_rec.sum(dim=-1)
+            if isinstance(l_rec, DTensor):
+                l_rec = l_rec.full_tensor()
+            loss_dict = {
+                "l_rec": l_rec,
+            }
+            loss = l_rec.mean()
+
+            if sparsity_loss_type is not None:
+                with timer.time("sparsity_loss_calculation"):
+                    decoder_norm = self.decoder_norm() if self.cfg.sparsity_include_decoder_norm else 1.0
+                    if sparsity_loss_type == "power":
+                        l_s = torch.norm(feature_acts * decoder_norm, p=p, dim=-1)
+                    elif sparsity_loss_type == "tanh":
+                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm).sum(dim=-1)
+                    elif sparsity_loss_type == "tanh-quad":
+                        approx_frequency = einops.reduce(
+                            torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm),
+                            "... d_sae -> d_sae",
+                            "mean",
+                        )
+                        l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
+                    else:
+                        raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
+                    if isinstance(l_s, DTensor):
+                        l_s = l_s.full_tensor()
+                    l_s = l1_coefficient * l_s
+                    # WARNING: Some DTensor bugs make if l1_coefficient * l_s goes before full_tensor, the l1_coefficient value will be internally cached. Furthermore, it will cause the backward pass to fail with redistribution error. See https://github.com/pytorch/pytorch/issues/153603 and https://github.com/pytorch/pytorch/issues/153615 .
+                    loss_dict["l_s"] = l_s
+                    loss = loss + l_s.mean()
+
+            # Add AuxK auxiliary loss if enabled
+            if self.cfg.use_auxk and self.cfg.act_fn == "topk":
+                with timer.time("auxk_loss_calculation"):
+                    # Get reconstruction error
+                    e = label - reconstructed  # (batch, d_model) or (batch, seq_len, d_model)
+                    
+                    # Get the top-k_aux dead latents based on their activation values
+                    current_k = self.current_k
+                    if self.device_mesh is not None:
+                        self.current_k = min(self.cfg.k_aux, self.is_dead.full_tensor().sum())
+                    else:
+                        self.current_k = min(self.cfg.k_aux, self.is_dead.sum())
+                    
+                    if self.current_k > 0:
+                        # Scale feature activations by decoder norm if configured
+                        if self.cfg.sparsity_include_decoder_norm:
+                            dead_sparsity_scores = hidden_pre * self.is_dead * self.decoder_norm()
+                        else:
+                            dead_sparsity_scores = hidden_pre * self.is_dead
+
+                        dead_activation_mask = self.activation_function(dead_sparsity_scores)
+                        dead_feature_acts = torch.clamp(hidden_pre * dead_activation_mask * self.is_dead, min=0.0)
+                        
+                        # Decode auxiliary feature activations
+                        aux_reconstructed = dead_feature_acts @ self.W_D
+
+                        if isinstance(aux_reconstructed, DTensor):
+                            aux_reconstructed = DimMap({}).redistribute(aux_reconstructed)
+                        
+                        l_aux = (e - aux_reconstructed).pow(2).sum(dim=-1)
+                    else:
+                        l_aux = torch.zeros_like(l_rec)
+                    
+                    if isinstance(l_aux, DTensor):
+                        l_aux = l_aux.full_tensor()
+                    loss_dict["l_aux"] = l_aux
+                    loss = loss + self.cfg.aux_coefficient * l_aux.mean()
+                    
+                    self.current_k = current_k
+        if return_aux_data:
+            aux_data = {
+                "feature_acts": feature_acts,
+                "reconstructed": reconstructed,
+                "hidden_pre": hidden_pre,
+            }
+            return loss, (loss_dict, aux_data)
+        return loss

@@ -141,16 +141,45 @@ export const CircuitNode = ({
   targetPosition = Position.Top,
   sourcePosition = Position.Bottom,
 }: NodeProps<Node<NodeData>>) => {
+  
+  // 根据节点类型获取颜色
+  const getNodeColor = () => {
+    const node = data?.tracingNode;
+    if (!node) return "bg-gray-400";
+    
+    if (node.type === "feature") {
+      const activation = node.activation;
+      const maxActivation = node.maxActivation;
+      const ratio = activation / maxActivation;
+      
+      if (ratio > 0.8) return "bg-red-500";
+      if (ratio > 0.6) return "bg-orange-500";
+      if (ratio > 0.4) return "bg-yellow-500";
+      if (ratio > 0.2) return "bg-blue-500";
+      return "bg-gray-400";
+    } else if (node.type === "logits") {
+      return "bg-purple-500";
+    } else if (node.type === "attn-score") {
+      return "bg-green-500";
+    }
+    return "bg-gray-400";
+  };
+
   return (
     <>
       <Handle type="target" position={targetPosition} isConnectable={isConnectable} />
-      <ContextMenu>
-        <ContextMenuTrigger className="block p-2.5">{data?.label}</ContextMenuTrigger>
-        <ContextMenuContent>
-          {data.onTrace && <ContextMenuItem onClick={data.onTrace}>Trace this node</ContextMenuItem>}
-          {data.clearTracing && <ContextMenuItem onClick={data.clearTracing}>Clear tracing</ContextMenuItem>}
-        </ContextMenuContent>
-      </ContextMenu>
+      
+      {/* 圆形节点 */}
+      <div
+        className={cn(
+          "w-6 h-6 rounded-full border border-white shadow-sm transition-all duration-200 cursor-pointer hover:scale-110 hover:shadow-md",
+          getNodeColor()
+        )}
+        title={data?.label}
+      />
+      
+
+      
       <Handle type="source" position={sourcePosition} isConnectable={isConnectable} />
     </>
   );
@@ -168,9 +197,9 @@ export const CircuitViewer = memo(
     const getLayoutedElements = useCallback((nodes: Node<NodeData>[], edges: Edge<EdgeData>[]) => {
       const dagreGraph = new dagre.graphlib.Graph();
       dagreGraph.setDefaultEdgeLabel(() => ({}));
-      dagreGraph.setGraph({ rankdir: "TB" });
-      const nodeWidth = 172;
-      const nodeHeight = 36;
+      dagreGraph.setGraph({ rankdir: "BT" });
+      const nodeWidth = 24; // 更小的圆形节点宽度
+      const nodeHeight = 24; // 更小的圆形节点高度
 
       nodes.forEach((node) => {
         dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
@@ -184,10 +213,33 @@ export const CircuitViewer = memo(
 
       const newNodes: Node<NodeData>[] = nodes.map((node) => {
         const nodeWithPosition = dagreGraph.node(node.id);
+        
+        // 检查这个节点是作为源节点还是目标节点
+        const isSource = edges.some(edge => edge.source === node.id);
+        const isTarget = edges.some(edge => edge.target === node.id);
+        
+        // 根据节点角色设置连接点
+        let targetPosition = Position.Top;
+        let sourcePosition = Position.Bottom;
+        
+        if (isSource && !isTarget) {
+          // 纯源节点（只有出边，没有入边）- 从下方输出
+          targetPosition = Position.Bottom;
+          sourcePosition = Position.Bottom;
+        } else if (!isSource && isTarget) {
+          // 纯目标节点（只有入边，没有出边）- 从上方接收
+          targetPosition = Position.Top;
+          sourcePosition = Position.Top;
+        } else {
+          // 中间节点（既有入边又有出边）- 从上方接收，从下方输出
+          targetPosition = Position.Top;
+          sourcePosition = Position.Bottom;
+        }
+        
         const newNode: Node<NodeData> = {
           ...node,
-          targetPosition: Position.Top,
-          sourcePosition: Position.Bottom,
+          targetPosition,
+          sourcePosition,
           // We are shifting the dagre node position (anchor=center center) to the top left
           // so it matches the React Flow node anchor point (top left).
           position: {
@@ -314,7 +366,7 @@ export const CircuitViewer = memo(
     return (
       <div className={cn("w-full h-[500px]", className)}>
         <ReactFlow<Node<NodeData>, Edge<EdgeData>>
-          className={flowClassName}
+          className={cn("w-full h-full", flowClassName)}
           nodeTypes={{ default: CircuitNode }}
           nodes={nodes}
           edges={edges}
@@ -328,6 +380,8 @@ export const CircuitViewer = memo(
             !disabled && onTrace?.(node.data.tracingNode);
           }}
           onSelectionChange={setSelection as (selection: { nodes: Node[]; edges: Edge[] }) => void}
+          fitView
+          fitViewOptions={{ padding: 0.1 }}
         >
           <Controls />
           <MiniMap />

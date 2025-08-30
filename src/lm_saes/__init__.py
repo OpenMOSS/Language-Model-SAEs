@@ -1,6 +1,7 @@
 from .activation import ActivationFactory, ActivationWriter
 from .analysis import FeatureAnalyzer
 from .clt import CrossLayerTranscoder
+from .lorsa import LowRankSparseAttention
 from .config import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
@@ -11,7 +12,7 @@ from .config import (
     CLTConfig,
     CrossCoderConfig,
     DatasetConfig,
-    DirectLogitAttributorConfig,
+    # DirectLogitAttributorConfig,
     FeatureAnalyzerConfig,
     InitializerConfig,
     LanguageModelConfig,
@@ -20,6 +21,7 @@ from .config import (
     SAEConfig,
     TrainerConfig,
     WandbConfig,
+    LorsaConfig,
 )
 from .crosscoder import CrossCoder
 from .database import MongoClient
@@ -34,6 +36,8 @@ from .runners import (
     EvaluateCrossCoderSettings,
     EvaluateSAESettings,
     GenerateActivationsSettings,
+    TrainLorsaSettings,
+    train_lorsa,
     SweepingItem,
     SweepSAESettings,
     TrainCLTSettings,
@@ -53,6 +57,7 @@ from .runners import (
     train_sae,
 )
 from .sae import SparseAutoEncoder
+from .circuit import ReplacementModel, attribute
 
 __all__ = [
     "ActivationFactory",
@@ -110,4 +115,10 @@ __all__ = [
     "DirectLogitAttributeSettings",
     "direct_logit_attribute",
     "DirectLogitAttributorConfig",
+    "LowRankSparseAttention",
+    "ReplacementModel",
+    "attribute",
+    "TrainLorsaSettings",
+    "train_lorsa",
+    "LorsaConfig",
 ]

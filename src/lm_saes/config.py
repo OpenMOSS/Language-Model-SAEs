@@ -41,7 +41,7 @@ class BaseModelConfig(BaseModel):
             },
             mode="serialization",
         ),
-    ] = Field(default=torch.bfloat16, exclude=True, validate_default=False)
+    ] = Field(default=torch.float32, exclude=True, validate_default=False)
 
 
 class BaseSAEConfig(BaseModelConfig, ABC):
@@ -51,7 +51,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt"]
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa"]
     d_model: int
     expansion_factor: int
     use_decoder_bias: bool = True
@@ -62,8 +62,9 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     sae_pretrained_name_or_path: Optional[str] = None
     strict_loading: bool = True
     use_triton_kernel: bool = False
-    sparsity_threshold_for_triton_spmm_kernel: float = 0.99
-
+    sparsity_threshold_for_triton_spmm_kernel: float = 0.996
+    circuit_tracing_mode: bool = False
+    
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
     promote_act_fn_dtype: Annotated[
@@ -114,14 +115,65 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
 
 class SAEConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "clt"] = "sae"
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "sae"
     hook_point_in: str
-    hook_point_out: str = Field(default_factory=lambda validated_model: validated_model["hook_point_in"])
+    hook_point_out: str
     use_glu_encoder: bool = False
 
     @property
     def associated_hook_points(self) -> list[str]:
         return [self.hook_point_in, self.hook_point_out]
+
+
+class LorsaConfig(BaseSAEConfig):
+    """Configuration for Low Rank Sparse Attention."""
+    
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "lorsa"
+
+    hook_point_in: str
+    hook_point_out: str
+    
+    # Attention dimensions
+    n_qk_heads: int
+    d_qk_head: int
+    positional_embedding_type: Literal["rotary", "none"] = "rotary"
+    rotary_dim: int
+    rotary_base: int = 10000
+    rotary_adjacent_pairs: bool = True
+    rotary_scale: int = 1
+    use_NTK_by_parts_rope: bool = False
+    NTK_by_parts_factor: float = 1.0
+    NTK_by_parts_low_freq_factor: float = 1.0
+    NTK_by_parts_high_freq_factor: float = 1.0
+    old_context_len: int = 2048
+
+    n_ctx: int
+    skip_bos: bool = False
+    
+    # Attention settings
+    attn_scale: Optional[float] = None
+    
+    @property
+    def n_ov_heads(self) -> int:
+        return self.d_sae
+    
+    @property
+    def associated_hook_points(self) -> list[str]:
+        """All hook points used by Lorsa."""
+        return [self.hook_point_in, self.hook_point_out]
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        assert self.hook_point_in is not None and self.hook_point_out is not None, (
+            "hook_point_in and hook_point_out must be set"
+        )
+        assert self.hook_point_in != self.hook_point_out, (
+            "hook_point_in and hook_point_out must be different"
+        )
+        assert self.n_ov_heads % self.n_qk_heads == 0, (
+            "n_ov_heads must be divisible by n_qk_heads"
+        )
+
 
 
 class CLTConfig(BaseSAEConfig):
@@ -131,12 +183,15 @@ class CLTConfig(BaseSAEConfig):
     reads from the residual stream at that layer and can decode to layers L through L-1.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt"] = "clt"
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "clt"
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk"] = "relu"
     hook_points_in: list[str]
     """List of hook points to capture input activations from, one for each layer."""
     hook_points_out: list[str]
     """List of hook points to capture output activations from, one for each layer."""
-
+    decode_with_csr: bool = False
+    """Whether to decode with CSR matrices. If `True`, will use CSR matrices for decoding. If `False`, will use dense matrices for decoding."""
+    
     @property
     def n_layers(self) -> int:
         """Number of layers in the CLT."""
@@ -160,7 +215,7 @@ class CLTConfig(BaseSAEConfig):
 
 
 class CrossCoderConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "clt"] = "crosscoder"
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "crosscoder"
     hook_points: list[str]
 
     @property
@@ -173,28 +228,47 @@ class CrossCoderConfig(BaseSAEConfig):
 
 
 class InitializerConfig(BaseConfig):
-    bias_init_method: str = "all_zero"
+    bias_init_method: Literal["all_zero", "geometric_median"] = "all_zero"
     decoder_uniform_bound: float = 1.0
     encoder_uniform_bound: float = 1.0
     init_encoder_with_decoder_transpose: bool = True
     init_encoder_with_decoder_transpose_factor: float = 1.0
     init_log_jumprelu_threshold_value: float | None = None
-    init_search: bool = False
-    state: Literal["training", "inference"] = "training"
+    grid_search_init_norm: bool = False
+    initialize_W_D_with_active_subspace: bool = False
+    d_active_subspace: int | None = None
 
 
 class TrainerConfig(BaseConfig):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     l1_coefficient: float | None = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
+    amp_dtype: Annotated[
+        torch.dtype | None,
+        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+        PlainSerializer(convert_torch_dtype_to_str),
+        WithJsonSchema(
+            {
+                "type": ["string", "null"],
+            },
+            mode="serialization",
+        ),
+    ] = Field(default=torch.bfloat16, exclude=True, validate_default=False)
     sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None
     tanh_stretch_coefficient: float = 4.0
     p: int = 1
     initial_k: int | float | None = None
     k_warmup_steps: int | float = 0.1
+    k_cold_booting_steps: int | float = 0
     use_batch_norm_mse: bool = True
-
+    skip_metrics_calculation: bool = False
+    gradient_accumulation_steps: int = 1
+    
     lr: float | dict[str, float] = 0.0004
     betas: Tuple[float, float] = (0.9, 0.999)
+    optimizer_class: Literal["adam", "sparseadam"] = "adam"
+    optimizer_foreach: bool = True
     lr_scheduler_name: Literal[
         "constant",
         "constantwithwarmup",
@@ -206,7 +280,6 @@ class TrainerConfig(BaseConfig):
     lr_end_ratio: float = 1 / 32
     lr_warm_up_steps: int | float = 5000
     lr_cool_down_steps: int | float = 0.2
-    jumprelu_lr_factor: float = 1.0
     clip_grad_norm: float = 0.0
     feature_sampling_window: int = 1000
     total_training_tokens: int = 300_000_000
@@ -216,6 +289,7 @@ class TrainerConfig(BaseConfig):
     n_checkpoints: int = 10
     check_point_save_mode: Literal["log", "linear"] = "log"
 
+    from_pretrained_path: Optional[str] = None
     exp_result_path: Path = Path("results")
 
     def model_post_init(self, __context):
@@ -224,12 +298,17 @@ class TrainerConfig(BaseConfig):
         self.exp_result_path.joinpath("checkpoints").mkdir(parents=True, exist_ok=True)
         assert self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
 
+        if self.from_pretrained_path is not None:
+            assert os.path.exists(self.from_pretrained_path), f"from_pretrained_path {self.from_pretrained_path} does not exist"
+
 
 class EvalConfig(BaseConfig):
     feature_sampling_window: int = 1000
     total_eval_tokens: int = 1000000
     use_cached_activations: bool = False
     device: str = "cpu"
+    fold_activation_scale: bool = True
+    """Whether to fold the activation scale into the SAE model"""
 
 
 class DatasetConfig(BaseConfig):
@@ -313,6 +392,9 @@ class BufferShuffleConfig(BaseConfig):
 
 
 class ActivationFactoryConfig(BaseConfig):
+    model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
+
+
     sources: list[ActivationFactoryDatasetSource | ActivationFactoryActivationsSource]
     """ List of sources to use for activations. Can be a dataset or a path to activations. """
     target: ActivationFactoryTarget
@@ -331,6 +413,20 @@ class ActivationFactoryConfig(BaseConfig):
         else None
     )
     """ The batch size to use for outputting `activations-1d`. """
+    override_dtype: Optional[
+        Annotated[
+            torch.dtype,
+            BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+            PlainSerializer(convert_torch_dtype_to_str),
+            WithJsonSchema(
+                {
+                    "type": "string",
+                },
+                mode="serialization",
+            ),
+        ]
+    ] = None
+    """ The dtype to use for outputting activations. If `None`, will not override the dtype. """
     buffer_size: Optional[int] = Field(
         default_factory=lambda validated_model: 500_000
         if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
@@ -361,9 +457,16 @@ class LanguageModelConfig(BaseModelConfig):
     backend: Literal["huggingface", "transformer_lens", "auto"] = "auto"
     """ The backend to use for the language model. """
     load_ckpt: bool = True
-
+    tokenizer_only: bool = False
+    """ Whether to only load the tokenizer. """
     prepend_bos: bool = True
     """ Whether to prepend the BOS token to the input. """
+    bos_token_id: Optional[int] = None
+    """ The ID of the BOS token. If `None`, will use the default BOS token. """
+    eos_token_id: Optional[int] = None
+    """ The ID of the EOS token. If `None`, will use the default EOS token. """
+    pad_token_id: Optional[int] = None
+    """ The ID of the padding token. If `None`, will use the default padding token. """
 
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
@@ -390,7 +493,6 @@ class LLaDAConfig(LanguageModelConfig):
     mask_ratio: float = 0.0
     mdm_mask_token_id: int = 126336
     prepend_bos: bool = False
-    calculate_logits: bool = False
 
 
 class ActivationWriterConfig(BaseConfig):
@@ -408,8 +510,16 @@ class ActivationWriterConfig(BaseConfig):
 
 
 class FeatureAnalyzerConfig(BaseConfig):
+    model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
     total_analyzing_tokens: int
     """ Total number of tokens to analyze """
+
+    enable_sampling: bool = False
+    """ Whether to use weighted sampling for selecting activations. 
+        If `False`, will only keep top activations (below the subsample threshold). 
+    """
+    sample_weight_exponent: float = 2.0
+    """ Exponent for weighting samples by activation value """
 
     ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
@@ -417,23 +527,23 @@ class FeatureAnalyzerConfig(BaseConfig):
     subsamples: dict[str, dict[str, int | float]] = Field(
         default_factory=lambda: {
             "top_activations": {"proportion": 1.0, "n_samples": 10},
-            "non_activating": {
-                "proportion": 0.3,
-                "n_samples": 20,
-                "max_length": 50,
-            },
         }
     )
     """ Dictionary mapping subsample names to their parameters:
         - `proportion`: Proportion of max activation to consider
         - `n_samples`: Number of samples to keep
-        - `max_length`: Maximum length of the sample
     """
 
+    non_activating_subsample: dict[str, int | float] | None = Field(
+        default_factory=lambda: {"threshold": 0.3, "n_samples": 10, "max_length": 50}
+    )
+    """ Parameters for non-activating subsample:
+        - `threshold`: Threshold of max activation to consider
+        - `n_samples`: Number of samples to keep
+    """
 
-class DirectLogitAttributorConfig(BaseConfig):
-    top_k: int = 10
-    """ The number of top tokens to attribute to. """
+    clt_layer: int | None = None
+    """ Layer to analyze for CLT. Provided iff analyzing CLT. """
 
 
 class WandbConfig(BaseConfig):

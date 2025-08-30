@@ -7,7 +7,7 @@ import { FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
 import React, { useEffect, useState, useMemo, useCallback, Suspense, lazy, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { useAsyncFn, useMount, useDebounce } from "react-use";
 import { z } from "zod";
 
@@ -1649,6 +1649,16 @@ const UnifiedChessBoard = ({ fen, activations, sampleIndex, analysisName, contex
 
       const result = await response.json();
       
+      console.log(`📥 Self-play API响应:`, result);
+      console.log(`📥 Self-play数据:`, result.selfplay);
+      
+      // 检查是否有错误
+      if (result.status === 'error' || result.selfplay?.error) {
+        console.error(`❌ Self-play分析失败: ${result.selfplay?.error || '未知错误'}`);
+        updateState({ isSelfplayLoading: false });
+        return;
+      }
+      
       // 检查是否被取消
       if (result.selfplay?.cancelled) {
         console.log(`⚡ Self-play任务被取消: ${fen.substring(0, 20)}...`);
@@ -1754,7 +1764,7 @@ const UnifiedChessBoard = ({ fen, activations, sampleIndex, analysisName, contex
     }, delayMs);
     
     return () => clearTimeout(timer);
-  }, [autoAnalyze, delayMs, fen]);
+  }, [autoAnalyze, delayMs, fen, state.stockfishCompleted, state.selfplayCompleted]);
 
   // 渲染模式选择器（显示后台进度）
   const renderModeSelector = () => (
@@ -3530,9 +3540,47 @@ function fenToBoardStr(fen: string): string {
 
 export const FeaturesPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [globalAnalysisCollapsed, setGlobalAnalysisCollapsed] = useState<boolean>(false);  // 全局分析折叠状态
   const [showSelfplay, setShowSelfplay] = useState<boolean>(false);  // Self-play显示状态
   const [currentFeatureKey, setCurrentFeatureKey] = useState<string | null>(null);  // 跟踪当前feature
+  
+  // 检查是否从circuits页面跳转过来
+  const fromCircuits = searchParams.get('from') === 'circuits';
+  const featureInfo = searchParams.get('feature');
+  
+  // 调试信息
+  console.log('🔍 Feature页面参数检查:');
+  console.log('  所有URL参数:', Object.fromEntries(searchParams.entries()));
+  console.log('  from参数:', searchParams.get('from'));
+  console.log('  fromCircuits:', fromCircuits);
+  console.log('  featureInfo:', featureInfo);
+  console.log('  returnState参数:', searchParams.get('returnState'));
+  console.log('  dictionary参数:', searchParams.get('dictionary'));
+  console.log('  featureIndex参数:', searchParams.get('featureIndex'));
+  
+  // 解析返回状态信息
+  const returnStateParam = searchParams.get('returnState');
+  let returnState = null;
+  if (returnStateParam) {
+    try {
+      returnState = JSON.parse(decodeURIComponent(returnStateParam));
+    } catch (error: any) {
+      console.error('解析返回状态失败:', error);
+    }
+  }
+  
+  // 返回Circuit页面的处理函数
+  const handleReturnToCircuits = useCallback(() => {
+    if (returnState) {
+      // 构建返回URL，包含所有状态信息
+      const returnUrl = `/circuits?returnState=${encodeURIComponent(JSON.stringify(returnState))}`;
+      navigate(returnUrl);
+    } else {
+      // 如果没有状态信息，使用浏览器后退
+      window.history.back();
+    }
+  }, [returnState, navigate]);
   
   // 优化全局折叠按钮的点击处理函数
   const handleGlobalAnalysisToggle = useCallback(() => {
@@ -3552,26 +3600,33 @@ export const FeaturesPage = () => {
   // 取消所有feature相关的推演任务
   const cancelAllFeatureTasks = async () => {
     try {
-      console.log('🔄 开始取消所有feature相关的推演任务...');
-      console.log('🔄 发送取消请求到:', `${import.meta.env.VITE_BACKEND_URL}/tasks/cancel`);
-      console.log('🔄 请求体:', { pattern: 'selfplay_' });
+      console.log('🔄 开始取消所有feature相关的任务...');
       
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/tasks/cancel`, {
+      // 首先取消所有会话（包括引擎分析）
+      const sessionResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/cancel_all_sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (sessionResponse.ok) {
+        const sessionResult = await sessionResponse.json();
+        console.log(`🛑 取消了 ${sessionResult.cancelled_count} 个会话和任务`);
+      }
+      
+      // 然后取消所有self-play任务
+      const taskResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/tasks/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pattern: 'selfplay_' })  // 取消所有推演任务
       });
       
-      console.log('🔄 取消请求响应状态:', response.status);
-      
-      if (response.ok) {
-        const result = await response.json();
-        console.log(`🛑 切换feature时取消了 ${result.cancelled_count} 个推演任务`);
-        console.log('🛑 取消任务完整响应:', result);
-        return result.cancelled_count;
+      if (taskResponse.ok) {
+        const taskResult = await taskResponse.json();
+        console.log(`🛑 额外取消了 ${taskResult.cancelled_count} 个推演任务`);
+        return taskResult.cancelled_count;
       } else {
-        console.error('❌ 取消任务失败，HTTP状态:', response.status);
-        const errorText = await response.text();
+        console.error('❌ 取消任务失败，HTTP状态:', taskResponse.status);
+        const errorText = await taskResponse.text();
         console.error('❌ 错误详情:', errorText);
       }
     } catch (error) {
@@ -3934,6 +3989,35 @@ export const FeaturesPage = () => {
     <div id="Top">
       <AppNavbar />
       <div className="pt-4 pb-20 px-20 flex flex-col items-center gap-12">
+        {/* 返回按钮 - 当从circuits页面跳转过来时显示 */}
+        {fromCircuits && (
+          <div className="w-full max-w-6xl">
+            <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex items-center gap-2 flex-1">
+                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium text-blue-800">
+                    从电路页面跳转查看Feature
+                  </span>
+                  {returnState?.nodeInfo && (
+                    <div className="text-xs text-blue-600 mt-1">
+                      节点信息: {returnState.nodeInfo.type} (层{returnState.nodeInfo.layer}, 位置{returnState.nodeInfo.position})
+                      {returnState.nodeInfo.featureIndex !== undefined && `, 特征索引${returnState.nodeInfo.featureIndex}`}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <Button 
+                onClick={handleReturnToCircuits}
+                variant="outline" 
+                size="sm"
+                className="ml-auto"
+              >
+                ← 返回电路页面
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
           <span className="font-bold justify-self-end">Select dictionary:</span>
           <Select

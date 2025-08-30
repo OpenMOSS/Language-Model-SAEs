@@ -241,26 +241,30 @@ def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optiona
 #     return layer_indices
 
 def _get_layer_indices_from_hook_points(hook_points: list[str]) -> list[int]:
-    # 支持两种格式的正则表达式
-    mlp_out_pattern = r"^blocks\.(\d+)\.hook_mlp_out$"
-    resid_mid_pattern = r"^blocks\.(\d+)\.resid_mid_after_ln$"
-    resid_post_pattern = r"^blocks\.(\d+)\.resid_post_after_ln$"
-    
-    layer_indices = []
+    # 支持的 hook 点样式
+    patterns = [
+        r"^blocks\.(\d+)\.hook_mlp_out$",
+        r"^blocks\.(\d+)\.resid_mid_after_ln$",
+        r"^blocks\.(\d+)\.resid_post_after_ln$",
+        r"^blocks\.(\d+)\.hook_attn_in$",
+        r"^blocks\.(\d+)\.hook_attn_out$",
+    ]
+
+    layer_indices: list[int] = []
     for hook_point in hook_points:
-        mlp_match = re.match(mlp_out_pattern, hook_point)
-        resid_mid_match = re.match(resid_mid_pattern, hook_point)
-        resid_post_match = re.match(resid_post_pattern, hook_point)
-        
-        if mlp_match:
-            layer_indices.append(int(mlp_match.group(1)))
-        elif resid_mid_match:
-            layer_indices.append(int(resid_mid_match.group(1)))
-        elif resid_post_match:
-            layer_indices.append(int(resid_post_match.group(1)))
-        else:
-            raise ValueError(f"hook_point '{hook_point}' must be either 'blocks.{{layer}}.hook_mlp_out' or 'blocks.{{layer}}.resid_mid_after_ln' or 'blocks.{{layer}}.resid_post_after_ln'")
-    
+        matched = False
+        for pat in patterns:
+            m = re.match(pat, hook_point)
+            if m:
+                layer_indices.append(int(m.group(1)))
+                matched = True
+                break
+        if not matched:
+            raise ValueError(
+                f"hook_point '{hook_point}' 必须匹配以下任一格式："
+                " blocks.<L>.hook_mlp_out | blocks.<L>.resid_mid_after_ln | "
+                "blocks.<L>.resid_post_after_ln | blocks.<L>.hook_attn_in | blocks.<L>.hook_attn_out"
+            )
     return layer_indices
 
 class LanguageModel(ABC):

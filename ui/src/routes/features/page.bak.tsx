@@ -403,8 +403,8 @@ class StatisticsManager {
     this.materialAccumulator = { totalWhiteMaterial: 0, totalBlackMaterial: 0, totalMaterialDifference: 0, count: 0 };
     this.wdlAccumulator = { totalWinProb: 0, totalDrawProb: 0, totalLossProb: 0, count: 0 };
     
-    console.log(`统计重置，最大棋盘限制: ${maxBoards}`);
-    this.notifyListeners();
+      console.log(`统计重置，最大棋盘限制: ${maxBoards}`);
+      this.notifyListeners();
     }
   }
 
@@ -628,7 +628,7 @@ class StatisticsManager {
                       if (toRank >= 0 && toRank < 8 && toFile >= 0 && toFile < 8) {
                         const targetPiece = board[toRank][toFile];
                         if (!targetPiece || targetPiece === '') {
-                    this.statistics.move_en_passant++;
+                          this.statistics.move_en_passant++;
                         }
                       }
                     }
@@ -975,41 +975,41 @@ const RuleStatisticsCard = ({ maxActivationTimes = 0 }: { maxActivationTimes?: n
 
           {/* 棋盘位置热力图 */}
           <div className="flex gap-4 justify-center">
-          <div>
+            <div>
               <h4 className="text-sm font-bold text-gray-700 mb-2">🗺️ 起始位置</h4>
               <div className="bg-gray-100 p-2 rounded-lg">
                 <div className="grid grid-cols-8 gap-0.5 max-w-[160px] mx-auto">
-                {Array.from({ length: 64 }, (_, i) => {
-                  const rank = Math.floor(i / 8);
-                  const file = i % 8;
-                  const square = `${String.fromCharCode(97 + file)}${8 - rank}`;
-                  const positionKey = `position_${square}`;
-                  const count = statistics[positionKey as keyof RuleStatistics] as number || 0;
-                  const percentage = getPercentage(count);
-                  const intensity = Math.min(percentage / 20, 1); // 最大20%为最热
-                  
-                  return (
-                    <div
-                      key={square}
+                  {Array.from({ length: 64 }, (_, i) => {
+                    const rank = Math.floor(i / 8);
+                    const file = i % 8;
+                    const square = `${String.fromCharCode(97 + file)}${8 - rank}`;
+                    const positionKey = `position_${square}`;
+                    const count = statistics[positionKey as keyof RuleStatistics] as number || 0;
+                    const percentage = getPercentage(count);
+                    const intensity = Math.min(percentage / 20, 1); // 最大20%为最热
+                    
+                    return (
+                      <div
+                        key={square}
                         className={`w-5 h-5 flex items-center justify-center text-[8px] font-bold border border-gray-300 ${
-                        (rank + file) % 2 === 0 ? 'bg-white' : 'bg-gray-200'
-                      }`}
-                      style={{
-                        backgroundColor: count > 0 ? 
-                          `rgba(255, 0, 0, ${intensity * 0.7})` : 
-                          ((rank + file) % 2 === 0 ? '#ffffff' : '#e5e7eb')
-                      }}
-                      title={`${square}: ${count}次 (${percentage}%)`}
-                    >
-                      {count > 0 ? count : ''}
-                    </div>
-                  );
-                })}
-              </div>
+                          (rank + file) % 2 === 0 ? 'bg-white' : 'bg-gray-200'
+                        }`}
+                        style={{
+                          backgroundColor: count > 0 ? 
+                            `rgba(255, 0, 0, ${intensity * 0.7})` : 
+                            ((rank + file) % 2 === 0 ? '#ffffff' : '#e5e7eb')
+                        }}
+                        title={`${square}: ${count}次 (${percentage}%)`}
+                      >
+                        {count > 0 ? count : ''}
+                      </div>
+                    );
+                  })}
+                </div>
                 <div className="mt-1 text-[10px] text-gray-600 text-center">
                   红色：起始位置
+                </div>
               </div>
-            </div>
             </div>
 
             <div>
@@ -1234,283 +1234,7 @@ const RuleStatisticsCard = ({ maxActivationTimes = 0 }: { maxActivationTimes?: n
 };
 
 // 支持渐进式加载的棋盘分析组件
-// Self-play 步骤悬浮窗组件
-const SelfPlayStepPopover = ({ step, onClose, position, initialActiveColor }: {
-  step: any;
-  onClose: () => void;
-  position: { x: number; y: number };
-  initialActiveColor: string;
-}) => {
-  // 在悬浮窗中显示这一步的走法
-  const selfplayMoves = { lastMove: undefined, nextMove: step.move };
-  const boardHTML = generateFENChessBoard(step.fen_before, undefined, undefined, "selfplay-step", undefined, undefined, false, initialActiveColor, selfplayMoves);
-  
-  return (
-    <div 
-      className="fixed z-50 bg-white border border-gray-300 rounded-lg shadow-lg p-4"
-      style={{
-        left: `${position.x}px`,
-        top: `${position.y}px`,
-        minWidth: '400px',
-        maxWidth: '500px'
-      }}
-    >
-      <div className="flex justify-between items-center mb-2">
-        <h3 className="text-sm font-semibold">第{step.move_number}步 - {step.player === 'white' ? '白棋' : '黑棋'}</h3>
-        <button 
-          onClick={onClose}
-          className="text-gray-500 hover:text-gray-700"
-        >
-          ✕
-        </button>
-      </div>
-      
-      <div dangerouslySetInnerHTML={{ __html: boardHTML }} />
-      
-      <div className="mt-2 text-xs">
-        <div><strong>选择走法:</strong> {step.move_san} ({step.move})</div>
-        <div><strong>概率:</strong> {(step.probability * 100).toFixed(1)}%</div>
-        <div><strong>FEN:</strong> {step.fen_before}</div>
-        
-        {step.top_moves && (
-          <div className="mt-2">
-            <div><strong>前5候选:</strong></div>
-            {step.top_moves.slice(0, 3).map((move: any, idx: number) => (
-              <div key={idx} className="text-xs">
-                {idx + 1}. {move[0]} ({(move[1] * 100).toFixed(1)}%)
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// Self-play 棋盘组件
-const SelfPlayChessBoard = ({ fen, activations, sampleIndex, analysisName, contextId, delayMs = 0, autoAnalyze = true, includeInStats = false, globalAnalysisCollapsed = false }: {
-  fen: string;
-  activations?: number[];
-  sampleIndex?: number;
-  analysisName?: string;
-  contextId?: number;
-  delayMs?: number;
-  autoAnalyze?: boolean;
-  includeInStats?: boolean;
-  globalAnalysisCollapsed?: boolean;
-}) => {
-  const [selfplayData, setSelfplayData] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [currentStep, setCurrentStep] = useState<number>(0);
-  const [showStepPopover, setShowStepPopover] = useState<boolean>(false);
-  const [popoverPosition, setPopoverPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [popoverStep, setPopoverStep] = useState<any>(null);
-
-  // 启动self-play分析
-  const startSelfplayAnalysis = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/selfplay`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          fen,
-          max_moves: 10,
-          temperature: 1.0
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-
-      const result = await response.json();
-      setSelfplayData(result.selfplay);
-      setCurrentStep(0);
-    } catch (error: any) {
-      console.error('Self-play分析失败:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (autoAnalyze && !selfplayData && !isLoading) {
-      const timer = setTimeout(() => {
-        startSelfplayAnalysis();
-      }, delayMs);
-      return () => clearTimeout(timer);
-    }
-  }, [fen, autoAnalyze, delayMs]);
-
-  // 处理滑动轴变化
-  const handleStepChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setCurrentStep(parseInt(event.target.value));
-  };
-
-  // 处理滑动轴点击（显示悬浮窗）
-  const handleSliderClick = (event: React.MouseEvent<HTMLInputElement>) => {
-    if (!selfplayData?.game_history) return;
-    
-    const rect = event.currentTarget.getBoundingClientRect();
-    const step = parseInt(event.currentTarget.value);
-    
-    if (step > 0 && step <= selfplayData.game_history.length) {
-      setPopoverStep(selfplayData.game_history[step - 1]);
-      setPopoverPosition({
-        x: event.clientX,
-        y: event.clientY - 200
-      });
-      setShowStepPopover(true);
-    }
-  };
-
-  // 获取当前显示的FEN
-  const getCurrentFen = () => {
-    if (!selfplayData?.game_history || currentStep === 0) {
-      return fen; // 初始局面
-    }
-    const step = selfplayData.game_history[currentStep - 1];
-    return step?.fen_after || fen;
-  };
-
-  // 获取当前步骤信息
-  const getCurrentStepInfo = () => {
-    if (!selfplayData?.game_history || currentStep === 0) {
-      return { player: 'initial', move: '初始局面', probability: 0 };
-    }
-    return selfplayData.game_history[currentStep - 1];
-  };
-
-  const currentStepInfo = getCurrentStepInfo();
-  const currentFen = getCurrentFen();
-  
-  // 获取初始FEN的行棋方作为固定视角
-  const initialActiveColor = fen.split(' ')[1] || 'w';
-  
-  // 计算推演走法信息
-  const getSelfplayMoves = () => {
-    if (!selfplayData?.game_history) return undefined;
-    
-    let lastMove = undefined;
-    let nextMove = undefined;
-    
-    // 上一步走法（当前步骤的走法）
-    if (currentStep > 0 && currentStep <= selfplayData.game_history.length) {
-      const step = selfplayData.game_history[currentStep - 1];
-      lastMove = step?.move;
-    }
-    
-    // 下一步走法（下一个步骤的走法）
-    if (currentStep < selfplayData.game_history.length) {
-      const nextStep = selfplayData.game_history[currentStep];
-      nextMove = nextStep?.move;
-    }
-    
-    return { lastMove, nextMove };
-  };
-  
-  const selfplayMoves = getSelfplayMoves();
-  const boardHTML = generateFENChessBoard(currentFen, activations, sampleIndex, analysisName, contextId, undefined, globalAnalysisCollapsed, initialActiveColor, selfplayMoves);
-
-  return (
-    <div className="bg-white p-4 rounded-lg border shadow-sm hover:shadow-md transition-shadow">
-      <div className="flex justify-between items-center mb-2">
-        <h4 className="text-sm font-semibold">🎮 Self-play 推演</h4>
-        {!selfplayData && !isLoading && (
-          <button 
-            onClick={startSelfplayAnalysis}
-            className="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
-          >
-            开始推演
-          </button>
-        )}
-      </div>
-
-      <div dangerouslySetInnerHTML={{ __html: boardHTML }} />
-      
-      {/* 步骤控制 */}
-      {selfplayData && (
-        <div className="mt-4">
-          <div className="flex items-center space-x-2 mb-2">
-            <span className="text-xs text-gray-600">步骤:</span>
-            <input
-              type="range"
-              min="0"
-              max={selfplayData.game_history?.length || 0}
-              value={currentStep}
-              onChange={handleStepChange}
-              onClick={handleSliderClick}
-              className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              style={{
-                background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(currentStep / (selfplayData.game_history?.length || 1)) * 100}%, #e5e7eb ${(currentStep / (selfplayData.game_history?.length || 1)) * 100}%, #e5e7eb 100%)`
-              }}
-            />
-            <span className="text-xs text-gray-600 min-w-[60px]">
-              {currentStep}/{selfplayData.game_history?.length || 0}
-            </span>
-          </div>
-          
-                     {/* 当前步骤信息 */}
-           <div className="text-xs bg-gray-50 p-2 rounded">
-             {currentStep === 0 ? (
-               <div>初始局面</div>
-             ) : (
-               <div>
-                 <div><strong>第{currentStep}步</strong> - {currentStepInfo.player === 'white' ? '白棋' : '黑棋'}</div>
-                 <div>走法: {currentStepInfo.move_san} ({currentStepInfo.move})</div>
-                 <div>概率: {(currentStepInfo.probability * 100).toFixed(1)}%</div>
-               </div>
-             )}
-           </div>
-           
-           {/* 箭头图例 */}
-           <div className="text-xs bg-blue-50 p-2 rounded">
-             <div className="font-semibold mb-1">箭头说明:</div>
-             <div className="flex items-center gap-2 mb-1">
-               <div className="w-4 h-1 bg-green-500"></div>
-               <span>绿色: 上一步走法</span>
-             </div>
-             <div className="flex items-center gap-2">
-               <div className="w-4 h-1 bg-blue-500" style={{backgroundImage: 'linear-gradient(to right, rgb(59 130 246) 50%, transparent 50%)', backgroundSize: '4px 1px'}}></div>
-               <span>蓝色虚线: 下一步走法</span>
-             </div>
-           </div>
-          
-          {/* 游戏结果 */}
-          {selfplayData.result && (
-            <div className="text-xs mt-2 p-2 bg-blue-50 rounded">
-              <div><strong>推演结果:</strong> {selfplayData.result}</div>
-              <div><strong>总步数:</strong> {selfplayData.total_moves}</div>
-              {selfplayData.termination && (
-                <div><strong>结束方式:</strong> {selfplayData.termination}</div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-      
-      {/* 加载状态 */}
-      {isLoading && (
-        <div className="mt-4 text-center text-xs text-gray-500">
-          🔄 正在进行Self-play推演...
-        </div>
-      )}
-
-             {/* 悬浮窗 */}
-       {showStepPopover && popoverStep && (
-         <SelfPlayStepPopover
-           step={popoverStep}
-           position={popoverPosition}
-           onClose={() => setShowStepPopover(false)}
-           initialActiveColor={initialActiveColor}
-         />
-       )}
-    </div>
-  );
-};
-
-const SimpleChessBoard = ({ fen, activations, sampleIndex, analysisName, contextId, delayMs = 0, autoAnalyze = true, includeInStats = false, globalAnalysisCollapsed = false, showSelfplay = false }: {
+const SimpleChessBoard = ({ fen, activations, sampleIndex, analysisName, contextId, delayMs = 0, autoAnalyze = true, includeInStats = false, globalAnalysisCollapsed = false }: {
   fen: string;
   activations?: number[];
   sampleIndex?: number;
@@ -1520,7 +1244,6 @@ const SimpleChessBoard = ({ fen, activations, sampleIndex, analysisName, context
   autoAnalyze?: boolean;  // 是否自动开始分析
   includeInStats?: boolean;  // 是否包含在统计中
   globalAnalysisCollapsed?: boolean;  // 全局分析折叠状态
-  showSelfplay?: boolean;  // 是否显示self-play功能
 }) => {
   // 生成唯一的分析状态键
   const analysisKey = `${fen}_${sampleIndex}_${contextId}`;
@@ -1581,22 +1304,22 @@ const SimpleChessBoard = ({ fen, activations, sampleIndex, analysisName, context
             status: result.status
           });
           
-                   // 规范化结果
-         const normalizedResult = {
-           ...result,
-           bestMove: result.best_move || result.bestMove,
-           ponder: result.ponder,
-           status: result.status || 'success',
-           error: result.error,
-           fen: result.fen || fen,
-           isCheck: result.is_check || result.isCheck,
-           rules: result.rules,      // 保留规则分析数据
-           material: result.material, // 保留物质力量数据
-           wdl: result.wdl          // 保留WDL数据
-         };
+          // 规范化结果
+          const normalizedResult = {
+            ...result,
+            bestMove: result.best_move || result.bestMove,
+            ponder: result.ponder,
+            status: result.status || 'success',
+            error: result.error,
+            fen: result.fen || fen,
+            isCheck: result.is_check || result.isCheck,
+            rules: result.rules,      // 保留规则分析数据
+            material: result.material, // 保留物质力量数据
+            wdl: result.wdl          // 保留WDL数据
+          };
           
-                     setStockfishAnalysis(normalizedResult);
-           setIsLoading(false);
+          setStockfishAnalysis(normalizedResult);
+          setIsLoading(false);
           setAnalysisCompleted(true);  // 标记分析已完成
           
           // 更新全局状态
@@ -1606,11 +1329,11 @@ const SimpleChessBoard = ({ fen, activations, sampleIndex, analysisName, context
             analysisStarted: true,
             analysisCompleted: true
           });
-           
-           // 上报综合分析数据（仅当包含在统计中时）
-           if (includeInStats && normalizedResult.status === 'success') {
-             globalStatsManager.updateAnalysis(normalizedResult);
-           }
+          
+          // 上报综合分析数据（仅当包含在统计中时）
+          if (includeInStats && normalizedResult.status === 'success') {
+            globalStatsManager.updateAnalysis(normalizedResult);
+          }
           
         } catch (error: any) {
           console.error(`❌ 分析失败 for ${fen.substring(0, 20)}...`, error);
@@ -1636,23 +1359,6 @@ const SimpleChessBoard = ({ fen, activations, sampleIndex, analysisName, context
 
   // 生成棋盘HTML
   const boardHTML = generateFENChessBoard(fen, activations, sampleIndex, analysisName, contextId, stockfishAnalysis, globalAnalysisCollapsed);
-
-  // 如果启用了self-play功能，使用SelfPlayChessBoard组件
-  if (showSelfplay) {
-  return (
-      <SelfPlayChessBoard 
-        fen={fen}
-        activations={activations}
-        sampleIndex={sampleIndex}
-        analysisName={analysisName}
-        contextId={contextId}
-        delayMs={delayMs}
-        autoAnalyze={autoAnalyze}
-        includeInStats={includeInStats}
-        globalAnalysisCollapsed={globalAnalysisCollapsed}
-      />
-    );
-  }
 
   return (
     <div className="bg-white p-4 rounded-lg border shadow-sm hover:shadow-md transition-shadow">
@@ -1685,30 +1391,30 @@ const SimpleChessBoard = ({ fen, activations, sampleIndex, analysisName, context
         {/* 分析内容 */}
         {!isAnalysisCollapsed && !globalAnalysisCollapsed && (
           <>
-        {!analysisStarted ? (
-          <div style={{ color: '#6c757d' }}>
-            <div>⏳ 等待分析...</div>
-          </div>
-        ) : isLoading ? (
-          <div style={{ color: '#856404' }}>
-            <div>🔄 正在分析中...</div>
-          </div>
-        ) : stockfishAnalysis?.status === 'success' ? (
-          <div style={{ color: '#155724' }}>
-            <div>✅ 分析完成</div>
-            {stockfishAnalysis.bestMove && <div style={{ color: '#0c5460', fontSize: '12px' }}>最佳: {stockfishAnalysis.bestMove}</div>}
-            {stockfishAnalysis.ponder && <div style={{ color: '#0c5460', fontSize: '10px' }}>预想: {stockfishAnalysis.ponder}</div>}
-          </div>
-        ) : stockfishAnalysis?.status === 'error' ? (
-          <div style={{ color: '#721c24' }}>
-            <div>❌ 分析失败</div>
-            <div style={{ fontSize: '9px', fontWeight: 'normal' }}>{stockfishAnalysis.error}</div>
-          </div>
-        ) : (
-          <div style={{ color: '#666' }}>
-            <div>🔄 准备分析...</div>
-          </div>
-        )}
+            {!analysisStarted ? (
+              <div style={{ color: '#6c757d' }}>
+                <div>⏳ 等待分析...</div>
+              </div>
+            ) : isLoading ? (
+              <div style={{ color: '#856404' }}>
+                <div>🔄 正在分析中...</div>
+              </div>
+            ) : stockfishAnalysis?.status === 'success' ? (
+              <div style={{ color: '#155724' }}>
+                <div>✅ 分析完成</div>
+                {stockfishAnalysis.bestMove && <div style={{ color: '#0c5460', fontSize: '12px' }}>最佳: {stockfishAnalysis.bestMove}</div>}
+                {stockfishAnalysis.ponder && <div style={{ color: '#0c5460', fontSize: '10px' }}>预想: {stockfishAnalysis.ponder}</div>}
+              </div>
+            ) : stockfishAnalysis?.status === 'error' ? (
+              <div style={{ color: '#721c24' }}>
+                <div>❌ 分析失败</div>
+                <div style={{ fontSize: '9px', fontWeight: 'normal' }}>{stockfishAnalysis.error}</div>
+              </div>
+            ) : (
+              <div style={{ color: '#666' }}>
+                <div>🔄 准备分析...</div>
+              </div>
+            )}
           </>
         )}
         
@@ -1731,7 +1437,7 @@ const SimpleChessBoard = ({ fen, activations, sampleIndex, analysisName, context
 };
 
 // 生成基于FEN的棋盘HTML函数
-const generateFENChessBoard = (fen: string, activations?: number[], sampleIndex?: number, analysisName?: string, contextId?: number, stockfishAnalysis?: any, globalAnalysisCollapsed?: boolean, fixedPerspective?: string, selfplayMoves?: { lastMove?: string, nextMove?: string }): string => {
+const generateFENChessBoard = (fen: string, activations?: number[], sampleIndex?: number, analysisName?: string, contextId?: number, stockfishAnalysis?: any, globalAnalysisCollapsed?: boolean): string => {
   console.log("=== 开始解析FEN ===");
   console.log("FEN字符串:", fen);
   console.log("激活值数组长度:", activations?.length);
@@ -1785,48 +1491,6 @@ const generateFENChessBoard = (fen: string, activations?: number[], sampleIndex?
     };
     console.log("Ponder走法坐标:", { ponderFromSquare, ponderToSquare });
   }
-
-  // 解析推演走法坐标
-  let lastMoveFromSquare = null;
-  let lastMoveToSquare = null;
-  let nextMoveFromSquare = null;
-  let nextMoveToSquare = null;
-
-  // 解析上一步走法
-  if (selfplayMoves?.lastMove && selfplayMoves.lastMove.length >= 4) {
-    const lastMove = selfplayMoves.lastMove;
-    const fromSquareStr = lastMove.substring(0, 2);
-    const toSquareStr = lastMove.substring(2, 4);
-    console.log("上一步走法分解:", { lastMove, fromSquareStr, toSquareStr });
-    
-    lastMoveFromSquare = {
-      file: fromSquareStr.charCodeAt(0) - 'a'.charCodeAt(0), // 0-7
-      rank: 8 - parseInt(fromSquareStr[1]) // 0-7，0=第8行
-    };
-    lastMoveToSquare = {
-      file: toSquareStr.charCodeAt(0) - 'a'.charCodeAt(0), // 0-7
-      rank: 8 - parseInt(toSquareStr[1]) // 0-7，0=第8行
-    };
-    console.log("上一步走法坐标:", { lastMoveFromSquare, lastMoveToSquare });
-  }
-
-  // 解析下一步走法
-  if (selfplayMoves?.nextMove && selfplayMoves.nextMove.length >= 4) {
-    const nextMove = selfplayMoves.nextMove;
-    const fromSquareStr = nextMove.substring(0, 2);
-    const toSquareStr = nextMove.substring(2, 4);
-    console.log("下一步走法分解:", { nextMove, fromSquareStr, toSquareStr });
-    
-    nextMoveFromSquare = {
-      file: fromSquareStr.charCodeAt(0) - 'a'.charCodeAt(0), // 0-7
-      rank: 8 - parseInt(fromSquareStr[1]) // 0-7，0=第8行
-    };
-    nextMoveToSquare = {
-      file: toSquareStr.charCodeAt(0) - 'a'.charCodeAt(0), // 0-7
-      rank: 8 - parseInt(toSquareStr[1]) // 0-7，0=第8行
-    };
-    console.log("下一步走法坐标:", { nextMoveFromSquare, nextMoveToSquare });
-  }
   
   // 解析FEN格式
   const fenParts = fen.split(' ');
@@ -1837,10 +1501,8 @@ const generateFENChessBoard = (fen: string, activations?: number[], sampleIndex?
     return `<div style="color: red;">FEN格式错误: 应包含6个部分，实际包含${fenParts.length}个部分<br>FEN: ${fen}</div>`;
   }
   
-  const [boardFen, currentActiveColor, castling, enPassant, halfmove, fullmove] = fenParts;
-  // 使用固定视角参数，如果没有提供则使用当前FEN的行棋方
-  const activeColor = fixedPerspective || currentActiveColor;
-  console.log("解析的FEN部分:", { boardFen, currentActiveColor, activeColor: activeColor, castling, enPassant, halfmove, fullmove });
+  const [boardFen, activeColor, castling, enPassant, halfmove, fullmove] = fenParts;
+  console.log("解析的FEN部分:", { boardFen, activeColor, castling, enPassant, halfmove, fullmove });
   
   // 将FEN棋盘转换为8x8数组
   const board: string[][] = Array(8).fill(null).map(() => Array(8).fill(''));
@@ -1852,7 +1514,7 @@ const generateFENChessBoard = (fen: string, activations?: number[], sampleIndex?
     return `<div style="color: red;">FEN棋盘格式错误: 应包含8行，实际包含${rows.length}行<br>棋盘部分: ${boardFen}</div>`;
   }
     
-    for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 8; i++) {
     let col = 0;
     console.log(`解析第${i}行: ${rows[i]}`);
     for (const char of rows[i]) {
@@ -1861,7 +1523,7 @@ const generateFENChessBoard = (fen: string, activations?: number[], sampleIndex?
         const emptySquares = parseInt(char);
         console.log(`在第${i}行第${col}列添加${emptySquares}个空格`);
         col += emptySquares;
-          } else {
+      } else {
         // 棋子
         if (col < 8) {
           board[i][col] = char;
@@ -2111,53 +1773,6 @@ const generateFENChessBoard = (fen: string, activations?: number[], sampleIndex?
                         border-top: 3px solid transparent; border-bottom: 3px solid transparent;"></div>
           </div>`;
       }
-
-      // 推演上一步走法箭头（绿色）
-      if (lastMoveFromSquare && lastMoveToSquare && lastMoveFromSquare.file === boardCol && lastMoveFromSquare.rank === boardRow) {
-        let dx = (lastMoveToSquare.file - lastMoveFromSquare.file);
-        let dy = (lastMoveToSquare.rank - lastMoveFromSquare.rank);
-        
-        // 如果是黑方行棋，棋盘已经翻转显示，所以箭头的方向需要调整
-        if (activeColor === 'b') {
-          // 黑方行棋时，棋盘只进行了上下翻转，所以箭头方向需要相应调整
-          dy = -dy;  // 上下翻转
-        }
-        
-        const angle = Math.atan2(dy, dx) * 180 / Math.PI; // 正常y轴（屏幕坐标）
-        const length = Math.sqrt(dx * dx + dy * dy) * 35;
-        moveIndicator += `
-          <div style="position: absolute; top: 60%; left: 50%; width: ${length}px; height: 3px;
-                      background: rgba(0,200,0,0.7); transform-origin: left center;
-                      transform: translate(0,-50%) rotate(${angle}deg); z-index: 12;">
-            <div style="position: absolute; right: -5px; top: -4px; width: 0; height: 0;
-                        border-left: 10px solid rgba(0,200,0,0.8);
-                        border-top: 4px solid transparent; border-bottom: 4px solid transparent;"></div>
-          </div>`;
-      }
-
-      // 推演下一步走法箭头（蓝色，虚线）
-      if (nextMoveFromSquare && nextMoveToSquare && nextMoveFromSquare.file === boardCol && nextMoveFromSquare.rank === boardRow) {
-        let dx = (nextMoveToSquare.file - nextMoveFromSquare.file);
-        let dy = (nextMoveToSquare.rank - nextMoveFromSquare.rank);
-        
-        // 如果是黑方行棋，棋盘已经翻转显示，所以箭头的方向需要调整
-        if (activeColor === 'b') {
-          // 黑方行棋时，棋盘只进行了上下翻转，所以箭头方向需要相应调整
-          dy = -dy;  // 上下翻转
-        }
-        
-        const angle = Math.atan2(dy, dx) * 180 / Math.PI; // 正常y轴（屏幕坐标）
-        const length = Math.sqrt(dx * dx + dy * dy) * 35;
-        moveIndicator += `
-          <div style="position: absolute; top: 65%; left: 50%; width: ${length}px; height: 2px;
-                      background: linear-gradient(to right, rgba(0,100,255,0.6) 50%, transparent 50%);
-                      background-size: 8px 2px; transform-origin: left center;
-                      transform: translate(0,-50%) rotate(${angle}deg); z-index: 13;">
-            <div style="position: absolute; right: -4px; top: -3px; width: 0; height: 0;
-                        border-left: 8px solid rgba(0,100,255,0.7);
-                        border-top: 3px solid transparent; border-bottom: 3px solid transparent;"></div>
-          </div>`;
-      }
       
       html += `
         <td style="width: 35px; height: 35px; background-color: ${bgColor}; 
@@ -2199,287 +1814,287 @@ const generateFENChessBoard = (fen: string, activations?: number[], sampleIndex?
       
   // 分析信息（受全局折叠状态控制）
   if (!globalAnalysisCollapsed) {
-  // 显示最佳走法信息
-  if (stockfishAnalysis?.status === "success" && stockfishAnalysis?.bestMove) {
-    html += `
-      <div style="margin-top: 4px; padding: 4px; background: #e8f4fd; border-radius: 3px; border-left: 3px solid #007bff;">
-        <strong>最佳走法:</strong> ${stockfishAnalysis.bestMove}
-        ${stockfishAnalysis.isCheck ? ' <span style="color: #ff4444;">(将军!)</span>' : ''}
-      </div>
-    `;
-  }
-  
-  // 显示物质力量分析结果
-  if (stockfishAnalysis?.material && Object.keys(stockfishAnalysis.material).length > 0) {
-    const material = stockfishAnalysis.material;
-    
-    if (!material.error) {
-      const whiteTotal = material.white_material || 0;
-      const blackTotal = material.black_material || 0;
-      const difference = material.material_difference || 0;
-      const advantage = material.material_advantage || 'equal';
-      
-      // 构建详细的棋子统计
-      const whitePieces = material.white_pieces || {};
-      const blackPieces = material.black_pieces || {};
-      
-      const whiteDetails = [
-        `兵${whitePieces.pawns || 0}`,
-        `马${whitePieces.knights || 0}`,
-        `象${whitePieces.bishops || 0}`,
-        `车${whitePieces.rooks || 0}`,
-        `后${whitePieces.queens || 0}`
-      ].filter(item => !item.endsWith('0')).join(', ');
-      
-      const blackDetails = [
-        `兵${blackPieces.pawns || 0}`,
-        `马${blackPieces.knights || 0}`,
-        `象${blackPieces.bishops || 0}`,
-        `车${blackPieces.rooks || 0}`,
-        `后${blackPieces.queens || 0}`
-      ].filter(item => !item.endsWith('0')).join(', ');
-      
-      const advantageColor = advantage === 'white' ? '#4CAF50' : advantage === 'black' ? '#f44336' : '#666';
-      const advantageText = advantage === 'white' ? '白方优势' : advantage === 'black' ? '黑方优势' : '物质平衡';
-      
+    // 显示最佳走法信息
+    if (stockfishAnalysis?.status === "success" && stockfishAnalysis?.bestMove) {
       html += `
-        <div style="margin-top: 6px; padding: 4px; background: #fff8e1; border-radius: 3px; border-left: 3px solid #ff9800;">
-          <div style="font-size: 10px; font-weight: bold; color: #e65100; margin-bottom: 2px;">💰 物质力量</div>
-          <div style="font-size: 9px; color: ${advantageColor}; margin-bottom: 2px;">
-            <strong>总计:</strong> 白方${whiteTotal} vs 黑方${blackTotal} (${advantageText} ${Math.abs(difference)})
-          </div>
-          ${whiteDetails ? `
-            <div style="font-size: 8px; color: #666; margin-bottom: 1px;">
-              <strong>白方:</strong> ${whiteDetails}
-            </div>
-          ` : ''}
-          ${blackDetails ? `
-            <div style="font-size: 8px; color: #666;">
-              <strong>黑方:</strong> ${blackDetails}
-            </div>
-          ` : ''}
+        <div style="margin-top: 4px; padding: 4px; background: #e8f4fd; border-radius: 3px; border-left: 3px solid #007bff;">
+          <strong>最佳走法:</strong> ${stockfishAnalysis.bestMove}
+          ${stockfishAnalysis.isCheck ? ' <span style="color: #ff4444;">(将军!)</span>' : ''}
         </div>
       `;
     }
-  }
-  
-  // 显示WDL评估结果
-  if (stockfishAnalysis?.wdl && Object.keys(stockfishAnalysis.wdl).length > 0) {
-    const wdl = stockfishAnalysis.wdl;
     
-    if (!wdl.error) {
-      const winProb = wdl.win_probability || 0;
-      const drawProb = wdl.draw_probability || 0;
-      const lossProb = wdl.loss_probability || 0;
-      const activeColor = wdl.active_color || 'white';
-      const activeColorChinese = activeColor === 'white' ? '白方' : '黑方';
+    // 显示物质力量分析结果
+    if (stockfishAnalysis?.material && Object.keys(stockfishAnalysis.material).length > 0) {
+      const material = stockfishAnalysis.material;
       
-      // 转换为百分比
-      const winPercent = Math.round(winProb * 100);
-      const drawPercent = Math.round(drawProb * 100);
-      const lossPercent = Math.round(lossProb * 100);
-      
-      // 确定主导结果的颜色
-      const dominantResult = winProb > drawProb && winProb > lossProb ? 'win' : 
-                            drawProb > winProb && drawProb > lossProb ? 'draw' : 'loss';
-      const resultColor = dominantResult === 'win' ? '#4CAF50' : 
-                         dominantResult === 'draw' ? '#ff9800' : '#f44336';
-      
-      html += `
-        <div style="margin-top: 6px; padding: 4px; background: #f3e5f5; border-radius: 3px; border-left: 3px solid #9c27b0;">
-          <div style="font-size: 10px; font-weight: bold; color: #6a1b9a; margin-bottom: 2px;">📊 Stockfish WDL (${activeColorChinese}视角)</div>
-          <div style="font-size: 9px; margin-bottom: 2px;">
-            <span style="color: #4CAF50; font-weight: bold;">胜${winPercent}%</span> | 
-            <span style="color: #ff9800; font-weight: bold;">和${drawPercent}%</span> | 
-            <span style="color: #f44336; font-weight: bold;">负${lossPercent}%</span>
-          </div>
-          ${wdl.evaluation_type === 'mate' ? `
-            <div style="font-size: 8px; color: ${resultColor}; font-weight: bold;">
-              ${wdl.mate_in > 0 ? `${Math.abs(wdl.mate_in)}步将死` : `被${Math.abs(wdl.mate_in)}步将死`}
-            </div>
-          ` : wdl.evaluation_cp !== null ? `
-            <div style="font-size: 8px; color: #666;">
-              评估: ${wdl.evaluation_cp > 0 ? '+' : ''}${wdl.evaluation_cp}厘兵
-            </div>
-          ` : ''}
-          ${wdl.principal_variation && wdl.principal_variation.length > 0 ? `
-            <div style="font-size: 8px; color: #666; margin-top: 1px;">
-              主要变着: ${wdl.principal_variation.slice(0, 3).join(' ')}${wdl.principal_variation.length > 3 ? '...' : ''}
-            </div>
-          ` : ''}
-        </div>
-      `;
-    }
-  }
-
-  // 显示模型推理结果
-  if (stockfishAnalysis?.model && Object.keys(stockfishAnalysis.model).length > 0) {
-    const model = stockfishAnalysis.model;
-    
-    if (!model.error) {
-      html += `
-        <div style="margin-top: 6px; padding: 4px; background: #e8f5e8; border-radius: 3px; border-left: 3px solid #4CAF50;">
-          <div style="font-size: 10px; font-weight: bold; color: #2e7d32; margin-bottom: 2px;">🤖 模型推理结果</div>
-      `;
-      
-      // 显示最佳走法
-      if (model.best_move) {
+      if (!material.error) {
+        const whiteTotal = material.white_material || 0;
+        const blackTotal = material.black_material || 0;
+        const difference = material.material_difference || 0;
+        const advantage = material.material_advantage || 'equal';
+        
+        // 构建详细的棋子统计
+        const whitePieces = material.white_pieces || {};
+        const blackPieces = material.black_pieces || {};
+        
+        const whiteDetails = [
+          `兵${whitePieces.pawns || 0}`,
+          `马${whitePieces.knights || 0}`,
+          `象${whitePieces.bishops || 0}`,
+          `车${whitePieces.rooks || 0}`,
+          `后${whitePieces.queens || 0}`
+        ].filter(item => !item.endsWith('0')).join(', ');
+        
+        const blackDetails = [
+          `兵${blackPieces.pawns || 0}`,
+          `马${blackPieces.knights || 0}`,
+          `象${blackPieces.bishops || 0}`,
+          `车${blackPieces.rooks || 0}`,
+          `后${blackPieces.queens || 0}`
+        ].filter(item => !item.endsWith('0')).join(', ');
+        
+        const advantageColor = advantage === 'white' ? '#4CAF50' : advantage === 'black' ? '#f44336' : '#666';
+        const advantageText = advantage === 'white' ? '白方优势' : advantage === 'black' ? '黑方优势' : '物质平衡';
+        
         html += `
-          <div style="font-size: 9px; margin-bottom: 2px;">
-            <strong>最佳走法:</strong> ${model.best_move_san || model.best_move} 
-            ${model.best_move_probability ? `(${model.best_move_probability}%)` : ''}
+          <div style="margin-top: 6px; padding: 4px; background: #fff8e1; border-radius: 3px; border-left: 3px solid #ff9800;">
+            <div style="font-size: 10px; font-weight: bold; color: #e65100; margin-bottom: 2px;">💰 物质力量</div>
+            <div style="font-size: 9px; color: ${advantageColor}; margin-bottom: 2px;">
+              <strong>总计:</strong> 白方${whiteTotal} vs 黑方${blackTotal} (${advantageText} ${Math.abs(difference)})
+            </div>
+            ${whiteDetails ? `
+              <div style="font-size: 8px; color: #666; margin-bottom: 1px;">
+                <strong>白方:</strong> ${whiteDetails}
+              </div>
+            ` : ''}
+            ${blackDetails ? `
+              <div style="font-size: 8px; color: #666;">
+                <strong>黑方:</strong> ${blackDetails}
+              </div>
+            ` : ''}
           </div>
         `;
       }
+    }
+    
+    // 显示WDL评估结果
+    if (stockfishAnalysis?.wdl && Object.keys(stockfishAnalysis.wdl).length > 0) {
+      const wdl = stockfishAnalysis.wdl;
       
-      // 显示策略分析
-      if (model.policy_analysis && model.policy_analysis.best_moves) {
-        const topMoves = model.policy_analysis.best_moves.slice(0, 3);
-        if (topMoves.length > 0) {
+      if (!wdl.error) {
+        const winProb = wdl.win_probability || 0;
+        const drawProb = wdl.draw_probability || 0;
+        const lossProb = wdl.loss_probability || 0;
+        const activeColor = wdl.active_color || 'white';
+        const activeColorChinese = activeColor === 'white' ? '白方' : '黑方';
+        
+        // 转换为百分比
+        const winPercent = Math.round(winProb * 100);
+        const drawPercent = Math.round(drawProb * 100);
+        const lossPercent = Math.round(lossProb * 100);
+        
+        // 确定主导结果的颜色
+        const dominantResult = winProb > drawProb && winProb > lossProb ? 'win' : 
+                              drawProb > winProb && drawProb > lossProb ? 'draw' : 'loss';
+        const resultColor = dominantResult === 'win' ? '#4CAF50' : 
+                           dominantResult === 'draw' ? '#ff9800' : '#f44336';
+        
+        html += `
+          <div style="margin-top: 6px; padding: 4px; background: #f3e5f5; border-radius: 3px; border-left: 3px solid #9c27b0;">
+            <div style="font-size: 10px; font-weight: bold; color: #6a1b9a; margin-bottom: 2px;">📊 Stockfish WDL (${activeColorChinese}视角)</div>
+            <div style="font-size: 9px; margin-bottom: 2px;">
+              <span style="color: #4CAF50; font-weight: bold;">胜${winPercent}%</span> | 
+              <span style="color: #ff9800; font-weight: bold;">和${drawPercent}%</span> | 
+              <span style="color: #f44336; font-weight: bold;">负${lossPercent}%</span>
+            </div>
+            ${wdl.evaluation_type === 'mate' ? `
+              <div style="font-size: 8px; color: ${resultColor}; font-weight: bold;">
+                ${wdl.mate_in > 0 ? `${Math.abs(wdl.mate_in)}步将死` : `被${Math.abs(wdl.mate_in)}步将死`}
+              </div>
+            ` : wdl.evaluation_cp !== null ? `
+              <div style="font-size: 8px; color: #666;">
+                评估: ${wdl.evaluation_cp > 0 ? '+' : ''}${wdl.evaluation_cp}厘兵
+              </div>
+            ` : ''}
+            ${wdl.principal_variation && wdl.principal_variation.length > 0 ? `
+              <div style="font-size: 8px; color: #666; margin-top: 1px;">
+                主要变着: ${wdl.principal_variation.slice(0, 3).join(' ')}${wdl.principal_variation.length > 3 ? '...' : ''}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }
+    }
+
+    // 显示模型推理结果
+    if (stockfishAnalysis?.model && Object.keys(stockfishAnalysis.model).length > 0) {
+      const model = stockfishAnalysis.model;
+      
+      if (!model.error) {
+        html += `
+          <div style="margin-top: 6px; padding: 4px; background: #e8f5e8; border-radius: 3px; border-left: 3px solid #4CAF50;">
+            <div style="font-size: 10px; font-weight: bold; color: #2e7d32; margin-bottom: 2px;">🤖 模型推理结果</div>
+        `;
+        
+        // 显示最佳走法
+        if (model.best_move) {
           html += `
-            <div style="font-size: 8px; color: #666; margin-bottom: 2px;">
-              <strong>候选走法:</strong> ${topMoves.map((move: any) => 
-                `${move.san}(${move.probability}%)`
-              ).join(', ')}
+            <div style="font-size: 9px; margin-bottom: 2px;">
+              <strong>最佳走法:</strong> ${model.best_move_san || model.best_move} 
+              ${model.best_move_probability ? `(${model.best_move_probability}%)` : ''}
             </div>
           `;
         }
-      }
-      
-      // 显示模型WDL
-      if (model.wdl_analysis) {
-        const modelWdl = model.wdl_analysis;
+        
+        // 显示策略分析
+        if (model.policy_analysis && model.policy_analysis.best_moves) {
+          const topMoves = model.policy_analysis.best_moves.slice(0, 3);
+          if (topMoves.length > 0) {
+            html += `
+              <div style="font-size: 8px; color: #666; margin-bottom: 2px;">
+                <strong>候选走法:</strong> ${topMoves.map((move: any) => 
+                  `${move.san}(${move.probability}%)`
+                ).join(', ')}
+              </div>
+            `;
+          }
+        }
+        
+        // 显示模型WDL
+        if (model.wdl_analysis) {
+          const modelWdl = model.wdl_analysis;
+          html += `
+            <div style="font-size: 9px; margin-bottom: 2px;">
+              <strong>模型WDL:</strong> 
+              <span style="color: #4CAF50;">胜${modelWdl.win_percent}%</span> | 
+              <span style="color: #ff9800;">和${modelWdl.draw_percent}%</span> | 
+              <span style="color: #f44336;">负${modelWdl.loss_percent}%</span>
+            </div>
+          `;
+        }
+        
+        // 显示价值评估
+        if (model.value_analysis) {
+          const valueAnalysis = model.value_analysis;
+          html += `
+            <div style="font-size: 8px; color: #666; margin-bottom: 2px;">
+              <strong>价值评估:</strong> ${valueAnalysis.raw_value} 
+              ${valueAnalysis.normalized_value ? `(归一化: ${valueAnalysis.normalized_value})` : ''}
+            </div>
+          `;
+        }
+        
+        // 显示原始输出形状信息
+        if (model.raw_outputs) {
+          const rawOutputs = model.raw_outputs;
+          html += `
+            <div style="font-size: 7px; color: #999; margin-top: 2px;">
+              <strong>输出维度:</strong> 
+              ${rawOutputs.policy_logits_shape ? `策略${rawOutputs.policy_logits_shape.join('×')} ` : ''}
+              ${rawOutputs.wdl_probs_shape ? `WDL${rawOutputs.wdl_probs_shape.join('×')} ` : ''}
+              ${rawOutputs.value_shape ? `价值${rawOutputs.value_shape.join('×')}` : ''}
+            </div>
+          `;
+        }
+        
+        html += `</div>`;
+      } else {
+        // 显示错误信息
         html += `
-          <div style="font-size: 9px; margin-bottom: 2px;">
-            <strong>模型WDL:</strong> 
-            <span style="color: #4CAF50;">胜${modelWdl.win_percent}%</span> | 
-            <span style="color: #ff9800;">和${modelWdl.draw_percent}%</span> | 
-            <span style="color: #f44336;">负${modelWdl.loss_percent}%</span>
+          <div style="margin-top: 6px; padding: 4px; background: #ffebee; border-radius: 3px; border-left: 3px solid #f44336;">
+            <div style="font-size: 10px; font-weight: bold; color: #c62828; margin-bottom: 2px;">🤖 模型推理</div>
+            <div style="font-size: 8px; color: #d32f2f;">
+              错误: ${model.error}
+            </div>
           </div>
         `;
       }
+    }
+
+    // 显示规则分析结果
+    if (stockfishAnalysis?.rules && Object.keys(stockfishAnalysis.rules).length > 0) {
+      const rules = stockfishAnalysis.rules;
       
-      // 显示价值评估
-      if (model.value_analysis) {
-        const valueAnalysis = model.value_analysis;
-        html += `
-          <div style="font-size: 8px; color: #666; margin-bottom: 2px;">
-            <strong>价值评估:</strong> ${valueAnalysis.raw_value} 
-            ${valueAnalysis.normalized_value ? `(归一化: ${valueAnalysis.normalized_value})` : ''}
-          </div>
-        `;
+      // 收集为真的规则
+      const trueRules = [];
+      const falseRules = [];
+      const specialRules = [];
+      
+      // 基本检查
+      if (rules.is_rook_under_attack) trueRules.push("车被攻击");
+      if (rules.is_knight_under_attack) trueRules.push("马被攻击");
+      if (rules.is_bishop_under_attack) trueRules.push("象被攻击");
+      if (rules.is_queen_under_attack) trueRules.push("后被攻击");
+      
+      // 王的状态
+      if (rules.is_king_in_check) trueRules.push("将军");
+      if (rules.is_checkmate) trueRules.push("将死");
+      if (rules.is_stalemate) trueRules.push("逼和");
+      
+      // 棋子配置
+      if (rules.is_bishop_pair) trueRules.push("双象");
+      
+      // 战术分析
+      if (rules.has_pinned_pieces) {
+        trueRules.push(`钉住棋子(${rules.pinned_pieces?.length || 0}个)`);
+      }
+      if (rules.is_in_fork) trueRules.push("面临叉攻");
+      
+      // 兵结构分析
+      if (rules.has_isolated_pawns) {
+        const whiteCount = rules.isolated_pawns_white?.length || 0;
+        const blackCount = rules.isolated_pawns_black?.length || 0;
+        if (whiteCount > 0 || blackCount > 0) {
+          trueRules.push(`孤兵(白${whiteCount},黑${blackCount})`);
+        }
+      }
+      if (rules.has_doubled_pawns) {
+        const whiteCount = Object.keys(rules.doubled_pawns_white || {}).length;
+        const blackCount = Object.keys(rules.doubled_pawns_black || {}).length;
+        if (whiteCount > 0 || blackCount > 0) {
+          trueRules.push(`重兵(白${whiteCount}列,黑${blackCount}列)`);
+        }
+      }
+      if (rules.has_passed_pawns) {
+        const whiteCount = rules.passed_pawns_white?.length || 0;
+        const blackCount = rules.passed_pawns_black?.length || 0;
+        if (whiteCount > 0 || blackCount > 0) {
+          trueRules.push(`通路兵(白${whiteCount},黑${blackCount})`);
+        }
       }
       
-      // 显示原始输出形状信息
-      if (model.raw_outputs) {
-        const rawOutputs = model.raw_outputs;
-        html += `
-          <div style="font-size: 7px; color: #999; margin-top: 2px;">
-            <strong>输出维度:</strong> 
-            ${rawOutputs.policy_logits_shape ? `策略${rawOutputs.policy_logits_shape.join('×')} ` : ''}
-            ${rawOutputs.wdl_probs_shape ? `WDL${rawOutputs.wdl_probs_shape.join('×')} ` : ''}
-            ${rawOutputs.value_shape ? `价值${rawOutputs.value_shape.join('×')}` : ''}
-          </div>
-        `;
+      // 中心控制
+      if (rules.center_control) {
+        const white = rules.center_control.white || 0;
+        const black = rules.center_control.black || 0;
+        if (white > black) {
+          specialRules.push(`中心控制: 白方优势(${white}-${black})`);
+        } else if (black > white) {
+          specialRules.push(`中心控制: 黑方优势(${black}-${white})`);
+        } else {
+          specialRules.push(`中心控制: 平衡(${white}-${black})`);
+        }
       }
       
-      html += `</div>`;
-    } else {
-      // 显示错误信息
       html += `
-        <div style="margin-top: 6px; padding: 4px; background: #ffebee; border-radius: 3px; border-left: 3px solid #f44336;">
-          <div style="font-size: 10px; font-weight: bold; color: #c62828; margin-bottom: 2px;">🤖 模型推理</div>
-          <div style="font-size: 8px; color: #d32f2f;">
-            错误: ${model.error}
-          </div>
+        <div style="margin-top: 6px; padding: 4px; background: #f0f8ff; border-radius: 3px; border-left: 3px solid #4CAF50;">
+          <div style="font-size: 10px; font-weight: bold; color: #2e7d32; margin-bottom: 2px;">🧩 规则分析</div>
+          ${trueRules.length > 0 ? `
+            <div style="font-size: 9px; color: #d32f2f; margin-bottom: 2px;">
+              <strong>检测到:</strong> ${trueRules.join(', ')}
+            </div>
+          ` : ''}
+          ${specialRules.length > 0 ? `
+            <div style="font-size: 9px; color: #1976d2; margin-bottom: 2px;">
+              ${specialRules.join(', ')}
+            </div>
+          ` : ''}
+          ${trueRules.length === 0 && specialRules.length === 0 ? `
+            <div style="font-size: 9px; color: #666;">无特殊局面特征</div>
+          ` : ''}
         </div>
       `;
-    }
-  }
-
-  // 显示规则分析结果
-  if (stockfishAnalysis?.rules && Object.keys(stockfishAnalysis.rules).length > 0) {
-    const rules = stockfishAnalysis.rules;
-    
-    // 收集为真的规则
-    const trueRules = [];
-    const falseRules = [];
-    const specialRules = [];
-    
-    // 基本检查
-    if (rules.is_rook_under_attack) trueRules.push("车被攻击");
-    if (rules.is_knight_under_attack) trueRules.push("马被攻击");
-    if (rules.is_bishop_under_attack) trueRules.push("象被攻击");
-    if (rules.is_queen_under_attack) trueRules.push("后被攻击");
-    
-    // 王的状态
-    if (rules.is_king_in_check) trueRules.push("将军");
-    if (rules.is_checkmate) trueRules.push("将死");
-    if (rules.is_stalemate) trueRules.push("逼和");
-    
-    // 棋子配置
-    if (rules.is_bishop_pair) trueRules.push("双象");
-    
-    // 战术分析
-    if (rules.has_pinned_pieces) {
-      trueRules.push(`钉住棋子(${rules.pinned_pieces?.length || 0}个)`);
-    }
-    if (rules.is_in_fork) trueRules.push("面临叉攻");
-    
-    // 兵结构分析
-    if (rules.has_isolated_pawns) {
-      const whiteCount = rules.isolated_pawns_white?.length || 0;
-      const blackCount = rules.isolated_pawns_black?.length || 0;
-      if (whiteCount > 0 || blackCount > 0) {
-        trueRules.push(`孤兵(白${whiteCount},黑${blackCount})`);
-      }
-    }
-    if (rules.has_doubled_pawns) {
-      const whiteCount = Object.keys(rules.doubled_pawns_white || {}).length;
-      const blackCount = Object.keys(rules.doubled_pawns_black || {}).length;
-      if (whiteCount > 0 || blackCount > 0) {
-        trueRules.push(`重兵(白${whiteCount}列,黑${blackCount}列)`);
-      }
-    }
-    if (rules.has_passed_pawns) {
-      const whiteCount = rules.passed_pawns_white?.length || 0;
-      const blackCount = rules.passed_pawns_black?.length || 0;
-      if (whiteCount > 0 || blackCount > 0) {
-        trueRules.push(`通路兵(白${whiteCount},黑${blackCount})`);
-      }
-    }
-    
-    // 中心控制
-    if (rules.center_control) {
-      const white = rules.center_control.white || 0;
-      const black = rules.center_control.black || 0;
-      if (white > black) {
-        specialRules.push(`中心控制: 白方优势(${white}-${black})`);
-      } else if (black > white) {
-        specialRules.push(`中心控制: 黑方优势(${black}-${white})`);
-      } else {
-        specialRules.push(`中心控制: 平衡(${white}-${black})`);
-      }
-    }
-    
-    html += `
-      <div style="margin-top: 6px; padding: 4px; background: #f0f8ff; border-radius: 3px; border-left: 3px solid #4CAF50;">
-        <div style="font-size: 10px; font-weight: bold; color: #2e7d32; margin-bottom: 2px;">🧩 规则分析</div>
-        ${trueRules.length > 0 ? `
-          <div style="font-size: 9px; color: #d32f2f; margin-bottom: 2px;">
-            <strong>检测到:</strong> ${trueRules.join(', ')}
-          </div>
-        ` : ''}
-        ${specialRules.length > 0 ? `
-          <div style="font-size: 9px; color: #1976d2; margin-bottom: 2px;">
-            ${specialRules.join(', ')}
-          </div>
-        ` : ''}
-        ${trueRules.length === 0 && specialRules.length === 0 ? `
-          <div style="font-size: 9px; color: #666;">无特殊局面特征</div>
-        ` : ''}
-      </div>
-    `;
     }
   }
   
@@ -2495,11 +2110,11 @@ const generateFENChessBoard = (fen: string, activations?: number[], sampleIndex?
   // 分析信息（受全局折叠状态控制）
   if (!globalAnalysisCollapsed) {
     html += `
-          <div style="margin-top: 4px; font-size: 10px; color: #333;">
+      <div style="margin-top: 4px; font-size: 10px; color: #333;">
         <strong>最佳走法:</strong> ${stockfishAnalysis?.bestMove || '无可用最佳走法'}
         ${stockfishAnalysis?.ponder ? `<br><strong>Ponder走法:</strong> ${stockfishAnalysis.ponder}` : ''}
       </div>
-  `;
+    `;
   }
   
   return html;
@@ -2585,16 +2200,10 @@ function fenToBoardStr(fen: string): string {
 export const FeaturesPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [globalAnalysisCollapsed, setGlobalAnalysisCollapsed] = useState<boolean>(false);  // 全局分析折叠状态
-  const [showSelfplay, setShowSelfplay] = useState<boolean>(false);  // Self-play显示状态
   
   // 优化全局折叠按钮的点击处理函数
   const handleGlobalAnalysisToggle = useCallback(() => {
     setGlobalAnalysisCollapsed(prev => !prev);
-  }, []);
-
-  // Self-play开关处理函数
-  const handleSelfplayToggle = useCallback(() => {
-    setShowSelfplay(prev => !prev);
   }, []);
 
   // 在页面加载时重置统计
@@ -3060,31 +2669,6 @@ export const FeaturesPage = () => {
               <span className="font-bold"></span>
             </>
           )}
-
-          {/* Self-play 控制开关 */}
-          <span className="font-bold justify-self-end">显示选项:</span>
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={globalAnalysisCollapsed}
-                onChange={handleGlobalAnalysisToggle}
-                className="rounded"
-              />
-              全局折叠分析
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={showSelfplay}
-                onChange={handleSelfplayToggle}
-                className="rounded"
-              />
-              🎮 Self-play 推演
-            </label>
-          </div>
-          <span className="font-bold"></span>
-          <span className="font-bold"></span>
         </div>
 
         {featureState.loading && !loadingRandomFeature && (
@@ -3202,7 +2786,6 @@ export const FeaturesPage = () => {
                                   autoAnalyze={true}
                                   includeInStats={true}  // 所有生成的棋盘都参与统计
                                   globalAnalysisCollapsed={globalAnalysisCollapsed}
-                                  showSelfplay={showSelfplay}
                                 />
                               );
                               
@@ -3327,7 +2910,7 @@ export const FeaturesPage = () => {
                         </div>
                       </div>
                     </div>
-                    
+
                     {/* 规则统计卡片 */}
                     <div className="w-full max-w-4xl mx-auto">
                       <RuleStatisticsCard maxActivationTimes={maxActivationTimes} />
