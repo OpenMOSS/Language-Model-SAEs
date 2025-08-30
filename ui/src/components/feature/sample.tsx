@@ -1,12 +1,11 @@
 import { Feature, FeatureSampleCompact, ImageTokenOrigin, TextTokenOrigin } from "@/types/feature";
-import { useState, useCallback, useMemo, memo, useEffect, useRef } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import { AppPagination } from "../ui/pagination";
 import { getAccentClassname } from "@/utils/style";
 import { cn } from "@/lib/utils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card";
 import { Switch } from "../ui/switch";
 import { Input } from "../ui/input";
-import { createChessBoardElement } from "../chess";
 
 export const FeatureSampleGroup = ({
   feature,
@@ -16,7 +15,7 @@ export const FeatureSampleGroup = ({
   sampleGroup: Feature["sampleGroups"][0];
 }) => {
   const [page, setPage] = useState<number>(1);
-  const [visibleRange, setVisibleRange] = useState<number>(50);
+  const [visibleRange, setVisibleRange] = useState<number>(100);
   
   const maxPage = useMemo(() => Math.ceil(sampleGroup.samples.length / 10), [sampleGroup.samples.length]);
   
@@ -115,8 +114,6 @@ export const FeatureActivationSample = memo(({
   maxFeatureAct,
   visibleRange,
 }: FeatureActivationSampleProps) => {
-  const chessBoardRef = useRef<HTMLDivElement>(null);
-  
   // Memoize text highlights processing
   const textHighlights = useMemo(() => 
     sample.origins
@@ -208,50 +205,12 @@ export const FeatureActivationSample = memo(({
   // Determine if we have any images to display
   const hasImages = sample.images && sample.images.length > 0;
 
-  // 检查是否为棋类样本
-  const isChessSample = useMemo(() => {
-    if (!sample.text) return false;
-    // 检查是否包含longfen格式的棋类数据
-    return sample.text.length > 77 && /^[wb][rnbqkbnrpppppppp\.]{64}[KQkq\.]{4}[a-h][1-8]?\.{0,2}\d{1,3}\.\d{1,3}[a-h][1-8][a-h][1-8][qrbn]?0$/.test(sample.text);
-  }, [sample.text]);
-
-  // 从样本文本中提取longfen
-  const longfen = useMemo(() => {
-    if (!isChessSample || !sample.text) return null;
-    return sample.text;
-  }, [isChessSample, sample.text]);
-
-  // 创建棋盘元素
-  useEffect(() => {
-    if (isChessSample && longfen && chessBoardRef.current) {
-      // 清空现有内容
-      chessBoardRef.current.innerHTML = '';
-      
-      // 创建棋盘元素
-      const chessBoardElement = createChessBoardElement({
-        longfen,
-        size: 300,
-        className: "mx-auto"
-      });
-      
-      chessBoardRef.current.appendChild(chessBoardElement);
-    }
-  }, [isChessSample, longfen]);
-
   return (
     <div className="border rounded p-4 w-full flex flex-col gap-2">
       <h3 className="font-bold mb-2">{sampleName}</h3>
 
       <div className="flex flex-col gap-4 w-full">
         <div className="flex gap-4 w-full justify-between">
-          {/* 棋盘显示 */}
-          {isChessSample && longfen && (
-            <div className="flex flex-col gap-2">
-              <div className="text-sm font-bold">Chess Position & Move:</div>
-              <div ref={chessBoardRef}></div>
-            </div>
-          )}
-
           {/* Text display with highlights */}
           {sample.text && (
             <div className="flex flex-col gap-2">

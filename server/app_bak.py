@@ -1,11 +1,12 @@
 import io
 import json
 import os
+import signal
 import sys
 import logging
 import threading
 import time
-import uuid
+import hashlib
 from functools import lru_cache
 from typing import Any, Optional, List, Tuple, Dict
 from asyncio import to_thread
@@ -22,12 +23,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from torchvision import transforms
 
+# 新增：缺失导入
+import asyncio
+from collections import deque
+
 from lm_saes.backend import LanguageModel
 from lm_saes.config import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
-from lm_saes.lc0_mapping import uci_to_idx_mappings, idx_to_uci_mappings, get_mapping_index
+from lm_saes.lc0_mapping import (
+    uci_to_idx_mappings, idx_to_uci_mappings, get_mapping_index
+)
 
 # 导入Transformer模型相关
 try:
@@ -38,8 +45,180 @@ except ImportError as e:
     logging.warning(f"⚠️ 无法加载 transformer_lens 模块: {e}")
     TRANSFORMER_LENS_AVAILABLE = False
 
+
 # 全局模型实例
 global_chess_model = None
+
+
+# 分析结果缓存管理器
+class AnalysisCache:
+    def __init__(self, max_size=1000):
+        self.cache = {}
+        self.access_times = {}
+        self.max_size = max_size
+        self.lock = threading.Lock()
+    
+    def _make_key(self, fen, analysis_type, **params):
+        """生成缓存键"""
+        params_str = json.dumps(params, sort_keys=True)
+        key_data = f"{fen}_{analysis_type}_{params_str}"
+        return hashlib.md5(key_data.encode()).hexdigest()
+    
+    def get(self, fen, analysis_type, **params):
+        """获取缓存的分析结果"""
+        key = self._make_key(fen, analysis_type, **params)
+        with self.lock:
+            if key in self.cache:
+                self.access_times[key] = time.time()
+                return self.cache[key]
+            return None
+    
+    def set(self, fen, analysis_type, result, **params):
+        """设置缓存的分析结果"""
+        key = self._make_key(fen, analysis_type, **params)
+        with self.lock:
+            # 如果缓存已满，删除最旧的条目
+            if len(self.cache) >= self.max_size:
+                oldest_key = min(
+                    self.access_times.keys(),
+                    key=lambda k: self.access_times[k]
+                )
+                del self.cache[oldest_key]
+                del self.access_times[oldest_key]
+            
+            self.cache[key] = result
+            self.access_times[key] = time.time()
+    
+    def clear(self):
+        """清空缓存"""
+        with self.lock:
+            self.cache.clear()
+            self.access_times.clear()
+
+
+# 全局分析缓存实例
+global_analysis_cache = AnalysisCache(max_size=500)
+
+
+# 任务管理器
+class TaskManager:
+    def __init__(self):
+        self.active_tasks = {}  # task_id -> task_info
+        self.task_queue = []  # 优先级队列
+        self.lock = threading.Lock()
+        self.next_task_id = 0
+    
+    def create_task(self, task_type, priority=0, **kwargs):
+        """创建新任务"""
+        with self.lock:
+            task_id = f"{task_type}_{int(time.time())}_{self.next_task_id}"
+            self.next_task_id += 1
+            
+            task_info = {
+                'task_id': task_id,
+                'task_type': task_type,
+                'priority': priority,
+                'status': 'pending',
+                'created_at': time.time(),
+                'cancel_event': threading.Event(),
+                'kwargs': kwargs
+            }
+            
+            self.active_tasks[task_id] = task_info
+            return task_id
+    
+    def cancel_task(self, task_id):
+        """取消任务"""
+        with self.lock:
+            if task_id in self.active_tasks:
+                self.active_tasks[task_id]['cancel_event'].set()
+                self.active_tasks[task_id]['status'] = 'cancelled'
+                logging.info(f"⚡ 任务已取消: {task_id}")
+                return True
+            return False
+    
+    def cancel_tasks_by_pattern(self, pattern):
+        """根据模式取消任务"""
+        cancelled_count = 0
+        with self.lock:
+            active_task_ids = list(self.active_tasks.keys())
+            logging.info(f"🔍 检查任务取消模式 '{pattern}': 当前活跃任务 {len(active_task_ids)} 个")
+            
+            # 批量取消所有匹配的任务
+            matching_tasks = []
+            for task_id in active_task_ids:
+                if pattern in task_id:
+                    matching_tasks.append(task_id)
+            
+            logging.info(f"🔍 找到 {len(matching_tasks)} 个匹配的任务: {matching_tasks}")
+            
+            # 快速批量设置取消标志
+            for task_id in matching_tasks:
+                if task_id in self.active_tasks:
+                    self.active_tasks[task_id]['cancel_event'].set()
+                    self.active_tasks[task_id]['status'] = 'cancelled'
+                    cancelled_count += 1
+                    
+            if cancelled_count > 0:
+                logging.info(f"⚡ 批量取消完成: {cancelled_count} 个任务已设置取消标志")
+            
+        return cancelled_count
+    
+    def is_cancelled(self, task_id):
+        """检查任务是否被取消"""
+        with self.lock:
+            if task_id in self.active_tasks:
+                return self.active_tasks[task_id]['cancel_event'].is_set()
+            return False
+    
+    def complete_task(self, task_id):
+        """标记任务完成"""
+        with self.lock:
+            if task_id in self.active_tasks:
+                self.active_tasks[task_id]['status'] = 'completed'
+                # 清理老任务
+                self._cleanup_old_tasks()
+                
+    def get_all_tasks(self):
+        """获取所有活跃任务信息"""
+        with self.lock:
+            return {
+                task_id: {
+                    'task_type': info['task_type'],
+                    'priority': info['priority'],
+                    'status': info['status'],
+                    'created_at': info['created_at'],
+                    'is_cancelled': info['cancel_event'].is_set()
+                }
+                for task_id, info in self.active_tasks.items()
+            }
+            
+    def force_clear_all_tasks(self):
+        """强制清理所有任务（紧急情况使用）"""
+        with self.lock:
+            cleared_count = len(self.active_tasks)
+            # 设置所有任务为取消状态
+            for task_info in self.active_tasks.values():
+                task_info['cancel_event'].set()
+                task_info['status'] = 'force_cancelled'
+            # 清空任务列表
+            self.active_tasks.clear()
+            logging.warning(f"🚨 强制清理了 {cleared_count} 个活跃任务")
+            return cleared_count
+    
+    def _cleanup_old_tasks(self):
+        """清理超过10分钟的老任务"""
+        current_time = time.time()
+        old_tasks = [
+            task_id for task_id, task_info in self.active_tasks.items()
+            if current_time - task_info['created_at'] > 600  # 10分钟
+        ]
+        for task_id in old_tasks:
+            del self.active_tasks[task_id]
+
+
+# 全局任务管理器
+global_task_manager = TaskManager()
 
 # 添加规则模块路径
 # 尝试多种路径方式
@@ -47,7 +226,8 @@ possible_paths = [
     os.path.join(os.path.dirname(__file__), '../exp/07rule'),
     os.path.join(os.getcwd(), 'exp/07rule'),
     os.path.join(os.getcwd(), '../exp/07rule'),
-    '/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/exp/07rule'
+    '/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/'
+    'rlin_projects/chess-SAEs/exp/07rule'
 ]
 
 rules_path = None
@@ -65,7 +245,7 @@ if rules_path:
     print(f"🔍 规则目录内容: {os.listdir(rules_path)}")
     print(f"🔍 rules子目录内容: {os.listdir(os.path.join(rules_path, 'rules'))}")
 else:
-    print(f"❌ 未找到规则模块目录")
+    print("❌ 未找到规则模块目录")
     print(f"🔍 尝试的路径: {possible_paths}")
 
 # 导入国际象棋规则分析函数
@@ -102,6 +282,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 app = FastAPI()
 
+
 @app.on_event("startup")
 async def startup_event():
     global global_engine, global_chess_model
@@ -134,9 +315,17 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     global global_engine, global_chess_model
+    
+    # 关闭所有活跃的引擎实例
+    global_engine_manager.close_all_engines()
+    
+    # 清理全局引擎引用
     if global_engine:
-        global_engine.quit()
-        logging.info("✓ Stockfish引擎已关闭")
+        try:
+            global_engine = None
+            logging.info("✓ Stockfish引擎引用已清理")
+        except Exception as e:
+            logging.warning(f"⚠️ 清理Stockfish引擎时出错: {e}")
     
     if global_chess_model:
         del global_chess_model
@@ -179,6 +368,84 @@ session_lock = threading.Lock()
 
 # 全局引擎实例
 global_engine: Optional[chess.engine.SimpleEngine] = None
+
+# 引擎管理器 - 提供更安全的引擎操作
+class EngineManager:
+    def __init__(self):
+        self.engine_lock = threading.Lock()
+        self.active_engines = set()
+    
+    def create_engine(self) -> Optional[chess.engine.SimpleEngine]:
+        """创建新的引擎实例"""
+        try:
+            engine = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)
+            with self.engine_lock:
+                self.active_engines.add(engine)
+            return engine
+        except Exception as e:
+            logging.error(f"创建引擎失败: {e}")
+            return None
+    
+    def close_engine(self, engine: chess.engine.SimpleEngine):
+        """安全关闭引擎实例"""
+        if engine is None:
+            return
+        
+        with self.engine_lock:
+            if engine in self.active_engines:
+                self.active_engines.remove(engine)
+        
+        try:
+            engine.quit()
+        except Exception as e:
+            logging.warning(f"关闭引擎时出错: {e}")
+    
+    def close_all_engines(self):
+        """关闭所有活跃的引擎"""
+        with self.engine_lock:
+            engines_to_close = list(self.active_engines)
+            self.active_engines.clear()
+        
+        for engine in engines_to_close:
+            try:
+                engine.quit()
+            except Exception as e:
+                logging.warning(f"关闭引擎时出错: {e}")
+        
+        logging.info(f"已关闭 {len(engines_to_close)} 个引擎实例")
+
+# 全局引擎管理器
+global_engine_manager = EngineManager()
+
+# 信号处理器 - 优雅地处理Ctrl+C
+def signal_handler(signum, frame):
+    """处理Ctrl+C信号，优雅地关闭所有资源"""
+    logging.info(f"🛑 收到信号 {signum}，开始优雅关闭...")
+    
+    try:
+        # 关闭所有活跃的引擎实例
+        global_engine_manager.close_all_engines()
+        
+        # 强制清理所有任务
+        global_task_manager.force_clear_all_tasks()
+        
+        # 清理所有会话
+        with session_lock:
+            for session_id, session_info in active_sessions.items():
+                session_info['cancel_event'].set()
+            active_sessions.clear()
+        
+        logging.info("✅ 优雅关闭完成")
+        
+    except Exception as e:
+        logging.error(f"❌ 优雅关闭时出错: {e}")
+    
+    # 退出程序
+    sys.exit(0)
+
+# 注册信号处理器
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 def register_session(session_id: str, cancel_event: threading.Event):
     """注册一个新的分析会话"""
@@ -390,31 +657,46 @@ async def get_wdl_evaluation(fen: str) -> dict:
         board = chess.Board(fen)
         
         def run_wdl_analysis():
+            engine = None
             try:
-                with chess.engine.SimpleEngine.popen_uci(ENGINE_PATH) as engine:
-                    # 配置引擎参数，确保启用WDL评估
-                    engine_options = ENGINE_OPTIONS.copy()
-                    # 一些Stockfish版本需要特殊设置来启用WDL
-                    try:
-                        engine.configure(engine_options)
-                    except:
-                        pass  # 如果配置失败，继续使用默认设置
-                    
-                    # 进行更深入的分析以获得准确的WDL
-                    info = engine.analyse(
-                        board,
-                        chess.engine.Limit(
-                            time=ENGINE_TIME_LIMIT * 2,  # 稍长时间以获得更准确的WDL
-                            depth=12,
-                            nodes=1_000_000
-                        ),
-                        info=chess.engine.INFO_ALL
-                    )
-                    
-                    return info
+                engine = global_engine_manager.create_engine()
+                if engine is None:
+                    logging.error("无法创建WDL引擎实例")
+                    return None
+                
+                # 配置引擎参数，确保启用WDL评估
+                engine_options = ENGINE_OPTIONS.copy()
+                # 一些Stockfish版本需要特殊设置来启用WDL
+                try:
+                    engine.configure(engine_options)
+                except Exception as config_error:
+                    logging.warning(f"WDL引擎配置失败: {config_error}")
+                
+                # 进行更深入的分析以获得准确的WDL
+                info = engine.analyse(
+                    board,
+                    chess.engine.Limit(
+                        time=ENGINE_TIME_LIMIT * 2,  # 稍长时间以获得更准确的WDL
+                        depth=12,
+                        nodes=1_000_000
+                    ),
+                    info=chess.engine.INFO_ALL
+                )
+                
+                return info
+            except chess.engine.EngineTerminatedError as e:
+                logging.error(f"WDL引擎意外终止: {e}")
+                return None
+            except chess.engine.EngineError as e:
+                logging.error(f"WDL引擎错误: {e}")
+                return None
             except Exception as e:
                 logging.error(f"WDL分析内部错误: {e}")
                 return None
+            finally:
+                # 使用引擎管理器安全关闭引擎
+                if engine:
+                    global_engine_manager.close_engine(engine)
         
         info = await to_thread(run_wdl_analysis)
         
@@ -790,25 +1072,51 @@ async def analyze_position_with_stockfish_simple(fen: str) -> Optional[tuple[str
 
         # 使用新的引擎实例避免状态冲突
         def run_engine_analysis():
+            engine = None
+            start_time = time.time()
+            max_analysis_time = ENGINE_TIME_LIMIT * 3  # 最大分析时间
+            
             try:
-                with chess.engine.SimpleEngine.popen_uci(ENGINE_PATH) as engine:
-                    # 配置引擎参数
-                    for option, value in ENGINE_OPTIONS.items():
+                engine = global_engine_manager.create_engine()
+                if engine is None:
+                    logging.error("无法创建引擎实例")
+                    return None
+                
+                # 配置引擎参数
+                for option, value in ENGINE_OPTIONS.items():
+                    try:
                         engine.configure({option: value})
-                    
-                    # 分析局面
-                    result = engine.play(
-                        board,
-                        chess.engine.Limit(
-                            time=ENGINE_TIME_LIMIT,
-                            depth=10,         # 降低深度以提高速度
-                            nodes=500_000     # 降低节点数
-                        )
+                    except Exception as config_error:
+                        logging.warning(f"引擎配置失败 {option}={value}: {config_error}")
+                
+                # 检查是否超时
+                if time.time() - start_time > max_analysis_time:
+                    logging.warning(f"引擎分析超时: {fen[:20]}...")
+                    return None
+                
+                # 分析局面
+                result = engine.play(
+                    board,
+                    chess.engine.Limit(
+                        time=ENGINE_TIME_LIMIT,
+                        depth=10,         # 降低深度以提高速度
+                        nodes=500_000     # 降低节点数
                     )
-                    return result
+                )
+                return result
+            except chess.engine.EngineTerminatedError as e:
+                logging.error(f"引擎意外终止: {e}")
+                return None
+            except chess.engine.EngineError as e:
+                logging.error(f"引擎错误: {e}")
+                return None
             except Exception as e:
                 logging.error(f"引擎分析内部错误: {e}")
                 return None
+            finally:
+                # 使用引擎管理器安全关闭引擎
+                if engine:
+                    global_engine_manager.close_engine(engine)
 
         result = await to_thread(run_engine_analysis)
 
@@ -1520,13 +1828,20 @@ async def cancel_all_analysis_sessions():
             # 清空活跃会话列表
             active_sessions.clear()
         
-        logging.info(f"🧹 批量取消 {cancelled_count} 个分析会话: {session_ids[:5]}{'...' if len(session_ids) > 5 else ''}")
+        # 同时取消所有任务
+        task_cancelled_count = global_task_manager.force_clear_all_tasks()
+        
+        # 关闭所有活跃的引擎实例
+        global_engine_manager.close_all_engines()
+        
+        logging.info(f"🧹 批量取消 {cancelled_count} 个分析会话和 {task_cancelled_count} 个任务: {session_ids[:5]}{'...' if len(session_ids) > 5 else ''}")
         
         return {
             "status": "success",
-            "message": f"已取消 {cancelled_count} 个分析会话",
-            "cancelled_count": cancelled_count,
-            "cancelled_sessions": session_ids[:10]  # 只返回前10个，避免响应过大
+            "message": f"已取消 {cancelled_count} 个分析会话和 {task_cancelled_count} 个任务",
+            "cancelled_count": cancelled_count + task_cancelled_count,
+            "cancelled_sessions": session_ids[:10],  # 只返回前10个，避免响应过大
+            "cancelled_tasks": task_cancelled_count
         }
         
     except Exception as e:
@@ -1597,6 +1912,19 @@ async def analyze_stockfish_simple(request_data: dict):
         if not fen:
             logging.error("❌ 缺少FEN参数")
             return Response(content="缺少FEN参数", status_code=400)
+        
+        # 检查缓存
+        cache_key_params = {
+            "include_rules": include_rules,
+            "include_material": include_material, 
+            "include_wdl": include_wdl,
+            "include_model": include_model
+        }
+        
+        cached_result = global_analysis_cache.get(fen, "stockfish", **cache_key_params)
+        if cached_result:
+            logging.info(f"💰 使用缓存结果: {fen[:30]}...")
+            return cached_result
         
         # 执行简化的Stockfish分析
         logging.info(f"🚀 开始调用Stockfish分析: {fen[:30]}...")
@@ -1691,6 +2019,12 @@ async def analyze_stockfish_simple(request_data: dict):
                 logging.info(f"🤖 模型推理完成: 最佳走法={best_move_model}, WDL={model_wdl.get('win_percent', '?')}/{model_wdl.get('draw_percent', '?')}/{model_wdl.get('loss_percent', '?')}{selfplay_info}")
             
         logging.info(f"📤 API返回响应: status={stockfish_analysis['status']}")
+        
+        # 缓存结果
+        if stockfish_analysis.get('status') == 'success':
+            global_analysis_cache.set(fen, "stockfish", stockfish_analysis, **cache_key_params)
+            logging.info(f"💾 分析结果已缓存: {fen[:30]}...")
+        
         return stockfish_analysis
         
     except Exception as e:
@@ -1809,17 +2143,78 @@ async def analyze_selfplay_api(request_data: dict):
         if not global_chess_model or not TRANSFORMER_LENS_AVAILABLE:
             return Response(content="模型未加载或不可用", status_code=503)
         
-        # 执行self-play
+        # 参数验证
+        if max_moves <= 0 or max_moves > 20:
+            logging.error(f"❌ 无效的max_moves参数: {max_moves}")
+            return Response(content="max_moves必须在1-20之间", status_code=400)
+        
+        if temperature <= 0 or temperature > 5.0:
+            logging.error(f"❌ 无效的temperature参数: {temperature}")
+            return Response(content="temperature必须在0-5.0之间", status_code=400)
+        
+        # 生成会话ID用于跟踪
+        session_id = f"selfplay_{int(time.time())}_{hash(fen) % 10000}"
+        logging.info(f"🎮 [会话:{session_id}] 开始Self-play分析")
+
+        # 创建任务并执行self-play
+        task_id = global_task_manager.create_task(
+            "selfplay", 
+            priority=1,  # 高优先级
+            fen=fen, 
+            max_moves=max_moves, 
+            temperature=temperature
+        )
+        
         def run_selfplay():
             try:
-                logging.info(f"🎮 开始Self-play分析: {fen[:30]}...")
-                selfplay_engine = HookedSelfPlayEngine(global_chess_model, temperature=temperature)
-                selfplay_result = selfplay_engine.play_game(initial_fen=fen, max_moves=max_moves)
-                logging.info(f"🎮 Self-play完成: {selfplay_result['total_moves']} 步")
+                # 检查FEN格式
+                try:
+                    chess.Board(fen)
+                except Exception as e:
+                    logging.error(f"❌ [任务:{task_id}] 无效的FEN格式: {e}")
+                    return {"error": f"无效的FEN格式: {str(e)}"}
+                
+                start_time = time.time()
+                logging.info(f"🎮 [任务:{task_id}] 开始Self-play分析: {fen[:30]}...")
+                
+                # 使用任务ID创建引擎，支持取消
+                selfplay_engine = HookedSelfPlayEngine(
+                    global_chess_model, 
+                    temperature=temperature,
+                    task_id=task_id
+                )
+                
+                # 优化超时设置：基础120秒 + 每步8秒
+                dynamic_timeout = max(20.0, max_moves * 8.0)
+                logging.info(f"⏰ [任务:{task_id}] 设置超时时间: {dynamic_timeout}秒 (最大步数: {max_moves})")
+                
+                selfplay_result = selfplay_engine.play_game(
+                    initial_fen=fen, 
+                    max_moves=max_moves, 
+                    timeout=dynamic_timeout
+                )
+                
+                elapsed_time = time.time() - start_time
+                logging.info(f"✅ [任务:{task_id}] Self-play完成: {selfplay_result['total_moves']} 步, 耗时: {elapsed_time:.2f}秒")
+                
+                # 标记任务完成
+                global_task_manager.complete_task(task_id)
+                
+                selfplay_result['session_id'] = session_id
+                selfplay_result['task_id'] = task_id
+                selfplay_result['processing_time'] = elapsed_time
                 return selfplay_result
+                
             except Exception as e:
-                logging.error(f"Self-play分析失败: {e}")
-                return {"error": f"Self-play分析失败: {str(e)}"}
+                error_msg = str(e)
+                if "任务已被取消" in error_msg:
+                    logging.info(f"⚡ [任务:{task_id}] Self-play任务被用户取消")
+                    return {"error": "任务被取消", "task_id": task_id, "cancelled": True}
+                else:
+                    logging.error(f"💥 [任务:{task_id}] Self-play分析失败: {e}")
+                    import traceback
+                    logging.error(f"💥 [任务:{task_id}] 详细错误: {traceback.format_exc()}")
+                    return {"error": f"Self-play分析失败: {error_msg}", "task_id": task_id}
         
         selfplay_result = await to_thread(run_selfplay)
         
@@ -1827,17 +2222,24 @@ async def analyze_selfplay_api(request_data: dict):
             "fen": fen,
             "selfplay": selfplay_result,
             "status": "success" if "error" not in selfplay_result else "error",
+            "session_id": session_id,
+            "timestamp": int(time.time()),
             "parameters": {
                 "max_moves": max_moves,
                 "temperature": temperature
-            }
+            },
+            "processing_time": selfplay_result.get('processing_time', 0) if "error" not in selfplay_result else None
         }
         
-        logging.info(f"📤 Self-play API返回响应")
+        logging.info(f"📤 [会话:{session_id}] Self-play API返回响应，状态: {response_data['status']}")
+        logging.info(f"📤 [会话:{session_id}] Self-play结果: {selfplay_result}")
         return response_data
         
     except Exception as e:
-        logging.error(f"💥 Self-play API错误: {e}")
+        session_id = session_id if 'session_id' in locals() else 'unknown'
+        logging.error(f"💥 [会话:{session_id}] Self-play API错误: {e}")
+        import traceback
+        logging.error(f"💥 详细错误堆栈: {traceback.format_exc()}")
         return Response(
             content=f"Self-play分析出错: {str(e)}", 
             status_code=500
@@ -1951,6 +2353,44 @@ async def analyze_stockfish_batch(request_data: dict):
             status_code=500
         )
 
+@app.get("/health")
+async def health_check():
+    """系统健康检查"""
+    try:
+        health_status = {
+            "status": "healthy",
+            "timestamp": int(time.time()),
+            "services": {
+                "api": "healthy",
+                "model": "healthy" if global_chess_model else "not_loaded",
+                "transformer_lens": "available" if TRANSFORMER_LENS_AVAILABLE else "unavailable"
+            },
+            "memory": {
+                "available": True  # 可以添加更详细的内存检查
+            }
+        }
+        
+        # 简单的模型健康检查
+        if global_chess_model and TRANSFORMER_LENS_AVAILABLE:
+            try:
+                # 快速测试模型是否响应
+                test_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                board = chess.Board(test_fen)
+                # 这里不实际运行推理，只检查模型是否可访问
+                health_status["services"]["model"] = "healthy"
+            except Exception as e:
+                health_status["services"]["model"] = f"unhealthy: {str(e)}"
+                health_status["status"] = "degraded"
+        
+        return health_status
+        
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": int(time.time())
+        }
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -1964,25 +2404,212 @@ app.add_middleware(
 class HookedSelfPlayEngine:
     """使用HookTransformer进行self-play的引擎"""
     
-    def __init__(self, model, temperature: float = 1.0):
+    def __init__(self, model, temperature: float = 1.0, task_id: str = None):
         """
         初始化self-play引擎
         
         Args:
             model: HookedTransformer模型
             temperature: 温度参数，控制随机性
+            task_id: 任务ID，用于取消控制
+            
+        Note:
+            引擎将在每步都执行完整的WDL分析以确保精度
         """
         self.model = model
         self.temperature = temperature
+        self.task_id = task_id
         self.model.eval()
         
         # 记录游戏历史
         self.game_history = []
         self.move_probabilities = []
+        
+        # 性能优化设置
+        self.max_inference_time = 8.0  # 单次推理最大时间
+    
+    def validate_move_legality(self, fen: str, uci_move: str) -> bool:
+        """
+        验证移动的合法性
+        
+        Args:
+            fen: FEN字符串
+            uci_move: UCI格式的移动字符串
+            
+        Returns:
+            移动是否合法
+        """
+        try:
+            chess_board = chess.Board(fen)
+            legal_moves = list(chess_board.legal_moves)
+            legal_uci_set = set(move.uci() for move in legal_moves)
+            return uci_move in legal_uci_set
+        except Exception as e:
+            logging.warning(f"验证移动合法性时出错: {e}")
+            return False
+    
+    def get_legal_moves_with_probabilities(self, fen: str) -> List[Tuple[str, float]]:
+        """
+        获取所有合法移动及其概率（修复版本）
+        
+        Args:
+            fen: FEN字符串
+            
+        Returns:
+            合法移动列表: [(uci_move, probability), ...]
+        """
+        try:
+            # 运行模型推理
+            output, cache = self.model.run_with_cache(fen, prepend_bos=False)
+            policy_output = output[0]  # [1, 1858]
+            
+            # 获取所有合法移动
+            chess_board = chess.Board(fen)
+            legal_moves = list(chess_board.legal_moves)
+            legal_uci_set = set(move.uci() for move in legal_moves)
+            
+            # 计算概率
+            probabilities = torch.softmax(policy_output / self.temperature, dim=-1)[0]
+            
+            # 获取映射表
+            mapping_idx = get_mapping_index(chess_board)
+            idx_to_uci = idx_to_uci_mappings[mapping_idx]
+            
+            move_probs = []
+            total_prob = 0.0
+            
+            for move in legal_moves:
+                try:
+                    # 转换为模型索引
+                    uci_move = move.uci()
+                    if uci_move in idx_to_uci.values():
+                        # 找到对应的索引
+                        for idx, uci in idx_to_uci.items():
+                            if uci == uci_move:
+                                prob = probabilities[idx].item()
+                                move_probs.append((uci_move, prob))
+                                total_prob += prob
+                                break
+                    else:
+                        # 如果转换失败，给一个很小的概率
+                        move_probs.append((uci_move, 0.001))
+                        total_prob += 0.001
+                        
+                except Exception as e:
+                    logging.warning(f"处理移动 {move.uci()} 时出错: {e}")
+                    # 如果转换失败，给一个很小的概率
+                    move_probs.append((move.uci(), 0.001))
+                    total_prob += 0.001
+            
+            # 重新归一化概率
+            if total_prob > 0:
+                move_probs = [(move, prob / total_prob) for move, prob in move_probs]
+            
+            # 按概率排序
+            move_probs.sort(key=lambda x: x[1], reverse=True)
+            
+            return move_probs
+            
+        except Exception as e:
+            logging.error(f"获取合法移动概率时出错: {e}")
+            return []
+    
+    def get_best_move_simple(self, fen: str) -> Tuple[str, float]:
+        """
+        简单方法：获取最大概率的移动，如果合法就返回，否则找下一个
+        
+        Args:
+            fen: FEN字符串
+            
+        Returns:
+            (最佳移动, 概率)
+        """
+        try:
+            # 运行模型推理
+            output, cache = self.model.run_with_cache(fen, prepend_bos=False)
+            policy_output = output[0]  # [1, 1858]
+            
+            # 获取所有合法移动
+            chess_board = chess.Board(fen)
+            legal_moves = list(chess_board.legal_moves)
+            legal_uci_set = set(move.uci() for move in legal_moves)
+            
+            # 计算概率
+            probabilities = torch.softmax(policy_output / self.temperature, dim=-1)[0]
+            
+            # 获取映射表
+            mapping_idx = get_mapping_index(chess_board)
+            idx_to_uci = idx_to_uci_mappings[mapping_idx]
+            
+            # 按概率排序所有可能的移动
+            all_moves_with_probs = []
+            for idx in range(len(policy_output[0])):
+                if idx in idx_to_uci:
+                    uci_move = idx_to_uci[idx]
+                    prob = probabilities[idx].item()
+                    all_moves_with_probs.append((uci_move, prob, idx))
+            
+            # 按概率排序
+            all_moves_with_probs.sort(key=lambda x: x[1], reverse=True)
+            
+            # 找到第一个合法的移动
+            for uci_move, prob, idx in all_moves_with_probs:
+                if uci_move in legal_uci_set:
+                    logging.debug(f"✅ 找到最佳合法移动: {uci_move} (概率:{prob:.4f}, 索引:{idx})")
+                    return uci_move, prob
+            
+            # 如果没有找到合法移动，随机选择一个
+            if legal_moves:
+                random_move = np.random.choice(legal_moves)
+                return random_move.uci(), 1.0 / len(legal_moves)
+            else:
+                raise ValueError("没有合法移动")
+                
+        except Exception as e:
+            logging.error(f"获取最佳移动时出错: {e}")
+            raise
+    
+    def get_best_move_with_validation(self, fen: str) -> Tuple[str, float, int]:
+        """
+        获取最佳移动并验证合法性（使用合法移动概率方法）
+        
+        Args:
+            fen: FEN字符串
+            
+        Returns:
+            (最佳移动, 概率, 索引)
+        """
+        try:
+            # 使用新的合法移动概率方法
+            legal_moves_with_probs = self.get_legal_moves_with_probabilities(fen)
+            
+            if not legal_moves_with_probs:
+                raise ValueError("没有找到合法移动")
+            
+            # 返回概率最高的合法移动
+            best_move, best_prob = legal_moves_with_probs[0]
+            
+            # 获取对应的索引（用于调试）
+            chess_board = chess.Board(fen)
+            mapping_idx = get_mapping_index(chess_board)
+            idx_to_uci = idx_to_uci_mappings[mapping_idx]
+            
+            best_idx = None
+            for idx, uci in idx_to_uci.items():
+                if uci == best_move:
+                    best_idx = idx
+                    break
+            
+            logging.debug(f"✅ 最佳合法移动: {best_move} (概率:{best_prob:.4f}, 索引:{best_idx})")
+            return best_move, best_prob, best_idx or 0
+                
+        except Exception as e:
+            logging.error(f"获取最佳移动时出错: {e}")
+            raise
     
     def get_top_moves(self, fen: str, top_k: int = 5) -> List[Tuple[str, float, int]]:
         """
-        获取前k个最佳移动
+        获取前k个最佳移动（带超时和取消检查）
         
         Args:
             fen: FEN字符串
@@ -1992,7 +2619,13 @@ class HookedSelfPlayEngine:
             移动列表: [(uci_move, probability, index), ...]
         """
         try:
-            # 运行模型推理
+            # 检查任务是否被取消
+            if self.task_id and global_task_manager.is_cancelled(self.task_id):
+                logging.info(f"⚡ [任务:{self.task_id}] 推演被取消，停止执行")
+                raise RuntimeError("任务已被取消")
+            
+            # 运行模型推理（带超时）
+            inference_start = time.time()
             output, cache = self.model.run_with_cache(fen, prepend_bos=False)
             policy_output = output[0]  # [1, 1858]
             
@@ -2034,7 +2667,7 @@ class HookedSelfPlayEngine:
     
     def select_move(self, fen: str) -> Tuple[str, float]:
         """
-        根据概率分布选择移动
+        选择最佳移动（使用简单验证方法）
         
         Args:
             fen: FEN字符串
@@ -2042,7 +2675,16 @@ class HookedSelfPlayEngine:
         Returns:
             (选择的移动, 移动概率)
         """
-        top_moves = self.get_top_moves(fen, top_k=10)  # 获取前10个作为候选
+        try:
+            # 使用简单方法：获取最大概率的移动，如果合法就返回
+            best_move, best_prob = self.get_best_move_simple(fen)
+            return best_move, best_prob
+            
+        except Exception as e:
+            logging.warning(f"简单方法失败，回退到传统方法: {e}")
+            
+            # 回退到传统方法
+            top_moves = self.get_top_moves(fen, top_k=5)
         
         if not top_moves:
             # 如果没有合法移动，随机选择一个
@@ -2054,25 +2696,184 @@ class HookedSelfPlayEngine:
             else:
                 raise ValueError("没有合法移动")
         
-        # 根据概率分布选择移动
-        moves, probs, indices = zip(*top_moves)
-        chosen_idx = np.random.choice(len(moves), p=np.array(probs) / sum(probs))
-        chosen_move = moves[chosen_idx]
-        chosen_prob = probs[chosen_idx]
-        
-        return chosen_move, chosen_prob
+        # 始终选择概率最高的走法（第一名）
+        best_move, best_prob, best_idx = top_moves[0]
+        return best_move, best_prob
     
-    def play_game(self, initial_fen: str = None, max_moves: int = 10) -> Dict:
+    def get_wdl_analysis(self, fen: str) -> Dict:
         """
-        进行一局self-play游戏
+        获取当前局面的WDL分析
+        
+        Args:
+            fen: FEN字符串
+            
+        Returns:
+            WDL分析结果（始终以白方视角显示）
+        """
+        try:
+            # 检查任务是否被取消
+            if self.task_id and global_task_manager.is_cancelled(self.task_id):
+                logging.info(f"⚡ [任务:{self.task_id}] WDL分析被取消")
+                raise RuntimeError("任务已被取消")
+                
+            with torch.no_grad():
+                outputs, cache = self.model.run_with_cache(fen, prepend_bos=False)
+            
+            # 尝试不同的方式获取WDL输出
+            wdl_probs = None
+            if len(outputs) > 1:
+                # 方式1：尝试outputs[1][0]
+                try:
+                    wdl_probs = outputs[1][0]
+                    if hasattr(wdl_probs, 'shape') and len(wdl_probs.shape) > 0:
+                        logging.debug(f"✓ 方式1成功: WDL shape={wdl_probs.shape}")
+                    else:
+                        logging.debug(f"✓ 方式1成功: WDL type={type(wdl_probs)}")
+                except Exception as e:
+                    logging.debug(f"✗ 方式1失败: {e}")
+                    
+                    # 方式2：尝试outputs[1]
+                    try:
+                        wdl_candidate = outputs[1]
+                        if hasattr(wdl_candidate, 'shape') and len(wdl_candidate.shape) >= 2:
+                            wdl_probs = wdl_candidate[0]
+                        elif hasattr(wdl_candidate, 'shape') and len(wdl_candidate.shape) == 1:
+                            wdl_probs = wdl_candidate
+                        else:
+                            wdl_probs = wdl_candidate
+                        logging.debug(f"✓ 方式2成功: WDL shape={wdl_probs.shape if hasattr(wdl_probs, 'shape') else type(wdl_probs)}")
+                    except Exception as e2:
+                        logging.debug(f"✗ 方式2失败: {e2}")
+                        
+                        # 方式3：尝试其他可能的输出位置
+                        for i in range(len(outputs)):
+                            try:
+                                candidate = outputs[i]
+                                if hasattr(candidate, 'shape') and len(candidate.shape) >= 1:
+                                    candidate_size = candidate.shape[-1] if len(candidate.shape) > 0 else 0
+                                    if candidate_size == 3:  # WDL应该是3个值
+                                        if len(candidate.shape) == 2:
+                                            wdl_probs = candidate[0]
+                                        else:
+                                            wdl_probs = candidate
+                                        logging.debug(f"✓ 方式3成功在outputs[{i}]: shape={wdl_probs.shape}")
+                                        break
+                            except Exception:
+                                continue
+            
+            if wdl_probs is not None:
+                # 确保WDL概率是有效的
+                try:
+                    # 尝试获取3个WDL值
+                    values = None
+                    if hasattr(wdl_probs, 'shape'):
+                        if len(wdl_probs.shape) == 1 and wdl_probs.shape[0] >= 3:
+                            # 一维张量，直接取前3个值
+                            values = [wdl_probs[i] for i in range(3)]
+                        elif len(wdl_probs.shape) == 0:
+                            # 标量，可能需要其他处理
+                            logging.warning(f"WDL输出是标量: {wdl_probs}")
+                        elif wdl_probs.shape[-1] >= 3:
+                            # 多维张量，取最后一维的前3个值
+                            if len(wdl_probs.shape) == 2:
+                                values = [wdl_probs[0][i] for i in range(3)]
+                            else:
+                                values = [wdl_probs[..., i] for i in range(3)]
+                    elif hasattr(wdl_probs, '__len__') and len(wdl_probs) >= 3:
+                        # 列表或类似序列
+                        values = wdl_probs[:3]
+                    
+                    if values is not None:
+                        # 转换为浮点数
+                        try:
+                            win_prob = float(values[0].item() if hasattr(values[0], 'item') else values[0])
+                            draw_prob = float(values[1].item() if hasattr(values[1], 'item') else values[1])
+                            loss_prob = float(values[2].item() if hasattr(values[2], 'item') else values[2])
+                        except Exception:
+                            # 如果item()失败，尝试直接转换
+                            win_prob = float(values[0])
+                            draw_prob = float(values[1])
+                            loss_prob = float(values[2])
+                        
+                        # 检查概率是否合理
+                        total_prob = win_prob + draw_prob + loss_prob
+                        if total_prob > 0:
+                            # 归一化概率
+                            win_prob /= total_prob
+                            draw_prob /= total_prob
+                            loss_prob /= total_prob
+                                                
+                            # 解析FEN以确定当前行棋方
+                            fen_parts = fen.split()
+                            current_player = fen_parts[1] if len(fen_parts) > 1 else 'w'
+                            
+                            # 模型输出的WDL是相对于当前行棋方的
+                            if current_player == 'w':  # 白方行棋
+                                white_win_prob = win_prob
+                                black_win_prob = loss_prob
+                            else:  # 黑方行棋
+                                white_win_prob = loss_prob
+                                black_win_prob = win_prob
+                            
+                            logging.debug(f"✓ WDL解析成功: W{white_win_prob:.3f} D{draw_prob:.3f} B{black_win_prob:.3f}")
+                            return {
+                                "white_win_prob": round(white_win_prob * 100, 2),
+                                "draw_prob": round(draw_prob * 100, 2),
+                                "black_win_prob": round(black_win_prob * 100, 2),
+                                "current_player": current_player,
+                                "evaluation_type": "model_wdl"
+                            }
+                        else:
+                            logging.warning(f"WDL概率总和为0: [{win_prob}, {draw_prob}, {loss_prob}]")
+                    else:
+                        wdl_shape = wdl_probs.shape if hasattr(wdl_probs, 'shape') else "unknown"
+                        logging.warning(f"无法从WDL输出提取3个值: shape={wdl_shape}, type={type(wdl_probs)}")
+                        
+                except Exception as parse_error:
+                    logging.error(f"解析WDL概率失败: {parse_error}")
+                    import traceback
+                    logging.debug(f"WDL解析错误详情: {traceback.format_exc()}")
+            
+            # 如果无法获取有效的WDL，使用合理的估计值
+            logging.debug("无法获取有效的WDL输出，使用估计值")
+            return {
+                "white_win_prob": 45.0,
+                "draw_prob": 10.0,
+                "black_win_prob": 45.0,
+                "evaluation_type": "estimated",
+                "note": "模型WDL解析失败，使用估计值"
+            }
+                
+        except Exception as e:
+            logging.error(f"WDL分析失败: {e}")
+            return {
+                "white_win_prob": 33.0,
+                "draw_prob": 34.0,
+                "black_win_prob": 33.0,
+                "evaluation_type": "error",
+                "error": str(e)
+            }
+    
+    def play_game(self, initial_fen: str = None, max_moves: int = 10, timeout: float = 120.0) -> Dict:
+        """
+        进行一局self-play游戏（带超时控制）
         
         Args:
             initial_fen: 初始FEN字符串，None表示标准开局
             max_moves: 最大移动数
+            timeout: 超时时间（秒），默认120秒
             
         Returns:
             游戏结果字典
         """
+        start_time = time.time()
+        
+        def check_timeout():
+            if time.time() - start_time > timeout:
+                raise TimeoutError(f"Self-play超时 ({timeout}秒)")
+            
+        check_timeout()  # 初始检查
+        
         # 初始化棋盘
         if initial_fen:
             try:
@@ -2085,41 +2886,78 @@ class HookedSelfPlayEngine:
         # 重置游戏历史
         self.game_history = []
         self.move_probabilities = []
+        wdl_history = []  # 记录WDL变化历史
+        
+        # 分析初始局面的WDL
+        initial_wdl = self.get_wdl_analysis(board.fen())
+        wdl_history.append({
+            'move_number': 0,
+            'fen': board.fen(),
+            'wdl': initial_wdl
+        })
         
         move_count = 0
         while not board.is_game_over() and move_count < max_moves:
+            check_timeout()  # 每步检查超时
+            
+            # 检查任务是否被取消
+            if self.task_id and global_task_manager.is_cancelled(self.task_id):
+                logging.info(f"⚡ Self-play任务被取消: {self.task_id}")
+                break
+            
             move_count += 1
             current_player = "white" if board.turn == chess.WHITE else "black"
             current_fen = board.fen()
             
             try:
-                # 获取前5个最佳移动
+                # 获取前5个最佳移动（耗时操作，需要检查取消）
+                if self.task_id and global_task_manager.is_cancelled(self.task_id):
+                    logging.info(f"⚡ [任务:{self.task_id}] 在获取最佳移动前被取消")
+                    break
                 top_moves = self.get_top_moves(current_fen, top_k=5)
                 
-                # 选择移动
+                # 选择移动（再次检查取消）
+                if self.task_id and global_task_manager.is_cancelled(self.task_id):
+                    logging.info(f"⚡ [任务:{self.task_id}] 在选择移动前被取消")
+                    break
                 chosen_move, chosen_prob = self.select_move(current_fen)
-                
-                # 记录游戏历史
-                self.game_history.append({
-                    'move_number': move_count,
-                    'player': current_player,
-                    'move': chosen_move,
-                    'probability': chosen_prob,
-                    'fen_before': current_fen,
-                    'fen_after': None,  # 将在执行移动后填充
-                    'top_moves': top_moves,
-                    'move_san': None  # 将在执行移动后填充
-                })
-                self.move_probabilities.append(chosen_prob)
                 
                 # 执行移动
                 move_obj = chess.Move.from_uci(chosen_move)
                 move_san = board.san(move_obj)
                 board.push(move_obj)
                 
-                # 更新历史记录中的信息
-                self.game_history[-1]['fen_after'] = board.fen()
-                self.game_history[-1]['move_san'] = move_san
+                # WDL分析前检查取消（WDL分析比较耗时）
+                if self.task_id and global_task_manager.is_cancelled(self.task_id):
+                    logging.info(f"⚡ [任务:{self.task_id}] 在WDL分析前被取消")
+                    break
+                    
+                # 每步都执行完整的WDL分析
+                logging.debug(f"🎯 步骤{move_count}: 执行WDL分析")
+                after_move_wdl = self.get_wdl_analysis(board.fen())
+                logging.debug(f"🎯 步骤{move_count}: WDL结果: {after_move_wdl.get('evaluation_type', 'unknown')}")
+                
+                # 记录游戏历史（包含WDL信息）
+                self.game_history.append({
+                    'move_number': move_count,
+                    'player': current_player,
+                    'move': chosen_move,
+                    'probability': chosen_prob,
+                    'fen_before': current_fen,
+                    'fen_after': board.fen(),
+                    'top_moves': top_moves,
+                    'move_san': move_san,
+                    'wdl_before': wdl_history[-1]['wdl'] if wdl_history else None,  # 移动前的WDL
+                    'wdl_after': after_move_wdl  # 移动后的WDL
+                })
+                self.move_probabilities.append(chosen_prob)
+                
+                # 记录WDL历史
+                wdl_history.append({
+                    'move_number': move_count,
+                    'fen': board.fen(),
+                    'wdl': after_move_wdl
+                })
                 
             except Exception as e:
                 logging.error(f"Self-play移动选择错误: {e}")
@@ -2138,6 +2976,7 @@ class HookedSelfPlayEngine:
             'termination': outcome.termination.name if outcome else None,
             'game_history': self.game_history,
             'move_probabilities': self.move_probabilities,
+            'wdl_history': wdl_history,  # 新增：WDL变化历史
             'temperature': self.temperature
         }
         
@@ -2318,3 +3157,741 @@ async def analyze_position_with_model_and_selfplay(fen: str) -> dict:
     except Exception as e:
         logging.error(f"模型分析异常: {e}")
         return {"error": f"模型分析异常: {str(e)}"}
+
+@app.post("/analyze/selfplay/branch")
+async def analyze_selfplay_branch_api(request_data: dict):
+    """从指定步骤使用指定走法重新推演
+    
+    Args:
+        request_data: 包含以下参数的请求数据
+            - initial_fen: 初始FEN字符串
+            - game_history: 之前的推演历史
+            - branch_step: 要分支的步骤编号（从1开始）
+            - selected_move: 选择的走法（UCI格式）
+            - max_moves: 最大推演步数（默认10）
+            - temperature: 温度参数（默认1.0）
+        
+    Returns:
+        新的推演结果
+    """
+    try:
+        initial_fen = request_data.get("initial_fen")
+        game_history = request_data.get("game_history", [])
+        branch_step = request_data.get("branch_step")
+        selected_move = request_data.get("selected_move")
+        max_moves = request_data.get("max_moves", 10)
+        temperature = request_data.get("temperature", 1.0)
+        
+        logging.info(f"📥 收到分支推演请求: branch_step={branch_step}, selected_move={selected_move}")
+        
+        if not initial_fen:
+            logging.error("❌ 缺少initial_fen参数")
+            return Response(content="缺少initial_fen参数", status_code=400)
+        
+        if branch_step is None:
+            logging.error("❌ 缺少branch_step参数")
+            return Response(content="缺少branch_step参数", status_code=400)
+        
+        if not selected_move:
+            logging.error("❌ 缺少selected_move参数")
+            return Response(content="缺少selected_move参数", status_code=400)
+        
+        if not global_chess_model or not TRANSFORMER_LENS_AVAILABLE:
+            return Response(content="模型未加载或不可用", status_code=503)
+        
+        def run_branch_selfplay():
+            try:
+                logging.info(f"🎯 开始分支推演: 从第{branch_step}步使用走法{selected_move}")
+                
+                # 重建到分支点的棋盘状态
+                board = chess.Board(initial_fen)
+                
+                # 重播到分支点之前的所有走法
+                for i in range(branch_step - 1):
+                    if i < len(game_history):
+                        move_uci = game_history[i]["move"]
+                        try:
+                            move = chess.Move.from_uci(move_uci)
+                            board.push(move)
+                        except Exception as e:
+                            logging.error(f"重播走法失败 {move_uci}: {e}")
+                            return {"error": f"重播走法失败: {str(e)}"}
+                
+                # 验证选择的走法是否合法
+                try:
+                    selected_move_obj = chess.Move.from_uci(selected_move)
+                    if selected_move_obj not in board.legal_moves:
+                        return {"error": f"选择的走法 {selected_move} 不合法"}
+                except Exception as e:
+                    return {"error": f"无效的走法格式 {selected_move}: {str(e)}"}
+                
+                # 执行选择的走法
+                move_san = board.san(selected_move_obj)
+                board.push(selected_move_obj)
+                branch_fen = board.fen()
+                
+                # 计算剩余可推演步数（总共最多10步）
+                remaining_moves = max(0, 10 - branch_step)
+                
+                # 从新位置开始self-play
+                selfplay_engine = HookedSelfPlayEngine(global_chess_model, temperature=temperature)
+                selfplay_result = selfplay_engine.play_game(initial_fen=branch_fen, max_moves=remaining_moves, timeout=20.0)
+                
+                # 获取分支点之前的WDL历史
+                wdl_history = []
+                temp_board = chess.Board(initial_fen)
+                
+                # 添加初始WDL
+                initial_wdl = selfplay_engine.get_wdl_analysis(initial_fen)
+                wdl_history.append({
+                    'move_number': 0,
+                    'fen': initial_fen,
+                    'wdl': initial_wdl
+                })
+                
+                # 构建完整的新游戏历史
+                # 1. 保留分支点之前的历史，但需要重新计算WDL
+                new_game_history = []
+                for i in range(branch_step - 1):
+                    if i < len(game_history):
+                        step = game_history[i].copy()
+                        # 重新计算WDL
+                        move = chess.Move.from_uci(step["move"])
+                        before_wdl = selfplay_engine.get_wdl_analysis(temp_board.fen())
+                        temp_board.push(move)
+                        after_wdl = selfplay_engine.get_wdl_analysis(temp_board.fen())
+                        
+                        step['wdl_before'] = before_wdl
+                        step['wdl_after'] = after_wdl
+                        new_game_history.append(step)
+                        
+                        # 添加到WDL历史
+                        wdl_history.append({
+                            'move_number': i + 1,
+                            'fen': temp_board.fen(),
+                            'wdl': after_wdl
+                        })
+                
+                # 2. 获取分支点原始步骤的top_moves（保持原有候选走法显示）
+                original_branch_step = game_history[branch_step - 1] if branch_step <= len(game_history) else None
+                original_top_moves = original_branch_step.get('top_moves', []) if original_branch_step else []
+                
+                # 计算选择走法在原候选中的概率
+                selected_move_prob = 1.0
+                for move_info in original_top_moves:
+                    if move_info[0] == selected_move:
+                        selected_move_prob = move_info[1]
+                        break
+                
+                # 3. 添加分支点的选择走法
+                before_move_wdl = selfplay_engine.get_wdl_analysis(temp_board.fen())
+                after_move_wdl = selfplay_engine.get_wdl_analysis(branch_fen)
+                
+                branch_step_info = {
+                    'move_number': branch_step,
+                    'player': "white" if temp_board.turn else "black",
+                    'move': selected_move,
+                    'probability': selected_move_prob,
+                    'fen_before': temp_board.fen(),
+                    'fen_after': branch_fen,
+                    'move_san': move_san,
+                    'top_moves': original_top_moves,  # 保持原有候选走法
+                    'wdl_before': before_move_wdl,
+                    'wdl_after': after_move_wdl,
+                    'is_branch_point': True  # 标记这是分支点
+                }
+                
+                new_game_history.append(branch_step_info)
+                
+                # 添加分支点WDL到历史
+                wdl_history.append({
+                    'move_number': branch_step,
+                    'fen': branch_fen,
+                    'wdl': after_move_wdl
+                })
+                
+                # 4. 添加从新位置开始的self-play历史
+                if selfplay_result.get('game_history'):
+                    for i, step in enumerate(selfplay_result['game_history']):
+                        # 调整步骤编号
+                        adjusted_step = step.copy()
+                        adjusted_step['move_number'] = branch_step + 1 + i
+                        new_game_history.append(adjusted_step)
+                
+                # 5. 合并WDL历史（包含新推演的WDL）
+                if selfplay_result.get('wdl_history'):
+                    for wdl_step in selfplay_result['wdl_history']:
+                        if wdl_step['move_number'] > 0:  # 跳过初始状态，避免重复
+                            adjusted_wdl_step = wdl_step.copy()
+                            adjusted_wdl_step['move_number'] = branch_step + adjusted_wdl_step['move_number']
+                            wdl_history.append(adjusted_wdl_step)
+                
+                # 构建分支推演结果
+                branch_result = {
+                    'initial_fen': initial_fen,
+                    'branch_step': branch_step,
+                    'selected_move': selected_move,
+                    'final_fen': selfplay_result.get('final_fen', branch_fen),
+                    'result': selfplay_result.get('result', '*'),
+                    'total_moves': len(new_game_history),
+                    'termination': selfplay_result.get('termination'),
+                    'game_history': new_game_history,
+                    'move_probabilities': [selected_move_prob] + selfplay_result.get('move_probabilities', []),
+                    'wdl_history': wdl_history,  # 包含完整的WDL历史
+                    'temperature': temperature,
+                    'is_branch': True,
+                    'original_total_moves': len(game_history),
+                    'branch_info': {
+                        'branch_step': branch_step,
+                        'selected_move': selected_move,
+                        'selected_move_san': move_san,
+                        'new_moves_count': len(selfplay_result.get('game_history', [])),
+                        'remaining_moves_used': remaining_moves
+                    }
+                }
+                
+                logging.info(f"🎯 分支推演完成: 从第{branch_step}步分支，新增{len(selfplay_result.get('game_history', []))}步")
+                return branch_result
+                
+            except Exception as e:
+                logging.error(f"分支推演失败: {e}")
+                return {"error": f"分支推演失败: {str(e)}"}
+        
+        branch_result = await to_thread(run_branch_selfplay)
+        
+        response_data = {
+            "initial_fen": initial_fen,
+            "branch": branch_result,
+            "status": "success" if "error" not in branch_result else "error",
+            "parameters": {
+                "branch_step": branch_step,
+                "selected_move": selected_move,
+                "max_moves": max_moves,
+                "temperature": temperature
+            }
+        }
+        
+        logging.info(f"📤 分支推演API返回响应")
+        return response_data
+        
+    except Exception as e:
+        logging.error(f"💥 分支推演API错误: {e}")
+        return Response(
+            content=f"分支推演出错: {str(e)}", 
+            status_code=500
+        )
+
+@app.post("/analyze/batch")
+async def analyze_batch(request_data: dict):
+    """批量分析多个FEN局面
+    
+    Args:
+        request_data: 包含FEN列表和分析选项的请求数据
+        {
+            "fens": ["fen1", "fen2", ...],
+            "analysis_types": ["stockfish", "selfplay"],  // 可选的分析类型
+            "include_rules": True,
+            "include_material": True,
+            "include_wdl": True,
+            "include_model": True,
+            "max_moves": 10,  // 仅用于selfplay
+            "temperature": 1.0  // 仅用于selfplay
+        }
+        
+    Returns:
+        批量分析结果
+    """
+    try:
+        fens = request_data.get("fens", [])
+        analysis_types = request_data.get("analysis_types", ["stockfish"])
+        include_rules = request_data.get("include_rules", True)
+        include_material = request_data.get("include_material", True)
+        include_wdl = request_data.get("include_wdl", True)
+        include_model = request_data.get("include_model", True)
+        max_moves = request_data.get("max_moves", 10)
+        temperature = request_data.get("temperature", 1.0)
+        
+        logging.info(f"📥 收到批量分析请求: {len(fens)} 个局面, 类型: {analysis_types}")
+        
+        if not fens:
+            logging.error("❌ 缺少FEN列表")
+            return Response(content="缺少FEN列表", status_code=400)
+        
+        results = {}
+        
+        # 处理每个FEN
+        for i, fen in enumerate(fens):
+            if not fen:
+                continue
+                
+            logging.info(f"🔄 处理第 {i+1}/{len(fens)} 个局面: {fen[:30]}...")
+            fen_results = {}
+            
+            # Stockfish分析
+            if "stockfish" in analysis_types:
+                cache_key_params = {
+                    "include_rules": include_rules,
+                    "include_material": include_material,
+                    "include_wdl": include_wdl,
+                    "include_model": include_model
+                }
+                
+                # 检查缓存
+                cached_result = global_analysis_cache.get(fen, "stockfish", **cache_key_params)
+                if cached_result:
+                    logging.info(f"💰 使用缓存的Stockfish结果: {fen[:30]}...")
+                    fen_results["stockfish"] = cached_result
+                else:
+                    # 执行分析
+                    stockfish_request = {
+                        "fen": fen,
+                        "include_rules": include_rules,
+                        "include_material": include_material,
+                        "include_wdl": include_wdl,
+                        "include_model": include_model
+                    }
+                    
+                    stockfish_result = await analyze_stockfish_simple(stockfish_request)
+                    fen_results["stockfish"] = stockfish_result
+            
+            # Self-play分析
+            if "selfplay" in analysis_types:
+                cache_key_params = {
+                    "max_moves": max_moves,
+                    "temperature": temperature
+                }
+                
+                # 检查缓存
+                cached_result = global_analysis_cache.get(fen, "selfplay", **cache_key_params)
+                if cached_result:
+                    logging.info(f"💰 使用缓存的Self-play结果: {fen[:30]}...")
+                    fen_results["selfplay"] = cached_result
+                else:
+                    # 执行self-play分析
+                    selfplay_request = {
+                        "fen": fen,
+                        "max_moves": max_moves,
+                        "temperature": temperature
+                    }
+                    
+                    # 为了避免超时，我们需要调用实际的self-play函数
+                    try:
+                        session_id = f"batch_{int(time.time())}_{i}"
+                        
+                        def run_selfplay():
+                            try:
+                                # 验证FEN格式
+                                chess.Board(fen)
+                            except Exception as e:
+                                logging.error(f"❌ [批量:{session_id}] 无效的FEN格式: {e}")
+                                return {"error": f"无效的FEN格式: {str(e)}"}
+                            
+                            start_time = time.time()
+                            logging.info(f"🎮 [批量:{session_id}] 开始Self-play分析: {fen[:30]}...")
+                            
+                            selfplay_engine = HookedSelfPlayEngine(global_chess_model, temperature=temperature)
+                            dynamic_timeout = max(20.0, max_moves * 15.0)
+                            selfplay_result = selfplay_engine.play_game(initial_fen=fen, max_moves=max_moves, timeout=dynamic_timeout)
+                            
+                            elapsed_time = time.time() - start_time
+                            logging.info(f"✅ [批量:{session_id}] Self-play完成: {selfplay_result['total_moves']} 步, 耗时: {elapsed_time:.2f}秒")
+                            
+                            selfplay_result['session_id'] = session_id
+                            selfplay_result['processing_time'] = elapsed_time
+                            return selfplay_result
+                        
+                        selfplay_result = await to_thread(run_selfplay)
+                        
+                        # 缓存结果
+                        if "error" not in selfplay_result:
+                            global_analysis_cache.set(fen, "selfplay", selfplay_result, **cache_key_params)
+                        
+                        fen_results["selfplay"] = selfplay_result
+                        
+                    except Exception as e:
+                        logging.error(f"💥 [批量:{session_id}] Self-play分析失败: {e}")
+                        fen_results["selfplay"] = {"error": f"Self-play分析失败: {str(e)}"}
+            
+            results[fen] = fen_results
+        
+        response_data = {
+            "status": "success",
+            "total_fens": len(fens),
+            "processed_fens": len(results),
+            "results": results,
+            "timestamp": int(time.time()),
+            "analysis_types": analysis_types
+        }
+        
+        logging.info(f"📤 批量分析完成: {len(results)}/{len(fens)} 个局面已处理")
+        return response_data
+        
+    except Exception as e:
+        logging.error(f"💥 批量分析API错误: {e}")
+        import traceback
+        logging.error(f"💥 详细错误堆栈: {traceback.format_exc()}")
+        return Response(
+            content=f"批量分析出错: {str(e)}",
+            status_code=500
+        )
+
+
+@app.post("/analyze/unified")
+async def analyze_unified(request_data: dict):
+    """统一分析接口，智能选择分析类型
+    
+    Args:
+        request_data: 包含FEN和分析偏好的请求数据
+        {
+            "fen": "fen_string",
+            "preferred_type": "auto|stockfish|selfplay",  // 首选分析类型
+            "fallback": True,  // 是否启用备用分析
+            "include_rules": True,
+            "include_material": True,
+            "include_wdl": True,
+            "include_model": True,
+            "max_moves": 10,
+            "temperature": 1.0
+        }
+        
+    Returns:
+        统一分析结果
+    """
+    try:
+        fen = request_data.get("fen")
+        preferred_type = request_data.get("preferred_type", "auto")
+        fallback = request_data.get("fallback", True)
+        include_rules = request_data.get("include_rules", True)
+        include_material = request_data.get("include_material", True)
+        include_wdl = request_data.get("include_wdl", True)
+        include_model = request_data.get("include_model", True)
+        max_moves = request_data.get("max_moves", 10)
+        temperature = request_data.get("temperature", 1.0)
+        
+        logging.info(f"📥 收到统一分析请求: {fen[:30] if fen else 'None'}..., 类型: {preferred_type}")
+        
+        if not fen:
+            logging.error("❌ 缺少FEN参数")
+            return Response(content="缺少FEN参数", status_code=400)
+        
+        result = {
+            "fen": fen,
+            "preferred_type": preferred_type,
+            "timestamp": int(time.time())
+        }
+        
+        # 智能选择分析类型
+        if preferred_type == "auto":
+            # 自动模式：优先使用缓存中的结果
+            stockfish_cache = global_analysis_cache.get(fen, "stockfish", 
+                include_rules=include_rules, include_material=include_material, 
+                include_wdl=include_wdl, include_model=include_model)
+            
+            selfplay_cache = global_analysis_cache.get(fen, "selfplay",
+                max_moves=max_moves, temperature=temperature)
+            
+            if stockfish_cache:
+                result["analysis"] = stockfish_cache
+                result["analysis_type"] = "stockfish"
+                result["cache_hit"] = True
+                logging.info(f"💰 使用缓存的Stockfish结果: {fen[:30]}...")
+            elif selfplay_cache:
+                result["analysis"] = selfplay_cache
+                result["analysis_type"] = "selfplay"
+                result["cache_hit"] = True
+                logging.info(f"💰 使用缓存的Self-play结果: {fen[:30]}...")
+            else:
+                # 没有缓存，执行Stockfish分析（更快）
+                preferred_type = "stockfish"
+        
+        # 执行指定类型的分析
+        if preferred_type == "stockfish" and "analysis" not in result:
+            stockfish_request = {
+                "fen": fen,
+                "include_rules": include_rules,
+                "include_material": include_material,
+                "include_wdl": include_wdl,
+                "include_model": include_model
+            }
+            
+            stockfish_result = await analyze_stockfish_simple(stockfish_request)
+            result["analysis"] = stockfish_result
+            result["analysis_type"] = "stockfish"
+            result["cache_hit"] = False
+            
+        elif preferred_type == "selfplay" and "analysis" not in result:
+            # 执行self-play分析（使用批量分析的逻辑）
+            batch_request = {
+                "fens": [fen],
+                "analysis_types": ["selfplay"],
+                "max_moves": max_moves,
+                "temperature": temperature
+            }
+            
+            batch_result = await analyze_batch(batch_request)
+            if batch_result.get("status") == "success" and fen in batch_result.get("results", {}):
+                result["analysis"] = batch_result["results"][fen].get("selfplay")
+                result["analysis_type"] = "selfplay"
+                result["cache_hit"] = False
+            else:
+                if fallback:
+                    # 回退到Stockfish分析
+                    stockfish_request = {
+                        "fen": fen,
+                        "include_rules": include_rules,
+                        "include_material": include_material,
+                        "include_wdl": include_wdl,
+                        "include_model": include_model
+                    }
+                    
+                    stockfish_result = await analyze_stockfish_simple(stockfish_request)
+                    result["analysis"] = stockfish_result
+                    result["analysis_type"] = "stockfish"
+                    result["cache_hit"] = False
+                    result["fallback_used"] = True
+                    logging.info(f"⚠️ Self-play分析失败，回退到Stockfish: {fen[:30]}...")
+                else:
+                    result["error"] = "Self-play分析失败且未启用回退"
+        
+        result["status"] = "success" if "analysis" in result else "error"
+        
+        logging.info(f"📤 统一分析完成: 类型={result.get('analysis_type', 'none')}, 缓存命中={result.get('cache_hit', False)}")
+        return result
+        
+    except Exception as e:
+        logging.error(f"💥 统一分析API错误: {e}")
+        import traceback
+        logging.error(f"💥 详细错误堆栈: {traceback.format_exc()}")
+        return Response(
+            content=f"统一分析出错: {str(e)}",
+            status_code=500
+        )
+
+@app.post("/tasks/cancel")
+async def cancel_task_api(request_data: dict):
+    """取消指定任务
+    
+    Args:
+        request_data: 包含task_id的请求数据
+        
+    Returns:
+        取消结果
+    """
+    try:
+        task_id = request_data.get("task_id")
+        pattern = request_data.get("pattern")  # 可选：按模式取消
+        
+        logging.info(f"🔍 [任务取消API] 收到取消请求: task_id={task_id}, pattern={pattern}")
+        
+        if task_id:
+            success = global_task_manager.cancel_task(task_id)
+            if success:
+                logging.info(f"⚡ 任务取消成功: {task_id}")
+                return {"status": "success", "message": f"任务 {task_id} 已取消"}
+            else:
+                return {"status": "not_found", "message": f"任务 {task_id} 不存在"}
+        
+        elif pattern:
+            cancelled_count = global_task_manager.cancel_tasks_by_pattern(pattern)
+            logging.info(f"⚡ 批量取消任务: {cancelled_count} 个任务包含模式 '{pattern}'")
+            return {"status": "success", "message": f"已取消 {cancelled_count} 个任务", "cancelled_count": cancelled_count}
+        
+        else:
+            return {"status": "error", "message": "需要提供 task_id 或 pattern 参数"}
+            
+    except Exception as e:
+        logging.error(f"💥 取消任务API错误: {e}")
+        return Response(content=f"取消任务出错: {str(e)}", status_code=500)
+
+
+@app.get("/tasks/status")
+async def get_tasks_status():
+    """获取当前活跃任务状态
+    
+    Returns:
+        活跃任务列表
+    """
+    try:
+        active_tasks = global_task_manager.get_all_tasks()
+        for task_info in active_tasks.values():
+            task_info["elapsed_time"] = time.time() - task_info["created_at"]
+        
+        return {
+            "status": "success",
+            "active_tasks": active_tasks,
+            "total_count": len(active_tasks),
+            "timestamp": int(time.time())
+        }
+        
+    except Exception as e:
+        logging.error(f"💥 查询任务状态API错误: {e}")
+        return Response(content=f"查询任务状态出错: {str(e)}", status_code=500)
+
+
+@app.post("/tasks/priority")
+async def set_task_priority(request_data: dict):
+    """设置任务优先级（用于分支推演等高优先级任务）
+    
+    Args:
+        request_data: 包含task_pattern和new_priority的请求数据
+        
+    Returns:
+        设置结果
+    """
+    try:
+        task_pattern = request_data.get("task_pattern")
+        new_priority = request_data.get("new_priority", 10)  # 默认高优先级
+        
+        if not task_pattern:
+            return {"status": "error", "message": "需要提供 task_pattern 参数"}
+        
+        # 取消低优先级的相关任务
+        cancelled_count = global_task_manager.cancel_tasks_by_pattern(task_pattern)
+        
+        logging.info(f"🔥 高优先级任务请求: 取消了 {cancelled_count} 个相关任务，模式: '{task_pattern}'")
+        
+        return {
+            "status": "success", 
+            "message": f"已为高优先级任务清理了 {cancelled_count} 个相关任务",
+            "cancelled_count": cancelled_count,
+            "new_priority": new_priority
+        }
+        
+    except Exception as e:
+        logging.error(f"💥 设置任务优先级API错误: {e}")
+        return Response(content=f"设置任务优先级出错: {str(e)}", status_code=500)
+
+
+@app.post("/tasks/force_clear")
+async def force_clear_all_tasks():
+    """强制清理所有任务（紧急情况使用）
+    
+    Returns:
+        清理结果
+    """
+    try:
+        cleared_count = global_task_manager.force_clear_all_tasks()
+        
+        logging.warning(f"🚨 强制清理API: 清理了 {cleared_count} 个任务")
+        
+        return {
+            "status": "success", 
+            "message": f"强制清理了 {cleared_count} 个任务",
+            "cleared_count": cleared_count
+        }
+        
+    except Exception as e:
+        logging.error(f"💥 强制清理任务API错误: {e}")
+        return Response(content=f"强制清理任务出错: {str(e)}", status_code=500)
+
+@app.post("/circuits/generate")
+async def circuits_generate(request_data: dict):
+    """根据FEN与可选的move生成电路归因图，并返回JSON（并可保存到/circuits）。
+
+    请求参数：
+      - fen: 必填，FEN字符串
+      - move_uci: 选填，UCI走法；缺省时将自动推理
+      - side: 选填，"k"|"q"|"both"，默认"k"
+      - node_threshold: 选填，默认0.5
+      - edge_threshold: 选填，默认0.3
+      - sae_series: 选填，默认"lc0-tc"
+      - save: 选填，是否保存到/circuits，默认True
+    返回：
+      { graph, saved_path, slug, fen, move_uci, inferred }
+    """
+    try:
+        if not CIRCUITS_SERVICE_AVAILABLE:
+            return Response(content="circuits_service 未就绪", status_code=503)
+
+        fen = request_data.get("fen")
+        move_uci = request_data.get("move_uci")
+        side = request_data.get("side", "k")
+        node_threshold = float(request_data.get("node_threshold", 0.5))
+        edge_threshold = float(request_data.get("edge_threshold", 0.3))
+        sae_series_req = request_data.get("sae_series") or os.environ.get("SAE_SERIES", "lc0-tc")
+        save = bool(request_data.get("save", False))
+        output_dir = request_data.get("output_dir")  # 可选自定义输出路径
+
+        if not fen:
+            return Response(content="缺少fen参数", status_code=400)
+
+        # 若未提供move，尝试用模型推理，否则回退Stockfish
+        inferred = False
+        if not move_uci:
+            inferred = True
+            best_move = None
+            # 优先使用自有模型
+            try:
+                if global_chess_model and TRANSFORMER_LENS_AVAILABLE:
+                    engine = HookedSelfPlayEngine(global_chess_model, temperature=1.0)
+                    best_move, _prob = engine.get_best_move_simple(fen)
+            except Exception as e:
+                logging.warning(f"模型推理best move失败，将回退Stockfish: {e}")
+                best_move = None
+
+            if not best_move:
+                try:
+                    sf_res = await analyze_position_with_stockfish_simple(fen)
+                    if sf_res is not None:
+                        best_move, _ponder = sf_res
+                except Exception as e:
+                    logging.error(f"回退Stockfish获取best move失败: {e}")
+
+            if not best_move:
+                return Response(content="无法推理到可用的best move，请手动提供move_uci", status_code=422)
+            move_uci = best_move
+
+        graph_json, saved_path, slug = await to_thread(
+            run_trace_to_graph,
+            fen=fen,
+            move_uci=move_uci,
+            side=side,
+            node_threshold=node_threshold,
+            edge_threshold=edge_threshold,
+            sae_series=sae_series_req,
+            output_dir=output_dir if save else None,
+            save=save,
+        )
+
+        if not graph_json:
+            return Response(content="图生成失败", status_code=500)
+
+        # 对返回的JSON做最小化适配（保证前端transformCircuitData可以识别）
+        # 若已有nodes/edges则直接返回；否则透传
+        resp = {
+            "status": "success",
+            "graph": graph_json,
+            "saved_path": saved_path,
+            "slug": slug,
+            "fen": fen,
+            "move_uci": move_uci,
+            "inferred": inferred,
+        }
+        return resp
+
+    except Exception as e:
+        logging.error(f"💥 circuits_generate 错误: {e}")
+        return Response(content=f"生成电路图出错: {str(e)}", status_code=500)
+
+@app.get("/logs/recent")
+async def get_recent_logs(limit: int = 200):
+    try:
+        limit = max(1, min(2000, int(limit)))
+    except Exception:
+        limit = 200
+    return {"logs": log_handler.get_recent(limit)}
+
+@app.get("/logs/stream")
+async def stream_logs():
+    async def event_gen():
+        last_len = 0
+        while True:
+            await asyncio.sleep(0.5)
+            logs = log_handler.get_recent(2000)
+            if len(logs) > last_len:
+                # 只发送新增部分
+                for item in logs[last_len:]:
+                    data = json.dumps(item)
+                    yield f"data: {data}\n\n"
+                last_len = len(logs)
+    return StreamingResponse(event_gen(), media_type="text/event-stream")

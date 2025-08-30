@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import signal
 import sys
 import logging
 import threading
@@ -9,6 +10,7 @@ import hashlib
 from functools import lru_cache
 from typing import Any, Optional, List, Tuple, Dict
 from asyncio import to_thread
+import importlib.util
 
 import chess
 import chess.engine
@@ -21,6 +23,11 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from torchvision import transforms
+from fastapi.responses import StreamingResponse
+
+# 新增：缺失导入
+import asyncio
+from collections import deque
 
 from lm_saes.backend import LanguageModel
 from lm_saes.config import MongoDBConfig, SAEConfig
@@ -39,6 +46,7 @@ try:
 except ImportError as e:
     logging.warning(f"⚠️ 无法加载 transformer_lens 模块: {e}")
     TRANSFORMER_LENS_AVAILABLE = False
+
 
 # 全局模型实例
 global_chess_model = None
@@ -310,10 +318,12 @@ async def startup_event():
 async def shutdown_event():
     global global_engine, global_chess_model
     
-    # 不要尝试关闭全局引擎，因为每次分析都使用独立的引擎实例
+    # 关闭所有活跃的引擎实例
+    global_engine_manager.close_all_engines()
+    
+    # 清理全局引擎引用
     if global_engine:
         try:
-            # 只是设置为None，避免引擎事件循环冲突
             global_engine = None
             logging.info("✓ Stockfish引擎引用已清理")
         except Exception as e:
@@ -360,6 +370,84 @@ session_lock = threading.Lock()
 
 # 全局引擎实例
 global_engine: Optional[chess.engine.SimpleEngine] = None
+
+# 引擎管理器 - 提供更安全的引擎操作
+class EngineManager:
+    def __init__(self):
+        self.engine_lock = threading.Lock()
+        self.active_engines = set()
+    
+    def create_engine(self) -> Optional[chess.engine.SimpleEngine]:
+        """创建新的引擎实例"""
+        try:
+            engine = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)
+            with self.engine_lock:
+                self.active_engines.add(engine)
+            return engine
+        except Exception as e:
+            logging.error(f"创建引擎失败: {e}")
+            return None
+    
+    def close_engine(self, engine: chess.engine.SimpleEngine):
+        """安全关闭引擎实例"""
+        if engine is None:
+            return
+        
+        with self.engine_lock:
+            if engine in self.active_engines:
+                self.active_engines.remove(engine)
+        
+        try:
+            engine.quit()
+        except Exception as e:
+            logging.warning(f"关闭引擎时出错: {e}")
+    
+    def close_all_engines(self):
+        """关闭所有活跃的引擎"""
+        with self.engine_lock:
+            engines_to_close = list(self.active_engines)
+            self.active_engines.clear()
+        
+        for engine in engines_to_close:
+            try:
+                engine.quit()
+            except Exception as e:
+                logging.warning(f"关闭引擎时出错: {e}")
+        
+        logging.info(f"已关闭 {len(engines_to_close)} 个引擎实例")
+
+# 全局引擎管理器
+global_engine_manager = EngineManager()
+
+# 信号处理器 - 优雅地处理Ctrl+C
+def signal_handler(signum, frame):
+    """处理Ctrl+C信号，优雅地关闭所有资源"""
+    logging.info(f"🛑 收到信号 {signum}，开始优雅关闭...")
+    
+    try:
+        # 关闭所有活跃的引擎实例
+        global_engine_manager.close_all_engines()
+        
+        # 强制清理所有任务
+        global_task_manager.force_clear_all_tasks()
+        
+        # 清理所有会话
+        with session_lock:
+            for session_id, session_info in active_sessions.items():
+                session_info['cancel_event'].set()
+            active_sessions.clear()
+        
+        logging.info("✅ 优雅关闭完成")
+        
+    except Exception as e:
+        logging.error(f"❌ 优雅关闭时出错: {e}")
+    
+    # 退出程序
+    sys.exit(0)
+
+# 注册信号处理器
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 def register_session(session_id: str, cancel_event: threading.Event):
     """注册一个新的分析会话"""
@@ -571,31 +659,46 @@ async def get_wdl_evaluation(fen: str) -> dict:
         board = chess.Board(fen)
         
         def run_wdl_analysis():
+            engine = None
             try:
-                with chess.engine.SimpleEngine.popen_uci(ENGINE_PATH) as engine:
-                    # 配置引擎参数，确保启用WDL评估
-                    engine_options = ENGINE_OPTIONS.copy()
-                    # 一些Stockfish版本需要特殊设置来启用WDL
-                    try:
-                        engine.configure(engine_options)
-                    except:
-                        pass  # 如果配置失败，继续使用默认设置
-                    
-                    # 进行更深入的分析以获得准确的WDL
-                    info = engine.analyse(
-                        board,
-                        chess.engine.Limit(
-                            time=ENGINE_TIME_LIMIT * 2,  # 稍长时间以获得更准确的WDL
-                            depth=12,
-                            nodes=1_000_000
-                        ),
-                        info=chess.engine.INFO_ALL
-                    )
-                    
-                    return info
+                engine = global_engine_manager.create_engine()
+                if engine is None:
+                    logging.error("无法创建WDL引擎实例")
+                    return None
+                
+                # 配置引擎参数，确保启用WDL评估
+                engine_options = ENGINE_OPTIONS.copy()
+                # 一些Stockfish版本需要特殊设置来启用WDL
+                try:
+                    engine.configure(engine_options)
+                except Exception as config_error:
+                    logging.warning(f"WDL引擎配置失败: {config_error}")
+                
+                # 进行更深入的分析以获得准确的WDL
+                info = engine.analyse(
+                    board,
+                    chess.engine.Limit(
+                        time=ENGINE_TIME_LIMIT * 2,  # 稍长时间以获得更准确的WDL
+                        depth=12,
+                        nodes=1_000_000
+                    ),
+                    info=chess.engine.INFO_ALL
+                )
+                
+                return info
+            except chess.engine.EngineTerminatedError as e:
+                logging.error(f"WDL引擎意外终止: {e}")
+                return None
+            except chess.engine.EngineError as e:
+                logging.error(f"WDL引擎错误: {e}")
+                return None
             except Exception as e:
                 logging.error(f"WDL分析内部错误: {e}")
                 return None
+            finally:
+                # 使用引擎管理器安全关闭引擎
+                if engine:
+                    global_engine_manager.close_engine(engine)
         
         info = await to_thread(run_wdl_analysis)
         
@@ -971,25 +1074,51 @@ async def analyze_position_with_stockfish_simple(fen: str) -> Optional[tuple[str
 
         # 使用新的引擎实例避免状态冲突
         def run_engine_analysis():
+            engine = None
+            start_time = time.time()
+            max_analysis_time = ENGINE_TIME_LIMIT * 3  # 最大分析时间
+            
             try:
-                with chess.engine.SimpleEngine.popen_uci(ENGINE_PATH) as engine:
-                    # 配置引擎参数
-                    for option, value in ENGINE_OPTIONS.items():
+                engine = global_engine_manager.create_engine()
+                if engine is None:
+                    logging.error("无法创建引擎实例")
+                    return None
+                
+                # 配置引擎参数
+                for option, value in ENGINE_OPTIONS.items():
+                    try:
                         engine.configure({option: value})
-                    
-                    # 分析局面
-                    result = engine.play(
-                        board,
-                        chess.engine.Limit(
-                            time=ENGINE_TIME_LIMIT,
-                            depth=10,         # 降低深度以提高速度
-                            nodes=500_000     # 降低节点数
-                        )
+                    except Exception as config_error:
+                        logging.warning(f"引擎配置失败 {option}={value}: {config_error}")
+                
+                # 检查是否超时
+                if time.time() - start_time > max_analysis_time:
+                    logging.warning(f"引擎分析超时: {fen[:20]}...")
+                    return None
+                
+                # 分析局面
+                result = engine.play(
+                    board,
+                    chess.engine.Limit(
+                        time=ENGINE_TIME_LIMIT,
+                        depth=10,         # 降低深度以提高速度
+                        nodes=500_000     # 降低节点数
                     )
-                    return result
+                )
+                return result
+            except chess.engine.EngineTerminatedError as e:
+                logging.error(f"引擎意外终止: {e}")
+                return None
+            except chess.engine.EngineError as e:
+                logging.error(f"引擎错误: {e}")
+                return None
             except Exception as e:
                 logging.error(f"引擎分析内部错误: {e}")
                 return None
+            finally:
+                # 使用引擎管理器安全关闭引擎
+                if engine:
+                    global_engine_manager.close_engine(engine)
 
         result = await to_thread(run_engine_analysis)
 
@@ -1701,13 +1830,20 @@ async def cancel_all_analysis_sessions():
             # 清空活跃会话列表
             active_sessions.clear()
         
-        logging.info(f"🧹 批量取消 {cancelled_count} 个分析会话: {session_ids[:5]}{'...' if len(session_ids) > 5 else ''}")
+        # 同时取消所有任务
+        task_cancelled_count = global_task_manager.force_clear_all_tasks()
+        
+        # 关闭所有活跃的引擎实例
+        global_engine_manager.close_all_engines()
+        
+        logging.info(f"🧹 批量取消 {cancelled_count} 个分析会话和 {task_cancelled_count} 个任务: {session_ids[:5]}{'...' if len(session_ids) > 5 else ''}")
         
         return {
             "status": "success",
-            "message": f"已取消 {cancelled_count} 个分析会话",
-            "cancelled_count": cancelled_count,
-            "cancelled_sessions": session_ids[:10]  # 只返回前10个，避免响应过大
+            "message": f"已取消 {cancelled_count} 个分析会话和 {task_cancelled_count} 个任务",
+            "cancelled_count": cancelled_count + task_cancelled_count,
+            "cancelled_sessions": session_ids[:10],  # 只返回前10个，避免响应过大
+            "cancelled_tasks": task_cancelled_count
         }
         
     except Exception as e:
@@ -2051,7 +2187,7 @@ async def analyze_selfplay_api(request_data: dict):
                 )
                 
                 # 优化超时设置：基础120秒 + 每步8秒
-                dynamic_timeout = max(120.0, max_moves * 8.0)
+                dynamic_timeout = max(20.0, max_moves * 8.0)
                 logging.info(f"⏰ [任务:{task_id}] 设置超时时间: {dynamic_timeout}秒 (最大步数: {max_moves})")
                 
                 selfplay_result = selfplay_engine.play_game(
@@ -2078,9 +2214,9 @@ async def analyze_selfplay_api(request_data: dict):
                     return {"error": "任务被取消", "task_id": task_id, "cancelled": True}
                 else:
                     logging.error(f"💥 [任务:{task_id}] Self-play分析失败: {e}")
-                import traceback
-                logging.error(f"💥 [任务:{task_id}] 详细错误: {traceback.format_exc()}")
-                return {"error": f"Self-play分析失败: {error_msg}", "task_id": task_id}
+                    import traceback
+                    logging.error(f"💥 [任务:{task_id}] 详细错误: {traceback.format_exc()}")
+                    return {"error": f"Self-play分析失败: {error_msg}", "task_id": task_id}
         
         selfplay_result = await to_thread(run_selfplay)
         
@@ -2098,6 +2234,7 @@ async def analyze_selfplay_api(request_data: dict):
         }
         
         logging.info(f"📤 [会话:{session_id}] Self-play API返回响应，状态: {response_data['status']}")
+        logging.info(f"📤 [会话:{session_id}] Self-play结果: {selfplay_result}")
         return response_data
         
     except Exception as e:
@@ -3100,7 +3237,7 @@ async def analyze_selfplay_branch_api(request_data: dict):
                 
                 # 从新位置开始self-play
                 selfplay_engine = HookedSelfPlayEngine(global_chess_model, temperature=temperature)
-                selfplay_result = selfplay_engine.play_game(initial_fen=branch_fen, max_moves=remaining_moves, timeout=120.0)
+                selfplay_result = selfplay_engine.play_game(initial_fen=branch_fen, max_moves=remaining_moves, timeout=20.0)
                 
                 # 获取分支点之前的WDL历史
                 wdl_history = []
@@ -3355,7 +3492,7 @@ async def analyze_batch(request_data: dict):
                             logging.info(f"🎮 [批量:{session_id}] 开始Self-play分析: {fen[:30]}...")
                             
                             selfplay_engine = HookedSelfPlayEngine(global_chess_model, temperature=temperature)
-                            dynamic_timeout = max(180.0, max_moves * 15.0)
+                            dynamic_timeout = max(20.0, max_moves * 15.0)
                             selfplay_result = selfplay_engine.play_game(initial_fen=fen, max_moves=max_moves, timeout=dynamic_timeout)
                             
                             elapsed_time = time.time() - start_time
@@ -3648,3 +3785,115 @@ async def force_clear_all_tasks():
     except Exception as e:
         logging.error(f"💥 强制清理任务API错误: {e}")
         return Response(content=f"强制清理任务出错: {str(e)}", status_code=500)
+
+@app.post("/circuits/generate")
+async def circuits_generate(request_data: dict):
+    """根据FEN与可选的move生成电路归因图，并返回JSON（并可保存到/circuits）。
+
+    请求参数：
+      - fen: 必填，FEN字符串
+      - move_uci: 选填，UCI走法；缺省时将自动推理
+      - side: 选填，"k"|"q"|"both"，默认"k"
+      - node_threshold: 选填，默认0.5
+      - edge_threshold: 选填，默认0.3
+      - sae_series: 选填，默认"lc0-tc"
+      - save: 选填，是否保存到/circuits，默认True
+    返回：
+      { graph, saved_path, slug, fen, move_uci, inferred }
+    """
+    try:
+        if not CIRCUITS_SERVICE_AVAILABLE:
+            return Response(content="circuits_service 未就绪", status_code=503)
+
+        fen = request_data.get("fen")
+        move_uci = request_data.get("move_uci")
+        side = request_data.get("side", "k")
+        node_threshold = float(request_data.get("node_threshold", 0.5))
+        edge_threshold = float(request_data.get("edge_threshold", 0.3))
+        sae_series_req = request_data.get("sae_series") or os.environ.get("SAE_SERIES", "lc0-tc")
+        save = bool(request_data.get("save", False))
+        output_dir = request_data.get("output_dir")  # 可选自定义输出路径
+
+        if not fen:
+            return Response(content="缺少fen参数", status_code=400)
+
+        # 若未提供move，尝试用模型推理，否则回退Stockfish
+        inferred = False
+        if not move_uci:
+            inferred = True
+            best_move = None
+            # 优先使用自有模型
+            try:
+                if global_chess_model and TRANSFORMER_LENS_AVAILABLE:
+                    engine = HookedSelfPlayEngine(global_chess_model, temperature=1.0)
+                    best_move, _prob = engine.get_best_move_simple(fen)
+            except Exception as e:
+                logging.warning(f"模型推理best move失败，将回退Stockfish: {e}")
+                best_move = None
+
+            if not best_move:
+                try:
+                    sf_res = await analyze_position_with_stockfish_simple(fen)
+                    if sf_res is not None:
+                        best_move, _ponder = sf_res
+                except Exception as e:
+                    logging.error(f"回退Stockfish获取best move失败: {e}")
+
+            if not best_move:
+                return Response(content="无法推理到可用的best move，请手动提供move_uci", status_code=422)
+            move_uci = best_move
+
+        graph_json, saved_path, slug = await to_thread(
+            run_trace_to_graph,
+            fen=fen,
+            move_uci=move_uci,
+            side=side,
+            node_threshold=node_threshold,
+            edge_threshold=edge_threshold,
+            sae_series=sae_series_req,
+            output_dir=output_dir if save else None,
+            save=save,
+        )
+
+        if not graph_json:
+            return Response(content="图生成失败", status_code=500)
+
+        # 对返回的JSON做最小化适配（保证前端transformCircuitData可以识别）
+        # 若已有nodes/edges则直接返回；否则透传
+        resp = {
+            "status": "success",
+            "graph": graph_json,
+            "saved_path": saved_path,
+            "slug": slug,
+            "fen": fen,
+            "move_uci": move_uci,
+            "inferred": inferred,
+        }
+        return resp
+
+    except Exception as e:
+        logging.error(f"💥 circuits_generate 错误: {e}")
+        return Response(content=f"生成电路图出错: {str(e)}", status_code=500)
+
+@app.get("/logs/recent")
+async def get_recent_logs(limit: int = 200):
+    try:
+        limit = max(1, min(2000, int(limit)))
+    except Exception:
+        limit = 200
+    return {"logs": log_handler.get_recent(limit)}
+
+@app.get("/logs/stream")
+async def stream_logs():
+    async def event_gen():
+        last_len = 0
+        while True:
+            await asyncio.sleep(0.5)
+            logs = log_handler.get_recent(2000)
+            if len(logs) > last_len:
+                # 只发送新增部分
+                for item in logs[last_len:]:
+                    data = json.dumps(item)
+                    yield f"data: {data}\n\n"
+                last_len = len(logs)
+    return StreamingResponse(event_gen(), media_type="text/event-stream")

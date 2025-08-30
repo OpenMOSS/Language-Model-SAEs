@@ -1,0 +1,15 @@
+[
+    "win_or_go_home_k_1024.json",
+    "win_or_go_home_q_1024.json",
+    "win_or_go_home_k_1024_encoder_demean.json",
+    "sacrifice_the_queen_k_1024.json",
+    "sacrifice_the_queen_k_4096_B.json",
+    "sacrifice_the_queen_in3_k_4096_B.json",
+    "win_or_go_home_incorrect_k_negative_1024.json",
+    "win_or_go_home_k_move_pair_1024.json",
+    "win_or_go_home_k_group_1024.json",
+    "win_or_go_home_k_2048_G.json",
+    "win_or_go_home_k_4096_G.json",
+    "win_or_go_home_k_4096_B.json",
+    "game_20250827-195731-174aa8_ply_002_selfplay_b_b_c7c5.json"
+] 

@@ -117,7 +117,7 @@ class Evaluator:
                 (1e-6, "below_1e-6"),
             ]:
                 comparison = feature_sparsity > threshold if "above" in name else feature_sparsity < threshold
-                log_metric(name, item(comparison.sum()))
+                log_metric(name, item(comparison.float().sum()))
 
             # Reset tracking counters
             log_info["act_freq_scores"].zero_()
