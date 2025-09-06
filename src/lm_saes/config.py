@@ -119,6 +119,9 @@ class SAEConfig(BaseSAEConfig):
     hook_point_in: str
     hook_point_out: str
     use_glu_encoder: bool = False
+    use_auxk: bool = False
+    k_aux: int = 512  # Number of dead latents to use for AuxK loss
+    aux_coefficient: float = 1.0 / 32  # Weight coefficient for AuxK loss (alpha)
 
     @property
     def associated_hook_points(self) -> list[str]:
@@ -136,7 +139,7 @@ class LorsaConfig(BaseSAEConfig):
     # Attention dimensions
     n_qk_heads: int
     d_qk_head: int
-    positional_embedding_type: Literal["rotary", "none"] = "rotary"
+    positional_embedding_type: Literal["rotary", "none"] = "none"
     rotary_dim: int
     rotary_base: int = 10000
     rotary_adjacent_pairs: bool = True
@@ -152,6 +155,8 @@ class LorsaConfig(BaseSAEConfig):
     
     # Attention settings
     attn_scale: Optional[float] = None
+    use_smolgen: bool = False
+    use_learnable_attn_scale: bool = False
     
     @property
     def n_ov_heads(self) -> int:
@@ -237,6 +242,11 @@ class InitializerConfig(BaseConfig):
     grid_search_init_norm: bool = False
     initialize_W_D_with_active_subspace: bool = False
     d_active_subspace: int | None = None
+    initialize_lorsa_with_mhsa: bool | None = None
+    model_layer: int | None = None
+    initialize_lorsa_smolgen_from_encoder: bool = False
+    initialize_W_D_with_mhsa: bool = False
+    initialize_lorsa_attn_scale_from_encoder: bool = False
 
 
 class TrainerConfig(BaseConfig):
@@ -450,7 +460,7 @@ class LanguageModelConfig(BaseModelConfig):
     """ The directory of the HuggingFace cache. Should have the same effect as `HF_HOME`. """
     d_model: int = 768
     """ The dimension of the model. """
-    local_files_only: bool = False
+    local_files_only: bool = True
     """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
     max_length: int = 2048
     """ The maximum length of the input. """

@@ -82,7 +82,8 @@ class AttributionContext:
         mlp_output_hook: str,
     ) -> None:
         # assert lorsa_activation_matrix.shape[:-1] == tc_activation_matrix.shape[:-1], "LORSAs and CLTs must have the same shape"
-        n_layers, n_pos, _ = tc_activation_matrix.shape # tc_activation_matrix.shape = torch.Size([15, 64, 12288])
+        n_layers, n_pos, _ = tc_activation_matrix.shape
+
         # Forward-pass cache
         # # L0Ainput, L0Minput, ... L-1Ainput, L-1Minput, pre_unembed
         # L0Minput, L1Minput, ... L-1Minput, policy_head_input for transcoder only tracing

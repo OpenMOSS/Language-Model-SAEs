@@ -15,6 +15,7 @@ from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
 from lm_saes.utils.tensor_dict import batch_size
+from lm_saes.backend.language_model import LanguageModel
 
 logger = get_distributed_logger("initializer")
 
@@ -257,6 +258,7 @@ class Initializer:
         device_mesh: DeviceMesh | None = None,
         wandb_logger: Run | None = None,
         fold_activation_scale: bool = False,
+        model: LanguageModel | None = None
     ):
         """
         Initialize the SAE from the SAE config.
@@ -289,17 +291,57 @@ class Initializer:
                     assert activation_stream is not None, (
                         "Activation iterator must be provided for dataset-wise normalization"
                     )
-
+ 
                     activation_norm = calculate_activation_norm(
                         activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
                     )
                 sae.set_dataset_average_activation_norm(activation_norm)
-
+                 
+            if cfg.sae_type == 'lorsa' and self.cfg.initialize_lorsa_with_mhsa and sae.cfg.norm_activation == 'dataset-wise':
+                sae.init_lorsa_with_mhsa(model.model.blocks[self.cfg.model_layer])
+ 
+            # Initialize LORSA SmolGen from encoder if configured
+            if (
+                cfg.sae_type == 'lorsa'
+                and cfg.use_smolgen
+                and self.cfg.initialize_lorsa_smolgen_from_encoder
+                and model is not None
+            ):
+                print(
+                    f"====== init_smolgen_from_encoder ======"
+                )
+                sae.init_smolgen_from_encoder(
+                    model.model.blocks[self.cfg.model_layer]
+                )
+ 
             assert activation_stream is not None, "Activation iterator must be provided for initialization search"
             activation_batch = next(iter(activation_stream))  # type: ignore
             sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
-
+ 
             if self.cfg.initialize_W_D_with_active_subspace:
                 activation_batch = sae.normalize_activations(activation_batch)
-                sae.init_W_D_with_active_subspace(activation_batch, self.cfg.d_active_subspace)
+                if cfg.sae_type == 'lorsa' and self.cfg.initialize_lorsa_with_mhsa and sae.cfg.norm_activation == 'dataset-wise':
+                    print(
+                        f"====== init_W_D_with_active_subspace_per_head ======"
+                    )
+                    sae.init_W_D_with_active_subspace_per_head(
+                        activation_batch,
+                        encoder_layer=model.model.blocks[self.cfg.model_layer],
+                    )
+                else:
+                    sae.init_W_D_with_active_subspace(activation_batch, self.cfg.d_active_subspace)
+            if self.cfg.initialize_lorsa_attn_scale_from_encoder:
+                print(
+                    f"====== init_attn_scale_from_encoder ======"
+                )
+                sae.init_attn_scale_from_encoder(
+                    encoder_layer=model.model.blocks[self.cfg.model_layer],
+                )
+            if self.cfg.initialize_W_D_with_mhsa:
+                print(
+                    f"====== init_lorsa_W_D_with_mhsa ======"
+                )
+                sae.init_lorsa_W_D_with_mhsa(
+                    encoder_layer=model.model.blocks[self.cfg.model_layer],
+                )
         return sae

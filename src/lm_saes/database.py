@@ -8,7 +8,6 @@ import pymongo.database
 import pymongo.errors
 from bson import ObjectId
 from pydantic import BaseModel
-from typing_extensions import deprecated
 
 from lm_saes.config import (
     BaseSAEConfig,
@@ -27,12 +26,17 @@ class DatasetRecord(BaseModel):
 
 
 class FeatureAnalysisSampling(BaseModel):
+    model_config = {"arbitrary_types_allowed": True}
+    
     name: str
-    feature_acts: list[list[float]]
+    feature_acts_indices: np.ndarray
+    feature_acts_values: np.ndarray
+    z_pattern_indices: np.ndarray | None = None
+    z_pattern_values: np.ndarray | None = None
     dataset_name: list[str]
-    shard_idx: Optional[list[int]] = None
-    n_shards: Optional[list[int]] = None
-    context_idx: list[int]
+    shard_idx: np.ndarray | None = None
+    n_shards: np.ndarray | None = None
+    context_idx: np.ndarray
     model_name: list[str]
 
 
@@ -54,10 +58,7 @@ class FeatureRecord(BaseModel):
     sae_series: str
     index: int
     analyses: list[FeatureAnalysis] = []
-    logits: Optional[dict[str, list[dict[str, Any]]]] = None
     interpretation: Optional[dict[str, Any]] = None
-    metric: Optional[dict[str, float]] = None
-    metric: Optional[dict[str, float]] = None
 
 
 class AnalysisRecord(BaseModel):
@@ -126,12 +127,27 @@ class MongoClient:
             unique=True,
         )
         self.bookmark_collection.create_index([("created_at", pymongo.DESCENDING)])
+        
+        # Initialize GridFS by default
+        self._init_fs()
 
-    @deprecated("Not recommended for new code, where any single record can fit in 16MB size limit of BSON")
     def _init_fs(self):
+        """Initialize GridFS for storing large binary data."""
         self.fs = gridfs.GridFS(self.db)
+        
+    def enable_gridfs(self) -> None:
+        """Enable GridFS for storing large binary data."""
+        if self.fs is None:
+            self._init_fs()
+            
+    def disable_gridfs(self) -> None:
+        """Disable GridFS usage."""
+        self.fs = None
+        
+    def is_gridfs_enabled(self) -> bool:
+        """Check if GridFS is enabled."""
+        return self.fs is not None
 
-    @deprecated("Not recommended for new code, where any single record can fit in 16MB size limit of BSON")
     def _to_gridfs(self, data: Any) -> Any:
         """
         Recursively convert numpy arrays in data object to bytes, and store in GridFS
@@ -145,7 +161,6 @@ class MongoClient:
             return self.fs.put(np_to_bytes(data))
         return data
 
-    @deprecated("Not recommended for new code, where any single record can fit in 16MB size limit of BSON")
     def _from_gridfs(self, data: Any) -> Any:
         """
         Recursively convert GridFS references in data object to numpy arrays
@@ -159,7 +174,6 @@ class MongoClient:
             return bytes_to_np(self.fs.get(data).read())
         return data
 
-    @deprecated("Not recommended for new code, where any single record can fit in 16MB size limit of BSON")
     def _remove_gridfs_objs(self, data: Any) -> None:
         """
         Recursively remove GridFS objects in data object
@@ -223,6 +237,11 @@ class MongoClient:
         feature = self.feature_collection.find_one({"sae_name": sae_name, "sae_series": sae_series, "index": index})
         if feature is None:
             return None
+        
+        # Convert GridFS references back to numpy arrays
+        if self.is_gridfs_enabled():
+            feature = self._from_gridfs(feature)
+            
         return FeatureRecord.model_validate(feature)
 
     def get_analysis(self, name: str, sae_name: str, sae_series: str) -> Optional[AnalysisRecord]:
@@ -238,11 +257,7 @@ class MongoClient:
         return SAERecord.model_validate(sae)
 
     def get_random_alive_feature(
-        self,
-        sae_name: str,
-        sae_series: str,
-        name: str | None = None,
-        metric_filters: Optional[dict[str, dict[str, float]]] = None,
+        self, sae_name: str, sae_series: str, name: str | None = None
     ) -> Optional[FeatureRecord]:
         """Get a random feature that has non-zero activation.
 
@@ -250,7 +265,6 @@ class MongoClient:
             sae_name: Name of the SAE model
             sae_series: Series of the SAE model
             name: Name of the analysis
-            metric_filters: Optional dict of metric filters in the format {"metric_name": {"$gte": value, "$lte": value}}
 
         Returns:
             A random feature record with non-zero activation, or None if no such feature exists
@@ -259,24 +273,24 @@ class MongoClient:
         if name is not None:
             elem_match["name"] = name
 
-        match_filter: dict[str, Any] = {
-            "sae_name": sae_name,
-            "sae_series": sae_series,
-            "analyses": {"$elemMatch": elem_match},
-        }
-
-        # Add metric filters if provided
-        if metric_filters:
-            for metric_name, filters in metric_filters.items():
-                match_filter[f"metric.{metric_name}"] = filters
-
         pipeline = [
-            {"$match": match_filter},
+            {
+                "$match": {
+                    "sae_name": sae_name,
+                    "sae_series": sae_series,
+                    "analyses": {"$elemMatch": elem_match},
+                }
+            },
             {"$sample": {"size": 1}},
         ]
         feature = next(self.feature_collection.aggregate(pipeline), None)
         if feature is None:
             return None
+            
+        # Convert GridFS references back to numpy arrays
+        if self.is_gridfs_enabled():
+            feature = self._from_gridfs(feature)
+
         return FeatureRecord.model_validate(feature)
 
     def get_alive_feature_count(self, sae_name: str, sae_series: str, name: str = "default"):
@@ -349,11 +363,17 @@ class MongoClient:
         return LanguageModelConfig.model_validate(model["cfg"])
 
     def add_feature_analysis(self, name: str, sae_name: str, sae_series: str, analysis: list[dict], start_idx: int = 0):
+        # Initialize GridFS if not already done
+        if not self.is_gridfs_enabled():
+            self.enable_gridfs()
+            
         operations = []
         for i, feature_analysis in enumerate(analysis):
+            # Convert numpy arrays to GridFS references
+            processed_analysis = self._to_gridfs(feature_analysis)
             update_operation = pymongo.UpdateOne(
                 {"sae_name": sae_name, "sae_series": sae_series, "index": start_idx + i},
-                {"$push": {"analyses": feature_analysis | {"name": name}}},
+                {"$push": {"analyses": processed_analysis | {"name": name}}},
                 upsert=True,
             )
             operations.append(update_operation)
@@ -398,22 +418,18 @@ class MongoClient:
         if feature is None:
             raise ValueError(f"Feature {feature_index} not found for SAE {sae_name}/{sae_series}")
 
+        # Initialize GridFS if not already done
+        if not self.is_gridfs_enabled():
+            self.enable_gridfs()
+            
+        # Convert numpy arrays to GridFS references
+        processed_update_data = self._to_gridfs(update_data)
+
         result = self.feature_collection.update_one(
-            {"sae_name": sae_name, "sae_series": sae_series, "index": feature_index}, {"$set": update_data}
+            {"sae_name": sae_name, "sae_series": sae_series, "index": feature_index}, {"$set": processed_update_data}
         )
 
         return result
-
-    def update_features(self, sae_name: str, sae_series: str, update_data: list[dict], start_idx: int = 0):
-        operations = []
-        for i, feature_update in enumerate(update_data):
-            update_operation = pymongo.UpdateOne(
-                {"sae_name": sae_name, "sae_series": sae_series, "index": start_idx + i},
-                {"$set": feature_update},
-            )
-            operations.append(update_operation)
-        if operations:
-            self.feature_collection.bulk_write(operations)
 
     def add_bookmark(
         self,
@@ -614,60 +630,3 @@ class MongoClient:
             query["sae_series"] = sae_series
 
         return self.bookmark_collection.count_documents(query)
-
-    def get_available_metrics(self, sae_name: str, sae_series: str) -> list[str]:
-        """Get available metrics for an SAE by checking the first feature.
-
-        Args:
-            sae_name: Name of the SAE model
-            sae_series: Series of the SAE model
-
-        Returns:
-            List of available metric names
-        """
-        # Use projection to avoid loading large arrays from analyses[0].samplings
-        projection = {
-            "metric": 1,
-        }
-
-        first_feature = self.feature_collection.find_one({"sae_name": sae_name, "sae_series": sae_series}, projection)
-
-        if first_feature is None or first_feature.get("metric") is None:
-            return []
-
-        return list(first_feature["metric"].keys())
-
-    def count_features_with_filters(
-        self,
-        sae_name: str,
-        sae_series: str,
-        name: str | None = None,
-        metric_filters: Optional[dict[str, dict[str, float]]] = None,
-    ) -> int:
-        """Count features that match the given filters.
-
-        Args:
-            sae_name: Name of the SAE model
-            sae_series: Series of the SAE model
-            name: Name of the analysis
-            metric_filters: Optional dict of metric filters in the format {"metric_name": {"$gte": value, "$lte": value}}
-
-        Returns:
-            Number of features matching the filters
-        """
-        elem_match: dict[str, Any] = {"max_feature_acts": {"$gt": 0}}
-        if name is not None:
-            elem_match["name"] = name
-
-        match_filter: dict[str, Any] = {
-            "sae_name": sae_name,
-            "sae_series": sae_series,
-            "analyses": {"$elemMatch": elem_match},
-        }
-
-        # Add metric filters if provided
-        if metric_filters:
-            for metric_name, filters in metric_filters.items():
-                match_filter[f"metric.{metric_name}"] = filters
-
-        return self.feature_collection.count_documents(match_filter)
