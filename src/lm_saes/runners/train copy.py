@@ -30,7 +30,7 @@ from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.trainer import Trainer
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import is_primary_rank
+from lm_saes.utils.misc import get_mesh_rank, is_primary_rank
 
 logger = get_distributed_logger("runners.train")
 
@@ -93,8 +93,8 @@ def train_sae(settings: TrainSAESettings) -> None:
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
-            mesh_shape=(settings.model_parallel_size,),
-            mesh_dim_names=("model",),
+            mesh_shape=(1, settings.model_parallel_size,),
+            mesh_dim_names=("data", "model",),
         )
         if settings.model_parallel_size > 1
         else None
@@ -162,7 +162,7 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -315,8 +315,14 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         else None
     )
 
+    activation_factory_mesh = device_mesh[
+        "data", "model"
+    ]  # Remove the head dimension, since each activation factory should only be responsible for a subset of the heads.
+
     logger.info("Setting up activation factory for CrossCoder")
-    activation_factory = ActivationFactory(settings.activation_factories[device_mesh.get_local_rank("head")])
+    activation_factory = ActivationFactory(
+        settings.activation_factories[device_mesh.get_local_rank("head")], device_mesh=activation_factory_mesh
+    )
 
     logger.info("Processing activations stream")
     activations_stream = activation_factory.process(
@@ -343,7 +349,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -417,9 +423,6 @@ class TrainCLTSettings(BaseSettings):
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
-
-    save_trainer_state: bool = False
-    """Whether to save trainer state during training"""
 
 
 def train_clt(settings: TrainCLTSettings) -> None:
@@ -503,20 +506,15 @@ def train_clt(settings: TrainCLTSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
         else None
     )
 
     sae = initializer.initialize_sae_from_config(
-        settings.sae,
-        activation_stream=activations_stream,
-        device_mesh=device_mesh,
-        wandb_logger=wandb_logger,
-        fold_activation_scale=False,
+        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger
     )
 
-    n_params = sum(p.numel() for p in sae.parameters())
-    logger.info(f"CLT initialized with {n_params / 1e9:.2f}B parameters")
+    logger.info(f"CLT initialized: {type(sae).__name__}")
 
     if wandb_logger is not None:
         logger.info("WandB logger initialized")
@@ -525,36 +523,23 @@ def train_clt(settings: TrainCLTSettings) -> None:
     eval_fn = (lambda x: None) if settings.eval else None
 
     logger.info("Starting CLT training")
-    if settings.trainer.from_pretrained_path is not None:
-        trainer = Trainer.from_checkpoint(
-            sae,
-            settings.trainer.from_pretrained_path,
-        )
-    else:
-        trainer = Trainer(settings.trainer)
+    trainer = Trainer(settings.trainer)
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
-    end_of_stream = trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+    trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
 
-    if not settings.save_trainer_state:
-        logger.info("Training completed, saving CLT model")
-        sae.save_pretrained(
-            save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
-        )
-    elif end_of_stream:
-        trainer.save_checkpoint(
-            sae=sae,
-            checkpoint_path=settings.trainer.exp_result_path,
-        )
+    logger.info("Training completed, saving CLT model")
+    sae.save_pretrained(
+        save_path=settings.trainer.exp_result_path,
+        sae_name=settings.sae_name,
+        sae_series=settings.sae_series,
+        mongo_client=mongo_client,
+    )
 
     if wandb_logger is not None:
         wandb_logger.finish()
         logger.info("WandB session closed")
 
     logger.info("CLT training completed successfully")
-
 
 class TrainLorsaSettings(BaseSettings):
     """Settings for training a LORSA (Low-Rank Sparse Autoencoder) model."""
@@ -670,7 +655,7 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
         model_name=settings.model_name,
         datasets=datasets,
     )
-
+    
     logger.info("Initializing lorsa")
     initializer = Initializer(settings.initializer)
 
@@ -688,7 +673,7 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
     )
 
     sae = initializer.initialize_sae_from_config(
-        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger, model=model,
+        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger
     )
 
     n_params = sum(p.numel() for p in sae.parameters())
@@ -718,7 +703,6 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
         logger.info("WandB session closed")
 
     logger.info("LORSA training completed successfully")
-
 
 class SweepingItem(BaseModel):
     """A single item in a sweeping configuration."""

@@ -22,6 +22,19 @@ class ReplacementMLP(nn.Module):
         mlp_out = self.old_mlp(x)
         return self.hook_out(mlp_out)
 
+class ReplacementAttention(nn.Module):
+    """Wrapper for a TransformerLens Attention layer that adds in extra hooks"""
+    def __init__(self, old_attn: nn.Module):
+        super().__init__()
+        self.old_attn = old_attn
+        self.hook_in = HookPoint()
+        self.hook_out = HookPoint()
+    
+    def forward(self, query_input, key_input, value_input, **kwargs):
+        assert torch.allclose(query_input, key_input) and torch.allclose(query_input, value_input)
+        query_input = self.hook_in(query_input)
+        attn_out = self.old_attn(query_input, key_input, value_input, **kwargs)
+        return self.hook_out(attn_out)
 
 class ReplacementPolicyHead(nn.Module):
     """Wrapper for LC0 PolicyHead that adds in extra hooks"""
@@ -90,15 +103,18 @@ class ReplacementPolicyHead(nn.Module):
         policy_out = self.old_policy_head.hook_policy_out(policy_logits)
         return self.hook_post(policy_out)
 
-
 class ReplacementModel(HookedTransformer):    
     d_transcoder: int
     transcoders: Dict[int, SparseAutoEncoder]
+    lorsas: nn.ModuleList
     mlp_input_hook: str
     mlp_output_hook: str
     original_mlp_output_hook: str
     feature_input_hook: str
     feature_output_hook: str
+    attn_input_hook: str
+    attn_output_hook: str
+    
 
     @classmethod
     def from_pretrained_and_transcoders(
