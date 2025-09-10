@@ -26,7 +26,7 @@ import time
 import weakref
 from functools import partial
 from typing import Any, Callable, List, Literal, Optional, Sequence, Tuple, Union, Dict
-from lm_saes import SparseAutoEncoder
+from lm_saes import SparseAutoEncoder, LowRankSparseAttention
 
 import numpy as np
 import torch
@@ -72,21 +72,21 @@ class AttributionContext:
 
     def __init__(
         self,
-        # lorsa_activation_matrix: torch.sparse.Tensor,
+        lorsa_activation_matrix: torch.sparse.Tensor,
         tc_activation_matrix: torch.sparse.Tensor,
         error_vectors: torch.Tensor,
         token_vectors: torch.Tensor, 
-        # lorsa_decoder_vecs: torch.Tensor,
+        lorsa_decoder_vecs: torch.Tensor,
         tc_decoder_vecs: torch.Tensor,
-        # attn_output_hook: str,
+        attn_output_hook: str,
         mlp_output_hook: str,
     ) -> None:
-        # assert lorsa_activation_matrix.shape[:-1] == tc_activation_matrix.shape[:-1], "LORSAs and CLTs must have the same shape"
+        # assert lorsa_activation_matrix.shape[:-1] == tc_activation_matrix.shape[:-1], "LORSAs and TCs must have the same shape"
         n_layers, n_pos, _ = tc_activation_matrix.shape # tc_activation_matrix.shape = torch.Size([15, 64, 12288])
         # Forward-pass cache
         # # L0Ainput, L0Minput, ... L-1Ainput, L-1Minput, pre_unembed
         # L0Minput, L1Minput, ... L-1Minput, policy_head_input for transcoder only tracing
-        self._resid_activations: List[torch.Tensor | None] = [None] * (n_layers + 1)
+        self._resid_activations: List[torch.Tensor | None] = [None] * (2 * n_layers + 1)
         # 添加policy head的q和k activations缓存
         self._policy_q_activations: torch.Tensor | None = None
         self._policy_k_activations: torch.Tensor | None = None
@@ -96,19 +96,19 @@ class AttributionContext:
 
         # Assemble all backward hooks up-front
         self._attribution_hooks = self._make_attribution_hooks(
-            # lorsa_activation_matrix,
+            lorsa_activation_matrix,
             tc_activation_matrix,
             error_vectors,
             token_vectors,
-            # lorsa_decoder_vecs,
+            lorsa_decoder_vecs,
             tc_decoder_vecs,
-            # attn_output_hook,
+            attn_output_hook,
             mlp_output_hook
         )
         
-        total_active_feats = tc_activation_matrix._nnz()
+        total_active_feats = lorsa_activation_matrix._nnz() + tc_activation_matrix._nnz()
         # total_active_feats + error_vectors + token_vectors
-        self._row_size: int = total_active_feats + n_layers * n_pos + n_pos  # + logits later
+        self._row_size: int = total_active_feats + 2 * n_layers * n_pos + n_pos  # + logits later
 
     # def _caching_hooks(self, attn_input_hook: str, mlp_input_hook: str) -> List[Tuple[str, Callable]]:
     #     """Return hooks that store residual activations layer-by-layer."""
@@ -127,7 +127,7 @@ class AttributionContext:
 
     #     return hooks
 
-    def _caching_hooks(self, mlp_input_hook: str) -> List[Tuple[str, Callable]]:
+    def _caching_hooks(self, attn_input_hook: str, mlp_input_hook: str) -> List[Tuple[str, Callable]]:
         """Return hooks that store residual activations layer-by-layer."""
 
         proxy = weakref.proxy(self)
@@ -158,7 +158,8 @@ class AttributionContext:
 
         hooks = []
         for layer in range(self.n_layers):
-            hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer)))
+            hooks.append((f"blocks.{layer}.{attn_input_hook}", partial(_cache, index=layer * 2)))
+            hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer * 2 + 1)))
         
         hooks.append(("policy_head.hook_pre", partial(_cache, index=self.n_layers)))
         # 添加policy head的q和k缓存hooks
@@ -183,7 +184,7 @@ class AttributionContext:
         proxy = weakref.proxy(self)
 
         def _hook_fn(grads: torch.Tensor, hook: HookPoint) -> None:
-            # print(f"DEBUG: Hook '{hook_name}' executed")
+            print(f"DEBUG: Hook '{hook_name}' executed")
             # print(f"DEBUG: grads shape: {grads.shape}")
             grads_non_zero_row_idx = (grads[0] != 0).any(dim=1).nonzero(as_tuple=True)[0]
             # print(f"DEBUG: grads[0][6]: {grads[0][6].flatten()[:5].tolist()}")
@@ -196,7 +197,8 @@ class AttributionContext:
             # 计算einsum前的形状信息
             grads_read = grads.to(output_vecs.dtype)[read_index] #[1, 2240, 768]
             # print(f"DEBUG: grads[read_index] shape: {grads_read.shape}")
-            
+            # print(f"DEBUG: grads_read.shape = {grads_read.shape}")
+            # print(f"DEBUG: output_vecs.shape = {output_vecs.shape}")
             # 执行einsum计算
             result = einsum(
                 grads_read,
@@ -209,34 +211,39 @@ class AttributionContext:
             # print(f"DEBUG: einsum result sum: {result.sum().item()}")
             
             # 写入缓冲区
-            proxy._batch_buffer[write_index] += result
             # print(f"DEBUG: Updated _batch_buffer[{write_index}]")
             # print(f"DEBUG: _batch_buffer[{write_index}] sum: {proxy._batch_buffer[write_index].sum().item()}")
+            # print(f'{result.shape = }')
+            # print(f'{proxy._batch_buffer[write_index].shape = }')
             # print("---")
+            proxy._batch_buffer[write_index] += result
+            print(f"DEBUG: Updated _batch_buffer[{write_index}]")
+            print(f"DEBUG: _batch_buffer[{write_index}] sum: {proxy._batch_buffer[write_index].sum().item()}")
+
 
         return hook_name, _hook_fn
 
 
     def _make_attribution_hooks(
         self,
-        # lorsa_activation_matrix: torch.sparse.Tensor,
+        lorsa_activation_matrix: torch.sparse.Tensor,
         tc_activation_matrix: torch.sparse.Tensor,
         error_vectors: torch.Tensor,
         token_vectors: torch.Tensor,
-        # lorsa_decoder_vecs: torch.Tensor,
+        lorsa_decoder_vecs: torch.Tensor,
         tc_decoder_vecs: torch.Tensor,
-        # attn_output_hook: str,
+        attn_output_hook: str,
         mlp_output_hook: str,
     ) -> List[Tuple[str, Callable]]:
         """
         Create the complete backward-hook for computing attribution scores.
         """
         _, n_pos, _ = tc_activation_matrix.shape
-        tc_error_vectors = error_vectors
-
+        lorsa_error_vectors = error_vectors[:self.n_layers]
+        tc_error_vectors = error_vectors[self.n_layers:]
         # Token-embedding nodes
-        # tc_offset + mlp_error_offset (no lorsa for LC0 model)
-        token_offset = tc_activation_matrix._nnz() + self.n_layers * n_pos
+        # lorsa_offset + tc_offset + mlp_error_offset + lorsa_error_offset
+        token_offset = lorsa_activation_matrix._nnz() + tc_activation_matrix._nnz() + 2 * self.n_layers * n_pos
         token_hook = [
             self._compute_score_hook(
                 "hook_embed",
@@ -244,12 +251,19 @@ class AttributionContext:
                 write_index=np.s_[token_offset : token_offset + n_pos],
             )
         ]
-        return token_hook + self._make_attribution_hooks_tc(
+        return token_hook + self._make_attribution_hooks_lorsa( 
+            lorsa_activation_matrix,
+            lorsa_error_vectors,
+            lorsa_decoder_vecs,
+            attn_output_hook,
+            tc_offset=0  # LoRSA 从 0 开始
+        ) + self._make_attribution_hooks_tc(
             tc_activation_matrix,
             tc_error_vectors,
             tc_decoder_vecs,
             mlp_output_hook,
-        ) 
+            lorsa_offset=lorsa_activation_matrix._nnz()  # TC 从 LoRSA 结束位置开始
+        )
 
     def _make_attribution_hooks_lorsa(
         self,
@@ -257,7 +271,7 @@ class AttributionContext:
         error_vectors: torch.Tensor,
         decoder_vecs: torch.Tensor,
         attn_output_hook: str,
-        clt_offset: int,
+        tc_offset: int,
     ) -> List[Tuple[str, Callable]]:
         """
         Create the complete backward-hook for computing attribution scores.
@@ -279,13 +293,15 @@ class AttributionContext:
         _, counts = torch.unique_consecutive(nnz_layers, return_counts=True)
         edges = [0] + counts.cumsum(0).tolist()
         layer_spans = list(zip(edges[:-1], edges[1:]))
-
+        print(f'in _make_attribution_hooks_lorsa : {layer_spans = }')
+        
+        
         # Feature nodes
         feature_hooks = [
             self._compute_score_hook(
                 f"blocks.{layer}.{attn_output_hook}",
                 decoder_vecs[start:end],
-                write_index=np.s_[start:end],
+                write_index=np.s_[tc_offset+start:tc_offset+end],
                 read_index=np.s_[:, nnz_positions[start:end]],
             )
             for layer, (start, end) in enumerate(layer_spans)
@@ -294,7 +310,7 @@ class AttributionContext:
 
         # Error nodes
         def error_offset(layer: int) -> int:  # starting row for this layer
-            return activation_matrix._nnz() + clt_offset + layer * n_pos
+            return activation_matrix._nnz() + tc_offset + layer * n_pos
         
         error_hooks = [
             self._compute_score_hook(
@@ -313,7 +329,7 @@ class AttributionContext:
         error_vectors: torch.Tensor,
         decoder_vecs: torch.Tensor,
         mlp_output_hook: str,
-        # lorsa_offset: int,
+        lorsa_offset: int,
     ) -> List[Tuple[str, Callable]]:
         """
         Create attribution hooks for single-layer transcoders.
@@ -336,28 +352,32 @@ class AttributionContext:
         _, counts = torch.unique_consecutive(nnz_layers, return_counts=True)
         edges = [0] + counts.cumsum(0).tolist()
         layer_spans = list(zip(edges[:-1], edges[1:]))
+        print(f'in _make_attribution_hooks_tc : {layer_spans = }')
+        
 
         # Simple assertion: decoder_vecs should match total active features
         assert edges[-1] == activation_matrix._nnz(), f'got {edges[-1]} but expected {activation_matrix._nnz()}'
         assert decoder_vecs.size(0) == activation_matrix._nnz(), f'got {decoder_vecs.size(0)} but expected {activation_matrix._nnz()}'
 
+        print(f'{lorsa_offset = }')
         # Feature nodes
         feature_hooks = []
         for layer, (start, end) in enumerate(layer_spans):
             if start != end:
+                print(f'{start = }, {end = }')
                 hook = self._compute_score_hook(
                     f"blocks.{layer}.{mlp_output_hook}",
                     decoder_vecs[start:end],
-                    write_index=np.s_[start:end],
+                    write_index=np.s_[lorsa_offset+start:lorsa_offset+end],
                     read_index=np.s_[:, nnz_positions[start:end]],
                 )
                 feature_hooks.append(hook)
 
         # Error nodes
         def error_offset(layer: int) -> int:
-            # tc_offset + layer_offset
-            return activation_matrix._nnz() + layer * n_pos
-        
+            # lorsa_offset + tc_offset + attn_error_offset + layer_offset
+            return lorsa_offset + activation_matrix._nnz() + self.n_layers * n_pos + layer * n_pos
+
         error_hooks = []
         for layer in range(n_layers):
             hook = self._compute_score_hook(
@@ -373,7 +393,7 @@ class AttributionContext:
     def install_hooks(self, model: "ReplacementModel"):
         """Context manager instruments the hooks for the forward and backward passes."""
         with model.hooks(
-            fwd_hooks=self._caching_hooks(model.mlp_input_hook),
+            fwd_hooks=self._caching_hooks(model.attn_input_hook, model.mlp_input_hook),
             bwd_hooks=self._attribution_hooks,
         ):
             yield
@@ -439,6 +459,7 @@ class AttributionContext:
 
         handles = []
         layers_in_batch = layers.unique().tolist()
+        print(f'{layers_in_batch = }')
         for layer in layers_in_batch:
             mask = layers == layer
             if not mask.any():
@@ -1446,7 +1467,7 @@ def select_scaled_decoder_vecs_tc(
     suitable as ``inject_values`` during gradient overrides.
     
     For transcoders, each layer has its own independent encoder/decoder,
-    unlike CLT where features can span multiple layers.
+    unlike TC where features can span multiple layers.
     """
     # Assert that the values in transcoders are of type SparseAutoEncoder
     assert all(isinstance(t, SparseAutoEncoder) for t in transcoders.values())
@@ -1471,6 +1492,18 @@ def select_scaled_decoder_vecs_tc(
     # Concatenate all the scaled rows
     return torch.cat(rows)
 
+@torch.no_grad()
+def select_scaled_decoder_vecs_lorsa(
+    activation_matrix: torch.sparse.Tensor,
+    lorsas: LowRankSparseAttention
+) -> torch.Tensor:
+    """Return encoder rows for **active** features only."""
+    rows: List[torch.Tensor] = []
+    for layer, row in enumerate(activation_matrix):
+        _, head_idx = row.coalesce().indices()
+        rows.append(lorsas[layer].W_O[head_idx])
+    return torch.cat(rows) * activation_matrix.values()[:, None]
+
 
 @torch.no_grad()
 def select_encoder_rows_tc(
@@ -1480,7 +1513,7 @@ def select_encoder_rows_tc(
     """Return encoder rows for **active** features only.
     
     For transcoders, each layer has its own independent encoder/decoder,
-    unlike CLT where features can span multiple layers.
+    unlike TC where features can span multiple layers.
     """
     rows: List[torch.Tensor] = []
     
@@ -1494,6 +1527,26 @@ def select_encoder_rows_tc(
         
     return torch.cat(rows)
 
+@torch.no_grad()
+def select_encoder_rows_lorsa(
+    activation_matrix: torch.sparse.Tensor,
+    attention_pattern: torch.Tensor,
+    lorsas: LowRankSparseAttention
+) -> torch.Tensor:
+    """Return encoder rows for **active** features only."""
+    rows: List[torch.Tensor] = []
+    patterns: List[torch.Tensor] = []
+    torch.cuda.synchronize()
+    for layer, row in enumerate(activation_matrix):
+        qpos, head_idx = row.coalesce().indices()
+        # qk_idx = head_idx // lorsas[layer].cfg.d_qk_head
+        qk_idx: Tensor = head_idx // (lorsas[layer].cfg.n_ov_heads // lorsas[layer].cfg.n_qk_heads)
+        # torch.cuda.synchronize()
+        # print(f'{attention_pattern.shape = }, {layer = }, {qk_idx = }, {qpos = }')
+        pattern = attention_pattern[layer, qk_idx, qpos]
+        patterns.append(pattern)
+        rows.append(lorsas[layer].W_V[head_idx])
+    return torch.cat(rows), torch.cat(patterns)
 
 @torch.no_grad()
 def select_encoder_bias_tc(
@@ -1526,6 +1579,48 @@ def select_encoder_bias_tc(
 
     return torch.cat(rows, dim=0)
 
+@torch.no_grad()
+def select_encoder_bias_lorsa(
+    activation_matrix: torch.sparse.Tensor,
+    lorsas: LowRankSparseAttention,
+) -> torch.Tensor:
+    """
+    Return encoder bias terms for LoRSA active features only.
+
+    For each layer, gather the bias vector entries corresponding to the
+    active heads (same indexing as select_encoder_rows_lorsa). If the
+    LoRSA layer has no encoder bias attribute (e.g., b_V), return zeros
+    for that layer's active heads to keep alignment with rows.
+    """
+    rows: List[torch.Tensor] = []
+
+    for layer, row in enumerate(activation_matrix):
+        idx2d = row.coalesce().indices()
+        if idx2d.numel() == 0:
+            continue
+
+        _, head_idx = idx2d  # active head indices for this layer
+        lrs = lorsas[layer]
+
+        # Prefer b_V if present; otherwise produce zeros matching dtype/device
+        bias_tensor = getattr(lrs, "b_V", None)
+        if bias_tensor is None:
+            dev, dt = lrs.W_V.device, lrs.W_V.dtype
+            layer_bias = torch.zeros(head_idx.numel(), device=dev, dtype=dt)
+        else:
+            layer_bias = bias_tensor.index_select(0, head_idx.to(device=bias_tensor.device))
+
+        rows.append(layer_bias)
+
+    if not rows:
+        # Fall back to an empty tensor on a reasonable device/dtype
+        if len(lorsas) > 0:
+            any_layer = next(iter(range(len(lorsas))))
+            dev, dt = lorsas[any_layer].W_V.device, lorsas[any_layer].W_V.dtype
+            return torch.empty(0, device=dev, dtype=dt)
+        return torch.empty(0, device=activation_matrix.device, dtype=activation_matrix.dtype)
+
+    return torch.cat(rows, dim=0)
 
 # def compute_partial_influences(edge_matrix, logit_p, row_to_node_index, max_iter=128, device=None):
 #     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")

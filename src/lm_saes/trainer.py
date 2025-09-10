@@ -370,10 +370,11 @@ class Trainer:
             l_rec = log_info["l_rec"]
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
-
-            l_s = log_info["l_s"]
-            if isinstance(l_s, DTensor):
-                l_s = l_s.full_tensor()
+                
+            if log_info.get("l_s", None) is not None:
+                l_s = log_info["l_s"]
+                if isinstance(l_s, DTensor):
+                    l_s = l_s.full_tensor()
 
             if sae.cfg.sae_type == "lorsa":
                 label = label.flatten(0, 1)

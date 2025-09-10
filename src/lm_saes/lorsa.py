@@ -391,9 +391,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             nonlocal captured_z
             captured_z = z.clone().detach()
             return z
-        handle = encoder_layer.hook_z.add_hook(capture_hook)
+        handle = encoder_layer.mha.hook_z.add_hook(capture_hook)
         _ = encoder_layer.forward(x)
-        print(f'{captured_z.shape = }')
+        print(f'{captured_z.shape = }') #[256, 24, 64, 32]
         print(f'{leela_W_O.shape = }')
         output_per_head = torch.einsum('b n s h, n h d -> b s n d', captured_z, leela_W_O)
         n_ov_per_orig_head = self.cfg.n_ov_heads // encoder_layer.n_heads
@@ -683,16 +683,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         # Compute Q, K, V
         q, k, v = self._compute_qkv(x)
         
-        # Attention pattern
-        # n_qk_heads batch q_pos k_pos
-        # pattern = self._compute_attention_pattern(q, k)
-        
-        # Head outputs
-        # hidden_pre = self._compute_head_outputs(pattern, v)
-
-        query = q.permute(0, 2, 1, 3)
-        key = k.permute(0, 2, 1, 3)
-        value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
+        # Prepare tensors for attention math
+        query = q.permute(0, 2, 1, 3)   # [B, H, S, d]
+        key = k.permute(0, 2, 1, 3)     # [B, H, S, d]
+        value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)  # [B, H, S, dv]
 
         # Optional SmolGen additive bias as attention mask: [B, H, S, S]
         attn_mask = None
@@ -724,38 +718,51 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 print('no SmolGen')
                 attn_mask = None
 
-        # 不再构造 causal_add
-        # causal_bool = self.mask[None, None, -seq_len:, -seq_len:]
-        # causal_add = torch.where(...)
-
-        # 直接使用 SmolGen 偏置
-        total_mask = attn_mask  # 允许为 None
+        # Combine scale - match encoder behavior (LORSA uses division so we pass inverse into SDPA)
         if hasattr(self, 'attn_scale'):
-            scale = 1/self.attn_scale.item()
+            scale = 1 / self.attn_scale.item()
         else:
-            scale = 1/self.cfg.attn_scale
+            scale = 1 / self.cfg.attn_scale
 
+        # Compute attention outputs using fused kernels
         with sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
             z = F.scaled_dot_product_attention(
                 query, key, value,
-                attn_mask=total_mask,  # None 或 [B,H,S,S]
+                attn_mask=attn_mask,  # None or [B,H,S,S]
                 scale=scale,
                 is_causal=False,
                 enable_gqa=True,
             )
-        hidden_pre = z.permute(0, 2, 1, 3).reshape(*v.shape)        
+        hidden_pre = z.permute(0, 2, 1, 3).reshape(*v.shape)
 
+        # Post-activation feature acts
         feature_acts = self.activation_function(hidden_pre)
 
-        return_values = [feature_acts]
-        if return_hidden_pre:
-            return_values.append(hidden_pre)
-        return tuple(return_values) if len(return_values) > 1 else return_values[0]
+        # Optionally compute attention pattern for return
+        pattern: Optional[torch.Tensor] = None
+        if return_attention_pattern:
+            # raw scores: [B,H,S,S]
+            raw_scores = torch.matmul(query, key.transpose(-2, -1)) * scale
+            if attn_mask is not None:
+                raw_scores = raw_scores + attn_mask
+            pattern = torch.softmax(raw_scores, dim=-1)
+
+        # Assemble return values according to flags
+        if return_hidden_pre and return_attention_pattern:
+            assert pattern is not None
+            return feature_acts, hidden_pre, pattern
+        elif return_hidden_pre:
+            return feature_acts, hidden_pre
+        elif return_attention_pattern:
+            assert pattern is not None
+            return feature_acts, pattern
+        else:
+            return feature_acts
 
     @torch.no_grad()
     def init_attn_scale_from_encoder(self, encoder_layer: nn.Module):
         """Initialize this LORSA's attn_scale from an existing encoder's attn_scale."""
-        if not getattr(self.cfg, "use_learnable_attn_scale", False):
+        if getattr(self.cfg, "use_learnable_attn_scale", False):
             return
         if not hasattr(self, "attn_scale"):
             raise ValueError("This LORSA has no attn_scale to initialize.")
@@ -889,9 +896,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         head_idx: Int[torch.Tensor, "n_active_features"],
     ) -> Float[torch.Tensor, "n_active_features k_pos"]:
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
-        qk_idx: Tensor = head_idx // self.cfg.d_qk_head
+        qk_idx: Tensor = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
         q, k, v = self._compute_qkv(x)
-
         # (n_active_features, q_pos, k_pos)
         pattern = self._compute_attention_pattern(q, k)[qk_idx, 0]
         return pattern.mul_(v[0, :, head_idx, None].permute(1, 2, 0))
@@ -947,8 +953,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Compute attention patterns."""
         q = q.permute(2, 0, 1, 3) # (n_qk_heads, batch, seq_len, d_qk_head)
         k = k.permute(2, 0, 3, 1) # (n_qk_heads, batch, d_qk_head, seq_len)
-        scores = torch.einsum("sbqd,sbdk->sbqk", q, k) / self.cfg.attn_scale
-        scores = self._apply_causal_mask(scores)
+        # torch.cuda.synchronize()
+        scores = torch.einsum("sbqd,sbdk->sbqk", q, k) / self.attn_scale.data
+        # scores = self._apply_causal_mask(scores)
+        # torch.cuda.synchronize()
         return F.softmax(scores, dim=-1)
 
     def _compute_head_outputs(
@@ -1103,7 +1111,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         cls,
         pretrained_name_or_path: str,
         strict_loading: bool = True,
-        fold_activation_scale: bool = True,
+        fold_activation_scale: bool = False,
         device_mesh: DeviceMesh | None = None,
         **kwargs,
     ):

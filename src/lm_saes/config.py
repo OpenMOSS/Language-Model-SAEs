@@ -148,7 +148,7 @@ class LorsaConfig(BaseSAEConfig):
     NTK_by_parts_factor: float = 1.0
     NTK_by_parts_low_freq_factor: float = 1.0
     NTK_by_parts_high_freq_factor: float = 1.0
-    old_context_len: int = 2048
+    old_context_len: int = 64
 
     n_ctx: int
     skip_bos: bool = False
@@ -239,6 +239,8 @@ class InitializerConfig(BaseConfig):
     init_encoder_with_decoder_transpose: bool = True
     init_encoder_with_decoder_transpose_factor: float = 1.0
     init_log_jumprelu_threshold_value: float | None = None
+    # init_search: bool = False
+    # state: Literal["training", "inference"] = "training"
     grid_search_init_norm: bool = False
     initialize_W_D_with_active_subspace: bool = False
     d_active_subspace: int | None = None
@@ -317,7 +319,7 @@ class EvalConfig(BaseConfig):
     total_eval_tokens: int = 1000000
     use_cached_activations: bool = False
     device: str = "cpu"
-    fold_activation_scale: bool = True
+    fold_activation_scale: bool = False
     """Whether to fold the activation scale into the SAE model"""
 
 
