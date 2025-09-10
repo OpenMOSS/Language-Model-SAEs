@@ -194,8 +194,7 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
         # put z_pattern_data into sample_result
         st = 0
         z_pattern_data = z_pattern_data.coalesce()
-        for sampling_name, sampling_data in sample_result.items():  
-            print(f'starting loop for {sampling_name} with st {st}')                      
+        for sampling_name, sampling_data in sample_result.items():                       
             sampling_data["z_pattern_indices"] = []
             sampling_data["z_pattern_values"] = []
             

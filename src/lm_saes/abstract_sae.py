@@ -330,11 +330,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             self.load_distributed_state_dict(state_dict, device_mesh)
 
     @classmethod
-    def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = True) -> Self:
+    def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = False) -> Self:
         model = cls(cfg, device_mesh)
         if cfg.sae_pretrained_name_or_path is None:
+            print(f'cfg.sae_pretrained_name_or_path is None')
             total_params = sum(param.numel() for param in model.parameters()) / 1e9
             logger.info(f"Initializing {cfg.sae_type} from scratch with {total_params:.2f} B parameters")
+            # if fold_activation_scale:
+            #     model.standardize_parameters_of_dataset_norm()
             return model
 
         path = parse_pretrained_name_or_path(cfg.sae_pretrained_name_or_path)
@@ -394,6 +397,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         model.load_full_state_dict(state_dict, device_mesh)
         if fold_activation_scale:
             model.standardize_parameters_of_dataset_norm()
+        
         return model
 
     @classmethod

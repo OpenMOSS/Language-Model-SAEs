@@ -296,7 +296,12 @@ class Initializer:
                         activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
                     )
                 sae.set_dataset_average_activation_norm(activation_norm)
-                 
+                print('successfully set dataset_average_activation_norm!')
+                # sae.standardize_parameters_of_dataset_norm(activation_norm)
+            # if self.cfg.init_search:
+            #     assert activation_stream is not None, "Activation iterator must be provided for initialization search"
+            #     activation_batch = next(iter(activation_stream))  # type: ignore
+            #     sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
             if cfg.sae_type == 'lorsa' and self.cfg.initialize_lorsa_with_mhsa and sae.cfg.norm_activation == 'dataset-wise':
                 sae.init_lorsa_with_mhsa(model.model.blocks[self.cfg.model_layer])
  

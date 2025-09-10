@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
-from lm_saes import SparseAutoEncoder, LanguageModelConfig, load_model, LowRankSparseAttention
+from lm_saes import SparseAutoEncoder, LanguageModelConfig
 import re
 
 
@@ -23,18 +23,17 @@ class ReplacementMLP(nn.Module):
         return self.hook_out(mlp_out)
 
 class ReplacementAttention(nn.Module):
-    """Wrapper for MultiHeadAttention that adds in extra hooks"""
-    
-    def __init__(self, old_mha: nn.Module):
+    """Wrapper for a TransformerLens Attention layer that adds in extra hooks"""
+    def __init__(self, old_attn: nn.Module):
         super().__init__()
-        self.old_mha = old_mha
+        self.old_attn = old_attn
         self.hook_in = HookPoint()
         self.hook_out = HookPoint()
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.hook_in(x)
-        # 调用原始的MultiHeadAttention，它现在返回完整的attn_out
-        attn_out = self.old_mha(x)
+    def forward(self, query_input, key_input, value_input, **kwargs):
+        assert torch.allclose(query_input, key_input) and torch.allclose(query_input, value_input)
+        query_input = self.hook_in(query_input)
+        attn_out = self.old_attn(query_input, key_input, value_input, **kwargs)
         return self.hook_out(attn_out)
 
 class ReplacementPolicyHead(nn.Module):
@@ -113,8 +112,6 @@ class ReplacementModel(HookedTransformer):
     original_mlp_output_hook: str
     feature_input_hook: str
     feature_output_hook: str
-    attn_input_hook: str
-    attn_output_hook: str
 
     @classmethod
     def from_pretrained_and_transcoders(
@@ -151,11 +148,8 @@ class ReplacementModel(HookedTransformer):
         cls,
         model: HookedTransformer,
         transcoders: Dict[int, SparseAutoEncoder],
-        lorsas: List[LowRankSparseAttention],
         mlp_input_hook: str = "resid_mid_after_ln",
         mlp_output_hook: str = "hook_mlp_out",
-        attn_input_hook: str = "hook_attn_in",
-        attn_output_hook: str = "hook_attn_out",
     ) -> "ReplacementModel":
         
         replacement_model = cls(
@@ -176,7 +170,7 @@ class ReplacementModel(HookedTransformer):
         replacement_model.load_state_dict(model_state_dict, strict=True)
         
         replacement_model._configure_replacement_model(
-            transcoders, lorsas, mlp_input_hook, mlp_output_hook, attn_input_hook, attn_output_hook
+            transcoders, mlp_input_hook, mlp_output_hook
         )
         
         # 确保整个模型在正确的设备上
@@ -187,38 +181,28 @@ class ReplacementModel(HookedTransformer):
     def _configure_replacement_model(
         self,
         transcoders: Dict[int, SparseAutoEncoder],
-        lorsas: List[LowRankSparseAttention],
         mlp_input_hook: str,
         mlp_output_hook: str,
-        attn_input_hook: str,
-        attn_output_hook: str,
     ):
-
+        """配置replacement model - 基于原始replacement_model.py的逻辑"""
+        
         for layer_idx, transcoder in transcoders.items():
             transcoder.to(self.cfg.device, self.cfg.dtype)
 
-        if lorsas is not None:
-            for lorsa in lorsas:
-                assert not lorsa.cfg.skip_bos, "Lorsa must not skip bos, will be handled by replacement model"
-                lorsa.to(self.cfg.device, self.cfg.dtype)
-        
-        self.add_module("transcoders", nn.ModuleDict({str(k): v for k, v in transcoders.items()}))
-        self.add_module("lorsas", nn.ModuleList(lorsas))
-
+        self.transcoders = nn.ModuleDict({str(k): v for k, v in transcoders.items()})
         self.d_transcoder = list(transcoders.values())[0].cfg.d_sae
-        self.d_lorsa = lorsas[0].cfg.d_sae
 
         self.mlp_input_hook = mlp_input_hook
         self.original_mlp_output_hook = mlp_output_hook
         self.mlp_output_hook = mlp_output_hook + ".hook_out_grad"
+        
+        # 设置feature hooks，用于intervention相关方法
+        self.feature_input_hook = mlp_input_hook
+        self.feature_output_hook = mlp_output_hook
 
-        self.attn_input_hook = attn_input_hook
-        self.original_attn_output_hook = attn_output_hook
-        self.attn_output_hook = attn_output_hook + ".hook_out_grad"
-
+        # 包装MLP层（类似原始代码包装mlp和attn）
         for block in self.blocks:
             block.mlp = ReplacementMLP(block.mlp)
-            block.attn = ReplacementAttention(block.mha) # TODO 这里还需要改下原来的Attention模块
         
         # 包装LC0模型的policy_head（如果存在）
         if hasattr(self, 'policy_head') and self.policy_head is not None:
@@ -252,12 +236,13 @@ class ReplacementModel(HookedTransformer):
             self.policy_head.old_policy_head.mish.hook_weight.add_hook(
                 stop_gradient, is_permanent=True
             )
-        # 用lorsa的话好像不需要搞这个
-        # for block in self.blocks:
-        #     if hasattr(block, 'hook_attn_pattern'):
-        #         block.hook_attn_pattern.add_hook(
-        #             stop_gradient, is_permanent=True
-        #         )
+
+        # 只需要停止attention weights的梯度（包含SmolGen效果的softmax输出）
+        for block in self.blocks:
+            if hasattr(block, 'hook_attn_pattern'):
+                block.hook_attn_pattern.add_hook(
+                    stop_gradient, is_permanent=True
+                )
                 
         for param in self.parameters():
             param.requires_grad = False
@@ -299,62 +284,15 @@ class ReplacementModel(HookedTransformer):
             is_permanent=True,
         )
 
-        # newly added
-        # add attn output hook and special grad hook
-        output_hook_parts = self.original_attn_output_hook.split(".")
-        subblock = block
-        for part in output_hook_parts:
-            subblock = getattr(subblock, part)
-        subblock.hook_out_grad = HookPoint()
-        subblock.add_hook(
-            partial(
-                add_skip_connection,
-                grad_hook=subblock.hook_out_grad,
-                replacement_bias=self.lorsas[layer].b_D,
-            ),
-            is_permanent=True,
-        )
-
     def _get_activation_caching_hooks(
         self,
         zero_bos: bool = False,
         sparse: bool = False,
         apply_activation_function: bool = True,
-    ) -> Tuple[List, List, List[Tuple[str, Callable]]]:  # 修正返回类型
-        """获取激活缓存hooks - 处理MLP和注意力"""
-        print("go into get_activation_caching hooks")
-        activation_matrix = [None] * self.cfg.n_layers * 2
-        lorsa_attention_pattern = [None] * self.cfg.n_layers
+    ) -> Tuple[List, List[Tuple[str, Callable]]]:
+        """获取激活缓存hooks - 简化版，只处理MLP"""
         
-        def cache_activations_attn(acts, hook, layer, zero_bos):
-            encode_result = self.lorsas[layer].encode(
-                acts,
-                return_hidden_pre=not apply_activation_function,
-                return_attention_pattern=True
-            )
-
-            if not apply_activation_function:
-                lorsa_acts = encode_result[1].detach().squeeze(0)
-                pattern = encode_result[2].detach().squeeze(0)
-            else:
-                lorsa_acts = encode_result[0].detach().squeeze(0)
-                pattern = encode_result[1].detach().squeeze(0)
-            
-            if zero_bos:
-                lorsa_acts[0] = 0
-            if sparse:
-                lorsa_acts = lorsa_acts.to_sparse()
-                
-            activation_matrix[layer] = lorsa_acts
-            lorsa_attention_pattern[layer] = pattern
-        
-        activation_hooks = [
-            (
-                f"blocks.{layer}.{self.attn_input_hook}",
-                partial(cache_activations_attn, layer=layer, zero_bos=zero_bos),
-            )
-            for layer in range(self.cfg.n_layers)
-        ]
+        activation_matrix = [None] * self.cfg.n_layers
 
         def cache_activations_mlp(acts, hook, layer, zero_bos):
             # 使用individual SAE而不是CrossLayerTranscoder
@@ -372,20 +310,18 @@ class ReplacementModel(HookedTransformer):
                 transcoder_acts[0] = 0
             if sparse:
                 transcoder_acts = transcoder_acts.to_sparse()
-            def mlp_offset(layer):
-                return self.cfg.n_layers + layer
-            
-            activation_matrix[mlp_offset(layer)] = transcoder_acts
 
-        activation_hooks.extend([
+            activation_matrix[layer] = transcoder_acts
+
+        activation_hooks = [
             (
                 f"blocks.{layer}.{self.mlp_input_hook}",
                 partial(cache_activations_mlp, layer=layer, zero_bos=zero_bos),
             )
             for layer in range(self.cfg.n_layers)
-        ])
+        ]
 
-        return activation_matrix, lorsa_attention_pattern, activation_hooks
+        return activation_matrix, activation_hooks
 
     def get_activations(
         self,
@@ -393,10 +329,10 @@ class ReplacementModel(HookedTransformer):
         sparse: bool = False,
         zero_bos: bool = False,
         apply_activation_function: bool = True,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:  # 修正返回类型
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """获取transcoder激活 - 类似原始代码但简化版"""
         
-        activation_cache, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(  # 修正解包
+        activation_cache, activation_hooks = self._get_activation_caching_hooks(
             sparse=sparse,
             zero_bos=zero_bos,
             apply_activation_function=apply_activation_function,
@@ -404,10 +340,9 @@ class ReplacementModel(HookedTransformer):
         with torch.inference_mode(), self.hooks(activation_hooks):
             logits = self(inputs)
         activation_cache = torch.stack(activation_cache)
-        lorsa_attention_pattern = torch.stack(lorsa_attention_pattern)
         if sparse:
             activation_cache = activation_cache.coalesce()
-        return logits, activation_cache, lorsa_attention_pattern
+        return logits, activation_cache
 
     @torch.no_grad()
     def setup_attribution(
@@ -426,13 +361,8 @@ class ReplacementModel(HookedTransformer):
             tokens = inputs
 
         # 缓存激活和MLP输出
-        activation_matrix, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
+        activation_matrix, activation_hooks = self._get_activation_caching_hooks(
             sparse=sparse, zero_bos=zero_bos
-        )
-        print(f'{activation_matrix = }')
-        
-        attn_out_cache, attn_out_caching_hooks, _ = self.get_caching_hooks(
-            lambda name: self.attn_output_hook in name
         )
         mlp_out_cache, mlp_out_caching_hooks, _ = self.get_caching_hooks(
             lambda name: self.mlp_output_hook in name
@@ -447,15 +377,15 @@ class ReplacementModel(HookedTransformer):
                              "policy_head.hook_k" in name)
             )
 
-        seq_len = len(tokens) if isinstance(tokens, torch.Tensor) else 64 # 64 for chess model
+        seq_len = len(tokens) if isinstance(tokens, torch.Tensor) else 1
         error_vectors = torch.zeros(
-            [self.cfg.n_layers * 2, seq_len, self.cfg.d_model],
+            [self.cfg.n_layers, seq_len, self.cfg.d_model],
             device=self.cfg.device,
             dtype=self.cfg.dtype,
         )
         
         # 运行前向传播
-        all_hooks = activation_hooks + attn_out_caching_hooks + mlp_out_caching_hooks + policy_caching_hooks
+        all_hooks = activation_hooks + mlp_out_caching_hooks + policy_caching_hooks
         logits = self.run_with_hooks(tokens, fwd_hooks=all_hooks)
         
         # 缓存policy head的q和k activations到模型属性中
@@ -465,39 +395,24 @@ class ReplacementModel(HookedTransformer):
                     self._policy_q_activations = cached_value
                 elif "hook_k" in hook_name:
                     self._policy_k_activations = cached_value
-        
-        
-        
-        lorsa_activation_matrix = activation_matrix[:self.cfg.n_layers]  
-        tc_activation_matrix = activation_matrix[self.cfg.n_layers:]
 
-        lorsa_reconstruction = torch.stack([
-            self.lorsas[layer].decode(lorsa_activation_matrix[layer])
-            for layer in range(self.cfg.n_layers)
-        ])
-
+        # 计算重构和误差（只有MLP，类似原始代码的clt部分）
         transcoder_reconstruction = torch.stack([
-            self.transcoders[str(layer)].decode(tc_activation_matrix[layer])
+            self.transcoders[str(layer)].decode(activation_matrix[layer])
             for layer in range(self.cfg.n_layers)
         ])
-        error_vectors[:self.cfg.n_layers] = torch.cat(
-            list(attn_out_cache.values()),
-            dim=0
-        ) - lorsa_reconstruction
         
-        error_vectors[self.cfg.n_layers:] = torch.cat(
+        error_vectors = torch.cat(
             list(mlp_out_cache.values()),
             dim=0
         ) - transcoder_reconstruction
 
         if zero_bos and isinstance(tokens, torch.Tensor):
             error_vectors[:, 0] = 0
-        lorsa_activation_matrix = torch.stack(lorsa_activation_matrix)
-        lorsa_attention_pattern = torch.stack(lorsa_attention_pattern)
-        tc_activation_matrix = torch.stack(tc_activation_matrix)
+
+        activation_matrix = torch.stack(activation_matrix)
         if sparse:
-            lorsa_activation_matrix = lorsa_activation_matrix.coalesce()
-            tc_activation_matrix = tc_activation_matrix.coalesce()
+            activation_matrix = activation_matrix.coalesce()
 
         # 从hook_embed获取实际的embedding值
         with torch.no_grad():
@@ -508,7 +423,7 @@ class ReplacementModel(HookedTransformer):
             if token_vectors.dim() == 3:
                 token_vectors = token_vectors[0]  # 形状: [seq_len, d_model]
 
-        return logits, lorsa_activation_matrix, lorsa_attention_pattern, tc_activation_matrix, error_vectors, token_vectors
+        return logits, activation_matrix, error_vectors, token_vectors
 
     def setup_intervention_with_freeze(
         self, inputs: Union[str, torch.Tensor], direct_effects: bool = False
@@ -516,9 +431,9 @@ class ReplacementModel(HookedTransformer):
         """设置干预和冻结 - 简化版，只处理MLP相关"""
         
         if direct_effects:
-            hookpoints_to_freeze = ["hook_pattern", "hook_scale", self.feature_output_hook]
+            hookpoints_to_freeze = ["hook_scale", self.feature_output_hook]
         else:
-            hookpoints_to_freeze = ["hook_pattern"]
+            hookpoints_to_freeze = []  # 没有attention pattern需要冻结
 
         freeze_cache, cache_hooks, _ = self.get_caching_hooks(
             names_filter=lambda name: any(hookpoint in name for hookpoint in hookpoints_to_freeze)
@@ -529,13 +444,7 @@ class ReplacementModel(HookedTransformer):
             cached_values = freeze_cache[hook.name]
 
             # 处理序列长度不匹配的情况
-            if "hook_pattern" in hook.name and activations.shape[2:] != cached_values.shape[2:]:
-                new_activations = activations.clone()
-                new_activations[:, :, : cached_values.shape[2], : cached_values.shape[3]] = (
-                    cached_values
-                )
-                return new_activations
-            elif (
+            if (
                 "hook_scale" in hook.name or self.feature_output_hook in hook.name
             ) and activations.shape[1] != cached_values.shape[1]:
                 new_activations = activations.clone()
@@ -553,9 +462,7 @@ class ReplacementModel(HookedTransformer):
             for hookpoint in freeze_cache.keys()
             if self.feature_input_hook not in hookpoint
         ]
-        
-        if not direct_effects:
-            return fwd_hooks
+
         return fwd_hooks
 
     def _get_feature_intervention_hooks(
@@ -576,7 +483,7 @@ class ReplacementModel(HookedTransformer):
             interventions_by_layer[layer].append((pos, feature_idx, value))
 
         # 激活缓存
-        activation_cache, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
+        activation_cache, activation_hooks = self._get_activation_caching_hooks(
             apply_activation_function=apply_activation_function
         )
 
@@ -663,12 +570,11 @@ class ReplacementModel(HookedTransformer):
             is_bias_like = (name.endswith('.bias') or re.search(r'\.b($|[_\.])', name))
             if not is_bias_like:
                 continue
+            # 排除任意层级索引下的 b_E（transcoders.0.b_E、transcoders.foo.b_E 都能命中）
             if re.search(r'^transcoders\.[^.]+\.b_E($|[_\.])', name):
-                continue
-            if re.search(r'^lorsas\.[^.]+\.b_V($|[_\.])', name):
                 continue
             # if 'b_Q' in name or 'b_K' in name:
             #     continue
-
+    
             bias_params.append((name, p))
         return bias_params
