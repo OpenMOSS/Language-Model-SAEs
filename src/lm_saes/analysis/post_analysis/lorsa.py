@@ -99,7 +99,7 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
             # n_samples x d_sae
             shard_indices = sampling_data.get(
                 "shard_idx",
-                torch.zeros_like(sampling_data["feature_acts"][:, :, 0])
+                torch.zeros_like(sampling_data["feature_acts"][:, :, 0], dtype=torch.int64)
             ).flatten()
             context_indices = sampling_data["context_idx"].flatten()
 
@@ -130,13 +130,14 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
 
             for i, m in enumerate(meta):
                 data_idx = torch.tensor(
-                    [m["shard_idx"], m["context_idx"]],
+                    [m.get('shard_idx', int(0)), m["context_idx"]],
                     device=interested_pairs.device,
                     dtype=torch.long
                 )
 
                 interested_pairs_idx = (data_idx == interested_pairs).all(dim=1)
                 n_unfiltered_interested_pairs = interested_pairs_idx.sum()
+                visited += n_unfiltered_interested_pairs
 
                 interested_pairs_idx &= repeat(
                     tensor=active_head_mask, pattern="d_sae -> (n_samples d_sae)",
@@ -177,9 +178,8 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
                     size=z_pattern_data.size(),
                 )
 
-                visited += n_unfiltered_interested_pairs
                 pbar.update(n_unfiltered_interested_pairs.item())
-                
+            
             if visited == interested_pairs.shape[0]:
                 break
         
@@ -192,9 +192,10 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
             sampling_data["z_pattern_values"] = []
             
             n_samples, d_sae, n_ctx = sampling_data["feature_acts"].shape
-            sample_feature_indices = z_pattern_data.indices()[0, st: st + n_samples * d_sae]
-            qk_indices = z_pattern_data.indices()[1, st: st + n_samples * d_sae]
-            zp_values = z_pattern_data.values()[st: st + n_samples * d_sae]
+            zp_data_mask = (z_pattern_data.indices()[0] >= st) & (z_pattern_data.indices()[0] < st + n_samples * d_sae)
+            sample_feature_indices = z_pattern_data.indices()[0][zp_data_mask]
+            qk_indices = z_pattern_data.indices()[1][zp_data_mask]
+            zp_values = z_pattern_data.values()[zp_data_mask]
             
             for feature_idx in range(d_sae):
                 feature_mask = (sample_feature_indices % d_sae).eq(feature_idx)

@@ -481,7 +481,7 @@ def select_encoder_rows_lorsa(
     patterns: List[torch.Tensor] = []
     for layer, row in enumerate(activation_matrix):
         qpos, head_idx = row.coalesce().indices()
-        qk_idx = head_idx // lorsas[layer].cfg.d_qk_head
+        qk_idx = head_idx // (lorsas[layer].cfg.n_ov_heads // lorsas[layer].cfg.n_qk_heads)
         pattern = attention_pattern[layer, qk_idx, qpos]
         patterns.append(pattern)
         rows.append(lorsas[layer].W_V[head_idx])
@@ -491,7 +491,8 @@ def compute_partial_influences(edge_matrix, logit_p, row_to_node_index, max_iter
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     normalized_matrix = torch.empty_like(edge_matrix, device=device).copy_(edge_matrix)
-    normalized_matrix = normalized_matrix.abs_()
+    # temp: not select negative node
+    # normalized_matrix = normalized_matrix.abs_()
     normalized_matrix /= normalized_matrix.sum(dim=1, keepdim=True).clamp(min=1e-8)
 
     influences = torch.zeros(edge_matrix.shape[1], device=normalized_matrix.device)

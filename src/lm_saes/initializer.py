@@ -17,6 +17,7 @@ from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
 from lm_saes.utils.tensor_dict import batch_size, concat_dict_of_tensor
+from lm_saes.backend.language_model import LanguageModel
 
 logger = get_distributed_logger("initializer")
 
@@ -54,6 +55,26 @@ class Initializer:
         """
         batch = sae.normalize_activations(activation_batch)
 
+        if self.cfg.bias_init_method == "geometric_median":
+            assert sae.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
+            if isinstance(sae, CrossLayerTranscoder):
+                for i in range(sae.cfg.n_layers):
+                    hook_point_out = sae.cfg.hook_points_out[i]
+                    normalized_mean_activation = batch[hook_point_out].mean(0)
+                    if isinstance(sae.b_D[i], DTensor):
+                        normalized_mean_activation = DTensor.from_local(
+                            normalized_mean_activation,
+                            device_mesh=sae.device_mesh,
+                            placements=sae.dim_maps()["b_D"].placements(sae.device_mesh),
+                        )
+                    
+                    sae.b_D[i].copy_(normalized_mean_activation)
+            else:
+                normalized_mean_activation = batch[sae.cfg.hook_point_out].mean(
+                    dim=list(range((batch[sae.cfg.hook_point_out].ndim - 1)))
+                )
+                sae.b_D.copy_(normalized_mean_activation)
+
         @torch.autocast(device_type=sae.cfg.device, dtype=sae.cfg.dtype)
         def grid_search_best_init_norm(search_range: List[float]) -> float:
             losses: Dict[float, float] = {}
@@ -79,26 +100,6 @@ class Initializer:
 
             sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
-        if self.cfg.bias_init_method == "geometric_median":
-            assert sae.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
-            if isinstance(sae, CrossLayerTranscoder):
-                for i in range(sae.cfg.n_layers):
-                    hook_point_out = sae.cfg.hook_points_out[i]
-                    normalized_mean_activation = batch[hook_point_out].mean(0)
-                    if isinstance(sae.b_D[i], DTensor):
-                        normalized_mean_activation = DTensor.from_local(
-                            normalized_mean_activation,
-                            device_mesh=sae.device_mesh,
-                            placements=sae.dim_maps()["b_D"].placements(sae.device_mesh),
-                        )
-                    
-                    sae.b_D[i].copy_(normalized_mean_activation)
-            else:
-                normalized_mean_activation = batch[sae.cfg.hook_point_out].mean(
-                    dim=list(range((batch[sae.cfg.hook_point_out].ndim - 1)))
-                )
-                sae.b_D.copy_(normalized_mean_activation)
-
         if self.cfg.init_encoder_with_decoder_transpose:
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
 
@@ -112,6 +113,7 @@ class Initializer:
         device_mesh: DeviceMesh | None = None,
         wandb_logger: Run | None = None,
         fold_activation_scale: bool = False,
+        model: LanguageModel | None = None
     ):
         """
         Initialize the SAE from the SAE config.
@@ -149,12 +151,23 @@ class Initializer:
                         activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
                     )
                 sae.set_dataset_average_activation_norm(activation_norm)
+                
+            if cfg.sae_type == 'lorsa' and self.cfg.initialize_lorsa_with_mhsa and sae.cfg.norm_activation == 'dataset-wise':
+                sae.init_lorsa_with_mhsa(model.model.blocks[self.cfg.model_layer].attn)
 
             assert activation_stream is not None, "Activation iterator must be provided for initialization search"
             activation_batch = next(iter(activation_stream))  # type: ignore
-            sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
-
+            
             if self.cfg.initialize_W_D_with_active_subspace:
                 activation_batch = sae.normalize_activations(activation_batch)
-                sae.init_W_D_with_active_subspace(activation_batch, self.cfg.d_active_subspace)
+                if cfg.sae_type == 'lorsa' and self.cfg.initialize_lorsa_with_mhsa and sae.cfg.norm_activation == 'dataset-wise':
+                    sae.init_W_D_with_active_subspace_per_head(activation_batch, mhsa = model.model.blocks[self.cfg.model_layer].attn)
+                else:
+                    sae.init_W_D_with_active_subspace(activation_batch, self.cfg.d_active_subspace)
+                    
+            if self.cfg.init_encoder_bias_with_mean_hidden_pre:
+                sae.init_encoder_bias_with_mean_hidden_pre(activation_batch)
+            
+            sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
+
         return sae

@@ -235,8 +235,11 @@ def distributed_topk(
             if to_decrease.any():
                 search_high_val = torch.where(to_decrease, threshold, search_high_val)
             
-            # Check for convergence
-            if (search_high_val - search_low_val < 1e-6).all():
+            # Check for convergence across all devices
+            local_converged = (search_high_val - search_low_val < 1e-6).all()
+            converged_tensor = local_converged.float().detach().clone()
+            torch.distributed.all_reduce(converged_tensor, group=group, op=torch.distributed.ReduceOp.MIN)
+            if converged_tensor.item() > 0:  # All devices have converged
                 break
         
         while threshold.ndim < local_tensor.ndim:

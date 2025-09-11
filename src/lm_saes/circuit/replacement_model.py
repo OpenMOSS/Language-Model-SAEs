@@ -326,7 +326,7 @@ class ReplacementModel(HookedTransformer):
             partial(
                 add_skip_connection,
                 grad_hook=subblock.hook_out_grad,
-                replacement_bias=self.lorsas[layer].b_O,
+                replacement_bias=self.lorsas[layer].b_D,
             ),
             is_permanent=True,
         )
@@ -376,7 +376,8 @@ class ReplacementModel(HookedTransformer):
             encode_result = self.lorsas[layer].encode(
                 acts,
                 return_hidden_pre=not apply_activation_function,
-                return_attention_pattern=True
+                return_attention_pattern=True,
+                return_hidden_pre=True,
             )
 
             if not apply_activation_function:

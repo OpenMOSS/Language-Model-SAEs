@@ -63,7 +63,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     strict_loading: bool = True
     use_triton_kernel: bool = False
     sparsity_threshold_for_triton_spmm_kernel: float = 0.996
-
+    sparsity_threshold_for_csr: float = 0.05
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
     promote_act_fn_dtype: Annotated[
@@ -151,6 +151,9 @@ class LorsaConfig(BaseSAEConfig):
     
     # Attention settings
     attn_scale: Optional[float] = None
+    use_post_qk_ln: bool = False
+    normalization_type: Literal["LN", "RMS"] | None = None
+    eps: float = 1e-6
     
     @property
     def n_ov_heads(self) -> int:
@@ -183,7 +186,8 @@ class CLTConfig(BaseSAEConfig):
     """
 
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "clt"
-    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk"] = "relu"
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
+    init_cross_layer_decoder_all_zero: bool = False
     hook_points_in: list[str]
     """List of hook points to capture input activations from, one for each layer."""
     hook_points_out: list[str]
@@ -236,6 +240,9 @@ class InitializerConfig(BaseConfig):
     grid_search_init_norm: bool = False
     initialize_W_D_with_active_subspace: bool = False
     d_active_subspace: int | None = None
+    initialize_lorsa_with_mhsa: bool | None = None
+    model_layer: int | None = None
+    init_encoder_bias_with_mean_hidden_pre: bool = False
 
 
 class TrainerConfig(BaseConfig):
@@ -260,6 +267,8 @@ class TrainerConfig(BaseConfig):
     initial_k: int | float | None = None
     k_warmup_steps: int | float = 0.1
     k_cold_booting_steps: int | float = 0
+    k_schedule_type: Literal["linear", "exponential"] = "linear"
+    k_exponential_factor: float = 3.0
     use_batch_norm_mse: bool = True
     skip_metrics_calculation: bool = False
     gradient_accumulation_steps: int = 1

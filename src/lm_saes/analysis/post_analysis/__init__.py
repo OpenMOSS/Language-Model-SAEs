@@ -117,8 +117,8 @@ class PostAnalysisProcessor(ABC):
         """
         return {
             "context_idx": sampling_data["context_idx"][:, i].cpu().numpy(),
-            "shard_idx": sampling_data["shard_idx"][:, i].cpu().numpy(),
-            "n_shards": sampling_data["n_shards"][:, i].cpu().numpy(),
+            "shard_idx": sampling_data["shard_idx"][:, i].cpu().numpy() if "shard_idx" in sampling_data else torch.zeros_like(sampling_data["context_idx"][:, i].cpu(), dtype=torch.int64).numpy(),
+            "n_shards": sampling_data["n_shards"][:, i].cpu().numpy() if "n_shards" in sampling_data else torch.ones_like(sampling_data["context_idx"][:, i].cpu(), dtype=torch.int64).numpy(),
         }
 
     @abstractmethod

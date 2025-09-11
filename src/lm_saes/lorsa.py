@@ -13,6 +13,7 @@ from typing import Dict, Optional, Tuple, Union, Any, Literal, overload, Sequenc
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
 import torch.distributed.tensor
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
@@ -55,6 +56,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             self.W_O = _get_param_with_shape((self.cfg.n_ov_heads, self.cfg.d_model))
             self.b_Q = _get_param_with_shape((self.cfg.n_qk_heads, self.cfg.d_qk_head))
             self.b_K = _get_param_with_shape((self.cfg.n_qk_heads, self.cfg.d_qk_head))
+            self.b_V = _get_param_with_shape((self.cfg.n_ov_heads,))
             if self.cfg.use_decoder_bias:
                 self.b_D = _get_param_with_shape((self.cfg.d_model,))
         else:
@@ -75,6 +77,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             self.W_O = _get_param_with_shape((self.cfg.n_ov_heads, self.cfg.d_model), placements=dim_maps["W_O"].placements(device_mesh))
             self.b_Q = _get_param_with_shape((self.cfg.n_qk_heads, self.cfg.d_qk_head), placements=dim_maps["b_Q"].placements(device_mesh))
             self.b_K = _get_param_with_shape((self.cfg.n_qk_heads, self.cfg.d_qk_head), placements=dim_maps["b_K"].placements(device_mesh))
+            self.b_V = _get_param_with_shape((self.cfg.n_ov_heads,), placements=dim_maps["b_V"].placements(device_mesh))
             if self.cfg.use_decoder_bias:
                 self.b_D = _get_param_with_shape((self.cfg.d_model,), placements=dim_maps["b_D"].placements(device_mesh))
         
@@ -95,6 +98,20 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         else:
             IGNORE = torch.tensor(-torch.inf, device=self.cfg.device)
         self.register_buffer("IGNORE", IGNORE)
+        
+        if self.cfg.use_post_qk_ln:
+            if self.cfg.normalization_type == "LN":
+                self.qk_ln_type = LayerNormPerHead
+            elif self.cfg.normalization_type == "RMS":
+                self.qk_ln_type = RMSNormPerHead
+            else:
+                raise ValueError(f"Invalid normalization type for QK-norm: {self.cfg.normalization_type}")
+        else:
+            self.qk_ln_type = None
+            
+        if self.cfg.use_post_qk_ln:
+            self.ln_q = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_qk_heads)
+            self.ln_k = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_qk_heads)
 
         if self.cfg.positional_embedding_type == "rotary":
             # Applies a rotation to each two-element chunk of keys and queries pre dot producting to bake in relative position.
@@ -129,9 +146,31 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         torch.nn.init.zeros_(self.b_Q)
         torch.nn.init.zeros_(self.b_K)
-
+        torch.nn.init.zeros_(self.b_V)
         if self.cfg.use_decoder_bias:
             torch.nn.init.zeros_(self.b_D)
+    
+    @torch.no_grad()
+    def init_lorsa_with_mhsa(self, mhsa):
+        """Initialize Lorsa with Original Multi Head Sparse Attention"""
+        assert self.cfg.n_qk_heads % mhsa.W_Q.size(0) == 0
+        input_norm_factor = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_in]
+        output_norm_factor = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_out]
+        qk_exp_factor = self.cfg.n_qk_heads // mhsa.W_Q.size(0)
+        ov_exp_factor = self.cfg.n_ov_heads // (mhsa.W_V.size(0) * mhsa.W_V.size(2))
+        self.W_Q = nn.Parameter(
+            torch.repeat_interleave(mhsa.W_Q, qk_exp_factor, dim=0).to(self.cfg.dtype) / input_norm_factor
+        )
+        self.W_K = nn.Parameter(
+            torch.repeat_interleave(mhsa.W_K, qk_exp_factor, dim=0).to(self.cfg.dtype) / input_norm_factor
+        )
+        if self.cfg.use_post_qk_ln and self.cfg.normalization_type == 'RMS':
+            self.ln_q.w = nn.Parameter(
+                torch.repeat_interleave(mhsa.ln_q.w, qk_exp_factor, dim=0).to(self.cfg.dtype)
+            )
+            self.ln_k.w = nn.Parameter(
+                torch.repeat_interleave(mhsa.ln_k.w, self.ln_k.w.size(0) // mhsa.ln_k.w.size(0), dim=0).to(self.cfg.dtype)
+            )
     
     @override
     @torch.no_grad()
@@ -148,6 +187,47 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         U, S, V = torch.svd(demeaned_label.T.to(torch.float32))
         proj_weight = U[:, :d_active_subspace] # [d_model, d_active_subspace]
         self.W_O.data = self.W_O.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype)
+        
+    @torch.no_grad()
+    @torch.autocast(device_type='cuda', dtype=torch.bfloat16)
+    def init_W_D_with_active_subspace_per_head(self, activation_batch: dict[str, torch.Tensor], mhsa):
+        """
+        Initialize W_D with the active subspace for each head.
+        """
+        x, _ = self.prepare_input(activation_batch)
+        captured_z = None
+        def capture_hook(z, hook):
+            nonlocal captured_z
+            captured_z = z.clone().detach()
+            return z
+        handle = mhsa.hook_z.add_hook(capture_hook)
+        _ = mhsa.forward(
+            query_input=x, 
+            key_input=x, 
+            value_input=x,
+        )
+        output_per_head = torch.einsum('b s n h, n h d -> b s n d', captured_z, mhsa.W_O)
+        n_ov_per_orig_head = self.cfg.n_ov_heads // mhsa.cfg.n_heads
+        for orig_head_index in range(mhsa.cfg.n_heads):
+            output = output_per_head[:, :, orig_head_index, :]
+            output_flattened = output.flatten(0, 1)
+            demeaned_output = output_flattened - output_flattened.mean(dim=0)
+            U, S, V = torch.svd(demeaned_output.T.to(torch.float32))
+            proj_weight = U[:, :self.cfg.d_qk_head]
+            self.W_O.data[orig_head_index*n_ov_per_orig_head:(orig_head_index+1)*n_ov_per_orig_head] = (
+                self.W_O.data[orig_head_index*n_ov_per_orig_head:(orig_head_index+1)*n_ov_per_orig_head, :self.cfg.d_qk_head] @
+                proj_weight.T
+            )
+            self.W_V.data[orig_head_index*n_ov_per_orig_head:(orig_head_index+1)*n_ov_per_orig_head] = (
+                self.W_O.data[orig_head_index*n_ov_per_orig_head:(orig_head_index+1)*n_ov_per_orig_head] @
+                (mhsa.W_V[orig_head_index] @ mhsa.W_O[orig_head_index]).T
+            )
+        self.W_V.data = self.W_V.data / self.W_V.data.norm(dim=1, keepdim=True)
+        self.W_O.data = self.W_O.data / self.W_O.data.norm(dim=1, keepdim=True)
+        
+        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True)
+        hidden_pre = hidden_pre.flatten(0, 1)
+        self.b_V.data = -hidden_pre.mean(dim=0)
 
     def _calculate_sin_cos_rotary(
         self,
@@ -264,10 +344,21 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         self.b_Q.data *= input_norm_factor
         self.b_K.data *= input_norm_factor
 
+        self.b_V.data = self.b_V.data / input_norm_factor
         self.W_O.data = self.W_O.data * input_norm_factor / output_norm_factor
         self.b_D.data = self.b_D.data / output_norm_factor
         
         self.cfg.norm_activation = "inference"
+
+    def compute_hidden_pre(self, x: Float[torch.Tensor, "batch seq_len d_model"]) -> Float[torch.Tensor, "batch seq_len d_sae"]:
+        """Compute the hidden pre-activations."""
+        q, k, v = self._compute_qkv(x)
+        query = q.permute(0, 2, 1, 3)
+        key = k.permute(0, 2, 1, 3)
+        value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
+        with sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+            z = F.scaled_dot_product_attention(query,key,value,scale=1/self.cfg.attn_scale,is_causal=True,enable_gqa=True)
+        return z.permute(0, 2, 1, 3).reshape(*v.shape)
 
     @override
     @torch.no_grad()
@@ -301,6 +392,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         x: Float[torch.Tensor, "batch seq_len d_model"],
         return_hidden_pre: bool = False,
         return_attention_pattern: bool = False,
+        return_attention_score: bool = False,
         **kwargs
     ) -> Union[
         Float[torch.Tensor, "batch seq_len d_sae"],
@@ -318,18 +410,32 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         # Compute Q, K, V
         q, k, v = self._compute_qkv(x)
         
-        # Attention pattern
-        # n_qk_heads batch q_pos k_pos
-        pattern = self._compute_attention_pattern(q, k)
-        
-        # Head outputs
-        hidden_pre = self._compute_head_outputs(pattern, v)
+        if not return_attention_pattern:
+            query = q.permute(0, 2, 1, 3)
+            key = k.permute(0, 2, 1, 3)
+            value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
+            with sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+                z = F.scaled_dot_product_attention(query,key,value,scale=1/self.cfg.attn_scale,is_causal=True,enable_gqa=True)
+            hidden_pre = z.permute(0, 2, 1, 3).reshape(*v.shape)
+        else:
+            # Attention pattern
+            # n_qk_heads batch q_pos k_pos
+            q = q.permute(2, 0, 1, 3) # (n_qk_heads, batch, seq_len, d_qk_head)
+            k = k.permute(2, 0, 3, 1) # (n_qk_heads, batch, d_qk_head, seq_len)
+            scores = torch.einsum("nbqd,nbdk->nbqk", q, k) / self.cfg.attn_scale
+            scores = self._apply_causal_mask(scores)
+            pattern = F.softmax(scores, dim=-1)
+            
+            # Head outputs
+            hidden_pre = self._compute_head_outputs(pattern, v)
 
         feature_acts = self.activation_function(hidden_pre)
 
         return_values = [feature_acts]
         if return_hidden_pre:
             return_values.append(hidden_pre)
+        if return_attention_score:
+            return_values.append(scores.permute(1, 0, 2, 3))
         if return_attention_pattern:
             return_values.append(pattern.permute(1, 0, 2, 3))
         return tuple(return_values) if len(return_values) > 1 else return_values[0]
@@ -368,8 +474,11 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             "bsd,Vd->bsV",
             x,
             self.W_V,
-        )
-        
+        ) + self.b_V
+        if self.cfg.use_post_qk_ln:
+            q = self.ln_q(q)
+            k = self.ln_k(k)
+            
         # Apply positional embedding
         if self.cfg.positional_embedding_type == "rotary":
             q = self._apply_rotary(q)
@@ -383,7 +492,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         head_idx: Int[torch.Tensor, "n_active_features"],
     ) -> Float[torch.Tensor, "n_active_features k_pos"]:
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
-        qk_idx: Tensor = head_idx // self.cfg.d_qk_head
+        qk_idx: Tensor = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
         q, k, v = self._compute_qkv(x)
 
         # (n_active_features, q_pos, k_pos)
@@ -472,7 +581,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     
     @override
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
-        raise NotImplementedError("set_decoder_to_fixed_norm does not make sense for lorsa")
+        self.W_O.data = self.W_O.data * value / self.W_O.data.norm(dim=1, keepdim=True)
 
     @override
     @torch.no_grad()
@@ -637,3 +746,34 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         if self.cfg.skip_bos:
             label = label[:, 1:]
         return label 
+    
+class RMSNormPerHead(nn.Module):
+    def __init__(self, cfg: Union[Dict, LorsaConfig], n_heads: Optional[int] = None):
+        """
+        RMSNorm - LayerNorm without the centering and bias (RMS = Root Mean Square)
+
+        length (Optional[int]): If the dimension of the RMSNorm. If not provided, assumed to be d_model
+        """
+        super().__init__()
+        self.cfg = cfg
+        self.eps = self.cfg.eps
+
+        self.n_heads = n_heads if n_heads is not None else self.cfg.n_qk_heads
+
+        self.w = nn.Parameter(torch.ones((self.n_heads, self.cfg.d_qk_head), dtype=cfg.dtype, device=cfg.device))
+
+        # Adds a hook point for the normalisation scale factor
+        self.hook_scale = HookPoint()  # [batch, pos, 1]
+        self.hook_normalized = HookPoint()  # [batch, pos, length]
+
+    def forward(
+        self, x: Float[torch.Tensor, "batch pos length"]
+    ) -> Float[torch.Tensor, "batch pos length"]:
+        if self.cfg.dtype not in [torch.float32, torch.float64]:
+            x = x.to(torch.float32)
+        scale: Float[torch.Tensor, "batch pos 1"] = self.hook_scale(
+            (x.pow(2).mean(-1, keepdim=True) + self.eps).sqrt()
+        )
+        x = x / scale * self.w
+        x = self.hook_normalized(x.to(self.cfg.dtype))  # [batch, pos, length]
+        return x
