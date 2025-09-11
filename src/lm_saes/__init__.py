@@ -1,6 +1,5 @@
 from .activation import ActivationFactory, ActivationWriter
 from .activation_functions import JumpReLU
-from .analysis import FeatureAnalyzer
 from .clt import CrossLayerTranscoder
 from .lorsa import LowRankSparseAttention
 from .config import (
@@ -23,12 +22,15 @@ from .config import (
     WandbConfig,
     LorsaConfig,
     GraphEvalConfig,
+    DirectLogitAttributorConfig,
 )
 from .crosscoder import CrossCoder
 from .database import MongoClient
 from .resource_loaders import load_dataset, load_model
 from .sae import SparseAutoEncoder
 from .circuit import ReplacementModel, attribute
+from .evaluator import EvalConfig, Evaluator
+from .analysis import DirectLogitAttributor, FeatureAnalyzer
 from .runners import (
     AnalyzeCrossCoderSettings,
     AnalyzeSAESettings,
@@ -53,8 +55,9 @@ from .runners import (
     train_clt,
     train_crosscoder,
     train_sae,
+    DirectLogitAttributeSettings,
+    direct_logit_attribute,
 )
-from .evaluator import EvalConfig, Evaluator
 
 __all__ = [
     "ActivationFactory",
@@ -113,4 +116,7 @@ __all__ = [
     "TrainLorsaSettings",
     "train_lorsa",
     "LorsaConfig",
+    "DirectLogitAttributor",
+    "DirectLogitAttributeSettings",
+    "direct_logit_attribute",
 ]
