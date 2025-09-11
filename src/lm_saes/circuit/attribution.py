@@ -530,7 +530,7 @@ def compute_partial_influences(edge_matrix, logit_p, row_to_node_index, max_iter
 
     normalized_matrix = torch.empty_like(edge_matrix, device=device).copy_(edge_matrix)
     # temp: not select negative node
-    # normalized_matrix = normalized_matrix.abs_()
+    normalized_matrix = normalized_matrix.abs_()
     normalized_matrix /= normalized_matrix.sum(dim=1, keepdim=True).clamp(min=1e-8)
 
     influences = torch.zeros(edge_matrix.shape[1], device=normalized_matrix.device)
