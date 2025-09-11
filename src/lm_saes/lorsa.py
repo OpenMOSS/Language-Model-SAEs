@@ -324,7 +324,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Transform to unit decoder norm."""
         norm = self.decoder_norm(keepdim=True)
         self.W_O /= norm
-        self.W_V *= norm.unsqueeze(-1)
+        self.W_V *= norm
+        self.b_V *= norm.squeeze()
 
     @override
     @torch.no_grad()
@@ -340,12 +341,11 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         output_norm_factor = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[hook_point_out]
 
         self.W_Q.data *= input_norm_factor
-        self.W_K.data *= input_norm_factor 
-        self.b_Q.data *= input_norm_factor
-        self.b_K.data *= input_norm_factor
+        self.W_K.data *= input_norm_factor
 
-        self.b_V.data = self.b_V.data / input_norm_factor
-        self.W_O.data = self.W_O.data * input_norm_factor / output_norm_factor
+        self.W_V.data *= input_norm_factor
+
+        self.W_O.data = self.W_O.data / output_norm_factor
         self.b_D.data = self.b_D.data / output_norm_factor
         
         self.cfg.norm_activation = "inference"
