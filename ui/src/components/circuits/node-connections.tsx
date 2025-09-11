@@ -116,15 +116,15 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
   }, [data.nodes, clickedNode?.nodeId, clickedNode?.sourceLinks, clickedNode?.targetLinks]);
 
   // Memoize the formatFeatureId function to avoid recreating it on every render
-  const formatFeatureId = useMemo(() => (node: Node): string => {
+  const formatFeatureId = useMemo(() => (node: Node, verbose: boolean = true): string => {
     if (node.feature_type === 'cross layer transcoder') {
       const layerIdx = Math.floor(node.layerIdx / 2) - 1;
       const featureId = node.id.split('_')[1];
-      return `M${layerIdx}#${featureId}@${node.ctx_idx}`;
+      return verbose ? `M${layerIdx}#${featureId}@${node.ctx_idx}` : `M${layerIdx}`;
     } else if (node.feature_type === 'lorsa') {
       const layerIdx = Math.floor(node.layerIdx / 2);
       const featureId = node.id.split('_')[1];
-      return `A${layerIdx}#${featureId}@${node.ctx_idx}`;
+      return verbose ? `A${layerIdx}#${featureId}@${node.ctx_idx}` : `A${layerIdx}`;
     } else if (node.feature_type === 'embedding') {
       return `Emb@${node.ctx_idx}`;
     } else if (node.feature_type === 'mlp reconstruction error') {
@@ -193,7 +193,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     if (!link || link.weight === undefined) return null;
 
     const weight = link.weight;
-    const pctInput = link.pctInput || 0;
     const isPinned = pinnedIds.includes(node.nodeId);
     const isHidden = hiddenIds.includes(node.featureId);
     const isHovered = node.nodeId === hoveredId;
@@ -202,7 +201,7 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     return (
       <div
         key={node.nodeId}
-        className={`feature-row p-1 border rounded cursor-pointer transition-colors ${
+        className={`feature-row py-0.5 px-1 border rounded cursor-pointer transition-colors ${
           isPinned ? 'bg-yellow-100 border-yellow-300' : 'bg-gray-50 border-gray-200'
         } ${isHidden ? 'opacity-50' : ''} ${isHovered ? 'ring-2 ring-blue-300' : ''} ${
           isClicked ? 'ring-2 ring-blue-500' : ''
@@ -216,19 +215,16 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <span className="text-sm font-mono text-gray-600">
-              {formatFeatureId(node)}
+            <span className="text-xs font-mono text-gray-600">
+              {formatFeatureId(node, false)}
             </span>
-            <span className="text-sm font-medium">
+            <span className="text-xs font-medium">
               {node.localClerp || node.remoteClerp || ''}
             </span>
           </div>
           <div className="text-right">
-            <div className="text-sm font-mono">
+            <div className="text-xs font-mono">
               {weight > 0 ? '+' : ''}{weight.toFixed(3)}
-            </div>
-            <div className="text-xs text-gray-500">
-              {pctInput.toFixed(1)}%
             </div>
           </div>
         </div>
@@ -282,17 +278,17 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
               {type.title}
             </div>
             
-            <div className="effects space-y-2">
+            <div className="effects space-y-1 overflow-y-auto h-full">
               {type.sections.map(section => (
                 <div key={section.title} className="section">
-                  <h4 className={`text-sm font-medium mb-1 px-2 py-1 rounded ${
-                    section.title === 'Positive' 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-red-100 text-red-800'
-                  }`}>
+                  <h4 className={`text-xs font-medium mb-0.5 px-2 py-0.5 rounded ${
+                      section.title === 'Positive' 
+                        ? 'bg-green-100 text-green-800' 
+                        : 'bg-red-800'
+                    }`}>
                     {section.title}
                   </h4>
-                  <div className="space-y-1">
+                  <div className="space-y-0.5">
                     {section.nodes.map(node => renderFeatureRow(node, type.id))}
                   </div>
                 </div>

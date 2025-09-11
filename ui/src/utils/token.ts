@@ -50,9 +50,9 @@ export const getZPatternForToken = (
   zPatternIndices: number[][] | null | undefined,
   zPatternValues: number[] | null | undefined,
   tokenIndex: number
-): { contributingTokens: number[]; contributions: number[] } => {
+): { contributingTokens: number[]; contributions: number[] } | null => {
   if (!zPatternIndices || !zPatternValues) {
-    return { contributingTokens: [], contributions: [] };
+    return null;
   }
 
   const contributingTokens: number[] = [];
