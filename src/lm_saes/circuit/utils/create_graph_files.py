@@ -35,6 +35,7 @@ class Node(BaseModel):
     clerp: str = ""
     influence: float | None = None
     activation: float | None = None
+    lorsa_pattern: list | None = None
 
     def __init__(self, **data):
         if "node_id" in data and "jsNodeId" not in data:
@@ -42,7 +43,7 @@ class Node(BaseModel):
         super().__init__(**data)
 
     @classmethod
-    def feature_node(cls, layer, pos, feat_idx, is_lorsa, influence=None, activation=None):
+    def feature_node(cls, layer, pos, feat_idx, is_lorsa, influence=None, activation=None, lorsa_pattern=None):
         """Create a feature node."""
 
         def cantor_pairing(x, y):
@@ -59,6 +60,7 @@ class Node(BaseModel):
             jsNodeId=f"{layer}_{feat_idx}-{reverse_ctx_idx}",
             influence=influence,
             activation=activation,
+            lorsa_pattern=lorsa_pattern.tolist(),
         )
 
     @classmethod
@@ -136,7 +138,7 @@ def load_graph_data(file_path) -> Graph:
     return graph
 
 
-def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores):
+def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lorsa):
     """Create all nodes for the graph."""
     start_time = time.time()
 
@@ -144,21 +146,26 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores):
 
     n_features = len(graph.selected_features)
     layers = graph.cfg.n_layers
-    error_end_idx = n_features + 2 * graph.n_pos * layers
+    error_end_idx = n_features + 2 * graph.n_pos * layers if use_lorsa else n_features + graph.n_pos * layers
     token_end_idx = error_end_idx + len(graph.input_tokens)
 
     for node_idx in node_mask.nonzero().squeeze().tolist():
         if node_idx in range(n_features):
-            orig_feature_idx = graph.selected_features[node_idx]
-            is_lorsa = orig_feature_idx < len(graph.lorsa_active_features)
-            if is_lorsa:
-                layer, pos, feat_idx = graph.lorsa_active_features[orig_feature_idx].tolist()
-                interested_activation = graph.lorsa_activation_values
+            if use_lorsa:
+                orig_feature_idx = graph.selected_features[node_idx]
+                is_lorsa = orig_feature_idx < len(graph.lorsa_active_features)
+                if is_lorsa:
+                    layer, pos, feat_idx = graph.lorsa_active_features[orig_feature_idx].tolist()
+                    interested_activation = graph.lorsa_activation_values
+                else:
+                    orig_feature_idx = orig_feature_idx - len(graph.lorsa_active_features)
+                    layer, pos, feat_idx = graph.clt_active_features[orig_feature_idx].tolist()
+                    interested_activation = graph.clt_activation_values
             else:
-                orig_feature_idx = orig_feature_idx - len(graph.lorsa_active_features)
+                is_lorsa = False
+                orig_feature_idx = graph.selected_features[node_idx]
                 layer, pos, feat_idx = graph.clt_active_features[orig_feature_idx].tolist()
                 interested_activation = graph.clt_activation_values
-
             nodes[node_idx] = Node.feature_node(
                 layer,
                 pos,
@@ -166,14 +173,20 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores):
                 is_lorsa=is_lorsa,
                 influence=cumulative_scores[node_idx],
                 activation=interested_activation[orig_feature_idx],
+                lorsa_pattern=graph.lorsa_pattern[node_idx],
             )
+            
         elif node_idx in range(n_features, error_end_idx):
             layer, pos = divmod(node_idx - n_features, graph.n_pos)
-            is_lorsa = node_idx < n_features + graph.n_pos * layers
-            if is_lorsa:
-                layer = 2 * layer
+            if use_lorsa:
+                is_lorsa = node_idx < n_features + graph.n_pos * layers
+                if is_lorsa:
+                    layer = 2 * layer
+                else:
+                    layer = 2 * (layer - layers) + 1
             else:
-                layer = 2 * (layer - layers) + 1
+                is_lorsa = False
+                layer = 2 * layer + 1
             nodes[node_idx] = Node.error_node(layer, pos, is_lorsa, influence=cumulative_scores[node_idx])
         elif node_idx in range(error_end_idx, token_end_idx):
             pos = node_idx - error_end_idx
@@ -276,6 +289,7 @@ def create_graph_files(
     sae_series=None,
     lorsa_analysis_name="",
     clt_analysis_name="",
+    use_lorsa:bool=True,
 ):
     total_start_time = time.time()
 
@@ -298,8 +312,9 @@ def create_graph_files(
         el.to(device) for el in prune_graph(graph, node_threshold, edge_threshold)
     )
 
+    print(f'{graph.cfg.tokenizer_name=}')
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
-    nodes = create_nodes(graph, node_mask, tokenizer, cumulative_scores)
+    nodes = create_nodes(graph, node_mask, tokenizer, cumulative_scores, use_lorsa=use_lorsa)
     used_nodes, used_edges = create_used_nodes_and_edges(graph, nodes, edge_mask)
     model = build_model(
         graph,

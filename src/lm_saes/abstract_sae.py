@@ -151,6 +151,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         sae_series: str | None = None,
         mongo_client: MongoClient | None = None,
     ) -> None:
+        os.makedirs(Path(save_path), exist_ok=True)
+
         if self.device_mesh is None:
             self.save_checkpoint(Path(save_path) / "sae_weights.safetensors")
         else:

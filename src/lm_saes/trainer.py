@@ -518,7 +518,7 @@ class Trainer:
             assert self.optimizer is not None
             assert self.scheduler is not None
 
-        maybe_local_d_sae = sae.cfg.d_sae# if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
+        maybe_local_d_sae = sae.cfg.d_sae # if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
         if sae.cfg.sae_type == "clt":
             act_freq_scores_shape = (
                 sae.cfg.n_layers,  # type: ignore

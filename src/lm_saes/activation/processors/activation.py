@@ -283,6 +283,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
 
         for d in data:
             # Validate input: ensure all tensors and lists have consistent shapes
+            # print(d.keys(), d['tokens'], d[])
             assert all(len(d[k]) == len(d[next(iter(d.keys()))]) for k in d.keys()), (
                 "All tensors and lists must have the same batch size"
             )

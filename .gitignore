@@ -27,6 +27,10 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+results_tmp/
+actications/
+actications_tmp/
+20250908_results/
 MANIFEST
 
 # PyInstaller

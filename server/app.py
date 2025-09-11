@@ -29,6 +29,8 @@ app = FastAPI()
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+print(os.environ.get("MONGO_URI", "mongodb://localhost:27017/"))
+print(os.environ.get("MONGO_DB", "mechinterp"))
 client = MongoClient(MongoDBConfig())
 sae_series = os.environ.get("SAE_SERIES", "default")
 tokenizer_only = os.environ.get("TOKENIZER_ONLY", "false").lower() == "true"
@@ -251,6 +253,7 @@ def get_feature(
             dict: Processed sample data
         """  # Get model and dataset
         model = get_model(model_name)
+        # model = None
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
 
         # Get origins for the features
@@ -410,6 +413,7 @@ def get_feature(
         "sample_groups": sample_groups,
         "is_bookmarked": client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature.index),
     }
+    print(f'{response_data=}')
 
     return Response(
         content=msgpack.packb(make_serializable(response_data)),

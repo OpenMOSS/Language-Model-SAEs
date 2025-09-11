@@ -535,7 +535,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
     end_of_stream = trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
 
-    if not settings.save_trainer_state:
+    if settings.save_trainer_state:
         logger.info("Training completed, saving CLT model")
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
