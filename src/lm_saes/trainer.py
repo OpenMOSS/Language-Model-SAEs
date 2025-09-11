@@ -233,12 +233,19 @@ class Trainer:
             "adam": Adam,
             "sparseadam": SparseAdam,
         }[self.cfg.optimizer_class]
-        optimizer = optim_cls(
-            sae.get_parameters(),
-            lr=self.cfg.lr,
-            betas=self.cfg.betas,
-            foreach=self.cfg.optimizer_foreach,
-        )
+        
+        # 构建optimizer参数
+        optimizer_kwargs = {
+            "params": sae.get_parameters(),
+            "lr": self.cfg.lr,
+            "betas": self.cfg.betas,
+        }
+        
+        # 只有adam optimizer才支持foreach参数
+        if self.cfg.optimizer_class == "adam":
+            optimizer_kwargs["foreach"] = self.cfg.optimizer_foreach
+            
+        optimizer = optim_cls(**optimizer_kwargs)
         scheduler = get_scheduler(
             scheduler_name=self.cfg.lr_scheduler_name,
             optimizer=optimizer,
@@ -262,12 +269,22 @@ class Trainer:
             if self.cur_step < self.k_cold_booting_steps:
                 sae.set_current_k(int(self.cfg.initial_k))
             else:
+                warmup_progress = (self.cur_step - self.k_cold_booting_steps) / self.k_warmup_steps
+                warmup_progress = min(1.0, warmup_progress)
+                
+                if self.cfg.k_schedule_type == "exponential":
+                    exp_factor = self.cfg.k_exponential_factor
+                    decay_factor = (1.0 - math.exp(-exp_factor * warmup_progress)) / (1.0 - math.exp(-exp_factor))
+                    current_k = self.cfg.initial_k - (self.cfg.initial_k - sae.cfg.top_k) * decay_factor
+                elif self.cfg.k_schedule_type == "linear":
+                    current_k = self.cfg.initial_k + (sae.cfg.top_k - self.cfg.initial_k) * warmup_progress
+                else:
+                    current_k = self.cfg.initial_k + (sae.cfg.top_k - self.cfg.initial_k) * warmup_progress
+                
                 sae.set_current_k(
                     max(
                         sae.cfg.top_k,
-                        math.ceil(
-                            self.cfg.initial_k + (sae.cfg.top_k - self.cfg.initial_k) / self.k_warmup_steps * (self.cur_step - self.k_cold_booting_steps),
-                        ),
+                        math.ceil(current_k),
                     )
                 )
 
@@ -501,7 +518,7 @@ class Trainer:
             assert self.optimizer is not None
             assert self.scheduler is not None
 
-        maybe_local_d_sae = sae.cfg.d_sae if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
+        maybe_local_d_sae = sae.cfg.d_sae# if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
         if sae.cfg.sae_type == "clt":
             act_freq_scores_shape = (
                 sae.cfg.n_layers,  # type: ignore
@@ -531,7 +548,7 @@ class Trainer:
                         loss_dict = self._training_step(sae, batch)
                     
                     log_info.update(loss_dict)
-                    proc_bar.set_description(f"loss: {log_info['loss'].item()}, learning rate: {self.optimizer.param_groups[0]['lr']}")
+                    proc_bar.set_description(f"loss: {log_info['loss'].item():.2f}, learning rate: {self.optimizer.param_groups[0]['lr']:.2e}")
                     
                     if timer.enabled:
                         logger.info(f"\nTimer Summary:\n{timer.summary()}\n")

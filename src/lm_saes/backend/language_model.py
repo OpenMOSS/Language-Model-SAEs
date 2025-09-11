@@ -254,7 +254,7 @@ class TransformerLensLanguageModel(LanguageModel):
             )
             tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
         with timer.time("run_with_cache_until"):
-            _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
+            _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points, use_flash_attn=True)
         return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
     
     def to_tokens(self, text: str | list[str], prepend_bos: bool = True) -> torch.Tensor:

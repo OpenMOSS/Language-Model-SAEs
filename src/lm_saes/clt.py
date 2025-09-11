@@ -142,6 +142,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             "topk",
             "jumprelu",
             "batchtopk",
+            "layertopk",
             "batchlayertopk",
         ], f"Not implemented activation function {self.cfg.act_fn}"
         if self.cfg.act_fn.lower() == "relu":
@@ -188,11 +189,11 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             
             return topk_activation
 
-        elif self.cfg.act_fn.lower() == "batchtopk":
+        elif self.cfg.act_fn.lower() == "layertopk":
             if device_mesh is not None:
                 from lm_saes.utils.distributed import distributed_topk
                 
-                def batch_topk(x: Union[
+                def layer_topk(x: Union[
                         Float[torch.Tensor, "batch n_layer d_sae"],
                         Float[torch.Tensor, "batch seq_len n_layer d_sae"],
                     ],
@@ -208,7 +209,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             else:
                 # single-GPU batchtopk
                 from lm_saes.utils.math import topk
-                def batch_topk(x: Union[
+                def layer_topk(x: Union[
                         Float[torch.Tensor, "batch n_layer d_sae"],
                         Float[torch.Tensor, "batch seq_len n_layer d_sae"],
                     ],
@@ -220,7 +221,68 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                         dim=(-2, -1),
                     )
             
-            return batch_topk
+            return layer_topk
+
+        # elif self.cfg.act_fn.lower() == "batchtopk":
+        #     if device_mesh is not None:
+        #         from lm_saes.utils.distributed import distributed_topk
+
+        #         def batch_topk_activation(
+        #             x: Union[
+        #                 Float[torch.Tensor, "batch n_layer d_sae"],
+        #                 Float[torch.Tensor, "batch seq_len n_layer d_sae"],
+        #             ],
+        #         ):
+        #             """
+        #             BatchTopK activation function - distributed version
+        #             Performs topk selection across the entire batch dimension to maintain sparsity
+        #             """
+        #             x = x * x.gt(0).to(x.dtype)  # Apply ReLU
+        #             # Perform topk selection across batch dimension
+        #             original_shape = None
+        #             if x.ndim == 4:
+        #                 original_shape = (x.size(0), x.size(1))
+        #                 x = x.flatten(end_dim=1)
+        #             result = distributed_topk(
+        #                 x,
+        #                 k=self.current_k * x.size(1),
+        #                 device_mesh=device_mesh,
+        #                 dim=(0, -1),
+        #                 mesh_dim_name="model",
+        #             )
+        #             if original_shape is not None:
+        #                 result = result.unflatten(dim=0, sizes=original_shape)
+        #             return result
+        #     else:
+        #         # single-GPU batchtopk
+        #         from lm_saes.utils.math import topk
+
+        #         def batch_topk_activation(
+        #             x: Union[
+        #                 Float[torch.Tensor, "batch n_layer d_sae"],
+        #                 Float[torch.Tensor, "batch seq_len n_layer d_sae"],
+        #             ],
+        #         ):
+        #             """
+        #             BatchTopK activation function - single GPU version
+        #             Performs topk selection across the entire batch dimension to maintain sparsity
+        #             """
+        #             x = x * x.gt(0).to(x.dtype)  # Apply ReLU
+        #             # Perform topk selection across batch dimension
+        #             original_shape = None
+        #             if x.ndim == 4:
+        #                 original_shape = (x.size(0), x.size(1))
+        #                 x = x.flatten(end_dim=1)
+        #             result = topk(
+        #                 x,
+        #                 k=self.current_k * x.size(1),
+        #                 dim=(0, -1),
+        #             )
+        #             if original_shape is not None:
+        #                 result = result.unflatten(dim=0, sizes=original_shape)
+        #             return result
+
+        #     return batch_topk_activation
             
         elif self.cfg.act_fn.lower() == "batchlayertopk":
             if device_mesh is not None:
@@ -232,7 +294,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     ],
                 ):
                     x = x * x.gt(0).to(x.dtype)
+                    original_shape = None
                     if x.ndim == 4:
+                        original_shape = (x.size(0), x.size(1))
                         x = x.flatten(end_dim=1)
                     result = distributed_topk(
                         x,
@@ -241,8 +305,8 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                         dim=(-3, -2, -1),
                         mesh_dim_name="model",
                     )
-                    if x.ndim == 4:
-                        result = result.unflatten(dim=0, sizes=(x.size(0), x.size(1)))
+                    if original_shape is not None:
+                        result = result.unflatten(dim=0, sizes=original_shape)
                     return result
             else:
                 # single-GPU batchtopk
@@ -253,15 +317,17 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     ],
                 ):
                     x = x * x.gt(0).to(x.dtype)
+                    original_shape = None
                     if x.ndim == 4:
+                        original_shape = (x.size(0), x.size(1))
                         x = x.flatten(end_dim=1)
                     result = topk(
                         x,
                         k=self.current_k * x.size(0),
                         dim=(-3, -2, -1),
                     )
-                    if x.ndim == 4:
-                        result = result.unflatten(dim=0, sizes=(x.size(0), x.size(1)))
+                    if original_shape is not None:
+                        result = result.unflatten(dim=0, sizes=original_shape)
                     return result
 
             return batch_layer_topk  # type: ignore
@@ -304,6 +370,8 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     layer_to + 1, self.cfg.d_sae, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype
                 )
                 nn.init.uniform_(W_D_layer, -scale, scale)
+                if self.cfg.init_cross_layer_decoder_all_zero:
+                    W_D_layer[:-1] = 0
                 W_D_initialized.append(W_D_layer)
 
             # Initialize decoder biases
@@ -329,6 +397,8 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 W_D_layer_local = torch.empty(
                     layer_to + 1, self.cfg.d_sae, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype
                 ).uniform_(-decoder_bound, decoder_bound)
+                if self.cfg.init_cross_layer_decoder_all_zero:
+                    W_D_layer_local[:-1] = 0
                 W_D_layer = self.dim_maps()["W_D"].distribute(tensor=W_D_layer_local, device_mesh=self.device_mesh)
                 W_D_initialized.append(W_D_layer)
 
@@ -342,6 +412,19 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         for layer_to, W_D_layer in enumerate(W_D_initialized):
             self.W_D[layer_to].copy_(W_D_layer)
+       
+    @torch.no_grad()
+    @torch.autocast(device_type='cuda', dtype=torch.bfloat16)
+    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch):
+        x, _ = self.prepare_input(activation_batch)
+        if self.device_mesh is None:
+            _, hidden_pre = self.encode(x, return_hidden_pre=True)
+            self.b_E.copy_(-hidden_pre.mean(dim=0))
+        else:
+            _, hidden_pre = self.encode(x, return_hidden_pre=True)
+            b_E_local = -hidden_pre.to_local().mean(dim=0)
+            b_E = DTensor.from_local(b_E_local, device_mesh=self.device_mesh, placements=self.dim_maps()["b_E"].placements(self.device_mesh))
+            self.b_E.copy_(b_E)
     
     def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
         """Initialize the W and D parameters with the active subspace."""
@@ -531,16 +614,27 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         """
         reconstructed = []
         # For each output layer L
+        if isinstance(feature_acts, list) and isinstance(feature_acts[0], torch.Tensor) and feature_acts[0].layout == torch.sparse_coo:
+            decode_single_output_layer = self._decode_single_output_layer_coo
+        elif self.cfg.decode_with_csr:
+            if self.current_k / (self.cfg.d_sae * self.cfg.n_layers) < self.cfg.sparsity_threshold_for_csr:
+                decode_single_output_layer = self._decode_single_output_layer_csr
+                if isinstance(feature_acts, DTensor):
+                    feature_acts = feature_acts.to_local()
+                if feature_acts.layout != torch.sparse_csr:
+                    feature_acts = [
+                        fa.to_sparse_csr() for fa in feature_acts.permute(1, 0, 2)
+                    ]
+            else:
+                decode_single_output_layer = self._decode_single_output_layer_dense
+        else:
+            decode_single_output_layer = self._decode_single_output_layer_dense
+            
         for layer_to in range(self.cfg.n_layers):
             decoder_bias = self.get_decoder_bias(layer_to)  # (d_model,)
 
             # we only compute W_D @ feature_acts here, without b_D
-            if isinstance(feature_acts, list) and isinstance(feature_acts[0], torch.Tensor) and feature_acts[0].layout == torch.sparse_coo:
-                contribution = self._decode_single_output_layer_coo(feature_acts, layer_to)
-            elif self.cfg.decode_with_csr:
-                contribution = self._decode_single_output_layer_csr(feature_acts, layer_to)
-            else:
-                contribution = self._decode_single_output_layer_dense(feature_acts, layer_to)
+            contribution = decode_single_output_layer(feature_acts, layer_to)
 
             # Add bias contribution (single bias vector for this target layer)
             contribution = contribution + decoder_bias
@@ -573,15 +667,15 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     ]:
         """Decode features for a single output layer using upper triangular pattern."""
         decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
-        batch_size = feature_acts.size(0)
+        batch_size = feature_acts[0].size(0)
         if self.device_mesh is not None:
             decoder_weights = decoder_weights.to_local()
-        if isinstance(feature_acts, DTensor):
-            feature_acts = feature_acts.to_local()
-        if feature_acts.layout != torch.sparse_csr:
-            feature_acts = [
-                fa.to_sparse_csr() for fa in feature_acts.permute(1, 0, 2)
-            ]
+        # if isinstance(feature_acts, DTensor):
+        #     feature_acts = feature_acts.to_local()
+        # if feature_acts.layout != torch.sparse_csr:
+        #     feature_acts = [
+        #         fa.to_sparse_csr() for fa in feature_acts.permute(1, 0, 2)
+        #     ]
         
         contribution = torch.zeros(
             batch_size,
@@ -658,7 +752,15 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     @override
     def encoder_norm(self, keepdim: bool = False):
         """Compute the norm of encoder weights averaged across layers."""
-        return torch.ones(self.cfg.n_layers, device=self.cfg.device, dtype=self.cfg.dtype)
+        if not isinstance(self.W_E, DTensor):
+            return torch.norm(self.W_E, p=2, dim=1, keepdim=keepdim).to(self.cfg.device)
+        else:
+            assert self.device_mesh is not None
+            return DTensor.from_local(
+                torch.norm(self.W_E.to_local(), p=2, dim=1, keepdim=keepdim),
+                device_mesh=self.device_mesh,
+                placements=DimMap({"model": 1 if keepdim else 0}).placements(self.device_mesh),
+            )
 
     @override
     def decoder_bias_norm(self):
