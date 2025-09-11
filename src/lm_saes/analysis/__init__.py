@@ -6,6 +6,7 @@ from .feature_interpreter import (
     ScorerType,
     TokenizedSample,
 )
+from .direct_logit_attributor import DirectLogitAttributor
 
 __all__ = [
     "FeatureAnalyzer",
@@ -14,4 +15,5 @@ __all__ = [
     "TokenizedSample",
     "ExplainerType",
     "ScorerType",
+    "DirectLogitAttributor",
 ]

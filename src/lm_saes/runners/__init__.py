@@ -3,8 +3,10 @@
 from .analyze import (
     AnalyzeCrossCoderSettings,
     AnalyzeSAESettings,
+    DirectLogitAttributeSettings,
     analyze_crosscoder,
     analyze_sae,
+    direct_logit_attribute,
 )
 from .autointerp import AutoInterpSettings, auto_interp
 from .eval import (
@@ -54,4 +56,6 @@ __all__ = [
     "evaluate_sae",
     "TrainLorsaSettings",
     "train_lorsa",
+    "DirectLogitAttributeSettings",
+    "direct_logit_attribute",
 ]
