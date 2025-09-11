@@ -18,6 +18,8 @@ class Graph:
     cfg: HookedTransformerConfig
     sae_series: Optional[Union[str, List[str]]]
     slug: str
+    use_lorsa: bool
+    lorsa_pattern: torch.Tensor
 
     def __init__(
         self,
@@ -34,6 +36,8 @@ class Graph:
         cfg: HookedTransformerConfig,
         slug: str = "untitled",
         sae_series: Optional[Union[str, List[str]]] = None,
+        use_lorsa: bool = True,
+        lorsa_pattern: torch.Tensor=None,
     ):
         """
         A graph object containing the adjacency matrix describing the direct effect of each
@@ -66,6 +70,8 @@ class Graph:
         self.logit_tokens = logit_tokens
         self.logit_probabilities = logit_probabilities
         self.input_tokens = input_tokens
+        self.use_lorsa = use_lorsa
+        self.lorsa_pattern = lorsa_pattern
         if sae_series is None:
             print("Graph loaded without sae_series to identify it. Uploading will not be possible.")
         self.sae_series = sae_series
@@ -75,14 +81,15 @@ class Graph:
     def to(self, device):
         """Send all relevant tensors to the device (cpu, cuda, etc.)"""
         self.adjacency_matrix = self.adjacency_matrix.to(device)
-        self.lorsa_active_features = self.lorsa_active_features.to(device)
-        self.lorsa_activation_values = self.lorsa_activation_values.to(device)
+        self.lorsa_active_features = self.lorsa_active_features.to(device) if self.use_lorsa else None
+        self.lorsa_activation_values = self.lorsa_activation_values.to(device) if self.use_lorsa else None
         self.clt_active_features = self.clt_active_features.to(device)
         self.clt_activation_values = self.clt_activation_values.to(device)
         self.logit_tokens = self.logit_tokens.to(device)
         self.logit_probabilities = self.logit_probabilities.to(device)
         self.selected_features = self.selected_features.to(device)
         self.input_tokens = self.input_tokens.to(device)
+        self.lorsa_pattern = self.lorsa_pattern.to(device)
 
     def to_pt(self, path: str):
         """Saves the graph at the given path"""
@@ -100,6 +107,7 @@ class Graph:
             "selected_features": self.selected_features,
             "sae_series": self.sae_series,
             "slug": self.slug,
+            "lorsa_pattern": self.lorsa_pattern,
         }
         torch.save(d, path)
 

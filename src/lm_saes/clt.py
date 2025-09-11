@@ -144,6 +144,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             "batchtopk",
             "layertopk",
             "batchlayertopk",
+            'layertopk',
         ], f"Not implemented activation function {self.cfg.act_fn}"
         if self.cfg.act_fn.lower() == "relu":
             return lambda x: x.gt(0).to(x.dtype)
@@ -222,68 +223,41 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     )
             
             return layer_topk
-
-        # elif self.cfg.act_fn.lower() == "batchtopk":
-        #     if device_mesh is not None:
-        #         from lm_saes.utils.distributed import distributed_topk
-
-        #         def batch_topk_activation(
-        #             x: Union[
-        #                 Float[torch.Tensor, "batch n_layer d_sae"],
-        #                 Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-        #             ],
-        #         ):
-        #             """
-        #             BatchTopK activation function - distributed version
-        #             Performs topk selection across the entire batch dimension to maintain sparsity
-        #             """
-        #             x = x * x.gt(0).to(x.dtype)  # Apply ReLU
-        #             # Perform topk selection across batch dimension
-        #             original_shape = None
-        #             if x.ndim == 4:
-        #                 original_shape = (x.size(0), x.size(1))
-        #                 x = x.flatten(end_dim=1)
-        #             result = distributed_topk(
-        #                 x,
-        #                 k=self.current_k * x.size(1),
-        #                 device_mesh=device_mesh,
-        #                 dim=(0, -1),
-        #                 mesh_dim_name="model",
-        #             )
-        #             if original_shape is not None:
-        #                 result = result.unflatten(dim=0, sizes=original_shape)
-        #             return result
-        #     else:
-        #         # single-GPU batchtopk
-        #         from lm_saes.utils.math import topk
-
-        #         def batch_topk_activation(
-        #             x: Union[
-        #                 Float[torch.Tensor, "batch n_layer d_sae"],
-        #                 Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-        #             ],
-        #         ):
-        #             """
-        #             BatchTopK activation function - single GPU version
-        #             Performs topk selection across the entire batch dimension to maintain sparsity
-        #             """
-        #             x = x * x.gt(0).to(x.dtype)  # Apply ReLU
-        #             # Perform topk selection across batch dimension
-        #             original_shape = None
-        #             if x.ndim == 4:
-        #                 original_shape = (x.size(0), x.size(1))
-        #                 x = x.flatten(end_dim=1)
-        #             result = topk(
-        #                 x,
-        #                 k=self.current_k * x.size(1),
-        #                 dim=(0, -1),
-        #             )
-        #             if original_shape is not None:
-        #                 result = result.unflatten(dim=0, sizes=original_shape)
-        #             return result
-
-        #     return batch_topk_activation
-            
+        
+        elif self.cfg.act_fn.lower() == "batchtopk":
+            if device_mesh is not None:
+                from lm_saes.utils.distributed import distributed_topk
+                def batch_topk(x: Union[
+                        Float[torch.Tensor, "batch n_layer d_sae"],
+                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
+                    ],
+                ):
+                    x = x * x.gt(0).to(x.dtype)
+                    result = distributed_topk(
+                        x.transpose(0,-2),
+                        k=self.current_k * x.size(0),
+                        device_mesh=device_mesh,
+                        dim=(-2, -1),
+                    )
+                    result = result.transpose(0,-2)
+                    return result
+            else:
+                from lm_saes.utils.math import topk
+                def batch_topk(x: Union[
+                        Float[torch.Tensor, "batch n_layer d_sae"],
+                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
+                    ],
+                ):
+                    x = x * x.gt(0).to(x.dtype)
+                    result = topk(
+                        x.transpose(0,-2),
+                        k=self.current_k * x.size(0),
+                        dim=(-2, -1),
+                    )
+                    result = result.transpose(0,-2)
+                    return result
+            return batch_topk
+        
         elif self.cfg.act_fn.lower() == "batchlayertopk":
             if device_mesh is not None:
                 from lm_saes.utils.distributed import distributed_topk
@@ -570,8 +544,11 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         # Apply each encoder to its corresponding layer: x[..., layer, :] @ W_E[layer] + b_E[layer]
         hidden_pre = torch.einsum("...d,ds->...s", x, self.W_E[layer]) + self.b_E[layer]
 
+        # print(f'{x.shape=} {self.W_E[layer].shape=} {self.b_E[layer].shape=}')
+        
         if self.cfg.sparsity_include_decoder_norm:
-            hidden_pre = hidden_pre * self.decoder_norm_per_feature(layer)
+            # print(f'{hidden_pre.shape=} {self.decoder_norm_per_feature(layer=layer).shape=}')
+            hidden_pre = hidden_pre * self.decoder_norm_per_feature(layer=layer)
 
         # Apply activation function (ReLU, TopK, etc.)
         if self.cfg.act_fn.lower() == "jumprelu":

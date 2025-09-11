@@ -213,20 +213,20 @@ class TokenizedSample:
         segments = []
         for i in range(len(sorted_positions) - 1):
             start, end = sorted_positions[i], sorted_positions[i + 1]
-            try:
-                segment_activation = max(
-                    act
-                    for origin, act in zip(origins, activations)
-                    if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
-                )
-            except Exception:
-                logger.error(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n")
-                continue
+            # try:
+            segment_activation = max(
+                act
+                for origin, act in zip(origins, activations)
+                if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
+            )
+            # except Exception:
+            #     logger.error(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n")
+            #     continue
             segments.append(Segment(text[start:end], segment_activation))
 
         return TokenizedSample(segments, max_activation)
 
-
+import numpy as np
 def generate_activating_examples(
     feature: FeatureRecord,
     model: LanguageModel,
@@ -253,23 +253,33 @@ def generate_activating_examples(
 
     # Get examples from each sampling
     sampling = analysis.samplings[0]
+    # print(f'{sampling.context_idx.shape=}')
+    # print(f'{sampling.feature_acts_values.shape=} {sampling.feature_acts_indices=}')
+    # feature_acts_ = torch.sparse_coo_tensor(torch.Tensor(sampling.feature_acts_indices), torch.Tensor(sampling.feature_acts_values), (1024, sampling.context_idx.shape[0]))
+    feature_acts_ = torch.sparse_coo_tensor(torch.Tensor(sampling.feature_acts_indices), torch.Tensor(sampling.feature_acts_values), (int(np.max(sampling.feature_acts_indices[0])), 2048))
+    feature_acts_ = feature_acts_.to_dense()
+    
     for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts) in enumerate(
         zip(
             sampling.dataset_name,
-            sampling.shard_idx if sampling.shard_idx else [0] * len(sampling.dataset_name),
-            sampling.n_shards if sampling.n_shards else [1] * len(sampling.dataset_name),
+            sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.dataset_name),
+            sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.dataset_name),
             sampling.context_idx,
-            sampling.feature_acts,
+            feature_acts_
         )
     ):
         try:
+        
             dataset = datasets(dataset_name, shard_idx, n_shards)
-            data = dataset[context_idx]
+            # context_idx = context_idx.astype(int)
+            data = dataset[int(context_idx)]
 
             # Process the sample using model's trace method
             origins = model.trace({k: [v] for k, v in data.items()})[0]
 
             max_act_pos = torch.argmax(torch.tensor(feature_acts)).item()
+            # print(f'{max_act_pos=}')
+            # print(f'{feature_acts=}')
 
             left_end = max(0, max_act_pos - max_length // 2)
             right_end = min(len(origins), max_act_pos + max_length // 2)
@@ -281,6 +291,7 @@ def generate_activating_examples(
                 origins=origins[left_end:right_end],
                 max_activation=analysis.max_feature_acts,
             )
+            # print('run activating')
             samples.append(sample)
 
         except Exception as e:
@@ -318,18 +329,33 @@ def generate_non_activating_examples(
     samples: list[TokenizedSample] = []
     error_prefix = f"Error processing non-activating examples of feature {feature.index}:"
 
-    sampling = analysis.samplings[-1]
+    sampling_idx = -1
+    for i in range(len(analysis.samplings)):
+        if analysis.samplings[i].name == "non_activating":
+            sampling_idx = i
+            break
+    if sampling_idx == -1:
+        return samples
+    sampling = analysis.samplings[sampling_idx]
+    # print(f'{len(analysis.samplings)=}')
+    # for sample in analysis.samplings:
+    #     print(sample.name)
     assert sampling.name == "non_activating", f"{error_prefix} Sampling {sampling.name} is not non_activating"
-    for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts) in enumerate(
+    for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts_indices, feature_acts_values) in enumerate(
         zip(
             sampling.dataset_name,
             sampling.shard_idx if sampling.shard_idx else [0] * len(sampling.dataset_name),
             sampling.n_shards if sampling.n_shards else [1] * len(sampling.dataset_name),
             sampling.context_idx,
-            sampling.feature_acts,
+            # sampling.feature_acts,
+            sampling.feature_acts_indices,
+            sampling.feature_acts_values,
         )
     ):
         try:
+            feature_acts = torch.sparse_coo_tensor(torch.Tensor(feature_acts_indices), torch.Tensor(feature_acts_values), (1024, sampling.context_idx.shape[0]))
+            feature_acts = feature_acts.to_dense()
+            
             dataset = datasets(dataset_name, shard_idx, n_shards)
             data = dataset[context_idx]
 
@@ -516,6 +542,8 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
         """
         system_prompt, user_prompt = self._generate_explanation_prompt(activating_examples)
         start_time = time.time()
+        # print(f'{system_prompt=}')
+        print(f'{user_prompt=}')
         response = self.explainer_client.chat.completions.create(
             model=self.cfg.openai_model,
             messages=[
@@ -600,6 +628,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
                     "balanced_accuracy": 0,
                 },
                 "passed": False,
+                "time": 0,
             }
 
         random.shuffle(all_examples)
@@ -743,6 +772,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
                     "balanced_accuracy": 0,
                 },
                 "passed": False,
+                'time': 0,
             }
 
         # Prepare examples:
@@ -855,6 +885,8 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             max_length=self.cfg.max_length,
         )
 
+        # print(f'{len(activating_examples)=} {len(non_activating_examples)=}')
+        
         # Generate explanation for the feature
         explanation_result = self.generate_explanation(activating_examples)
         explanation: dict[str, Any] = explanation_result["response"]
@@ -869,6 +901,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             )
             # print(f"Detection result for feature {feature.index}:\n{detection_result}\n\n")
             evaluation_results.append(detection_result)
+            # print(detection_result)
             response_time += detection_result["time"]
 
         if ScorerType.FUZZING in self.cfg.scorer_type:

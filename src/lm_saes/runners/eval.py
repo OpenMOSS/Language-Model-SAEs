@@ -14,11 +14,12 @@ from lm_saes.config import (
     BaseSAEConfig,
     CrossCoderConfig,
     EvalConfig,
+    GraphEvalConfig,
     LanguageModelConfig,
     WandbConfig,
 )
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.evaluator import Evaluator
+from lm_saes.evaluator import Evaluator, GrahEval
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.lorsa import LowRankSparseAttention
@@ -26,6 +27,24 @@ from lm_saes.utils.logging import get_distributed_logger, setup_logging
 
 logger = get_distributed_logger("runners.eval")
 
+class EvalGraphSettings(BaseSettings):
+    
+    model_cfg: LanguageModelConfig
+    
+    transcoders_path: str
+    
+    lorsas_path: list
+    
+    dataset_path: str
+    
+    eval: GraphEvalConfig
+    
+    device: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+    
+    show: bool = False
+    
+    use_lorsa: bool = True
 
 class EvaluateSAESettings(BaseSettings):
     """Settings for evaluating a Sparse Autoencoder."""
@@ -119,6 +138,54 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
     evaluator.evaluate(sae, activations, wandb_logger)
     logger.info("Evaluation completed")
 
+from lm_saes import ReplacementModel, LanguageModelConfig, CrossLayerTranscoder, LowRankSparseAttention
+
+def eval_graph(settings: EvalGraphSettings) -> None:
+    # Set up logging
+    setup_logging(level="INFO")
+    
+    # device_mesh = (
+    #     init_device_mesh(
+    #         device_type=settings.device_type,
+    #         mesh_shape=(settings.model_parallel_size,),
+    #         mesh_dim_names=("model",),
+    #     )
+    #     if settings.model_parallel_size > 1
+    #     else None
+    # )
+
+    # logger.info(f"Device mesh initialized: {device_mesh}")
+
+    logger.info("Loading transcoder and lorsa")
+    transcoders = CrossLayerTranscoder.from_pretrained(
+        settings.transcoders_path,
+        device=settings.device,
+    )
+    
+    if settings.use_lorsa:
+        lorsas = [
+            LowRankSparseAttention.from_pretrained(lorsa_cfg, device=settings.device)
+            for lorsa_cfg in settings.lorsas_path
+        ]
+        for lorsa in lorsas:
+            lorsa.cfg.skip_bos = False
+    else:
+        lorsas = None
+
+    logger.info("Loading replacement model")
+    replacement_model = ReplacementModel.from_pretrained(settings.model_cfg, transcoders, lorsas, use_lorsa=settings.use_lorsa)
+    
+    # dataset = json.load(open(settings.dataset_path, 'r'))
+    
+    grapheval = GrahEval(settings.eval)
+    
+    grapheval.eval(
+        replacement_model,
+        settings.dataset_path,
+        use_lorsa = settings.use_lorsa,
+        show = settings.show,
+    )
+    
 
 class EvaluateCrossCoderSettings(BaseSettings):
     """Settings for evaluating a CrossCoder model."""

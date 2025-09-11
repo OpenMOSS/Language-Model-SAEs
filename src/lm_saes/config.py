@@ -318,6 +318,25 @@ class EvalConfig(BaseConfig):
     fold_activation_scale: bool = True
     """Whether to fold the activation scale into the SAE model"""
 
+class GraphEvalConfig(BaseConfig):
+    
+    max_n_logits:int = 2
+    # How many logits to attribute from, max. We attribute to min(max_n_logits, n_logits_to_reach_desired_log_prob); see below for the latter
+    
+    desired_logit_prob:float = 0.95
+    # Attribution will attribute from the minimum number of logits needed to reach this probability mass (or max_n_logits, whichever is lower)
+    
+    max_feature_nodes:int = 1024
+    # Only attribute from this number of feature nodes, max. Lower is faster, but you will lose more of the graph. None means no limit.
+    
+    batch_size:int = 2
+    # Batch size when attributing
+    
+    offload: Literal[None, "disk", "cpu"] = None
+    # Offload various parts of the model during attribution to save memory. Can be 'disk', 'cpu', or None (keep on GPU)
+    
+    start_from:int = 0
+
 
 class DatasetConfig(BaseConfig):
     dataset_name_or_path: str = "openwebtext"

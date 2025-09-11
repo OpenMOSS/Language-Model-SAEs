@@ -276,3 +276,133 @@ class Evaluator:
             if self.cur_tokens > self.cfg.total_eval_tokens:
                 break
         self.process_metrics(wandb_logger)
+
+from lm_saes.utils.timer import timer
+from lm_saes.circuit.graph import Graph
+from lm_saes.circuit.graph import *
+
+from lm_saes.circuit.replacement_model import ReplacementModel
+from lm_saes.circuit.attribution import attribute
+from lm_saes.config import GraphEvalConfig
+
+def compute_graph_scores(graph: Graph, use_lorsa:bool=True) -> tuple[float, float]:
+    """Compute metrics for evaluating how well the graph captures the model's computation.
+    This function calculates two complementary scores that measure how much of the model's
+    computation flows through interpretable feature nodes versus reconstruction error nodes:
+    1. Replacement Score: Measures the fraction of end-to-end influence from input tokens
+       to output logits that flows through feature nodes rather than error nodes. This is
+       a strict metric that rewards complete explanations where tokens influence logits
+       entirely through features.
+    2. Completeness Score: Measures the fraction of incoming edges to all nodes (weighted
+       by each node's influence on the output) that originate from feature or token nodes
+       rather than error nodes. This metric gives partial credit for nodes that are mostly
+       explained by features, even if some error influence remains.
+    Args:
+        graph: The computation graph containing nodes for features, errors, tokens, and logits,
+               along with their connections and influence weights.
+    Returns:
+        tuple[float, float]: A tuple containing:
+            - replacement_score: Fraction of token-to-logit influence through features (0-1)
+            - completeness_score: Weighted fraction of non-error inputs across all nodes (0-1)
+    Note:
+        Higher scores indicate better model interpretability, with 1.0 representing perfect
+        reconstruction where all computation flows through interpretable features. Lower
+        scores indicate more reliance on error nodes, suggesting incomplete feature coverage.
+    """
+    # n_logits = len(graph.logit_tokens)
+    # n_tokens = len(graph.input_tokens)
+    # n_features = len(graph.selected_features)
+    
+    # error_start = n_features
+    # error_end = error_start + n_tokens * graph.cfg.n_layers
+    # token_end = error_end + n_tokens
+    
+    # Extract dimensions
+    n_logits = len(graph.logit_tokens)
+    n_features = len(graph.selected_features)
+    layers = graph.cfg.n_layers
+    error_end_idx = n_features + 2 * graph.n_pos * layers if use_lorsa else n_features + graph.n_pos * layers
+    token_end_idx = error_end_idx + len(graph.input_tokens)
+
+    logit_weights = torch.zeros(
+        graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device
+    )
+    logit_weights[-n_logits:] = graph.logit_probabilities
+
+    normalized_matrix = normalize_matrix(graph.adjacency_matrix)
+    node_influence = compute_influence(normalized_matrix, logit_weights)
+    token_influence = node_influence[error_end_idx:token_end_idx].sum()
+    error_influence = node_influence[n_features:error_end_idx].sum()
+
+    print(f'fraction: {token_influence.item()} {(token_influence + error_influence).item()}')
+    replacement_score = token_influence / (token_influence + error_influence)
+    
+    
+
+    # non_error_fractions = normalized_matrix[:, :].sum(dim=-1) 
+    # non_error_fractions = normalized_matrix[:, :].sum(dim=-1) - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1) # not from error 
+    non_error_fractions = 1 - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1)  # not from error 
+    # print(f'node_influence: {node_influence.sum()}')
+    output_influence = node_influence + logit_weights
+    # print(f'{node_influence.shape=} {logit_weights.shape=}')
+    # print(f'{non_error_fractions.shape=} {output_influence.shape=}')
+    completeness_score = (non_error_fractions * output_influence).sum() / output_influence.sum()
+    
+
+    return replacement_score.item(), completeness_score.item()
+
+import json
+class GrahEval:
+    def __init__(self, cfg: GraphEvalConfig):
+        self.cfg = cfg
+        self.replacement_scores = []
+        self.completeness_scores = []
+        self.prompt = []
+    
+    def eval(
+        self,
+        replacement_model : ReplacementModel,
+        dataset_path: str,
+        use_lorsa:bool= True,
+        show:bool = False,
+        add_bos:bool = True,
+    ):
+        timer.reset()
+        
+        with timer.time("Init. dataset"):
+            dataset = json.load(open(dataset_path, 'r'))
+        
+        for i in range(self.cfg.start_from, len(dataset)):
+            data = dataset[i]
+            
+            if add_bos and data['prompt'][0]!='<':
+                prompt = "<|endoftext|> "+data['prompt']
+            
+            
+            # input_token = replacement_model.tokenizer.encode(prompt)  
+                      
+            replacement_model._configure_gradient_flow()
+            replacement_model._deduplicate_attention_buffers()
+            replacement_model.setup()
+            graph = attribute(
+                prompt=prompt,
+                model=replacement_model,
+                max_n_logits=self.cfg.max_n_logits,
+                desired_logit_prob=self.cfg.desired_logit_prob,
+                batch_size=self.cfg.batch_size,
+                max_feature_nodes=self.cfg.max_feature_nodes,
+                offload=self.cfg.offload,
+                use_lorsa=use_lorsa,
+            )
+            
+            # complete_score, A = calc_graph_completeness_score(graph)
+            # replacement_score, A = calc_graph_replacement_score(graph)
+            replacement_score, completeness_score = compute_graph_scores(graph, use_lorsa=use_lorsa)
+
+            self.replacement_scores.append(replacement_score)
+            self.completeness_scores.append(completeness_score)
+            
+            if show:
+                print('prompt:', prompt)
+                print(f'complete: {completeness_score}')
+                print(f'replace: {replacement_score}')

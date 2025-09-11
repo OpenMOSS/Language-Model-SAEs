@@ -27,7 +27,7 @@ class DatasetRecord(BaseModel):
 
 class FeatureAnalysisSampling(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
-    
+    # feature_acts: list[list[float]]
     name: str
     feature_acts_indices: np.ndarray
     feature_acts_values: np.ndarray
@@ -58,6 +58,7 @@ class FeatureRecord(BaseModel):
     sae_series: str
     index: int
     analyses: list[FeatureAnalysis] = []
+    logits: Optional[dict[str, list[dict[str, Any]]]] = None
     interpretation: Optional[dict[str, Any]] = None
 
 
@@ -241,7 +242,14 @@ class MongoClient:
         # Convert GridFS references back to numpy arrays
         if self.is_gridfs_enabled():
             feature = self._from_gridfs(feature)
-            
+        
+        # print(f'{feature.keys()}')
+        # for k in feature:
+        #     print(f'{k} {type(feature[k])}')
+        #     if k == 'analyses':
+        #         print('feature_acts_indices', feature[k][0]['samplings'][0]['feature_acts_indices'])
+        #         print('feature_acts_indices', feature[k][0]['samplings'][0]['feature_acts_values'])
+        
         return FeatureRecord.model_validate(feature)
 
     def get_analysis(self, name: str, sae_name: str, sae_series: str) -> Optional[AnalysisRecord]:

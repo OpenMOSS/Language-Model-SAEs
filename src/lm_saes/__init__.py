@@ -22,11 +22,13 @@ from .config import (
     TrainerConfig,
     WandbConfig,
     LorsaConfig,
+    GraphEvalConfig,
 )
 from .crosscoder import CrossCoder
 from .database import MongoClient
-from .evaluator import EvalConfig, Evaluator
 from .resource_loaders import load_dataset, load_model
+from .sae import SparseAutoEncoder
+from .circuit import ReplacementModel, attribute
 from .runners import (
     AnalyzeCrossCoderSettings,
     AnalyzeSAESettings,
@@ -52,8 +54,7 @@ from .runners import (
     train_crosscoder,
     train_sae,
 )
-from .sae import SparseAutoEncoder
-from .circuit import ReplacementModel, attribute
+from .evaluator import EvalConfig, Evaluator
 
 __all__ = [
     "ActivationFactory",
