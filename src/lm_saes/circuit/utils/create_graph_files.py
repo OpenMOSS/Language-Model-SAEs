@@ -8,6 +8,8 @@ from pydantic import BaseModel
 
 from ..graph import Graph, prune_graph
 
+from lm_saes import MongoDBConfig, MongoClient
+
 logger = logging.getLogger(__name__)
 
 class Metadata(BaseModel):
@@ -336,3 +338,6 @@ def create_graph_files(
     total_time_ms = (time.time() - total_start_time) * 1000
     logger.info(f"Total execution time: {total_time_ms=:.2f} ms")
 
+def create_graph_files_with_interp_logits(graph_path: str, mongo: MongoDBConfig, ):
+    mongo_client = MongoClient(settings.mongo)
+    
