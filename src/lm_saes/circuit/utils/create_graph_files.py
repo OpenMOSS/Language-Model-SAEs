@@ -335,3 +335,4 @@ def create_graph_files(
 
     total_time_ms = (time.time() - total_start_time) * 1000
     logger.info(f"Total execution time: {total_time_ms=:.2f} ms")
+

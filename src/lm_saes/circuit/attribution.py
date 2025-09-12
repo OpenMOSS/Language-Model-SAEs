@@ -82,7 +82,6 @@ class AttributionContext:
         if use_lorsa:
             assert lorsa_activation_matrix.shape[:-1] == clt_activation_matrix.shape[:-1], "LORSAs and CLTs must have the same shape"
         n_layers, n_pos, _ = clt_activation_matrix.shape
-        print(f'{n_layers=} {n_pos=}')
 
         # Forward-pass cache
         # L0Ainput, L0Minput, ... L-1Ainput, L-1Minput, pre_unembed
@@ -334,7 +333,7 @@ class AttributionContext:
         # Error nodes
         def error_offset(layer: int) -> int:  # starting row for this layer
             # lorsa_offset + clt_offset + attn_error_offset + layer_offset
-            return lorsa_offset + activation_matrix._nnz() + layer * n_pos
+            return lorsa_offset + activation_matrix._nnz() + n_layers * n_pos + layer * n_pos
         
         error_hooks = [
             self._compute_score_hook(
