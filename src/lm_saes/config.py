@@ -160,6 +160,10 @@ class LorsaConfig(BaseSAEConfig):
         return self.d_sae
     
     @property
+    def ov_group_size(self) -> int:
+        return self.n_ov_heads // self.n_qk_heads
+
+    @property
     def associated_hook_points(self) -> list[str]:
         """All hook points used by Lorsa."""
         return [self.hook_point_in, self.hook_point_out]

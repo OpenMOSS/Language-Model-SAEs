@@ -107,10 +107,11 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
         interested_pairs = torch.cat(interested_pairs)
         head_indices = torch.cat(head_indices)
         _feature_acts = torch.cat(_feature_acts).flatten(0, 1)
+        n_ctx = _feature_acts.size(-1)
 
         # Initialize z pattern storage
         z_pattern_data = torch.sparse_coo_tensor(
-            size=(interested_pairs.shape[0], sae.cfg.n_ctx * sae.cfg.n_ctx),
+            size=(interested_pairs.shape[0], n_ctx * n_ctx),
             dtype=_feature_acts.dtype,
             device=sae.cfg.device,
         )  # type: ignore
@@ -171,7 +172,7 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
                     indices=torch.cat(
                         [
                             interested_pairs_idx.nonzero().squeeze(1)[None, z_pattern.indices()[0]],
-                            z_pattern.indices()[1:2] * sae.cfg.n_ctx + z_pattern.indices()[2:]
+                            z_pattern.indices()[1:2] * n_ctx + z_pattern.indices()[2:]
                         ],
                     ),
                     values=z_pattern.values(),
