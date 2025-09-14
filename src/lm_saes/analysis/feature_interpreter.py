@@ -217,15 +217,15 @@ class TokenizedSample:
         hash_ = {}
         Flag = False
         for seg in self.segments:
-            if seg.activation>threshold * self.max_activation:
-                Flag = True
-            else:
-                Flag = False
             if Flag:
                 text = seg.text
                 if text != "" and hash_.get(text, None) is None:
                     hash_[text] = 1
                     next_activation_text = text+"\n"
+            if seg.activation>threshold * self.max_activation:
+                Flag = True
+            else:
+                Flag = False
         return next_activation_text 
 
     @staticmethod
