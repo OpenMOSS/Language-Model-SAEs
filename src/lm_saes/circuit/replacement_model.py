@@ -275,6 +275,7 @@ class ReplacementModel(HookedTransformer):
     def _configure_gradient_flow(self):
         for layer in range(self.cfg.n_layers):
             self._configure_skip_connection(self.blocks[layer], layer)
+            self.lorsas[layer]._configure_gradient_flow()
 
         def stop_gradient(acts, hook):
             return acts.detach()
@@ -425,13 +426,6 @@ class ReplacementModel(HookedTransformer):
                 activation_matrix[layer] = lorsa_acts
                 lorsa_attention_pattern[layer] = pattern
 
-            # activation_hooks = [
-            #     (
-            #         f"blocks.{layer}.{self.attn_input_hook}",
-            #         partial(cache_activations_attn, layer=layer, zero_bos=zero_bos),
-            #     )
-            #     for layer in range(self.cfg.n_layers)
-            # ]
             activation_hooks.extend([
                 (
                     f"blocks.{layer}.{self.attn_input_hook}",
@@ -857,5 +851,7 @@ class ReplacementModel(HookedTransformer):
         bias_params = []
         for param in self.named_parameters():
             if '.b' in param[0] and 'b_Q' not in param[0] and 'b_K' not in param[0] and 'old' not in param[0] and 'transcoders.b_E' not in param[0]:
+                bias_params.append(param)
+            elif self.use_lorsa is True and 'lorsas' in param[0] and ('b_Q' in param[0] or 'b_K' in param[0]):
                 bias_params.append(param)
         return bias_params

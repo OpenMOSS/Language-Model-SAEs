@@ -113,6 +113,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             self.ln_q = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_qk_heads)
             self.ln_k = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_qk_heads)
 
+        self.hook_k = HookPoint() # [batch, pos, q_head_index, d_qk_head]
+        self.hook_q = HookPoint() # [batch, pos, q_head_index, d_qk_head]
+
         if self.cfg.positional_embedding_type == "rotary":
             # Applies a rotation to each two-element chunk of keys and queries pre dot producting to bake in relative position.
             if self.cfg.rotary_dim is None:  # keep mypy happy
@@ -360,6 +363,21 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             z = F.scaled_dot_product_attention(query,key,value,scale=1/self.cfg.attn_scale,is_causal=True,enable_gqa=True)
         return z.permute(0, 2, 1, 3).reshape(*v.shape)
 
+    def compute_attn_scores(self, x: Float[torch.Tensor, "batch seq_len d_model"], return_q_k: bool = False) -> Float[torch.Tensor, "batch seq_len n_qk_heads d_qk_head"]:
+        """Compute the attention scores."""
+        q, k, v = self._compute_qkv(x)
+        q = self.hook_q(q)
+        k = self.hook_k(k)
+        q_ = q.permute(2, 0, 1, 3)
+        k_ = k.permute(2, 0, 3, 1)
+        scores = torch.einsum("nbqd,nbdk->nbqk", q_, k_) / self.cfg.attn_scale
+        scores = self._apply_causal_mask(scores)
+        scores = scores.permute(1, 0, 2, 3)
+        if return_q_k:
+            return scores, q, k # (batch, n_qk_heads, seq_len, seq_len), (batch, seq_len, n_qk_heads, d_qk_head), (batch, seq_len, n_qk_heads, d_qk_head)
+        else:
+            return scores # (batch, n_qk_heads, seq_len, seq_len)
+
     @override
     @torch.no_grad()
     def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
@@ -410,7 +428,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         # Compute Q, K, V
         q, k, v = self._compute_qkv(x)
         
-        if not return_attention_pattern:
+        if not (return_attention_pattern or return_attention_score):
             query = q.permute(0, 2, 1, 3)
             key = k.permute(0, 2, 1, 3)
             value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
@@ -434,10 +452,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         return_values = [feature_acts]
         if return_hidden_pre:
             return_values.append(hidden_pre)
-        if return_attention_score:
-            return_values.append(scores.permute(1, 0, 2, 3))
         if return_attention_pattern:
             return_values.append(pattern.permute(1, 0, 2, 3))
+        if return_attention_score:
+            return_values.append(scores.permute(1, 0, 2, 3))
         return tuple(return_values) if len(return_values) > 1 else return_values[0]
 
     @override
@@ -747,6 +765,14 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             label = label[:, 1:]
         return label 
     
+    def _configure_gradient_flow(self):
+        def stop_gradient(acts, hook):
+            return acts.detach()
+        
+        if self.cfg.use_post_qk_ln:
+            self.ln_q.hook_scale.add_hook(stop_gradient, is_permanent=True)
+            self.ln_k.hook_scale.add_hook(stop_gradient, is_permanent=True)
+
 class RMSNormPerHead(nn.Module):
     def __init__(self, cfg: Union[Dict, LorsaConfig], n_heads: Optional[int] = None):
         """
