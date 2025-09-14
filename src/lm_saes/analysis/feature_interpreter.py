@@ -218,9 +218,9 @@ class TokenizedSample:
         Flag = False
         for seg in self.segments:
             if seg.activation>threshold * self.max_activation:
-                Flag = False
-            else:
                 Flag = True
+            else:
+                Flag = False
             if Flag:
                 text = seg.text
                 if text != "" and hash_.get(text, None) is None:
