@@ -46,6 +46,9 @@ class AutoInterp4GraphSettings(BaseSettings):
 
     max_workers: int = 10
     """Maximum number of workers to use for interpretation."""
+    
+    cover: bool = False
+    """Whether cover the generated interp"""
 
 def get_feature(graph_path):
     """
@@ -148,37 +151,38 @@ def auto_interp4graph(settings: AutoInterp4GraphSettings):
         print(feature_idx, sae_name)
         # continue
         feature = mongo_client.get_feature(sae_name, settings.sae_series, feature_idx)
-        if feature is not None and feature.interpretation is None:
-            result = {
-                    "feature_index": feature.index,
-                    "sae_name": sae_name,
-                    "sae_series": settings.sae_series,
-                } | interpreter.interpret_single_feature(feature, language_model, get_dataset, settings.analysis_name)
-            
-            interpretation = {
-                "text": result["explanation"],
-                "validation": [
-                    {"method": eval_result["method"], "passed": eval_result["passed"], "detail": eval_result}
-                    for eval_result in result["evaluations"]
-                ],
-                "complexity": result["complexity"],
-                "consistency": result["consistency"],
-                "detail": result["explanation_details"],
-                "passed": result["passed"],
-                "time": result["time"],
-            }
-            logger.info(
-                f"Updating feature {result['feature_index']} in {sae_name}\nTime: {result['time']}\nExplanation: {interpretation['text']}"
-            )
-            mongo_client.update_feature(
-                sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
-            )
-        elif feature is not None:
-            logger.info(
-                f"Already interp feature {feature_idx} in {sae_name}\nExplanation: {feature.interpretation}"
-            )
-        else:
-            logger.info(
-                f"Feature {feature_idx} in {sae_name} does not exist. Please check it."
-            )
+        if feature is not None:
+            if feature.interpretation is None or settings.cover:
+                result = {
+                        "feature_index": feature.index,
+                        "sae_name": sae_name,
+                        "sae_series": settings.sae_series,
+                    } | interpreter.interpret_single_feature(feature, language_model, get_dataset, settings.analysis_name)
+                
+                interpretation = {
+                    "text": result["explanation"],
+                    "validation": [
+                        {"method": eval_result["method"], "passed": eval_result["passed"], "detail": eval_result}
+                        for eval_result in result["evaluations"]
+                    ],
+                    "complexity": result["complexity"],
+                    "consistency": result["consistency"],
+                    "detail": result["explanation_details"],
+                    "passed": result["passed"],
+                    "time": result["time"],
+                }
+                logger.info(
+                    f"Updating feature {result['feature_index']} in {sae_name}\nTime: {result['time']}\nExplanation: {interpretation['text']}"
+                )
+                mongo_client.update_feature(
+                    sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
+                )
+            elif feature is not None:
+                logger.info(
+                    f"Already interp feature {feature_idx} in {sae_name}\nExplanation: {feature.interpretation}"
+                )
+            else:
+                logger.info(
+                    f"Feature {feature_idx} in {sae_name} does not exist. Please check it."
+                )
         
