@@ -33,6 +33,7 @@ class ExplainerType(str, Enum):
     """Types of LLM explainers supported."""
 
     OPENAI = "openai"
+    NEURONPEDIA = "neuronpedia"
 
 
 class ScorerType(str, Enum):
@@ -165,6 +166,11 @@ class Segment:
             return f"<<{self.text}>>"
         else:
             return self.text
+    def display_max(self, abs_threshold: float) -> str:
+        if self.activation > abs_threshold:
+            return f"{self.text}\n"
+        else:
+            return ""
 
 
 @dataclass
@@ -192,6 +198,35 @@ class TokenizedSample:
     def display_plain(self) -> str:
         """Get the text with all segments displayed."""
         return "".join([seg.text for seg in self.segments])
+    
+    def display_max(self, threshold: float = 0.7) -> str:
+        # max_activation_text = "".join([seg.display_max(threshold * self.max_activation) for seg in self.segments])
+        max_activation_text = ""
+        hash_ = {}
+        for seg in self.segments:
+            if seg.activation>threshold * self.max_activation:
+                text = seg.text
+                if text != "" and hash_.get(text, None) is None:
+                    hash_[text] = 1
+                    max_activation_text = text+"\n"
+        return max_activation_text
+    
+    def display_next(self, threshold: float = 0.7) -> str:
+        # max_activation_text = "".join([seg.display_max(threshold * self.max_activation) for seg in self.segments])
+        next_activation_text = ""
+        hash_ = {}
+        Flag = False
+        for seg in self.segments:
+            if seg.activation>threshold * self.max_activation:
+                Flag = False
+            else:
+                Flag = True
+            if Flag:
+                text = seg.text
+                if text != "" and hash_.get(text, None) is None:
+                    hash_[text] = 1
+                    next_activation_text = text+"\n"
+        return next_activation_text 
 
     @staticmethod
     def construct(
@@ -396,7 +431,7 @@ class FeatureInterpreter:
         """
         self.cfg = cfg
         self.mongo_client = mongo_client
-
+        self.logits = None
         # Set up LLM client for explanation generation
         self._setup_llm_clients()
 
@@ -451,8 +486,82 @@ class FeatureInterpreter:
             analysis=analysis,
             max_length=max_length,
         )
+        # self.logits = None
         return activating_examples, non_activating_examples
 
+    def _generate_explanation_prompt_neuronpedia(self, activating_examples: list[TokenizedSample]) -> tuple[str, str]:
+        """Generate a prompt for explanation generation with neuronpedia.
+
+        Args:
+            activating_examples: List of activating examples
+
+        Returns:
+            Prompt string for the LLM
+        """
+        system_prompt = """You are explaining the behavior of a neuron in a neural network. Your response should be a very concise explanation (1-6 words) that captures what the neuron detects or predicts by finding patterns in lists.\n\n
+To determine the explanation, you are given four lists:\n\n
+- MAX_ACTIVATING_TOKENS, which are the top activating tokens in the top activating texts.\n
+- TOKENS_AFTER_MAX_ACTIVATING_TOKEN, which are the tokens immediately after the max activating token.\n
+- TOP_POSITIVE_LOGITS, which are the most likely words or tokens associated with this neuron.\n
+- TOP_ACTIVATING_TEXTS, which are top activating texts.\n\n
+You should look for a pattern by trying the following methods in order. Once you find a pattern, stop and return that pattern. Do not proceed to the later methods.\n
+Method 1: Look at MAX_ACTIVATING_TOKENS. If they share something specific in common, or are all the same token or a variation of the same token (like different cases or conjugations), respond with that token.\n
+Method 2: Look at TOKENS_AFTER_MAX_ACTIVATING_TOKEN. Try to find a specific pattern or similarity in all the tokens. A common pattern is that they all start with the same letter. If you find a pattern (like \'s word\', \'the ending -ing\', \'number 8\'), respond with \'say [the pattern]\'. You can ignore uppercase/lowercase differences for this.\n
+Method 3: Look at TOP_POSITIVE_LOGITS for similarities and describe it very briefly (1-3 words).\n
+Method 4: Look at TOP_ACTIVATING_TEXTS and make a best guess by describing the broad theme or context, ignoring the max activating tokens.\n\n
+Rules:\n
+- Keep your explanation extremely concise (1-6 words, mostly 1-3 words).\n
+- Do not add unnecessary phrases like "words related to", "concepts related to", or "variations of the word".\n
+- Do not mention "tokens" or "patterns" in your explanation.\n
+- The explanation should be specific. For example, "unique words" is not a specific enough pattern, nor is "foreign words".\n
+- Remember to use the \'say [the pattern]\' when using Method 2 above (pattern found in TOKENS_AFTER_MAX_ACTIVATING_TOKEN).\n
+- If you absolutely cannot make any guesses, return the first token in MAX_ACTIVATING_TOKENS.\n\n
+Respond by going through each method number until you find one that helps you find an explanation for what this neuron is detecting or predicting. If a method does not help you find an explanation, briefly explain why it does not, then go on to the next method. Finally, end your response with the method number you used, the reason for your explanation, and then the explanation.\n
+
+Exsample:
+{
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nwatching\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nShe\nenjoy\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nwalking\nWA\nwaiting\nwas\nwe\nWHAM\nwish\nwin\nwake\nwhisper\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nShe was taking a nap when her phone started ringing.\nI enjoy watching movies with my family.\n\n</TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
+Method 1 fails: MAX_ACTIVATING_TOKENS (She, enjoy) are not similar tokens.\nMethod 2 succeeds: All TOKENS_AFTER_MAX_ACTIVATING_TOKEN have a pattern in common: they all start with "w".\nExplanation: say "w" words
+}
+
+{
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwarm\nthe\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nand\nAnd\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nelephant\nguitar\nmountain\nbicycle\nocean\ntelescope\ncandle\numbrella\ntornado\nbutterfly\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nIt was a beautiful day outside with clear skies and warm sunshine.\nAnd the garden has roses and tulips and daisies and sunflowers blooming together.\n\n</TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
+Method 1 succeeds: All MAX_ACTIVATING_TOKENS are the word "and".\nExplanation: and
+}
+
+{
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nare\n,\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nbanana\nblueberries\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\napple\norange\npineapple\nwatermelon\nkiwi\npeach\npear\ngrape\ncherry\nplum\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nThe apple and banana are delicious foods that provide essential vitamins and nutrients.\nI enjoy eating fresh strawberries, blueberries, and mangoes during the summer months.\n\n</TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
+Method 1 succeeds: All MAX_ACTIVATING_TOKENS (banana, blueberries) are fruits.\nExplanation: fruits\n
+}
+
+{
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nplaces\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nwar\nsome\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n4\nfour\nfourth\n4th\nIV\nFour\nFOUR\n~4\n4.0\nquartet\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nthe civil war was a major topic in history class .\n seasons of the year are winter , spring , summer , and fall or autumn in some places .\n\n</TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
+Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nMethod 2 fails: TOKENS_AFTER_MAX_ACTIVATING_TOKEN (was, places) are not all similar tokens and don't have a text pattern in common.\nMethod 3 succeeds: All TOP_POSITIVE_LOGITS are the number 4.\nExplanation: 4\n
+}
+"""
+        examples_to_show = activating_examples[: self.cfg.n_activating_examples]
+        next_activating_tokens = ""
+        max_activating_tokens = ""
+        plain_activating_tokens = ""
+        logit_activating_tokens = ""
+        
+        for i, example in enumerate(examples_to_show, 1):
+            next_activating_tokens  = next_activating_tokens + example.display_next(self.cfg.activation_threshold)
+            max_activating_tokens = max_activating_tokens + example.display_max(self.cfg.activation_threshold)
+            plain_activating_tokens = plain_activating_tokens + example.display_plain()+"\n"
+        
+        if self.logits is not None:
+            for text in self.logits['top_positive']:
+                logit_activating_tokens = logit_activating_tokens + text['token']+"\n"
+        else:
+            logit_activating_tokens = next_activating_tokens
+            
+        user_prompt:str = f"""
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n{next_activating_tokens}\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\n{max_activating_tokens}\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n{logit_activating_tokens}\n<\TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\n{plain_activating_tokens}\n<\TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
+"""
+        return system_prompt, user_prompt
+        
+    
     def _generate_explanation_prompt(self, activating_examples: list[TokenizedSample]) -> tuple[str, str]:
         """Generate a prompt for explanation generation.
 
@@ -540,23 +649,53 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
         Returns:
             Dictionary with explanation and metadata
         """
-        system_prompt, user_prompt = self._generate_explanation_prompt(activating_examples)
+        if self.cfg.explainer_type is ExplainerType.OPENAI:
+            system_prompt, user_prompt = self._generate_explanation_prompt(activating_examples)
+        else:
+            system_prompt, user_prompt = self._generate_explanation_prompt_neuronpedia(activating_examples)
         start_time = time.time()
         # print(f'{system_prompt=}')
         print(f'{user_prompt=}')
-        response = self.explainer_client.chat.completions.create(
-            model=self.cfg.openai_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-        )
+        
+        if self.cfg.explainer_type is ExplainerType.OPENAI:
+            response = self.explainer_client.chat.completions.create(
+                model=self.cfg.openai_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
 
-        assert response.choices[0].message.content is not None, (
-            f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
-        )
-        explanation = json_repair.loads(response.choices[0].message.content)
+            assert response.choices[0].message.content is not None, (
+                f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
+            )
+            explanation = json_repair.loads(response.choices[0].message.content)
+        else:
+            response = self.explainer_client.chat.completions.create(
+                model=self.cfg.openai_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+
+            # assert response.choices[0].message.content is not None, (
+            #     f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
+            # )
+            # explanation = json_repair.loads(response.choices[0].message.content)
+            def extract_explanation(s:str):
+                keyword = "Explanation: "
+                start_index = s.find(keyword)
+                if start_index == -1:
+                    return None
+                else:
+                    return s[start_index + len(keyword):]
+            explanation = {
+                "final_explanation" : extract_explanation(response.choices[0].message.content),
+                "activation_consistency": 5,
+                "complexity": 5,
+            }
         response_time = time.time() - start_time
         return {
             "user_prompt": user_prompt,
@@ -877,6 +1016,9 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         start_time = time.time()
         response_time = 0
 
+        # if self.cfg.explainer_type is ExplainerType.NEURONPEDIA:
+        self.logits = feature.logits
+        
         activating_examples, non_activating_examples = self.get_feature_examples(
             feature=feature,
             model=model,
@@ -930,7 +1072,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
                 "response": response_time,
             },
         }
-
+    
     def interpret_features(
         self,
         sae_name: str,
