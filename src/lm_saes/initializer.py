@@ -295,6 +295,8 @@ class Initializer:
                     activation_norm = calculate_activation_norm(
                         activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
                     )
+                    print('train from scratch...... set_dataset_average_activation norm')
+                    print(f'{activation_norm = }')
                 sae.set_dataset_average_activation_norm(activation_norm)
                 print('successfully set dataset_average_activation_norm!')
                 # sae.standardize_parameters_of_dataset_norm(activation_norm)

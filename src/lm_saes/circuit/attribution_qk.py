@@ -184,7 +184,7 @@ class AttributionContext:
         proxy = weakref.proxy(self)
 
         def _hook_fn(grads: torch.Tensor, hook: HookPoint) -> None:
-            print(f"DEBUG: Hook '{hook_name}' executed")
+            # print(f"DEBUG: Hook '{hook_name}' executed")
             # print(f"DEBUG: grads shape: {grads.shape}")
             grads_non_zero_row_idx = (grads[0] != 0).any(dim=1).nonzero(as_tuple=True)[0]
             # print(f"DEBUG: grads[0][6]: {grads[0][6].flatten()[:5].tolist()}")
@@ -217,8 +217,8 @@ class AttributionContext:
             # print(f'{proxy._batch_buffer[write_index].shape = }')
             # print("---")
             proxy._batch_buffer[write_index] += result
-            print(f"DEBUG: Updated _batch_buffer[{write_index}]")
-            print(f"DEBUG: _batch_buffer[{write_index}] sum: {proxy._batch_buffer[write_index].sum().item()}")
+            # print(f"DEBUG: Updated _batch_buffer[{write_index}]")
+            # print(f"DEBUG: _batch_buffer[{write_index}] sum: {proxy._batch_buffer[write_index].sum().item()}")
 
 
         return hook_name, _hook_fn
@@ -256,7 +256,7 @@ class AttributionContext:
             lorsa_error_vectors,
             lorsa_decoder_vecs,
             attn_output_hook,
-            tc_offset=0  # LoRSA 从 0 开始
+            tc_offset=tc_activation_matrix._nnz() 
         ) + self._make_attribution_hooks_tc(
             tc_activation_matrix,
             tc_error_vectors,
@@ -301,7 +301,7 @@ class AttributionContext:
             self._compute_score_hook(
                 f"blocks.{layer}.{attn_output_hook}",
                 decoder_vecs[start:end],
-                write_index=np.s_[tc_offset+start:tc_offset+end],
+                write_index=np.s_[start:end],
                 read_index=np.s_[:, nnz_positions[start:end]],
             )
             for layer, (start, end) in enumerate(layer_spans)
@@ -459,7 +459,7 @@ class AttributionContext:
 
         handles = []
         layers_in_batch = layers.unique().tolist()
-        print(f'{layers_in_batch = }')
+        # print(f'{layers_in_batch = }')
         for layer in layers_in_batch:
             mask = layers == layer
             if not mask.any():
@@ -1784,20 +1784,27 @@ def _run_attribution(
     phase_start = time.time()
 
     input_ids = prompt
-    model_out, tc_activation_matrix, error_vecs, token_vecs = model.setup_attribution(
+    model_out, lorsa_activation_matrix, lorsa_attention_pattern, tc_activation_matrix, error_vecs, token_vecs = model.setup_attribution(
         input_ids, sparse=True
     )
     print("set up attribution! ")
+    
+    lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas)
+    lorsa_encoder_rows, lorsa_attention_patterns = select_encoder_rows_lorsa(lorsa_activation_matrix, lorsa_attention_pattern, model.lorsas)
+    lorsa_encoder_bias = select_encoder_bias_lorsa(lorsa_activation_matrix, model.lorsas)
     
     tc_decoder_vecs = select_scaled_decoder_vecs_tc(tc_activation_matrix, model.transcoders)
     tc_encoder_rows = select_encoder_rows_tc(tc_activation_matrix, model.transcoders)
     tc_encoder_bias = select_encoder_bias_tc(tc_activation_matrix, model.transcoders)
 
     ctx = AttributionContext(
+        lorsa_activation_matrix,
         tc_activation_matrix,
         error_vecs,
         token_vecs,
+        lorsa_decoder_vecs,
         tc_decoder_vecs,
+        model.attn_output_hook,
         model.mlp_output_hook
     )
     logger.info(f"Precomputation completed in {time.time() - phase_start:.2f}s")
@@ -1830,7 +1837,7 @@ def _run_attribution(
 
     policy_out = model_out[0]
     n_layers, n_pos, _ = tc_activation_matrix.shape
-    total_active_feats = tc_activation_matrix._nnz()
+    total_active_feats = lorsa_activation_matrix._nnz() + tc_activation_matrix._nnz()
 
     if order_mode == 'group':
         print('compute logit info in group mode')
@@ -1878,7 +1885,7 @@ def _run_attribution(
     if offload:
         offload_handles += offload_modules([model.unembed, model.embed], offload)
 
-    logit_offset = total_active_feats + n_layers * n_pos + n_pos
+    logit_offset = total_active_feats + 2 * n_layers * n_pos + n_pos
     n_logits = len(logit_idx)
     total_nodes = logit_offset + n_logits
 
@@ -2022,6 +2029,7 @@ def _run_attribution(
         ctx.reset()
 
     # 稀疏索引
+    lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = lorsa_activation_matrix.indices()
     tc_feat_layer, tc_feat_pos, tc_feat_idx = tc_activation_matrix.indices()
 
     # —— 构建允许掩码：True=保留, False=剔除 —— #
@@ -2029,10 +2037,15 @@ def _run_attribution(
     if mongo_client is not None and act_times_max is not None:
         print('wash dense nodes')
         cache = {}
-        Ls = tc_feat_layer.cpu().tolist()
-        Fs = tc_feat_idx.cpu().tolist()
-        print(f'{len(Ls) = }, {len(Fs) = }')
-        for gid, (L, F) in enumerate(zip(Ls, Fs)):
+        
+        # 处理TC features
+        tc_Ls = tc_feat_layer.cpu().tolist()
+        tc_Fs = tc_feat_idx.cpu().tolist()
+        tc_offset = lorsa_activation_matrix._nnz()
+        
+        print(f'{len(tc_Ls) = }, {len(tc_Fs) = }')
+        for i, (L, F) in enumerate(zip(tc_Ls, tc_Fs)):
+            gid = tc_offset + i  # TC features start after LoRSA features
             key = (int(L), int(F))
             if key not in cache:
                 try:
@@ -2081,25 +2094,103 @@ def _run_attribution(
 
     # —— 索引函数（给 run_feature_attribution） —— #
     def idx_to_layer(idx: torch.Tensor) -> torch.Tensor:
-        return tc_feat_layer[idx]
+        is_lorsa = idx < len(lorsa_feat_layer)
+        return torch.where(
+            is_lorsa.to(lorsa_feat_layer.device),
+            2 * lorsa_feat_layer[idx * is_lorsa],
+            2 * tc_feat_layer[(idx - len(lorsa_feat_layer)) * ~is_lorsa] + 1
+        )
 
     def idx_to_pos(idx: torch.Tensor) -> torch.Tensor:
-        return tc_feat_pos[idx]
+        is_lorsa = idx < len(lorsa_feat_layer)
+        return torch.where(
+            is_lorsa.to(lorsa_feat_pos.device),
+            lorsa_feat_pos[idx * is_lorsa],
+            tc_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
+        )
+
+    def idx_to_feature_id(idx: torch.Tensor) -> torch.Tensor:
+        is_lorsa = (idx < len(lorsa_feat_layer))
+        l_idx = (idx * is_lorsa).to(torch.long)
+        t_idx = ((idx - len(lorsa_feat_layer)) * (~is_lorsa)).to(torch.long)
+
+        return torch.where(
+            is_lorsa.to(lorsa_feat_layer.device),
+            lorsa_feat_idx[l_idx],
+            tc_feat_idx[t_idx],
+        )
 
     def idx_to_encoder_rows(idx: torch.Tensor) -> torch.Tensor:
-        rows = tc_encoder_rows[idx]  # [B, d_model]
+        is_lorsa = idx < len(lorsa_feat_layer)
+        rows = torch.where(
+            is_lorsa.to(lorsa_encoder_rows.device)[:, None],
+            lorsa_encoder_rows[idx * is_lorsa],
+            tc_encoder_rows[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
+        )
         if encoder_demean:
-            layers = tc_feat_layer[idx].to(torch.long)     # [B]
+            # Apply demean only to TC features
+            layers = torch.where(
+                is_lorsa.to(tc_feat_layer.device),
+                torch.zeros_like(tc_feat_layer[0]),  # dummy for LoRSA
+                tc_feat_layer[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
+            ).to(torch.long)     # [B]
             means = layer_means.index_select(0, layers)    # [B, d_model]
+            # Only subtract mean for TC features
+            means = torch.where(
+                is_lorsa.to(means.device)[:, None],
+                torch.zeros_like(means),
+                means
+            )
             rows = rows - means
         return rows
 
     def idx_to_encoder_bias(idx: torch.Tensor) -> torch.Tensor:
-        return tc_encoder_bias[idx]
+        is_lorsa = (idx < len(lorsa_feat_layer))
+        l_idx = (idx * is_lorsa).to(torch.long)
+        t_idx = ((idx - len(lorsa_feat_layer)) * (~is_lorsa)).to(torch.long)
+
+        return torch.where(
+            is_lorsa.to(lorsa_encoder_bias.device),
+            lorsa_encoder_bias[l_idx],
+            tc_encoder_bias[t_idx],
+        )
 
     def idx_to_pattern(idx: torch.Tensor) -> torch.Tensor:
-        positions = tc_feat_pos[idx]
-        return torch.nn.functional.one_hot(positions, num_classes=n_pos)
+        is_lorsa = idx < len(lorsa_feat_layer)
+        res = torch.where(
+            is_lorsa.to(lorsa_attention_patterns.device)[:, None],
+            lorsa_attention_patterns[idx * is_lorsa],
+            torch.nn.functional.one_hot(
+                tc_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa],
+                num_classes=n_pos
+            )
+        )
+        return res
+
+    def idx_to_activation_values(idx: torch.Tensor) -> torch.Tensor:
+        is_lorsa = idx < len(lorsa_feat_layer)
+        if is_lorsa.squeeze().item():
+            return lorsa_activation_matrix.values()[idx]
+        else:
+            local_idx = (idx - len(lorsa_feat_layer)).to(torch.long)
+            layer = tc_feat_layer[local_idx]
+            feat_idx = tc_feat_idx[local_idx]
+
+            if torch.is_tensor(layer):
+                layer_key = str(int(layer.item()))
+            else:
+                layer_key = str(int(layer))
+
+            tc = model.transcoders[layer_key]
+
+            # 若无 b_E，用 0 占位
+            b_E = getattr(tc, "b_E", None)
+            if b_E is None:
+                bias_val = 0.0
+            else:
+                bias_val = b_E[feat_idx.to(device=b_E.device, dtype=torch.long)]
+
+            return tc_activation_matrix.values()[local_idx] - bias_val
 
     fa_result = run_feature_attribution(
         side=side,

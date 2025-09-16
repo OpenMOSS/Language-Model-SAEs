@@ -614,6 +614,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     @torch.no_grad()
     def standardize_parameters_of_dataset_norm(self):
         """Standardize parameters for dataset norm."""
+        
         assert self.cfg.norm_activation == "dataset-wise"
         assert self.dataset_average_activation_norm is not None
 
@@ -630,8 +631,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         self.W_O.data = self.W_O.data * input_norm_factor / output_norm_factor
         self.b_D.data = self.b_D.data / output_norm_factor
+        # self.W_V.data *= input_norm_factor
+        self.b_V.data /= input_norm_factor
+
+        if hasattr(self, 'smolgen') and self.cfg.use_smolgen:
+            self.smolgen.compress.weight.data *= input_norm_factor
         
-        self.smolgen_score_scale.data = self.smolgen_score_scale.data * (input_norm_factor ** 2)
         self.cfg.norm_activation = "inference"
 
     @override
@@ -736,7 +741,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         hidden_pre = z.permute(0, 2, 1, 3).reshape(*v.shape)
 
         # Post-activation feature acts
-        feature_acts = self.activation_function(hidden_pre)
+        # modified here
+        # originally: feature_acts = self.activation_function(hidden_pre)
+        # print(f'{self.activation_function(hidden_pre) = }')
+        feature_acts = hidden_pre * self.activation_function(hidden_pre)
 
         # Optionally compute attention pattern for return
         pattern: Optional[torch.Tensor] = None
@@ -746,6 +754,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             if attn_mask is not None:
                 raw_scores = raw_scores + attn_mask
             pattern = torch.softmax(raw_scores, dim=-1)
+        
 
         # Assemble return values according to flags
         if return_hidden_pre and return_attention_pattern:
@@ -784,11 +793,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         if not hasattr(encoder_layer, "smolgen"):
             raise ValueError("Encoder layer has no SmolGen to initialize from.")
         
-        # 计算输入归一化因子，与 init_lorsa_with_mhsa 保持一致
         input_norm_factor = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_in]
         
         # 复制 SmolGen 的状态
-        # 计算扩展因子，与 init_lorsa_with_mhsa 保持一致
         qk_exp_factor = self.cfg.n_qk_heads // encoder_layer.n_heads
         
         # 复制基础层的权重
@@ -1111,7 +1118,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         cls,
         pretrained_name_or_path: str,
         strict_loading: bool = True,
-        fold_activation_scale: bool = False,
+        fold_activation_scale: bool = True,
         device_mesh: DeviceMesh | None = None,
         **kwargs,
     ):

@@ -158,6 +158,11 @@ class LorsaConfig(BaseSAEConfig):
     use_smolgen: bool = False
     use_learnable_attn_scale: bool = False
     
+    # Auxk Loss
+    use_auxk: bool = False
+    k_aux: int = 512  # Number of dead latents to use for AuxK loss
+    aux_coefficient: float = 1.0 / 32  # Weight coefficient for AuxK loss (alpha)
+    
     @property
     def n_ov_heads(self) -> int:
         return self.d_sae

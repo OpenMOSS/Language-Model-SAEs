@@ -11,7 +11,7 @@ WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per
 WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node=1 --master-port=29440 exp/train_tc.py --lr 2e-3 --layer 2 --k 30 --exp_factor 16
 WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node=1 --master-port=29440 exp/train_tc.py --lr 2e-3 --layer 14 --k 30 --exp_factor 16
 
-WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node=1 --master-port=29440 exp/train_tc.py --lr 2e-3 --layer 6 --k 30 --exp_factor 16
+WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node=1 --master-port=29410 exp/train_tc.py --lr 2e-3 --layer 6 --k 30 --exp_factor 16
 
 
 

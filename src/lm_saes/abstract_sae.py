@@ -297,6 +297,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
         def normalize_hook_point(hook_point: str, original_tensor: torch.Tensor):
             norm_factor = self.compute_norm_factor(original_tensor, hook_point=hook_point)
+            # print(f'{norm_factor = }')
             return original_tensor * norm_factor
 
         return {k: normalize_hook_point(k, v) if k in self.cfg.associated_hook_points else v for k, v in batch.items()}
@@ -330,14 +331,11 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             self.load_distributed_state_dict(state_dict, device_mesh)
 
     @classmethod
-    def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = False) -> Self:
+    def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = True) -> Self:
         model = cls(cfg, device_mesh)
         if cfg.sae_pretrained_name_or_path is None:
-            print(f'cfg.sae_pretrained_name_or_path is None')
             total_params = sum(param.numel() for param in model.parameters()) / 1e9
             logger.info(f"Initializing {cfg.sae_type} from scratch with {total_params:.2f} B parameters")
-            # if fold_activation_scale:
-            #     model.standardize_parameters_of_dataset_norm()
             return model
 
         path = parse_pretrained_name_or_path(cfg.sae_pretrained_name_or_path)
@@ -397,7 +395,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         model.load_full_state_dict(state_dict, device_mesh)
         if fold_activation_scale:
             model.standardize_parameters_of_dataset_norm()
-        
         return model
 
     @classmethod
@@ -470,6 +467,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         elif self.cfg.act_fn.lower() == "topk":
 
             if self.device_mesh is not None:
+                print("distributed topk")
                 from lm_saes.utils.distributed import distributed_topk
                 
                 def topk_activation(x: Union[
@@ -496,7 +494,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     
                     k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
                     k_th_value = k_th_value.unsqueeze(dim=-1)
-                    return x * x.ge(k_th_value)
+                    # return x * x.ge(k_th_value)
+                    return x.ge(k_th_value)
 
             return topk_activation
 

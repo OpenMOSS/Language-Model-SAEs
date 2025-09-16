@@ -9,11 +9,13 @@ class Graph:
     input_string: str
     input_tokens: torch.Tensor
     logit_tokens: torch.Tensor
+    logit_probabilities: torch.Tensor
+    lorsa_active_features: torch.Tensor
+    lorsa_activation_matrix: torch.Tensor
     tc_active_features: torch.Tensor
     tc_activation_values: torch.Tensor
     adjacency_matrix: torch.Tensor
     selected_features: torch.Tensor
-    logit_probabilities: torch.Tensor
     cfg: HookedTransformerConfig
     sae_series: Optional[Union[str, List[str]]]
     slug: str
@@ -24,6 +26,8 @@ class Graph:
         input_tokens: torch.Tensor,
         logit_tokens: torch.Tensor,
         logit_probabilities: torch.Tensor,
+        lorsa_active_features: torch.Tensor,
+        lorsa_activation_values: torch.Tensor,
         tc_active_features: torch.Tensor,
         tc_activation_values: torch.Tensor,
         selected_features: torch.Tensor,
@@ -54,6 +58,8 @@ class Graph:
         self.adjacency_matrix = adjacency_matrix
         self.cfg = cfg
         self.n_pos = len(input_tokens)
+        self.lorsa_active_features = lorsa_active_features
+        self.lorsa_activation_values = lorsa_activation_values
         self.tc_active_features = tc_active_features
         self.tc_activation_values = tc_activation_values
         self.logit_tokens = logit_tokens
@@ -68,6 +74,8 @@ class Graph:
     def to(self, device):
         """Send all relevant tensors to the device (cpu, cuda, etc.)"""
         self.adjacency_matrix = self.adjacency_matrix.to(device)
+        self.lorsa_active_features = self.lorsa_active_features.to(device)
+        self.lorsa_activation_values = self.lorsa_activation_values.to(device)
         self.tc_active_features = self.tc_active_features.to(device)
         self.tc_activation_values = self.tc_activation_values.to(device)
         self.logit_tokens = self.logit_tokens.to(device)
@@ -81,6 +89,8 @@ class Graph:
             "input_string": self.input_string,
             "adjacency_matrix": self.adjacency_matrix,
             "cfg": self.cfg,
+            "lorsa_active_features": self.lorsa_active_features,
+            "lorsa_activation_values": self.lorsa_activation_values,
             "tc_active_features": self.tc_active_features,
             "tc_activation_values": self.tc_activation_values,
             "logit_tokens": self.logit_tokens,
@@ -117,8 +127,8 @@ class Graph:
                 d["tc_activation_values"] = torch.empty(0)
 
         # Drop LORSA if present
-        d.pop("lorsa_active_features", None)
-        d.pop("lorsa_activation_values", None)
+        # d.pop("lorsa_active_features", None)
+        # d.pop("lorsa_activation_values", None)
 
         # Remove any lingering CLT keys
         d.pop("clt_active_features", None)
@@ -210,8 +220,8 @@ def prune_graph(
     logit_weights = torch.zeros(
         graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device
     )
-    print(f'{logit_weights = }')
-    print(f'{n_logits = }')
+    # print(f'{logit_weights = }')
+    # print(f'{n_logits = }')
     logit_weights[-n_logits:] = graph.logit_probabilities
 
     # Calculate node influence and apply threshold

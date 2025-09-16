@@ -429,7 +429,6 @@ class ReplacementModel(HookedTransformer):
         activation_matrix, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
             sparse=sparse, zero_bos=zero_bos
         )
-        print(f'{activation_matrix = }')
         
         attn_out_cache, attn_out_caching_hooks, _ = self.get_caching_hooks(
             lambda name: self.attn_output_hook in name
@@ -453,7 +452,7 @@ class ReplacementModel(HookedTransformer):
             device=self.cfg.device,
             dtype=self.cfg.dtype,
         )
-        
+        # TODO: 修正,model不用compute norm factor也能正确跑
         # 运行前向传播
         all_hooks = activation_hooks + attn_out_caching_hooks + mlp_out_caching_hooks + policy_caching_hooks
         logits = self.run_with_hooks(tokens, fwd_hooks=all_hooks)
@@ -667,8 +666,9 @@ class ReplacementModel(HookedTransformer):
                 continue
             if re.search(r'^lorsas\.[^.]+\.b_V($|[_\.])', name):
                 continue
-            # if 'b_Q' in name or 'b_K' in name:
-            #     continue
-
+            if 'b_Q' in name or 'b_K' in name:
+                continue
+            if re.search(r'^lorsas\.[^.]+\.smolgen\.[^.]+\.bias($|[_\.])', name):
+                continue
             bias_params.append((name, p))
         return bias_params
