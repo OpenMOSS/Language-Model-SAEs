@@ -96,6 +96,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         
         # Initialize dead latents tracking buffers after all parameters are set up
         if self.cfg.use_auxk and self.cfg.act_fn == "topk":
+            print("======== use auxk loss set up ========")
             if device_mesh is None:
                 self.register_buffer('tokens_since_last_activation', torch.zeros(self.cfg.d_sae, device=cfg.device, dtype=torch.long))
                 self.register_buffer('is_dead', torch.zeros(self.cfg.d_sae, device=cfg.device, dtype=torch.bool))
@@ -181,6 +182,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         if self.cfg.use_glu_encoder:
             sae_maps["W_E_glu"] = DimMap({"model": 1})
             sae_maps["b_E_glu"] = DimMap({"model": 0})
+        if self.cfg.use_auxk and self.cfg.act_fn == "topk":
+            sae_maps["tokens_since_last_activation"] = DimMap({"model": 0})
+            sae_maps["is_dead"] = DimMap({"model": 0})
         return parent_maps | sae_maps
 
     @override
@@ -227,12 +231,76 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         output_norm_factor: float = (
             math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_out]
         )
+        
+        # print(f'{self.cfg.hook_point_in = }')
+        # print(f'{self.cfg.hook_point_out = }')
+        # print(f'{self.dataset_average_activation_norm[self.cfg.hook_point_in] = }')
+        # print(f'{self.dataset_average_activation_norm[self.cfg.hook_point_out] = }')
+        # print(f'{input_norm_factor = }')
+        # print(f'{output_norm_factor = }')
+        
         self.b_E.div_(input_norm_factor)
         if self.cfg.use_decoder_bias:
             assert self.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
             self.b_D.div_(output_norm_factor)
         self.W_D.mul_(input_norm_factor / output_norm_factor)
         self.cfg.norm_activation = "inference"
+
+    # @torch.no_grad()
+    # def standardize_parameters_of_dataset_norm(
+    #     self, dataset_average_activation_norm: dict[str, float] | None = None
+    # ):
+    #     assert self.cfg.norm_activation == "dataset-wise"
+    #     assert self.dataset_average_activation_norm is not None or dataset_average_activation_norm is not None
+    #     if dataset_average_activation_norm is not None:
+    #         self.set_dataset_average_activation_norm(dataset_average_activation_norm)
+    #     assert self.dataset_average_activation_norm is not None
+
+    #     # 1) 计算标量（Python float）
+    #     input_norm_factor: float = (
+    #         math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_in]
+    #     )
+    #     output_norm_factor: float = (
+    #         math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_out]
+    #     )
+
+    #     # 2) 选择目标 dtype 和 device —— 强制使用 torch.float32
+    #     target_dtype = torch.float32
+
+    #     # 尽量取一个已存在参数的 device（优先 b_E，再 fallback 到 model parameters，再 fallback cpu）
+    #     device = None
+    #     if hasattr(self, "b_E") and getattr(self.b_E, "device", None) is not None:
+    #         device = self.b_E.device
+    #     else:
+    #         try:
+    #             # next(self.parameters()) 在没有参数时会抛异常
+    #             device = next(self.parameters()).device
+    #         except StopIteration:
+    #             device = torch.device("cpu")
+
+    #     # 3) 把标量转成 tensor（float32）
+    #     input_norm_factor_t = torch.tensor(input_norm_factor, dtype=target_dtype, device=device)
+    #     output_norm_factor_t = torch.tensor(output_norm_factor, dtype=target_dtype, device=device)
+
+    #     # debug 打印（现在不会报错）
+    #     print(f'{self.cfg.hook_point_in = }')
+    #     print(f'{self.cfg.hook_point_out = }')
+    #     print(f'{self.dataset_average_activation_norm[self.cfg.hook_point_in] = }')
+    #     print(f'{self.dataset_average_activation_norm[self.cfg.hook_point_out] = }')
+    #     print(f'{input_norm_factor_t = }')
+    #     print(f'{output_norm_factor_t = }')  # tensor 会打印 dtype & device
+
+    #     # 4) 用 tensor 做原地修改（广播会生效）
+    #     # 注意：如果 self.b_E / self.b_D / self.W_D 是 DTensor，需要做 DTensor 专用处理（见下方说明）。
+    #     # 一般场景（nn.Parameter / torch.Tensor）下如下写法是安全的：
+    #     self.b_E.div_(input_norm_factor_t)
+    #     if self.cfg.use_decoder_bias:
+    #         assert self.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
+    #         self.b_D.div_(output_norm_factor_t)
+    #     self.W_D.mul_(input_norm_factor_t / output_norm_factor_t)
+
+    #     # 最后切换模式标志
+    #     self.cfg.norm_activation = "inference"
 
     @overload
     def encode(
@@ -300,6 +368,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
                 Tuple of (feature_acts, hidden_pre) where both have shape (batch, d_sae) or (batch, seq_len, d_sae)
         """
         # Pass through encoder
+        # x = x.to(torch.float64)
         hidden_pre = x @ self.W_E + self.b_E
 
         # Apply GLU if configured
@@ -319,6 +388,23 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         # since it computes a scaling of the input tensor, which is, suppose the common activation function
         # is $f(x)$, then here it computes $f(x) / x$. For simple ReLU case, it computes a mask of 1s and 0s.
         activation_mask = self.activation_function(sparsity_scores)
+        
+
+        nonzero_indices = (activation_mask != 0).nonzero(as_tuple=False)
+
+        # 只取前 10 个
+        first10_idx = nonzero_indices[:10]
+
+        # 对应的值
+        first10_vals = activation_mask[first10_idx[:, 0], *first10_idx[:, 1:].T]
+
+        # 打印结果
+        # for idx, val in zip(first10_idx, first10_vals):
+        #     print('activation_mask')
+        #     print(f"Index: {tuple(idx.tolist())}, Value: {val.item()}")    
+    
+        # end of debugging
+        
         feature_acts = self.hook_feature_acts(hidden_pre * activation_mask)
 
         if return_hidden_pre:
@@ -387,7 +473,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         return reconstructed
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, fold_activation_scale: bool = False, **kwargs):
+    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, fold_activation_scale: bool = True, **kwargs):
         cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
         return cls.from_config(cfg, fold_activation_scale=fold_activation_scale)
 
@@ -450,6 +536,38 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         label = batch[self.cfg.hook_point_out]
         return label
     
+    @torch.no_grad()
+    def update_dead_latents(self, feature_acts: torch.Tensor):
+        """Update the dead latents tracking based on current feature activations.
+        
+        Args:
+            feature_acts: Feature activations tensor of shape (batch, d_sae) or (batch, seq_len, d_sae)
+        """
+        if not (self.cfg.use_auxk and self.cfg.act_fn == "topk"):
+            return
+            
+        # Calculate batch size (number of tokens in this batch)
+        if feature_acts.dim() == 3:  # (batch, seq_len, d_sae)
+            batch_size = feature_acts.size(0) * feature_acts.size(1)  # batch * seq_len
+        else:  # (batch, d_sae)
+            batch_size = feature_acts.size(0)  # batch
+            
+        # Check which features were activated in this batch
+        if feature_acts.dim() == 3:  # (batch, seq_len, d_sae)
+            activated = feature_acts.gt(0).any(dim=(0, 1))  # (d_sae,)
+        else:  # (batch, d_sae)
+            activated = feature_acts.gt(0).any(dim=0)  # (d_sae,)
+            
+        # Update tokens since last activation
+        # If a feature was activated, reset to 0; otherwise, add batch_size
+        self.tokens_since_last_activation = torch.where(
+            activated,
+            torch.zeros_like(self.tokens_since_last_activation),
+            self.tokens_since_last_activation + batch_size
+        )
+        
+        # Mark as dead if tokens since last activation exceeds threshold
+        self.is_dead = self.tokens_since_last_activation >= self.cfg.dead_threshold
     
     @override
     def compute_loss(
@@ -487,6 +605,10 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
+
+        # newly added
+        # Update dead latents tracking
+        self.update_dead_latents(feature_acts)
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
@@ -528,6 +650,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
             # Add AuxK auxiliary loss if enabled
             if self.cfg.use_auxk and self.cfg.act_fn == "topk":
+                print("======== use auxk loss ========")
                 with timer.time("auxk_loss_calculation"):
                     # Get reconstruction error
                     e = label - reconstructed  # (batch, d_model) or (batch, seq_len, d_model)

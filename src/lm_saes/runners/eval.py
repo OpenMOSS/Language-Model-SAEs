@@ -90,6 +90,7 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
         "clt": CrossLayerTranscoder,
         "lorsa": LowRankSparseAttention,
     }[settings.sae.sae_type]
+    print(f'{settings.eval.fold_activation_scale = }')
     sae = cls.from_config(
         settings.sae,
         device_mesh=device_mesh,
@@ -125,6 +126,7 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
     # print(f'{sae.W_K = }')
     # print(f'{sae.b_Q = }')
     # print(f'{sae.b_K = }')
+    # print(f'{sae.smolgen.compress.weight.data = }')
     evaluator.evaluate(sae, activations, wandb_logger)
     logger.info("Evaluation completed")
 
