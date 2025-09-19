@@ -1,360 +1,556 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 
 interface ChessBoardProps {
   fen: string;
   activations?: number[];
-  zPatternIndices?: number[][]; // 改为二维：每个目标格子的贡献来源索引列表
-  zPatternValues?: number[];    // 与zPatternIndices同长度或可重复，表示贡献强度
+  zPatternIndices?: number[][];
+  zPatternValues?: number[];
   sampleIndex?: number;
   analysisName?: string;
   contextId?: number;
+  size?: 'small' | 'medium' | 'large';
+  showCoordinates?: boolean;
+  move?: string; // 移动字符串，如 "a2a4"
+  orientation?: 'white' | 'black' | 'auto'; // 方向覆盖
 }
 
-// 棋子符号映射
-const pieceSymbols: Record<string, string> = {
-  'K': '♔', 'Q': '♕', 'R': '♖', 'B': '♗', 'N': '♘', 'P': '♙',
-  'k': '♚', 'q': '♛', 'r': '♜', 'b': '♝', 'n': '♞', 'p': '♟'
+// 棋子Unicode符号映射
+const PIECE_SYMBOLS: { [key: string]: string } = {
+  'K': '♔', // 白王
+  'Q': '♕', // 白后
+  'R': '♖', // 白车
+  'B': '♗', // 白象
+  'N': '♘', // 白马
+  'P': '♙', // 白兵
+  'k': '♚', // 黑王
+  'q': '♛', // 黑后
+  'r': '♜', // 黑车
+  'b': '♝', // 黑象
+  'n': '♞', // 黑马
+  'p': '♟', // 黑兵
+};
+
+// FEN字符串解析函数
+const parseFEN = (fen: string) => {
+  const parts = fen.trim().split(' ');
+  if (parts.length < 4) {
+    throw new Error('Invalid FEN string');
+  }
+
+  const [boardPart, activeColor, castling, enPassant] = parts;
+  const rows = boardPart.split('/');
+
+  if (rows.length !== 8) {
+    throw new Error('Invalid board configuration in FEN');
+  }
+
+  // 将FEN转换为8x8数组
+  const board: (string | null)[][] = [];
+  
+  for (let i = 0; i < 8; i++) {
+    const row: (string | null)[] = [];
+    const rowStr = rows[i];
+    
+    for (const char of rowStr) {
+      if (/\d/.test(char)) {
+        // 数字表示空格数量
+        const emptySquares = parseInt(char);
+        for (let j = 0; j < emptySquares; j++) {
+          row.push(null);
+        }
+      } else {
+        // 棋子字符
+        row.push(char);
+      }
+    }
+    
+    board.push(row);
+  }
+
+  return {
+    board,
+    activeColor,
+    castling,
+    enPassant,
+    isWhiteToMove: activeColor === 'w'
+  };
+};
+
+// 将行列坐标转换为线性索引 (0-63)
+const getSquareIndex = (row: number, col: number): number => {
+  return row * 8 + col;
+};
+
+// 获取激活强度的颜色
+const getActivationColor = (activation: number): string => {
+  if (activation === 0) return 'transparent';
+  
+  // 激活值统一用红色表示，根据强度调整透明度
+  const intensity = Math.min(Math.abs(activation), 1);
+  const opacity = Math.max(0.4, intensity);
+  
+  return `rgba(239, 68, 68, ${opacity})`; // 红色表示激活
+};
+
+// 获取Z模式的目标格子 - 只显示最强的几个连接
+const getZPatternTargets = (sourceSquare: number, zPatternIndices?: number[][], zPatternValues?: number[]) => {
+  if (!zPatternIndices || !zPatternValues) return [];
+  
+  const targets: { square: number; strength: number }[] = [];
+  
+  // 检查数据格式 - 参考feature page逻辑
+  const looksLikePairList = Array.isArray(zPatternIndices[0]) && (zPatternIndices[0] as number[]).length === 2;
+  
+  if (looksLikePairList) {
+    // 格式：[[source, target], ...] 对应 [value, ...]
+    for (let i = 0; i < zPatternIndices.length; i++) {
+      const pair = zPatternIndices[i] as number[];
+      const value = zPatternValues[i] || 0;
+      const [source, target] = pair;
+      
+      if (source === sourceSquare) {
+        targets.push({ square: target, strength: value });
+      }
+    }
+  } else {
+    // 格式：zPatternIndices[0]为源位置数组，zPatternIndices[1]为目标位置数组
+    if (zPatternIndices.length >= 2) {
+      const sources = zPatternIndices[0] as number[];
+      const targets_array = zPatternIndices[1] as number[];
+      
+      // 遍历所有连接
+      for (let i = 0; i < Math.min(sources.length, targets_array.length, zPatternValues.length); i++) {
+        const source = sources[i];
+        const target = targets_array[i];
+        const value = zPatternValues[i] || 0;
+        
+        if (source === sourceSquare) {
+          targets.push({ square: target, strength: value });
+        }
+      }
+    }
+  }
+  
+  // 只返回绝对值最大的前8个连接（参考feature页面逻辑）
+  return targets
+    .sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength))
+    .slice(0, 8);
+};
+
+// 解析象棋移动字符串
+const parseMove = (move: string) => {
+  if (!move || move.length < 4) return null;
+  
+  const fromSquare = move.substring(0, 2);
+  const toSquare = move.substring(2, 4);
+  
+  const parseSquare = (square: string) => {
+    if (square.length !== 2) return null;
+    const col = square.charCodeAt(0) - 97; // a=0, b=1, etc.
+    const row = 8 - parseInt(square[1]); // 8=0, 7=1, etc.
+    if (col < 0 || col > 7 || row < 0 || row > 7) return null;
+    return { row, col, index: row * 8 + col };
+  };
+  
+  const from = parseSquare(fromSquare);
+  const to = parseSquare(toSquare);
+  
+  if (!from || !to) return null;
+  
+  return {
+    from,
+    to,
+    moveString: `${fromSquare}${toSquare}`
+  };
 };
 
 export const ChessBoard: React.FC<ChessBoardProps> = ({
   fen,
-  activations = [],
-  zPatternIndices = [],
-  zPatternValues = [],
+  activations,
+  zPatternIndices,
+  zPatternValues,
   sampleIndex,
   analysisName,
-  contextId
+  contextId,
+  size = 'medium',
+  showCoordinates = true,
+  move,
+  orientation = 'auto',
 }) => {
+  // Hover状态管理
   const [hoveredSquare, setHoveredSquare] = useState<number | null>(null);
 
-  // 解析FEN格式
-  const fenParts = fen.split(' ');
-  if (fenParts.length < 6) {
-    return (
-      <div className="text-red-500">
-        FEN格式错误: 应包含6个部分，实际包含{fenParts.length}个部分<br/>
-        FEN: {fen}
-      </div>
-    );
-  }
-
-  const [boardFen, currentActiveColor, castling, enPassant, halfmove, fullmove] = fenParts;
-  const activeColor = currentActiveColor;
-
-  // 将FEN棋盘转换为8x8数组
-  const board = useMemo(() => {
-    const boardArray: string[][] = Array(8).fill(null).map(() => Array(8).fill(''));
-    const rows = boardFen.split('/');
-    
-    if (rows.length !== 8) {
+  const parsedBoard = useMemo(() => {
+    try {
+      return parseFEN(fen);
+    } catch (error) {
+      console.error('Failed to parse FEN:', error);
       return null;
     }
-    
-    for (let i = 0; i < 8; i++) {
-      let col = 0;
-      for (const char of rows[i]) {
-        if (/\d/.test(char)) {
-          const emptySquares = parseInt(char);
-          col += emptySquares;
-        } else {
-          if (col < 8) {
-            boardArray[i][col] = char;
-            col++;
-          }
-        }
-      }
-    }
-    return boardArray;
-  }, [boardFen]);
+  }, [fen]);
 
-  if (!board) {
+  if (!parsedBoard) {
     return (
-      <div className="text-red-500">
-        FEN棋盘格式错误: 应包含8行，实际包含{boardFen.split('/').length}行<br/>
-        棋盘部分: {boardFen}
+      <div className="p-4 border border-red-200 rounded-lg bg-red-50">
+        <p className="text-red-700 text-sm">无效的FEN格式: {fen}</p>
       </div>
     );
   }
 
-  // 处理激活值 - 创建64长度的数组
-  const boardActivations = useMemo(() => {
-    const activationsArray = new Array(64).fill(0);
-    if (activations && activations.length > 0) {
-      if (activations.length === 64) {
-        activationsArray.splice(0, 64, ...activations);
-      } else {
-        for (let i = 0; i < Math.min(activations.length, 64); i++) {
-          activationsArray[i] = activations[i];
-        }
-      }
-    }
-    return activationsArray;
-  }, [activations]);
+  const { board, isWhiteToMove } = parsedBoard;
 
-  // 根据悬停的格子，计算对应的Z Pattern映射（长度64），参考sample.tsx的getZPatternForToken
-  const hoveredZMap = useMemo(() => {
-    const zMap = new Array(64).fill(0);
-    if (hoveredSquare === null) return zMap;
-    if (!Array.isArray(zPatternIndices) || zPatternIndices.length === 0) return zMap;
+  // 黑方行棋时翻转棋盘显示，让黑方棋子在下方
+  const flip = !isWhiteToMove;
+  const flip_activation = true;
 
-    // zPatternIndices: 每个目标格子i的贡献来源索引列表（数组），
-    // 若其中包含 hoveredSquare，则该目标格子受其影响。强度取对应的zPatternValues[i]（若存在），否则置1。
-    const len = Math.min(zPatternIndices.length, zPatternValues?.length || zPatternIndices.length);
-    for (let target = 0; target < len; target++) {
-      const sources = Array.isArray(zPatternIndices[target]) ? zPatternIndices[target] : [];
-      if (sources.includes(hoveredSquare)) {
-        const val = zPatternValues && zPatternValues[target] != null ? zPatternValues[target] : 1;
-        zMap[target] = val;
-      }
-    }
-    return zMap;
-  }, [hoveredSquare, zPatternIndices, zPatternValues]);
+  // 根据 flip 决定是否翻转棋盘
+  const displayBoard = useMemo(() => {
+    return flip ? [...board].reverse() : board;
+  }, [board, flip]);
 
-  // 获取激活值对应的颜色
-  const getActivationColor = (activation: number, isLight: boolean): string => {
-    if (activation === 0) {
-      return isLight ? '#f0d9b5' : '#b58863'; // 默认棋盘颜色
-    }
-    
-    // 计算激活值的相对强度（相对于所有激活值的最大值）
-    const maxActivation = Math.max(...boardActivations);
-    const intensity = maxActivation > 0 ? Math.min(activation / maxActivation, 1) : 0;
-    
-    if (isLight) {
-      // 浅色格子：从默认颜色渐变到红色
-      const r = Math.round(240 + (255 - 240) * intensity);
-      const g = Math.round(217 - 217 * intensity);
-      const b = Math.round(181 - 181 * intensity);
-      return `rgb(${r}, ${g}, ${b})`;
-    } else {
-      // 深色格子：从默认颜色渐变到深红色
-      const r = Math.round(181 + (139 - 181) * intensity);
-      const g = Math.round(136 - 136 * intensity);
-      const b = Math.round(99 - 99 * intensity);
-      return `rgb(${r}, ${g}, ${b})`;
-    }
+  // 解析移动信息
+  const parsedMove = useMemo(() => {
+    return move ? parseMove(move) : null;
+  }, [move]);
+
+  // 根据显示位置计算实际的squareIndex（考虑翻转）
+  const getActualSquareIndex = (displayRow: number, col: number): number => {
+    const actualRow = flip ? (7 - displayRow) : displayRow;
+    return getSquareIndex(actualRow, col);
   };
 
-  // 获取z pattern对应的颜色（蓝色系）
-  const getZPatternColor = (zValue: number, isLight: boolean): string => {
-    if (zValue === 0) {
-      return isLight ? '#f0d9b5' : '#b58863'; // 默认棋盘颜色
-    }
-    
-    // 计算z pattern的相对强度
-    const maxZValue = Math.max(...hoveredZMap);
-    const intensity = maxZValue > 0 ? Math.min(zValue / maxZValue, 1) : 0;
-    
-    if (isLight) {
-      // 浅色格子：从默认颜色渐变到蓝色
-      const r = Math.round(240 - 100 * intensity);
-      const g = Math.round(217 - 100 * intensity);
-      const b = Math.round(181 + 74 * intensity);
-      return `rgb(${r}, ${g}, ${b})`;
-    } else {
-      // 深色格子：从默认颜色渐变到深蓝色
-      const r = Math.round(181 - 100 * intensity);
-      const g = Math.round(136 - 100 * intensity);
-      const b = Math.round(99 + 156 * intensity);
-      return `rgb(${r}, ${g}, ${b})`;
-    }
+  // 激活值索引映射 - 始终保持在原始绝对位置，不受翻转影响
+  const getActivationIndex = (displayRow: number, col: number): number => {
+    // 将显示行转换回原始棋盘行（如果棋盘被翻转）
+    const originalRow = flip_activation ? (7 - displayRow) : displayRow;
+    // 激活值始终使用原始位置索引
+    return originalRow * 8 + col;
   };
 
-  // 获取方格的背景颜色
-  const getSquareBackgroundColor = (row: number, col: number, activation: number, squareIndex: number): string => {
-    const isLight = (row + col) % 2 === 0;
-    
-    // 悬停时：清除所有红色激活高亮，仅显示由 hoveredSquare 触发的 z pattern 映射
-    if (hoveredSquare !== null) {
-      const zVal = hoveredZMap[squareIndex] || 0;
-      if (zVal > 0) {
-        return getZPatternColor(zVal, isLight);
-      }
-      return isLight ? '#f0d9b5' : '#b58863';
-    }
-    
-    // 默认：红色激活值高亮
-    return getActivationColor(activation, isLight);
+  // 根据实际squareIndex计算显示位置（用于箭头绘制）
+  const getDisplayPosition = (actualSquareIndex: number) => {
+    const actualRow = Math.floor(actualSquareIndex / 8);
+    const col = actualSquareIndex % 8;
+    const displayRow = flip_activation ? (7 - actualRow) : actualRow;
+    return { row: displayRow, col };
   };
+
+  // Z模式和激活值的显示位置映射 - 始终保持在原始绝对位置
+  const getDisplayPositionFromActivationIndex = (activationIndex: number) => {
+    const originalRow = Math.floor(activationIndex / 8);
+    const col = activationIndex % 8;
+    
+    // 根据棋盘是否翻转来确定显示行，但激活值索引本身不变
+    const displayRow = flip_activation ? (7 - originalRow) : originalRow;
+    return { row: displayRow, col };
+  };
+
+  // 根据显示行索引获取棋盘行号（1-8）
+  const getDisplayRowNumber = (displayRowIndex: number) => {
+    // 不管是否翻转，显示行0始终对应最上面一行，应该显示最大的行号
+    return 8 - displayRowIndex;
+  };
+
+  // 统一的 从索引到标准坐标的命名（不依赖行棋方）
+  const getSquareNameFromActivationIndex = (activationIndex: number) => {
+    const activationRow = Math.floor(activationIndex / 8);
+    const col = activationIndex % 8;
+    return `${String.fromCharCode(97 + col)}${8 - activationRow}`;
+  };
+
+  // 根据尺寸设置样式
+  const sizeClasses = {
+    small: 'w-64 h-64',
+    medium: 'w-80 h-80',
+    large: 'w-96 h-96'
+  };
+
+  const squareSize = {
+    small: 'w-8 h-8',
+    medium: 'w-10 h-10',
+    large: 'w-12 h-12'
+  };
+
+  const fontSize = {
+    small: 'text-lg',
+    medium: 'text-xl',
+    large: 'text-2xl'
+  };
+
+  // 获取当前hover格子的Z模式目标
+  const zPatternTargets = hoveredSquare !== null ? getZPatternTargets(hoveredSquare, zPatternIndices, zPatternValues) : [];
 
   return (
-    <div className="font-sans border border-gray-300 rounded-lg p-3 bg-gray-50 max-w-xs">
-      <div className="flex justify-between items-center mb-2">
-        <h4 className="text-gray-800 text-sm font-semibold">
-          棋盘 {activations.length > 0 ? '(激活值)' : ''} {zPatternIndices.length > 0 ? '(Z Pattern)' : ''}
-        </h4>
-        <div className="flex gap-1 items-center">
-          {sampleIndex !== undefined && (
-            <div className="bg-blue-500 text-white px-2 py-1 rounded text-xs font-bold">
-              #{sampleIndex}
-            </div>
-          )}
-          {contextId !== undefined && (
-            <div className="bg-green-500 text-white px-2 py-1 rounded text-xs font-bold">
-              ID:{contextId}
-            </div>
-          )}
+    <div className="flex flex-col items-center space-y-2">
+      {/* 棋盘信息 */}
+      <div className="text-sm text-gray-600 text-center">
+        {sampleIndex !== undefined && (
+          <div>样本 #{sampleIndex}</div>
+        )}
+        {analysisName && (
+          <div>分析: {analysisName}</div>
+        )}
+        <div className="mt-1">
+          <span className={`inline-block w-3 h-3 rounded-full mr-1 ${
+            isWhiteToMove ? 'bg-white border-2 border-gray-800' : 'bg-gray-800'
+          }`}></span>
+          {isWhiteToMove ? '白方行棋' : '黑方行棋'}
         </div>
       </div>
-      
-      {analysisName && (
-        <div className="text-gray-600 text-xs mb-2">Analysis: {analysisName}</div>
-      )}
-      
-      <div className="inline-block border-2 border-gray-700 mb-3">
-        <table className="border-collapse text-xl">
-          {/* 列标记 */}
-          <tr>
-            <td className="w-5 h-5 text-center text-xs text-gray-500"></td>
-            {Array.from({ length: 8 }, (_, col) => (
-              <td key={col} className="w-9 h-5 text-center text-xs text-gray-500">
-                {String.fromCharCode(65 + col)}
-              </td>
-            ))}
-          </tr>
-          
-          {/* 棋盘行 */}
-          {Array.from({ length: 8 }, (_, row) => {
-            const rowNumber = activeColor === 'b' ? (row + 1) : (8 - row);
-            return (
-              <tr key={row}>
-                {/* 行号标记 */}
-                <td className="w-5 h-9 text-center text-xs text-gray-500">
-                  {rowNumber}
-                </td>
+
+      {/* 棋盘容器 */}
+      <div className={`relative ${sizeClasses[size]} border-4 border-gray-800 rounded-lg overflow-hidden shadow-lg`}>
+        {/* 棋盘网格 */}
+        <div className="w-full h-full grid grid-cols-8 grid-rows-8">
+          {displayBoard.map((row, displayRowIndex) =>
+            row.map((_, colIndex) => {
+              const piece = row[colIndex];
+              const isLight = (displayRowIndex + colIndex) % 2 === 0;
+              const squareIndex = getActualSquareIndex(displayRowIndex, colIndex);
+              const activationIndex = getActivationIndex(displayRowIndex, colIndex);
+              const activation = activations?.[activationIndex] || 0;
+              const activationColor = getActivationColor(activation);
+              
+              // 检查当前格子是否是hover格子的Z模式目标
+              const isZPatternTarget = zPatternTargets.some(target => target.square === activationIndex);
+              const targetStrength = zPatternTargets.find(target => target.square === activationIndex)?.strength || 0;
+              
+              // 检查是否为移动的起点或终点
+              const isMoveFromSquare = parsedMove && parsedMove.from.index === activationIndex;
+              const isMoveToSquare = parsedMove && parsedMove.to.index === activationIndex;
+              
+              // 获取基础背景色
+              const baseColor = isLight ? 'bg-amber-100' : 'bg-amber-800';
+              
+              // 确定最终背景色
+              let finalBackgroundColor;
+              const isSourceSquare = hoveredSquare === activationIndex; // 当前格子是否为源格子
+              
+              if (isMoveFromSquare) {
+                // 移动起点用黄绿色高亮
+                finalBackgroundColor = 'rgba(34, 197, 94, 0.7)'; // green-500 with opacity
+              } else if (isMoveToSquare) {
+                // 移动终点用更深的绿色高亮
+                finalBackgroundColor = 'rgba(22, 163, 74, 0.8)'; // green-600 with opacity
+              } else if (isZPatternTarget) {
+                // Z模式目标格子根据强度使用不同颜色 - 参考feature页面逻辑
+                const absStrength = Math.abs(targetStrength);
+                const normalizedStrength = Math.min(absStrength / 0.01, 1); // 归一化到[0,1]
+                const opacity = Math.max(0.3, normalizedStrength * 0.7 + 0.3);
                 
-                {/* 棋盘方格 */}
-                {Array.from({ length: 8 }, (_, col) => {
-                  // 激活值数组的索引：始终翻转，让激活值显示在行棋方这一侧
-                  const activationIndex = (7 - row) * 8 + col;
-                  const activation = boardActivations[activationIndex] || 0;
-                  
-                  // 棋盘位置：黑方行棋时只进行上下翻转，保持A列在最左边
-                  let boardRow, boardCol;
-                  if (activeColor === 'b') {
-                    boardRow = 7 - row;  // 行翻转
-                    boardCol = col;      // 列不翻转，保持A列在最左边
-                  } else {
-                    boardRow = row;
-                    boardCol = col;
-                  }
-                  
-                  const piece = board[boardRow][boardCol];
-                  const pieceSymbol = pieceSymbols[piece] || '';
-                  const textColor = piece && piece >= 'A' && piece <= 'Z' ? '#fff' : '#000';
-                  const textShadow = piece && piece >= 'A' && piece <= 'Z' 
-                    ? '1px 1px 2px rgba(0,0,0,0.8)' 
-                    : '1px 1px 1px rgba(255,255,255,0.5)';
-                  
-                  const backgroundColor = getSquareBackgroundColor(row, col, activation, activationIndex);
-                  
-                  return (
-                    <td
-                      key={col}
-                      className="w-9 h-9 text-center align-middle border border-gray-600 font-bold relative cursor-pointer transition-colors duration-300 overflow-hidden"
+                if (targetStrength > 0) {
+                  // 正值用蓝色
+                  finalBackgroundColor = `rgba(59, 130, 246, ${opacity})`;
+                } else {
+                  // 负值用橙色/红色
+                  finalBackgroundColor = `rgba(249, 115, 22, ${opacity})`;
+                }
+              } else if (activationColor !== 'transparent' && !isSourceSquare && hoveredSquare === null) {
+                // 只有在未悬停任何格子时才显示激活红色高亮
+                finalBackgroundColor = activationColor;
+              }
+              
+              return (
+                <div
+                  key={`${displayRowIndex}-${colIndex}`}
+                  className={`
+                    ${squareSize[size]} 
+                    relative flex items-center justify-center
+                    ${baseColor}
+                    transition-all duration-200 hover:brightness-110
+                    ${activation !== 0 ? 'cursor-pointer' : ''}
+                  `}
+                  style={{
+                    backgroundColor: finalBackgroundColor,
+                  }}
+                  onMouseEnter={() => {
+                    // 只有激活值不为0的格子才响应hover
+                    if (activation !== 0) {
+                      setHoveredSquare(activationIndex);
+                    }
+                  }}
+                  onMouseLeave={() => {
+                    setHoveredSquare(null);
+                  }}
+                  title={`${String.fromCharCode(97 + colIndex)}${getDisplayRowNumber(displayRowIndex)}${
+                    activation !== 0 ? ` (激活: ${activation.toFixed(3)})` : ''
+                  }${
+                    isZPatternTarget ? ` [Z模式目标: ${targetStrength.toFixed(3)}]` : ''
+                  }${
+                    isMoveFromSquare ? ' [移动起点]' : ''
+                  }${
+                    isMoveToSquare ? ' [移动终点]' : ''
+                  }`}
+                >
+                  {/* 棋子 */}
+                  {piece && (
+                    <span
+                      className={`
+                        ${fontSize[size]} 
+                        ${piece === piece.toLowerCase() ? 'text-black' : 'text-white'}
+                        drop-shadow-sm select-none
+                      `}
                       style={{
-                        backgroundColor,
-                        color: textColor,
-                        textShadow
-                      }}
-                      onMouseEnter={() => {
-                        // 只有当方格有激活值时才设置悬停状态
-                        if (activation > 0) {
-                          setHoveredSquare(activationIndex);
-                        }
-                      }}
-                      onMouseLeave={() => {
-                        setHoveredSquare(null);
+                        textShadow: piece === piece.toLowerCase() ? '1px 1px 1px rgba(255,255,255,0.8)' : '1px 1px 1px rgba(0,0,0,0.8)'
                       }}
                     >
-                      {pieceSymbol}
-                      
-                      {/* 激活值显示（非悬停状态下，固定6px并置于右上角）*/}
-                      {hoveredSquare === null && activation > 0 && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            top: 1,
-                            right: 1,
-                            fontSize: 6,
-                            lineHeight: '8px',
-                            color: '#333',
-                            backgroundColor: 'rgba(255,255,255,0.7)',
-                            padding: '0px 1px',
-                            borderRadius: 2,
-                            pointerEvents: 'none'
-                          }}
-                        >
-                          {activation.toFixed(3)}
-                        </div>
-                      )}
-                      
-                      {/* Z Pattern值提示（悬停映射处，固定6px并置于左下角）*/}
-                      {hoveredSquare !== null && hoveredZMap[activationIndex] > 0 && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            bottom: 1,
-                            left: 1,
-                            fontSize: 6,
-                            lineHeight: '8px',
-                            color: '#374151',
-                            backgroundColor: 'rgba(103, 232, 249, 0.7)', // cyan-300 70%
-                            padding: '0px 1px',
-                            borderRadius: 2,
-                            pointerEvents: 'none'
-                          }}
-                        >
-                          {`Z:${hoveredZMap[activationIndex].toFixed(3)}`}
-                        </div>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-        </table>
-      </div>
-      
-      <div className="text-xs text-gray-600 space-y-2">
-        {/* 激活值说明 */}
-        {boardActivations.some(v => v > 0) && (
-          <div className="p-2 bg-blue-50 rounded border-l-4 border-blue-400">
-            <strong>激活范围:</strong> {Math.min(...boardActivations.filter(v => v > 0)).toFixed(3)} ~ {Math.max(...boardActivations).toFixed(3)}<br/>
-            <small className="text-gray-500">红色：激活值强度（鼠标悬停时隐藏）</small>
-          </div>
-        )}
+                      {PIECE_SYMBOLS[piece] || piece}
+                    </span>
+                  )}
 
-        {/* Z Pattern说明（以悬停映射为准）*/}
-        {hoveredSquare !== null && hoveredZMap.some(v => v > 0) && (
-          <div className="p-2 bg-cyan-50 rounded border-l-4 border-cyan-400">
-            <strong>Z Pattern范围:</strong> {Math.min(...hoveredZMap.filter(v => v > 0)).toFixed(3)} ~ {Math.max(...hoveredZMap).toFixed(3)}<br/>
-            <small className="text-gray-500">蓝色：悬停格子的Z Pattern强度</small>
+                  {/* 激活值显示 - 在格子内部显示，源格子时隐去 */}
+                  {activation !== 0 && !isSourceSquare && hoveredSquare === null && (
+                    <div className="absolute top-0 right-0 bg-blue-600 text-white text-xs rounded px-1 leading-3" style={{ fontSize: '10px' }}>
+                      {Math.abs(activation).toFixed(2)}
+                    </div>
+                  )}
+
+                  {/* Z模式值显示 - 在格子内部左上角显示 */}
+                  {isZPatternTarget && (
+                    <div className={`absolute top-0 left-0 text-white text-xs rounded px-1 leading-3 ${
+                      targetStrength > 0 ? 'bg-blue-700' : 'bg-orange-700'
+                    }`} style={{ fontSize: '10px' }}>
+                      {targetStrength.toFixed(3)}
+                    </div>
+                  )}
+
+                  {/* 坐标标记 */}
+                  {showCoordinates && (
+                    <>
+                      {colIndex === 0 && (
+                        <div className="absolute left-1 top-1 text-xs font-bold opacity-60">
+                          {getDisplayRowNumber(displayRowIndex)}
+                        </div>
+                      )}
+                      {displayRowIndex === 7 && (
+                        <div className="absolute bottom-1 right-1 text-xs font-bold opacity-60">
+                          {String.fromCharCode(97 + colIndex)}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })
+          )}
+        
+        {/* 移动箭头 */}
+        {parsedMove && (() => {
+          const fromDisplayPos = getDisplayPositionFromActivationIndex(parsedMove.from.index);
+          const toDisplayPos = getDisplayPositionFromActivationIndex(parsedMove.to.index);
+          
+          return (
+            <svg
+              className="absolute inset-0 w-full h-full pointer-events-none"
+              viewBox="0 0 800 800"
+              style={{ zIndex: 10 }}
+            >
+              <defs>
+                <marker
+                  id="arrowhead"
+                  markerWidth="10"
+                  markerHeight="7"
+                  refX="10"
+                  refY="3.5"
+                  orient="auto"
+                >
+                  <polygon points="0 0, 10 3.5, 0 7" fill="#22c55e" />
+                </marker>
+              </defs>
+              <line
+                x1={fromDisplayPos.col * 100 + 50}
+                y1={fromDisplayPos.row * 100 + 50}
+                x2={toDisplayPos.col * 100 + 50}
+                y2={toDisplayPos.row * 100 + 50}
+                stroke="#22c55e"
+                strokeWidth="6"
+                markerEnd="url(#arrowhead)"
+              />
+            </svg>
+          );
+        })()}
+        </div>
+
+              {/* FEN字符串和移动信息显示 */}
+      <div className="absolute -bottom-12 left-0 right-0 text-xs text-gray-500 text-center space-y-1">
+        {parsedMove && (
+          <div className="text-green-600 font-medium">
+            移动: {parsedMove.moveString}
           </div>
         )}
-        
-        {/* 游戏信息 */}
-        <div>
-          <strong>当前:</strong> {activeColor === 'w' ? '白方' : '黑方'} | <strong>回合:</strong> {fullmove}
-        </div>
-        
-        {/* 显示完整FEN */}
-        <div className="font-mono bg-blue-50 p-2 rounded border-l-4 border-blue-400 text-[9px] break-all leading-tight">
-          <strong>FEN:</strong> {fen}
-        </div>
-        
-        {/* 使用说明 */}
-        <div className="p-2 bg-yellow-50 rounded border-l-4 border-yellow-400">
-          <div className="text-yellow-700">
-            <strong>💡 使用说明:</strong><br/>
-            • 默认显示：红色高亮表示激活值强度<br/>
-            • 鼠标悬停：清除红色高亮，仅显示该格子对应的Z Pattern蓝色高亮<br/>
-            • 触发条件：只有当格子有激活值时才触发悬停映射<br/>
-            • 鼠标移开：恢复红色激活值高亮
-          </div>
+        <div className="truncate">
+          {fen}
         </div>
       </div>
+      </div>
+
+      {/* FEN字符串显示 */}
+      <div className="w-full max-w-lg text-xs text-gray-600 bg-gray-50 rounded p-2 border">
+        <div className="font-medium text-gray-800 mb-1">FEN字符串:</div>
+        <div className="font-mono text-xs break-all select-all">
+          {fen}
+        </div>
+      </div>
+
+      {/* 激活值统计 */}
+      {activations && activations.some(a => a !== 0) && (
+        <div className="text-xs text-gray-600 space-y-1">
+          <div>激活统计:</div>
+          <div className="flex space-x-4">
+            <span>激活格子: {activations.filter(a => a !== 0).length}</span>
+            <span>最大值: {Math.max(...activations.map(Math.abs)).toFixed(3)}</span>
+            <span className="text-red-600">🔴 激活值</span>
+            {hoveredSquare !== null && <span className="text-blue-600">🔵 Z模式连接 (最强8个)</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Z模式统计 */}
+      {zPatternValues && zPatternValues.length > 0 && (
+        <div className="text-xs text-gray-600 space-y-1">
+          <div>Z模式连接: {zPatternValues.length}个</div>
+          <div>强度范围: {Math.min(...zPatternValues).toFixed(3)} ~ {Math.max(...zPatternValues).toFixed(3)}</div>
+          <div className="flex space-x-4">
+            <span className="text-blue-600">🔵 正值连接</span>
+            <span className="text-orange-600">🟠 负值连接</span>
+          </div>
+        </div>
+      )}
+
+      {/* Hover状态显示Z模式连接详情 */}
+      {hoveredSquare !== null && (() => {
+        const squareName = getSquareNameFromActivationIndex(hoveredSquare);
+        const activation = activations?.[hoveredSquare] || 0;
+        
+        return (
+          <div className="text-xs bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
+            <div className="font-medium text-blue-800">
+              格子 {squareName} (激活值: {activation.toFixed(3)})
+            </div>
+            {zPatternTargets.length > 0 ? (
+              <>
+                <div className="text-blue-700">Z模式最强连接 ({zPatternTargets.length}个):</div>
+                <div className="grid grid-cols-2 gap-1">
+                  {zPatternTargets.slice(0, 6).map((target, idx) => {
+                    const targetName = getSquareNameFromActivationIndex(target.square);
+                    const isPositive = target.strength > 0;
+                    return (
+                      <div key={idx} className={isPositive ? "text-blue-600" : "text-orange-600"}>
+                        → {targetName} ({target.strength.toFixed(3)})
+                      </div>
+                    );
+                  })}
+                  {zPatternTargets.length > 6 && (
+                    <div className="text-blue-500 col-span-2">... 还有 {zPatternTargets.length - 6} 个连接</div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="text-blue-600">无Z模式连接</div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
-}; 
+};

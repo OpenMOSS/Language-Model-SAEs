@@ -31,10 +31,10 @@ export const DictionarySample = ({ samples, onSamplesChange, dictionaryName }: D
   };
 
   const tokens = samples.map((sample) =>
-    zip(sample.context, sample.featureActsIndices, sample.featureActs, sample.maxFeatureActs).map(
-      ([token, featureActsIndices, featureActs, maxFeatureActs]) => ({
+    zip(sample.context, sample.featureActsIndices, sample.featureActsValues, sample.maxFeatureActs).map(
+      ([token, featureActsIndices, featureActsValues, maxFeatureActs]) => ({
         token,
-        featureActs: zip(featureActsIndices, featureActs, maxFeatureActs).map(
+        featureActs: zip(featureActsIndices, featureActsValues, maxFeatureActs).map(
           ([featureActIndex, featureAct, maxFeatureAct]) => ({
             featureActIndex,
             featureAct,

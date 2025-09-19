@@ -161,7 +161,7 @@ class AttributionContext:
             hooks.append((f"blocks.{layer}.{attn_input_hook}", partial(_cache, index=layer * 2)))
             hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer * 2 + 1)))
         
-        hooks.append(("policy_head.hook_pre", partial(_cache, index=self.n_layers)))
+        hooks.append(("policy_head.hook_pre", partial(_cache, index=2 * self.n_layers)))
         # 添加policy head的q和k缓存hooks
         hooks.append(("policy_head.hook_q", _cache_q))
         hooks.append(("policy_head.hook_k", _cache_k))
@@ -2038,6 +2038,31 @@ def _run_attribution(
         print('wash dense nodes')
         cache = {}
         
+        # 处理LoRSA features
+        lorsa_Ls = lorsa_feat_layer.cpu().tolist()
+        lorsa_Fs = lorsa_feat_idx.cpu().tolist()
+        
+        print(f'{len(lorsa_Ls) = }, {len(lorsa_Fs) = }')
+        for i, (L, F) in enumerate(zip(lorsa_Ls, lorsa_Fs)):
+            gid = i  # LoRSA features start from index 0
+            key = (int(L), int(F), 'lorsa')  # 添加类型标识避免与TC混淆
+            if key not in cache:
+                try:
+                    sae_name = f"lc0-lorsa-L{L}"
+                    fr = mongo_client.get_feature(sae_name, sae_series, F)
+                    at = None
+                    if fr:
+                        for ana in fr.analyses:
+                            if ana.name == analysis_name:
+                                at = ana.act_times
+                                break
+                    cache[key] = at
+                except Exception:
+                    cache[key] = None
+            at = cache[key]
+            if at is not None and at > act_times_max:
+                allow_mask[gid] = False
+        
         # 处理TC features
         tc_Ls = tc_feat_layer.cpu().tolist()
         tc_Fs = tc_feat_idx.cpu().tolist()
@@ -2046,7 +2071,7 @@ def _run_attribution(
         print(f'{len(tc_Ls) = }, {len(tc_Fs) = }')
         for i, (L, F) in enumerate(zip(tc_Ls, tc_Fs)):
             gid = tc_offset + i  # TC features start after LoRSA features
-            key = (int(L), int(F))
+            key = (int(L), int(F), 'tc')  # 添加类型标识避免与LoRSA混淆
             if key not in cache:
                 try:
                     sae_name = f"lc0_L{L}M_16x_k30_lr2e-03_auxk_sparseadam"
@@ -2063,6 +2088,14 @@ def _run_attribution(
             at = cache[key]
             if at is not None and at > act_times_max:
                 allow_mask[gid] = False
+        
+        print(f'LoRSA features: {lorsa_activation_matrix._nnz()} (filtered by max_activation_times)')
+        print(f'TC features: {tc_activation_matrix._nnz()} (filtered by max_activation_times)')
+    
+    # 打印统计信息
+    lorsa_kept = allow_mask[:lorsa_activation_matrix._nnz()].sum().item()
+    tc_kept = allow_mask[lorsa_activation_matrix._nnz():].sum().item()
+    print(f'Features kept: LORSA={lorsa_kept}/{lorsa_activation_matrix._nnz()}, TC={tc_kept}/{tc_activation_matrix._nnz()}')
     # print(f'{allow_mask = }')
     # 一些打印信息
     masked_idx = (~allow_mask).nonzero(as_tuple=True)[0]          # LongTensor
@@ -2325,7 +2358,7 @@ def _run_attribution(
             "n_logits": int(n_logits),
             "logit_offset": int(logit_offset),
             "final_node_count": int(final_node_count),
-            "max_feature_rows": int(allowed_rows_available),   # ★ 实际填入的允许行数
+            "max_feature_rows": int(allowed_rows_available),
             "filtered_feature_cols": int(selected_features.numel()),
         }
 
@@ -2345,14 +2378,14 @@ def _run_attribution(
             visited=fa_result['q']['visited'],
             edge_matrix=fa_result['q']['edge_matrix'],
             row_to_node_index=fa_result['q']['row_to_node_index'],
-            allow_mask=allow_mask,   # ★
+            allow_mask=allow_mask,   
         )
     if 'k' in fa_result:
         packaged_k = package_side(
             visited=fa_result['k']['visited'],
             edge_matrix=fa_result['k']['edge_matrix'],
             row_to_node_index=fa_result['k']['row_to_node_index'],
-            allow_mask=allow_mask,   # ★
+            allow_mask=allow_mask,   
         )
 
     # —— 同步对 rows_q / rows_k 做掩码（不让被剔除的 gid 参与根选择） —— #
@@ -2396,6 +2429,11 @@ def _run_attribution(
             "logit_offset": int(logit_offset),
             "total_active_feats": int(total_active_feats),
             "max_feature_nodes": int(max_feature_nodes),
+        },
+        "lorsa_activations": {
+            "indices": lorsa_activation_matrix.indices().T,   # [nnz, 3]
+            "values": lorsa_activation_matrix.values(),       # [nnz]
+            "lorsa_activation_matrix": lorsa_activation_matrix,
         },
         "tc_activations": {
             "indices": tc_activation_matrix.indices().T,   # [nnz, 3]
@@ -2530,10 +2568,7 @@ def run_feature_attribution(
             for idx_batch in queue:
                 if idx_batch.numel() == 0:
                     continue
-                
                 n_visited += len(idx_batch)
-                # print(f'{idx_batch = }')
-
                 # ------- 准备注入 -------
                 layers = idx_to_layer(idx_batch)
                 positions = idx_to_pos(idx_batch)
@@ -2758,15 +2793,42 @@ def run_feature_attribution(
     
 #     return result
 
-def find_feature_gid(attribution_result, layer, feature_id, position):
-    tc_activations = attribution_result['tc_activations']
-    indices = tc_activations['indices']  # [nnz, 3]
-    values = tc_activations['values']    # [nnz]
-    mask = (indices[:, 0] == layer) & (indices[:, 1] == position) & (indices[:, 2] == feature_id)
-    if mask.any():
-        matching_idx = mask.nonzero(as_tuple=True)[0][0]
-        gid = matching_idx.item()
-        activation_value = values[matching_idx].item()
-        return gid, activation_value
-    else:
-        return None, None
+def find_feature_gid(attribution_result, layer, feature_id, position, feature_type='tc'):
+    """
+    在attribution result中查找指定特征的全局ID (gid)
+    
+    Args:
+        attribution_result: attribute()函数的返回结果
+        layer: 层索引
+        feature_id: 特征ID
+        position: 位置索引
+        feature_type: 特征类型 ('tc' 或 'lorsa')
+    
+    Returns:
+        tuple: (gid, activation_value) 或 (None, None)
+    """
+    if feature_type == 'tc':
+        activations = attribution_result['tc_activations']
+        indices = activations['indices']  # [nnz, 3]
+        values = activations['values']    # [nnz]
+        mask = (indices[:, 0] == layer) & (indices[:, 1] == position) & (indices[:, 2] == feature_id)
+        if mask.any():
+            matching_idx = mask.nonzero(as_tuple=True)[0][0]
+            # TC features的gid需要加上LORSA features的偏移量
+            lorsa_offset = attribution_result['lorsa_activations']['indices'].shape[0]
+            gid = lorsa_offset + matching_idx.item()
+            activation_value = values[matching_idx].item()
+            return gid, activation_value
+    elif feature_type == 'lorsa':
+        activations = attribution_result['lorsa_activations']
+        indices = activations['indices']  # [nnz, 3]
+        values = activations['values']    # [nnz]
+        mask = (indices[:, 0] == layer) & (indices[:, 1] == position) & (indices[:, 2] == feature_id)
+        if mask.any():
+            matching_idx = mask.nonzero(as_tuple=True)[0][0]
+            # LORSA features的gid就是它们在激活矩阵中的索引
+            gid = matching_idx.item()
+            activation_value = values[matching_idx].item()
+            return gid, activation_value
+    
+    return None, None

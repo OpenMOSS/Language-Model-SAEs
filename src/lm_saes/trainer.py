@@ -376,6 +376,11 @@ class Trainer:
                 if isinstance(l_s, DTensor):
                     l_s = l_s.full_tensor()
 
+            if log_info.get("l_aux", None) is not None:
+                l_aux = log_info["l_aux"]
+                if isinstance(l_aux, DTensor):
+                    l_aux = l_aux.full_tensor()
+
             if sae.cfg.sae_type == "lorsa":
                 label = label.flatten(0, 1)
                 log_info["reconstructed"] = log_info["reconstructed"].flatten(0, 1)
@@ -427,6 +432,7 @@ class Trainer:
                 # losses
                 "losses/mse_loss": l_rec.mean().item(),
                 **({"losses/sparsity_loss": l_s.mean().item()} if log_info.get("l_s", None) is not None else {}),
+                **({"losses/aux_loss": l_aux.mean().item()} if log_info.get("l_aux", None) is not None else {}),
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
                 **clt_per_layer_ev_dict,

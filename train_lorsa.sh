@@ -81,7 +81,7 @@ WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 torchrun \
 # 6000:
   below_1e-5 : 11,964
   below_1e-6 : 11,310
-  overall_loss : 207.0876
+  6 : 207.0876
   explained_variance  : 0.6692
   有点跳ev
 WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 torchrun \
@@ -292,7 +292,7 @@ for LAYER in $(seq 0 2); do
     exp/analyze_lc0_lorsa.py \
       --layer "${LAYER}" \
       --n_tokens 100000000 \
-    >"$LOGDIR/analyze_layer_${LAYER}.log" 2>&1
+    >"$LOGDIR/analyze_a_3_layer_${LAYER}.log" 2>&1
 done
 
 cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
@@ -312,7 +312,7 @@ for LAYER in $(seq 3 5); do
     exp/analyze_lc0_lorsa.py \
       --layer "${LAYER}" \
       --n_tokens 100000000 \
-    >"$LOGDIR/analyze_layer_${LAYER}.log" 2>&1
+    >"$LOGDIR/analyze_a_3_layer_${LAYER}.log" 2>&1
 done
 
 
@@ -333,7 +333,7 @@ for LAYER in $(seq 6 8); do
     exp/analyze_lc0_lorsa.py \
       --layer "${LAYER}" \
       --n_tokens 100000000 \
-    >"$LOGDIR/analyze_layer_${LAYER}.log" 2>&1
+    >"$LOGDIR/analyze_a_3_layer_${LAYER}.log" 2>&1
 done
 
 
@@ -354,7 +354,7 @@ for LAYER in $(seq 9 11); do
     exp/analyze_lc0_lorsa.py \
       --layer "${LAYER}" \
       --n_tokens 100000000 \
-    >"$LOGDIR/analyze_layer_${LAYER}.log" 2>&1
+    >"$LOGDIR/analyze_a_3_layer_${LAYER}.log" 2>&1
 done
 
 cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
@@ -374,7 +374,7 @@ for LAYER in $(seq 12 14); do
     exp/analyze_lc0_lorsa.py \
       --layer "${LAYER}" \
       --n_tokens 100000000 \
-    >"$LOGDIR/analyze_layer_${LAYER}.log" 2>&1
+    >"$LOGDIR/analyze_a_3_layer_${LAYER}.log" 2>&1
 done
 
 

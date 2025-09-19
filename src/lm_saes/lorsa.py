@@ -26,6 +26,7 @@ from .abstract_sae import AbstractSparseAutoEncoder
 from .config import LorsaConfig
 from .utils.distributed import DimMap
 from .utils.logging import get_distributed_logger
+from .utils.timer import timer
 
 logger = get_distributed_logger("lorsa")
 
@@ -205,6 +206,25 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 )
                 self.attn_scale.data.fill_(self.cfg.attn_scale)
 
+        # Initialize dead latents tracking buffers after all parameters are set up
+        if self.cfg.use_auxk and self.cfg.act_fn == "topk":
+            if device_mesh is None:
+                self.register_buffer('tokens_since_last_activation', torch.zeros(self.cfg.d_sae, device=cfg.device, dtype=torch.long))
+                self.register_buffer('is_dead', torch.zeros(self.cfg.d_sae, device=cfg.device, dtype=torch.bool))
+            else:
+                self.register_buffer('tokens_since_last_activation', torch.distributed.tensor.zeros(
+                    self.cfg.d_sae,
+                    dtype=torch.long,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["tokens_since_last_activation"].placements(device_mesh),
+                ))
+                self.register_buffer('is_dead', torch.distributed.tensor.zeros(
+                    self.cfg.d_sae,
+                    dtype=torch.bool,
+                    device_mesh=device_mesh,
+                    placements=self.dim_maps()["is_dead"].placements(device_mesh),
+                ))
+    
     
     def init_parameters(self, **kwargs):
         """Initialize parameters."""
@@ -614,7 +634,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     @torch.no_grad()
     def standardize_parameters_of_dataset_norm(self):
         """Standardize parameters for dataset norm."""
-        
+        print("standardize_parameters_of_dataset_norm")
         assert self.cfg.norm_activation == "dataset-wise"
         assert self.dataset_average_activation_norm is not None
 
@@ -626,8 +646,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         self.W_Q.data *= input_norm_factor
         self.W_K.data *= input_norm_factor 
-        self.b_Q.data *= input_norm_factor
-        self.b_K.data *= input_norm_factor
 
         self.W_O.data = self.W_O.data * input_norm_factor / output_norm_factor
         self.b_D.data = self.b_D.data / output_norm_factor
@@ -1001,6 +1019,40 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Set encoder weights to fixed norm."""
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for lorsa")
     
+    @torch.no_grad()
+    def update_dead_latents(self, feature_acts: torch.Tensor):
+        """Update the dead latents tracking based on current feature activations.
+        
+        Args:
+            feature_acts: Feature activations tensor of shape (batch, d_sae) or (batch, seq_len, d_sae)
+        """
+        if not (self.cfg.use_auxk and self.cfg.act_fn == "topk"):
+            return
+            
+        # Calculate batch size (number of tokens in this batch)
+        if feature_acts.dim() == 3:  # (batch, seq_len, d_sae)
+            batch_size = feature_acts.size(0) * feature_acts.size(1)  # batch * seq_len
+        else:  # (batch, d_sae)
+            batch_size = feature_acts.size(0)  # batch
+            
+        # Check which features were activated in this batch
+        if feature_acts.dim() == 3:  # (batch, seq_len, d_sae)
+            activated = feature_acts.gt(0).any(dim=(0, 1))  # (d_sae,)
+        else:  # (batch, d_sae)
+            activated = feature_acts.gt(0).any(dim=0)  # (d_sae,)
+            
+        # Update tokens since last activation
+        # If a feature was activated, reset to 0; otherwise, add batch_size
+        self.tokens_since_last_activation = torch.where(
+            activated,
+            torch.zeros_like(self.tokens_since_last_activation),
+            self.tokens_since_last_activation + batch_size
+        )
+        
+        # Mark as dead if tokens since last activation exceeds threshold
+        self.is_dead = self.tokens_since_last_activation >= self.cfg.dead_threshold
+    
+    
     @overload
     def compute_loss(
         self,
@@ -1066,7 +1118,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
-        
+
+        # Update dead latents tracking
+        self.update_dead_latents(feature_acts)
+
         l_rec = (reconstructed - label).pow(2)
         if use_batch_norm_mse:
             l_rec = (
@@ -1103,6 +1158,50 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             loss = loss + l_s.mean()
         else:
             loss_dict["l_s"] = None
+
+        # Add AuxK auxiliary loss if enabled
+        if self.cfg.use_auxk and self.cfg.act_fn == "topk":
+            with timer.time("auxk_loss_calculation"):
+                # Get reconstruction error
+                e = label - reconstructed  # (batch, d_model) or (batch, seq_len, d_model)
+                
+                # Get the top-k_aux dead latents based on their activation values
+                current_k = self.current_k
+                if self.device_mesh is not None:
+                    self.current_k = min(self.cfg.k_aux, self.is_dead.full_tensor().sum())
+                else:
+                    self.current_k = min(self.cfg.k_aux, self.is_dead.sum())
+                
+                # print(f'{self.current_k = }')
+                
+                if self.current_k > 0:
+                    # Scale feature activations by decoder norm if configured
+                    if self.cfg.sparsity_include_decoder_norm:
+                        dead_sparsity_scores = hidden_pre * self.is_dead * self.decoder_norm()
+                    else:
+                        dead_sparsity_scores = hidden_pre * self.is_dead
+
+                    dead_activation_mask = self.activation_function(dead_sparsity_scores)
+                    dead_feature_acts = torch.clamp(hidden_pre * dead_activation_mask * self.is_dead, min=0.0)
+                    
+                    # Decode auxiliary feature activations
+                    aux_reconstructed = dead_feature_acts @ self.W_O
+                    if isinstance(aux_reconstructed, DTensor):
+                        aux_reconstructed = DimMap({}).redistribute(aux_reconstructed)
+                    # print(f'{torch.norm(e, dim=-1) = }')
+                    # print(f'{torch.norm(aux_reconstructed, dim=-1) = }')
+                    l_aux = (e - aux_reconstructed).pow(2).sum(dim=-1)
+                else:
+                    l_aux = torch.zeros_like(l_rec)
+                
+                # print(f'{torch.norm(l_aux,dim = -1) = }')
+                
+                if isinstance(l_aux, DTensor):
+                    l_aux = l_aux.full_tensor()
+                loss_dict["l_aux"] = l_aux
+                loss = loss + self.cfg.aux_coefficient * l_aux.mean()
+                
+                self.current_k = current_k
 
         if return_aux_data:
             aux_data = {

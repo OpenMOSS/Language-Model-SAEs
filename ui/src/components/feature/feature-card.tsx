@@ -67,7 +67,7 @@ const FeatureCustomInputArea = ({ feature }: { feature: Feature }) => {
             sampleName="Custom Input"
             maxFeatureAct={feature.maxFeatureAct}
           />
-          <p className="font-bold">Custom Input Max Activation: {Math.max(...state.value.featureActs).toFixed(3)}</p>
+          <p className="font-bold">Custom Input Max Activation: {Math.max(...state.value.featureActsValues.flat()).toFixed(3)}</p>
         </>
       )}
     </div>

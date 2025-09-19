@@ -35,7 +35,7 @@ import { useNavigate } from "react-router-dom";
 import { Switch } from "../ui/switch";
 import { Label as SLabel } from "../ui/label";
 import { Toggle } from "../ui/toggle";
-import { CircuitViewer } from "./circuit";
+// import { CircuitViewer } from "./circuit";
 
 const SAEInfo = ({
   position,
@@ -322,10 +322,10 @@ const ModelSample = ({
       sample.saeInfo.length > 0
         ? zip(
             ...sample.saeInfo.map((sae) =>
-              zip(sae.featureActsIndices, sae.featureActs, sae.maxFeatureActs).map(
-                ([featureActIndex, featureAct, maxFeatureAct]) => ({
+              zip(sae.featureActsIndices, sae.featureActsValues, sae.maxFeatureActs).map(
+                ([featureActIndex, featureActValues, maxFeatureAct]) => ({
                   name: sae.name,
-                  featureActs: zip(featureActIndex, featureAct, maxFeatureAct).map(
+                  featureActs: zip(featureActIndex, featureActValues, maxFeatureAct).map(
                     ([featureActIndex, featureAct, maxFeatureAct]) => ({
                       featureActIndex,
                       featureAct,
@@ -482,7 +482,7 @@ const ModelCustomInputArea = () => {
   const [tracingTopK, setTracingTopK] = useState<number | null>(null);
   const [detachAtAttnScores, setDetachAtAttnScores] = useState<boolean>(false);
 
-  const [tracings, setTracings] = useState<Tracing[]>([]);
+  // const [tracings, setTracings] = useState<Tracing[]>([]);
 
   const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
     return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries`)
@@ -787,7 +787,7 @@ const ModelCustomInputArea = () => {
         Submit
       </Button>
       {state.error && <p className="text-red-500">{state.error.message}</p>}
-      {tracings.length > 0 && <CircuitViewer tracings={tracings} onTrace={trace} onTracingsChange={setTracings} />}
+      {/* {tracings.length > 0 && <CircuitViewer tracings={tracings} onTrace={trace} onTracingsChange={setTracings} />} */}
       {sample && (
         <ModelSample
           sample={sample}

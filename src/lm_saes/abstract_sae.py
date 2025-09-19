@@ -297,7 +297,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
         def normalize_hook_point(hook_point: str, original_tensor: torch.Tensor):
             norm_factor = self.compute_norm_factor(original_tensor, hook_point=hook_point)
-            # print(f'{norm_factor = }')
+            print(f'{norm_factor = }')
             return original_tensor * norm_factor
 
         return {k: normalize_hook_point(k, v) if k in self.cfg.associated_hook_points else v for k, v in batch.items()}

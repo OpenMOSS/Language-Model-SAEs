@@ -70,7 +70,7 @@ export const ModelGenerationSchema = z.object({
     z.object({
       name: z.string(),
       featureActsIndices: z.array(z.array(z.number())),
-      featureActs: z.array(z.array(z.number())),
+      featureActsValues: z.array(z.array(z.number())),
       maxFeatureActs: z.array(z.array(z.number())),
     })
   ),
