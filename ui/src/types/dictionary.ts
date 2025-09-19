@@ -11,7 +11,7 @@ export type Dictionary = z.infer<typeof DictionarySchema>;
 export const DictionarySampleCompactSchema = z.object({
   context: z.array(z.instanceof(Uint8Array)),
   featureActsIndices: z.array(z.array(z.number())),
-  featureActs: z.array(z.array(z.number())),
+  featureActsValues: z.array(z.array(z.number())),
   maxFeatureActs: z.array(z.array(z.number())),
 });
 

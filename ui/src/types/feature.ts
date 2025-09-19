@@ -23,86 +23,14 @@ export const FeatureSampleCompactSchema = z.object({
   text: z.string().nullish(),
   images: z.array(z.string()).nullish(),
   origins: z.array(TokenOriginSchema.nullable()),
-  featureActs: z.array(z.number()),
-  stockfishAnalysis: z
-    .object({
-      bestMove: z.string().nullish(),
-      ponder: z.string().nullish(),
-      status: z.string().nullish(),
-      error: z.any().nullish(),
-      fen: z.string().nullish(),
-      isCheck: z.boolean().nullish(),
-      model: z
-        .object({
-          best_move: z.string().nullish(),
-          best_move_san: z.string().nullish(),
-          best_move_probability: z.number().nullish(),
-          policy_analysis: z
-            .object({
-              best_moves: z.array(
-                z.object({
-                  san: z.string(),
-                  probability: z.number(),
-                })
-              ).nullish(),
-            })
-            .nullish(),
-          wdl_analysis: z
-            .object({
-              win_percent: z.number(),
-              draw_percent: z.number(),
-              loss_percent: z.number(),
-            })
-            .nullish(),
-          value_analysis: z
-            .object({
-              raw_value: z.number(),
-              normalized_value: z.number().nullish(),
-            })
-            .nullish(),
-          raw_outputs: z
-            .object({
-              policy_logits_shape: z.array(z.number()).nullish(),
-              wdl_probs_shape: z.array(z.number()).nullish(),
-              value_shape: z.array(z.number()).nullish(),
-            })
-            .nullish(),
-          error: z.string().nullish(),
-        })
-        .nullish(),
-      rules: z
-        .object({
-          is_rook_under_attack: z.boolean().nullish(),
-          is_knight_under_attack: z.boolean().nullish(),
-          is_bishop_under_attack: z.boolean().nullish(),
-          is_queen_under_attack: z.boolean().nullish(),
-          is_can_capture_rook: z.boolean().nullish(),
-          is_can_capture_knight: z.boolean().nullish(),
-          is_can_capture_bishop: z.boolean().nullish(),
-          is_can_capture_queen: z.boolean().nullish(),
-          is_king_in_check: z.boolean().nullish(),
-          is_checkmate: z.boolean().nullish(),
-          is_stalemate: z.boolean().nullish(),
-        })
-        .nullish(),
-      material: z
-        .object({
-          white_material: z.number().nullish(),
-          black_material: z.number().nullish(),
-          material_advantage: z.number().nullish(),
-          error: z.string().nullish(),
-        })
-        .nullish(),
-      wdl: z
-        .object({
-          win_probability: z.number().nullish(),
-          draw_probability: z.number().nullish(),
-          loss_probability: z.number().nullish(),
-          error: z.string().nullish(),
-        })
-        .nullish(),
-    })
-    .nullish(),
+  // COO format: indices where feature is active
+  featureActsIndices: z.array(z.number()),
+  // COO format: corresponding activation values
+  featureActsValues: z.array(z.number()),
+  // Z pattern data: indices in COO format for z pattern contributions
+  zPatternIndices: z.array(z.array(z.number())).nullish(),
+  // Z pattern data: corresponding contribution values
+  zPatternValues: z.array(z.number()).nullish(),
 });
 
 export type FeatureSampleCompact = z.infer<typeof FeatureSampleCompactSchema>;

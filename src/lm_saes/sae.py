@@ -96,7 +96,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         
         # Initialize dead latents tracking buffers after all parameters are set up
         if self.cfg.use_auxk and self.cfg.act_fn == "topk":
-            print("======== use auxk loss set up ========")
             if device_mesh is None:
                 self.register_buffer('tokens_since_last_activation', torch.zeros(self.cfg.d_sae, device=cfg.device, dtype=torch.long))
                 self.register_buffer('is_dead', torch.zeros(self.cfg.d_sae, device=cfg.device, dtype=torch.bool))

@@ -120,6 +120,7 @@ class SAEConfig(BaseSAEConfig):
     hook_point_out: str
     use_glu_encoder: bool = False
     use_auxk: bool = False
+    dead_threshold: int = 100_000  # Threshold for marking latents as dead (10 million tokens)
     k_aux: int = 512  # Number of dead latents to use for AuxK loss
     aux_coefficient: float = 1.0 / 32  # Weight coefficient for AuxK loss (alpha)
 
@@ -160,6 +161,7 @@ class LorsaConfig(BaseSAEConfig):
     
     # Auxk Loss
     use_auxk: bool = False
+    dead_threshold: int = 100_000
     k_aux: int = 512  # Number of dead latents to use for AuxK loss
     aux_coefficient: float = 1.0 / 32  # Weight coefficient for AuxK loss (alpha)
     

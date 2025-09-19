@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import "@xyflow/react/dist/style.css";
 import "./globals.css";
 import { RouterProvider, createBrowserRouter } from "react-router-dom";
+import { AppStateProvider } from "./contexts/AppStateContext";
 import { FeaturesPage } from "@/routes/features/page";
 import { RootPage } from "./routes/page";
 import { AttentionHeadPage } from "./routes/attn-heads/page";
@@ -10,7 +11,6 @@ import { DictionaryPage } from "./routes/dictionaries/page";
 import { ModelsPage } from "./routes/models/page";
 import BookmarksPage from "./routes/bookmarks/page";
 import { CircuitsPage } from "./routes/circuits/page";
-import { CircuitProvider } from "./contexts/CircuitContext";
 
 const router = createBrowserRouter([
   {
@@ -45,8 +45,8 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <CircuitProvider>
+    <AppStateProvider>
       <RouterProvider router={router} />
-    </CircuitProvider>
+    </AppStateProvider>
   </React.StrictMode>
 );

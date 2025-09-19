@@ -17,7 +17,305 @@ import { ChessBoard } from "@/components/chess/chess-board";
 // 全局计数器确保唯一ID
 let boardCounter = 0;
 
-// 已迁移到组件 ChessBoard，删除字符串生成棋盘逻辑
+// 分析状态管理器
+class AnalysisStateManager {
+  private analysisStates = new Map<string, {
+    stockfishAnalysis: any;
+    isLoading: boolean;
+    analysisStarted: boolean;
+    analysisCompleted: boolean;
+  }>();
+
+  getAnalysisState(key: string) {
+    return this.analysisStates.get(key) || {
+      stockfishAnalysis: null,
+      isLoading: false,
+      analysisStarted: false,
+      analysisCompleted: false
+    };
+  }
+
+  setAnalysisState(key: string, state: {
+    stockfishAnalysis: any;
+    isLoading: boolean;
+    analysisStarted: boolean;
+    analysisCompleted: boolean;
+  }) {
+    this.analysisStates.set(key, state);
+  }
+
+  clear() {
+    this.analysisStates.clear();
+  }
+}
+
+// 全局分析状态管理器实例
+const globalAnalysisStateManager = new AnalysisStateManager();
+
+// 增强版棋盘组件，包含 Stockfish 分析功能
+const AnalysisChessBoard = ({ 
+  fen, 
+  activations, 
+  zPatternIndices, 
+  zPatternValues, 
+  sampleIndex, 
+  analysisName, 
+  contextId,
+  delayMs = 0,
+  autoAnalyze = true,
+  globalAnalysisCollapsed = false
+}: {
+  fen: string;
+  activations?: number[];
+  zPatternIndices?: number[][];
+  zPatternValues?: number[];
+  sampleIndex?: number;
+  analysisName?: string;
+  contextId?: number;
+  delayMs?: number;
+  autoAnalyze?: boolean;
+  globalAnalysisCollapsed?: boolean;
+}) => {
+  // 生成唯一的分析状态键
+  const analysisKey = `${fen}_${sampleIndex}_${contextId}`;
+  
+  // 从全局状态管理器获取初始状态
+  const initialState = globalAnalysisStateManager.getAnalysisState(analysisKey);
+  
+  const [stockfishAnalysis, setStockfishAnalysis] = useState<any>(initialState.stockfishAnalysis);
+  const [isLoading, setIsLoading] = useState<boolean>(initialState.isLoading);
+  const [analysisStarted, setAnalysisStarted] = useState<boolean>(initialState.analysisStarted);
+  const [analysisCompleted, setAnalysisCompleted] = useState<boolean>(initialState.analysisCompleted);
+  const [isAnalysisCollapsed, setIsAnalysisCollapsed] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!autoAnalyze || analysisStarted) return;
+    
+    // 设置延迟分析
+    const timer = setTimeout(() => {
+      console.log(`🚀 启动分析 (延迟${delayMs}ms): ${fen.substring(0, 30)}...`);
+      
+      setAnalysisStarted(true);
+      setStockfishAnalysis(null);
+      setIsLoading(true);
+      
+      // 更新全局状态
+      globalAnalysisStateManager.setAnalysisState(analysisKey, {
+        stockfishAnalysis: null,
+        isLoading: true,
+        analysisStarted: true,
+        analysisCompleted: false
+      });
+      
+      const analyzePosition = async () => {
+        try {
+          console.log(`📡 发送Stockfish请求 for ${fen.substring(0, 20)}...`);
+          
+          const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/stockfish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fen }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+          }
+
+          const result = await response.json();
+          
+          console.log(`✅ 收到结果 for ${fen.substring(0, 20)}...`, {
+            bestMove: result.best_move || result.bestMove,
+            status: result.status
+          });
+          
+          // 规范化结果
+          const normalizedResult = {
+            ...result,
+            bestMove: result.best_move || result.bestMove,
+            ponder: result.ponder,
+            status: result.status || 'success',
+            error: result.error,
+            fen: result.fen || fen,
+            isCheck: result.is_check || result.isCheck,
+            rules: result.rules,
+            material: result.material,
+            wdl: result.wdl
+          };
+          
+          setStockfishAnalysis(normalizedResult);
+          setIsLoading(false);
+          setAnalysisCompleted(true);
+          
+          // 更新全局状态
+          globalAnalysisStateManager.setAnalysisState(analysisKey, {
+            stockfishAnalysis: normalizedResult,
+            isLoading: false,
+            analysisStarted: true,
+            analysisCompleted: true
+          });
+          
+        } catch (error: any) {
+          console.error(`❌ 分析失败 for ${fen.substring(0, 20)}...`, error);
+          setStockfishAnalysis({ status: 'error', error: error.message, fen });
+          setIsLoading(false);
+          setAnalysisCompleted(true);
+          
+          // 更新全局状态
+          globalAnalysisStateManager.setAnalysisState(analysisKey, {
+            stockfishAnalysis: { status: 'error', error: error.message, fen },
+            isLoading: false,
+            analysisStarted: true,
+            analysisCompleted: true
+          });
+        }
+      };
+
+      analyzePosition();
+    }, delayMs);
+
+    return () => clearTimeout(timer);
+  }, [fen, autoAnalyze, delayMs, analysisStarted]);
+
+  // 格式化 WDL 数据
+  const formatWDL = (wdl: any) => {
+    if (!wdl) return null;
+    
+    const winProb = ((wdl.white_win_prob || wdl.winProb || 0) * 100).toFixed(1);
+    const drawProb = ((wdl.draw_prob || wdl.drawProb || 0) * 100).toFixed(1);
+    const lossProb = ((wdl.white_loss_prob || wdl.lossProb || 0) * 100).toFixed(1);
+    
+    return { winProb, drawProb, lossProb };
+  };
+
+  const wdlData = formatWDL(stockfishAnalysis?.wdl);
+
+  return (
+    <div className="bg-white p-4 rounded-lg border shadow-sm hover:shadow-md transition-shadow">
+      {/* 棋盘组件 */}
+      <ChessBoard
+        fen={fen}
+        activations={activations}
+        zPatternIndices={zPatternIndices}
+        zPatternValues={zPatternValues}
+        sampleIndex={sampleIndex}
+        analysisName={analysisName}
+        contextId={contextId}
+      />
+      
+      {/* 分析状态卡片 */}
+      <div className="mt-2 p-2 bg-gray-50 rounded border text-xs">
+        <div 
+          className="flex justify-between items-center mb-1 cursor-pointer"
+          onClick={() => setIsAnalysisCollapsed(!isAnalysisCollapsed)}
+        >
+          <span className="text-gray-600 text-xs">
+            {isAnalysisCollapsed ? '📋 展开分析' : '📋 折叠分析'}
+          </span>
+          <span className="text-xs">
+            {isAnalysisCollapsed ? '▼' : '▲'}
+          </span>
+        </div>
+        
+                 {/* 分析内容 */}
+         {!isAnalysisCollapsed && !globalAnalysisCollapsed && (
+          <>
+            {!analysisStarted ? (
+              <div className="text-gray-500">
+                <div>⏳ 等待分析...</div>
+              </div>
+            ) : isLoading ? (
+              <div className="text-yellow-600">
+                <div>🔄 正在分析中...</div>
+              </div>
+            ) : stockfishAnalysis?.status === 'success' ? (
+              <div className="text-green-700">
+                <div className="mb-2">✅ 分析完成</div>
+                
+                {/* 最佳走法 */}
+                {stockfishAnalysis.bestMove && (
+                  <div className="text-blue-700 text-xs mb-1">
+                    <strong>最佳走法:</strong> {stockfishAnalysis.bestMove}
+                  </div>
+                )}
+                
+                {/* 预想走法 */}
+                {stockfishAnalysis.ponder && (
+                  <div className="text-blue-600 text-xs mb-1">
+                    <strong>预想走法:</strong> {stockfishAnalysis.ponder}
+                  </div>
+                )}
+                
+                {/* WDL 胜率信息 */}
+                {wdlData && (
+                  <div className="mt-2 p-2 bg-blue-50 rounded">
+                    <div className="text-xs font-medium text-blue-800 mb-1">胜率分析:</div>
+                    <div className="grid grid-cols-3 gap-1 text-xs">
+                      <div className="text-center">
+                        <div className="text-green-600 font-bold">{wdlData.winProb}%</div>
+                        <div className="text-gray-500">胜</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-gray-600 font-bold">{wdlData.drawProb}%</div>
+                        <div className="text-gray-500">和</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-red-600 font-bold">{wdlData.lossProb}%</div>
+                        <div className="text-gray-500">负</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* 物质力量信息 */}
+                {stockfishAnalysis.material && (
+                  <div className="mt-2 p-2 bg-green-50 rounded">
+                    <div className="text-xs font-medium text-green-800 mb-1">物质力量:</div>
+                    <div className="text-xs">
+                      <div>白方: {stockfishAnalysis.material.white_material || 0}</div>
+                      <div>黑方: {stockfishAnalysis.material.black_material || 0}</div>
+                      <div>差值: {(stockfishAnalysis.material.white_material || 0) - (stockfishAnalysis.material.black_material || 0)}</div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* 将军状态 */}
+                {stockfishAnalysis.isCheck && (
+                  <div className="mt-1 text-red-600 text-xs font-bold">
+                    ⚠️ 将军状态
+                  </div>
+                )}
+              </div>
+            ) : stockfishAnalysis?.status === 'error' ? (
+              <div className="text-red-700">
+                <div>❌ 分析失败</div>
+                <div className="text-xs font-normal">{stockfishAnalysis.error}</div>
+              </div>
+            ) : (
+              <div className="text-gray-600">
+                <div>🔄 准备分析...</div>
+              </div>
+            )}
+          </>
+        )}
+        
+                 {/* 折叠时显示简要状态 */}
+         {(isAnalysisCollapsed || globalAnalysisCollapsed) && (
+          <div className={`text-xs font-bold ${
+            !analysisStarted ? 'text-gray-500' : 
+            isLoading ? 'text-yellow-600' : 
+            analysisCompleted ? (stockfishAnalysis?.status === 'success' ? 'text-green-700' : 'text-red-700') : 
+            'text-yellow-600'
+          }`}>
+            {!analysisStarted ? '⏳ 等待' : 
+             isLoading ? '🔄 分析中' : 
+             analysisCompleted ? (stockfishAnalysis?.status === 'success' ? '✅ 已完成' : '❌ 失败') : 
+             '🔄 准备中'}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export const FeaturesPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -52,6 +350,8 @@ export const FeaturesPage = () => {
 
   const [inputValue, setInputValue] = useState<string>("0");
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
+  const [globalAnalysisEnabled, setGlobalAnalysisEnabled] = useState<boolean>(true);
+  const [globalAnalysisCollapsed, setGlobalAnalysisCollapsed] = useState<boolean>(false);
 
   // Debounce the input value to avoid excessive updates
   useDebounce(
@@ -429,32 +729,56 @@ export const FeaturesPage = () => {
                             console.log(`🎯 构建激活值数组: ${activationsArray.filter(v => v !== 0).length} 个非零值`);
                           }
 
-                          // 构建Z Pattern数组
+                          // 构建Z Pattern数组并打印调试信息
                           let zPatternIndices: number[][] | undefined = undefined;
                           let zPatternValues: number[] | undefined = undefined;
                           if ((sample as any).zPatternIndices && (sample as any).zPatternValues) {
-                            // 如果后端给的是 number[]，包一层；如果给的是二维，直接使用
-                            const zpIdx = (sample as any).zPatternIndices;
-                            zPatternIndices = Array.isArray(zpIdx) && Array.isArray(zpIdx[0]) ? zpIdx : [zpIdx];
+                            const zpIdxRaw = (sample as any).zPatternIndices;
+                            zPatternIndices = Array.isArray(zpIdxRaw) && Array.isArray(zpIdxRaw[0]) ? zpIdxRaw : [zpIdxRaw];
                             zPatternValues = (sample as any).zPatternValues;
+
+                            try {
+                              const len = zPatternValues?.length || 0;
+                              console.log(`z_pattern_values shape: (${len},)`);
+                              // 打印全部索引和值
+                              console.log('z all idx:', zPatternIndices);
+                              console.log('z all val:', zPatternValues);
+                              // 识别格式并打印全部 pairs
+                              const looksLikePairList = Array.isArray(zPatternIndices?.[0]) && (zPatternIndices?.[0] as number[]).length === 2;
+                              if (looksLikePairList) {
+                                const pairsAll = (zPatternIndices || []).map((p, i) => ([p, (zPatternValues || [])[i]]));
+                                console.log('z pairs (all):', pairsAll);
+                              } else {
+                                const pairs: Array<[number[], number]> = [];
+                                for (let t = 0; t < (zPatternIndices || []).length; t++) {
+                                  const srcs = zPatternIndices?.[t] || [];
+                                  const v = (zPatternValues || [])[t];
+                                  for (const s of srcs) {
+                                    pairs.push([[s, t], v]);
+                                  }
+                                }
+                                console.log('z pairs (all 展开为[source,target]):', pairs);
+                              }
+                            } catch (e) {
+                              console.warn('打印z_pattern调试信息时出错:', e);
+                            }
                           }
 
-                          // 使用 ChessBoard 组件
+                          // 使用增强版 AnalysisChessBoard 组件
                           chessBoards.push(
-                            <div 
+                            <AnalysisChessBoard
                               key={`chess-${groupIndex}-${sampleIndex}-${lineIndex}`}
-                              className="bg-white p-4 rounded-lg border shadow-sm"
-                            >
-                              <ChessBoard
-                                fen={trimmed}
-                                activations={activationsArray}
-                                zPatternIndices={zPatternIndices}
-                                zPatternValues={zPatternValues}
-                                sampleIndex={sampleIndex}
-                                analysisName={group.analysisName || ''}
-                                contextId={(sample as any).context_idx}
-                              />
-                            </div>
+                              fen={trimmed}
+                              activations={activationsArray}
+                              zPatternIndices={zPatternIndices}
+                              zPatternValues={zPatternValues}
+                              sampleIndex={sampleIndex}
+                              analysisName={group.analysisName || ''}
+                              contextId={(sample as any).context_idx}
+                              delayMs={validFENFound * 1000} // 每个棋盘延迟1秒分析，避免同时请求
+                              autoAnalyze={globalAnalysisEnabled}
+                              globalAnalysisCollapsed={globalAnalysisCollapsed}
+                            />
                           );
                           
                           validFENFound++;
@@ -486,6 +810,54 @@ export const FeaturesPage = () => {
                   <h3 className="text-xl font-bold mb-2">Feature #{feature.featureIndex} 棋盘可视化</h3>
                   <div className="text-sm text-gray-600">
                     找到 {validFENFound} 个包含FEN的样本
+                      </div>
+                    </div>
+                    
+                    {/* 全局分析控制面板 */}
+                    <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                      <h4 className="text-lg font-medium mb-3 text-blue-800">🧠 Stockfish 分析控制</h4>
+                      <div className="flex flex-wrap gap-4 items-center">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={globalAnalysisEnabled}
+                            onChange={(e) => setGlobalAnalysisEnabled(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm">启用自动分析</span>
+                        </label>
+                        
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={globalAnalysisCollapsed}
+                            onChange={(e) => setGlobalAnalysisCollapsed(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm">折叠所有分析详情</span>
+                        </label>
+                        
+                        <button
+                          onClick={() => globalAnalysisStateManager.clear()}
+                          className="px-3 py-1 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200"
+                        >
+                          清除分析缓存
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            // 强制重新分析所有棋盘
+                            globalAnalysisStateManager.clear();
+                            window.location.reload();
+                          }}
+                          className="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200"
+                        >
+                          重新分析全部
+                        </button>
+                        
+                        <div className="text-xs text-blue-600">
+                          💡 分析会自动延迟执行，避免同时请求过多
+                        </div>
                       </div>
                     </div>
                     

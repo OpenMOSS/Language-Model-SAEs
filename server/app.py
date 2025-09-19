@@ -22,6 +22,10 @@ from lm_saes.config import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
+import subprocess
+import json
+import tempfile
+import os
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -782,6 +786,157 @@ def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = N
         return {"message": "Bookmark updated successfully"}
     else:
         return Response(content="Bookmark not found", status_code=404)
+
+
+@app.post("/analyze/stockfish")
+def analyze_stockfish(request: dict):
+    """使用 Stockfish 分析国际象棋位置
+    
+    Args:
+        request: 包含 FEN 字符串的请求体
+        
+    Returns:
+        Stockfish 分析结果
+    """
+    try:
+        fen = request.get("fen")
+        if not fen:
+            return Response(content="FEN string is required", status_code=400)
+        
+        # 验证 FEN 格式（基本检查）
+        parts = fen.split()
+        if len(parts) < 4:
+            return Response(content="Invalid FEN format", status_code=400)
+        
+        # 检查 Stockfish 是否可用
+        try:
+            result = subprocess.run(
+                ["stockfish", "--version"], 
+                capture_output=True, 
+                text=True, 
+                timeout=5
+            )
+            if result.returncode != 0:
+                return Response(content="Stockfish not available", status_code=503)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return Response(content="Stockfish not found or not responding", status_code=503)
+        
+        # 创建临时文件用于 Stockfish 输入
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+            f.write(f"position fen {fen}\n")
+            f.write("go depth 15\n")
+            f.write("quit\n")
+            temp_file = f.name
+        
+        try:
+            # 运行 Stockfish 分析
+            result = subprocess.run(
+                ["stockfish"],
+                stdin=open(temp_file, 'r'),
+                capture_output=True,
+                text=True,
+                timeout=30  # 30秒超时
+            )
+            
+            if result.returncode != 0:
+                return Response(content=f"Stockfish analysis failed: {result.stderr}", status_code=500)
+            
+            # 解析 Stockfish 输出
+            output_lines = result.stdout.strip().split('\n')
+            
+            # 提取最佳走法
+            best_move = None
+            ponder = None
+            evaluation = None
+            depth = None
+            nodes = None
+            
+            for line in output_lines:
+                if line.startswith('bestmove'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        best_move = parts[1]
+                    if len(parts) >= 4 and parts[2] == 'ponder':
+                        ponder = parts[3]
+                elif 'info' in line and 'depth' in line:
+                    # 解析评估信息
+                    info_parts = line.split()
+                    for i, part in enumerate(info_parts):
+                        if part == 'depth' and i + 1 < len(info_parts):
+                            depth = int(info_parts[i + 1])
+                        elif part == 'score' and i + 1 < len(info_parts):
+                            if info_parts[i + 1] == 'cp':
+                                evaluation = int(info_parts[i + 2]) / 100.0  # 转换为兵值
+                            elif info_parts[i + 1] == 'mate':
+                                evaluation = float('inf') if int(info_parts[i + 2]) > 0 else float('-inf')
+                        elif part == 'nodes' and i + 1 < len(info_parts):
+                            nodes = int(info_parts[i + 1])
+            
+            # 计算胜率（基于评估值）
+            wdl = None
+            if evaluation is not None and evaluation != float('inf') and evaluation != float('-inf'):
+                # 使用简单的 sigmoid 函数估算胜率
+                import math
+                win_prob = 1 / (1 + math.exp(-evaluation / 0.7))
+                draw_prob = 0.1  # 简化假设
+                loss_prob = 1 - win_prob - draw_prob
+                
+                wdl = {
+                    "winProb": max(0, min(1, win_prob)),
+                    "drawProb": max(0, min(1, draw_prob)),
+                    "lossProb": max(0, min(1, loss_prob))
+                }
+            
+            # 检查将军状态
+            is_check = False
+            if 'check' in result.stdout.lower():
+                is_check = True
+            
+            # 计算物质力量（简化版本）
+            material = {
+                "white_material": 0,
+                "black_material": 0
+            }
+            
+            # 从 FEN 中计算物质力量
+            board_part = fen.split()[0]
+            piece_values = {
+                'p': 1, 'n': 3, 'b': 3, 'r': 5, 'q': 9, 'k': 0,
+                'P': 1, 'N': 3, 'B': 3, 'R': 5, 'Q': 9, 'K': 0
+            }
+            
+            for char in board_part:
+                if char in piece_values:
+                    if char.isupper():
+                        material["white_material"] += piece_values[char]
+                    else:
+                        material["black_material"] += piece_values[char]
+            
+            response_data = {
+                "status": "success",
+                "fen": fen,
+                "bestMove": best_move,
+                "ponder": ponder,
+                "evaluation": evaluation,
+                "depth": depth,
+                "nodes": nodes,
+                "wdl": wdl,
+                "isCheck": is_check,
+                "material": material,
+                "rules": "Standard chess rules apply"
+            }
+            
+            return response_data
+            
+        finally:
+            # 清理临时文件
+            if os.path.exists(temp_file):
+                os.unlink(temp_file)
+                
+    except subprocess.TimeoutExpired:
+        return Response(content="Stockfish analysis timeout", status_code=504)
+    except Exception as e:
+        return Response(content=f"Analysis error: {str(e)}", status_code=500)
 
 
 app.add_middleware(

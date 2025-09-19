@@ -44,3 +44,54 @@ export const hex = (token: Token | Uint8Array): string => {
     ""
   );
 };
+
+// Helper function to get z pattern for a specific token index
+export const getZPatternForToken = (
+  zPatternIndices: number[][] | null | undefined,
+  zPatternValues: number[] | null | undefined,
+  tokenIndex: number
+): { contributingTokens: number[]; contributions: number[] } => {
+  if (!zPatternIndices || !zPatternValues) {
+    return { contributingTokens: [], contributions: [] };
+  }
+
+  const contributingTokens: number[] = [];
+  const contributions: number[] = [];
+
+  // Find all z pattern entries that contribute to this token
+  for (let i = 0; i < zPatternIndices[0].length; i++) {
+    const indices = zPatternIndices[0][i];
+    
+    if (indices === tokenIndex) {
+      contributingTokens.push(zPatternIndices[1][i]);
+      contributions.push(zPatternValues[i]);
+    }
+  }
+
+  return { contributingTokens, contributions };
+};
+
+// Helper function to find the highest activating token
+export const findHighestActivatingToken = (
+  featureActsIndices: number[],
+  featureActsValues: number[]
+): { tokenIndex: number; activationValue: number } | null => {
+  if (featureActsIndices.length === 0 || featureActsValues.length === 0) {
+    return null;
+  }
+
+  let maxIndex = 0;
+  let maxValue = featureActsValues[0];
+
+  for (let i = 1; i < featureActsValues.length; i++) {
+    if (featureActsValues[i] > maxValue) {
+      maxValue = featureActsValues[i];
+      maxIndex = i;
+    }
+  }
+
+  return {
+    tokenIndex: featureActsIndices[maxIndex],
+    activationValue: maxValue,
+  };
+};

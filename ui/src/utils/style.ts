@@ -1,7 +1,7 @@
 export const getAccentClassname = (
   featureAct: number,
   maxFeatureAct: number,
-  variant: "text" | "bg" | "border" | "*:stroke"
+  variant: "text" | "bg" | "border" | "zpattern" | "*:stroke"
 ) => {
   const textAccentClassnames = [
     null,
@@ -30,6 +30,15 @@ export const getAccentClassname = (
     "border-orange-500",
   ];
 
+  const zPatternAccentClassnames = [
+    null,
+    "bg-green-100",
+    "bg-green-200",
+    "bg-green-300",
+    "bg-green-400",
+    "bg-green-500",
+  ];
+
   const strokeAccentClassnames = [
     null,
     "*:stroke-gray-300",
@@ -43,6 +52,7 @@ export const getAccentClassname = (
     (variant === "text" && textAccentClassnames) ||
     (variant === "bg" && bgAccentClassnames) ||
     (variant === "border" && borderAccentClassnames) ||
+    (variant === "zpattern" && zPatternAccentClassnames) ||
     strokeAccentClassnames;
 
   return accentClassnames[Math.ceil(Math.min(featureAct / maxFeatureAct, 1) * (accentClassnames.length - 1))];

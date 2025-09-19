@@ -82,21 +82,10 @@ export const FeatureLinkWithPreview = ({
   dictionaryName: string;
   featureIndex: number;
 }) => {
-  // 检查当前是否在circuits页面
-  const isInCircuits = window.location.pathname === '/circuits';
-  
-  const getFeatureUrl = () => {
-    const baseUrl = `/features?dictionary=${encodeURIComponent(dictionaryName)}&featureIndex=${featureIndex}`;
-    if (isInCircuits) {
-      return `${baseUrl}&from=circuits&feature=${encodeURIComponent(`${dictionaryName}.${featureIndex}`)}`;
-    }
-    return baseUrl;
-  };
-
   return (
     <HoverCard>
       <HoverCardTrigger>
-        <Link to={getFeatureUrl()}>
+        <Link to={`/features?dictionary=${encodeURIComponent(dictionaryName)}&featureIndex=${featureIndex}`}>
           #{featureIndex}
         </Link>
       </HoverCardTrigger>
