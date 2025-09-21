@@ -6,7 +6,7 @@ import torch
 from transformers import AutoTokenizer
 from pydantic import BaseModel
 
-from ..graph import Graph, prune_graph
+from ..graph_lc0 import Graph, prune_graph
 from ..leela_board import *
 
 from typing import Callable, Optional
@@ -47,7 +47,8 @@ class Node(BaseModel):
         super().__init__(**data)
 
     @classmethod
-    def feature_node(cls, layer, pos, feat_idx, is_lorsa, influence=None, activation=None):
+    def feature_node(cls, layer, pos, feat_idx, is_lorsa, influence=None, 
+                     activation=None):
         """Create a feature node."""
 
         def cantor_pairing(x, y):
@@ -124,10 +125,24 @@ class Link(BaseModel):
     weight: float
 
 
+class ActivationInfo(BaseModel):
+    featureId: int
+    type: str  # 'lorsa' or 'tc'
+    layer: int
+    position: int
+    head_idx: int | None = None  # for lorsa features
+    feature_idx: int | None = None  # for tc features
+    activation_value: float
+    activations: List[float]  # 64位置的激活数组
+    zPatternIndices: List[List[int]] | None = None  # [[q_positions], [k_positions]]
+    zPatternValues: List[float] | None = None  # z_pattern值
+
+
 class Model(BaseModel):
     metadata: Metadata
     nodes: List[Node]
     links: List[dict]
+    activation_info: List[ActivationInfo] | None = None  # 全局激活信息
 
 
 def process_token(token: str) -> str:
@@ -151,7 +166,7 @@ def create_nodes(
     graph: Graph,
     node_mask: torch.Tensor,
     cumulative_scores: torch.Tensor,
-    to_uci: Optional[Callable[[int], str]] = None,   # ← 新增
+    to_uci: Optional[Callable[[int], str]] = None,
 ):
     """Create all nodes for the graph."""
     start_time = time.time()
@@ -167,7 +182,6 @@ def create_nodes(
         if node_idx in range(n_features):
             orig_feature_idx = int(graph.selected_features[node_idx])
             is_lorsa = orig_feature_idx < len(graph.lorsa_active_features)
-            print(f'{orig_feature_idx = }')
             if is_lorsa:
                 layer, pos, feat_idx = (
                     graph.lorsa_active_features[orig_feature_idx].tolist()
@@ -187,7 +201,6 @@ def create_nodes(
                 activation_value = (
                     graph.tc_activation_values[orig_feature_idx]
                 )
-                
             nodes[node_idx] = Node.feature_node(
                 layer=layer,
                 pos=pos,
@@ -246,6 +259,35 @@ def create_nodes(
     logger.info(f"Total node creation: {total_time=:.2f} ms")
 
     return nodes
+
+
+def extract_activation_info(graph: Graph) -> List[ActivationInfo] | None:
+    """从graph中提取激活信息到统一格式"""
+    if graph.activation_info is None:
+        return None
+        
+    activation_info_list = []
+    
+    # 优先使用k side，如果没有则使用q side
+    for side in ['k', 'q']:
+        if side in graph.activation_info and graph.activation_info[side] is not None:
+            features = graph.activation_info[side].get('features', [])
+            for feature_info in features:
+                activation_info_list.append(ActivationInfo(
+                    featureId=feature_info['featureId'],
+                    type=feature_info['type'],
+                    layer=feature_info['layer'],
+                    position=feature_info['position'],
+                    head_idx=feature_info.get('head_idx'),
+                    feature_idx=feature_info.get('feature_idx'),
+                    activation_value=feature_info['activation_value'],
+                    activations=feature_info['activations'],
+                    zPatternIndices=feature_info.get('zPatternIndices'),
+                    zPatternValues=feature_info.get('zPatternValues'),
+                ))
+            break  # 找到一个side就停止
+    
+    return activation_info_list if activation_info_list else None
 
 
 def create_used_nodes_and_edges(graph: Graph, nodes, edge_mask):
@@ -319,10 +361,14 @@ def build_model(
         target_move=target_move,             # ← 写入
     )
 
+    # 提取激活信息
+    activation_info = extract_activation_info(graph)
+    
     full_model = Model(
         metadata=meta,
         nodes=used_nodes,
         links=used_edges,
+        activation_info=activation_info,
     )
 
     time_ms = (time.time() - start_time) * 1000
