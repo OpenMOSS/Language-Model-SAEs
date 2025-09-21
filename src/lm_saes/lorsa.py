@@ -634,7 +634,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     @torch.no_grad()
     def standardize_parameters_of_dataset_norm(self):
         """Standardize parameters for dataset norm."""
-        print("standardize_parameters_of_dataset_norm")
         assert self.cfg.norm_activation == "dataset-wise"
         assert self.dataset_average_activation_norm is not None
 

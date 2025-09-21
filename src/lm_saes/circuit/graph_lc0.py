@@ -19,6 +19,7 @@ class Graph:
     cfg: HookedTransformerConfig
     sae_series: Optional[Union[str, List[str]]]
     slug: str
+    activation_info: Optional[dict]  # 新增：激活信息和z_pattern
 
     def __init__(
         self,
@@ -26,6 +27,7 @@ class Graph:
         input_tokens: torch.Tensor,
         logit_tokens: torch.Tensor,
         logit_probabilities: torch.Tensor,
+        logit_position: int,
         lorsa_active_features: torch.Tensor,
         lorsa_activation_values: torch.Tensor,
         tc_active_features: torch.Tensor,
@@ -35,29 +37,39 @@ class Graph:
         cfg: HookedTransformerConfig,
         slug: str = "untitled",
         sae_series: Optional[Union[str, List[str]]] = None,
+        activation_info: Optional[dict] = None,
     ):
         """
-        A graph object containing the adjacency matrix describing the direct effect of each
-        node on each other. Nodes are either non-zero transcoder features (TC), transcoder errors,
-        tokens, or logits. They are stored in the order [tc_active_features[0], ..., error[layer0][position0], ...,
+        A graph object containing the adjacency matrix describing the direct 
+        effect of each node on each other. Nodes are either non-zero transcoder 
+        features (TC), transcoder errors, tokens, or logits. They are stored in 
+        the order [tc_active_features[0], ..., error[layer0][position0], ...,
         tokens[0], ..., logits[top-1 logit], ...].
 
         Args:
             input_string (str): The input string attributed.
             input_tokens (torch.Tensor): The input tokens attributed.
             logit_tokens (torch.Tensor): The logit tokens attributed from.
-            logit_probabilities (torch.Tensor): The probabilities of each logit token, given the input string.
-            tc_active_features (torch.Tensor): Indices (layer, pos, feature_idx) of non-zero TC features.
-            tc_activation_values (torch.Tensor): Activation values for TC features.
-            selected_features (torch.Tensor): Indices of selected features (for pruning, etc).
+            logit_probabilities (torch.Tensor): The probabilities of each logit 
+                token, given the input string.
+            tc_active_features (torch.Tensor): Indices (layer, pos, feature_idx) 
+                of non-zero TC features.
+            tc_activation_values (torch.Tensor): Activation values for TC 
+                features.
+            selected_features (torch.Tensor): Indices of selected features (for 
+                pruning, etc).
             adjacency_matrix (torch.Tensor): The adjacency matrix.
             cfg (HookedTransformerConfig): The cfg of the model.
-            sae_series (Optional[Union[str,List[str]]], optional): The identifier of the transcoders used in the graph.
+            sae_series (Optional[Union[str,List[str]]], optional): The 
+                identifier of the transcoders used in the graph.
+            activation_info (Optional[dict], optional): Activation information 
+                and z_patterns for features.
         """
         self.input_string = input_string
         self.adjacency_matrix = adjacency_matrix
         self.cfg = cfg
         self.n_pos = len(input_tokens)
+        self.logit_position = logit_position
         self.lorsa_active_features = lorsa_active_features
         self.lorsa_activation_values = lorsa_activation_values
         self.tc_active_features = tc_active_features
@@ -66,10 +78,12 @@ class Graph:
         self.logit_probabilities = logit_probabilities
         self.input_tokens = input_tokens
         if sae_series is None:
-            print("Graph loaded without sae_series to identify it. Uploading will not be possible.")
+            print("Graph loaded without sae_series to identify it. "
+                  "Uploading will not be possible.")
         self.sae_series = sae_series
         self.selected_features = selected_features
         self.slug = slug
+        self.activation_info = activation_info
 
     def to(self, device):
         """Send all relevant tensors to the device (cpu, cuda, etc.)"""
@@ -99,6 +113,7 @@ class Graph:
             "selected_features": self.selected_features,
             "sae_series": self.sae_series,
             "slug": self.slug,
+            "activation_info": self.activation_info,
         }
         torch.save(d, path)
 
@@ -133,6 +148,10 @@ class Graph:
         # Remove any lingering CLT keys
         d.pop("clt_active_features", None)
         d.pop("clt_activation_values", None)
+
+        # Handle activation_info (default to None if not present)
+        if "activation_info" not in d:
+            d["activation_info"] = None
 
         return Graph(**d)
 
