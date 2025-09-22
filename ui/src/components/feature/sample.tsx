@@ -6,6 +6,9 @@ import { cn } from "@/lib/utils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card";
 import { Switch } from "../ui/switch";
 import { Input } from "../ui/input";
+import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
+import { Download } from "lucide-react";
 
 export const FeatureSampleGroup = ({
   feature,
@@ -16,6 +19,11 @@ export const FeatureSampleGroup = ({
 }) => {
   const [page, setPage] = useState<number>(1);
   const [visibleRange, setVisibleRange] = useState<number>(50);
+  
+  // SVG Export state
+  const [selectedSamples, setSelectedSamples] = useState<Set<number>>(new Set());
+  const [svgWidth, setSvgWidth] = useState<number>(800);
+  const [svgOffset, setSvgOffset] = useState<number>(0);
   
   const maxPage = useMemo(() => Math.ceil(sampleGroup.samples.length / 10), [sampleGroup.samples.length]);
   
@@ -36,6 +44,253 @@ export const FeatureSampleGroup = ({
       setVisibleRange(value);
     }
   }, []);
+
+  // SVG Export handlers
+  const handleSampleSelection = useCallback((sampleIndex: number, checked: boolean) => {
+    const newSelected = new Set(selectedSamples);
+    if (checked) {
+      newSelected.add(sampleIndex);
+    } else {
+      newSelected.delete(sampleIndex);
+    }
+    setSelectedSamples(newSelected);
+  }, [selectedSamples]);
+
+  const handleSelectAll = useCallback((checked: boolean) => {
+    if (checked) {
+      const allSamples = new Set(currentSamples.map((_, i) => (page - 1) * 10 + i));
+      setSelectedSamples(allSamples);
+    } else {
+      setSelectedSamples(new Set());
+    }
+  }, [currentSamples, page]);
+
+  // SVG Export utility functions
+  const escapeXML = useCallback((text: string): string => {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }, []);
+
+  const downloadSVG = useCallback((content: string, filename: string) => {
+    const blob = new Blob([content], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const getColorFromActivation = useCallback((featureAct: number, maxFeatureAct: number): string => {
+    const intensity = Math.ceil(Math.min(featureAct / maxFeatureAct, 1) * 5);
+    
+    const colorMap: Record<number, string> = {
+      1: '#fff5e6',
+      2: '#ffe0b3',
+      3: '#ffcc80', 
+      4: '#ffb74d',
+      5: '#ffa726',
+    };
+    
+    return colorMap[intensity] || 'transparent';
+  }, []);
+
+  const exportSelectedSamplesToSVG = useCallback(() => {
+    if (selectedSamples.size === 0) {
+      alert('No samples selected for export');
+      return;
+    }
+
+    // SVG configuration
+    const fontSize = 16;
+    const fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif';
+    const lineHeight = fontSize * 1.2;
+    const lineSpacing = 2;
+
+    // Create a temporary canvas to measure text
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.font = `${fontSize}px ${fontFamily}`;
+
+    const svgElements: Array<{
+      type: 'rect' | 'text';
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      fill: string;
+      text?: string;
+    }> = [];
+    
+    let currentY = fontSize; // Start with baseline position for first line
+    let maxWidth = 0;
+
+    // Process each selected sample
+    const selectedSampleIndices = Array.from(selectedSamples).sort((a, b) => a - b);
+    
+    selectedSampleIndices.forEach((sampleIndex, _lineIndex) => {
+      const sample = sampleGroup.samples[sampleIndex];
+      if (!sample.text) return;
+
+      // Get text highlights for this sample
+      const textHighlights = sample.origins
+        .map((origin, index) => ({
+          origin,
+          featureAct: sample.featureActs[index],
+        }))
+        .filter((item): item is { origin: TextTokenOrigin; featureAct: number } => 
+          item.origin?.key === "text"
+        );
+
+      if (textHighlights.length === 0) return;
+
+      // Find max activation highlight for centering
+      const maxActivationHighlight = textHighlights.reduce(
+        (max, current) => (current.featureAct > max.featureAct ? current : max),
+        textHighlights[0]
+      );
+
+      // Create segments
+      const segments: Array<{
+        start: number;
+        end: number;
+        maxSegmentAct: number;
+      }> = [];
+      
+      const positions = new Set<number>();
+      textHighlights.forEach((h) => {
+        positions.add(h.origin.range[0]);
+        positions.add(h.origin.range[1]);
+      });
+      const sortedPositions = Array.from(positions).sort((a, b) => a - b);
+
+      for (let i = 0; i < sortedPositions.length - 1; i++) {
+        const start = sortedPositions[i];
+        const end = sortedPositions[i + 1];
+        const activeHighlights = textHighlights.filter(
+          (h) => h.origin.range[0] <= start && h.origin.range[1] >= end
+        );
+        if (activeHighlights.length > 0) {
+          const maxSegmentAct = Math.max(...activeHighlights.map((h) => h.featureAct));
+          segments.push({ start, end, maxSegmentAct });
+        }
+      }
+
+      // Filter visible segments based on visibleRange
+      const maxActivationSegmentIndex = segments.findIndex((segment) => {
+        const activeHighlights = textHighlights.filter(
+          (h) => h.origin.range[0] <= segment.start && h.origin.range[1] >= segment.end
+        );
+        return activeHighlights.some((h) => h.featureAct === maxActivationHighlight.featureAct);
+      });
+
+      const visibleSegments = segments.filter((_segment, index) => {
+        if (maxActivationSegmentIndex === -1) return true;
+        return Math.abs(index - maxActivationSegmentIndex) <= visibleRange;
+      });
+
+      // Calculate centering offset based on max activation token
+      let centeringOffset = 0;
+      if (maxActivationSegmentIndex >= 0 && visibleSegments.length > 0) {
+        const maxActivationSegment = segments[maxActivationSegmentIndex];
+        if (maxActivationSegment) {
+          // Calculate text width up to the max activation segment
+          let widthToMaxActivation = 0;
+          for (const segment of visibleSegments) {
+            if (segment.start >= maxActivationSegment.start) break;
+            const segmentText = sample.text.slice(segment.start, segment.end)
+              .replaceAll('\n', '↵')
+              .replaceAll('\t', '→');
+            widthToMaxActivation += ctx.measureText(segmentText).width;
+          }
+          centeringOffset = svgWidth / 2 - widthToMaxActivation;
+        }
+      }
+
+      // Apply offset parameter
+      let currentX = centeringOffset + svgOffset;
+
+      // Process each visible segment
+      visibleSegments.forEach((segment) => {
+        const segmentText = sample.text!
+          .slice(segment.start, segment.end)
+          .replaceAll('\n', '↵')
+          .replaceAll('\t', '→');
+        
+        const textWidth = ctx.measureText(segmentText).width;
+
+        if (segment.maxSegmentAct > 0) {
+          // Create background rectangle for highlight
+          svgElements.push({
+            type: 'rect',
+            x: currentX,
+            y: currentY - fontSize * 0.9,
+            width: textWidth,
+            height: fontSize * 1.2,
+            fill: getColorFromActivation(segment.maxSegmentAct, feature.maxFeatureAct),
+          });
+        }
+
+        // Create text element
+        svgElements.push({
+          type: 'text',
+          x: currentX,
+          y: currentY,
+          text: segmentText,
+          fill: '#333',
+        });
+
+        currentX += textWidth;
+        maxWidth = Math.max(maxWidth, currentX);
+      });
+
+      currentY += lineHeight + lineSpacing;
+    });
+
+    // Adjust total height
+    const totalHeight = currentY - lineHeight - lineSpacing + fontSize * 0.3;
+
+    // Generate SVG content
+    let svgContent = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${svgWidth}" height="${totalHeight}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .text-element {
+        font-family: ${fontFamily};
+        font-size: ${fontSize}px;
+        fill: #333;
+        dominant-baseline: alphabetic;
+        white-space: pre;
+      } 
+    </style>
+  </defs>
+`;
+
+    // Add all SVG elements
+    svgElements.forEach((element) => {
+      if (element.type === 'rect') {
+        svgContent += `  <rect x="${element.x}" y="${element.y}" width="${element.width}" height="${element.height}" fill="${element.fill}" stroke="none"/>
+`;
+      } else if (element.type === 'text') {
+        const escapedText = escapeXML(element.text!);
+        svgContent += `  <text x="${element.x}" y="${element.y}" class="text-element">${escapedText}</text>
+`;
+      }
+    });
+
+    svgContent += '</svg>';
+
+    // Download the SVG file
+    const filename = `feature-${feature.featureIndex}-activations.svg`;
+    downloadSVG(svgContent, filename);
+  }, [selectedSamples, sampleGroup.samples, visibleRange, svgWidth, svgOffset, feature.maxFeatureAct, feature.featureIndex, getColorFromActivation, escapeXML, downloadSVG]);
 
   return (
     <div className="flex flex-col gap-4 mt-4">
@@ -59,15 +314,64 @@ export const FeatureSampleGroup = ({
         </div>
       </div>
 
-      {currentSamples.map((sample, i) => (
-        <FeatureActivationSample
-          key={(page - 1) * 10 + i}
-          sample={sample}
-          sampleName={`Sample ${(page - 1) * 10 + i + 1}`}
-          maxFeatureAct={feature.maxFeatureAct}
-          visibleRange={visibleRange}
-        />
-      ))}
+      {/* SVG Export Controls */}
+      <div className="border rounded p-4 bg-gray-50">
+        <h4 className="font-bold mb-3">SVG Export Configuration</h4>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-4">
+            <Checkbox 
+              checked={selectedSamples.size === currentSamples.length && currentSamples.length > 0}
+              onCheckedChange={handleSelectAll}
+            />
+            <span className="text-sm font-medium">Select All ({selectedSamples.size} selected)</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-sm font-bold min-w-[80px]">Width:</div>
+            <Input
+              type="number"
+              value={svgWidth.toString()}
+              onChange={(e) => setSvgWidth(parseInt(e.target.value) || 800)}
+              className="w-[100px]"
+              min={100}
+            />
+            <div className="text-sm text-muted-foreground">pixels</div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-sm font-bold min-w-[80px]">Offset:</div>
+            <Input
+              type="number"
+              value={svgOffset.toString()}
+              onChange={(e) => setSvgOffset(parseInt(e.target.value) || 0)}
+              className="w-[100px]"
+            />
+            <div className="text-sm text-muted-foreground">pixels</div>
+          </div>
+          <Button 
+            onClick={exportSelectedSamplesToSVG}
+            disabled={selectedSamples.size === 0}
+            className="w-fit"
+            size="sm"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Export SVG ({selectedSamples.size} samples)
+          </Button>
+        </div>
+      </div>
+
+      {currentSamples.map((sample, i) => {
+        const sampleIndex = (page - 1) * 10 + i;
+        return (
+          <FeatureActivationSample
+            key={sampleIndex}
+            sample={sample}
+            sampleName={`Sample ${sampleIndex + 1}`}
+            maxFeatureAct={feature.maxFeatureAct}
+            visibleRange={visibleRange}
+            isSelected={selectedSamples.has(sampleIndex)}
+            onSelectionChange={(checked) => handleSampleSelection(sampleIndex, checked)}
+          />
+        );
+      })}
       <AppPagination page={page} setPage={setPage} maxPage={maxPage} />
     </div>
   );
@@ -106,6 +410,8 @@ export type FeatureActivationSampleProps = {
   sampleName: string;
   maxFeatureAct: number;
   visibleRange?: number;
+  isSelected?: boolean;
+  onSelectionChange?: (checked: boolean) => void;
 };
 
 export const FeatureActivationSample = memo(({
@@ -113,6 +419,8 @@ export const FeatureActivationSample = memo(({
   sampleName,
   maxFeatureAct,
   visibleRange,
+  isSelected = false,
+  onSelectionChange,
 }: FeatureActivationSampleProps) => {
   // Memoize text highlights processing
   const textHighlights = useMemo(() => 
@@ -207,7 +515,15 @@ export const FeatureActivationSample = memo(({
 
   return (
     <div className="border rounded p-4 w-full flex flex-col gap-2">
-      <h3 className="font-bold mb-2">{sampleName}</h3>
+      <div className="flex items-center gap-3 mb-2">
+        {onSelectionChange && (
+          <Checkbox
+            checked={isSelected}
+            onCheckedChange={onSelectionChange}
+          />
+        )}
+        <h3 className="font-bold">{sampleName}</h3>
+      </div>
 
       <div className="flex flex-col gap-4 w-full">
         <div className="flex gap-4 w-full justify-between">
