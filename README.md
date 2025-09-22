@@ -1,95 +1,88 @@
-# Language-Model-SAEs
+# Codes for Evolution of Concepts in Language Model Pre-Training
 
-## News
+## Install the Environment
 
-- 2025.4.29 We introduce **Low-Rank Sparse Attention (Lorsa)** to attack attention superposition, extracting tens of thousands of true attention units from LLM attention layers. Link: [Towards Understanding the Nature of Attention with Low-Rank Sparse Decomposition](https://arxiv.org/abs/2504.20938)
-
-- 2024.10.29 We introduce **Llama Scope**, our first contribution to the open-source Sparse Autoencoder ecosystem. Stay tuned! Link: [Llama Scope: Extracting Millions of Features from Llama-3.1-8B with Sparse Autoencoders](http://arxiv.org/abs/2410.20526)
-
-- 2024.10.9 Transformers and Mambas are mechanistically similar in both feature and circuit level. Can we follow this line and find **universal motifs and fundamental differences between language model architectures**? Link: [Towards Universality: Studying Mechanistic Similarity Across Language Model Architectures](https://arxiv.org/pdf/2410.06672)
-
-- 2024.5.22 We propose hierarchical tracing, a promising method to **scale up sparse feature circuit analysis** to industrial size language models! Link: [Automatically Identifying Local and Global Circuits with Linear Computation Graphs](https://arxiv.org/pdf/2405.13868)
-
-- 2024.2.19 Our first attempt on SAE-based circuit analysis for Othello-GPT leads us to **an example of Attention Superposition in the wild**! Link: [Dictionary learning improves patch-free circuit discovery in mechanistic interpretability: A case study on othello-gpt](https://arxiv.org/pdf/2402.12201).
-
-## Installation
-
-Currently, the codebase use [pdm](https://pdm-project.org/) to manage the dependencies, which is an alternative to [poetry](https://python-poetry.org/). To install the required packages, just install `pdm`, and run the following command:
+We use [uv](https://docs.astral.sh/uv/getting-started/installation/) as the dependency manager. Install `uv`, and run:
 
 ```bash
-pdm install
+uv sync --extra default
 ```
 
-This will install all the required packages for the core codebase. Note that if you're in a conda environment, `pdm` will directly take the current environment as the virtual environment for current project, and remove all the packages that are not in the `pyproject.toml` file. So make sure to create a new conda environment (or just deactivate conda, this will use virtualenv by default) before running the above command. A forked version of `TransformerLens` is also included in the dependencies to provide the necessary tools for analyzing features.
+to fetch all dependencies.
 
-If you want to use the visualization tools, you also need to install the required packages for the frontend, which uses [bun](https://bun.sh/) for dependency management. Follow the instructions on the website to install it, and then run the following command:
+## Replicate the Crosscoders
+
+To replicate our key results, you need to generate Pythia model activations, train the crosscoders, and analyze the crosscoders.
+
+### Requirements
+
+The following instructions assume you have access to a GPU cluster with at least 16 NVIDIA A100s/H100s or better GPUs, with CUDA version 12.8. With some simple modifications (e.g. change all `"cuda"` to `"npu"`, and install the environment by `uv sync --extra npu`), these codes can also run on an NPU cluster with at least 32 Ascend 910B or better NPUs. The cluster should have a large disk space (>200T) to save all model activations.
+
+Our scripts also require you have a subset of the SlimPajama dataset saved by `dataset.save_to_disk()` at `~/data/SlimPajama-3B`, and all Pythia model checkpoints at `~/models/pythia-{size}-all/step{step}`, where `size` can be `160m` or `6.9b`.
+
+### Generate Activations
+
+Two types of model activations are required for training and analyzing crosscoders:
+
+1. **1D Activations:** Activations where the context dimension folds into the batch dimension and re-shuffled. Typically with the shape of `(batch, d_model)`. Use for crosscoder training.
+2. **2D Activations:** Activations where the context dimension is reserved. Typically with the shape of `(batch, n_context, d_model)`. Use for crosscoder analyzing.
+
+To generate 1D activations of Pythia-160M, run:
+
+```bash
+uv run torchrun --nproc-per-node=8 scripts/generate-pythia-activations-1d.py --size 160m --layer 6
+```
+
+This will take up ~40T disk space.
+
+To generate 2D activations of Pythia-160M, run:
+
+```bash
+uv run torchrun --nproc-per-node=8 scripts/generate-pythia-activations-2d.py --size 160m --layer 6
+```
+
+To generate 1D activations of Pythia-6.9B, run:
+
+```bash
+uv run torchrun --nproc-per-node=8 scripts/generate-pythia-activations-1d.py --size 6.9b --layer 16
+```
+
+This will take up ~170T disk space.
+
+To generate 2D activations of Pythia-160M, run:
+
+```bash
+uv run torchrun --nproc-per-node=8 scripts/generate-pythia-activations-2d.py --size 6.9b --layer 16
+```
+
+### Training Crosscoders
+
+To train crosscoders on Pythia-160M, run:
+
+```bash
+uv run torchrun --nproc-per-node=8 scripts/train-pythia-crosscoders.py --init_encoder_factor 1 --lr 5e-5 --l1_coefficient 0.3 --jumprelu_lr_factor 0.1 --layer 6 --expansion_factor 32 --batch_size 2048
+```
+
+To train crosscoders on Pythia-6.9B, run:
+
+```bash
+uv run --extra npu torchrun --nproc-per-node=8 --nnodes=2 scripts/train-pythia-crosscoders.py --init_encoder_factor 1 --lr 1e-5 --l1_coefficient 0.3 --jumprelu_lr_factor 0.3 --layer 16 --expansion_factor 8 --batch_size 2048 --size 6.9b # Require 2 nodes
+```
+
+You can modify the `expansion_factor` to get crosscoders with different dictionary sizes, and modify the `l1_coefficient` to move the trade-off between sparsity and reconstruction fidelity.
+
+### Analyze Crosscoders
+
+To analyze trained crosscoders, you should first have a MongoDB instance run at `localhost:27017`, and run
+
+```bash
+uv run scripts/analyze-pythia-crosscoder.py --name <crosscoder-name> --batch-size 16
+```
+
+where `<crosscoder-name>` is the name of your trained crosscoder. Results will be saved to the MongoDB. Afterwards, you can use our visualization tool to view the features:
 
 ```bash
 cd ui
 bun install
-```
-
-`bun` is not well-supported on Windows, so you may need to use WSL or other Linux-based solutions to run the frontend, or consider using a different package manager, such as `pnpm` or `yarn`.
-
-## Launch an Experiment
-
-We provide both a programmatic and a configuration-based way to launch an experiment. The configuration-based way is more flexible and recommended for most users. You can find the configuration files in the [examples/configuration](https://github.com/OpenMOSS/Language-Model-SAEs/tree/main/examples/configuration) directory, and modify them to fit your needs. The programmatic way is more suitable for advanced users who want to customize the training process, and you can find the example scripts in the [examples/programmatic](https://github.com/OpenMOSS/Language-Model-SAEs/tree/main/examples/programmatic) directory.
-
-To simply begin a training process, you can run the following command:
-
-```bash
-lm-saes train examples/configuration/train.toml
-```
-
-which will start the training process using the configuration file [examples/configuration/train.toml](https://github.com/OpenMOSS/Language-Model-SAEs/tree/main/examples/configuration/train.toml).
-
-To analyze a trained dictionary, you can run the following command:
-
-```bash
-lm-saes analyze examples/configuration/analyze.toml --sae <path_to_sae_model>
-```
-
-which will start the analysis process using the configuration file [examples/configuration/analyze.toml](https://github.com/OpenMOSS/Language-Model-SAEs/tree/main/examples/configuration/analyze.toml). The analysis process requires a trained SAE model, which can be obtained from the training process. You may need launch a MongoDB server to store the analysis results, and you can modify the MongoDB settings in the configuration file.
-
-Generally, our configuration-based pipeline uses outer layer settings as default of the inner layer settings. This is beneficial for easily building deeply nested configurations, where sub-configurations can be reused (such as device and dtype settings). More detail will be provided future.
-
-## Visualizing the Learned Dictionary
-
-The analysis results will be saved using MongoDB, and you can use the provided visualization tools to visualize the learned dictionary. First, start the FastAPI server by running the following command:
-
-```bash
-uvicorn server.app:app --port 24577 --env-file server/.env
-```
-
-Then, copy the `ui/.env.example` file to `ui/.env` and modify the `VITE_BACKEND_URL` to fit your server settings (by default, it's `http://localhost:24577`), and start the frontend by running the following command:
-
-```bash
-cd ui
-bun dev --port 24576
-```
-
-That's it! You can now go to `http://localhost:24576` to visualize the learned dictionary and its features.
-
-## Development
-
-We highly welcome contributions to this project. If you have any questions or suggestions, feel free to open an issue or a pull request. We are looking forward to hearing from you!
-
-TODO: Add development guidelines
-
-## Acknowledgement
-
-The design of the pipeline (including the configuration and some training details) is highly inspired by the [mats_sae_training
-](https://github.com/jbloomAus/mats_sae_training) project (now known as [SAELens](https://github.com/jbloomAus/SAELens)) and heavily relies on the [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) library. We thank the authors for their great work.
-
-## Citation
-
-Please cite this library as:
-
-```
-@misc{Ge2024OpenMossSAEs,
-    title  = {OpenMoss Language Model Sparse Autoencoders},
-    author = {Xuyang Ge, Fukang Zhu, Junxuan Wang, Wentao Shu, Lingjie Chen, Zhengfu He},
-    url    = {https://github.com/OpenMOSS/Language-Model-SAEs},
-    year   = {2024}
-}
+bun run dev
 ```

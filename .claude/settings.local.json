@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ruff check:*)",
+      "Bash(ruff format:*)",
+      "Bash(basedpyright:*)"
+    ],
+    "deny": []
+  }
+}
