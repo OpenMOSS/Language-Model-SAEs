@@ -272,17 +272,17 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
       </div>
 
       {/* Connections */}
-      <div className="connections flex-1 flex overflow-hidden gap-5">
+      <div className="connections flex-1 flex gap-5 min-h-0">
         {connectionTypes.map(type => (
           <div
             key={type.id}
-            className={`features flex-1 ${type.id === 'output' ? 'output' : 'input'}`}
+            className={`features flex-1 flex flex-col min-h-0 ${type.id === 'output' ? 'output' : 'input'}`}
           >
-            <div className="section-title text-lg font-semibold mb-2 text-gray-800">
+            <div className="section-title text-lg font-semibold mb-2 text-gray-800 flex-shrink-0">
               {type.title}
             </div>
             
-            <div className="effects space-y-2">
+            <div className="effects space-y-2 flex-1 overflow-y-auto pr-2">
               {type.sections.map(section => (
                 <div key={section.title} className="section">
                   <h4 className={`text-sm font-medium mb-1 px-2 py-1 rounded ${

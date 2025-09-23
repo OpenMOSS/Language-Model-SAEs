@@ -37,7 +37,7 @@ from transformer_lens.hook_points import HookPoint
 from .graph_lc0 import Graph
 from .replacement_lc0_model import ReplacementModel
 from .utils.disk_offload import offload_modules
-from .utils.create_graph_files import create_graph_files, ActivationInfo
+from .utils.create_graph_files import create_graph_files
 
 from ..utils.logging import get_distributed_logger
 
@@ -1770,15 +1770,24 @@ def _run_attribution(
 ) -> Dict[str, Any]:
     start_time = time.time()
 
-    # ========== 类型检查 ============
-    if order_mode == 'move_pair':
-        assert isinstance(move_idx, tuple), f"move_idx must be a tuple in movepair mode, now it is {type(move_idx)}"
-        move_idx, negative_move_idx = move_idx[0], move_idx[1]
+    # ========== 类型检查和move索引处理 ============
+    positive_move_idx = None
+    negative_move_idx = None
+    
+    if order_mode == 'positive':
+        positive_move_idx = move_idx
+        print(f'{positive_move_idx = }')
+    elif order_mode == 'negative':
+        negative_move_idx = move_idx
+        print(f'{negative_move_idx = }')
+    elif order_mode == 'move_pair':
+        assert isinstance(move_idx, tuple), f"move_idx must be a tuple in move_pair mode, now it is {type(move_idx)}"
+        positive_move_idx, negative_move_idx = move_idx[0], move_idx[1]
+        print(f'{positive_move_idx = }, {negative_move_idx = }')
     elif order_mode == 'group':
-        assert side =='k', f"side must be k during attributing in the group mode"
-        negative_move_idx = None
-    else:
-        negative_move_idx = None
+        assert side == 'k', f"side must be k during attributing in the group mode"
+        positive_move_idx = move_idx
+        print(f'{positive_move_idx = }')
         
     # ========== Phase 0: 预计算 ==========
     logger.info("Phase 0: Precomputing activations and vectors")
@@ -1844,33 +1853,51 @@ def _run_attribution(
     n_layers, n_pos, _ = tc_activation_matrix.shape
     total_active_feats = lorsa_activation_matrix._nnz() + tc_activation_matrix._nnz()
 
-    if order_mode == 'group':
-        print('compute logit info in group mode')
-        logit_idx, logit_p, logit_vecs_q, logit_vecs_k, move_positions, logit_vecs = compute_logit_gradients_wrt_group_k(
-            fen=fen,
-            logits=policy_out[0],
-            model=model,
-            residual_input=residual,
-            max_n_logits=max_n_logits,
-            desired_logit_prob=desired_logit_prob,
-            demean=False,
-            move_idx=move_idx,      
-        )
-    else:
-        # 计算与 Q/K 的 logit 梯度向量
-        logit_idx, logit_p, logit_vecs_q, logit_vecs_k, move_positions, logit_vecs = compute_logit_gradients_wrt_qk(
-            fen=fen,
-            logits=policy_out[0],
-            model=model,
-            residual_input=residual,
-            max_n_logits=max_n_logits,
-            desired_logit_prob=desired_logit_prob,
-            demean=False,
-            move_idx=move_idx,
-        )
-    print(f'{move_positions = }')
+    # 初始化变量
+    logit_idx_positive = None
+    logit_p_positive = None
+    logit_vecs_q_positive = None
+    logit_vecs_k_positive = None
+    move_positions_positive = None
+    logit_vecs_positive = None
     
+    logit_idx_negative = None
+    logit_p_negative = None
+    logit_vecs_q_negative = None
+    logit_vecs_k_negative = None
+    move_positions_negative = None
+    logit_vecs_negative = None
+    
+    # 处理positive move (正数注入)
+    if positive_move_idx is not None:
+        if order_mode == 'group':
+            print('compute logit info in group mode')
+            logit_idx_positive, logit_p_positive, logit_vecs_q_positive, logit_vecs_k_positive, move_positions_positive, logit_vecs_positive = compute_logit_gradients_wrt_group_k(
+                fen=fen,
+                logits=policy_out[0],
+                model=model,
+                residual_input=residual,
+                max_n_logits=max_n_logits,
+                desired_logit_prob=desired_logit_prob,
+                demean=False,
+                move_idx=positive_move_idx,      
+            )
+        else:
+            print('compute positive logit gradients')
+            logit_idx_positive, logit_p_positive, logit_vecs_q_positive, logit_vecs_k_positive, move_positions_positive, logit_vecs_positive = compute_logit_gradients_wrt_qk(
+                fen=fen,
+                logits=policy_out[0],
+                model=model,
+                residual_input=residual,
+                max_n_logits=max_n_logits,
+                desired_logit_prob=desired_logit_prob,
+                demean=False,
+                move_idx=positive_move_idx,
+            )
+    
+    # 处理negative move (负数注入)
     if negative_move_idx is not None:
+        print('compute negative logit gradients')
         logit_idx_negative, logit_p_negative, logit_vecs_q_negative, logit_vecs_k_negative, move_positions_negative, logit_vecs_negative = compute_logit_gradients_wrt_qk(
             fen=fen,
             logits=policy_out[0],
@@ -1881,6 +1908,20 @@ def _run_attribution(
             demean=False,
             move_idx=negative_move_idx,
         )
+    
+    # 确定主要的logit信息（用于后续处理）
+    if positive_move_idx is not None:
+        logit_idx, logit_p, logit_vecs_q, logit_vecs_k, move_positions, logit_vecs = (
+            logit_idx_positive, logit_p_positive, logit_vecs_q_positive, 
+            logit_vecs_k_positive, move_positions_positive, logit_vecs_positive
+        )
+    else:
+        logit_idx, logit_p, logit_vecs_q, logit_vecs_k, move_positions, logit_vecs = (
+            logit_idx_negative, logit_p_negative, logit_vecs_q_negative,
+            logit_vecs_k_negative, move_positions_negative, logit_vecs_negative
+        )
+    
+    print(f'{move_positions = }')
 
 
     logger.info(
@@ -1912,6 +1953,15 @@ def _run_attribution(
         return torch.stack(vals).sum() if vals else b.new_zeros(())
 
     logger.info("Phase 3: Computing logit attributions")
+    if positive_move_idx is not None and negative_move_idx is not None:
+        logger.info("Note: Using DIFFERENTIAL gradient injection (positive - negative moves)")
+        print("Note: Using DIFFERENTIAL gradient injection (positive - negative moves)")
+    elif positive_move_idx is not None:
+        logger.info("Note: Using POSITIVE gradient injection to find features that promote the logit")
+        print("Note: Using POSITIVE gradient injection to find features that promote the logit")
+    elif negative_move_idx is not None:
+        logger.info("Note: Using NEGATIVE gradient injection to find features that suppress the logit")
+        print("Note: Using NEGATIVE gradient injection to find features that suppress the logit")
     phase_start = time.time()
     model.zero_grad(set_to_none=True)
 
@@ -1926,23 +1976,32 @@ def _run_attribution(
         else:      
             batch_move_positions_k = batch_move_positions[:, 1:2]
             batch_move_positions_q = batch_move_positions[:, 0:1]
-            batch_move_positions_q = batch_move_positions_q[0, 0].unsqueeze(0)
 
-        batch_q = logit_vecs_q[i : i + batch_size]
-        batch_k = logit_vecs_k[i : i + batch_size]
+        # 初始化注入值
+        if positive_move_idx is not None:
+            batch_q = torch.zeros_like(logit_vecs_q_positive[i : i + batch_size])
+            batch_k = torch.zeros_like(logit_vecs_k_positive[i : i + batch_size])
+        else:
+            batch_q = torch.zeros_like(logit_vecs_q_negative[i : i + batch_size])
+            batch_k = torch.zeros_like(logit_vecs_k_negative[i : i + batch_size])
         
+        # 处理positive梯度注入（正数）
+        if positive_move_idx is not None:
+            batch_q += logit_vecs_q_positive[i : i + batch_size]
+            batch_k += logit_vecs_k_positive[i : i + batch_size]
+        
+        # 处理negative梯度注入（负数）
         if negative_move_idx is not None:
-            batch_negative_k = logit_vecs_k_negative[i : i + batch_size]
-            batch_negative_q = logit_vecs_q_negative[i : i + batch_size]
-            batch_k = batch_k - batch_negative_k
-            batch_q = batch_q - batch_negative_q
+            batch_q -= logit_vecs_q_negative[i : i + batch_size]
+            batch_k -= logit_vecs_k_negative[i : i + batch_size]
             
-            
-            batch_move_position_negative = move_positions_negative[i : i + batch_size]
-            batch_move_positions_k_negative = batch_move_position_negative[:, 1:2]
-            batch_move_positions_q_negative = batch_move_position_negative[:, 0:1]
-            batch_move_positions_k = torch.cat([batch_move_positions_k, batch_move_positions_k_negative], dim=1)
-            batch_move_positions_q = torch.cat([batch_move_positions_q, batch_move_positions_q_negative], dim=1)
+            # 如果是move_pair模式，需要扩展位置信息
+            if order_mode == 'move_pair':
+                batch_move_position_negative = move_positions_negative[i : i + batch_size]
+                batch_move_positions_k_negative = batch_move_position_negative[:, 1:2]
+                batch_move_positions_q_negative = batch_move_position_negative[:, 0:1]
+                batch_move_positions_k = torch.cat([batch_move_positions_k, batch_move_positions_k_negative], dim=1)
+                batch_move_positions_q = torch.cat([batch_move_positions_q, batch_move_positions_q_negative], dim=1)
 
         non_zero_row = (batch_k[0] != 0).any(dim=-1)
 
@@ -1963,41 +2022,67 @@ def _run_attribution(
         bias_k = bias_attr_now(model)
 
         # 一致性检查
-        idx = batch_move_positions[0]
-        if negative_move_idx is not None:
-            idx_negative = batch_move_position_negative[0]
-        print(f'{idx.shape = }, {idx[0] = }, {idx[1] = }')
-        if is_castle:
-            if idx[1] == 2: idx[1] = 0
-            elif idx[1] == 6: idx[1] = 7
-
-        q_row_dots = (ctx._policy_q_activations[0][idx[0]] * logit_vecs_q[0][idx[0]]).sum()
-        k_row_dots = (ctx._policy_k_activations[0][idx[1]] * logit_vecs_k[0][idx[1]]).sum()
+        # 获取正确的设备和数据类型
+        device = ctx._policy_q_activations.device
+        dtype = ctx._policy_q_activations.dtype
         
-        if negative_move_idx is not None:
-            q_row_dots_negative = (ctx._policy_q_activations[0][idx_negative[0]] * logit_vecs_q_negative[0][idx_negative[0]]).sum()
-            k_row_dots_negative = (ctx._policy_k_activations[0][idx_negative[1]] * logit_vecs_k_negative[0][idx_negative[1]]).sum()
-            # print(f'q_row_dots_negative:{q_row_dots_negative = }')
-            # print(f'k_row_dots_negative:{k_row_dots_negative = }')
-            assert torch.allclose(bias_q + rows_q[0].sum(), q_row_dots - q_row_dots_negative, rtol=1e-3), f'{bias_q + rows_q[0].sum() = }, {q_row_dots = }, {q_row_dots_negative = }'
-            assert torch.allclose(bias_k + rows_k[0].sum(), k_row_dots - k_row_dots_negative, rtol=1e-3), f'{bias_k + rows_k[0].sum() = }, {k_row_dots = }, {k_row_dots_negative = }'
-        elif order_mode == 'group':
-            print(f'verify in group mode')
-            # idx[1]: [pos_k, neg_k1, neg_k2, ...]
-            k_pos = idx[1][0]
-            k_negs = idx[1][1:]
-            k_dot_pos = (ctx._policy_k_activations[0][k_pos] *
-                        logit_vecs_k[0][k_pos]).sum()
-            k_neg_component = (ctx._policy_k_activations[0].index_select(0, k_negs) *
-                            logit_vecs_k[0].index_select(0, k_negs)).sum()
+        idx = batch_move_positions[0]
+        print(f'{idx.shape = }, {idx[0] = }, {idx[1] = }')
+        
+        # 处理castle的位置调整（确保在正确的设备上）
+        idx_adjusted = idx.clone().to(device)
+        if is_castle:
+            if idx_adjusted[1] == 2: idx_adjusted[1] = 0
+            elif idx_adjusted[1] == 6: idx_adjusted[1] = 7
 
-            lhs = bias_k + rows_k[0].sum()
-            rhs = k_dot_pos + k_neg_component   # 注意是 +，因为 component 已含负号
-            assert torch.allclose(lhs, rhs, rtol=1e-3, atol=1e-6), (lhs, rhs)
-        else:
-            print(f'{k_row_dots = }')
-            assert torch.allclose(bias_q + rows_q[0].sum(), q_row_dots, rtol=1e-3), f'{bias_q + rows_q[0].sum() = }, {q_row_dots = }'
-            assert torch.allclose(bias_k + rows_k[0].sum(), k_row_dots, rtol=1e-3), f'{bias_k + rows_k[0].sum() = }, {k_row_dots = }'
+        # 计算期望值
+        expected_q = torch.tensor(0.0, device=device, dtype=dtype)
+        expected_k = torch.tensor(0.0, device=device, dtype=dtype)
+        
+        # 添加positive部分（正数）
+        if positive_move_idx is not None:
+            if order_mode == 'group':
+                print(f'verify in group mode')
+                # idx[1]: [pos_k, neg_k1, neg_k2, ...]
+                k_pos = idx_adjusted[1][0]
+                k_negs = idx_adjusted[1][1:]
+                q_dot_pos = (ctx._policy_q_activations[0][idx_adjusted[0]] * logit_vecs_q_positive[0][idx_adjusted[0]]).sum()
+                k_dot_pos = (ctx._policy_k_activations[0][k_pos] * logit_vecs_k_positive[0][k_pos]).sum()
+                k_neg_component = (ctx._policy_k_activations[0].index_select(0, k_negs) *
+                                logit_vecs_k_positive[0].index_select(0, k_negs)).sum()
+                expected_q += q_dot_pos
+                expected_k += k_dot_pos + k_neg_component
+            else:
+                q_dot_positive = (ctx._policy_q_activations[0][idx_adjusted[0]] * logit_vecs_q_positive[0][idx_adjusted[0]]).sum()
+                k_dot_positive = (ctx._policy_k_activations[0][idx_adjusted[1]] * logit_vecs_k_positive[0][idx_adjusted[1]]).sum()
+                expected_q += q_dot_positive
+                expected_k += k_dot_positive
+        
+        # 减去negative部分（负数）
+        if negative_move_idx is not None:
+            if order_mode == 'move_pair' and 'batch_move_position_negative' in locals():
+                idx_negative = batch_move_position_negative[0].to(device)
+                idx_negative_adjusted = idx_negative.clone()
+                if is_castle:
+                    if idx_negative_adjusted[1] == 2: idx_negative_adjusted[1] = 0
+                    elif idx_negative_adjusted[1] == 6: idx_negative_adjusted[1] = 7
+                q_dot_negative = (ctx._policy_q_activations[0][idx_negative_adjusted[0]] * logit_vecs_q_negative[0][idx_negative_adjusted[0]]).sum()
+                k_dot_negative = (ctx._policy_k_activations[0][idx_negative_adjusted[1]] * logit_vecs_k_negative[0][idx_negative_adjusted[1]]).sum()
+                expected_q -= q_dot_negative
+                expected_k -= k_dot_negative
+            else:
+                # pure negative mode - use positions from negative move
+                negative_idx = move_positions_negative[0].to(device) if move_positions_negative is not None else idx_adjusted
+                q_dot_negative = (ctx._policy_q_activations[0][negative_idx[0]] * logit_vecs_q_negative[0][negative_idx[0]]).sum()
+                k_dot_negative = (ctx._policy_k_activations[0][negative_idx[1]] * logit_vecs_k_negative[0][negative_idx[1]]).sum()
+                expected_q -= q_dot_negative
+                expected_k -= k_dot_negative
+        
+        print(f'验证: expected_q={expected_q:.6f}, actual_q={bias_q + rows_q[0].sum():.6f}')
+        print(f'验证: expected_k={expected_k:.6f}, actual_k={bias_k + rows_k[0].sum():.6f}')
+        
+        assert torch.allclose(bias_q + rows_q[0].sum(), expected_q, rtol=1e-3), f'{bias_q + rows_q[0].sum() = }, {expected_q = }'
+        assert torch.allclose(bias_k + rows_k[0].sum(), expected_k, rtol=1e-3), f'{bias_k + rows_k[0].sum() = }, {expected_k = }'
 
         for param in model._get_requires_grad_bias_params():
             param[1].grad = None
@@ -2264,6 +2349,8 @@ def _run_attribution(
         row_to_node_index: torch.Tensor,
         *,
         allow_mask: Optional[torch.Tensor] = None,   # ★ 新增：允许的 feature（gid 级）
+        move_idx: Optional[torch.Tensor] = None,     # ★ 新增：move索引
+        side: Optional[str] = None,                  # ★ 新增：'q' 或 'k'
     ) -> Dict[str, Any]:
         total_nodes = logit_offset + n_logits
 
@@ -2365,6 +2452,34 @@ def _run_attribution(
             "filtered_feature_cols": int(selected_features.numel()),
         }
 
+        # 处理move_idx，根据side提取对应的位置信息
+        side_move_positions = None
+        if move_idx is not None and side is not None:
+            try:
+                if side.lower() == 'q':
+                    # 提取q位置 (move_idx[i][0])
+                    if move_idx.dim() == 3:  # group模式: [batch, 2, M]
+                        # 只取第一个位置（起点）
+                        side_move_positions = move_idx[:, 0, 0]  # [batch]
+                    elif move_idx.dim() == 2:  # 常规模式: [batch, 2]
+                        side_move_positions = move_idx[:, 0]  # [batch]
+                    else:
+                        side_move_positions = torch.tensor([move_idx[i][0] for i in range(len(move_idx))], 
+                                                         dtype=torch.long, device=move_idx.device)
+                elif side.lower() == 'k':
+                    # 提取k位置 (move_idx[i][1])
+                    if move_idx.dim() == 3:  # group模式: [batch, 2, M]
+                        # 取所有K端位置
+                        side_move_positions = move_idx[:, 1, :]  # [batch, M]
+                    elif move_idx.dim() == 2:  # 常规模式: [batch, 2]
+                        side_move_positions = move_idx[:, 1]  # [batch]
+                    else:
+                        side_move_positions = torch.tensor([move_idx[i][1] for i in range(len(move_idx))], 
+                                                         dtype=torch.long, device=move_idx.device)
+            except Exception as e:
+                print(f"Warning: Failed to extract move positions for side {side}: {e}")
+                side_move_positions = None
+
         # 收集激活信息（如果需要的话）
         side_activation_info = None
         if save_activation_info:
@@ -2388,6 +2503,7 @@ def _run_attribution(
             "full_edge_matrix": full_edge_matrix,         # 方阵（上=允许的 feature 行，下=logit 行）
             "meta": meta,
             "activation_info": side_activation_info,      # 该side的激活信息
+            "move_positions": side_move_positions,        # ★ 新增：该side对应的move位置
         }
 
     packaged_q = None
@@ -2397,14 +2513,18 @@ def _run_attribution(
             visited=fa_result['q']['visited'],
             edge_matrix=fa_result['q']['edge_matrix'],
             row_to_node_index=fa_result['q']['row_to_node_index'],
-            allow_mask=allow_mask,   
+            allow_mask=allow_mask,
+            move_idx=move_positions,
+            side='q',
         )
     if 'k' in fa_result:
         packaged_k = package_side(
             visited=fa_result['k']['visited'],
             edge_matrix=fa_result['k']['edge_matrix'],
             row_to_node_index=fa_result['k']['row_to_node_index'],
-            allow_mask=allow_mask,   
+            allow_mask=allow_mask,
+            move_idx=move_positions,
+            side='k',
         )
 
     # —— 同步对 rows_q / rows_k 做掩码（不让被剔除的 gid 参与根选择） —— #
@@ -2565,9 +2685,14 @@ def _collect_activation_info_after_forward(
                 small_mask = z_pattern_weighted.abs() < 1e-3 * abs(activation_value)
                 z_pattern_weighted = z_pattern_weighted.masked_fill(small_mask, 0)
                 
-                # 转换为稀疏格式
-                nonzero_indices = z_pattern_weighted.nonzero().squeeze(-1)
-                nonzero_values = z_pattern_weighted[nonzero_indices]
+                # 转换为稀疏格式 - 修复维度错误
+                nonzero_result = z_pattern_weighted.nonzero()
+                if nonzero_result.numel() > 0:
+                    nonzero_indices = nonzero_result.squeeze(-1) if nonzero_result.shape[-1] == 1 else nonzero_result[:, 0]
+                    nonzero_values = z_pattern_weighted[nonzero_indices]
+                else:
+                    nonzero_indices = torch.tensor([], dtype=torch.long, device=z_pattern_weighted.device)
+                    nonzero_values = torch.tensor([], dtype=z_pattern_weighted.dtype, device=z_pattern_weighted.device)
                 
                 if len(nonzero_indices) > 0:
                     # 为每个非零值添加q位置（起点）和k位置（关注位置）
@@ -2590,8 +2715,14 @@ def _collect_activation_info_after_forward(
                 small_pattern_mask = weighted_pattern.abs() < 1e-3 * abs(activation_value)
                 weighted_pattern = weighted_pattern.masked_fill(small_pattern_mask, 0)
                 
-                nonzero_indices = weighted_pattern.nonzero().squeeze(-1)
-                nonzero_values = weighted_pattern[nonzero_indices]
+                # 修复维度错误 - 处理空张量情况
+                nonzero_result = weighted_pattern.nonzero()
+                if nonzero_result.numel() > 0:
+                    nonzero_indices = nonzero_result.squeeze(-1) if nonzero_result.shape[-1] == 1 else nonzero_result[:, 0]
+                    nonzero_values = weighted_pattern[nonzero_indices]
+                else:
+                    nonzero_indices = torch.tensor([], dtype=torch.long, device=weighted_pattern.device)
+                    nonzero_values = torch.tensor([], dtype=weighted_pattern.dtype, device=weighted_pattern.device)
                 
                 if len(nonzero_indices) > 0:
                     # 为每个非零值添加q位置（起点）和k位置（关注位置）

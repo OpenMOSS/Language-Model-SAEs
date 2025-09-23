@@ -161,7 +161,7 @@ class AttributionContext:
             hooks.append((f"blocks.{layer}.{attn_input_hook}", partial(_cache, index=layer * 2)))
             hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer * 2 + 1)))
         
-        hooks.append(("policy_head.hook_pre", partial(_cache, index=self.n_layers)))
+        hooks.append(("policy_head.hook_pre", partial(_cache, index=2 * self.n_layers)))
         # 添加policy head的q和k缓存hooks
         hooks.append(("policy_head.hook_q", _cache_q))
         hooks.append(("policy_head.hook_k", _cache_k))
@@ -359,12 +359,10 @@ class AttributionContext:
         assert edges[-1] == activation_matrix._nnz(), f'got {edges[-1]} but expected {activation_matrix._nnz()}'
         assert decoder_vecs.size(0) == activation_matrix._nnz(), f'got {decoder_vecs.size(0)} but expected {activation_matrix._nnz()}'
 
-        print(f'{lorsa_offset = }')
         # Feature nodes
         feature_hooks = []
         for layer, (start, end) in enumerate(layer_spans):
             if start != end:
-                print(f'{start = }, {end = }')
                 hook = self._compute_score_hook(
                     f"blocks.{layer}.{mlp_output_hook}",
                     decoder_vecs[start:end],
@@ -1692,7 +1690,8 @@ def attribute(
     mongo_client = None,
     sae_series: str = 'lc0-tc',
     analysis_name: str = 'default',
-    order_mode: str = 'positive' # ['positive', 'negative', 'move_pair', 'group']
+    order_mode: str = 'positive',
+    save_activation_info: bool = False,  # 是否当前propmt保存激活信息和z_pattern
 ) -> Dict[str, Any]:
     """Compute an attribution graph for *prompt* and return a structured bundle."""
     offload_handles = []
@@ -1737,6 +1736,7 @@ def attribute(
             sae_series = sae_series,
             analysis_name = analysis_name,
             order_mode = order_mode,
+            save_activation_info = save_activation_info,
         )
     finally:
         for reload_handle in offload_handles:
@@ -1766,6 +1766,7 @@ def _run_attribution(
     sae_series: str = 'lc0-tc',
     analysis_name: str = 'default',
     order_mode: str = 'positive', # ['positive', 'negative', 'move_pair', 'group']
+    save_activation_info: bool = False,  # 是否保存激活信息和z_pattern
 ) -> Dict[str, Any]:
     start_time = time.time()
 
@@ -1773,6 +1774,7 @@ def _run_attribution(
     if order_mode == 'move_pair':
         assert isinstance(move_idx, tuple), f"move_idx must be a tuple in movepair mode, now it is {type(move_idx)}"
         move_idx, negative_move_idx = move_idx[0], move_idx[1]
+        print(f'{move_idx = }, {negative_move_idx = }')
     elif order_mode == 'group':
         assert side =='k', f"side must be k during attributing in the group mode"
         negative_move_idx = None
@@ -1817,11 +1819,15 @@ def _run_attribution(
     logger.info("Phase 1: Running forward pass")
     print("Phase 1: Running forward pass")
     phase_start = time.time()
+    
     with ctx.install_hooks(model):
         residual = model.forward(input_ids, stop_at_layer=model.cfg.n_layers)
         ctx._resid_activations[-1] = residual
         if hasattr(model, 'policy_head'):
             _ = model.policy_head(residual)
+    
+    # 激活信息将在Phase 5中根据selected_features收集
+    activation_info = None
     print(f"Forward pass completed in {time.time() - phase_start:.2f}s")
     logger.info(f"Forward pass completed in {time.time() - phase_start:.2f}s")
 
@@ -1907,6 +1913,9 @@ def _run_attribution(
         return torch.stack(vals).sum() if vals else b.new_zeros(())
 
     logger.info("Phase 3: Computing logit attributions")
+    if order_mode == 'negative':
+        logger.info("Note: Using NEGATIVE gradient injection to find features that most suppress the logit")
+        print("Note: Using NEGATIVE gradient injection to find features that most suppress the logit")
     phase_start = time.time()
     model.zero_grad(set_to_none=True)
 
@@ -1921,7 +1930,7 @@ def _run_attribution(
         else:      
             batch_move_positions_k = batch_move_positions[:, 1:2]
             batch_move_positions_q = batch_move_positions[:, 0:1]
-            batch_move_positions_q = batch_move_positions_q[0, 0].unsqueeze(0)
+            # batch_move_positions_q = batch_move_positions_q[0, 0].unsqueeze(0)
 
         batch_q = logit_vecs_q[i : i + batch_size]
         batch_k = logit_vecs_k[i : i + batch_size]
@@ -1931,6 +1940,14 @@ def _run_attribution(
             batch_negative_q = logit_vecs_q_negative[i : i + batch_size]
             batch_k = batch_k - batch_negative_k
             batch_q = batch_q - batch_negative_q
+            
+        # 如果order_mode为negative，取相反数来看哪些特征最大程度地抑制这个logit
+        if order_mode == 'negative':
+            batch_q = -batch_q
+            batch_k = -batch_k
+            if negative_move_idx is not None:
+                # 注意：这里我们已经计算了差值，所以直接取相反数即可
+                pass
             
             
             batch_move_position_negative = move_positions_negative[i : i + batch_size]
@@ -1974,8 +1991,13 @@ def _run_attribution(
             k_row_dots_negative = (ctx._policy_k_activations[0][idx_negative[1]] * logit_vecs_k_negative[0][idx_negative[1]]).sum()
             # print(f'q_row_dots_negative:{q_row_dots_negative = }')
             # print(f'k_row_dots_negative:{k_row_dots_negative = }')
-            assert torch.allclose(bias_q + rows_q[0].sum(), q_row_dots - q_row_dots_negative, rtol=1e-3), f'{bias_q + rows_q[0].sum() = }, {q_row_dots = }, {q_row_dots_negative = }'
-            assert torch.allclose(bias_k + rows_k[0].sum(), k_row_dots - k_row_dots_negative, rtol=1e-3), f'{bias_k + rows_k[0].sum() = }, {k_row_dots = }, {k_row_dots_negative = }'
+            expected_q = q_row_dots - q_row_dots_negative
+            expected_k = k_row_dots - k_row_dots_negative
+            if order_mode == 'negative':
+                expected_q = -expected_q
+                expected_k = -expected_k
+            assert torch.allclose(bias_q + rows_q[0].sum(), expected_q, rtol=1e-3), f'{bias_q + rows_q[0].sum() = }, {expected_q = }'
+            assert torch.allclose(bias_k + rows_k[0].sum(), expected_k, rtol=1e-3), f'{bias_k + rows_k[0].sum() = }, {expected_k = }'
         elif order_mode == 'group':
             print(f'verify in group mode')
             # idx[1]: [pos_k, neg_k1, neg_k2, ...]
@@ -1991,8 +2013,13 @@ def _run_attribution(
             assert torch.allclose(lhs, rhs, rtol=1e-3, atol=1e-6), (lhs, rhs)
         else:
             print(f'{k_row_dots = }')
-            assert torch.allclose(bias_q + rows_q[0].sum(), q_row_dots, rtol=1e-3), f'{bias_q + rows_q[0].sum() = }, {q_row_dots = }'
-            assert torch.allclose(bias_k + rows_k[0].sum(), k_row_dots, rtol=1e-3), f'{bias_k + rows_k[0].sum() = }, {k_row_dots = }'
+            expected_q = q_row_dots
+            expected_k = k_row_dots
+            if order_mode == 'negative':
+                expected_q = -expected_q
+                expected_k = -expected_k
+            assert torch.allclose(bias_q + rows_q[0].sum(), expected_q, rtol=1e-3), f'{bias_q + rows_q[0].sum() = }, {expected_q = }'
+            assert torch.allclose(bias_k + rows_k[0].sum(), expected_k, rtol=1e-3), f'{bias_k + rows_k[0].sum() = }, {expected_k = }'
 
         for param in model._get_requires_grad_bias_params():
             param[1].grad = None
@@ -2038,6 +2065,31 @@ def _run_attribution(
         print('wash dense nodes')
         cache = {}
         
+        # 处理LoRSA features
+        lorsa_Ls = lorsa_feat_layer.cpu().tolist()
+        lorsa_Fs = lorsa_feat_idx.cpu().tolist()
+        
+        print(f'{len(lorsa_Ls) = }, {len(lorsa_Fs) = }')
+        for i, (L, F) in enumerate(zip(lorsa_Ls, lorsa_Fs)):
+            gid = i  # LoRSA features start from index 0
+            key = (int(L), int(F), 'lorsa')  # 添加类型标识避免与TC混淆
+            if key not in cache:
+                try:
+                    sae_name = f"lc0-lorsa-L{L}"
+                    fr = mongo_client.get_feature(sae_name, sae_series, F)
+                    at = None
+                    if fr:
+                        for ana in fr.analyses:
+                            if ana.name == analysis_name:
+                                at = ana.act_times
+                                break
+                    cache[key] = at
+                except Exception:
+                    cache[key] = None
+            at = cache[key]
+            if at is not None and at > act_times_max:
+                allow_mask[gid] = False
+        
         # 处理TC features
         tc_Ls = tc_feat_layer.cpu().tolist()
         tc_Fs = tc_feat_idx.cpu().tolist()
@@ -2046,7 +2098,7 @@ def _run_attribution(
         print(f'{len(tc_Ls) = }, {len(tc_Fs) = }')
         for i, (L, F) in enumerate(zip(tc_Ls, tc_Fs)):
             gid = tc_offset + i  # TC features start after LoRSA features
-            key = (int(L), int(F))
+            key = (int(L), int(F), 'tc')  # 添加类型标识避免与LoRSA混淆
             if key not in cache:
                 try:
                     sae_name = f"lc0_L{L}M_16x_k30_lr2e-03_auxk_sparseadam"
@@ -2063,6 +2115,14 @@ def _run_attribution(
             at = cache[key]
             if at is not None and at > act_times_max:
                 allow_mask[gid] = False
+        
+        print(f'LoRSA features: {lorsa_activation_matrix._nnz()} (filtered by max_activation_times)')
+        print(f'TC features: {tc_activation_matrix._nnz()} (filtered by max_activation_times)')
+    
+    # 打印统计信息
+    lorsa_kept = allow_mask[:lorsa_activation_matrix._nnz()].sum().item()
+    tc_kept = allow_mask[lorsa_activation_matrix._nnz():].sum().item()
+    print(f'Features kept: LORSA={lorsa_kept}/{lorsa_activation_matrix._nnz()}, TC={tc_kept}/{tc_activation_matrix._nnz()}')
     # print(f'{allow_mask = }')
     # 一些打印信息
     masked_idx = (~allow_mask).nonzero(as_tuple=True)[0]          # LongTensor
@@ -2226,6 +2286,8 @@ def _run_attribution(
         row_to_node_index: torch.Tensor,
         *,
         allow_mask: Optional[torch.Tensor] = None,   # ★ 新增：允许的 feature（gid 级）
+        move_idx: Optional[torch.Tensor] = None,     # ★ 新增：move索引
+        side: Optional[str] = None,                  # ★ 新增：'q' 或 'k'
     ) -> Dict[str, Any]:
         total_nodes = logit_offset + n_logits
 
@@ -2294,8 +2356,6 @@ def _run_attribution(
             print(f"[dbg] allowed-but-no-row gids (allowed in mask but absent as rows): {missing.numel()}")
         # end of debugging   
         
-        
-
         # 统计可用的允许行数，决定实际填充几行
         allowed_rows_available = int(min(max_feature_nodes, allow_feat_rows_sorted.numel()))
         if allowed_rows_available < max_feature_nodes:
@@ -2325,9 +2385,52 @@ def _run_attribution(
             "n_logits": int(n_logits),
             "logit_offset": int(logit_offset),
             "final_node_count": int(final_node_count),
-            "max_feature_rows": int(allowed_rows_available),   # ★ 实际填入的允许行数
+            "max_feature_rows": int(allowed_rows_available),
             "filtered_feature_cols": int(selected_features.numel()),
         }
+
+        # 处理move_idx，根据side提取对应的位置信息
+        side_move_positions = None
+        if move_idx is not None and side is not None:
+            try:
+                if side.lower() == 'q':
+                    # 提取q位置 (move_idx[i][0])
+                    if move_idx.dim() == 3:  # group模式: [batch, 2, M]
+                        # 只取第一个位置（起点）
+                        side_move_positions = move_idx[:, 0, 0]  # [batch]
+                    elif move_idx.dim() == 2:  # 常规模式: [batch, 2]
+                        side_move_positions = move_idx[:, 0]  # [batch]
+                    else:
+                        side_move_positions = torch.tensor([move_idx[i][0] for i in range(len(move_idx))], 
+                                                         dtype=torch.long, device=move_idx.device)
+                elif side.lower() == 'k':
+                    # 提取k位置 (move_idx[i][1])
+                    if move_idx.dim() == 3:  # group模式: [batch, 2, M]
+                        # 取所有K端位置
+                        side_move_positions = move_idx[:, 1, :]  # [batch, M]
+                    elif move_idx.dim() == 2:  # 常规模式: [batch, 2]
+                        side_move_positions = move_idx[:, 1]  # [batch]
+                    else:
+                        side_move_positions = torch.tensor([move_idx[i][1] for i in range(len(move_idx))], 
+                                                         dtype=torch.long, device=move_idx.device)
+            except Exception as e:
+                print(f"Warning: Failed to extract move positions for side {side}: {e}")
+                side_move_positions = None
+
+        # 收集激活信息（如果需要的话）
+        side_activation_info = None
+        if save_activation_info:
+            side_activation_info = _collect_activation_info_after_forward(
+                lorsa_activation_matrix=lorsa_activation_matrix,
+                tc_activation_matrix=tc_activation_matrix,
+                lorsa_attention_pattern=lorsa_attention_pattern,
+                model=model,
+                input_ids=input_ids,
+                n_layers=n_layers,
+                n_pos=n_pos,
+                ctx=ctx,
+                selected_features=selected_features
+            )
 
         return {
             "selected_features": selected_features,       # 已过滤（列）
@@ -2336,6 +2439,8 @@ def _run_attribution(
             "row_to_node_index": row_to_node_index_final, # 与 edge_matrix 同步
             "full_edge_matrix": full_edge_matrix,         # 方阵（上=允许的 feature 行，下=logit 行）
             "meta": meta,
+            "activation_info": side_activation_info,      # 该side的激活信息
+            "move_positions": side_move_positions,        # ★ 新增：该side对应的move位置
         }
 
     packaged_q = None
@@ -2345,14 +2450,18 @@ def _run_attribution(
             visited=fa_result['q']['visited'],
             edge_matrix=fa_result['q']['edge_matrix'],
             row_to_node_index=fa_result['q']['row_to_node_index'],
-            allow_mask=allow_mask,   # ★
+            allow_mask=allow_mask,
+            move_idx=move_positions,
+            side='q',
         )
     if 'k' in fa_result:
         packaged_k = package_side(
             visited=fa_result['k']['visited'],
             edge_matrix=fa_result['k']['edge_matrix'],
             row_to_node_index=fa_result['k']['row_to_node_index'],
-            allow_mask=allow_mask,   # ★
+            allow_mask=allow_mask,
+            move_idx=move_positions,
+            side='k',
         )
 
     # —— 同步对 rows_q / rows_k 做掩码（不让被剔除的 gid 参与根选择） —— #
@@ -2371,6 +2480,8 @@ def _run_attribution(
     # 仅屏蔽 feature 段（0..total_active_feats-1）
     rows_q_filtered[:, :total_active_feats] *= mask_float
     rows_k_filtered[:, :total_active_feats] *= mask_float
+    # 激活信息已在Phase 1中收集（如果save_activation_info=True）
+
     # ========== 统一返回 ==========
     graph_bundle = {
         "meta": {
@@ -2397,6 +2508,11 @@ def _run_attribution(
             "total_active_feats": int(total_active_feats),
             "max_feature_nodes": int(max_feature_nodes),
         },
+        "lorsa_activations": {
+            "indices": lorsa_activation_matrix.indices().T,   # [nnz, 3]
+            "values": lorsa_activation_matrix.values(),       # [nnz]
+            "lorsa_activation_matrix": lorsa_activation_matrix,
+        },
         "tc_activations": {
             "indices": tc_activation_matrix.indices().T,   # [nnz, 3]
             "values": tc_activation_matrix.values(),       # [nnz]
@@ -2413,9 +2529,225 @@ def _run_attribution(
 
         # 便于下游调试/复用
         "feature_allow_mask": allow_mask,
+        
+        # 激活信息（如果保存的话）
+        "activation_info": {
+            "q": packaged_q["activation_info"] if packaged_q and "activation_info" in packaged_q else None,
+            "k": packaged_k["activation_info"] if packaged_k and "activation_info" in packaged_k else None,
+        } if save_activation_info else None,
     }
 
     return graph_bundle
+
+
+def _collect_activation_info_after_forward(
+    lorsa_activation_matrix: torch.sparse.Tensor,
+    tc_activation_matrix: torch.sparse.Tensor,
+    lorsa_attention_pattern: torch.Tensor,
+    model,
+    input_ids: torch.Tensor,
+    n_layers: int,
+    n_pos: int,
+    ctx,
+    selected_features: torch.Tensor
+) -> Dict[str, Any]:
+    """在前向传播完成后收集激活信息，包括真正的z_patterns
+    
+    Args:
+        lorsa_activation_matrix: LoRSA特征激活矩阵 [n_layers, n_pos, n_features]
+        tc_activation_matrix: TC特征激活矩阵 [n_layers, n_pos, n_features] 
+        lorsa_attention_pattern: LoRSA注意力模式 [n_layers, n_qk_heads, n_pos, n_pos]
+        model: 模型实例
+        input_ids: 输入token ids
+        n_layers: 层数
+        n_pos: 序列长度
+        ctx: AttributionContext实例（前向传播已完成，激活已缓存）
+        selected_features: 选中的feature全局ID列表
+        
+    Returns:
+        包含每个selected feature激活信息的字典，格式与前端UI兼容
+    """
+    # ========== 处理LoRSA Features 激活信息 ==========
+    lorsa_indices = lorsa_activation_matrix.indices()  # [3, nnz] - (layer, pos, head_idx)
+    lorsa_values = lorsa_activation_matrix.values()    # [nnz]
+    
+    # 存储每个selected feature的激活信息
+    features_activation_info = []
+    
+    # 将selected_features转换为CPU上的set以便快速查找
+    selected_features_set = set(selected_features.cpu().numpy().tolist())
+    
+    # 处理每个LoRSA feature，只处理selected的
+    for i in range(lorsa_activation_matrix._nnz()):
+        # LoRSA features的全局ID就是i
+        if i not in selected_features_set:
+            continue
+            
+        layer = lorsa_indices[0, i].item()
+        pos = lorsa_indices[1, i].item()
+        head_idx = lorsa_indices[2, i].item()
+        activation_value = lorsa_values[i].item()
+        
+        # 为当前feature创建64位置的激活数组
+        feature_activations = [0.0] * 64
+        if 0 <= pos < 64:
+            feature_activations[pos] = activation_value
+        
+        # 为当前feature初始化z_pattern
+        feature_z_pattern_indices = [[], []]  # [q_positions, k_positions]
+        feature_z_pattern_values = []
+        
+        # ========== 计算该LoRSA feature的z_pattern ==========
+        try:
+            # 获取对应的LoRSA SAE
+            lorsa_sae = model.lorsas[layer]
+            
+            # 从缓存的激活中获取该层的激活
+            layer_activation = ctx._resid_activations[layer * 2]  # attention input
+            
+            if layer_activation is not None:
+                # 计算该head的z_pattern
+                z_pattern = lorsa_sae.encode_z_pattern_for_head(
+                    layer_activation,  # [1, seq, d_model]
+                    torch.tensor([head_idx], device=layer_activation.device)
+                )  # [1, n_ctx, n_ctx]
+                
+                # 只取当前position的pattern
+                z_pattern_for_pos = z_pattern[0, pos, :]  # [n_ctx]
+                
+                # 应用激活值权重
+                z_pattern_weighted = z_pattern_for_pos * activation_value
+                
+                # 过滤小值
+                small_mask = z_pattern_weighted.abs() < 1e-3 * abs(activation_value)
+                z_pattern_weighted = z_pattern_weighted.masked_fill(small_mask, 0)
+                
+                # 转换为稀疏格式 - 修复维度错误
+                nonzero_result = z_pattern_weighted.nonzero()
+                if nonzero_result.numel() > 0:
+                    nonzero_indices = nonzero_result.squeeze(-1) if nonzero_result.shape[-1] == 1 else nonzero_result[:, 0]
+                    nonzero_values = z_pattern_weighted[nonzero_indices]
+                else:
+                    nonzero_indices = torch.tensor([], dtype=torch.long, device=z_pattern_weighted.device)
+                    nonzero_values = torch.tensor([], dtype=z_pattern_weighted.dtype, device=z_pattern_weighted.device)
+                
+                if len(nonzero_indices) > 0:
+                    # 为每个非零值添加q位置（起点）和k位置（关注位置）
+                    for k_pos, value in zip(nonzero_indices.detach().cpu().numpy(), nonzero_values.detach().cpu().numpy()):
+                        feature_z_pattern_indices[0].append(pos)  # q位置（起点）
+                        feature_z_pattern_indices[1].append(int(k_pos))  # k位置（关注位置）
+                        feature_z_pattern_values.append(float(value))
+                        
+            else:
+                print(f"Warning: No cached activation for layer {layer}")
+                        
+        except Exception as e:
+            print(f"Warning: Failed to compute z_pattern for LoRSA layer {layer}, head {head_idx}: {e}")
+            # 回退到使用attention_pattern的简化版本
+            try:
+                qk_head_idx = head_idx // (model.lorsas[layer].cfg.n_ov_heads // model.lorsas[layer].cfg.n_qk_heads)
+                attention_pattern = lorsa_attention_pattern[layer, qk_head_idx, pos, :]
+                
+                weighted_pattern = attention_pattern * activation_value
+                small_pattern_mask = weighted_pattern.abs() < 1e-3 * abs(activation_value)
+                weighted_pattern = weighted_pattern.masked_fill(small_pattern_mask, 0)
+                
+                # 修复维度错误 - 处理空张量情况
+                nonzero_result = weighted_pattern.nonzero()
+                if nonzero_result.numel() > 0:
+                    nonzero_indices = nonzero_result.squeeze(-1) if nonzero_result.shape[-1] == 1 else nonzero_result[:, 0]
+                    nonzero_values = weighted_pattern[nonzero_indices]
+                else:
+                    nonzero_indices = torch.tensor([], dtype=torch.long, device=weighted_pattern.device)
+                    nonzero_values = torch.tensor([], dtype=weighted_pattern.dtype, device=weighted_pattern.device)
+                
+                if len(nonzero_indices) > 0:
+                    # 为每个非零值添加q位置（起点）和k位置（关注位置）
+                    for k_pos, value in zip(nonzero_indices.detach().cpu().numpy(), nonzero_values.detach().cpu().numpy()):
+                        feature_z_pattern_indices[0].append(pos)  # q位置（起点）
+                        feature_z_pattern_indices[1].append(int(k_pos))  # k位置（关注位置）
+                        feature_z_pattern_values.append(float(value))
+                        
+            except Exception as e2:
+                print(f"Warning: Also failed fallback computation for layer {layer}, head {head_idx}: {e2}")
+        
+        # 为当前LoRSA feature创建完整的激活信息
+        feature_info = {
+            "featureId": i,  # LoRSA features的全局ID从0开始
+            "type": "lorsa",
+            "layer": layer,
+            "position": pos,
+            "head_idx": head_idx,
+            "activation_value": activation_value,
+            "activations": feature_activations,
+            "zPatternIndices": feature_z_pattern_indices,
+            "zPatternValues": feature_z_pattern_values
+        }
+        features_activation_info.append(feature_info)
+    
+    # ========== 处理TC Features 激活信息 ==========
+    tc_indices = tc_activation_matrix.indices()  # [3, nnz] - (layer, pos, feature_idx)
+    tc_values = tc_activation_matrix.values()    # [nnz]
+    
+    # TC features的ID从LoRSA features之后开始
+    tc_id_offset = lorsa_activation_matrix._nnz()
+    
+    for i in range(tc_activation_matrix._nnz()):
+        # TC features的全局ID是tc_id_offset + i
+        tc_global_id = tc_id_offset + i
+        if tc_global_id not in selected_features_set:
+            continue
+            
+        layer = tc_indices[0, i].item()
+        pos = tc_indices[1, i].item()
+        feature_idx = tc_indices[2, i].item()
+        activation_value = tc_values[i].item()
+        
+        # 为当前feature创建64位置的激活数组
+        feature_activations = [0.0] * 64
+        if 0 <= pos < 64:
+            feature_activations[pos] = activation_value
+        
+        # TC features没有z_pattern，使用空数组
+        feature_z_pattern_indices = [[], []]
+        feature_z_pattern_values = []
+        
+        # 为当前TC feature创建完整的激活信息
+        feature_info = {
+            "featureId": tc_global_id,  # TC features的全局ID
+            "type": "tc",
+            "layer": layer,
+            "position": pos,
+            "feature_idx": feature_idx,
+            "activation_value": activation_value,
+            "activations": feature_activations,
+            "zPatternIndices": feature_z_pattern_indices,
+            "zPatternValues": feature_z_pattern_values
+        }
+        features_activation_info.append(feature_info)
+    
+    # ========== 构建与前端UI兼容的数据结构 ==========
+    activation_info = {
+        # 每个feature的激活信息数组
+        "features": features_activation_info,
+        
+        # 元信息
+        "meta": {
+            "total_features": len(features_activation_info),
+            "n_lorsa_features": lorsa_activation_matrix._nnz(),
+            "n_tc_features": tc_activation_matrix._nnz(),
+            "n_layers": n_layers,
+            "n_pos": n_pos,
+            "sequence": input_ids,
+            "collected_after_forward": True
+        }
+    }
+    
+    print(f"Collected activation info for {len(features_activation_info)} features: {lorsa_activation_matrix._nnz()} LoRSA + {tc_activation_matrix._nnz()} TC")
+    lorsa_z_patterns = sum(len(f["zPatternValues"]) for f in features_activation_info if f["type"] == "lorsa")
+    print(f"Total z_pattern entries: {lorsa_z_patterns}")
+    
+    return activation_info
 
 
 
@@ -2530,10 +2862,7 @@ def run_feature_attribution(
             for idx_batch in queue:
                 if idx_batch.numel() == 0:
                     continue
-                
                 n_visited += len(idx_batch)
-                # print(f'{idx_batch = }')
-
                 # ------- 准备注入 -------
                 layers = idx_to_layer(idx_batch)
                 positions = idx_to_pos(idx_batch)
@@ -2758,15 +3087,42 @@ def run_feature_attribution(
     
 #     return result
 
-def find_feature_gid(attribution_result, layer, feature_id, position):
-    tc_activations = attribution_result['tc_activations']
-    indices = tc_activations['indices']  # [nnz, 3]
-    values = tc_activations['values']    # [nnz]
-    mask = (indices[:, 0] == layer) & (indices[:, 1] == position) & (indices[:, 2] == feature_id)
-    if mask.any():
-        matching_idx = mask.nonzero(as_tuple=True)[0][0]
-        gid = matching_idx.item()
-        activation_value = values[matching_idx].item()
-        return gid, activation_value
-    else:
-        return None, None
+def find_feature_gid(attribution_result, layer, feature_id, position, feature_type='tc'):
+    """
+    在attribution result中查找指定特征的全局ID (gid)
+    
+    Args:
+        attribution_result: attribute()函数的返回结果
+        layer: 层索引
+        feature_id: 特征ID
+        position: 位置索引
+        feature_type: 特征类型 ('tc' 或 'lorsa')
+    
+    Returns:
+        tuple: (gid, activation_value) 或 (None, None)
+    """
+    if feature_type == 'tc':
+        activations = attribution_result['tc_activations']
+        indices = activations['indices']  # [nnz, 3]
+        values = activations['values']    # [nnz]
+        mask = (indices[:, 0] == layer) & (indices[:, 1] == position) & (indices[:, 2] == feature_id)
+        if mask.any():
+            matching_idx = mask.nonzero(as_tuple=True)[0][0]
+            # TC features的gid需要加上LORSA features的偏移量
+            lorsa_offset = attribution_result['lorsa_activations']['indices'].shape[0]
+            gid = lorsa_offset + matching_idx.item()
+            activation_value = values[matching_idx].item()
+            return gid, activation_value
+    elif feature_type == 'lorsa':
+        activations = attribution_result['lorsa_activations']
+        indices = activations['indices']  # [nnz, 3]
+        values = activations['values']    # [nnz]
+        mask = (indices[:, 0] == layer) & (indices[:, 1] == position) & (indices[:, 2] == feature_id)
+        if mask.any():
+            matching_idx = mask.nonzero(as_tuple=True)[0][0]
+            # LORSA features的gid就是它们在激活矩阵中的索引
+            gid = matching_idx.item()
+            activation_value = values[matching_idx].item()
+            return gid, activation_value
+    
+    return None, None

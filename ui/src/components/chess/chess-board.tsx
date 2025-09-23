@@ -12,6 +12,7 @@ interface ChessBoardProps {
   showCoordinates?: boolean;
   move?: string; // 移动字符串，如 "a2a4"
   orientation?: 'white' | 'black' | 'auto'; // 方向覆盖
+  flip_activation?: boolean; // 控制激活值是否翻转
 }
 
 // 棋子Unicode符号映射
@@ -176,7 +177,13 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   showCoordinates = true,
   move,
   orientation = 'auto',
+  flip_activation = true,
 }) => {
+  // 一行精简日志：直接打印用于显示的数据结构
+  console.log(`[CB#${sampleIndex ?? 'NA'}] activations:`, activations);
+  console.log(`[CB#${sampleIndex ?? 'NA'}] zPatternIndices:`, zPatternIndices);
+  console.log(`[CB#${sampleIndex ?? 'NA'}] zPatternValues:`, zPatternValues);
+
   // Hover状态管理
   const [hoveredSquare, setHoveredSquare] = useState<number | null>(null);
 
@@ -201,7 +208,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   // 黑方行棋时翻转棋盘显示，让黑方棋子在下方
   const flip = !isWhiteToMove;
-  const flip_activation = true;
+  // const flip_activation = true; // This line is now handled by the prop
 
   // 根据 flip 决定是否翻转棋盘
   const displayBoard = useMemo(() => {

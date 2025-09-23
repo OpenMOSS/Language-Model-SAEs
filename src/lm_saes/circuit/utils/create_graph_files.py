@@ -247,7 +247,7 @@ def create_nodes(
                 else f"idx:{move_idx}"
             )
             nodes[node_idx] = Node.logit_node(
-                pos=graph.n_pos - 1,
+                pos=int(graph.logit_position),
                 vocab_idx=move_idx,
                 token=move_str,
                 target_logit=(pos == 0),
