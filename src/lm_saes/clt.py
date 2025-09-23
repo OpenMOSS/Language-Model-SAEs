@@ -663,9 +663,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         
         for i in range(layer_to + 1):
             contribution = contribution + torch.sparse.mm(
-                feature_acts[i],
-                decoder_weights[i],
-            )  # type: ignore
+                feature_acts[i].to(torch.float32),
+                decoder_weights[i].to(torch.float32),
+            ).to(self.cfg.dtype)  # type: ignore
 
         if self.device_mesh is not None:
             contribution = DTensor.from_local(

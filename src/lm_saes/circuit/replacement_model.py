@@ -242,7 +242,6 @@ class ReplacementModel(HookedTransformer):
         if lorsas is not None:
             for lorsa in lorsas:
                 assert not lorsa.cfg.skip_bos, "Lorsa must not skip bos, will be handled by replacement model"
-                lorsa.to(self.cfg.device, self.cfg.dtype)
 
         self.add_module("transcoders", transcoders)
         if use_lorsa:

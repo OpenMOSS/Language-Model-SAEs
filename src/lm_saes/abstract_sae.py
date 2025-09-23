@@ -59,6 +59,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         self.device_mesh: DeviceMesh | None = device_mesh
 
         self.activation_function: Callable[[torch.Tensor], torch.Tensor] = self.activation_function_factory(device_mesh)
+        self.circuit_tracing_mode: bool = cfg.circuit_tracing_mode
 
     @torch.no_grad()
     def set_dataset_average_activation_norm(self, dataset_average_activation_norm: dict[str, float]):
@@ -322,6 +323,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         if device_mesh is None or any(isinstance(v, DTensor) for v in state_dict.values()):
             # Non-distributed checkpoint or DCP checkpoint
             # Load the state dict through torch API
+            for k, v in state_dict.items():
+                if any(isinstance(v, DTensor) for v in state_dict.values()) and not isinstance(v, DTensor):
+                    state_dict[k] = DimMap({}).distribute(v, device_mesh)
             self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
         else:
             # Full checkpoint (in .safetensors or .pt format) to be loaded distributedly
@@ -464,14 +468,20 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         elif self.cfg.act_fn.lower() == "topk":
 
             if self.device_mesh is not None:
-                from lm_saes.utils.distributed import distributed_kthvalue
+                from lm_saes.utils.distributed import distributed_topk
                 
                 def topk_activation(x: Union[
                         Float[torch.Tensor, "batch d_sae"],
                         Float[torch.Tensor, "batch seq_len d_sae"],
                     ],
                 ):
-                    return distributed_kthvalue(x, k=self.current_k, device_mesh=self.device_mesh, dim=-1, mesh_dim_name="model")
+                    return distributed_topk(
+                        x,
+                        k=self.current_k,
+                        device_mesh=self.device_mesh,
+                        dim=-1,
+                        mesh_dim_name="model",
+                    )
             else:
                 def topk_activation(
                     x: Union[

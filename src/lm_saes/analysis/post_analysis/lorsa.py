@@ -84,7 +84,7 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
         head_indices = []
 
         _feature_acts = []
-        for sampling_name, sampling_data in sample_result.items():
+        for _, sampling_data in sample_result.items():
             if sampling_data is None:
                 continue
             
@@ -157,14 +157,8 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
                     interested_heads,
                 )
                 z_pattern *= interested_feature_acts.ne(0)[..., None]
-                small_zp_mask = z_pattern.abs() < 1e-3 * interested_feature_acts[..., None]
-                z_pattern.masked_fill_(small_zp_mask, 0)
-
-                # max_relative_error = (
-                #     (z_pattern.sum(-1) - interested_feature_acts).abs() / (interested_feature_acts + 1e-6)
-                # ).max()
-                # if max_relative_error > 1e-1:
-                #     logger.warning(f"Max relative error: {max_relative_error.item()}")
+                small_zp_mask = z_pattern.abs() < 1e-2 * interested_feature_acts[..., None]
+                z_pattern.masked_fill_(small_zp_mask, 0.)
 
                 z_pattern = z_pattern.to_sparse()
                 
@@ -188,7 +182,6 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
         st = 0
         z_pattern_data = z_pattern_data.coalesce()
         for sampling_name, sampling_data in sample_result.items():  
-            print(f'starting loop for {sampling_name} with st {st}')                      
             sampling_data["z_pattern_indices"] = []
             sampling_data["z_pattern_values"] = []
             
