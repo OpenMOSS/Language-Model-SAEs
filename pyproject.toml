@@ -121,7 +121,6 @@ exclude = [
     "node_modules",
     "site-packages",
     "venv",
-    "TransformerLens",
     "ui",
 ]
 line-length = 120
@@ -144,7 +143,7 @@ docstring-code-format = false
 docstring-code-line-length = "dynamic"
 
 [tool.pyright]
-ignore = [".venv/", "examples", "TransformerLens", "tests", "exp"]
+ignore = [".venv/", "examples", "tests", "exp"]
 typeCheckingMode = "standard"
 reportRedeclaration = false
 reportPrivateImportUsage = false
@@ -159,6 +158,7 @@ name = "flash-attn"
 version = "2.7.4.post1"
 requires-dist = ["torch", "einops"]
 
-[tool.uv.sources.transformer-lens]
-path = "./TransformerLens"
-editable = true
+# TransformerLens dependency will be installed from PyPI
+# [tool.uv.sources.transformer-lens]
+# path = "./TransformerLens"
+# editable = true
