@@ -34,7 +34,7 @@ from einops import einsum
 from tqdm import tqdm
 from transformer_lens.hook_points import HookPoint
 
-from .graph_lc0 import Graph
+from .graph_lc0 import Graph, compute_graph_scores
 from .replacement_lc0_model import ReplacementModel
 from .utils.disk_offload import offload_modules
 from .utils.create_graph_files import create_graph_files
