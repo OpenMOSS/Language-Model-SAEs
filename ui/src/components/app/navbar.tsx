@@ -55,6 +55,15 @@ export const AppNavbar = () => {
           >
             Circuits
           </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/graph-diffing" && "text-foreground"
+            )}
+            to="/graph-diffing"
+          >
+            Graph Diffing
+          </Link>
         </div>
       </div>
     </nav>
