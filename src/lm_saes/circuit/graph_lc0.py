@@ -10,6 +10,7 @@ class Graph:
     input_tokens: torch.Tensor
     logit_tokens: torch.Tensor
     logit_probabilities: torch.Tensor
+    logit_position: torch.Tensor
     lorsa_active_features: torch.Tensor
     lorsa_activation_matrix: torch.Tensor
     tc_active_features: torch.Tensor
@@ -27,7 +28,7 @@ class Graph:
         input_tokens: torch.Tensor,
         logit_tokens: torch.Tensor,
         logit_probabilities: torch.Tensor,
-        logit_position: int,
+        logit_position: torch.Tensor,
         lorsa_active_features: torch.Tensor,
         lorsa_activation_values: torch.Tensor,
         tc_active_features: torch.Tensor,
