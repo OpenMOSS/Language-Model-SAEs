@@ -7,7 +7,7 @@ export const AppNavbar = () => {
   return (
     <nav className="p-4">
       <div className="container mx-auto flex items-center gap-8">
-        <img src="/openmoss.ico" alt="logo" className="h-8" />
+        <img src="/vite.svg" alt="logo" className="h-8" />
 
         <div className="flex gap-4 items-center">
           <Link

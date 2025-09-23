@@ -83,7 +83,7 @@ def parse_pretrained_name_or_path(pretrained_name_or_path: str):
         return pretrained_name_or_path
     else:
         print_once(f"Local path `{pretrained_name_or_path}` not found. Downloading from huggingface model hub.")
-        if pretrained_name_or_path.startswith("fnlp"):
+        if pretrained_name_or_path.startswith("llamascope"):
             print_once("Downloading Llama Scope SAEs.")
             repo_id = _parse_repo_id(pretrained_name_or_path)
             hook_point = pretrained_name_or_path.split("/")[1]

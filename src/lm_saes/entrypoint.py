@@ -83,7 +83,7 @@ def setup_create_parser(subparsers: argparse._SubParsersAction[argparse.Argument
         default=os.environ.get("MONGO_URI", "mongodb://localhost:27017/"),
     )
     create_parser.add_argument(
-        "--mongo-db", type=str, help="The MongoDB database to use", default=os.environ.get("MONGO_DB", "mechinterp")
+        "--mongo-db", type=str, help="The MongoDB database to use", default=os.environ.get("MONGO_DB", "sae_analysis")
     )
     create_subparsers = create_parser.add_subparsers(
         dest="type", required=True, help="The type of database record to create"
@@ -120,7 +120,7 @@ def setup_remove_parser(subparsers: argparse._SubParsersAction[argparse.Argument
         default=os.environ.get("MONGO_URI", "mongodb://localhost:27017/"),
     )
     remove_parser.add_argument(
-        "--mongo-db", type=str, help="The MongoDB database to use", default=os.environ.get("MONGO_DB", "mechinterp")
+        "--mongo-db", type=str, help="The MongoDB database to use", default=os.environ.get("MONGO_DB", "sae_analysis")
     )
     remove_subparsers = remove_parser.add_subparsers(
         dest="type", required=True, help="The type of database record to remove"

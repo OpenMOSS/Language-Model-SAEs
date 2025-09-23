@@ -553,4 +553,4 @@ class WandbConfig(BaseConfig):
 
 class MongoDBConfig(BaseConfig):
     mongo_uri: str = Field(default_factory=lambda: os.environ.get("MONGO_URI", "mongodb://localhost:27017/"))
-    mongo_db: str = Field(default_factory=lambda: os.environ.get("MONGO_DB", "mechinterp"))
+    mongo_db: str = Field(default_factory=lambda: os.environ.get("MONGO_DB", "sae_analysis"))

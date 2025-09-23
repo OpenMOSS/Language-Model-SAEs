@@ -3,6 +3,14 @@ export const getAccentClassname = (
   maxFeatureAct: number,
   variant: "text" | "bg" | "border" | "zpattern" | "*:stroke"
 ) => {
+  // Debug: Print input parameters for zpattern variant
+  if (variant === "zpattern") {
+    console.log("🎨 Debug getAccentClassname (zpattern):", {
+      featureAct,
+      maxFeatureAct,
+      variant,
+    });
+  }
   const textAccentClassnames = [
     null,
     "text-orange-100",
@@ -55,5 +63,24 @@ export const getAccentClassname = (
     (variant === "zpattern" && zPatternAccentClassnames) ||
     strokeAccentClassnames;
 
-  return accentClassnames[Math.ceil(Math.min(featureAct / maxFeatureAct, 1) * (accentClassnames.length - 1))];
+  const ratio = featureAct / maxFeatureAct;
+  const clampedRatio = Math.min(ratio, 1);
+  const scaledValue = clampedRatio * (accentClassnames.length - 1);
+  const index = Math.ceil(scaledValue);
+  const result = accentClassnames[index];
+  
+  // Debug: Print calculation details for zpattern variant
+  if (variant === "zpattern") {
+    console.log("🧮 Debug Color Calculation Details:", {
+      ratio,
+      clampedRatio,
+      scaledValue,
+      index,
+      accentClassnamesLength: accentClassnames.length,
+      result,
+      allClassnames: accentClassnames,
+    });
+  }
+  
+  return result;
 };

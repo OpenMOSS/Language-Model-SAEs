@@ -8,6 +8,7 @@ import { Switch } from "../ui/switch";
 import { Input } from "../ui/input";
 import { getZPatternForToken, findHighestActivatingToken } from "@/utils/token";
 
+
 // Helper function to get activation value for a given index from COO format
 const getActivationValue = (indices: number[], values: number[], targetIndex: number): number => {
   const indexPosition = indices.indexOf(targetIndex);
@@ -156,11 +157,31 @@ export const FeatureActivationSample = memo(({
   // Get z pattern for hovered token
   const hoveredZPattern = useMemo(() => {
     if (hoveredTokenIndex === null) return null;
-    return getZPatternForToken(
+    
+    // Debug: Print Z pattern raw data
+    console.log("🔍 Debug Z Pattern Raw Data:", {
+      hoveredTokenIndex,
+      zPatternIndices: sample.zPatternIndices,
+      zPatternValues: sample.zPatternValues,
+      zPatternIndicesLength: sample.zPatternIndices?.length,
+      zPatternValuesLength: sample.zPatternValues?.length,
+    });
+    
+    const result = getZPatternForToken(
       sample.zPatternIndices,
       sample.zPatternValues,
       hoveredTokenIndex
     );
+    
+    // Debug: Print Z pattern calculation result
+    console.log("🎯 Debug Z Pattern Result:", {
+      hoveredTokenIndex,
+      contributingTokens: result.contributingTokens,
+      contributions: result.contributions,
+      contributingTokensCount: result.contributingTokens.length,
+    });
+    
+    return result;
   }, [hoveredTokenIndex, sample.zPatternIndices, sample.zPatternValues]);
 
   // Memoize segments calculation
@@ -237,14 +258,40 @@ export const FeatureActivationSample = memo(({
     if (hoveredTokenIndex !== null) {        
       // Check if this segment contains contributing tokens
       if (hoveredZPattern) {
-          const Contribution = segment.highlights.map(highlight => {
+          const Contribution = segment.highlights.map((highlight, highlightIndex) => {
             // Find the token index for this highlight's origin
             const tokenIndex = sample.origins.findIndex(origin => origin === highlight.origin);
             const isContributing = hoveredZPattern.contributingTokens.includes(tokenIndex);
-            return isContributing ? hoveredZPattern.contributions[hoveredZPattern.contributingTokens.indexOf(tokenIndex)] : 0;
+            const contribution = isContributing ? hoveredZPattern.contributions[hoveredZPattern.contributingTokens.indexOf(tokenIndex)] : 0;
+            
+            // Debug: Print contribution calculation details
+            console.log(`💚 Debug Contribution Calc [highlight ${highlightIndex}]:`, {
+              tokenIndex,
+              isContributing,
+              contribution,
+              highlightFeatureAct: highlight.featureAct,
+              contributingTokens: hoveredZPattern.contributingTokens,
+              contributions: hoveredZPattern.contributions,
+            });
+            
+            return contribution;
           });
         
-        return getAccentClassname(Contribution.reduce((a, b) => a + b, 0), maxFeatureAct, "zpattern"); // Green for contributing tokens
+        const totalContribution = Contribution.reduce((a, b) => a + b, 0);
+        const colorClass = getAccentClassname(totalContribution, maxFeatureAct, "zpattern");
+        
+        // Debug: Print final color calculation
+        console.log("🎨 Debug Final Color Calc:", {
+          segmentStart: segment.start,
+          segmentEnd: segment.end,
+          individualContributions: Contribution,
+          totalContribution,
+          maxFeatureAct,
+          colorClass,
+          ratio: totalContribution / maxFeatureAct,
+        });
+        
+        return colorClass; // Green for contributing tokens
       }
 
       // Check if this segment contains the hovered token
@@ -292,9 +339,28 @@ export const FeatureActivationSample = memo(({
                             <span
                               className={cn(
                                 "relative",
-                                getSegmentHighlightClass(segment)
+                                (() => {
+                                  const highlightClass = getSegmentHighlightClass(segment);
+                                  // Debug: Print applied CSS classes
+                                  console.log("🎨 Debug Applied CSS Classes:", {
+                                    segmentStart: segment.start,
+                                    segmentEnd: segment.end,
+                                    segmentText: sample.text!.slice(segment.start, segment.end),
+                                    highlightClass,
+                                    hoveredTokenIndex,
+                                    hasZPattern: !!hoveredZPattern,
+                                  });
+                                  return highlightClass;
+                                })()
                               )}
                               onMouseEnter={() => {
+                                // Debug: Print hover event trigger
+                                console.log("🖱️ Debug Mouse Enter Event:", {
+                                  segmentStart: segment.start,
+                                  segmentEnd: segment.end,
+                                  segmentText: sample.text!.slice(segment.start, segment.end),
+                                });
+                                
                                 // Find the token index for this segment by looking at the feature acts indices
                                 // We want to find the token that has the highest activation in this segment
                                 let maxActivation = -1;
@@ -315,11 +381,19 @@ export const FeatureActivationSample = memo(({
                                   }
                                 }
                                 
+                                // Debug: Print token selection result
+                                console.log("🎯 Debug Token Selection:", {
+                                  maxActivation,
+                                  maxTokenIndex,
+                                  previousHoveredIndex: hoveredTokenIndex,
+                                });
+                                
                                 if (maxTokenIndex !== -1) {
                                   setHoveredTokenIndex(maxTokenIndex);
                                 }
                               }}
                               onMouseLeave={() => {
+                                console.log("🖱️ Debug Mouse Leave Event");
                                 setHoveredTokenIndex(null);
                               }}
                             >

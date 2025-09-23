@@ -52,21 +52,40 @@ export const getZPatternForToken = (
   tokenIndex: number
 ): { contributingTokens: number[]; contributions: number[] } => {
   if (!zPatternIndices || !zPatternValues) {
+    console.log("🚨 Z Pattern data is null/undefined");
     return { contributingTokens: [], contributions: [] };
   }
 
   const contributingTokens: number[] = [];
   const contributions: number[] = [];
 
+  // Debug: Check what target tokens exist in Z pattern data
+  const uniqueTargetTokens = [...new Set(zPatternIndices[0])].sort((a, b) => a - b);
+  console.log("🔍 Debug Z Pattern Target Tokens:", {
+    requestedTokenIndex: tokenIndex,
+    uniqueTargetTokens: uniqueTargetTokens.slice(0, 20), // Show first 20
+    totalUniqueTargets: uniqueTargetTokens.length,
+    hasRequestedToken: uniqueTargetTokens.includes(tokenIndex),
+    zPatternLength: zPatternIndices[0].length,
+  });
+
   // Find all z pattern entries that contribute to this token
+  let matchCount = 0;
   for (let i = 0; i < zPatternIndices[0].length; i++) {
-    const indices = zPatternIndices[0][i];
+    const targetToken = zPatternIndices[0][i];
     
-    if (indices === tokenIndex) {
+    if (targetToken === tokenIndex) {
       contributingTokens.push(zPatternIndices[1][i]);
       contributions.push(zPatternValues[i]);
+      matchCount++;
     }
   }
+
+  console.log("🎯 Debug Z Pattern Search Result:", {
+    tokenIndex,
+    matchCount,
+    foundContributors: contributingTokens.length,
+  });
 
   return { contributingTokens, contributions };
 };

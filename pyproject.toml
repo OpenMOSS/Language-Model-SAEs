@@ -1,7 +1,7 @@
 [project]
 name = "lm-saes"
 version = "0.1.0"
-description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
+description = "Sparse Autoencoder (SAE) research library for mechanistic interpretability."
 dependencies = [
     "datasets>=3.0.2",
     "transformers>=4.46.0",
@@ -37,29 +37,7 @@ dependencies = [
 requires-python = "==3.11.*"
 readme = "README.md"
 
-[[project.authors]]
-name = "Xuyang Ge"
-email = "xyge20@fudan.edu.cn"
-
-[[project.authors]]
-name = "Zhengfu He"
-email = "zfhe19@fudan.edu.cn"
-
-[[project.authors]]
-name = "Wentao Shu"
-email = "wtshu20@fudan.edu.cn"
-
-[[project.authors]]
-name = "Fukang Zhu"
-email = "fkzhu21@m.fudan.edu.cn"
-
-[[project.authors]]
-name = "Lingjie Chen"
-email = "ljchen21@m.fudan.edu.cn"
-
-[[project.authors]]
-name = "Junxuan Wang"
-email = "junxuanwang21@m.fudan.edu.cn"
+# Authors information removed for anonymous submission
 
 [project.license]
 text = "MIT"
