@@ -462,7 +462,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def decode(self, feature_acts, **kwargs):
         """Decode head activations to output."""
         if feature_acts.layout == torch.sparse_coo:
-            return torch.sparse.mm(feature_acts, self.W_O) + self.b_D
+            return torch.sparse.mm(
+                feature_acts.to(torch.float32),
+                self.W_O.to(torch.float32),
+            ).to(self.cfg.dtype) + self.b_D
         out = torch.einsum("bps,sd->bpd", feature_acts, self.W_O)
         if self.cfg.use_decoder_bias:
             out = out + self.b_D
@@ -725,12 +728,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         pretrained_name_or_path: str,
         strict_loading: bool = True,
         fold_activation_scale: bool = True,
+        device_mesh: DeviceMesh | None = None,
         **kwargs,
     ):
         """Load pretrained model."""
         cfg = LorsaConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale)
-        assert model.cfg.dtype == torch.float32
+        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
         return model
     
     @override

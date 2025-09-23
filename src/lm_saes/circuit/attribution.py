@@ -326,7 +326,7 @@ class AttributionContext:
         assert edges[-1] == activation_matrix._nnz(), f'got {edges[-1]} but expected {activation_matrix._nnz()}'
         assert decoder_layer_spans[-1] == decoder_vecs.size(0), f'got {decoder_layer_spans[-1]} but expected {decoder_vecs.size(0)}'
         decoder_layer_spans = [slice(start, end) for start, end in zip(decoder_layer_spans[:-1], decoder_layer_spans[1:])]
-
+        
         # Feature nodes
         feature_hooks: list[Tuple[str, Callable[..., Any]]] = [
             self._compute_score_hook(
