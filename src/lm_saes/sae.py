@@ -410,9 +410,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             self.W_E_glu.copy_(W_E_glu)
 
     @override
-    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
+    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
         x = batch[self.cfg.hook_point_in]
-        return x, {}
+        return x, {}, {}
 
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:

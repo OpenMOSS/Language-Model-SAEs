@@ -17,11 +17,13 @@ from lm_saes.config import (
     DirectLogitAttributorConfig,
     FeatureAnalyzerConfig,
     LanguageModelConfig,
+    MOLTConfig,
     MongoDBConfig,
     SAEConfig,
 )
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient
+from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.resource_loaders import load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.sae import SparseAutoEncoder
@@ -94,6 +96,10 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     logger.info("Loading SAE model")
     if isinstance(settings.sae, CrossCoderConfig):
         sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
+    elif isinstance(settings.sae, MOLTConfig):
+        sae = MixtureOfLinearTransform.from_config(
+            settings.sae, device_mesh=device_mesh
+        )
     else:
         sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
 

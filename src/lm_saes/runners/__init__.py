@@ -26,10 +26,12 @@ from .train import (
     SweepSAESettings,
     TrainCLTSettings,
     TrainCrossCoderSettings,
+    TrainMOLTSettings,
     TrainSAESettings,
     sweep_sae,
     train_clt,
     train_crosscoder,
+    train_molt,
     train_sae,
 )
 from .utils import load_config
@@ -61,4 +63,6 @@ __all__ = [
     "evaluate_crosscoder",
     "EvaluateSAESettings",
     "evaluate_sae",
+    "TrainMOLTSettings",
+    "train_molt",
 ]
