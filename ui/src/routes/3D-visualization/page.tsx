@@ -65,13 +65,16 @@ const GRAPH_COLORS = [
 
 const FEATURE_TYPE_COLORS = {
   lorsa: '#7a4cff',
-  'cross layer transcoder': '#4ecdc4',
+  'cross layer transcoder': '#69b3a2',
   logit: '#ff6b6b',
-  embedding: '#95a5a6',
-  default: '#95a5a6'
+  embedding: '#69b3a2',
+  default: '#95a5a6',
+  'mlp reconstruction error': '#95a5a6',
+  'lorsa error': '#95a5a6',
+  error: '#95a5a6'
 };
 
-export default function GraphDiffingPage() {
+export default function ThreeDVisualPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -95,6 +98,9 @@ export default function GraphDiffingPage() {
   const [nodeSize, setNodeSize] = useState(1.0);
   const [edgeThickness, setEdgeThickness] = useState(1.0);
   const [performanceMode, setPerformanceMode] = useState(true);
+  const [chessMode, setChessMode] = useState(false);
+  const chessBoardGroupRef = useRef<THREE.Group | null>(null);
+  const chessPiecesGroupRef = useRef<THREE.Group | null>(null);
   
   // 拖拽状态（右侧面板）
   const [panelPos, setPanelPos] = useState<{x: number; y: number}>({ x: 24, y: 24 });
@@ -106,6 +112,8 @@ export default function GraphDiffingPage() {
   const linksGroupRef = useRef<THREE.Group | null>(null);
   const raycasterRef = useRef<THREE.Raycaster | null>(null);
   const mouseRef = useRef({ x: 0, y: 0 });
+
+
 
   // 初始化Three.js场景（本地依赖）
   useEffect(() => {
@@ -158,8 +166,12 @@ export default function GraphDiffingPage() {
     // 分组
     nodesGroupRef.current = new THREE.Group();
     linksGroupRef.current = new THREE.Group();
+    chessBoardGroupRef.current = new THREE.Group();
+    chessPiecesGroupRef.current = new THREE.Group();
     scene.add(nodesGroupRef.current);
     scene.add(linksGroupRef.current);
+    scene.add(chessBoardGroupRef.current);
+    scene.add(chessPiecesGroupRef.current);
 
     const onResize = () => {
       if (!rendererRef.current || !cameraRef.current || !containerRef.current) return;
@@ -206,6 +218,8 @@ export default function GraphDiffingPage() {
     };
     canvas.addEventListener('mousemove', onMouseMove);
 
+
+
     return () => {
       window.removeEventListener('resize', onResize);
       canvas.removeEventListener('mousemove', onMouseMove);
@@ -214,6 +228,143 @@ export default function GraphDiffingPage() {
     };
   // 仅在首次和performanceMode变化时重建渲染器与背景
   }, [performanceMode]);
+
+  // 构建棋盘与棋子
+  const buildChessBoard = (ctxList: number[]) => {
+    if (!chessBoardGroupRef.current || !chessPiecesGroupRef.current) return;
+    chessBoardGroupRef.current.clear();
+    chessPiecesGroupRef.current.clear();
+
+    // 仅单图可用
+    if (graphs.length !== 1) return;
+
+    // 计算embedding层的实际y高度（与布局一致）
+    let minLayer = Number.POSITIVE_INFINITY;
+    let maxLayer = Number.NEGATIVE_INFINITY;
+    processedNodes.forEach(n => {
+      const parts = (n.node_id || '').split('_');
+      const rawLayer = Number(parts[0]);
+      const layerFromId = Number.isFinite(rawLayer) ? Math.floor(rawLayer / 2) : 0;
+      if (layerFromId < minLayer) minLayer = layerFromId;
+      if (layerFromId > maxLayer) maxLayer = layerFromId;
+    });
+    if (!Number.isFinite(minLayer) || !Number.isFinite(maxLayer)) return;
+    const ySpacingLocal = 18;
+    const layerToYLocal = (layer: number) => (layer - minLayer) * ySpacingLocal;
+    const yCenterOffsetLocal = -((maxLayer - minLayer) * ySpacingLocal) / 2;
+    const embeddingY = layerToYLocal(minLayer) + yCenterOffsetLocal;
+
+    // 棋盘参数
+    const gridSize = 8; // 8x8
+    const cellSize = 5.0; // 放大格子边长
+    const boardSize = gridSize * cellSize; // 棋盘总宽
+
+    // 将ctx映射到8x8网格（按升序截断/填充）
+    const sortedCtx = [...ctxList].sort((a,b)=>a-b);
+    const maxCells = gridSize * gridSize;
+    const mappedCtx = sortedCtx.slice(0, maxCells);
+
+    // 棋盘底板
+    const boardGeo = new THREE.PlaneGeometry(boardSize, boardSize);
+    const boardMat = new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+    const boardMesh = new THREE.Mesh(boardGeo, boardMat);
+    boardMesh.rotation.x = -Math.PI / 2; // 水平放置
+    boardMesh.position.set(0, embeddingY, 0);
+    chessBoardGroupRef.current.add(boardMesh);
+
+    // 画格子
+    for (let r = 0; r < gridSize; r++) {
+      for (let c = 0; c < gridSize; c++) {
+        const isDark = (r + c) % 2 === 1;
+        const tileGeo = new THREE.PlaneGeometry(cellSize, cellSize);
+        const tileMat = new THREE.MeshBasicMaterial({ color: isDark ? 0x3b3b3b : 0xcccccc, side: THREE.DoubleSide, transparent: true, opacity: 0.85, depthWrite: false });
+        const tile = new THREE.Mesh(tileGeo, tileMat);
+        tile.rotation.x = -Math.PI / 2;
+        const x = (c - (gridSize - 1) / 2) * cellSize;
+        const z = (r - (gridSize - 1) / 2) * cellSize;
+        tile.position.set(x, embeddingY + 0.01, z);
+        chessBoardGroupRef.current.add(tile);
+      }
+    }
+
+    // 从FEN生成棋子
+    try {
+      const fen = graphs[0]?.data?.metadata?.prompt || '';
+      const boardPart = String(fen).split(' ')[0] || '';
+      const ranks = boardPart.split('/');
+      if (ranks.length === 8) {
+        for (let r = 0; r < 8; r++) {
+          const rankStr = ranks[r];
+          let file = 0;
+          for (const ch of rankStr) {
+            if (/^[1-8]$/.test(ch)) {
+              file += Number(ch);
+            } else {
+              if (file >= 0 && file < 8) {
+                const c = file;
+                const tileX = (c - (gridSize - 1) / 2) * cellSize;
+                const tileZ = (r - (gridSize - 1) / 2) * cellSize;
+                const isWhite = ch === ch.toUpperCase();
+                const color = isWhite ? 0xffffff : 0x333333;
+                const height = 3.2; // 增加高度
+                const radialSegments = performanceMode ? 10 : 18;
+                const geo = new THREE.CylinderGeometry(1.3, 1.3, height, radialSegments);
+                const mat = new THREE.MeshLambertMaterial({ color, transparent: true, opacity: 1.0, emissive: 0x111111, emissiveIntensity: 0.2 });
+                const piece = new THREE.Mesh(geo, mat);
+                piece.position.set(tileX, embeddingY + height / 2, tileZ);
+                chessPiecesGroupRef.current!.add(piece);
+              }
+              file += 1;
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // 参考柱：将上方feature的同ctx列x位置做参考（保持与棋盘r/c一致）
+    const allCtxSet = new Set<number>(ctxList);
+    const allCtxArr = Array.from(allCtxSet.values()).sort((a,b)=>a-b);
+    const ctxToX = new Map<number, number>();
+    const xGroupSpacing = 10;
+    allCtxArr.forEach((ctx, idx) => {
+      ctxToX.set(ctx, (idx - (allCtxArr.length - 1)/2) * xGroupSpacing);
+    });
+
+    mappedCtx.forEach((ctx, i) => {
+      const r = Math.floor(i / gridSize);
+      const c = i % gridSize;
+      const tileZ = (r - (gridSize - 1) / 2) * cellSize;
+      const refX = ctxToX.get(ctx) ?? 0;
+      const refMat = new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.5 });
+      const refGeo = new THREE.CylinderGeometry(0.05, 0.05, 40, 6);
+      const ref = new THREE.Mesh(refGeo, refMat);
+      ref.position.set(refX, embeddingY + 20, tileZ);
+      chessPiecesGroupRef.current!.add(ref);
+    });
+  };
+
+  // 在数据或模式变化时重建棋盘
+  useEffect(() => {
+    if (!chessMode) {
+      chessBoardGroupRef.current?.clear();
+      chessPiecesGroupRef.current?.clear();
+      return;
+    }
+    if (graphs.length !== 1) return; // 仅单图
+    // 收集embedding层的ctx（按node_id解析layer/ctx，layer最小的一层视为embedding层）
+    const embCtxSet = new Set<number>();
+    processedNodes.forEach(n => {
+      const parts = (n.node_id || '').split('_');
+      const rawLayer = Number(parts[0]);
+      const layerFromId = Number.isFinite(rawLayer) ? Math.floor(rawLayer / 2) : 0;
+      if (layerFromId === 0) { // 视为embedding层
+        const ctxFromId = Number(parts[2]);
+        const ctx = (n as any).ctx_idx ?? (Number.isFinite(ctxFromId) ? ctxFromId : 0);
+        embCtxSet.add(ctx);
+      }
+    });
+    buildChessBoard(Array.from(embCtxSet.values()));
+  }, [chessMode, graphs, processedNodes, performanceMode]);
 
   const showTooltip = (event: MouseEvent, nodeData: any) => {
     if (!tooltipRef.current) return;
@@ -238,8 +389,8 @@ export default function GraphDiffingPage() {
 
   // 文件上传处理
   const handleFileUpload = async (files: FileList) => {
-    if (files.length < 2 || files.length > 5) {
-      setError('Please upload 2-5 JSON files');
+    if (files.length < 1 || files.length > 5) {
+      setError('Please upload 1-5 JSON files');
       return;
     }
 
@@ -403,6 +554,22 @@ export default function GraphDiffingPage() {
       ctxToX.set(ctx, x);
     });
 
+    // 如果是Chess模式（单图），准备ctx->棋盘tile坐标映射
+    let ctxToTileXZ: Map<number, {x: number; z: number}> | null = null;
+    if (chessMode && graphs.length === 1) {
+      const gridSize = 8;
+      const cellSize = 5.0; // 与棋盘一致
+      const sortedCtx = [...ctxList].sort((a,b)=>a-b).slice(0, gridSize * gridSize);
+      ctxToTileXZ = new Map<number, {x: number; z: number}>();
+      sortedCtx.forEach((ctx, i) => {
+        const r = Math.floor(i / gridSize);
+        const c = i % gridSize;
+        const tileX = (c - (gridSize - 1) / 2) * cellSize;
+        const tileZ = (r - (gridSize - 1) / 2) * cellSize;
+        ctxToTileXZ!.set(ctx, { x: tileX, z: tileZ });
+      });
+    }
+
     // 先按层与ctx聚合，保证相同ctx的X一致
     const mapKey = (layer: number, ctx: number) => `${layer}__${ctx}`;
     const bucket = new Map<string, ProcessedNode[]>();
@@ -425,75 +592,89 @@ export default function GraphDiffingPage() {
       const [layerStr, ctxStr] = key.split('__');
       const layer = Number(layerStr);
       const ctx = Number(ctxStr);
-      const baseX = ctxToX.get(ctx) || 0;
       const baseY = layerToY(layer) + yCenterOffset;
       group.sort((a,b)=> orderScore(a.feature_type) - orderScore(b.feature_type));
       const arr: { x: number; y: number }[] = [];
       group.forEach((node, idx) => {
-        const x = baseX + (idx - (group.length - 1)/2) * xInGroupSpacing;
+        let x: number;
+        let z: number | undefined;
+        if (chessMode && graphs.length === 1 && ctxToTileXZ && ctxToTileXZ.has(ctx)) {
+          const tile = ctxToTileXZ.get(ctx)!;
+          x = tile.x;
+          z = tile.z;
+        } else {
+          x = (ctxToX.get(ctx) || 0) + (idx - (group.length - 1)/2) * xInGroupSpacing;
+        }
         const y = baseY;
         arr.push({ x, y });
+        // 直接写入node的z（在后续统一写入时使用映射）
+        if (z !== undefined) (node as any).__tileZ = z;
       });
       basePos.set(key, arr);
     });
 
-    // 为不同子集分配平面：
-    // - size==ng: 全共享 → 中央平面(φ=null), zOffset=0
-    // - size==1: 独有 → φ=baseAngles[g]
-    // - size==2: 两两共享 → φ=两图角的中点
-    // 为确保几何上不重叠，再叠加固定z偏移：独有=+d，两两共享=+2d，全共享=0
+    // 为不同子集分配平面（非chess模式仅用y分层；chess模式x/z来自tile，z再按子集扇区叠加）
     const nGraphs = Math.max(1, loadedGraphs.length);
     const baseAngles: number[] = Array.from({ length: nGraphs }, (_, i) => (2 * Math.PI * i) / nGraphs);
-    const depthUnit = 6; // 固定z偏移的单位
+    const depthUnit = 6;
 
     const angleForSubset = (ids: number[]): number | null => {
-      if (ids.length === nGraphs) return null; // 中央平面
+      if (ids.length === nGraphs) return null;
       if (ids.length === 1) return baseAngles[ids[0] % nGraphs];
       if (ids.length === 2) {
         const a = baseAngles[ids[0] % nGraphs];
         const b = baseAngles[ids[1] % nGraphs];
         let mid = (a + b) / 2;
-        // 角度归一化到[0,2π)
-        if (Math.abs(a - b) > Math.PI) {
-          mid = ((a + b + 2 * Math.PI) / 2) % (2 * Math.PI);
-        }
+        if (Math.abs(a - b) > Math.PI) mid = ((a + b + 2 * Math.PI) / 2) % (2 * Math.PI);
         return mid;
       }
-      // 更大子集(>2且<ng)：按平均角（很少用）
       const avg = ids.reduce((acc, g) => acc + baseAngles[g % nGraphs], 0) / ids.length;
       return avg;
     };
 
     const zOffsetForSubset = (ids: number[]): number => {
-      if (ids.length === nGraphs) return 0; // 中央
-      if (ids.length === 1) return depthUnit; // 独有
-      if (ids.length === 2) return depthUnit * 2; // 两两共享
-      return depthUnit; // 其它
+      if (ids.length === nGraphs) return 0;
+      if (ids.length === 1) return depthUnit;
+      if (ids.length === 2) return depthUnit * 2;
+      return depthUnit;
     };
 
     bucket.forEach((group, key) => {
       const baseArr = basePos.get(key)!;
+      const [layerStr, ctxStr] = key.split('__');
+      const ctx = Number(ctxStr);
       group.forEach((node, idx) => {
         const bx = baseArr[idx].x;
         const by = baseArr[idx].y;
-
+        let xFinal = bx;
+        let zBaseFromTile: number | null = null;
+        if (chessMode && graphs.length === 1 && (node as any).__tileZ !== undefined) {
+          zBaseFromTile = (node as any).__tileZ as number;
+        }
         const subset = [...node.graphIds].sort((a,b)=>a-b);
         const phi = angleForSubset(subset);
-        const zBase = zOffsetForSubset(subset);
+        const zOffset = zOffsetForSubset(subset);
 
         if (phi === null) {
-          // 全共享：中央平面
-          node.x = bx;
+          // 全共享：中央扇区
+          node.x = xFinal;
           node.y = by;
-          node.z = 0;
+          node.z = (zBaseFromTile !== null) ? zBaseFromTile : 0;
         } else {
-          // 绕Y轴旋转到对应扇区 + 固定z偏移
-          const xRot = bx * Math.cos(phi);
-          const zRot = -bx * Math.sin(phi);
-          node.x = xRot;
-          node.y = by;
-          node.z = zRot + zBase;
+          // 绕Y轴旋转 + 偏移（仅当非棋盘时才旋转x；棋盘模式保持tile x，不再旋转x）
+          if (zBaseFromTile !== null) {
+            node.x = xFinal;
+            node.y = by;
+            node.z = zBaseFromTile + zOffset;
+          } else {
+            const xRot = xFinal * Math.cos(phi);
+            const zRot = -xFinal * Math.sin(phi);
+            node.x = xRot;
+            node.y = by;
+            node.z = zRot + zOffset;
+          }
         }
+        delete (node as any).__tileZ;
       });
     });
 
@@ -629,6 +810,8 @@ export default function GraphDiffingPage() {
   const onPanelMouseMove = (e: React.MouseEvent) => { if (!panelDragging) return; setPanelPos({ x: e.clientX - dragOffsetRef.current.x, y: e.clientY - dragOffsetRef.current.y }); };
   const onPanelMouseUp = () => setPanelDragging(false);
 
+
+
   return (
     <div className="flex h-screen bg-gray-100" onMouseMove={onPanelMouseMove} onMouseUp={onPanelMouseUp}>
       <div ref={containerRef} className="flex-1 relative">
@@ -648,7 +831,7 @@ export default function GraphDiffingPage() {
                 </svg>
               </div>
               <h3 className="text-xl font-semibold text-gray-700 mb-2">Upload Graph Files</h3>
-              <p className="text-gray-500 mb-4">Drag and drop 2-5 JSON files here, or click to browse</p>
+              <p className="text-gray-500 mb-4">Drag and drop 1-5 JSON files here, or click to browse</p>
               <input ref={fileInputRef} type="file" accept=".json" multiple onChange={handleFileInput} className="hidden" />
               <Button className="cursor-pointer" onClick={() => fileInputRef.current?.click()} aria-label="Choose Files">Choose Files</Button>
               {error && (<div className="mt-4 text-red-600 text-sm">{error}</div>)}
@@ -711,6 +894,10 @@ export default function GraphDiffingPage() {
                   <span className="text-sm">Show Unique Nodes</span>
                   <Switch checked={showUniqueNodes} onCheckedChange={setShowUniqueNodes} />
                 </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Chess-board Mode (single graph)</span>
+                  <Switch checked={chessMode} onCheckedChange={(v)=> graphs.length===1 ? setChessMode(v) : null} />
+                </div>
                 <div>
                   <label className="text-sm font-medium">Node Size: {nodeSize.toFixed(1)}</label>
                   <input type="range" min="0.5" max="3.0" step="0.1" value={nodeSize} onChange={(e) => setNodeSize(parseFloat(e.target.value))} className="w-full mt-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
@@ -723,6 +910,9 @@ export default function GraphDiffingPage() {
                   <span className="text-sm">Performance Mode</span>
                   <Switch checked={performanceMode} onCheckedChange={setPerformanceMode} />
                 </div>
+                {graphs.length !== 1 && chessMode && (
+                  <div className="text-xs text-orange-600">仅在单图时可启用棋盘模式</div>
+                )}
               </CardContent>
             </Card>
 
@@ -743,4 +933,4 @@ export default function GraphDiffingPage() {
   );
 }
 
-export { GraphDiffingPage };
+export { ThreeDVisualPage };

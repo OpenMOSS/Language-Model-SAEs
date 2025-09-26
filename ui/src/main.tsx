@@ -11,7 +11,7 @@ import { DictionaryPage } from "./routes/dictionaries/page";
 import { ModelsPage } from "./routes/models/page";
 import BookmarksPage from "./routes/bookmarks/page";
 import { CircuitsPage } from "./routes/circuits/page";
-import GraphDiffingPage from "./routes/graph-diffing/page";
+import ThreeDVisualPage from "./routes/3D-visualization/page";
 
 const router = createBrowserRouter([
   {
@@ -39,8 +39,8 @@ const router = createBrowserRouter([
     element: <CircuitsPage />,
   },
   {
-    path: "/graph-diffing",
-    element: <GraphDiffingPage />,
+    path: "/3D-visualization",
+    element: <ThreeDVisualPage />,
   },
   {
     path: "/",

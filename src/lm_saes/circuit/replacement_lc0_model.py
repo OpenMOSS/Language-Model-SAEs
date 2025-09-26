@@ -1,4 +1,4 @@
-from typing import Dict, List, Union, Callable, Tuple
+from typing import Dict, List, Union, Callable, Tuple, ContextManager
 from functools import partial
 import torch
 import torch.nn as nn
@@ -672,3 +672,137 @@ class ReplacementModel(HookedTransformer):
                 continue
             bias_params.append((name, p))
         return bias_params
+    
+    
+    def run_with_replacements(
+        self,
+        inputs: Union[str, torch.Tensor],
+        apply_activation_function: bool = True,
+        zero_bos: bool = False,
+        enable_grad: bool = False,
+        names_filter=None,
+        device=None,
+        remove_batch_dim: bool = False,
+        incl_bwd: bool = False,
+        reset_hooks_end: bool = True,
+        clear_contexts: bool = False,
+        pos_slice=None,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Run a forward pass where attention outputs are replaced by LORSA
+        decodes and MLP outputs are replaced by Transcoder decodes, while
+        also returning a cache of activations like run_with_cache.
+
+        Replacement is performed per-layer by installing forward hooks on
+        `attn.hook_in/out` and `mlp.hook_in/out` of each block.
+
+        Args:
+            inputs: Input prompt (string or token ids tensor).
+            apply_activation_function: If True, use post-activation features for
+                encode→decode; otherwise use pre-activation features.
+            zero_bos: If True and inputs include a BOS at position 0, zero out
+                feature activations at pos 0 before decoding (for both LORSA and
+                Transcoder paths).
+            enable_grad: If True, run with grad enabled (ignored if incl_bwd=True).
+            names_filter, device, remove_batch_dim, incl_bwd, reset_hooks_end,
+                clear_contexts, pos_slice: Same semantics as HookedTransformer.run_with_cache.
+
+        Returns:
+            Tuple[model_out, cache_dict]: The logits (or model output) and the
+            captured activation cache.
+        """
+
+        # Capture inputs to attn/MLP per layer to compute replacement outputs at hook_out
+        attn_in_cache: Dict[int, torch.Tensor] = {}
+        mlp_in_cache: Dict[int, torch.Tensor] = {}
+
+        def capture_attn_in(acts: torch.Tensor, hook: HookPoint, layer: int):
+            attn_in_cache[layer] = acts
+            return acts
+
+        def replace_attn_out(_acts: torch.Tensor, hook: HookPoint, layer: int):
+            # Compute LORSA encode/decode from captured input
+            inputs_tensor = attn_in_cache[layer]
+            # Encode
+            if apply_activation_function:
+                lorsa_feats = self.lorsas[layer].encode(inputs_tensor)
+            else:
+                lorsa_feats = self.lorsas[layer].encode(
+                    inputs_tensor, return_hidden_pre=True
+                )[1]
+            # Optional BOS zeroing
+            if zero_bos and lorsa_feats.shape[0] > 0:
+                # Keep batch dimension; zero position 0 for all batch elements
+                if lorsa_feats.ndim == 3:
+                    lorsa_feats[:, 0] = 0
+                elif lorsa_feats.ndim == 2:
+                    lorsa_feats[0] = 0
+            # Decode to attn output space
+            replaced = self.lorsas[layer].decode(lorsa_feats)
+            return replaced
+
+        def capture_mlp_in(acts: torch.Tensor, hook: HookPoint, layer: int):
+            mlp_in_cache[layer] = acts
+            return acts
+
+        def replace_mlp_out(_acts: torch.Tensor, hook: HookPoint, layer: int):
+            inputs_tensor = mlp_in_cache[layer]
+            # Encode single layer via per-layer SAE
+            if apply_activation_function:
+                transcoder_feats = self.transcoders[str(layer)].encode(
+                    inputs_tensor
+                )
+            else:
+                transcoder_feats = self.transcoders[str(layer)].encode(
+                    inputs_tensor, return_hidden_pre=True
+                )[1]
+            if zero_bos:
+                if transcoder_feats.ndim == 3:
+                    transcoder_feats[:, 0] = 0
+                elif transcoder_feats.ndim == 2:
+                    transcoder_feats[0] = 0
+            # Decode back to model dimension using per-layer transcoder
+            replaced = self.transcoders[str(layer)].decode(transcoder_feats)
+            return replaced
+
+        # Build replacement hooks for all layers
+        replacement_hooks: List[Tuple[str, Callable]] = []
+        for layer in range(self.cfg.n_layers):
+            replacement_hooks.append(
+                (f"blocks.{layer}.attn.hook_in", partial(capture_attn_in, layer=layer))
+            )
+            replacement_hooks.append(
+                (f"blocks.{layer}.attn.hook_out", partial(replace_attn_out, layer=layer))
+            )
+            replacement_hooks.append(
+                (f"blocks.{layer}.mlp.hook_in", partial(capture_mlp_in, layer=layer))
+            )
+            replacement_hooks.append(
+                (f"blocks.{layer}.mlp.hook_out", partial(replace_mlp_out, layer=layer))
+            )
+
+        # Compose with caching hooks similar to run_with_cache
+        cache_dict, fwd_hooks, bwd_hooks = self.get_caching_hooks(
+            names_filter,
+            incl_bwd,
+            device,
+            remove_batch_dim=remove_batch_dim,
+            pos_slice=pos_slice,
+        )
+
+        # Determine execution context: allow grads if incl_bwd, else follow enable_grad
+        context_manager = (
+            torch.enable_grad() if (enable_grad or incl_bwd) else torch.inference_mode()
+        )
+
+        with context_manager:
+            with self.hooks(
+                fwd_hooks=fwd_hooks + replacement_hooks,
+                bwd_hooks=bwd_hooks,
+                reset_hooks_end=reset_hooks_end,
+                clear_contexts=clear_contexts,
+            ):
+                model_out = self(inputs)
+                if incl_bwd:
+                    model_out.backward()
+
+        return model_out, cache_dict

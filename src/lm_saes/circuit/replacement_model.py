@@ -1,15 +1,17 @@
-from typing import Dict, List, Optional, Union, Callable, Tuple, ContextManager, DefaultDict
+from typing import Dict, List, Union, Callable, Tuple, ContextManager
 from functools import partial
 from contextlib import contextmanager
-from jaxtyping import Float
 
 import torch
 import torch.nn as nn
-import einops
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
-from lm_saes import CrossLayerTranscoder, SparseAutoEncoder, LanguageModelConfig, load_model, LowRankSparseAttention
-from .utils.load_transcoder_set import load_transcoder_set
+from lm_saes import (
+    CrossLayerTranscoder,
+    LanguageModelConfig,
+    load_model,
+    LowRankSparseAttention,
+)
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -27,8 +29,10 @@ class ReplacementMLP(nn.Module):
         mlp_out = self.old_mlp(x)
         return self.hook_out(mlp_out)
 
+
 class ReplacementAttention(nn.Module):
     """Wrapper for a TransformerLens Attention layer that adds in extra hooks"""
+
     def __init__(self, old_attn: nn.Module):
         super().__init__()
         self.old_attn = old_attn
@@ -36,7 +40,10 @@ class ReplacementAttention(nn.Module):
         self.hook_out = HookPoint()
     
     def forward(self, query_input, key_input, value_input, **kwargs):
-        assert torch.allclose(query_input, key_input) and torch.allclose(query_input, value_input)
+        assert (
+            torch.allclose(query_input, key_input)
+            and torch.allclose(query_input, value_input)
+        )
         query_input = self.hook_in(query_input)
         attn_out = self.old_attn(query_input, key_input, value_input, **kwargs)
         return self.hook_out(attn_out)
@@ -86,22 +93,25 @@ class ReplacementModel(HookedTransformer):
         attn_output_hook: str = "attn.hook_out",
         **kwargs,
     ) -> "ReplacementModel":
-        """Create a ReplacementModel from a given LanguageModelConfig and dict of transcoders
+        """Create a ReplacementModel from a given LanguageModelConfig and
+        dict of transcoders.
 
         Args:
-            config (LanguageModelConfig): the config of the HookedTransformer that this
-                ReplacmentModel will inherit from
-            transcoders: CrossLayerTranscoder: A CrossLayerTranscoder
-            lorsas: List[LowRankSparseAttention]: A list of LowRankSparseAttention modules
-            mlp_input_hook (List[str], optional): The hookpoints of the model that transcoders
-                hook into. Defaults to "mlp.hook_in".
-            mlp_output_hook (List[str], optional): The hookpoints of the model that transcoders
-                hook out of. Defaults to "mlp.hook_out".
-            attn_input_hook (List[str], optional): The hookpoints of the model that lorsa
-                hook into. Defaults to "attn.hook_in".
-            attn_output_hook (List[str], optional): The hookpoints of the model that lorsa
-                hook out of. Defaults to "attn.hook_out".
-            **kwargs: Additional keyword arguments to pass to the HookedTransformer constructor.
+            config (LanguageModelConfig): the config of the HookedTransformer
+                that this ReplacmentModel will inherit from
+            transcoders (CrossLayerTranscoder): A CrossLayerTranscoder
+            lorsas (List[LowRankSparseAttention]): A list of
+                LowRankSparseAttention modules
+            mlp_input_hook (str, optional): Hookpoint that transcoders hook
+                into. Defaults to "mlp.hook_in".
+            mlp_output_hook (str, optional): Hookpoint that transcoders hook
+                out of. Defaults to "mlp.hook_out".
+            attn_input_hook (str, optional): Hookpoint that lorsa hook into.
+                Defaults to "attn.hook_in".
+            attn_output_hook (str, optional): Hookpoint that lorsa hook out
+                of. Defaults to "attn.hook_out".
+            **kwargs: Additional keyword arguments to pass to the
+                HookedTransformer constructor.
 
         Returns:
             ReplacementModel: The loaded ReplacementModel
@@ -109,7 +119,12 @@ class ReplacementModel(HookedTransformer):
 
         model = load_model(config).model  # type: ignore[reportAttributeAccessIssue]
         model._configure_replacement_model(
-            transcoders, mlp_input_hook, mlp_output_hook, attn_input_hook, attn_output_hook
+            transcoders,
+            lorsas,
+            mlp_input_hook,
+            mlp_output_hook,
+            attn_input_hook,
+            attn_output_hook,
         )
         return model
     
@@ -125,27 +140,33 @@ class ReplacementModel(HookedTransformer):
         attn_output_hook: str = "attn.hook_out",
         **kwargs,
     ) -> "ReplacementModel":
-        """Create a ReplacementModel from the name of HookedTransformer and dict of transcoders
+        """Create a ReplacementModel from a pretrained HookedTransformer and
+        transcoders.
 
         Args:
-            model_cfg (LanguageModelConfig): the config of the pretrained HookedTransformer that this
-                ReplacmentModel will inherit from
-            transcoders (Union[Dict[int, SparseAutoEncoder], CrossLayerTranscoder]): A dict that maps from layer -> Transcoder or a CrossLayerTranscoder
-            mlp_input_hook (List[str], optional): The hookpoints of the model that transcoders
-                hook into for inputs. Defaults to "mlp.hook_in".
-            mlp_output_hook (List[str], optional): The hookpoints of the model that transcoders
-                hook into for outputs. Defaults to "mlp.hook_out".
-            attn_input_hook (List[str], optional): The hookpoints of the model that lorsa
-                hook into. Defaults to "attn.hook_in".
-            attn_output_hook (List[str], optional): The hookpoints of the model that lorsa
-                hook out of. Defaults to "attn.hook_out".
+            model_cfg (LanguageModelConfig): the config of the pretrained
+                HookedTransformer that this ReplacmentModel will inherit from
+            transcoders (CrossLayerTranscoder): A CrossLayerTranscoder
+            mlp_input_hook (str, optional): Hookpoint that transcoders hook
+                into for inputs. Defaults to "mlp.hook_in".
+            mlp_output_hook (str, optional): Hookpoint that transcoders hook
+                into for outputs. Defaults to "mlp.hook_out".
+            attn_input_hook (str, optional): Hookpoint that lorsa hook into.
+                Defaults to "attn.hook_in".
+            attn_output_hook (str, optional): Hookpoint that lorsa hook out
+                of. Defaults to "attn.hook_out".
 
         Returns:
             ReplacementModel: The loaded ReplacementModel
         """
+        model_name_or_path = (
+            model_cfg.model_name
+            if model_cfg.model_from_pretrained_path is None
+            else model_cfg.model_from_pretrained_path
+        )
         hf_model = (
             AutoModelForCausalLM.from_pretrained(
-                (model_cfg.model_name if model_cfg.model_from_pretrained_path is None else model_cfg.model_from_pretrained_path),
+                model_name_or_path,
                 cache_dir=model_cfg.cache_dir,
                 local_files_only=model_cfg.local_files_only,
                 torch_dtype=model_cfg.dtype,
@@ -156,7 +177,7 @@ class ReplacementModel(HookedTransformer):
         )
         hf_tokenizer = (
             AutoTokenizer.from_pretrained(
-                (model_cfg.model_name if model_cfg.model_from_pretrained_path is None else model_cfg.model_from_pretrained_path),
+                model_name_or_path,
                 trust_remote_code=True,
                 use_fast=True,
                 add_bos_token=True,
@@ -171,7 +192,7 @@ class ReplacementModel(HookedTransformer):
             device=model_cfg.device,
             cache_dir=model_cfg.cache_dir,
             hf_model=hf_model,
-            hf_config=hf_model.config if hf_model is not None else None,
+            hf_config=(hf_model.config if hf_model is not None else None),
             tokenizer=hf_tokenizer,
             dtype=model_cfg.dtype,  # type: ignore ; issue with transformer_lens
             fold_ln=False,
@@ -180,7 +201,12 @@ class ReplacementModel(HookedTransformer):
         )
 
         model._configure_replacement_model(
-            transcoders, lorsas, mlp_input_hook, mlp_output_hook, attn_input_hook, attn_output_hook
+            transcoders,
+            lorsas,
+            mlp_input_hook,
+            mlp_output_hook,
+            attn_input_hook,
+            attn_output_hook,
         )
         return model
     
@@ -196,15 +222,16 @@ class ReplacementModel(HookedTransformer):
         attn_output_hook: str = "attn.hook_out",
         **kwargs,
     ) -> "ReplacementModel":
-        """Create a ReplacementModel from the name of HookedTransformer and dict of transcoders
+        """Create a ReplacementModel from the name of HookedTransformer and
+        dict of transcoders.
 
         Args:
-            model_name (str): the name of the pretrained HookedTransformer that this
-                ReplacmentModel will inherit from
-            transcoders: (str): Either a predefined transcoder set name, or a config file
-                defining where to load them from
-            device (torch.device, Optional): the device onto which to load the transcoders
-                and HookedTransformer.
+            model_name (str): the name of the pretrained HookedTransformer
+                that this ReplacmentModel will inherit from
+            transcoders (str): Either a predefined transcoder set name, or a
+                config file defining where to load them from
+            device (torch.device, Optional): the device onto which to load the
+                transcoders and HookedTransformer.
 
         Returns:
             ReplacementModel: The loaded ReplacementModel
@@ -750,3 +777,108 @@ class ReplacementModel(HookedTransformer):
             if '.b' in param[0] and 'b_Q' not in param[0] and 'b_K' not in param[0] and 'old' not in param[0] and 'transcoders.b_E' not in param[0]:
                 bias_params.append(param)
         return bias_params
+
+    def run_with_replacements(
+        self,
+        inputs: Union[str, torch.Tensor],
+        apply_activation_function: bool = True,
+        zero_bos: bool = False,
+        enable_grad: bool = False,
+    ) -> torch.Tensor:
+        """Run a forward pass where attention outputs are replaced by LORSA
+        decodes and MLP outputs are replaced by Transcoder decodes.
+
+        Replacement is performed per-layer by installing forward hooks on
+        `attn.hook_in/out` and `mlp.hook_in/out` of each block.
+
+        Args:
+            inputs: Input prompt (string or token ids tensor).
+            apply_activation_function: If True, use post-activation features for
+                encode→decode; otherwise use pre-activation features.
+            zero_bos: If True and inputs include a BOS at position 0, zero out
+                feature activations at pos 0 before decoding (for both LORSA and
+                Transcoder paths).
+            enable_grad: If True, run with grad enabled; otherwise inference mode.
+
+        Returns:
+            The logits tensor from the model forward pass with replacements.
+        """
+
+        # Capture inputs to attn/MLP per layer to compute replacement outputs at hook_out
+        attn_in_cache: Dict[int, torch.Tensor] = {}
+        mlp_in_cache: Dict[int, torch.Tensor] = {}
+
+        def capture_attn_in(acts: torch.Tensor, hook: HookPoint, layer: int):
+            attn_in_cache[layer] = acts
+            return acts
+
+        def replace_attn_out(_acts: torch.Tensor, hook: HookPoint, layer: int):
+            # Compute LORSA encode/decode from captured input
+            inputs_tensor = attn_in_cache[layer]
+            # Encode
+            if apply_activation_function:
+                lorsa_feats = self.lorsas[layer].encode(inputs_tensor)
+            else:
+                lorsa_feats = self.lorsas[layer].encode(
+                    inputs_tensor, return_hidden_pre=True
+                )[1]
+            # Optional BOS zeroing
+            if zero_bos and lorsa_feats.shape[0] > 0:
+                # assume seq-first: (pos, d_sae) after squeeze in other fns; here inputs likely (batch, pos, dim)
+                # Keep batch dimension; zero position 0 for all batch elements
+                if lorsa_feats.ndim == 3:
+                    lorsa_feats[:, 0] = 0
+                elif lorsa_feats.ndim == 2:
+                    lorsa_feats[0] = 0
+            # Decode to attn output space
+            replaced = self.lorsas[layer].decode(lorsa_feats)
+            return replaced
+
+        def capture_mlp_in(acts: torch.Tensor, hook: HookPoint, layer: int):
+            mlp_in_cache[layer] = acts
+            return acts
+
+        def replace_mlp_out(_acts: torch.Tensor, hook: HookPoint, layer: int):
+            inputs_tensor = mlp_in_cache[layer]
+            # Encode single layer via transcoder
+            if apply_activation_function:
+                transcoder_feats = self.transcoders.encode_single_layer(
+                    inputs_tensor, layer
+                )
+            else:
+                transcoder_feats = self.transcoders.encode_single_layer(
+                    inputs_tensor, layer, return_hidden_pre=True
+                )[1]
+            if zero_bos:
+                if transcoder_feats.ndim == 3:
+                    transcoder_feats[:, 0] = 0
+                elif transcoder_feats.ndim == 2:
+                    transcoder_feats[0] = 0
+            # Decode back to model dimension using per-layer transcoder
+            replaced = self.transcoders[layer].decode(transcoder_feats)
+            return replaced
+
+        # Build hooks for all layers
+        hooks: List[Tuple[str, Callable]] = []
+        for layer in range(self.cfg.n_layers):
+            hooks.append((f"blocks.{layer}.attn.hook_in", partial(capture_attn_in, layer=layer)))
+            hooks.append((f"blocks.{layer}.attn.hook_out", partial(replace_attn_out, layer=layer)))
+            hooks.append((f"blocks.{layer}.mlp.hook_in", partial(capture_mlp_in, layer=layer)))
+            hooks.append((f"blocks.{layer}.mlp.hook_out", partial(replace_mlp_out, layer=layer)))
+
+        cm: ContextManager
+        if enable_grad:
+            cm = self.hooks(hooks)
+        else:
+            cm = torch.inference_mode()
+
+        # If not enabling grad, we still need to set hooks; nest contexts accordingly
+        if enable_grad:
+            with cm:
+                logits = self(inputs)
+        else:
+            with cm:
+                with self.hooks(hooks):
+                    logits = self(inputs)
+
+        return logits
