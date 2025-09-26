@@ -58,11 +58,11 @@ export const AppNavbar = () => {
           <Link
             className={cn(
               "transition-colors hover:text-foreground/80 text-foreground/60",
-              location.pathname === "/graph-diffing" && "text-foreground"
+              location.pathname === "/3D-visualization" && "text-foreground"
             )}
-            to="/graph-diffing"
+            to="/3D-visualization"
           >
-            Graph Diffing
+            3D Visualization
           </Link>
         </div>
       </div>
