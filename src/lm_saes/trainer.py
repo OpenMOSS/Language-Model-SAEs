@@ -293,6 +293,12 @@ class Trainer:
             if self.cfg.l1_coefficient is not None
             else 1.0
         )
+        
+        lp_coefficient = (
+            self.cfg.lp_coefficient
+            if self.cfg.lp_coefficient is not None
+            else 0.0
+        )
 
         result = sae.compute_loss(
             batch,
@@ -302,6 +308,7 @@ class Trainer:
             use_batch_norm_mse=self.cfg.use_batch_norm_mse,
             return_aux_data=not self.cfg.skip_metrics_calculation,
             l1_coefficient=l1_coefficient,
+            lp_coefficient=lp_coefficient,
         )
         if not self.cfg.skip_metrics_calculation:
             loss, (loss_data, aux_data) = result
@@ -310,7 +317,7 @@ class Trainer:
             loss_data = {}
             aux_data = {}
         loss_dict = (
-            {"loss": loss, "batch_size": batch_size(batch), "l1_coefficient": l1_coefficient} | loss_data | aux_data
+            {"loss": loss, "batch_size": batch_size(batch), "l1_coefficient": l1_coefficient, "lp_coefficient": lp_coefficient} | loss_data | aux_data
         )
         return loss_dict
 
@@ -344,6 +351,7 @@ class Trainer:
                 above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
                 below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
                 below_1e_6 = (feature_sparsity < 1e-6).sum(-1)
+                below_1e_7 = (feature_sparsity < 1e-7).sum(-1)
                 wandb_log_dict = {}
                 
                 for l in range(sae.cfg.n_layers):
@@ -353,18 +361,21 @@ class Trainer:
                 for l in range(sae.cfg.n_layers):
                     wandb_log_dict[f"sparsity/below_1e-5_layer{l}"] = below_1e_5[l].item()
                     wandb_log_dict[f"sparsity/below_1e-6_layer{l}"] = below_1e_6[l].item()
-
+                    wandb_log_dict[f"sparsity/below_1e-7_layer{l}"] = below_1e_7[l].item()
+                    
                 wandb_log_dict["sparsity/above_1e-1"] = above_1e_1.sum().item()
                 wandb_log_dict["sparsity/above_1e-2"] = above_1e_2.sum().item()
                 wandb_log_dict["sparsity/below_1e-5"] = below_1e_5.sum().item()
                 wandb_log_dict["sparsity/below_1e-6"] = below_1e_6.sum().item()
-            
+                wandb_log_dict["sparsity/below_1e-7"] = below_1e_7.sum().item()
+                            
             else:
                 wandb_log_dict = {
                     "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum(-1).item(),
                     "sparsity/above_1e-2": (feature_sparsity > 1e-2).sum(-1).item(),
                     "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum(-1).item(),
                     "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum(-1).item(),
+                    "sparsity/below_1e-7": (feature_sparsity < 1e-7).sum(-1).item(),
                 }
             if is_primary_rank(sae.device_mesh):
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Sparsity Metrics")
@@ -391,6 +402,10 @@ class Trainer:
             l_s = log_info["l_s"]
             if isinstance(l_s, DTensor):
                 l_s = l_s.full_tensor()
+                
+            l_p = log_info["l_p"]
+            if isinstance(l_p, DTensor):
+                l_p = l_p.full_tensor()
 
             if sae.cfg.sae_type == "lorsa":
                 label = label.flatten(0, 1)
@@ -443,6 +458,7 @@ class Trainer:
                 # losses
                 "losses/mse_loss": l_rec.mean().item(),
                 **({"losses/sparsity_loss": l_s.mean().item()} if log_info.get("l_s", None) is not None else {}),
+                **({"losses/lp_loss": l_p.mean().item()} if log_info.get("l_p", None) is not None else {}),
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
                 **clt_per_layer_ev_dict,
@@ -459,6 +475,7 @@ class Trainer:
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
                 "details/l1_coefficient": log_info["l1_coefficient"],
+                "details/lp_coefficient": log_info["lp_coefficient"],
             }
 
             # Add timer information

@@ -255,6 +255,7 @@ class TrainerConfig(BaseConfig):
 
     l1_coefficient: float | None = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
+    lp_coefficient: float | None = None
     amp_dtype: Annotated[
         torch.dtype | None,
         BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
