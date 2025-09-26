@@ -189,7 +189,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         demeaned_label = flattened_label - flattened_label.mean(dim=0)
         U, S, V = torch.svd(demeaned_label.T.to(torch.float32))
         proj_weight = U[:, :d_active_subspace] # [d_model, d_active_subspace]
-        self.W_O.data = self.W_O.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype)
+        self.W_O.data.copy_(self.W_O.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
         
     @torch.no_grad()
     @torch.autocast(device_type='cuda', dtype=torch.bfloat16)
@@ -225,12 +225,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 self.W_O.data[orig_head_index*n_ov_per_orig_head:(orig_head_index+1)*n_ov_per_orig_head] @
                 (mhsa.W_V[orig_head_index] @ mhsa.W_O[orig_head_index]).T
             )
-        self.W_V.data = self.W_V.data / self.W_V.data.norm(dim=1, keepdim=True)
-        self.W_O.data = self.W_O.data / self.W_O.data.norm(dim=1, keepdim=True)
+        self.W_V.data.copy_(self.W_V.data / self.W_V.data.norm(dim=1, keepdim=True))
+        self.W_O.data.copy_(self.W_O.data / self.W_O.data.norm(dim=1, keepdim=True))
         
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True)
         hidden_pre = hidden_pre.flatten(0, 1)
-        self.b_V.data = -hidden_pre.mean(dim=0)
+        self.b_V.data.copy_(-hidden_pre.mean(dim=0))
 
     def _calculate_sin_cos_rotary(
         self,
@@ -447,7 +447,14 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             # Head outputs
             hidden_pre = self._compute_head_outputs(pattern, v)
 
+        # Scale feature activations by decoder norm if configured
+        if self.cfg.sparsity_include_decoder_norm:
+            hidden_pre = hidden_pre * self.decoder_norm()
+
         feature_acts = self.activation_function(hidden_pre)
+
+        if self.cfg.sparsity_include_decoder_norm:
+            feature_acts = feature_acts / self.decoder_norm()
 
         return_values = [feature_acts]
         if return_hidden_pre:
@@ -712,6 +719,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             loss = loss + l_s.mean()
         else:
             loss_dict["l_s"] = None
+        
+        loss_dict["l_p"] = None
 
         if return_aux_data:
             aux_data = {
