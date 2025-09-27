@@ -7,12 +7,20 @@ from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 from wandb.sdk.wandb_run import Run
+import json
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import EvalConfig
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
+from lm_saes.utils.timer import timer
+from lm_saes.circuit.graph import Graph
+from lm_saes.circuit.graph import *
+
+from lm_saes.circuit.replacement_model import ReplacementModel
+from lm_saes.circuit.attribution import attribute
+from lm_saes.config import GraphEvalConfig
 
 logger = get_distributed_logger("evaluator")
 
@@ -277,16 +285,10 @@ class Evaluator:
                 break
         self.process_metrics(wandb_logger)
 
-from lm_saes.utils.timer import timer
-from lm_saes.circuit.graph import Graph
-from lm_saes.circuit.graph import *
-
-from lm_saes.circuit.replacement_model import ReplacementModel
-from lm_saes.circuit.attribution import attribute
-from lm_saes.config import GraphEvalConfig
 
 def compute_graph_scores(graph: Graph, use_lorsa:bool=True) -> tuple[float, float]:
-    """Compute metrics for evaluating how well the graph captures the model's computation.
+    """Copy from circuit-tracer 
+    Compute metrics for evaluating how well the graph captures the model's computation.
     This function calculates two complementary scores that measure how much of the model's
     computation flows through interpretable feature nodes versus reconstruction error nodes:
     1. Replacement Score: Measures the fraction of end-to-end influence from input tokens
@@ -309,13 +311,6 @@ def compute_graph_scores(graph: Graph, use_lorsa:bool=True) -> tuple[float, floa
         reconstruction where all computation flows through interpretable features. Lower
         scores indicate more reliance on error nodes, suggesting incomplete feature coverage.
     """
-    # n_logits = len(graph.logit_tokens)
-    # n_tokens = len(graph.input_tokens)
-    # n_features = len(graph.selected_features)
-    
-    # error_start = n_features
-    # error_end = error_start + n_tokens * graph.cfg.n_layers
-    # token_end = error_end + n_tokens
     
     # Extract dimensions
     n_logits = len(graph.logit_tokens)
@@ -334,24 +329,16 @@ def compute_graph_scores(graph: Graph, use_lorsa:bool=True) -> tuple[float, floa
     token_influence = node_influence[error_end_idx:token_end_idx].sum()
     error_influence = node_influence[n_features:error_end_idx].sum()
 
-    print(f'fraction: {token_influence.item()} {(token_influence + error_influence).item()}')
     replacement_score = token_influence / (token_influence + error_influence)
-    
-    
 
-    # non_error_fractions = normalized_matrix[:, :].sum(dim=-1) 
-    # non_error_fractions = normalized_matrix[:, :].sum(dim=-1) - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1) # not from error 
+    # non_error_fractions = normalized_matrix[:, :].sum(dim=-1) - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1) # not from error (Ibelieve this is correct)
     non_error_fractions = 1 - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1)  # not from error 
-    # print(f'node_influence: {node_influence.sum()}')
     output_influence = node_influence + logit_weights
-    # print(f'{node_influence.shape=} {logit_weights.shape=}')
-    # print(f'{non_error_fractions.shape=} {output_influence.shape=}')
     completeness_score = (non_error_fractions * output_influence).sum() / output_influence.sum()
     
 
     return replacement_score.item(), completeness_score.item()
 
-import json
 class GrahEval:
     def __init__(self, cfg: GraphEvalConfig):
         self.cfg = cfg
@@ -372,15 +359,15 @@ class GrahEval:
         with timer.time("Init. dataset"):
             dataset = json.load(open(dataset_path, 'r'))
         
+        
+        
         for i in range(self.cfg.start_from, len(dataset)):
             data = dataset[i]
             
+            # Add <BOS> if there doesn't have
             if add_bos and data['prompt'][0]!='<':
                 prompt = "<|endoftext|> "+data['prompt']
-            
-            
-            # input_token = replacement_model.tokenizer.encode(prompt)  
-                      
+                                  
             replacement_model._configure_gradient_flow()
             replacement_model._deduplicate_attention_buffers()
             replacement_model.setup()
@@ -395,8 +382,6 @@ class GrahEval:
                 use_lorsa=use_lorsa,
             )
             
-            # complete_score, A = calc_graph_completeness_score(graph)
-            # replacement_score, A = calc_graph_replacement_score(graph)
             replacement_score, completeness_score = compute_graph_scores(graph, use_lorsa=use_lorsa)
 
             self.replacement_scores.append(replacement_score)
@@ -406,3 +391,4 @@ class GrahEval:
                 print('prompt:', prompt)
                 print(f'complete: {completeness_score}')
                 print(f'replace: {replacement_score}')
+            
