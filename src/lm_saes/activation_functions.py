@@ -20,28 +20,30 @@ class STEFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, input: torch.Tensor, jumprelu_threshold: torch.Tensor, jumprelu_threshold_window: float, dims_to_keep_in_bwd: tuple[int, ...]):
+        mask = input.gt(jumprelu_threshold)
         ctx.save_for_backward(
             input,
             jumprelu_threshold,
             torch.tensor(jumprelu_threshold_window, dtype=input.dtype, device=input.device),
+            mask,
         )
         ctx.dims_to_keep_in_bwd = dims_to_keep_in_bwd
-        return input * input.gt(jumprelu_threshold)
+        return input * mask
 
     @staticmethod
     def backward(ctx, *grad_outputs: torch.Tensor, **args):
         assert len(grad_outputs) == 1
         grad_output = grad_outputs[0]
 
-        input, jumprelu_threshold, jumprelu_threshold_window = ctx.saved_tensors
+        input, jumprelu_threshold, jumprelu_threshold_window, mask = ctx.saved_tensors
 
         grad_jumprelu_threshold = torch.where(
             ((input - jumprelu_threshold).abs() < jumprelu_threshold_window * 0.5) * (input > 0.0),
             -jumprelu_threshold / jumprelu_threshold_window,
             0.0,
-        )
+        ) * grad_output
 
-        x_grad = grad_output * input.gt(jumprelu_threshold)
+        x_grad = grad_output * mask
 
         grad_jumprelu_threshold = grad_jumprelu_threshold.sum(
             dim=tuple(

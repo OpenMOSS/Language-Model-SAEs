@@ -59,6 +59,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         self.device_mesh: DeviceMesh | None = device_mesh
 
         self.activation_function: Callable[[torch.Tensor], torch.Tensor] = self.activation_function_factory(device_mesh)
+        self.circuit_tracing_mode: bool = cfg.circuit_tracing_mode
 
     @torch.no_grad()
     def set_dataset_average_activation_norm(self, dataset_average_activation_norm: dict[str, float]):
@@ -322,6 +323,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         if device_mesh is None or any(isinstance(v, DTensor) for v in state_dict.values()):
             # Non-distributed checkpoint or DCP checkpoint
             # Load the state dict through torch API
+            for k, v in state_dict.items():
+                if any(isinstance(v, DTensor) for v in state_dict.values()) and not isinstance(v, DTensor):
+                    state_dict[k] = DimMap({}).distribute(v, device_mesh)
             self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
         else:
             # Full checkpoint (in .safetensors or .pt format) to be loaded distributedly
@@ -464,14 +468,20 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         elif self.cfg.act_fn.lower() == "topk":
 
             if self.device_mesh is not None:
-                from lm_saes.utils.distributed import distributed_kthvalue
+                from lm_saes.utils.distributed import distributed_topk
                 
                 def topk_activation(x: Union[
                         Float[torch.Tensor, "batch d_sae"],
                         Float[torch.Tensor, "batch seq_len d_sae"],
                     ],
                 ):
-                    return distributed_kthvalue(x, k=self.current_k, device_mesh=self.device_mesh, dim=-1, mesh_dim_name="model")
+                    return distributed_topk(
+                        x, 
+                        k=self.current_k, 
+                        device_mesh=self.device_mesh, 
+                        dim=-1, 
+                        mesh_dim_name="model",
+                    )
             else:
                 def topk_activation(
                     x: Union[
@@ -479,48 +489,63 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         Float[torch.Tensor, "batch seq_len d_sae"],
                     ],
                 ):
-                    x = torch.clamp(x, min=0.0)
-                    k = x.shape[-1] - self.current_k + 1
-                    
-                    k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
-                    k_th_value = k_th_value.unsqueeze(dim=-1)
-                    return x * x.ge(k_th_value)
+                    from lm_saes.utils.math import topk
+                    return topk(
+                        x,
+                        k=self.current_k,
+                        dim=-1,
+                    )
 
             return topk_activation
 
         elif self.cfg.act_fn.lower() == "batchtopk":
 
-            if self.device_mesh is not None:
+            if device_mesh is not None:
                 from lm_saes.utils.distributed import distributed_topk
-
-                def topk_activation(x: Union[
+                
+                def batch_topk(x: Union[
                         Float[torch.Tensor, "batch d_sae"],
                         Float[torch.Tensor, "batch seq_len d_sae"],
-                    ],):
-                    return distributed_topk(x, k=self.current_k * x.size(-2), device_mesh=self.device_mesh, dim=(-2, -1), mesh_dim_name="model")
+                    ],
+                ):
+                    x = x * x.gt(0).to(x.dtype)
+                    original_shape = None
+                    if x.ndim == 3:
+                        original_shape = (x.size(0), x.size(1))
+                        x = x.flatten(end_dim=1)
+                    result = distributed_topk(
+                        x,
+                        k=self.current_k * x.size(0),
+                        device_mesh=device_mesh,
+                        dim=(-2, -1),
+                        mesh_dim_name="model",
+                    )
+                    if original_shape is not None:
+                        result = result.unflatten(dim=0, sizes=original_shape)
+                    return result
             else:
-                def topk_activation(x: Union[
+                # single-GPU batchtopk
+                from lm_saes.utils.math import topk
+                def batch_topk(x: Union[
                         Float[torch.Tensor, "batch d_sae"],
                         Float[torch.Tensor, "batch seq_len d_sae"],
-                    ],):
-                    assert x.dim() == 2, f"It is advised to use JumpReLU function to evaluate models trained with batchtopk activation function, expected 2 dimensions, got {x.dim()} dimensions with shape {x.shape}"
-                    
-                    batch_size = x.size(0)
-                    x = torch.clamp(x, min=0.0)
-
-                    flattened_x = x.flatten()
-                    non_zero_entries = flattened_x[flattened_x.gt(0)]
-
-                    if non_zero_entries.numel() < batch_size * self.current_k:
-                        return x.gt(0)
-                    else:
-                        k = non_zero_entries.numel() - self.current_k + 1
-
-                        k_th_value, _ = torch.kthvalue(non_zero_entries, k=k, dim=-1)
-                        return x * x.ge(k_th_value)
+                    ],
+                ):
+                    x = x * x.gt(0).to(x.dtype)
+                    original_shape = None
+                    if x.ndim == 3:
+                        original_shape = (x.size(0), x.size(1))
+                        x = x.flatten(end_dim=1)
+                    result = topk(
+                        x,
+                        k=self.current_k * x.size(0),
+                        dim=(-2, -1),
+                    )
+                    if original_shape is not None:
+                        result = result.unflatten(dim=0, sizes=original_shape)
+                    return result
             
-
-            return topk_activation
+            return batch_topk
 
         raise ValueError(f"Not implemented activation function {self.cfg.act_fn}")
 
@@ -540,6 +565,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
         l1_coefficient: float = 1.0,
+        lp_coefficient: float = 0.0,
         return_aux_data: Literal[True] = True,
         **kwargs,
     ) -> tuple[
@@ -557,6 +583,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
         l1_coefficient: float = 1.0,
+        lp_coefficient: float = 0.0,
         return_aux_data: Literal[False],
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
@@ -579,6 +606,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         frequency_scale: float = 0.01,
         p: int = 1,
         l1_coefficient: float = 1.0,
+        lp_coefficient: float = 0.0,
         return_aux_data: bool = True,
         **kwargs,
     ) -> Union[
@@ -637,6 +665,24 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     loss = loss + l_s.mean()
             else:
                 loss_dict["l_s"] = None
+
+            # Lp loss calculation: λ_P * Σ_i ReLU(exp(t) - f_i(x)) ||W_{d,i}||_2
+            if lp_coefficient > 0.0 and isinstance(self.activation_function, JumpReLU):
+                with timer.time("lp_loss_calculation"):
+                    # ReLU(exp(lp_threshold) - feature_acts) * decoder_norm
+                    jumprelu_threshold = self.activation_function.get_jumprelu_threshold()
+                    l_p = (
+                        torch.nn.functional.relu(jumprelu_threshold - feature_acts) 
+                        * self.decoder_norm()
+                    )
+                    l_p = l_p.sum(dim=-1)
+                    if isinstance(l_p, DTensor):
+                        l_p = l_p.full_tensor()
+                    l_p = lp_coefficient * l_p
+                    loss_dict["l_p"] = l_p
+                    loss = loss + l_p.mean()
+            else:
+                loss_dict["l_p"] = None
 
         if return_aux_data:
             aux_data = {

@@ -1,3 +1,6 @@
+from torch._tensor import Tensor
+
+
 from typing import Iterable
 
 import torch
@@ -110,7 +113,7 @@ class Evaluator:
         log_metric("l_rec", item(l_rec.mean()))
 
         # Explained variance
-        total_variance = (label - label.mean(0)).pow(2).sum(dim=-1)
+        total_variance: Tensor = (label - label.mean(0)).pow(2).sum(dim=-1)
         explained_variance = 1 - per_token_l2_loss / total_variance
         log_metric("explained_variance", item(explained_variance.mean()))
 

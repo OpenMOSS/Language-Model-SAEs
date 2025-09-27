@@ -338,7 +338,6 @@ class FeatureAnalyzer:
             n_tokens += n_tokens_current
             n_analyzed_tokens += cast(int, ignore_token_masks.int().sum().item())
             pbar.update(n_tokens_current)
-
             if n_tokens >= self.cfg.total_analyzing_tokens:
                 break
 
