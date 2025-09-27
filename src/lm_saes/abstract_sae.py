@@ -659,10 +659,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Prepare the label for the loss computation."""
         raise NotImplementedError("Subclasses must implement this method")
     
-    @abstractmethod
-    def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
-        """Initialize the W and D parameters with the active subspace."""
-        raise NotImplementedError("Subclasses must implement this method")
+    # @abstractmethod
+    # def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
+    #     """Initialize the W and D parameters with the active subspace."""
+    #     raise NotImplementedError("Subclasses must implement this method")
 
     def dim_maps(self) -> dict[str, DimMap]:
         """Return a dictionary mapping parameter names to dimension maps.

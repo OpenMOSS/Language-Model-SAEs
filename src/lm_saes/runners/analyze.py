@@ -78,6 +78,102 @@ class AnalyzeSAESettings(BaseSettings):
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
 @torch.no_grad()
+def analyze_sae_2(settings: AnalyzeSAESettings) -> None:
+    """Analyze a SAE model.
+
+    Args:
+        settings: Configuration settings for SAE analysis
+    """
+    # Set up logging
+    setup_logging(level="INFO")
+
+    device_mesh = (
+        init_device_mesh(
+            device_type=settings.device_type,
+            mesh_shape=(settings.model_parallel_size,),
+            mesh_dim_names=("model",),
+        )
+        if settings.model_parallel_size > 1
+        else None
+    )
+
+    logger.info(f"Device mesh initialized: {device_mesh}")
+
+    mongo_client = MongoClient(settings.mongo)
+    logger.info("MongoDB client initialized")
+
+    # Load configurations
+    model_cfg = load_config(
+        config=settings.model,
+        name=settings.model_name,
+        mongo_client=mongo_client,
+        config_type="model",
+        required=False,
+    )
+
+    dataset_cfgs = (
+        {
+            dataset_name: load_config(
+                config=dataset_cfg,
+                name=dataset_name,
+                mongo_client=mongo_client,
+                config_type="dataset",
+            )
+            for dataset_name, dataset_cfg in settings.datasets.items()
+        }
+        if settings.datasets is not None
+        else None
+    )
+
+    model = load_model(model_cfg) if model_cfg is not None else None
+    datasets = (
+        {
+            dataset_name: load_dataset(dataset_cfg, device_mesh=device_mesh)
+            for dataset_name, dataset_cfg in dataset_cfgs.items()
+        }
+        if dataset_cfgs is not None
+        else None
+    )
+
+    activation_factory = ActivationFactory(settings.activation_factory)
+
+
+    logger.info(f"Loading {settings.sae.sae_type} model")
+    sae_cls = {
+        "sae": SparseAutoEncoder,
+        "clt": CrossLayerTranscoder,
+        "lorsa": LowRankSparseAttention,
+    }[settings.sae.sae_type]
+    sae = sae_cls.from_config(settings.sae, device_mesh=device_mesh)
+
+    logger.info(f"{settings.sae.sae_type} model loaded: {type(sae).__name__}")
+
+    analyzer = FeatureAnalyzer(settings.analyzer)
+    logger.info("Feature analyzer initialized")
+
+    logger.info("Processing activations for analysis")
+
+    with torch.amp.autocast(device_type=settings.device_type, dtype=settings.amp_dtype):
+        result = analyzer.analyze_chunk(
+            activation_factory,
+            sae=sae,
+            device_mesh=device_mesh,
+            activation_factory_process_kwargs={
+                "model": model,
+                "model_name": settings.model_name,
+                "datasets": datasets,
+            },
+        )
+
+    logger.info("Analysis completed, saving results to MongoDB")
+    start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
+    # mongo_client.add_feature_analysis(
+    #     name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result, start_idx=start_idx
+    # )
+
+    logger.info(f"{settings.sae.sae_type} analysis completed successfully")
+
+@torch.no_grad()
 def analyze_sae(settings: AnalyzeSAESettings) -> None:
     """Analyze a SAE model.
 
