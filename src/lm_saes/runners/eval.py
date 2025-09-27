@@ -30,14 +30,19 @@ logger = get_distributed_logger("runners.eval")
 class EvalGraphSettings(BaseSettings):
     
     model_cfg: LanguageModelConfig
+    """Configuration for the language model."""
     
     transcoders_path: str
+    """The save path of CLT."""
     
     lorsas_path: list
+    """The save path of lorsa."""
     
     dataset_path: str
+    """The path of evaluation json file."""
     
     eval: GraphEvalConfig
+    """Configuration for the GrahEval"""
     
     device: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
@@ -143,18 +148,6 @@ from lm_saes import ReplacementModel, LanguageModelConfig, CrossLayerTranscoder,
 def eval_graph(settings: EvalGraphSettings) -> None:
     # Set up logging
     setup_logging(level="INFO")
-    
-    # device_mesh = (
-    #     init_device_mesh(
-    #         device_type=settings.device_type,
-    #         mesh_shape=(settings.model_parallel_size,),
-    #         mesh_dim_names=("model",),
-    #     )
-    #     if settings.model_parallel_size > 1
-    #     else None
-    # )
-
-    # logger.info(f"Device mesh initialized: {device_mesh}")
 
     logger.info("Loading transcoder and lorsa")
     transcoders = CrossLayerTranscoder.from_pretrained(
@@ -174,9 +167,7 @@ def eval_graph(settings: EvalGraphSettings) -> None:
 
     logger.info("Loading replacement model")
     replacement_model = ReplacementModel.from_pretrained(settings.model_cfg, transcoders, lorsas, use_lorsa=settings.use_lorsa)
-    
-    # dataset = json.load(open(settings.dataset_path, 'r'))
-    
+        
     grapheval = GrahEval(settings.eval)
     
     grapheval.eval(

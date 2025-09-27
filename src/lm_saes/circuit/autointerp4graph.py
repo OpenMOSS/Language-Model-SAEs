@@ -52,7 +52,7 @@ class AutoInterp4GraphSettings(BaseSettings):
 
 def get_feature(graph_path):
     """
-    Process node data from JSON file and organize into specified list based on feature_type
+    Process node data from JSON file, and organize into specified list based on feature_type
     
     Args:
         graph_path (str): Path to the JSON file
@@ -147,9 +147,8 @@ def auto_interp4graph(settings: AutoInterp4GraphSettings):
     
     for todo_feature in feature_list:
         sae_name = todo_feature['sae_name']
-        feature_idx = todo_feature['feature_idx']
-        print(feature_idx, sae_name)
-        # continue
+        feature_idx = todo_feature['feature_idx']        
+        
         feature = mongo_client.get_feature(sae_name, settings.sae_series, feature_idx)
         if feature is not None:
             if feature.interpretation is None or settings.cover:
