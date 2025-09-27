@@ -64,6 +64,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     use_triton_kernel: bool = False
     sparsity_threshold_for_triton_spmm_kernel: float = 0.996
     sparsity_threshold_for_csr: float = 0.05
+    circuit_tracing_mode: bool = False
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
     promote_act_fn_dtype: Annotated[
@@ -254,6 +255,7 @@ class TrainerConfig(BaseConfig):
 
     l1_coefficient: float | None = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
+    lp_coefficient: float | None = None
     amp_dtype: Annotated[
         torch.dtype | None,
         BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),

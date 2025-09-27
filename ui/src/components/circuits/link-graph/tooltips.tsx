@@ -30,7 +30,6 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
   useEffect(() => {
     if (visState.hoveredId && !timeoutRef.current) {
       timeoutRef.current = setTimeout(() => {
-        console.log('🔄 Tooltips: Fallback timeout clearing tooltip');
         // This will trigger a re-render and clear the tooltip
         timeoutRef.current = null;
       }, 10000); // 10 second fallback
@@ -55,14 +54,12 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
 
     // If no hovered ID, don't show any tooltip
     if (!visState.hoveredId) {
-      console.log('🔄 Tooltips: No hovered ID, clearing tooltips');
       return;
     }
 
     const hoveredNode = positionedNodes.find((d: any) => d.nodeId === visState.hoveredId);
     
     if (hoveredNode) {
-      console.log('🔄 Tooltips: Creating tooltip for node:', visState.hoveredId);
       const tooltip = svg.append("g")
         .attr("class", "clerp-tooltip");
       

@@ -6,6 +6,7 @@ import { transformCircuitData, CircuitJsonData } from "./link-graph/utils";
 import { Node } from "./link-graph/types";
 import { Feature } from "@/types/feature";
 import { FeatureCard } from "@/components/feature/feature-card";
+import { cacheFeatures, getDictionaryName } from "@/utils/api";
 
 export const CircuitVisualization = () => {
   const {
@@ -29,6 +30,8 @@ export const CircuitVisualization = () => {
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [connectedFeatures, setConnectedFeatures] = useState<Feature[]>([]);
   const [isLoadingConnectedFeatures, setIsLoadingConnectedFeatures] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   const handleFeatureClick = useCallback((node: Node, isMetaKey: boolean) => {
     if (isMetaKey) {
@@ -118,6 +121,42 @@ export const CircuitVisualization = () => {
       handleFileUpload(files[0]);
     }
   }, [handleFileUpload]);
+
+  const handleSaveVisibleFeatures = useCallback(async () => {
+    if (!linkGraphData) return;
+    try {
+      setIsSaving(true);
+      setSaveMessage(null);
+      // Collect visible features: include all non-logit nodes (skip logits since not loadable)
+      const specs = linkGraphData.nodes
+        .filter(n => n.feature_type !== "logit")
+        .map(n => {
+          const isLorsa = n.feature_type === "lorsa" || n.feature_type === "cross layer transcoder";
+          const layer = n.layerIdx; // utils.ts set layerIdx = layer + 1
+          const analysis = getDictionaryName(linkGraphData.metadata as any, layer, isLorsa);
+          return {
+            feature_id: parseInt(n.featureId, 10),
+            layer,
+            is_lorsa: isLorsa,
+            analysis_name: analysis,
+          };
+        });
+
+      if (specs.length === 0) {
+        setSaveMessage("No features to save.");
+        return;
+      }
+
+      const outputDir = "./cached_features"; // server-side path
+      const dictName = (linkGraphData.metadata as any).clt_analysis_name?.split("/")[0] || (linkGraphData.metadata as any).lorsa_analysis_name?.split("/")[0] || "unknown_dict";
+      const result = await cacheFeatures(dictName, specs, outputDir);
+      setSaveMessage(`Saved ${result.saved} features to ${result.output_dir}`);
+    } catch (err: any) {
+      setSaveMessage(err?.message || "Failed to save features");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [linkGraphData]);
 
   if (error) {
     return (
@@ -211,6 +250,16 @@ export const CircuitVisualization = () => {
           <h2 className="text-l">{linkGraphData.metadata.prompt_tokens.join(' ')}</h2>
         </div>
         <div className="flex items-center space-x-2">
+          {saveMessage && (
+            <span className="text-sm text-gray-600 mr-2">{saveMessage}</span>
+          )}
+          <button
+            onClick={handleSaveVisibleFeatures}
+            disabled={isSaving}
+            className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
+          >
+            {isSaving ? 'Saving…' : 'Save Visible Features'}
+          </button>
           <button
             onClick={() => setLinkGraphData(null)}
             className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
