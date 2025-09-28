@@ -83,7 +83,24 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       const ctxWidth = x(ctxData.ctx_idx + 1) - x(ctxData.ctx_idx) - padR;
       
       ctxData.layerGroups.forEach((layerNodes: any, layerIdx: number) => {
-        layerNodes.sort((a: any, b: any) => -(a.logitPct || 0) + (b.logitPct || 0));
+        // 自定义排序：共有 -> 按文件顺序的单文件 -> error
+        const getIsError = (n: any) => typeof n.feature_type === 'string' && n.feature_type.toLowerCase().includes('error');
+        const getIsShared = (n: any) => Array.isArray(n.sourceIndices) && n.sourceIndices.length > 1;
+        const getFileIndex = (n: any) => (n.sourceIndex !== undefined ? n.sourceIndex : (Array.isArray(n.sourceIndices) && n.sourceIndices.length ? n.sourceIndices[0] : 0));
+        const groupIndex = (n: any) => {
+          if (getIsError(n)) return 1000; // error 放最后
+          if (getIsShared(n)) return 0;   // 共有优先
+          return 1 + getFileIndex(n);     // 各文件按上传顺序
+        };
+        layerNodes.sort((a: any, b: any) => {
+          const ga = groupIndex(a);
+          const gb = groupIndex(b);
+          if (ga !== gb) return ga - gb;
+          // 同组内保持稳定：可按 logitPct 次序作为次要键（降序）
+          const la = a.logitPct || 0;
+          const lb = b.logitPct || 0;
+          return (lb - la);
+        });
         
         const maxNodesInContext = ctxData.maxCount;
         const spacing = ctxWidth / maxNodesInContext;

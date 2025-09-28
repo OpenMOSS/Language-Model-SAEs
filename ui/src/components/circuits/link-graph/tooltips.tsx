@@ -76,7 +76,13 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
         // Fallback: show basic node info
         tooltipText = `Feature: ${hoveredNode.featureId} (Layer ${hoveredNode.layerIdx})`;
       }
-      
+
+      // 追加来源文件信息（如果有）
+      if (hoveredNode.sourceFiles && hoveredNode.sourceFiles.length) {
+        const files = hoveredNode.sourceFiles.join(', ');
+        tooltipText = `${tooltipText} | Source: ${files}`;
+      }
+ 
       // Calculate tooltip dimensions based on text content
       const textWidth = tooltipText.length * 6; // Approximate character width
       const tooltipWidth = Math.max(120, textWidth + 20); // Minimum 120px, or text width + padding

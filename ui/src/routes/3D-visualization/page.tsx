@@ -389,8 +389,8 @@ export default function ThreeDVisualPage() {
 
   // 文件上传处理
   const handleFileUpload = async (files: FileList) => {
-    if (files.length < 1 || files.length > 5) {
-      setError('Please upload 1-5 JSON files');
+    if (files.length < 1 || files.length > 4) {
+      setError('Please upload 1-4 JSON files');
       return;
     }
 
@@ -482,21 +482,20 @@ export default function ThreeDVisualPage() {
         const nodeId = node.node_id;
         if (!nodeId) return;
 
-        // 对于logit节点：不同graph视为不同点（不合并）
-        const isLogit = (node as any).is_target_logit === true 
-          || (node.type && /logit/i.test(node.type))
-          || (node.feature_type && /logit/i.test(node.feature_type));
-        const mapKey = isLogit ? `${nodeId}::g${graphIndex}` : nodeId;
+        // 统一按 node_id 合并（包含 logit 和 embedding 节点）
+        const mapKey = nodeId;
 
         if (nodeMap.has(mapKey)) {
           const existingNode = nodeMap.get(mapKey)!;
           if (!existingNode.graphIds.includes(graphIndex)) existingNode.graphIds.push(graphIndex);
           existingNode.isShared = existingNode.graphIds.length > 1;
+          // 保留更有信息量的字段
+          if (!existingNode.feature_type && node.feature_type) existingNode.feature_type = node.feature_type;
         } else {
-          const color = node.feature_type ? (FEATURE_TYPE_COLORS as any)[node.feature_type] || FEATURE_TYPE_COLORS.default : graph.color;
+          const color = node.feature_type ? (FEATURE_TYPE_COLORS as any)[(node.feature_type as string).toLowerCase?.() || node.feature_type] || FEATURE_TYPE_COLORS.default : graph.color;
           nodeMap.set(mapKey, {
             ...node,
-            node_id: mapKey, // 保证后续渲染与链接查找一致
+            node_id: mapKey,
             x: 0,
             y: 0,
             z: 0,
@@ -742,28 +741,43 @@ export default function ThreeDVisualPage() {
     });
   };
 
-  // 渲染连接
+  // 渲染连接（跨图合并相同的边）
   const renderLinks = (loadedGraphs: ProcessedGraph[]) => {
     if (!linksGroupRef.current) return;
     linksGroupRef.current.clear();
+
     const nodeMap = new Map(processedNodes.map(node => [node.node_id, node]));
+    type EdgeAgg = { source: ProcessedNode; target: ProcessedNode; graphIds: number[] };
+    const edgeMap = new Map<string, EdgeAgg>();
+
     loadedGraphs.forEach((graph) => {
       if (!graph.visible) return;
       graph.data.links?.forEach(link => {
-        // 适配logit节点拆分：优先尝试graph特定key
-        const srcKeyGraph = `${link.source}::g${graph.id}`;
-        const tgtKeyGraph = `${link.target}::g${graph.id}`;
-        const sourceNode = nodeMap.get(srcKeyGraph) || nodeMap.get(link.source);
-        const targetNode = nodeMap.get(tgtKeyGraph) || nodeMap.get(link.target);
+        const sourceNode = nodeMap.get(link.source);
+        const targetNode = nodeMap.get(link.target);
         if (!sourceNode || !targetNode) return;
-        const geometry = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(sourceNode.x, sourceNode.y, sourceNode.z),
-          new THREE.Vector3(targetNode.x, targetNode.y, targetNode.z)
-        ]);
-        const material = new THREE.LineBasicMaterial({ color: graph.color, transparent: true, opacity: graph.highlighted ? 0.8 : 0.4 });
-        const line = new THREE.Line(geometry, material);
-        linksGroupRef.current!.add(line);
+        const key = `${sourceNode.node_id}__${targetNode.node_id}`;
+        const agg = edgeMap.get(key);
+        if (agg) {
+          if (!agg.graphIds.includes(graph.id)) agg.graphIds.push(graph.id);
+        } else {
+          edgeMap.set(key, { source: sourceNode, target: targetNode, graphIds: [graph.id] });
+        }
       });
+    });
+
+    edgeMap.forEach(({ source, target, graphIds }) => {
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(source.x, source.y, source.z),
+        new THREE.Vector3(target.x, target.y, target.z)
+      ]);
+      // 共享边：用白色更醒目；唯一边：取所属图的颜色（若多图但同一条边，已走共享）
+      const isShared = graphIds.length > 1;
+      const color = isShared ? 0xffffff : (graphs[graphIds[0]]?.color ? new THREE.Color(graphs[graphIds[0]].color) : new THREE.Color('#999999'));
+      const opacity = isShared ? 0.8 : 0.5;
+      const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity });
+      const line = new THREE.Line(geometry, material);
+      linksGroupRef.current!.add(line);
     });
   };
 
@@ -810,6 +824,35 @@ export default function ThreeDVisualPage() {
   const onPanelMouseMove = (e: React.MouseEvent) => { if (!panelDragging) return; setPanelPos({ x: e.clientX - dragOffsetRef.current.x, y: e.clientY - dragOffsetRef.current.y }); };
   const onPanelMouseUp = () => setPanelDragging(false);
 
+  // 绑定点击跳转到 Feature 页面
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onClick = (event: MouseEvent) => {
+      if (!cameraRef.current || !raycasterRef.current || !nodesGroupRef.current) return;
+      const rect = canvas.getBoundingClientRect();
+      const mouse = new THREE.Vector2();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycasterRef.current.setFromCamera(mouse as any, cameraRef.current);
+      const intersects = raycasterRef.current.intersectObjects(nodesGroupRef.current.children, false);
+      if (intersects.length === 0) return;
+      const nodeData = intersects[0].object.userData as ProcessedNode;
+      // 从node_id解析layer与featureIndex
+      const parts = (nodeData.node_id || '').split('_');
+      const rawLayer = Number(parts[0]);
+      const layerIdx = Number.isFinite(rawLayer) ? Math.floor(rawLayer / 2) : (nodeData.layer ?? 0);
+      const featureIndex = Number(parts[1]);
+      const isLorsa = (nodeData.feature_type || '').toLowerCase() === 'lorsa';
+      const dictionary = isLorsa 
+        ? `lc0-lorsa-L${layerIdx}`
+        : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+      const url = `/features?dictionary=${encodeURIComponent(dictionary)}&featureIndex=${featureIndex}`;
+      window.open(url, '_blank');
+    };
+    canvas.addEventListener('click', onClick);
+    return () => { canvas.removeEventListener('click', onClick); };
+  }, [processedNodes, graphs]);
 
 
   return (
@@ -831,7 +874,7 @@ export default function ThreeDVisualPage() {
                 </svg>
               </div>
               <h3 className="text-xl font-semibold text-gray-700 mb-2">Upload Graph Files</h3>
-              <p className="text-gray-500 mb-4">Drag and drop 1-5 JSON files here, or click to browse</p>
+              <p className="text-gray-500 mb-4">Drag and drop 1-4 JSON files here, or click to browse</p>
               <input ref={fileInputRef} type="file" accept=".json" multiple onChange={handleFileInput} className="hidden" />
               <Button className="cursor-pointer" onClick={() => fileInputRef.current?.click()} aria-label="Choose Files">Choose Files</Button>
               {error && (<div className="mt-4 text-red-600 text-sm">{error}</div>)}

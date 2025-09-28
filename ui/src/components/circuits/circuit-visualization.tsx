@@ -41,13 +41,161 @@ export const CircuitVisualization = () => {
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [connectedFeatures, setConnectedFeatures] = useState<Feature[]>([]);
   const [isLoadingConnectedFeatures, setIsLoadingConnectedFeatures] = useState(false);
-  const [originalCircuitJson, setOriginalCircuitJson] = useState<any>(null); // 存储原始JSON数据
+  const [originalCircuitJson, setOriginalCircuitJson] = useState<any>(null); // 存储原始JSON数据（单图或合并后的）
   const [editingClerp, setEditingClerp] = useState<string>(''); // 当前编辑的clerp
   const [isSaving, setIsSaving] = useState(false); // 保存状态
-  const [originalFileName, setOriginalFileName] = useState<string>(''); // 原始文件名
+  const [originalFileName, setOriginalFileName] = useState<string>(''); // 原始文件名（单文件时）
   const [updateCounter, setUpdateCounter] = useState(0); // 用于强制更新的计数器
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false); // 是否有未保存的更改
   const [saveHistory, setSaveHistory] = useState<string[]>([]); // 保存历史记录
+
+  // 多图支持：存放多份原始 JSON 及其文件名
+  const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
+
+  // 为“各自独有”的节点/边分配的颜色表（最多4个图）
+  const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // 蓝、橙、绿、红
+
+  // 将多个图的 JSON 合并为一个 LinkGraphData（节点按 node_id 合并，边按(source,target)合并）
+  const mergeGraphs = useCallback((jsons: CircuitJsonData[], fileNames?: string[]) => {
+    // 先将每个 JSON 转换为 LinkGraphData
+    const graphs = jsons.map(j => transformCircuitData(j));
+
+    // 合并 metadata（简单策略：拼接 prompt_tokens 并标注来源数量）
+    const mergedMetadata: any = {
+      ...(graphs[0]?.metadata || {}),
+      prompt_tokens: graphs.map((g, i) => `[#${i + 1}] ` + (g?.metadata?.prompt_tokens?.join(' ') || '')).filter(Boolean),
+      sourceFileNames: fileNames && fileNames.length ? fileNames : undefined,
+    };
+
+    // 合并节点
+    type NodeAccum = {
+      base: any; // 任意一个来源的节点作为基准（保留 feature_type 等）
+      presentIn: number[]; // 出现于哪些图的索引
+    };
+
+    const nodeMap = new Map<string, NodeAccum>();
+
+    graphs.forEach((g, gi) => {
+      g.nodes.forEach((n: any) => {
+        const key = n.nodeId;
+        if (!nodeMap.has(key)) {
+          nodeMap.set(key, { base: { ...n }, presentIn: [gi] });
+        } else {
+          const acc = nodeMap.get(key)!;
+          // 合并可选字段（以非空为准）
+          acc.base.localClerp = acc.base.localClerp ?? n.localClerp;
+          acc.base.remoteClerp = acc.base.remoteClerp ?? n.remoteClerp;
+          // 累加来源
+          if (!acc.presentIn.includes(gi)) acc.presentIn.push(gi);
+        }
+      });
+    });
+
+    // 为节点设置颜色：
+    // - 若 presentIn.length > 1（多个图共有）：使用 transformCircuitData 原有的 feature_type 颜色（acc.base.nodeColor）
+    // - 若仅在某个单图中：覆盖为 UNIQUE_GRAPH_COLORS[graphIndex]
+    const mergedNodes: any[] = [];
+    nodeMap.forEach(({ base, presentIn }) => {
+      const isShared = presentIn.length > 1;
+      const isError = typeof base.feature_type === 'string' && base.feature_type.toLowerCase().includes('error');
+      const nodeColor = isError
+        ? '#95a5a6'
+        : (isShared ? base.nodeColor : UNIQUE_GRAPH_COLORS[presentIn[0] % UNIQUE_GRAPH_COLORS.length]);
+      const sourceIndices = presentIn.slice();
+      const sourceFiles = (fileNames && fileNames.length)
+        ? sourceIndices.map(i => fileNames[i]).filter(Boolean)
+        : undefined;
+      mergedNodes.push({
+        ...base,
+        nodeColor,
+        sourceIndices,
+        sourceIndex: sourceIndices.length === 1 ? sourceIndices[0] : undefined,
+        sourceFiles,
+      });
+    });
+
+    // 合并边：以(source,target)为键；
+    // - 若多图共有：保留 transform 中的颜色（红/绿取决于权重正负）和 strokeWidth（取最大）并将权重求和或取平均
+    // - 若单图有：保留并将颜色覆盖为对应图的 UNIQUE_GRAPH_COLORS[gi] 的淡化版以区分（但维持正负色彩会更直观，这里沿用正负色，不改变现有绿色/红色方案）
+    type LinkAccum = {
+      sources: number[]; // 出现于哪些图
+      weightSum: number;
+      maxStroke: number;
+      color: string; // 采用首次的权重颜色（正负）即可
+      pctInputSum: number;
+      weightsBySource: Record<number, number>;
+      pctBySource: Record<number, number>;
+    };
+
+    const linkKey = (s: string, t: string) => `${s}__${t}`;
+    const linkMap = new Map<string, LinkAccum>();
+
+    graphs.forEach((g, gi) => {
+      (g.links || []).forEach((e: any) => {
+        const k = linkKey(e.source, e.target);
+        if (!linkMap.has(k)) {
+          linkMap.set(k, {
+            sources: [gi],
+            weightSum: e.weight ?? 0,
+            maxStroke: e.strokeWidth ?? 1,
+            color: e.color,
+            pctInputSum: e.pctInput ?? 0,
+            weightsBySource: { [gi]: e.weight ?? 0 },
+            pctBySource: { [gi]: e.pctInput ?? (Math.abs(e.weight ?? 0) * 100) },
+          });
+        } else {
+          const acc = linkMap.get(k)!;
+          if (!acc.sources.includes(gi)) acc.sources.push(gi);
+          acc.weightSum += (e.weight ?? 0);
+          acc.maxStroke = Math.max(acc.maxStroke, e.strokeWidth ?? 1);
+          // 颜色按首次的正负即可，不覆盖
+          acc.pctInputSum += (e.pctInput ?? 0);
+          acc.weightsBySource[gi] = (acc.weightsBySource[gi] || 0) + (e.weight ?? 0);
+          acc.pctBySource[gi] = (acc.pctBySource[gi] || 0) + (e.pctInput ?? (Math.abs(e.weight ?? 0) * 100));
+        }
+      });
+    });
+
+    const mergedLinks: any[] = [];
+    linkMap.forEach((acc, k) => {
+      const [source, target] = k.split("__");
+      const isShared = acc.sources.length > 1;
+      const avgWeight = acc.weightSum / acc.sources.length;
+      const avgPct = acc.pctInputSum / acc.sources.length;
+      // 沿用 transform 的正负配色：正=绿色，负=红色
+      const color = avgWeight > 0 ? "#4CAF50" : "#F44336";
+      mergedLinks.push({
+        source,
+        target,
+        pathStr: "",
+        color: isShared ? color : color, // 共有与独有均保持正负配色，便于解读
+        strokeWidth: acc.maxStroke,
+        weight: avgWeight,
+        pctInput: avgPct,
+        sources: acc.sources,
+        weightsBySource: acc.weightsBySource,
+        pctBySource: acc.pctBySource,
+      });
+    });
+
+    // 重新为节点填充 sourceLinks/targetLinks
+    const nodeById: Record<string, any> = {};
+    mergedNodes.forEach(n => { nodeById[n.nodeId] = { ...n, sourceLinks: [], targetLinks: [] }; });
+    mergedLinks.forEach(l => {
+      if (nodeById[l.source]) nodeById[l.source].sourceLinks.push(l);
+      if (nodeById[l.target]) nodeById[l.target].targetLinks.push(l);
+    });
+
+    const finalNodes = Object.values(nodeById);
+
+    const mergedData: any = {
+      nodes: finalNodes,
+      links: mergedLinks,
+      metadata: mergedMetadata,
+    };
+
+    return mergedData;
+  }, []);
 
   const handleFeatureClick = useCallback((node: Node, isMetaKey: boolean) => {
     if (isMetaKey) {
@@ -82,7 +230,8 @@ export const CircuitVisualization = () => {
     setIsLoadingConnectedFeatures(loading);
   }, []);
 
-  const handleFileUpload = useCallback(async (file: File) => {
+  // 单文件上传（保留，兼容）
+  const handleSingleFileUpload = useCallback(async (file: File) => {
     if (!file.name.endsWith('.json')) {
       setError('Please upload a JSON file');
       return;
@@ -94,8 +243,23 @@ export const CircuitVisualization = () => {
       
       const text = await file.text();
       const jsonData: CircuitJsonData = JSON.parse(text);
+      // 基础变换
       const data = transformCircuitData(jsonData);
-      setLinkGraphData(data);
+      // 注入来源信息（单文件索引为 0）
+      const annotated = {
+        ...data,
+        nodes: data.nodes.map(n => ({
+          ...n,
+          sourceIndex: 0,
+          sourceIndices: [0],
+          sourceFiles: [file.name],
+        })),
+        metadata: {
+          ...data.metadata,
+          sourceFileNames: [file.name],
+        }
+      };
+      setLinkGraphData(annotated);
       // Reset circuit state when loading new data
       setClickedId(null);
       setHoveredId(null);
@@ -108,6 +272,7 @@ export const CircuitVisualization = () => {
       setEditingClerp(''); // 重置编辑状态
       setHasUnsavedChanges(false); // 清除未保存的更改
       setSaveHistory([]); // 清除保存历史
+      setMultiOriginalJsons([{ json: jsonData, fileName: file.name }]);
     } catch (err) {
       console.error('Failed to load circuit data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load circuit data');
@@ -115,6 +280,68 @@ export const CircuitVisualization = () => {
       setLoading(false);
     }
   }, [setLinkGraphData, setLoading, setError, setClickedId, setHoveredId, setPinnedIds, setHiddenIds, setSelectedFeature, setConnectedFeatures]);
+
+  // 多文件上传（1-4 个）
+  const handleMultiFilesUpload = useCallback(async (files: FileList | File[]) => {
+    const list = Array.from(files).filter(f => f.name.endsWith('.json')).slice(0, 4);
+    if (list.length === 0) {
+      setError('Please upload 1-4 JSON files');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const texts = await Promise.all(list.map(f => f.text()));
+      const jsons: CircuitJsonData[] = texts.map(t => JSON.parse(t));
+      const fileNames = list.map(f => f.name);
+
+      // 合并
+      const merged = jsons.length === 1 
+        ? (() => {
+            const data = transformCircuitData(jsons[0]);
+            return {
+              ...data,
+              nodes: data.nodes.map(n => ({
+                ...n,
+                sourceIndex: 0,
+                sourceIndices: [0],
+                sourceFiles: [fileNames[0]],
+              })),
+              metadata: {
+                ...data.metadata,
+                sourceFileNames: [fileNames[0]],
+              }
+            };
+          })()
+        : mergeGraphs(jsons, fileNames);
+
+      setLinkGraphData(merged);
+      setClickedId(null);
+      setHoveredId(null);
+      setPinnedIds([]);
+      setHiddenIds([]);
+      setSelectedFeature(null);
+      setConnectedFeatures([]);
+      setOriginalCircuitJson(jsons.length === 1 ? jsons[0] : merged); // 单图保留原始，多图保留合并结果
+      setOriginalFileName(list.length === 1 ? list[0].name : `merged_${list.length}_graphs.json`);
+      setEditingClerp('');
+      setHasUnsavedChanges(false);
+      setSaveHistory([]);
+      setMultiOriginalJsons(list.map((f, i) => ({ json: jsons[i], fileName: f.name })));
+    } catch (err) {
+      console.error('Failed to load circuit data:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load circuit data');
+    } finally {
+      setLoading(false);
+    }
+  }, [mergeGraphs, setLinkGraphData, setLoading, setError, setClickedId, setHoveredId, setPinnedIds, setHiddenIds, setSelectedFeature, setConnectedFeatures]);
+
+  const handleFileUpload = useCallback(async (file: File) => {
+    // 兼容旧调用，保留单文件路径
+    return handleSingleFileUpload(file);
+  }, [handleSingleFileUpload]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -132,16 +359,24 @@ export const CircuitVisualization = () => {
     
     const files = e.dataTransfer.files;
     if (files.length > 0) {
-      handleFileUpload(files[0]);
+      if (files.length === 1) {
+        handleSingleFileUpload(files[0]);
+      } else {
+        handleMultiFilesUpload(files);
+      }
     }
-  }, [handleFileUpload]);
+  }, [handleSingleFileUpload, handleMultiFilesUpload]);
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      handleFileUpload(files[0]);
+      if (files.length === 1) {
+        handleSingleFileUpload(files[0]);
+      } else {
+        handleMultiFilesUpload(files);
+      }
     }
-  }, [handleFileUpload]);
+  }, [handleSingleFileUpload, handleMultiFilesUpload]);
 
   // 从circuit数据中提取FEN字符串
   const extractFenFromPrompt = useCallback(() => {
@@ -180,6 +415,26 @@ export const CircuitVisualization = () => {
     return null;
   }, [linkGraphData]);
 
+  // 按文件从原始 JSON 提取 FEN
+  const extractFenFromCircuitJson = useCallback((json: any): string | null => {
+    const tokens = json?.metadata?.prompt_tokens;
+    if (!tokens) return null;
+    const promptText = Array.isArray(tokens) ? tokens.join(' ') : String(tokens);
+    const lines = promptText.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.includes('/')) {
+        const parts = trimmed.split(/\s+/);
+        if (parts.length >= 6) {
+          const boardRows = parts[0].split('/');
+          if (boardRows.length === 8 && /^[wb]$/.test(parts[1])) return trimmed;
+        }
+      }
+    }
+    const simpleMatch = promptText.match(/[rnbqkpRNBQKP1-8\/]{15,}\s+[wb]\s+[KQkqA-Za-z-]+\s+[a-h][36-]?\s*\d*\s*\d*/);
+    return simpleMatch ? simpleMatch[0] : null;
+  }, []);
+ 
   // 从prompt中提取输出移动
   const extractOutputMove = useCallback(() => {
     if (!linkGraphData?.metadata?.prompt_tokens) return null;
@@ -211,6 +466,26 @@ export const CircuitVisualization = () => {
     return null;
   }, [linkGraphData]);
 
+  // 按文件提取输出移动
+  const extractOutputMoveFromCircuitJson = useCallback((json: any): string | null => {
+    const tokens = json?.metadata?.prompt_tokens;
+    if (!tokens) return null;
+    const promptText = Array.isArray(tokens) ? tokens.join(' ') : String(tokens);
+    const patterns = [
+      /(?:Output|Move|下一步|移动)[:：]\s*([a-h][1-8][a-h][1-8])/i,
+      /\b([a-h][1-8][a-h][1-8])\b/g
+    ];
+    for (const pattern of patterns) {
+      const matches = promptText.match(pattern);
+      if (matches) {
+        const lastMatch = Array.isArray(matches) ? matches[matches.length - 1] : matches;
+        const moveMatch = lastMatch.match(/[a-h][1-8][a-h][1-8]/);
+        if (moveMatch) return moveMatch[0];
+      }
+    }
+    return null;
+  }, []);
+ 
   // 改进的getNodeActivationData函数
   const getNodeActivationData = useCallback((nodeId: string | null): NodeActivationData => {
     if (!nodeId || !originalCircuitJson) {
@@ -379,6 +654,124 @@ export const CircuitVisualization = () => {
     return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
   }, [originalCircuitJson, updateCounter]);
 
+  const getNodeActivationDataFromJson = useCallback((jsonData: any, nodeId: string | null): NodeActivationData => {
+    if (!nodeId || !jsonData) return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
+    const parts = nodeId.split('_');
+    const rawLayer = Number(parts[0]) || 0;
+    const featureOrHead = Number(parts[1]) || 0;
+    const ctxIdx = Number(parts[2]) || 0;
+    const layerForActivation = Math.floor(rawLayer / 2);
+
+    // 1) 优先在 nodes 数组中做直接匹配
+    let nodesToSearch: any[] = [];
+    if (jsonData.nodes && Array.isArray(jsonData.nodes)) {
+      nodesToSearch = jsonData.nodes;
+    } else if (Array.isArray(jsonData)) {
+      nodesToSearch = jsonData;
+    } else {
+      const possibleArrayKeys = ['data', 'features', 'items', 'activations'];
+      for (const key of possibleArrayKeys) {
+        if (Array.isArray(jsonData[key])) {
+          nodesToSearch = jsonData[key];
+          break;
+        }
+      }
+      if (nodesToSearch.length === 0) {
+        const values = Object.values(jsonData);
+        const arrayValue = values.find(v => Array.isArray(v)) as any[] | undefined;
+        if (arrayValue) nodesToSearch = arrayValue;
+      }
+    }
+
+    if (nodesToSearch.length > 0) {
+      const exactMatch = nodesToSearch.find((node: any) => node?.node_id === nodeId);
+      if (exactMatch) {
+        if (exactMatch.activations || (exactMatch.zPatternIndices && exactMatch.zPatternValues)) {
+          return {
+            activations: exactMatch.activations,
+            zPatternIndices: exactMatch.zPatternIndices,
+            zPatternValues: exactMatch.zPatternValues,
+            nodeType: exactMatch.feature_type,
+            clerp: exactMatch.clerp,
+          };
+        }
+      }
+    }
+
+    // 2) 深度扫描激活记录集合，匹配(layer/position/index)
+    const candidateRecords: any[] = [];
+    const pushCandidateArrays = (obj: any) => {
+      if (!obj) return;
+      if (Array.isArray(obj)) {
+        for (const item of obj) {
+          if (item && typeof item === 'object') {
+            const hasActivationShape = ('layer' in item) && ('position' in item) && ('activations' in item);
+            const hasZShape = ('zPatternIndices' in item) && ('zPatternValues' in item);
+            const hasIndexKey = ('head_idx' in item) || ('feature_idx' in item);
+            if (hasActivationShape || hasZShape || hasIndexKey) candidateRecords.push(item);
+          }
+        }
+      } else if (typeof obj === 'object') {
+        for (const v of Object.values(obj)) pushCandidateArrays(v);
+      }
+    };
+    pushCandidateArrays(jsonData);
+
+    // 从 nodes 中尽量确定 feature_type
+    let featureTypeForNode: string | undefined;
+    if (nodesToSearch.length > 0) {
+      const nodeMeta = nodesToSearch.find((n: any) => n?.node_id === nodeId);
+      featureTypeForNode = nodeMeta?.feature_type;
+    }
+
+    const matched = candidateRecords.find((rec: any) => {
+      const recLayer = Number(rec?.layer);
+      const recPos = Number(rec?.position);
+      const recHead = rec?.head_idx;
+      const recFeatIdx = rec?.feature_idx;
+      const layerOk = !Number.isNaN(recLayer) && recLayer === layerForActivation;
+      const posOk = !Number.isNaN(recPos) && recPos === ctxIdx;
+      let indexOk = false;
+      if (featureTypeForNode) {
+        const t = featureTypeForNode.toLowerCase();
+        if (t === 'lorsa') indexOk = recHead === featureOrHead;
+        else if (t === 'cross layer transcoder') indexOk = recFeatIdx === featureOrHead;
+        else indexOk = (recHead === featureOrHead) || (recFeatIdx === featureOrHead);
+      } else {
+        indexOk = (recHead === featureOrHead) || (recFeatIdx === featureOrHead);
+      }
+      return layerOk && posOk && indexOk;
+    });
+
+    if (matched) {
+      const clerp = (nodesToSearch.find((n: any) => n?.node_id === nodeId) || {}).clerp;
+      return {
+        activations: matched.activations,
+        zPatternIndices: matched.zPatternIndices,
+        zPatternValues: matched.zPatternValues,
+        nodeType: featureTypeForNode,
+        clerp,
+      };
+    }
+
+    // 3) 模糊匹配
+    if (nodesToSearch.length > 0) {
+      const fuzzyMatches = nodesToSearch.filter((node: any) => node?.node_id && node.node_id.includes(nodeId.split('_')[0]));
+      if (fuzzyMatches.length > 0) {
+        const firstMatch = fuzzyMatches[0];
+        return {
+          activations: firstMatch.activations,
+          zPatternIndices: firstMatch.zPatternIndices,
+          zPatternValues: firstMatch.zPatternValues,
+          nodeType: firstMatch.feature_type,
+          clerp: firstMatch.clerp,
+        };
+      }
+    }
+
+    return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
+  }, []);
+ 
   // 提取相关数据
   const fen = extractFenFromPrompt();
   const outputMove = extractOutputMove();
@@ -611,7 +1004,7 @@ export const CircuitVisualization = () => {
                 Upload Circuit Data
               </h3>
               <p className="text-gray-600 mb-4">
-                Drag and drop a JSON file here, or click to browse
+                Drag and drop 1-4 JSON files here, or click to browse
               </p>
               <input
                 type="file"
@@ -619,16 +1012,17 @@ export const CircuitVisualization = () => {
                 onChange={handleFileInput}
                 className="hidden"
                 id="file-upload"
+                multiple
               />
               <label
                 htmlFor="file-upload"
                 className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 cursor-pointer transition-colors"
               >
-                Choose File
+                Choose Files
               </label>
             </div>
             <p className="text-sm text-gray-500">
-              Supports JSON files with circuit visualization data
+              Supports uploading multiple JSON files (1-4) to merge graphs
             </p>
           </div>
         </div>
@@ -659,6 +1053,21 @@ export const CircuitVisualization = () => {
           <h2 className="text-l">{linkGraphData.metadata.prompt_tokens.join(' ')}</h2>
         </div>
         <div className="flex items-center space-x-2">
+          {/* 颜色-文件名图例（多文件时显示） */}
+          {linkGraphData.metadata.sourceFileNames && linkGraphData.metadata.sourceFileNames.length > 1 && (
+            <div className="hidden md:flex items-center space-x-3 mr-4">
+              {linkGraphData.metadata.sourceFileNames.map((name, idx) => (
+                <div key={idx} className="flex items-center space-x-1 text-xs">
+                  <span
+                    className="inline-block rounded-full"
+                    style={{ width: 10, height: 10, backgroundColor: UNIQUE_GRAPH_COLORS[idx % UNIQUE_GRAPH_COLORS.length] }}
+                    title={name}
+                  />
+                  <span className="text-gray-600 truncate max-w-[140px]" title={name}>{name}</span>
+                </div>
+              ))}
+            </div>
+          )}
           {hasUnsavedChanges && (
             <div className="flex items-center space-x-2 px-3 py-1 bg-orange-100 text-orange-800 rounded-md text-sm">
               <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
@@ -700,8 +1109,8 @@ export const CircuitVisualization = () => {
         </div>
       </div>
 
-      {/* Chess Board Display */}
-      {fen && (
+      {/* Chess Board Display - 单文件 */}
+      {(!linkGraphData.metadata.sourceFileNames || linkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
         <div className="flex justify-center mb-6">
           <div className="bg-white rounded-lg border shadow-sm p-4 pb-8">
             <h3 className="text-lg font-semibold mb-4 text-center">
@@ -738,6 +1147,62 @@ export const CircuitVisualization = () => {
               analysisName={nodeActivationData?.nodeType || 'Circuit Node'}
             />
           </div>
+        </div>
+      )}
+
+      {/* Chess Board Display - 多文件：为每个源文件渲染一个棋盘，并按来源显示激活 */}
+      {linkGraphData.metadata.sourceFileNames && linkGraphData.metadata.sourceFileNames.length > 1 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          {multiOriginalJsons.map((entry, idx) => {
+            const fileFen = extractFenFromCircuitJson(entry.json);
+            if (!fileFen) return null;
+            const fileMove = extractOutputMoveFromCircuitJson(entry.json);
+            // 判断当前选中节点是否属于该文件
+            const currentNode = clickedId ? linkGraphData.nodes.find(n => n.nodeId === clickedId) : null;
+            const belongs = currentNode && (currentNode.sourceIndices?.includes(idx) || currentNode.sourceIndex === idx);
+            const perFileActivation = (clickedId && belongs)
+              ? getNodeActivationDataFromJson(entry.json, clickedId)
+              : { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
+            return (
+              <div key={idx} className="bg-white rounded-lg border shadow-sm p-4 pb-8">
+                <h3 className="text-md font-semibold mb-3 flex items-center justify-center">
+                  <span
+                    className="inline-block rounded-full mr-2"
+                    style={{ width: 10, height: 10, backgroundColor: UNIQUE_GRAPH_COLORS[idx % UNIQUE_GRAPH_COLORS.length] }}
+                    title={entry.fileName}
+                  />
+                  <span className="truncate" title={entry.fileName}>{entry.fileName}</span>
+                  {clickedId && belongs && (
+                    <span className="text-xs font-normal text-blue-600 ml-2">(含该节点)</span>
+                  )}
+                </h3>
+                {fileMove && (
+                  <div className="text-center mb-2 text-sm text-green-600 font-medium">
+                    输出移动: {fileMove} 🎯
+                  </div>
+                )}
+                {clickedId && belongs && perFileActivation.activations && (
+                  <div className="text-center mb-2 text-sm text-purple-600">
+                    激活数据: {perFileActivation.activations.filter((v: number) => v !== 0).length} 个非零激活
+                    {perFileActivation.zPatternIndices && perFileActivation.zPatternValues &&
+                      `, ${perFileActivation.zPatternValues.length} 个Z模式连接`}
+                  </div>
+                )}
+                <ChessBoard
+                  fen={fileFen}
+                  size="medium"
+                  showCoordinates={true}
+                  move={fileMove || undefined}
+                  activations={belongs ? perFileActivation.activations : undefined}
+                  zPatternIndices={belongs ? perFileActivation.zPatternIndices : undefined}
+                  zPatternValues={belongs ? perFileActivation.zPatternValues : undefined}
+                  flip_activation={true}
+                  sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
+                  analysisName={(perFileActivation?.nodeType || 'Circuit Node') + ` @${idx+1}`}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
 
