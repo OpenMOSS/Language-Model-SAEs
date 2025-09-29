@@ -1,4 +1,5 @@
 import warnings
+from functools import partial
 from typing import Any, Mapping, Optional, cast
 
 import torch
@@ -6,18 +7,17 @@ from einops import rearrange, repeat
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from tqdm import tqdm
-from functools import partial
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
-from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.activation.factory import ActivationFactory
+from lm_saes.analysis.post_analysis import get_post_analysis_processor
 from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.activation.factory import ActivationFactory
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
-from lm_saes.analysis.post_analysis import get_post_analysis_processor
 
 
 class FeatureAnalyzer:
@@ -145,7 +145,7 @@ class FeatureAnalyzer:
         """
         if self.cfg.non_activating_subsample is None:
             return sample_result
-        
+
         feature_acts = feature_acts[:, : self.cfg.non_activating_subsample["max_length"], :]
         sample_result_cur = sample_result.get("non_activating", None)
         if sample_result_cur is not None and all(
@@ -209,10 +209,10 @@ class FeatureAnalyzer:
 
     def get_post_analysis_func(self, sae_type: str):
         """Get the post-analysis processor for the given SAE type.
-        
+
         Args:
             sae_type: The SAE type identifier
-            
+
         Returns:
             The post-analysis processor instance
         """
@@ -248,9 +248,7 @@ class FeatureAnalyzer:
             - Activation counts and maximums
             - Sampled activations with metadata
         """
-        activation_stream = activation_factory.process(
-            **activation_factory_process_kwargs
-        )
+        activation_stream = activation_factory.process(**activation_factory_process_kwargs)
         n_tokens = n_analyzed_tokens = 0
 
         # Progress tracking
@@ -287,7 +285,7 @@ class FeatureAnalyzer:
             # Get feature activations from SAE
             x, kwargs = sae.prepare_input(batch)
             feature_acts: torch.Tensor = sae.encode(x, **kwargs)
-            
+
             if isinstance(feature_acts, DTensor):
                 assert device_mesh is not None, "Device mesh is required for DTensor feature activations"
                 if device_mesh is not feature_acts.device_mesh:

@@ -4,10 +4,10 @@ import pytest
 import torch
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 
+from lm_saes.circuit.attribution import AttributionContext, attribute, compute_salient_logits
+from lm_saes.circuit.replacement_model import ReplacementModel
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import CLTConfig
-from lm_saes.circuit.attribution import attribute, AttributionContext, compute_salient_logits
-from lm_saes.circuit.replacement_model import ReplacementModel
 
 
 class TestAttribution:
@@ -38,13 +38,13 @@ class TestAttribution:
     def transformer_model(self, transformer_config):
         """Create a minimal HookedTransformer model."""
         model = HookedTransformer(transformer_config)
-        
+
         # Initialize with simple values for reproducibility
         with torch.no_grad():
             # Initialize embeddings
             model.embed.W_E.data.fill_(0.1)
             model.pos_embed.W_pos.data.fill_(0.05)
-            
+
             # Initialize attention weights
             for block in model.blocks:
                 block.attn.W_Q.data.fill_(0.1)
@@ -55,25 +55,25 @@ class TestAttribution:
                 block.attn.b_K.data.fill_(0.01)
                 block.attn.b_V.data.fill_(0.01)
                 block.attn.b_O.data.fill_(0.01)
-                
+
                 # Initialize MLP weights
                 block.mlp.W_in.data.fill_(0.1)
                 block.mlp.W_out.data.fill_(0.1)
                 block.mlp.b_in.data.fill_(0.01)
                 block.mlp.b_out.data.fill_(0.01)
-                
+
                 # Initialize layer norms
                 block.ln1.w.data.fill_(1.0)
                 block.ln1.b.data.fill_(0.0)
                 block.ln2.w.data.fill_(1.0)
                 block.ln2.b.data.fill_(0.0)
-            
+
             # Initialize final layer norm and unembed
             model.ln_final.w.data.fill_(1.0)
             model.ln_final.b.data.fill_(0.0)
             model.unembed.W_U.data.fill_(0.1)
             model.unembed.b_U.data.fill_(0.01)
-        
+
         return model
 
     @pytest.fixture(scope="class")
@@ -103,18 +103,18 @@ class TestAttribution:
     def clt_model(self, clt_config):
         """Create a CLT model instance."""
         model = CrossLayerTranscoder(clt_config)
-        
+
         # Initialize with simple values for reproducibility
         with torch.no_grad():
             # Initialize encoder weights: (n_layers, d_model, d_sae)
             model.W_E.data.fill_(0.1)
             model.b_E.data.fill_(0.01)
-            
+
             # Initialize decoder weights for each layer
             for layer_to in range(clt_config.n_layers):
                 model.W_D[layer_to].data.fill_(0.1)
                 model.b_D[layer_to].data.fill_(0.01)
-        
+
         model.init_parameters()
         return model
 
@@ -124,7 +124,7 @@ class TestAttribution:
         # Convert HookedTransformer to ReplacementModel by changing its class
         replacement_model = transformer_model
         replacement_model.__class__ = ReplacementModel
-        
+
         # Mark as CLT model and configure
         replacement_model.is_clt = True
         replacement_model._configure_replacement_model(
@@ -132,10 +132,10 @@ class TestAttribution:
             feature_input_hook="ln2.hook_normalized",
             feature_output_hook="hook_mlp_out",
         )
-        
+
         # Add a simple tokenizer for testing
         replacement_model.tokenizer = None  # For simple tensor tests
-        
+
         return replacement_model
 
     @pytest.fixture
@@ -158,12 +158,12 @@ class TestAttribution:
             # Test forward pass
             output = replacement_model(simple_prompt.unsqueeze(0))
             assert output.shape == (1, 3, 10)  # (batch, seq_len, vocab_size)
-            
+
             # Test setup_attribution
             logits, activation_matrix, error_vecs, token_vecs = replacement_model.setup_attribution(
                 simple_prompt, sparse=True
             )
-            
+
             assert logits.shape == (1, 3, 10)
             assert activation_matrix.shape == (2, 3, 4)  # (n_layers, seq_len, d_sae)
             assert error_vecs.shape == (2, 3, 2)  # (n_layers, seq_len, d_model)
@@ -175,7 +175,7 @@ class TestAttribution:
             # Get logits from model
             logits = replacement_model(simple_prompt.unsqueeze(0))
             final_logits = logits[0, -1, :]  # Last position logits
-            
+
             # Test compute_salient_logits
             logit_idx, logit_probs, demeaned_vecs = compute_salient_logits(
                 final_logits,
@@ -183,7 +183,7 @@ class TestAttribution:
                 max_n_logits=5,
                 desired_logit_prob=0.8,
             )
-            
+
             assert len(logit_idx) <= 5
             assert len(logit_probs) == len(logit_idx)
             assert demeaned_vecs.shape == (len(logit_idx), 2)  # (n_logits, d_model)
@@ -197,10 +197,10 @@ class TestAttribution:
             logits, activation_matrix, error_vecs, token_vecs = replacement_model.setup_attribution(
                 simple_prompt, sparse=True
             )
-            
+
             # Select scaled decoder vectors (dummy implementation for testing)
             decoder_vecs = torch.randn(activation_matrix._nnz(), 2)
-            
+
             # Create AttributionContext
             ctx = AttributionContext(
                 activation_matrix=activation_matrix,
@@ -209,7 +209,7 @@ class TestAttribution:
                 decoder_vecs=decoder_vecs,
                 feature_output_hook=replacement_model.feature_output_hook,
             )
-            
+
             assert ctx.n_layers == 2
             assert ctx._row_size == activation_matrix._nnz() + (2 + 1) * 3  # features + error + token nodes
 
@@ -226,7 +226,7 @@ class TestAttribution:
                 max_feature_nodes=8,
                 verbose=False,
             )
-            
+
             # Verify graph properties
             assert graph.input_tokens.shape == (3,)
             assert len(graph.logit_tokens) <= 3
@@ -252,7 +252,7 @@ class TestAttribution:
                     max_feature_nodes=4,
                     verbose=False,
                 )
-                
+
                 # Should produce consistent results regardless of batch size
                 assert graph.input_tokens.shape == (3,)
                 assert len(graph.logit_tokens) <= 2
@@ -270,7 +270,7 @@ class TestAttribution:
                 max_feature_nodes=1,
                 verbose=False,
             )
-            
+
             assert len(graph.logit_tokens) <= 1
             assert len(graph.selected_features) <= 1
 
@@ -287,19 +287,19 @@ class TestAttribution:
                 max_feature_nodes=4,
                 verbose=False,
             )
-            
+
             # Check that adjacency matrix has reasonable values
             adj_matrix = graph.adjacency_matrix
             assert not torch.isnan(adj_matrix).any(), "Adjacency matrix should not contain NaN"
             assert not torch.isinf(adj_matrix).any(), "Adjacency matrix should not contain Inf"
-            
+
             # Check that some connections exist (non-zero entries)
             assert adj_matrix.abs().sum() > 0, "Adjacency matrix should have non-zero entries"
 
     def test_attribution_deterministic(self, replacement_model, simple_prompt):
         """Test that attribution produces deterministic results."""
         torch.manual_seed(42)
-        
+
         with torch.no_grad():
             graph1 = attribute(
                 prompt=simple_prompt,
@@ -310,7 +310,7 @@ class TestAttribution:
                 max_feature_nodes=4,
                 verbose=False,
             )
-            
+
             torch.manual_seed(42)
             graph2 = attribute(
                 prompt=simple_prompt,
@@ -321,8 +321,8 @@ class TestAttribution:
                 max_feature_nodes=4,
                 verbose=False,
             )
-            
+
             # Results should be identical
             assert torch.allclose(graph1.adjacency_matrix, graph2.adjacency_matrix, atol=1e-6)
             assert torch.equal(graph1.input_tokens, graph2.input_tokens)
-            assert torch.equal(graph1.logit_tokens, graph2.logit_tokens) 
+            assert torch.equal(graph1.logit_tokens, graph2.logit_tokens)

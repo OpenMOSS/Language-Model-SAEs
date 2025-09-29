@@ -1,7 +1,8 @@
 from .activation import ActivationFactory, ActivationWriter
 from .activation_functions import JumpReLU
+from .analysis import DirectLogitAttributor, FeatureAnalyzer
+from .circuit import ReplacementModel, attribute
 from .clt import CrossLayerTranscoder
-from .lorsa import LowRankSparseAttention
 from .config import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
@@ -16,48 +17,47 @@ from .config import (
     InitializerConfig,
     LanguageModelConfig,
     LLaDAConfig,
+    LorsaConfig,
     MongoDBConfig,
     SAEConfig,
     TrainerConfig,
     WandbConfig,
-    LorsaConfig,
-    GraphEvalConfig,
-    DirectLogitAttributorConfig,
 )
 from .crosscoder import CrossCoder
 from .database import MongoClient
-from .resource_loaders import load_dataset, load_model
-from .sae import SparseAutoEncoder
-from .circuit import ReplacementModel, attribute
 from .evaluator import EvalConfig, Evaluator
-from .analysis import DirectLogitAttributor, FeatureAnalyzer
+from .lorsa import LowRankSparseAttention
+from .resource_loaders import load_dataset, load_model
 from .runners import (
     AnalyzeCrossCoderSettings,
     AnalyzeSAESettings,
     AutoInterpSettings,
+    CheckActivationConsistencySettings,
+    DirectLogitAttributeSettings,
     EvaluateCrossCoderSettings,
     EvaluateSAESettings,
     GenerateActivationsSettings,
-    TrainLorsaSettings,
-    train_lorsa,
     SweepingItem,
     SweepSAESettings,
     TrainCLTSettings,
     TrainCrossCoderSettings,
+    TrainLorsaSettings,
     TrainSAESettings,
     analyze_crosscoder,
     analyze_sae,
     auto_interp,
+    check_activation_consistency,
+    direct_logit_attribute,
     evaluate_crosscoder,
     evaluate_sae,
     generate_activations,
     sweep_sae,
     train_clt,
     train_crosscoder,
+    train_lorsa,
     train_sae,
-    DirectLogitAttributeSettings,
-    direct_logit_attribute,
 )
+from .sae import SparseAutoEncoder
 
 __all__ = [
     "ActivationFactory",
@@ -87,6 +87,8 @@ __all__ = [
     "evaluate_sae",
     "GenerateActivationsSettings",
     "generate_activations",
+    "CheckActivationConsistencySettings",
+    "check_activation_consistency",
     "InitializerConfig",
     "SAEConfig",
     "TrainerConfig",

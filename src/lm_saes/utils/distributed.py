@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union
+from typing import Tuple, Union, cast
 
 import torch
 from jaxtyping import Float
@@ -6,8 +6,6 @@ from torch._tensor import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Placement, distribute_tensor
 from torch.distributed.tensor.placement_types import Replicate, Shard
-from typing import Any, Union, Optional, Tuple
-from jaxtyping import Float
 
 
 class DimMap:
@@ -67,14 +65,14 @@ class DimMap:
 
         return {v: k for k, v in self._dim_map.items()}
 
-    def placements(self, device_mesh: DeviceMesh) -> list[Placement]:
+    def placements(self, device_mesh: DeviceMesh) -> tuple[Placement, ...]:
         """Get the placements for a tensor based on the dimension map and device mesh.
 
         Args:
             device_mesh: The device mesh to get placements for.
 
         Returns:
-            A list of placements for the tensor.
+            A tuple of placements for the tensor.
 
         Raises:
             ValueError: If the device mesh does not have mesh dimension names.
@@ -82,10 +80,10 @@ class DimMap:
         if device_mesh.mesh_dim_names is None:
             raise ValueError("Device mesh does not have mesh dimension names.")
 
-        return [
+        return tuple(
             Shard(self._dim_map[dim_name]) if dim_name in self._dim_map else Replicate()
             for dim_name in device_mesh.mesh_dim_names
-        ]
+        )
 
     def local_slices(self, shape: tuple[int, ...], device_mesh: DeviceMesh) -> tuple[slice, ...]:
         """Get the local slices for a tensor based on the dimension map and device mesh.
@@ -148,6 +146,34 @@ class DimMap:
         """Merge this DimMap with another DimMap or dictionary."""
         return DimMap(self.to_dict() | other.to_dict())
 
+    @classmethod
+    def from_placements(cls, placements: tuple[Placement, ...], device_mesh: DeviceMesh) -> "DimMap":
+        """Create a DimMap from a list of placements and a device mesh."""
+        assert device_mesh.mesh_dim_names is not None, "Device mesh must have mesh dimension names"
+        assert all(isinstance(placement, Shard) or isinstance(placement, Replicate) for placement in placements), (
+            "All placements must be Shard or Replicate"
+        )
+        return cls(
+            {
+                dim_name: cast(Shard, placements[i]).dim
+                for i, dim_name in enumerate(device_mesh.mesh_dim_names)
+                if isinstance(placements[i], Shard)
+            }
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, DimMap):
+            return False
+        """Check if two DimMaps are equal."""
+        return self.to_dict() == other.to_dict()
+
+    def __ne__(self, other: object) -> bool:
+        if not isinstance(other, DimMap):
+            return True
+        """Check if two DimMaps are not equal."""
+        return self.to_dict() != other.to_dict()
+
+
 def distributed_topk(
     x: Float[DTensor, "batch n_layers d_sae"],
     k: int,
@@ -160,20 +186,20 @@ def distributed_topk(
 ) -> Union[DTensor, Tuple[DTensor, Float[Tensor, ""]]]:
     """
     Perform distributed batch kthvalue operation on a DTensor using binary search.
-    
+
     Args:
         x: Input tensor of shape (batch, n_layers, d_sae)
         k: Target number of top elements to keep
         k_range: Acceptable range for the number of elements above threshold (lower_bound, upper_bound)
         device_mesh: Device mesh for distributed training
         mesh_dim_name: Name of the mesh dimension to shard along
-        
+
     Returns:
         Tuple of (threshold, None) where threshold is a scalar value that gives acceptable k elements
     """
     if not isinstance(x, DTensor) or device_mesh is None:
         raise ValueError("x must be a DTensor and device_mesh must be provided")
-    
+
     local_tensor = x.to_local()
     placements = x.placements
 
@@ -184,7 +210,7 @@ def distributed_topk(
                 mesh_dim_idx = device_mesh.mesh_dim_names.index(mesh_dim_name)
             except ValueError:
                 raise ValueError(f"Mesh dimension '{mesh_dim_name}' not found in device mesh")
-        
+
         # Check if the tensor is sharded along the specified dimensions
         if mesh_dim_idx is None or not isinstance(placements[mesh_dim_idx], Shard):
             raise ValueError("x must be sharded along the specified dimension")
@@ -192,39 +218,36 @@ def distributed_topk(
         shard_dim: Tuple[int] = (placements[mesh_dim_idx].dim,)  # type: ignore
         if isinstance(dim, int):
             dim = (dim,)
-        
+
         def _ensure_positive_dim(dim: Tuple[int, ...]) -> Tuple[int, ...]:
             """We want to ensure that the dims are positive"""
             return tuple(d if d >= 0 else d + local_tensor.ndim for d in dim)
-        
+
         dim = _ensure_positive_dim(dim)
-        
+
         if not any(d in shard_dim for d in dim):
             raise ValueError("At least one of the specified dimensions must be sharded")
-        
+
         constant_dims = tuple(d for d in range(local_tensor.ndim) if d not in dim)
         constant_dim_size = tuple(local_tensor.size(d) for d in constant_dims)
 
         k_lower_bound, k_upper_bound = k - tolerance, k + tolerance
         search_low_val = torch.zeros(constant_dim_size, device=local_tensor.device)
         search_high_val = torch.full(constant_dim_size, local_tensor.max(), device=local_tensor.device)
-        
+
         local_tensor_flat = local_tensor.flatten(start_dim=len(constant_dims))
 
         group = device_mesh.get_group(mesh_dim_name)
-        
-        
+
         for _ in range(max_iterations):
             threshold = (search_low_val + search_high_val) / 2
             torch.distributed.all_reduce(threshold, group=group, op=torch.distributed.ReduceOp.AVG)
-            
+
             count_above_threshold = (local_tensor_flat > threshold.unsqueeze(-1)).sum(-1)
             # All-reduce to get total count across all ranks
             torch.distributed.all_reduce(count_above_threshold, group=group)
-            
-            if (
-                (k_lower_bound <= count_above_threshold) * (count_above_threshold <= k_upper_bound)
-            ).all():
+
+            if ((k_lower_bound <= count_above_threshold) * (count_above_threshold <= k_upper_bound)).all():
                 break
 
             to_increase = count_above_threshold > k_upper_bound
@@ -234,25 +257,25 @@ def distributed_topk(
                 search_low_val = torch.where(to_increase, threshold, search_low_val)
             if to_decrease.any():
                 search_high_val = torch.where(to_decrease, threshold, search_high_val)
-            
+
             # Check for convergence across all devices
             local_converged = (search_high_val - search_low_val < 1e-6).all()
             converged_tensor = local_converged.float().detach().clone()
             torch.distributed.all_reduce(converged_tensor, group=group, op=torch.distributed.ReduceOp.MIN)
             if converged_tensor.item() > 0:  # All devices have converged
                 break
-        
+
         while threshold.ndim < local_tensor.ndim:
             threshold = threshold[..., None]
-    
+
     local_tensor = local_tensor * local_tensor.ge(threshold)
-    
+
     result = DTensor.from_local(
         local_tensor,
         device_mesh=device_mesh,
         placements=placements,
     )
-    
+
     if return_threshold:
         return result, threshold
     else:

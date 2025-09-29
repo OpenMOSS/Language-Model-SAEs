@@ -25,15 +25,14 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookedRootModule
 
+from lm_saes.activation_functions import JumpReLU
+from lm_saes.config import BaseSAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.timer import timer
-
-from lm_saes.activation_functions import JumpReLU
-from lm_saes.config import BaseSAEConfig
 
 logger = get_distributed_logger("abstract_sae")
 
@@ -164,7 +163,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     "sae_name and sae_series must be provided when saving to MongoDB"
                 )
                 mongo_client.create_sae(
-                    name=sae_name, series=sae_series, path=str(Path(save_path).absolute()), cfg=self.cfg
+                    name=sae_name,
+                    series=sae_series,
+                    path=str(Path(save_path).absolute()),
+                    cfg=self.cfg,
                 )
 
     @overload
@@ -291,17 +293,47 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             return torch.tensor(1.0, device=x.device, dtype=x.dtype)
         raise ValueError(f"Not implemented norm_activation {self.cfg.norm_activation}")
 
+    @overload
+    def normalize_activations(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        return_scale_factor: Literal[False] = False,
+    ) -> dict[str, torch.Tensor]: ...
+
+    @overload
+    def normalize_activations(
+        self, batch: dict[str, torch.Tensor], *, return_scale_factor: Literal[True]
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]: ...
+
     @timer.time("normalize_activations")
-    def normalize_activations(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def normalize_activations(
+        self, batch: dict[str, torch.Tensor], *, return_scale_factor: bool = False
+    ) -> dict[str, torch.Tensor] | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         """Normalize the input activations.
         This should be called before calling `encode` or `compute_loss`.
         """
 
-        def normalize_hook_point(hook_point: str, original_tensor: torch.Tensor):
-            norm_factor = self.compute_norm_factor(original_tensor, hook_point=hook_point)
-            return original_tensor * norm_factor
+        scale_factors = {
+            k: self.compute_norm_factor(v, hook_point=k)
+            for k, v in batch.items()
+            if k in self.cfg.associated_hook_points
+        }
+        others = {k: v for k, v in batch.items() if k not in self.cfg.associated_hook_points}
+        activations = {k: v * scale_factors[k] for k, v in batch.items() if k in self.cfg.associated_hook_points}
 
-        return {k: normalize_hook_point(k, v) if k in self.cfg.associated_hook_points else v for k, v in batch.items()}
+        if not return_scale_factor:
+            return activations | others
+        else:
+            return activations | others, scale_factors
+
+    def denormalize_activations(
+        self, batch: dict[str, torch.Tensor], scale_factors: dict[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        """Denormalize the input activations.
+        This should be called after calling `encode` or `compute_loss`.
+        """
+        return {k: v / scale_factors[k] for k, v in batch.items()}
 
     @abstractmethod
     @torch.no_grad()
@@ -311,7 +343,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
     def get_parameters(self) -> list[dict[str, Any]]:
         """Get the parameters of the model for optimization."""
-        return [{"params": self.parameters()}]
+        jumprelu_params = (
+            list(self.activation_function.parameters()) if isinstance(self.activation_function, JumpReLU) else []
+        )
+        other_params = [p for p in self.parameters() if not any(p is param for param in jumprelu_params)]
+        return [
+            {"params": other_params, "name": "others"},
+            {"params": jumprelu_params, "name": "jumprelu"},
+        ]
 
     def load_full_state_dict(self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh | None = None) -> None:
         # Extract and set dataset_average_activation_norm if present
@@ -332,7 +371,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             self.load_distributed_state_dict(state_dict, device_mesh)
 
     @classmethod
-    def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = True) -> Self:
+    def from_config(
+        cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = True
+    ) -> Self:
         model = cls(cfg, device_mesh)
         if cfg.sae_pretrained_name_or_path is None:
             total_params = sum(param.numel() for param in model.parameters()) / 1e9
@@ -391,7 +432,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             state_dict = model.full_state_dict()
             dcp.load(state_dict, storage_reader=fs_reader)
         else:
-            raise ValueError(f"Unsupported checkpoint format: {ckpt_path}")                
+            raise ValueError(f"Unsupported checkpoint format: {ckpt_path}")
 
         model.load_full_state_dict(state_dict, device_mesh)
         if fold_activation_scale:
@@ -466,23 +507,24 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             )
 
         elif self.cfg.act_fn.lower() == "topk":
-
             if self.device_mesh is not None:
                 from lm_saes.utils.distributed import distributed_topk
-                
-                def topk_activation(x: Union[
+
+                def topk_activation(
+                    x: Union[
                         Float[torch.Tensor, "batch d_sae"],
                         Float[torch.Tensor, "batch seq_len d_sae"],
                     ],
                 ):
                     return distributed_topk(
-                        x, 
-                        k=self.current_k, 
-                        device_mesh=self.device_mesh, 
-                        dim=-1, 
+                        x,
+                        k=self.current_k,
+                        device_mesh=self.device_mesh,
+                        dim=-1,
                         mesh_dim_name="model",
                     )
             else:
+
                 def topk_activation(
                     x: Union[
                         Float[torch.Tensor, "batch d_sae"],
@@ -490,6 +532,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     ],
                 ):
                     from lm_saes.utils.math import topk
+
                     return topk(
                         x,
                         k=self.current_k,
@@ -499,11 +542,11 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             return topk_activation
 
         elif self.cfg.act_fn.lower() == "batchtopk":
-
             if device_mesh is not None:
                 from lm_saes.utils.distributed import distributed_topk
-                
-                def batch_topk(x: Union[
+
+                def batch_topk(
+                    x: Union[
                         Float[torch.Tensor, "batch d_sae"],
                         Float[torch.Tensor, "batch seq_len d_sae"],
                     ],
@@ -526,7 +569,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             else:
                 # single-GPU batchtopk
                 from lm_saes.utils.math import topk
-                def batch_topk(x: Union[
+
+                def batch_topk(
+                    x: Union[
                         Float[torch.Tensor, "batch d_sae"],
                         Float[torch.Tensor, "batch seq_len d_sae"],
                     ],
@@ -544,7 +589,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     if original_shape is not None:
                         result = result.unflatten(dim=0, sizes=original_shape)
                     return result
-            
+
             return batch_topk
 
         raise ValueError(f"Not implemented activation function {self.cfg.act_fn}")
@@ -626,7 +671,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         with timer.time("decode"):
             reconstructed = self.decode(feature_acts, **kwargs)
-        
+
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
             if use_batch_norm_mse:
@@ -671,10 +716,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 with timer.time("lp_loss_calculation"):
                     # ReLU(exp(lp_threshold) - feature_acts) * decoder_norm
                     jumprelu_threshold = self.activation_function.get_jumprelu_threshold()
-                    l_p = (
-                        torch.nn.functional.relu(jumprelu_threshold - feature_acts) 
-                        * self.decoder_norm()
-                    )
+                    l_p = torch.nn.functional.relu(jumprelu_threshold - feature_acts) * self.decoder_norm()
                     l_p = l_p.sum(dim=-1)
                     if isinstance(l_p, DTensor):
                         l_p = l_p.full_tensor()
@@ -704,7 +746,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         """Prepare the label for the loss computation."""
         raise NotImplementedError("Subclasses must implement this method")
-    
+
     # @abstractmethod
     # def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
     #     """Initialize the W and D parameters with the active subspace."""
@@ -726,7 +768,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         return {}
 
     def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
+        self,
+        state_dict: dict[str, torch.Tensor],
+        device_mesh: DeviceMesh,
+        prefix: str = "",
     ) -> None:
         self.device_mesh = device_mesh
         if isinstance(self.activation_function, JumpReLU):

@@ -1,7 +1,9 @@
 from typing import Any, TypeVar, overload
+
 import torch
 
 T = TypeVar("T")
+
 
 def sort_dict_of_tensor(
     tensor_dict: dict[str, torch.Tensor],
@@ -26,10 +28,7 @@ def sort_dict_of_tensor(
         tmp_sorted_idx = sorted_idx
         while v.ndim > tmp_sorted_idx.ndim:
             tmp_sorted_idx = tmp_sorted_idx.unsqueeze(-1)
-        tensor_dict[k] = v.gather(
-            sort_dim,
-            tmp_sorted_idx.expand_as(v)
-        ) 
+        tensor_dict[k] = v.gather(sort_dim, tmp_sorted_idx.expand_as(v))
     return tensor_dict
 
 

@@ -1,16 +1,15 @@
-from typing import Dict, List, Optional, Union, Callable, Tuple, ContextManager, DefaultDict
-from functools import partial
+from collections import defaultdict
 from contextlib import contextmanager
-from jaxtyping import Float
+from functools import partial
+from typing import Callable, List, Tuple, Union
 
 import torch
 import torch.nn as nn
-import einops
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
-from lm_saes import CrossLayerTranscoder, LanguageModelConfig, load_model, LowRankSparseAttention
-from .utils.load_transcoder_set import load_transcoder_set
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from lm_saes import CrossLayerTranscoder, LanguageModelConfig, LowRankSparseAttention, load_model
 
 
 class ReplacementMLP(nn.Module):
@@ -27,14 +26,16 @@ class ReplacementMLP(nn.Module):
         mlp_out = self.old_mlp(x)
         return self.hook_out(mlp_out)
 
+
 class ReplacementAttention(nn.Module):
     """Wrapper for a TransformerLens Attention layer that adds in extra hooks"""
+
     def __init__(self, old_attn: nn.Module):
         super().__init__()
         self.old_attn = old_attn
         self.hook_in = HookPoint()
         self.hook_out = HookPoint()
-    
+
     def forward(self, query_input, key_input, value_input, **kwargs):
         assert torch.allclose(query_input, key_input) and torch.allclose(query_input, value_input)
         query_input = self.hook_in(query_input)
@@ -113,7 +114,7 @@ class ReplacementModel(HookedTransformer):
             transcoders, lorsas, mlp_input_hook, mlp_output_hook, attn_input_hook, attn_output_hook, use_lorsa
         )
         return model
-    
+
     @classmethod
     def from_pretrained_and_transcoders(
         cls,
@@ -147,7 +148,11 @@ class ReplacementModel(HookedTransformer):
         """
         hf_model = (
             AutoModelForCausalLM.from_pretrained(
-                (model_cfg.model_name if model_cfg.model_from_pretrained_path is None else model_cfg.model_from_pretrained_path),
+                (
+                    model_cfg.model_name
+                    if model_cfg.model_from_pretrained_path is None
+                    else model_cfg.model_from_pretrained_path
+                ),
                 cache_dir=model_cfg.cache_dir,
                 local_files_only=model_cfg.local_files_only,
                 torch_dtype=model_cfg.dtype,
@@ -158,7 +163,11 @@ class ReplacementModel(HookedTransformer):
         )
         hf_tokenizer = (
             AutoTokenizer.from_pretrained(
-                (model_cfg.model_name if model_cfg.model_from_pretrained_path is None else model_cfg.model_from_pretrained_path),
+                (
+                    model_cfg.model_name
+                    if model_cfg.model_from_pretrained_path is None
+                    else model_cfg.model_from_pretrained_path
+                ),
                 trust_remote_code=True,
                 use_fast=True,
                 add_bos_token=True,
@@ -182,10 +191,16 @@ class ReplacementModel(HookedTransformer):
         )
 
         model._configure_replacement_model(
-            transcoders, lorsas, mlp_input_hook, mlp_output_hook, attn_input_hook, attn_output_hook, use_lorsa,
+            transcoders,
+            lorsas,
+            mlp_input_hook,
+            mlp_output_hook,
+            attn_input_hook,
+            attn_output_hook,
+            use_lorsa,
         )
         return model
-    
+
     @classmethod
     def from_pretrained(  # type: ignore[override]
         cls,
@@ -235,9 +250,8 @@ class ReplacementModel(HookedTransformer):
         attn_output_hook: str,
         use_lorsa: bool = True,
     ):
-        
         self.use_lorsa = use_lorsa
-        
+
         transcoders.to(self.cfg.device, self.cfg.dtype)
         if lorsas is not None:
             for lorsa in lorsas:
@@ -270,7 +284,7 @@ class ReplacementModel(HookedTransformer):
         self._configure_gradient_flow()
         self._deduplicate_attention_buffers()
         self.setup()
-    
+
     def _configure_gradient_flow(self):
         for layer in range(self.cfg.n_layers):
             self._configure_skip_connection(self.blocks[layer], layer)
@@ -295,7 +309,7 @@ class ReplacementModel(HookedTransformer):
 
         for param in self.parameters():
             param.requires_grad = False
-        
+
         for param in self._get_requires_grad_bias_params():
             param[1].requires_grad = True
 
@@ -304,10 +318,11 @@ class ReplacementModel(HookedTransformer):
             return acts
 
         self.hook_embed.add_hook(enable_gradient, is_permanent=True)
-    
+
     def _configure_skip_connection(self, block, layer):
-        
-        def add_skip_connection(acts: torch.Tensor, hook: HookPoint, grad_hook: HookPoint, replacement_bias: torch.Tensor):
+        def add_skip_connection(
+            acts: torch.Tensor, hook: HookPoint, grad_hook: HookPoint, replacement_bias: torch.Tensor
+        ):
             # We add grad_hook because we need a way to hook into the gradients of the output
             # of this function. If we put the backwards hook here at hook, the grads will be 0
             # because we detached acts.
@@ -343,8 +358,8 @@ class ReplacementModel(HookedTransformer):
                     replacement_bias=self.lorsas[layer].b_D,
                 ),
                 is_permanent=True,
-            )            
-    
+            )
+
     def _deduplicate_attention_buffers(self):
         """
         Share attention buffers across layers to save memory.
@@ -377,13 +392,13 @@ class ReplacementModel(HookedTransformer):
                 block.attn.old_attn.mask = attn_masks[block.attn.old_attn.attn_type]
                 block.attn.old_attn.rotary_sin = attn_masks["rotary_sin"]
                 block.attn.old_attn.rotary_cos = attn_masks["rotary_cos"]
-            
+
             lorsa_masks = {}
             for lorsa in self.lorsas:
                 lorsa_masks["causal_mask"] = lorsa.mask
                 lorsa_masks["rotary_sin"] = lorsa.rotary_sin
                 lorsa_masks["rotary_cos"] = lorsa.rotary_cos
-            
+
             for lorsa in self.lorsas:
                 lorsa.mask = lorsa_masks["causal_mask"]
                 lorsa.rotary_sin = lorsa_masks["rotary_sin"]
@@ -401,13 +416,12 @@ class ReplacementModel(HookedTransformer):
         else:
             activation_matrix = [None] * self.cfg.n_layers
         activation_hooks = []
-        
+
         if self.use_lorsa:
+
             def cache_activations_attn(acts, hook, layer, zero_bos):
                 encode_result = self.lorsas[layer].encode(
-                    acts,
-                    return_hidden_pre=not apply_activation_function,
-                    return_attention_pattern=True
+                    acts, return_hidden_pre=not apply_activation_function, return_attention_pattern=True
                 )
 
                 if not apply_activation_function:
@@ -416,7 +430,7 @@ class ReplacementModel(HookedTransformer):
                 else:
                     lorsa_acts = encode_result[0].detach().squeeze(0)
                     pattern = encode_result[1].detach().squeeze(0)
-                
+
                 if zero_bos:
                     lorsa_acts[0] = 0
                 if sparse:
@@ -425,80 +439,81 @@ class ReplacementModel(HookedTransformer):
                 activation_matrix[layer] = lorsa_acts
                 lorsa_attention_pattern[layer] = pattern
 
-            activation_hooks.extend([
-                (
-                    f"blocks.{layer}.{self.attn_input_hook}",
-                    partial(cache_activations_attn, layer=layer, zero_bos=zero_bos),
-                )
-                for layer in range(self.cfg.n_layers)
-            ])
-            
+            activation_hooks.extend(
+                [
+                    (
+                        f"blocks.{layer}.{self.attn_input_hook}",
+                        partial(cache_activations_attn, layer=layer, zero_bos=zero_bos),
+                    )
+                    for layer in range(self.cfg.n_layers)
+                ]
+            )
+
             def cache_activations_mlp(acts, hook, layer, zero_bos):
                 transcoder_acts = self.transcoders.encode_single_layer(
-                    acts, 
-                    layer, 
-                    return_hidden_pre=not apply_activation_function
+                    acts, layer, return_hidden_pre=not apply_activation_function
                 )
 
                 if not apply_activation_function:
                     transcoder_acts = transcoder_acts[1].detach().squeeze(0)
                 else:
                     transcoder_acts = transcoder_acts.detach().squeeze(0)
-                
+
                 if zero_bos:
                     transcoder_acts[0] = 0
                 if sparse:
                     transcoder_acts = transcoder_acts.to_sparse()
-                
+
                 def mlp_offset(layer):
                     return self.cfg.n_layers + layer
-                
+
                 activation_matrix[mlp_offset(layer)] = transcoder_acts
-            
-            activation_hooks.extend([
-                (
-                    f"blocks.{layer}.{self.mlp_input_hook}",
-                    partial(cache_activations_mlp, layer=layer, zero_bos=zero_bos),
-                )
-                for layer in range(self.cfg.n_layers)
-            ])
+
+            activation_hooks.extend(
+                [
+                    (
+                        f"blocks.{layer}.{self.mlp_input_hook}",
+                        partial(cache_activations_mlp, layer=layer, zero_bos=zero_bos),
+                    )
+                    for layer in range(self.cfg.n_layers)
+                ]
+            )
         else:
             lorsa_attention_pattern = None
+
             def cache_activations_mlp(acts, hook, layer, zero_bos):
                 transcoder_acts = self.transcoders.encode_single_layer(
-                    acts, 
-                    layer, 
-                    return_hidden_pre=not apply_activation_function
+                    acts, layer, return_hidden_pre=not apply_activation_function
                 )
 
                 if not apply_activation_function:
                     transcoder_acts = transcoder_acts[1].detach().squeeze(0)
                 else:
                     transcoder_acts = transcoder_acts.detach().squeeze(0)
-                
+
                 if zero_bos:
                     transcoder_acts[0] = 0
                 if sparse:
                     transcoder_acts = transcoder_acts.to_sparse()
-                
+
                 def mlp_offset(layer):
                     return layer
-                
+
                 activation_matrix[mlp_offset(layer)] = transcoder_acts
                 # print('run')
-            
-            activation_hooks.extend([
-                (
-                    f"blocks.{layer}.{self.mlp_input_hook}",
-                    partial(cache_activations_mlp, layer=layer, zero_bos=zero_bos),
-                )
-                for layer in range(self.cfg.n_layers)
-            ])
 
-        
+            activation_hooks.extend(
+                [
+                    (
+                        f"blocks.{layer}.{self.mlp_input_hook}",
+                        partial(cache_activations_mlp, layer=layer, zero_bos=zero_bos),
+                    )
+                    for layer in range(self.cfg.n_layers)
+                ]
+            )
 
         return activation_matrix, lorsa_attention_pattern, activation_hooks
-    
+
     def get_activations(
         self,
         inputs: Union[str, torch.Tensor],
@@ -541,7 +556,7 @@ class ReplacementModel(HookedTransformer):
             yield
         finally:
             self.cfg.output_logits_soft_cap = current_softcap
-    
+
     @torch.no_grad()
     def setup_attribution(
         self,
@@ -576,9 +591,7 @@ class ReplacementModel(HookedTransformer):
                 special_tokens.append(special_token)
 
         special_token_ids = self.tokenizer.convert_tokens_to_ids(special_tokens)
-        zero_bos = (
-            zero_bos and tokens[0].cpu().item() in special_token_ids
-        )  # == self.tokenizer.bos_token_id
+        zero_bos = zero_bos and tokens[0].cpu().item() in special_token_ids  # == self.tokenizer.bos_token_id
 
         # cache activations and MLP in
         activation_matrix, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
@@ -591,9 +604,7 @@ class ReplacementModel(HookedTransformer):
         else:
             attn_out_cache, attn_out_caching_hooks = None, None
 
-        mlp_out_cache, mlp_out_caching_hooks, _ = self.get_caching_hooks(
-            lambda name: self.mlp_output_hook in name
-        )
+        mlp_out_cache, mlp_out_caching_hooks, _ = self.get_caching_hooks(lambda name: self.mlp_output_hook in name)
 
         if self.use_lorsa:
             error_vectors = torch.zeros(
@@ -611,19 +622,13 @@ class ReplacementModel(HookedTransformer):
         # note: activation_hooks must come before error_hooks
         if self.use_lorsa:
             logits = self.run_with_hooks(
-                tokens, fwd_hooks=(
-                    activation_hooks + attn_out_caching_hooks + mlp_out_caching_hooks
-                )
+                tokens, fwd_hooks=(activation_hooks + attn_out_caching_hooks + mlp_out_caching_hooks)
             )
         else:
-            logits = self.run_with_hooks(
-                tokens, fwd_hooks=(
-                    activation_hooks + mlp_out_caching_hooks
-                )
-            )
+            logits = self.run_with_hooks(tokens, fwd_hooks=(activation_hooks + mlp_out_caching_hooks))
         if self.use_lorsa:
-            lorsa_activation_matrix = activation_matrix[:self.cfg.n_layers]
-            clt_activation_matrix = activation_matrix[self.cfg.n_layers:]
+            lorsa_activation_matrix = activation_matrix[: self.cfg.n_layers]
+            clt_activation_matrix = activation_matrix[self.cfg.n_layers :]
         else:
             lorsa_activation_matrix = None
             clt_activation_matrix = activation_matrix
@@ -631,28 +636,16 @@ class ReplacementModel(HookedTransformer):
             print(activation_matrix)
 
         if self.use_lorsa:
-            lorsa_reconstruction = torch.stack([
-                self.lorsas[layer].decode(lorsa_activation_matrix[layer])
-                for layer in range(self.cfg.n_layers)
-            ])
-        clt_reconstruction = self.transcoders.decode(
-            clt_activation_matrix
-        )
-        
+            lorsa_reconstruction = torch.stack(
+                [self.lorsas[layer].decode(lorsa_activation_matrix[layer]) for layer in range(self.cfg.n_layers)]
+            )
+        clt_reconstruction = self.transcoders.decode(clt_activation_matrix)
+
         if self.use_lorsa:
-            error_vectors[:self.cfg.n_layers] = torch.cat(
-                list(attn_out_cache.values()),
-                dim=0
-            ) - lorsa_reconstruction
-            error_vectors[self.cfg.n_layers:] = torch.cat(
-                list(mlp_out_cache.values()),
-                dim=0
-            ) - clt_reconstruction
+            error_vectors[: self.cfg.n_layers] = torch.cat(list(attn_out_cache.values()), dim=0) - lorsa_reconstruction
+            error_vectors[self.cfg.n_layers :] = torch.cat(list(mlp_out_cache.values()), dim=0) - clt_reconstruction
         else:
-            error_vectors = torch.cat(
-                list(mlp_out_cache.values()),
-                dim=0
-            ) - clt_reconstruction
+            error_vectors = torch.cat(list(mlp_out_cache.values()), dim=0) - clt_reconstruction
 
         if zero_bos:
             error_vectors[:, 0] = 0
@@ -667,7 +660,14 @@ class ReplacementModel(HookedTransformer):
             clt_activation_matrix = clt_activation_matrix.coalesce()
 
         token_vectors = self.W_E[tokens].detach()  # (n_pos, d_model)
-        return logits, lorsa_activation_matrix, lorsa_attention_pattern, clt_activation_matrix, error_vectors, token_vectors
+        return (
+            logits,
+            lorsa_activation_matrix,
+            lorsa_attention_pattern,
+            clt_activation_matrix,
+            error_vectors,
+            token_vectors,
+        )
 
     def setup_intervention_with_freeze(
         self, inputs: Union[str, torch.Tensor], direct_effects: bool = False
@@ -701,14 +701,12 @@ class ReplacementModel(HookedTransformer):
             # so we'll just freeze the previous positions, and leave the new ones unfrozen
             if "hook_pattern" in hook.name and activations.shape[2:] != cached_values.shape[2:]:
                 new_activations = activations.clone()
-                new_activations[:, :, : cached_values.shape[2], : cached_values.shape[3]] = (
-                    cached_values
-                )
+                new_activations[:, :, : cached_values.shape[2], : cached_values.shape[3]] = cached_values
                 return new_activations
 
-            elif (
-                "hook_scale" in hook.name or self.feature_output_hook in hook.name
-            ) and activations.shape[1] != cached_values.shape[1]:
+            elif ("hook_scale" in hook.name or self.feature_output_hook in hook.name) and activations.shape[
+                1
+            ] != cached_values.shape[1]:
                 new_activations = activations.clone()
                 new_activations[:, : cached_values.shape[1]] = cached_values
                 return new_activations
@@ -721,9 +719,7 @@ class ReplacementModel(HookedTransformer):
             return cached_values
 
         fwd_hooks = [
-            (hookpoint, freeze_hook)
-            for hookpoint in freeze_cache.keys()
-            if self.feature_input_hook not in hookpoint
+            (hookpoint, freeze_hook) for hookpoint in freeze_cache.keys() if self.feature_input_hook not in hookpoint
         ]
 
         if not direct_effects:
@@ -734,9 +730,7 @@ class ReplacementModel(HookedTransformer):
     def _get_feature_intervention_hooks(
         self,
         inputs: Union[str, torch.Tensor],
-        interventions: List[
-            Tuple[int, Union[int, slice, torch.Tensor], int, Union[int, torch.Tensor]]
-        ],
+        interventions: List[Tuple[int, Union[int, slice, torch.Tensor], int, Union[int, torch.Tensor]]],
         direct_effects: bool = False,
         freeze_attention: bool = True,
         apply_activation_function: bool = True,
@@ -771,9 +765,7 @@ class ReplacementModel(HookedTransformer):
             transcoder_activations = activation_cache[layer]
             if not apply_activation_function:
                 transcoder_activations = (
-                    self.transcoders[layer]
-                    .activation_function(transcoder_activations.unsqueeze(0))
-                    .squeeze(0)
+                    self.transcoders[layer].activation_function(transcoder_activations.unsqueeze(0)).squeeze(0)
                 )
             transcoder_output = self.transcoders[layer].decode(transcoder_activations)
             for pos, feature_idx, value in layer_interventions:
@@ -803,9 +795,7 @@ class ReplacementModel(HookedTransformer):
     def feature_intervention(
         self,
         inputs: Union[str, torch.Tensor],
-        interventions: List[
-            Tuple[int, Union[int, slice, torch.Tensor], int, Union[int, torch.Tensor]]
-        ],
+        interventions: List[Tuple[int, Union[int, slice, torch.Tensor], int, Union[int, torch.Tensor]]],
         direct_effects: bool = False,
         freeze_attention: bool = True,
         apply_activation_function: bool = True,
@@ -845,12 +835,18 @@ class ReplacementModel(HookedTransformer):
         activation_cache = torch.stack(activation_cache)
 
         return logits, activation_cache
-        
+
     def _get_requires_grad_bias_params(self):
         bias_params = []
         for param in self.named_parameters():
-            if '.b' in param[0] and 'b_Q' not in param[0] and 'b_K' not in param[0] and 'old' not in param[0] and 'transcoders.b_E' not in param[0]:
+            if (
+                ".b" in param[0]
+                and "b_Q" not in param[0]
+                and "b_K" not in param[0]
+                and "old" not in param[0]
+                and "transcoders.b_E" not in param[0]
+            ):
                 bias_params.append(param)
-            elif self.use_lorsa is True and 'lorsas' in param[0] and ('b_Q' in param[0] or 'b_K' in param[0]):
+            elif self.use_lorsa is True and "lorsas" in param[0] and ("b_Q" in param[0] or "b_K" in param[0]):
                 bias_params.append(param)
         return bias_params

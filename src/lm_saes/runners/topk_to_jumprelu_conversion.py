@@ -2,12 +2,12 @@
 
 from typing import Optional
 
+import torch
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
-import torch
-from lm_saes.utils.topk_to_jumprelu_conversion import topk_to_jumprelu_conversion
-from lm_saes.clt import CrossLayerTranscoder
+
 from lm_saes.activation.factory import ActivationFactory
+from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import (
     ActivationFactoryConfig,
     CLTConfig,
@@ -19,6 +19,7 @@ from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
+from lm_saes.utils.topk_to_jumprelu_conversion import topk_to_jumprelu_conversion
 
 logger = get_distributed_logger("runners.topk_to_jumprelu_conversion")
 
@@ -59,6 +60,7 @@ class ConvertCLTSettings(BaseSettings):
     exp_result_path: str
     """Path to save the converted CLT model"""
 
+
 @torch.no_grad()
 def convert_clt(settings: ConvertCLTSettings) -> None:
     """Train a Cross Layer Transcoder (CLT) model.
@@ -81,9 +83,7 @@ def convert_clt(settings: ConvertCLTSettings) -> None:
 
     logger.info(f"Device mesh initialized: {device_mesh}")
 
-    mongo_client = MongoClient(
-        settings.mongo
-    ) if settings.mongo is not None else None
+    mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
     if mongo_client:
         logger.info("MongoDB client initialized")
 
@@ -112,9 +112,7 @@ def convert_clt(settings: ConvertCLTSettings) -> None:
 
     # Load model and datasets
     logger.info("Loading model and datasets")
-    model = load_model(
-        model_cfg
-    ) if model_cfg is not None else None
+    model = load_model(model_cfg) if model_cfg is not None else None
     datasets = (
         {
             dataset_name: load_dataset(dataset_cfg, device_mesh=device_mesh)

@@ -1,4 +1,5 @@
 import io
+import json
 import os
 from functools import lru_cache
 from typing import Any, Optional
@@ -8,9 +9,10 @@ import numpy as np
 import plotly.graph_objects as go
 import torch
 from datasets import Dataset
-from fastapi import FastAPI, Response, Body
+from fastapi import Body, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+
 try:
     from torchvision import transforms
 except ImportError:
@@ -132,7 +134,11 @@ def trim_minimum(
 
     min_length = min(len(origins), feature_acts_indices[-1] + 10)
     feature_acts_indices_mask = feature_acts_indices <= min_length
-    return origins[:int(min_length)], feature_acts_indices[feature_acts_indices_mask], feature_acts_values[feature_acts_indices_mask]
+    return (
+        origins[: int(min_length)],
+        feature_acts_indices[feature_acts_indices_mask],
+        feature_acts_values[feature_acts_indices_mask],
+    )
 
 
 @app.exception_handler(AssertionError)
@@ -177,11 +183,60 @@ def get_image(dataset_name: str, context_idx: int, image_idx: int, shard_idx: in
     return Response(content=img_byte_arr.getvalue(), media_type="image/png")
 
 
+@app.get("/dictionaries/{name}/metrics")
+def get_available_metrics(name: str):
+    """Get available metrics for a dictionary.
+
+    Args:
+        name: Name of the dictionary/SAE
+
+    Returns:
+        List of available metric names
+    """
+    metrics = client.get_available_metrics(name, sae_series=sae_series)
+    return {"metrics": metrics}
+
+
+@app.get("/dictionaries/{name}/features/count")
+def count_features_with_filters(
+    name: str,
+    feature_analysis_name: str | None = None,
+    metric_filters: str | None = None,
+):
+    """Count features that match the given filters.
+
+    Args:
+        name: Name of the dictionary/SAE
+        feature_analysis_name: Optional analysis name
+        metric_filters: Optional JSON string of metric filters
+
+    Returns:
+        Count of features matching the filters
+    """
+    # Parse metric filters if provided
+    parsed_metric_filters = None
+    if metric_filters:
+        try:
+            parsed_metric_filters = json.loads(metric_filters)
+        except (json.JSONDecodeError, TypeError):
+            return Response(
+                content=f"Invalid metric_filters format: {metric_filters}",
+                status_code=400,
+            )
+
+    count = client.count_features_with_filters(
+        sae_name=name, sae_series=sae_series, name=feature_analysis_name, metric_filters=parsed_metric_filters
+    )
+
+    return {"count": count}
+
+
 @app.get("/dictionaries/{name}/features/{feature_index}")
 def get_feature(
     name: str,
     feature_index: str | int,
     feature_analysis_name: str | None = None,
+    metric_filters: str | None = None,
 ):
     # Parse feature_index if it's a string
     if isinstance(feature_index, str) and feature_index != "random":
@@ -193,18 +248,24 @@ def get_feature(
                 status_code=400,
             )
 
+    # Parse metric filters if provided
+    parsed_metric_filters = None
+    if metric_filters:
+        try:
+            parsed_metric_filters = json.loads(metric_filters)
+        except (json.JSONDecodeError, TypeError):
+            return Response(
+                content=f"Invalid metric_filters format: {metric_filters}",
+                status_code=400,
+            )
+
     # Get feature data
     feature = (
         client.get_random_alive_feature(
-            sae_name=name,
-            sae_series=sae_series,
-            name=feature_analysis_name,
+            sae_name=name, sae_series=sae_series, name=feature_analysis_name, metric_filters=parsed_metric_filters
         )
         if feature_index == "random"
-        else client.get_feature(
-            sae_name=name,
-            sae_series=sae_series,
-            index=feature_index)
+        else client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
     )
 
     if feature is None:
@@ -214,10 +275,7 @@ def get_feature(
         )
 
     analysis = next(
-        (
-            a for a in feature.analyses
-            if a.name == feature_analysis_name or feature_analysis_name is None
-        ),
+        (a for a in feature.analyses if a.name == feature_analysis_name or feature_analysis_name is None),
         None,
     )
     if analysis is None:
@@ -287,18 +345,13 @@ def get_feature(
             feature_acts_indices,
             feature_acts_values,
         )
-        assert (
-            origins is not None
-            and feature_acts_indices is not None
-            and feature_acts_values is not None
-        ), "Origins and feature acts must not be None"
+        assert origins is not None and feature_acts_indices is not None and feature_acts_values is not None, (
+            "Origins and feature acts must not be None"
+        )
 
         # Process text data if present
         if "text" in data:
-            text_ranges = [
-                origin["range"] for origin in origins
-                if origin is not None and origin["key"] == "text"
-            ]
+            text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
             if text_ranges:
                 max_text_origin = max(text_ranges, key=lambda x: x[1])
                 data["text"] = data["text"][: max_text_origin[1]]
@@ -311,7 +364,7 @@ def get_feature(
             "z_pattern_indices": z_pattern_indices,
             "z_pattern_values": z_pattern_values,
         }
-    
+
     def process_sparse_feature_acts(
         feature_acts_indices: np.ndarray,
         feature_acts_values: np.ndarray,
@@ -319,13 +372,13 @@ def get_feature(
         z_pattern_values: np.ndarray | None = None,
     ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]]:
         """Process sparse feature acts.
-        
+
         Args:
             feature_acts_indices: Feature acts indices
             feature_acts_values: Feature acts values
             z_pattern_indices: Z pattern indices
             z_pattern_values: Z pattern values
-        
+
         TODO: This is really ugly, we should find a better way to do this.
         """
         _, feature_acts_counts = np.unique(
@@ -333,18 +386,12 @@ def get_feature(
             return_counts=True,
         )
         _, z_pattern_counts = (
-            np.unique(z_pattern_indices[0], return_counts=True)
-            if z_pattern_indices is not None
-            else (None, None)
+            np.unique(z_pattern_indices[0], return_counts=True) if z_pattern_indices is not None else (None, None)
         )
 
-        feature_acts_sample_ranges = np.concatenate(
-            [[0], np.cumsum(feature_acts_counts)]
-        )
+        feature_acts_sample_ranges = np.concatenate([[0], np.cumsum(feature_acts_counts)])
         z_pattern_sample_ranges = (
-            np.concatenate([[0], np.cumsum(z_pattern_counts)])
-            if z_pattern_counts is not None
-            else None
+            np.concatenate([[0], np.cumsum(z_pattern_counts)]) if z_pattern_counts is not None else None
         )
 
         feature_acts_sample_ranges = list(zip(feature_acts_sample_ranges[:-1], feature_acts_sample_ranges[1:]))
@@ -354,13 +401,21 @@ def get_feature(
             else [(None, None)] * len(feature_acts_sample_ranges)
         )
         if z_pattern_sample_ranges[0][0] is not None:
-            assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), "Feature acts and z pattern must have the same number of samples"
+            assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), (
+                "Feature acts and z pattern must have the same number of samples"
+            )
 
-        for (feature_acts_start, feature_acts_end), (z_pattern_start, z_pattern_end) in zip(feature_acts_sample_ranges, z_pattern_sample_ranges):
+        for (feature_acts_start, feature_acts_end), (z_pattern_start, z_pattern_end) in zip(
+            feature_acts_sample_ranges, z_pattern_sample_ranges
+        ):
             feature_acts_indices_i = feature_acts_indices[1, feature_acts_start:feature_acts_end]
             feature_acts_values_i = feature_acts_values[feature_acts_start:feature_acts_end]
-            z_pattern_indices_i = z_pattern_indices[1:, z_pattern_start:z_pattern_end] if z_pattern_indices is not None else None
-            z_pattern_values_i = z_pattern_values[z_pattern_start:z_pattern_end] if z_pattern_values is not None else None
+            z_pattern_indices_i = (
+                z_pattern_indices[1:, z_pattern_start:z_pattern_end] if z_pattern_indices is not None else None
+            )
+            z_pattern_values_i = (
+                z_pattern_values[z_pattern_start:z_pattern_end] if z_pattern_values is not None else None
+            )
             yield feature_acts_indices_i, feature_acts_values_i, z_pattern_indices_i, z_pattern_values_i
 
     # Process all samples for each sampling
@@ -414,7 +469,7 @@ def get_feature(
         "sample_groups": sample_groups,
         "is_bookmarked": client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature.index),
     }
-    print(f'{response_data=}')
+    print(f"{response_data=}")
 
     return Response(
         content=msgpack.packb(make_serializable(response_data)),
@@ -447,7 +502,7 @@ def cache_features(
     saved = 0
     for f in features:
         feature_id = int(f["feature_id"])  # may raise KeyError which FastAPI will surface
-        layer = int(f["layer"])           # required for formatting analysis name
+        layer = int(f["layer"])  # required for formatting analysis name
         is_lorsa = bool(f.get("is_lorsa", False))
         analysis_name_override = f.get("analysis_name")
 
@@ -457,7 +512,11 @@ def cache_features(
             formatted_analysis_name = analysis_name_override
         else:
             try:
-                base_name = client.get_lorsa_analysis_name(name, sae_series) if is_lorsa else client.get_clt_analysis_name(name, sae_series)
+                base_name = (
+                    client.get_lorsa_analysis_name(name, sae_series)
+                    if is_lorsa
+                    else client.get_clt_analysis_name(name, sae_series)
+                )
             except AttributeError:
                 base_name = None
             if base_name is None:
@@ -466,7 +525,7 @@ def cache_features(
                     return Response(content=f"Dictionary {name} not found", status_code=404)
                 available = [a.name for a in feat.analyses]
                 preferred = [a for a in available if ("lorsa" in a) == is_lorsa]
-                base_name = (preferred[0] if preferred else available[0])
+                base_name = preferred[0] if preferred else available[0]
             formatted_analysis_name = base_name.replace("{}", str(layer))
 
         # Reuse existing single-feature endpoint logic. Align with frontend usage where
@@ -486,6 +545,7 @@ def cache_features(
             json_path = base.replace(".msgpack", ".json")
             # make_serializable handles tensors/np arrays
             import json as _json
+
             with open(json_path, "w") as fj:
                 _json.dump(make_serializable(decoded), fj)
         except Exception:

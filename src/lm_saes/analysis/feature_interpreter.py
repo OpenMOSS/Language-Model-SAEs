@@ -17,6 +17,7 @@ from enum import Enum
 from typing import Any, Callable, Generator, Literal, Optional
 
 import json_repair
+import numpy as np
 import torch
 from datasets import Dataset
 from pydantic import BaseModel, Field
@@ -166,6 +167,7 @@ class Segment:
             return f"<<{self.text}>>"
         else:
             return self.text
+
     def display_max(self, abs_threshold: float) -> str:
         if self.activation > abs_threshold:
             return f"{self.text}\n"
@@ -198,19 +200,19 @@ class TokenizedSample:
     def display_plain(self) -> str:
         """Get the text with all segments displayed."""
         return "".join([seg.text for seg in self.segments])
-    
+
     def display_max(self, threshold: float = 0.7) -> str:
         # max_activation_text = "".join([seg.display_max(threshold * self.max_activation) for seg in self.segments])
         max_activation_text = ""
         hash_ = {}
         for seg in self.segments:
-            if seg.activation>threshold * self.max_activation:
+            if seg.activation > threshold * self.max_activation:
                 text = seg.text
                 if text != "" and hash_.get(text, None) is None:
                     hash_[text] = 1
-                    max_activation_text = text+"\n"
+                    max_activation_text = text + "\n"
         return max_activation_text
-    
+
     def display_next(self, threshold: float = 0.7) -> str:
         # max_activation_text = "".join([seg.display_max(threshold * self.max_activation) for seg in self.segments])
         next_activation_text = ""
@@ -221,12 +223,12 @@ class TokenizedSample:
                 text = seg.text
                 if text != "" and hash_.get(text, None) is None:
                     hash_[text] = 1
-                    next_activation_text = text+"\n"
-            if seg.activation>threshold * self.max_activation:
+                    next_activation_text = text + "\n"
+            if seg.activation > threshold * self.max_activation:
                 Flag = True
             else:
                 Flag = False
-        return next_activation_text 
+        return next_activation_text
 
     @staticmethod
     def construct(
@@ -261,7 +263,7 @@ class TokenizedSample:
 
         return TokenizedSample(segments, max_activation)
 
-import numpy as np
+
 def generate_activating_examples(
     feature: FeatureRecord,
     model: LanguageModel,
@@ -291,20 +293,23 @@ def generate_activating_examples(
     # print(f'{sampling.context_idx.shape=}')
     # print(f'{sampling.feature_acts_values.shape=} {sampling.feature_acts_indices=}')
     # feature_acts_ = torch.sparse_coo_tensor(torch.Tensor(sampling.feature_acts_indices), torch.Tensor(sampling.feature_acts_values), (1024, sampling.context_idx.shape[0]))
-    feature_acts_ = torch.sparse_coo_tensor(torch.Tensor(sampling.feature_acts_indices), torch.Tensor(sampling.feature_acts_values), (int(np.max(sampling.feature_acts_indices[0])), 2048))
+    feature_acts_ = torch.sparse_coo_tensor(
+        torch.Tensor(sampling.feature_acts_indices),
+        torch.Tensor(sampling.feature_acts_values),
+        (int(np.max(sampling.feature_acts_indices[0])), 2048),
+    )
     feature_acts_ = feature_acts_.to_dense()
-    
+
     for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts) in enumerate(
         zip(
             sampling.dataset_name,
             sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.dataset_name),
             sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.dataset_name),
             sampling.context_idx,
-            feature_acts_
+            feature_acts_,
         )
     ):
         try:
-        
             dataset = datasets(dataset_name, shard_idx, n_shards)
             # context_idx = context_idx.astype(int)
             data = dataset[int(context_idx)]
@@ -388,9 +393,13 @@ def generate_non_activating_examples(
         )
     ):
         try:
-            feature_acts = torch.sparse_coo_tensor(torch.Tensor(feature_acts_indices), torch.Tensor(feature_acts_values), (1024, sampling.context_idx.shape[0]))
+            feature_acts = torch.sparse_coo_tensor(
+                torch.Tensor(feature_acts_indices),
+                torch.Tensor(feature_acts_values),
+                (1024, sampling.context_idx.shape[0]),
+            )
             feature_acts = feature_acts.to_dense()
-            
+
             dataset = datasets(dataset_name, shard_idx, n_shards)
             data = dataset[context_idx]
 
@@ -544,24 +553,23 @@ Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nM
         max_activating_tokens = ""
         plain_activating_tokens = ""
         logit_activating_tokens = ""
-        
+
         for i, example in enumerate(examples_to_show, 1):
-            next_activating_tokens  = next_activating_tokens + example.display_next(self.cfg.activation_threshold)
+            next_activating_tokens = next_activating_tokens + example.display_next(self.cfg.activation_threshold)
             max_activating_tokens = max_activating_tokens + example.display_max(self.cfg.activation_threshold)
-            plain_activating_tokens = plain_activating_tokens + example.display_plain()+"\n"
-        
+            plain_activating_tokens = plain_activating_tokens + example.display_plain() + "\n"
+
         if self.logits is not None:
-            for text in self.logits['top_positive']:
-                logit_activating_tokens = logit_activating_tokens + text['token']+"\n"
+            for text in self.logits["top_positive"]:
+                logit_activating_tokens = logit_activating_tokens + text["token"] + "\n"
         else:
             logit_activating_tokens = next_activating_tokens
-            
-        user_prompt:str = f"""
+
+        user_prompt: str = f"""
 <TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n{next_activating_tokens}\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\n{max_activating_tokens}\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n{logit_activating_tokens}\n<\TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\n{plain_activating_tokens}\n<\TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
 """
         return system_prompt, user_prompt
-        
-    
+
     def _generate_explanation_prompt(self, activating_examples: list[TokenizedSample]) -> tuple[str, str]:
         """Generate a prompt for explanation generation.
 
@@ -655,8 +663,8 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
             system_prompt, user_prompt = self._generate_explanation_prompt_neuronpedia(activating_examples)
         start_time = time.time()
         # print(f'{system_prompt=}')
-        print(f'{user_prompt=}')
-        
+        print(f"{user_prompt=}")
+
         if self.cfg.explainer_type is ExplainerType.OPENAI:
             response = self.explainer_client.chat.completions.create(
                 model=self.cfg.openai_model,
@@ -684,15 +692,16 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
             #     f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
             # )
             # explanation = json_repair.loads(response.choices[0].message.content)
-            def extract_explanation(s:str):
+            def extract_explanation(s: str):
                 keyword = "Explanation: "
                 start_index = s.find(keyword)
                 if start_index == -1:
                     return None
                 else:
-                    return s[start_index + len(keyword):]
+                    return s[start_index + len(keyword) :]
+
             explanation = {
-                "final_explanation" : extract_explanation(response.choices[0].message.content),
+                "final_explanation": extract_explanation(response.choices[0].message.content),
                 "activation_consistency": 5,
                 "complexity": 5,
             }
@@ -911,7 +920,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
                     "balanced_accuracy": 0,
                 },
                 "passed": False,
-                'time': 0,
+                "time": 0,
             }
 
         # Prepare examples:
@@ -1018,7 +1027,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
 
         # if self.cfg.explainer_type is ExplainerType.NEURONPEDIA:
         self.logits = feature.logits
-        
+
         activating_examples, non_activating_examples = self.get_feature_examples(
             feature=feature,
             model=model,
@@ -1028,7 +1037,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         )
 
         # print(f'{len(activating_examples)=} {len(non_activating_examples)=}')
-        
+
         # Generate explanation for the feature
         explanation_result = self.generate_explanation(activating_examples)
         explanation: dict[str, Any] = explanation_result["response"]
@@ -1072,7 +1081,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
                 "response": response_time,
             },
         }
-    
+
     def interpret_features(
         self,
         sae_name: str,

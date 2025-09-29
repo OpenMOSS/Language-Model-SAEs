@@ -3,12 +3,8 @@
 from typing import cast
 
 import torch
-from torch.distributed.tensor import DTensor, Replicate
-from torch.distributed.device_mesh import DeviceMesh
 import triton
 import triton.language as tl
-from jaxtyping import Float
-from typing import Union
 
 from lm_saes.utils.logging import get_logger
 
@@ -88,7 +84,7 @@ def triton_sparse_transpose_dense_matmul(
     K = sparse_indices.shape[1]
     A = dense.shape[0]
     assert sparse_indices.shape[0] == A
-    
+
     # Validate sparse indices are within bounds
     if sparse_indices.numel() > 0:
         max_idx = sparse_indices.max().item()
@@ -122,7 +118,7 @@ def triton_coo_sparse_dense_matmul(
     def grid(META):
         return triton.cdiv(AK, META["BLOCK_SIZE_AK"]), 1
 
-    triton_sparse_transpose_dense_matmul_kernel[grid](
+    triton_sparse_transpose_dense_matmul_kernel[grid](  # type: ignore
         coo_indices,
         coo_values,
         dense,
@@ -256,7 +252,7 @@ def triton_sparse_dense_matmul(
 
     out = torch.zeros(A, B, device=dense.device, dtype=sparse_values.dtype)
 
-    triton_sparse_dense_matmul_kernel[(A,)](
+    triton_sparse_dense_matmul_kernel[(A,)](  # type: ignore
         sparse_indices,
         sparse_values,
         dense,
@@ -306,7 +302,7 @@ def triton_dense_dense_sparseout_matmul(
 
     # grid = lambda META: (triton.cdiv(A, META['BLOCK_SIZE_A']),)
 
-    triton_dense_dense_sparseout_matmul_kernel[(A,)](
+    triton_dense_dense_sparseout_matmul_kernel[(A,)](  # type: ignore
         dense1,
         dense2,
         at_indices,
@@ -445,14 +441,14 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
     def forward(ctx, x, W_E, b_E, sparsity_threshold):
         """
         Forward pass: x @ W_E + b_E using dense operations.
-        
+
         Args:
             ctx: autograd context
             x: (batch, d_model) - Input activations
             W_E: (d_model, d_sae) - Encoder weights
             b_E: (d_sae,) - Encoder bias
             sparsity_threshold: (float) - Sparsity threshold for using sparse kernels.
-            
+
         Returns:
             output: (batch, d_sae) - Encoded activations
         """
@@ -469,77 +465,79 @@ class TritonEncoderAutogradDynamicK(torch.autograd.Function):
     def backward(ctx, *grad_outputs):
         """
         Backward pass: Use triton sparse kernels when grad_output is sparse (after topk).
-        
+
         Args:
             grad_outputs: Tuple containing grad_output (batch, d_sae) - Gradient w.r.t. output (sparse after topk)
-            
+
         Returns:
             grad_x: (batch, d_model) - Gradient w.r.t. input
-            grad_W_E: (d_model, d_sae) - Gradient w.r.t. encoder weights  
+            grad_W_E: (d_model, d_sae) - Gradient w.r.t. encoder weights
             grad_b_E: (d_sae,) - Gradient w.r.t. encoder bias
             None: For sparsity_threshold (no gradient needed)
         """
         assert len(grad_outputs) == 1, "Expected exactly one gradient output"
         grad_output = grad_outputs[0]
-        
+
         x, W_E, b_E = ctx.saved_tensors
         sparsity_threshold = ctx.sparsity_threshold
-        
-        assert grad_output.is_contiguous(), (
-            "grad_output must be contiguous for triton kernels"
-        )
-        
+
+        assert grad_output.is_contiguous(), "grad_output must be contiguous for triton kernels"
+
         # Check if grad_output is sparse (after topk activation)
         sparsity_ratio = (grad_output == 0).float().mean().item()
-        use_sparse_kernels = sparsity_ratio > sparsity_threshold  # Use sparse kernels if sparsity_ratio > sparsity_threshold
-        
+        use_sparse_kernels = (
+            sparsity_ratio > sparsity_threshold
+        )  # Use sparse kernels if sparsity_ratio > sparsity_threshold
+
         if use_sparse_kernels:
             # Use triton sparse kernels for backward pass
             sparse_indices, sparse_values = get_sparse_representation(grad_output)
-            
+
             # Validate sparse indices are within bounds (skip if no active features)
             if sparse_indices.numel() > 0:
                 max_sparse_idx = sparse_indices.max().item()
                 if max_sparse_idx >= W_E.size(1):
-                    raise ValueError(f"Sparse indices out of bounds: max_idx={max_sparse_idx}, expected < {W_E.size(1)}")
-            
+                    raise ValueError(
+                        f"Sparse indices out of bounds: max_idx={max_sparse_idx}, expected < {W_E.size(1)}"
+                    )
+
             # grad_x = grad_output @ W_E.T (sparse @ dense)
             grad_x = triton_sparse_dense_matmul(sparse_indices, sparse_values, W_E.T.contiguous())
-            
-            # grad_W_E = x.T @ grad_output (dense.T @ sparse)  
+
+            # grad_W_E = x.T @ grad_output (dense.T @ sparse)
             # This is equivalent to sparse.T @ dense, so we can use transpose matmul
             grad_W_E = triton_sparse_transpose_dense_matmul(
                 sparse_indices, sparse_values, x.contiguous(), N=W_E.size(1)
             ).T
-            
+
             # grad_b_E = grad_output.sum(dim=0) for sparse tensor
             grad_b_E = torch.zeros_like(b_E)
-            
+
             # sparse_indices: (batch, k) - feature indices for each batch sample
             # sparse_values: (batch, k) - corresponding values
             # We need to sum all values that correspond to the same feature index
-            
+
             # Flatten to get all (batch_idx, feature_idx) pairs and their values
             batch_size, k = sparse_indices.shape
-            batch_idx_expanded = torch.arange(batch_size, device=sparse_indices.device).unsqueeze(1).expand(-1, k)
-            
+
             # Get valid (non-padded) entries
             if sparse_indices.numel() > 0:
                 valid_mask = sparse_indices < W_E.size(1)  # Valid feature indices
                 valid_feature_indices = sparse_indices[valid_mask]
                 valid_values = sparse_values[valid_mask]
-                
+
                 # Sum values by feature index to compute bias gradient (only if we have valid features)
                 if valid_feature_indices.numel() > 0:
                     grad_b_E.index_add_(0, valid_feature_indices, valid_values)
-            
+
         else:
             # Fall back to dense operations when not sparse enough
             grad_x = grad_output @ W_E.T
-            grad_W_E = x.T @ grad_output  
+            grad_W_E = x.T @ grad_output
             grad_b_E = grad_output.sum(dim=0)
-        
+
         return grad_x, grad_W_E, grad_b_E, None
+
 
 class TritonDecoderAutogradTopK(torch.autograd.Function):
     @staticmethod

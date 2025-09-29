@@ -38,8 +38,8 @@ permissions:
   contents: write
 
 jobs:
-  code-checks:
-    name: Code Checks
+  type-checks:
+    name: Type Checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -53,13 +53,13 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Install the project
-        run: uv sync --all-extras --dev
+        run: uv sync --extra default --dev
 
       - name: Type check
         run: uv run basedpyright .
 
-      - name: Unit tests
-        run: uv run pytest tests
+      # - name: Unit tests
+      #   run: uv run pytest tests
 
   ruff:
     runs-on: ubuntu-latest

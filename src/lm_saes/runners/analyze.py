@@ -1,40 +1,36 @@
 """Module for analyzing SAE models."""
 
-from pydantic_settings.main import SettingsConfigDict
-from typing import Annotated, Any, Iterable, Optional
-import sys
+from typing import Optional
 
 import torch
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory
+from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
+from lm_saes.backend.language_model import TransformerLensLanguageModel
+from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import (
     ActivationFactoryConfig,
     BaseSAEConfig,
-    CrossCoderConfig,
-    FeatureAnalyzerConfig,
-    DatasetConfig,
-    LanguageModelConfig,
-    MongoDBConfig,
-    DirectLogitAttributorConfig,
-    CrossCoderConfig,
-    LorsaConfig,
-    CrossCoderConfig,
-    SAEConfig,
     CLTConfig,
+    CrossCoderConfig,
+    DatasetConfig,
+    DirectLogitAttributorConfig,
+    FeatureAnalyzerConfig,
+    LanguageModelConfig,
+    LorsaConfig,
+    MongoDBConfig,
+    SAEConfig,
 )
 from lm_saes.crosscoder import CrossCoder
+from lm_saes.database import MongoClient
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
-from lm_saes.database import MongoClient
 from lm_saes.sae import SparseAutoEncoder
-from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.backend.language_model import TransformerLensLanguageModel
-from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor
 
 logger = get_distributed_logger("runners.analyze")
 
@@ -74,8 +70,12 @@ class AnalyzeSAESettings(BaseSettings):
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
 
+    data_parallel_size: int = 1
+    """Size of data parallel mesh"""
+
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
+
 
 @torch.no_grad()
 def analyze_sae(settings: AnalyzeSAESettings) -> None:
@@ -90,10 +90,10 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
-            mesh_shape=(settings.model_parallel_size,),
-            mesh_dim_names=("model",),
+            mesh_shape=(settings.model_parallel_size, settings.data_parallel_size),
+            mesh_dim_names=("model", "data"),
         )
-        if settings.model_parallel_size > 1
+        if settings.model_parallel_size > 1 or settings.data_parallel_size > 1
         else None
     )
 
@@ -137,7 +137,6 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
 
     activation_factory = ActivationFactory(settings.activation_factory)
 
-
     logger.info(f"Loading {settings.sae.sae_type} model")
     sae_cls = {
         "sae": SparseAutoEncoder,
@@ -167,14 +166,19 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
 
     logger.info("Analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
-    mongo_client.add_feature_analysis(
-        name="default", sae_name=settings.sae_name, sae_series=settings.sae_series, analysis=result, start_idx=start_idx
-    )
+    if device_mesh is None or settings.data_parallel_size == 1 or device_mesh.get_local_rank("data") == 0:
+        mongo_client.add_feature_analysis(
+            name="default",
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            analysis=result,
+            start_idx=start_idx,
+        )
 
     logger.info(f"{settings.sae.sae_type} analysis completed successfully")
 
 
-class AnalyzeCrossCoderSettings(BaseSettings):    
+class AnalyzeCrossCoderSettings(BaseSettings):
     """Settings for analyzing a CrossCoder model."""
 
     sae: CrossCoderConfig
@@ -279,7 +283,7 @@ class DirectLogitAttributeSettings(BaseSettings):
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
-    
+
     layer_idx: Optional[int | None] = None
     """The index of layer to DLA."""
 
