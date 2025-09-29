@@ -206,13 +206,14 @@ class ActivationFactory:
                 batch_size=self.cfg.batch_size,
                 buffer_size=self.cfg.buffer_size,
                 buffer_shuffle_config=self.cfg.buffer_shuffle,
+                device_mesh=self.device_mesh,
             )
 
         def build_override_dtype_processor():
             """Create processor that overrides the dtype of the activations."""
-            assert (
-                self.cfg.override_dtype is not None
-            ), "Override dtype must be provided for outputting activations with different dtype"
+            assert self.cfg.override_dtype is not None, (
+                "Override dtype must be provided for outputting activations with different dtype"
+            )
             return OverrideDtypeProcessor(dtype=self.cfg.override_dtype)
 
         processors = []

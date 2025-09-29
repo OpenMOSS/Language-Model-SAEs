@@ -37,7 +37,7 @@ class Graph:
         slug: str = "untitled",
         sae_series: Optional[Union[str, List[str]]] = None,
         use_lorsa: bool = True,
-        lorsa_pattern: torch.Tensor=None,
+        lorsa_pattern: torch.Tensor = None,
     ):
         """
         A graph object containing the adjacency matrix describing the direct effect of each
@@ -115,7 +115,8 @@ class Graph:
     def from_pt(path: str, map_location="cpu") -> "Graph":
         """Load a graph (saved using graph.to_pt) from a .pt file at the given path."""
         d = torch.load(path, weights_only=False, map_location=map_location)
-        return Graph(**d)        
+        return Graph(**d)
+
 
 def normalize_matrix(matrix: torch.Tensor) -> torch.Tensor:
     normalized = matrix.abs()
@@ -133,9 +134,7 @@ def compute_influence(A: torch.Tensor, logit_weights: torch.Tensor, max_iter: in
     iterations = 0
     while current_influence.any():
         if iterations >= max_iter:
-            raise RuntimeError(
-                f"Influence computation failed to converge after {iterations} iterations"
-            )
+            raise RuntimeError(f"Influence computation failed to converge after {iterations} iterations")
         current_influence = current_influence @ A
         influence += current_influence
         iterations += 1
@@ -170,9 +169,7 @@ class PruneResult(NamedTuple):
     cumulative_scores: torch.Tensor  # Tensor of cumulative influence scores for each node
 
 
-def prune_graph(
-    graph: Graph, node_threshold: float = 0.8, edge_threshold: float = 0.98
-) -> PruneResult:
+def prune_graph(graph: Graph, node_threshold: float = 0.8, edge_threshold: float = 0.98) -> PruneResult:
     """Prunes a graph by removing nodes and edges with low influence on the output logits.
 
     Args:
@@ -197,16 +194,14 @@ def prune_graph(
     n_logits = len(graph.logit_tokens)
     n_features = len(graph.selected_features)
 
-    logit_weights = torch.zeros(
-        graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device
-    )
+    logit_weights = torch.zeros(graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device)
     logit_weights[-n_logits:] = graph.logit_probabilities
 
     # Calculate node influence and apply threshold
     node_influence = compute_node_influence(graph.adjacency_matrix, logit_weights)
     node_mask = node_influence >= find_threshold(node_influence, node_threshold)
     # Always keep tokens and logits
-    node_mask[-n_logits - n_tokens:] = True
+    node_mask[-n_logits - n_tokens :] = True
 
     # Create pruned matrix with selected nodes
     pruned_matrix = graph.adjacency_matrix.clone()

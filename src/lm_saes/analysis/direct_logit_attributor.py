@@ -1,26 +1,21 @@
 import einops
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformer_lens import HookedTransformer
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes import CrossLayerTranscoder, LowRankSparseAttention
 from lm_saes.backend import LanguageModel
 from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.config import DirectLogitAttributorConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.sae import SparseAutoEncoder
-from lm_saes import CrossLayerTranscoder
-
-from lm_saes import ReplacementModel, LanguageModelConfig, CrossLayerTranscoder, LowRankSparseAttention
-
 
 
 class DirectLogitAttributor:
     def __init__(self, cfg: DirectLogitAttributorConfig):
         self.cfg = cfg
-    
+
     @torch.no_grad()
-    def direct_logit_attribute(self, sae, model:LanguageModel, layer_idx=None):
+    def direct_logit_attribute(self, sae, model: LanguageModel, layer_idx=None):
         # model = self.model
         assert isinstance(model, TransformerLensLanguageModel), (
             "DirectLogitAttributor only supports TransformerLensLanguageModel as the model backend"
@@ -54,20 +49,22 @@ class DirectLogitAttributor:
                 logits = None
                 for i in range(layer_idx, sae.cfg.n_layers):
                     residual = sae.W_D[i][layer_idx]
-                    
+
                     residual = einops.rearrange(residual, "batch d_model -> batch 1 d_model")  # Add a context dimension
                     # print(f'{residual.shape=}')
-                
+
                     if model.cfg.normalization_type is not None:
                         residual = model.ln_final(residual)  # [batch, pos, d_model]
                     logits_ = model.unembed(residual)  # [batch, pos, d_vocab]
                     if logits is None:
-                        logits = einops.rearrange(logits_, "batch 1 d_vocab -> batch d_vocab")  # Remove the context dimension
+                        logits = einops.rearrange(
+                            logits_, "batch 1 d_vocab -> batch d_vocab"
+                        )  # Remove the context dimension
                     else:
                         logits = logits + einops.rearrange(logits_, "batch 1 d_vocab -> batch d_vocab")
                     del logits_, residual
                     torch.cuda.empty_cache()
-        
+
         # Select the top k tokens
         top_k_logits, top_k_indices = torch.topk(logits, self.cfg.top_k, dim=-1)
         top_k_tokens = [model.to_str_tokens(top_k_indices[i]) for i in range(d_sae)]

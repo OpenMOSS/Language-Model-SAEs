@@ -127,12 +127,12 @@ class SAEConfig(BaseSAEConfig):
 
 class LorsaConfig(BaseSAEConfig):
     """Configuration for Low Rank Sparse Attention."""
-    
+
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa"] = "lorsa"
 
     hook_point_in: str
     hook_point_out: str
-    
+
     # Attention dimensions
     n_qk_heads: int
     d_qk_head: int
@@ -149,17 +149,17 @@ class LorsaConfig(BaseSAEConfig):
 
     n_ctx: int
     skip_bos: bool = False
-    
+
     # Attention settings
     attn_scale: Optional[float] = None
     use_post_qk_ln: bool = False
     normalization_type: Literal["LN", "RMS"] | None = None
     eps: float = 1e-6
-    
+
     @property
     def n_ov_heads(self) -> int:
         return self.d_sae
-    
+
     @property
     def ov_group_size(self) -> int:
         return self.n_ov_heads // self.n_qk_heads
@@ -174,13 +174,8 @@ class LorsaConfig(BaseSAEConfig):
         assert self.hook_point_in is not None and self.hook_point_out is not None, (
             "hook_point_in and hook_point_out must be set"
         )
-        assert self.hook_point_in != self.hook_point_out, (
-            "hook_point_in and hook_point_out must be different"
-        )
-        assert self.n_ov_heads % self.n_qk_heads == 0, (
-            "n_ov_heads must be divisible by n_qk_heads"
-        )
-
+        assert self.hook_point_in != self.hook_point_out, "hook_point_in and hook_point_out must be different"
+        assert self.n_ov_heads % self.n_qk_heads == 0, "n_ov_heads must be divisible by n_qk_heads"
 
 
 class CLTConfig(BaseSAEConfig):
@@ -199,7 +194,7 @@ class CLTConfig(BaseSAEConfig):
     """List of hook points to capture output activations from, one for each layer."""
     decode_with_csr: bool = False
     """Whether to decode with CSR matrices. If `True`, will use CSR matrices for decoding. If `False`, will use dense matrices for decoding."""
-    
+
     @property
     def n_layers(self) -> int:
         """Number of layers in the CLT."""
@@ -278,7 +273,7 @@ class TrainerConfig(BaseConfig):
     use_batch_norm_mse: bool = True
     skip_metrics_calculation: bool = False
     gradient_accumulation_steps: int = 1
-    
+
     lr: float | dict[str, float] = 0.0004
     betas: Tuple[float, float] = (0.9, 0.999)
     optimizer_class: Literal["adam", "sparseadam"] = "adam"
@@ -294,6 +289,7 @@ class TrainerConfig(BaseConfig):
     lr_end_ratio: float = 1 / 32
     lr_warm_up_steps: int | float = 5000
     lr_cool_down_steps: int | float = 0.2
+    jumprelu_lr_factor: float = 1.0
     clip_grad_norm: float = 0.0
     feature_sampling_window: int = 1000
     total_training_tokens: int = 300_000_000
@@ -313,7 +309,9 @@ class TrainerConfig(BaseConfig):
         assert self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
 
         if self.from_pretrained_path is not None:
-            assert os.path.exists(self.from_pretrained_path), f"from_pretrained_path {self.from_pretrained_path} does not exist"
+            assert os.path.exists(self.from_pretrained_path), (
+                f"from_pretrained_path {self.from_pretrained_path} does not exist"
+            )
 
 
 class EvalConfig(BaseConfig):
@@ -324,24 +322,24 @@ class EvalConfig(BaseConfig):
     fold_activation_scale: bool = True
     """Whether to fold the activation scale into the SAE model"""
 
+
 class GraphEvalConfig(BaseConfig):
-    
-    max_n_logits:int = 2
+    max_n_logits: int = 2
     # How many logits to attribute from, max. We attribute to min(max_n_logits, n_logits_to_reach_desired_log_prob); see below for the latter
-    
-    desired_logit_prob:float = 0.95
+
+    desired_logit_prob: float = 0.95
     # Attribution will attribute from the minimum number of logits needed to reach this probability mass (or max_n_logits, whichever is lower)
-    
-    max_feature_nodes:int = 1024
+
+    max_feature_nodes: int = 1024
     # Only attribute from this number of feature nodes, max. Lower is faster, but you will lose more of the graph. None means no limit.
-    
-    batch_size:int = 2
+
+    batch_size: int = 2
     # Batch size when attributing
-    
+
     offload: Literal[None, "disk", "cpu"] = None
     # Offload various parts of the model during attribution to save memory. Can be 'disk', 'cpu', or None (keep on GPU)
-    
-    start_from:int = 0
+
+    start_from: int = 0
 
 
 class DatasetConfig(BaseConfig):
@@ -426,7 +424,6 @@ class BufferShuffleConfig(BaseConfig):
 
 class ActivationFactoryConfig(BaseConfig):
     model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
-
 
     sources: list[ActivationFactoryDatasetSource | ActivationFactoryActivationsSource]
     """ List of sources to use for activations. Can be a dataset or a path to activations. """
@@ -526,6 +523,7 @@ class LLaDAConfig(LanguageModelConfig):
     mask_ratio: float = 0.0
     mdm_mask_token_id: int = 126336
     prepend_bos: bool = False
+    calculate_logits: bool = False
 
 
 class ActivationWriterConfig(BaseConfig):
@@ -547,33 +545,29 @@ class FeatureAnalyzerConfig(BaseConfig):
     total_analyzing_tokens: int
     """ Total number of tokens to analyze """
 
-    enable_sampling: bool = False
-    """ Whether to use weighted sampling for selecting activations. 
-        If `False`, will only keep top activations (below the subsample threshold). 
-    """
-    sample_weight_exponent: float = 2.0
-    """ Exponent for weighting samples by activation value """
-
     ignore_token_ids: Optional[list[int]] = None
     """ Tokens to ignore in the activations. """
 
     subsamples: dict[str, dict[str, int | float]] = Field(
         default_factory=lambda: {
             "top_activations": {"proportion": 1.0, "n_samples": 10},
+            "non_activating": {
+                "proportion": 0.3,
+                "n_samples": 20,
+                "max_length": 50,
+            },
         }
     )
     """ Dictionary mapping subsample names to their parameters:
         - `proportion`: Proportion of max activation to consider
         - `n_samples`: Number of samples to keep
+        - `max_length`: Maximum length of the sample
     """
 
-    non_activating_subsample: dict[str, int | float] | None = Field(
-        default_factory=lambda: {"threshold": 0.3, "n_samples": 10, "max_length": 50}
-    )
-    """ Parameters for non-activating subsample:
-        - `threshold`: Threshold of max activation to consider
-        - `n_samples`: Number of samples to keep
-    """
+
+class DirectLogitAttributorConfig(BaseConfig):
+    top_k: int = 10
+    """ The number of top tokens to attribute to. """
 
     clt_layer: int | None = None
     """ Layer to analyze for CLT. Provided iff analyzing CLT. """
@@ -588,6 +582,3 @@ class WandbConfig(BaseConfig):
 class MongoDBConfig(BaseConfig):
     mongo_uri: str = Field(default_factory=lambda: os.environ.get("MONGO_URI", "mongodb://localhost:27017/"))
     mongo_db: str = Field(default_factory=lambda: os.environ.get("MONGO_DB", "mechinterp"))
-
-class DirectLogitAttributorConfig(BaseModelConfig):
-    top_k: int = 10

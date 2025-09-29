@@ -4,11 +4,13 @@ import os
 from typing import Optional
 
 import torch
-import wandb
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
+import wandb
+from lm_saes import ReplacementModel
 from lm_saes.activation.factory import ActivationFactory
+from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import (
     ActivationFactoryConfig,
     BaseSAEConfig,
@@ -20,36 +22,37 @@ from lm_saes.config import (
 )
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.evaluator import Evaluator, GrahEval
-from lm_saes.sae import SparseAutoEncoder
-from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
+from lm_saes.utils.misc import get_mesh_rank
 
 logger = get_distributed_logger("runners.eval")
 
+
 class EvalGraphSettings(BaseSettings):
-    
     model_cfg: LanguageModelConfig
     """Configuration for the language model."""
-    
+
     transcoders_path: str
     """The save path of CLT."""
-    
+
     lorsas_path: list
     """The save path of lorsa."""
-    
+
     dataset_path: str
     """The path of evaluation json file."""
-    
+
     eval: GraphEvalConfig
     """Configuration for the GrahEval"""
-    
+
     device: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
-    
+
     show: bool = False
-    
+
     use_lorsa: bool = True
+
 
 class EvaluateSAESettings(BaseSettings):
     """Settings for evaluating a Sparse Autoencoder."""
@@ -130,7 +133,7 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -143,7 +146,6 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
     evaluator.evaluate(sae, activations, wandb_logger)
     logger.info("Evaluation completed")
 
-from lm_saes import ReplacementModel, LanguageModelConfig, CrossLayerTranscoder, LowRankSparseAttention
 
 def eval_graph(settings: EvalGraphSettings) -> None:
     # Set up logging
@@ -154,7 +156,7 @@ def eval_graph(settings: EvalGraphSettings) -> None:
         settings.transcoders_path,
         device=settings.device,
     )
-    
+
     if settings.use_lorsa:
         lorsas = [
             LowRankSparseAttention.from_pretrained(lorsa_cfg, device=settings.device)
@@ -166,17 +168,19 @@ def eval_graph(settings: EvalGraphSettings) -> None:
         lorsas = None
 
     logger.info("Loading replacement model")
-    replacement_model = ReplacementModel.from_pretrained(settings.model_cfg, transcoders, lorsas, use_lorsa=settings.use_lorsa)
-        
+    replacement_model = ReplacementModel.from_pretrained(
+        settings.model_cfg, transcoders, lorsas, use_lorsa=settings.use_lorsa
+    )
+
     grapheval = GrahEval(settings.eval)
-    
+
     grapheval.eval(
         replacement_model,
         settings.dataset_path,
-        use_lorsa = settings.use_lorsa,
-        show = settings.show,
+        use_lorsa=settings.use_lorsa,
+        show=settings.show,
     )
-    
+
 
 class EvaluateCrossCoderSettings(BaseSettings):
     """Settings for evaluating a CrossCoder model."""
@@ -244,7 +248,7 @@ def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
+        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
         else None
     )
 

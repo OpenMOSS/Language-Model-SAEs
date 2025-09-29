@@ -1,3 +1,4 @@
+from .direct_logit_attributor import DirectLogitAttributor
 from .feature_analyzer import FeatureAnalyzer
 from .feature_interpreter import (
     AutoInterpConfig,
@@ -6,7 +7,6 @@ from .feature_interpreter import (
     ScorerType,
     TokenizedSample,
 )
-from .direct_logit_attributor import DirectLogitAttributor
 
 __all__ = [
     "FeatureAnalyzer",

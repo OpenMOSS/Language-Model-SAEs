@@ -1,27 +1,26 @@
 import math
 import os
-from typing import Any, Any, Callable, Iterable
 from pathlib import Path
+from typing import Any, Callable, Iterable
 
 import torch
+import torch.distributed.checkpoint as dcp
 import torch.optim.lr_scheduler as lr_scheduler
 from torch import Tensor
-from torch.distributed.tensor import DTensor
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
-import torch.distributed.checkpoint as dcp
-import torch.distributed as dist
+from torch.distributed.tensor import DTensor
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
-from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.optim import get_scheduler, SparseAdam
+from lm_saes.optim import SparseAdam, get_scheduler
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
 from lm_saes.utils.timer import timer
+from wandb.sdk.wandb_run import Run
 
 logger = get_distributed_logger("trainer")
 
@@ -42,24 +41,22 @@ class Trainer:
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
 
-    def save_checkpoint(
-        self, sae: AbstractSparseAutoEncoder, checkpoint_path: str
-    ) -> None:
+    def save_checkpoint(self, sae: AbstractSparseAutoEncoder, checkpoint_path: str) -> None:
         """
-        Save a complete checkpoint including model, optimizer, scheduler, and 
+        Save a complete checkpoint including model, optimizer, scheduler, and
         trainer state.
-        
+
         Args:
             sae: The sparse autoencoder model to save
             checkpoint_path: Path where to save the checkpoint (without extension)
         """
-            
+
         # Create checkpoint directory if it doesn't exist
         checkpoint_dir = Path(checkpoint_path) / "checkpoints" / f"step_{self.cur_step}"
 
-        if (checkpoint_dir and not os.path.exists(checkpoint_dir)):
+        if checkpoint_dir and not os.path.exists(checkpoint_dir):
             os.makedirs(checkpoint_dir, exist_ok=True)
-        
+
         sae.cfg.save_hyperparameters(checkpoint_dir)
         # Save model state
         if sae.device_mesh is None:
@@ -98,7 +95,7 @@ class Trainer:
                 optimizer_state = self.optimizer.state_dict()
                 fs_writer = FileSystemWriter(optimizer_path)
                 dcp.save(optimizer_state, storage_writer=fs_writer)
-        
+
         # Save scheduler state - handle distributed tensors
         if self.scheduler is not None:
             if sae.device_mesh is None:
@@ -111,38 +108,39 @@ class Trainer:
                 scheduler_state = self.scheduler.state_dict()
                 fs_writer = FileSystemWriter(scheduler_path)
                 dcp.save(scheduler_state, storage_writer=fs_writer)
-            
-            
+
         logger.info(f"Checkpoint saved to {checkpoint_path}")
 
     @classmethod
     def from_checkpoint(
-        cls, sae: AbstractSparseAutoEncoder, checkpoint_path: str,
+        cls,
+        sae: AbstractSparseAutoEncoder,
+        checkpoint_path: str,
     ) -> "Trainer":
         """
-        Load a complete checkpoint including model, optimizer, scheduler, and 
+        Load a complete checkpoint including model, optimizer, scheduler, and
         trainer state.
-        
+
         Args:
             device_mesh: The device mesh to load the model into
             checkpoint_path: Path where the checkpoint was saved (without extension)
-            
+
         Returns:
             Trainer: A new trainer instance with loaded state
-        """            
+        """
         # Load trainer state first to get the config
         checkpoint_dir = Path(checkpoint_path)
         trainer_path = checkpoint_dir / "trainer.pt"
         if os.path.exists(trainer_path):
-            trainer_state = torch.load(trainer_path, map_location='cpu', weights_only=False)
+            trainer_state = torch.load(trainer_path, map_location="cpu", weights_only=False)
             cfg = trainer_state.get("cfg")
             if cfg is None:
                 raise ValueError("Checkpoint does not contain trainer config")
-            
+
             # Create trainer instance with loaded config
             trainer = cls(cfg)
             trainer.cfg.from_pretrained_path = checkpoint_path
-            
+
             # Restore trainer state variables
             trainer.cur_step = trainer_state["cur_step"]
             trainer.cur_tokens = trainer_state["cur_tokens"]
@@ -153,17 +151,17 @@ class Trainer:
             trainer.k_cold_booting_steps = trainer_state["k_cold_booting_steps"]
             trainer.l1_coefficient_warmup_steps = trainer_state["l1_coefficient_warmup_steps"]
             trainer.checkpoint_thresholds = trainer_state["checkpoint_thresholds"]
-            
+
             logger.info(f"Loaded trainer state from step {trainer.cur_step}")
         else:
             raise ValueError(f"Trainer checkpoint not found at {trainer_path}")
-        
+
         trainer._initialize_optimizer(sae)
-        
+
         # Load optimizer state
         if sae.device_mesh is None:
             optimizer_path = checkpoint_dir / "optimizer.pt"
-            optimizer_state = torch.load(optimizer_path, map_location='cpu')
+            optimizer_state = torch.load(optimizer_path, map_location="cpu")
             trainer.optimizer.load_state_dict(optimizer_state)
             logger.info("Loaded optimizer state")
         else:
@@ -174,11 +172,11 @@ class Trainer:
             trainer.optimizer.load_state_dict(optimizer_state)
             logger.info("Loaded optimizer state")
             logger.info(f"trainer.optimizer.state_dict(): {trainer.optimizer.state_dict()}")
-        
+
         # Load scheduler state
         if sae.device_mesh is None:
             scheduler_path = checkpoint_dir / "scheduler.pt"
-            scheduler_state = torch.load(scheduler_path, map_location='cpu')
+            scheduler_state = torch.load(scheduler_path, map_location="cpu")
             trainer.scheduler.load_state_dict(scheduler_state)
             logger.info("Loaded scheduler state")
         else:
@@ -229,23 +227,49 @@ class Trainer:
     @timer.time("initialize_optimizer")
     def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
         assert isinstance(self.cfg.lr, float)
+
+        def _apply_lr(parameters: dict[str, Any]):
+            assert isinstance(self.cfg.lr, float)
+            if parameters["name"] == "jumprelu":
+                return {**parameters, "lr": self.cfg.jumprelu_lr_factor * self.cfg.lr}
+            return parameters
+
+        params = [_apply_lr(parameters) for parameters in sae.get_parameters()]
+
+        def _format_parameters(parameters: dict[str, Any]) -> str:
+            param_info = f"{parameters['name']}:"
+            for i, param in enumerate(parameters["params"]):
+                param_info += f"\n    [{i}] shape={list(param.shape)}, dtype={param.dtype}"
+                if param.requires_grad:
+                    param_info += ", trainable"
+                else:
+                    param_info += ", frozen"
+            if "lr" in parameters:
+                param_info += f"\n    lr={parameters['lr']}"
+            return param_info
+
+        param_str = "\n".join([_format_parameters(p) for p in params])
+        logger.info(f"\nParameter Groups: \n{param_str}\n")
+
         optim_cls = {
             "adam": Adam,
             "sparseadam": SparseAdam,
         }[self.cfg.optimizer_class]
-        
+
         # 构建optimizer参数
         optimizer_kwargs = {
             "params": sae.get_parameters(),
             "lr": self.cfg.lr,
             "betas": self.cfg.betas,
         }
-        
+
         # 只有adam optimizer才支持foreach参数
         if self.cfg.optimizer_class == "adam":
             optimizer_kwargs["foreach"] = self.cfg.optimizer_foreach
-            
+
         optimizer = optim_cls(**optimizer_kwargs)
+        # TODO: make this elegant
+
         scheduler = get_scheduler(
             scheduler_name=self.cfg.lr_scheduler_name,
             optimizer=optimizer,
@@ -271,7 +295,7 @@ class Trainer:
             else:
                 warmup_progress = (self.cur_step - self.k_cold_booting_steps) / self.k_warmup_steps
                 warmup_progress = min(1.0, warmup_progress)
-                
+
                 if self.cfg.k_schedule_type == "exponential":
                     exp_factor = self.cfg.k_exponential_factor
                     decay_factor = (1.0 - math.exp(-exp_factor * warmup_progress)) / (1.0 - math.exp(-exp_factor))
@@ -280,7 +304,7 @@ class Trainer:
                     current_k = self.cfg.initial_k + (sae.cfg.top_k - self.cfg.initial_k) * warmup_progress
                 else:
                     current_k = self.cfg.initial_k + (sae.cfg.top_k - self.cfg.initial_k) * warmup_progress
-                
+
                 sae.set_current_k(
                     max(
                         sae.cfg.top_k,
@@ -293,12 +317,8 @@ class Trainer:
             if self.cfg.l1_coefficient is not None
             else 1.0
         )
-        
-        lp_coefficient = (
-            self.cfg.lp_coefficient
-            if self.cfg.lp_coefficient is not None
-            else 0.0
-        )
+
+        lp_coefficient = self.cfg.lp_coefficient if self.cfg.lp_coefficient is not None else 0.0
 
         result = sae.compute_loss(
             batch,
@@ -317,7 +337,14 @@ class Trainer:
             loss_data = {}
             aux_data = {}
         loss_dict = (
-            {"loss": loss, "batch_size": batch_size(batch), "l1_coefficient": l1_coefficient, "lp_coefficient": lp_coefficient} | loss_data | aux_data
+            {
+                "loss": loss,
+                "batch_size": batch_size(batch),
+                "l1_coefficient": l1_coefficient,
+                "lp_coefficient": lp_coefficient,
+            }
+            | loss_data
+            | aux_data
         )
         return loss_dict
 
@@ -353,7 +380,7 @@ class Trainer:
                 below_1e_6 = (feature_sparsity < 1e-6).sum(-1)
                 below_1e_7 = (feature_sparsity < 1e-7).sum(-1)
                 wandb_log_dict = {}
-                
+
                 for l in range(sae.cfg.n_layers):
                     wandb_log_dict[f"sparsity/above_1e-1_layer{l}"] = above_1e_1[l].item()
                     wandb_log_dict[f"sparsity/above_1e-2_layer{l}"] = above_1e_2[l].item()
@@ -362,13 +389,13 @@ class Trainer:
                     wandb_log_dict[f"sparsity/below_1e-5_layer{l}"] = below_1e_5[l].item()
                     wandb_log_dict[f"sparsity/below_1e-6_layer{l}"] = below_1e_6[l].item()
                     wandb_log_dict[f"sparsity/below_1e-7_layer{l}"] = below_1e_7[l].item()
-                    
+
                 wandb_log_dict["sparsity/above_1e-1"] = above_1e_1.sum().item()
                 wandb_log_dict["sparsity/above_1e-2"] = above_1e_2.sum().item()
                 wandb_log_dict["sparsity/below_1e-5"] = below_1e_5.sum().item()
                 wandb_log_dict["sparsity/below_1e-6"] = below_1e_6.sum().item()
                 wandb_log_dict["sparsity/below_1e-7"] = below_1e_7.sum().item()
-                            
+
             else:
                 wandb_log_dict = {
                     "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum(-1).item(),
@@ -402,7 +429,7 @@ class Trainer:
             l_s = log_info["l_s"]
             if isinstance(l_s, DTensor):
                 l_s = l_s.full_tensor()
-                
+
             l_p = log_info["l_p"]
             if isinstance(l_p, DTensor):
                 l_p = l_p.full_tensor()
@@ -428,10 +455,8 @@ class Trainer:
                 clt_per_layer_ev_dict = {
                     f"metrics/explained_variance_L{l}": per_layer_ev[l].item() for l in range(per_layer_ev.size(0))
                 }
-                clt_per_layer_l0_dict = {
-                    f"metrics/l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))
-                }
-                l0 = l0.sum(-1) # [batch_size]
+                clt_per_layer_l0_dict = {f"metrics/l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))}
+                l0 = l0.sum(-1)  # [batch_size]
                 ####
                 # per_decoder_norm = sae.decoder_norm_per_decoder()
                 # if isinstance(per_decoder_norm, DTensor):
@@ -442,7 +467,7 @@ class Trainer:
             else:
                 clt_per_layer_ev_dict = {}
                 clt_per_layer_l0_dict = {}
-                # clt_per_decoder_norm_dict = {} 
+                # clt_per_decoder_norm_dict = {}
 
             if isinstance(l2_norm_error, DTensor):
                 l2_norm_error = l2_norm_error.full_tensor()
@@ -452,8 +477,7 @@ class Trainer:
             # grad_norm = log_info["grad_norm"]
             # if isinstance(grad_norm, DTensor):
             #     grad_norm = grad_norm.full_tensor()
-            
-            
+
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.mean().item(),
@@ -523,7 +547,7 @@ class Trainer:
         sae: AbstractSparseAutoEncoder,
         activation_stream: Iterable[dict[str, Tensor]],
         eval_fn: Callable[[AbstractSparseAutoEncoder], None] | None = None,
-        wandb_logger: Run | None = None,    
+        wandb_logger: Run | None = None,
     ) -> bool | None:
         # Reset timer at the start of training
         timer.reset()
@@ -535,7 +559,7 @@ class Trainer:
             assert self.optimizer is not None
             assert self.scheduler is not None
 
-        maybe_local_d_sae = sae.cfg.d_sae # if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
+        maybe_local_d_sae = sae.cfg.d_sae  # if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
         if sae.cfg.sae_type == "clt":
             act_freq_scores_shape = (
                 sae.cfg.n_layers,  # type: ignore
@@ -563,10 +587,12 @@ class Trainer:
 
                     with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
                         loss_dict = self._training_step(sae, batch)
-                    
+
                     log_info.update(loss_dict)
-                    proc_bar.set_description(f"loss: {log_info['loss'].item():.2f}, learning rate: {self.optimizer.param_groups[0]['lr']:.2e}")
-                    
+                    proc_bar.set_description(
+                        f"loss: {log_info['loss'].item():.2f}, learning rate: {self.optimizer.param_groups[0]['lr']:.2e}"
+                    )
+
                     if timer.enabled:
                         logger.info(f"\nTimer Summary:\n{timer.summary()}\n")
 
@@ -583,7 +609,11 @@ class Trainer:
                     with timer.time("clip_grad_norm"):
                         # exclude the grad of the jumprelu threshold
                         loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
-                            [param for name, param in sae.named_parameters() if param.grad is not None and 'log_jumprelu_threshold' not in name],
+                            [
+                                param
+                                for name, param in sae.named_parameters()
+                                if param.grad is not None and "log_jumprelu_threshold" not in name
+                            ],
                             max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
                         )
 
@@ -603,8 +633,8 @@ class Trainer:
                     self.cur_tokens += batch_size(batch)
                     if self.cur_tokens >= self.cfg.total_training_tokens:
                         break
-        except StopIteration as e:
-            logger.info(f"the current stream has ended")
+        except StopIteration:
+            logger.info("the current stream has ended")
             return True
         except Exception as e:
             logger.error(f"Training failed: {e}")

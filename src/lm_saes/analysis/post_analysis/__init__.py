@@ -9,14 +9,18 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import torch
-from tqdm import tqdm
-from einops import rearrange
 from torch.distributed.device_mesh import DeviceMesh
+from tqdm import tqdm
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.logging import get_logger
+
+from .clt import CLTPostAnalysisProcessor
+from .crosscoder import CrossCoderPostAnalysisProcessor
+from .generic import GenericPostAnalysisProcessor
+from .lorsa import LorsaPostAnalysisProcessor
 
 # Set up logger for this module
 logger = get_logger(__name__)
@@ -24,11 +28,11 @@ logger = get_logger(__name__)
 
 class PostAnalysisProcessor(ABC):
     """Abstract base class for post-analysis processors.
-    
+
     Each SAE type can implement its own post-analysis processor to customize
     how analysis results are formatted and processed.
     """
-    
+
     def process(
         self,
         sae: AbstractSparseAutoEncoder,
@@ -42,11 +46,11 @@ class PostAnalysisProcessor(ABC):
         activation_factory_process_kwargs: dict[str, Any] = {},
     ) -> list[dict[str, Any]]:
         """Process analysis results into the final per-feature format.
-        
+
         This method implements the template pattern:
         1. Calls the subclass-specific _process_tensors method
         2. Applies the standard rearrangement and conversion to lists
-        
+
         Args:
             sae: The sparse autoencoder model
             act_times: Tensor of activation times for each feature
@@ -55,7 +59,7 @@ class PostAnalysisProcessor(ABC):
             sample_result: Dictionary of sampling results
             mapper: KeyedDiscreteMapper for encoding/decoding metadata
             device_mesh: Device mesh for distributed tensors
-            
+
         Returns:
             List of dictionaries containing per-feature analysis results
         """
@@ -72,14 +76,14 @@ class PostAnalysisProcessor(ABC):
             activation_factory,
             activation_factory_process_kwargs=activation_factory_process_kwargs,
         )
-        
+
         # Step 2: Apply standard rearrangement and conversion
         sample_result = {k: v for k, v in sample_result.items() if v is not None}
         # sample_result = {
         #     k1: {k2: rearrange(v2, "n_samples d_sae ... -> d_sae n_samples ...") for k2, v2 in v1.items()}
         #     for k1, v1 in sample_result.items()
         # }
-        
+
         # Step 3: Convert to final format
         logger.info("[PostAnalysisProcessor] Converting results to final per-feature format.")
         results = []
@@ -100,25 +104,27 @@ class PostAnalysisProcessor(ABC):
                 ],
             }
             results.append(feature_result)
-        
+
         return results
 
     def _sparsify_feature_acts(self, feature_acts: torch.Tensor) -> dict[str, Any]:
-        """Sparsify the feature acts.
-        """
+        """Sparsify the feature acts."""
         feature_acts = feature_acts.to_sparse()
         return {
             "feature_acts_indices": feature_acts.indices().cpu().float().numpy(),
             "feature_acts_values": feature_acts.values().cpu().float().numpy(),
         }
-    
+
     def _extra_info(self, sampling_data: dict[str, Any], i: int) -> dict[str, Any]:
-        """Extra information to add to the feature result.
-        """
+        """Extra information to add to the feature result."""
         return {
             "context_idx": sampling_data["context_idx"][:, i].cpu().numpy(),
-            "shard_idx": sampling_data["shard_idx"][:, i].cpu().numpy() if "shard_idx" in sampling_data else torch.zeros_like(sampling_data["context_idx"][:, i].cpu(), dtype=torch.int64).numpy(),
-            "n_shards": sampling_data["n_shards"][:, i].cpu().numpy() if "n_shards" in sampling_data else torch.ones_like(sampling_data["context_idx"][:, i].cpu(), dtype=torch.int64).numpy(),
+            "shard_idx": sampling_data["shard_idx"][:, i].cpu().numpy()
+            if "shard_idx" in sampling_data
+            else torch.zeros_like(sampling_data["context_idx"][:, i].cpu(), dtype=torch.int64).numpy(),
+            "n_shards": sampling_data["n_shards"][:, i].cpu().numpy()
+            if "n_shards" in sampling_data
+            else torch.ones_like(sampling_data["context_idx"][:, i].cpu(), dtype=torch.int64).numpy(),
         }
 
     @abstractmethod
@@ -135,9 +141,9 @@ class PostAnalysisProcessor(ABC):
         activation_factory_process_kwargs: dict[str, Any] = {},
     ) -> tuple[dict[str, dict[str, torch.Tensor]], list[dict[str, Any]] | None]:
         """Process tensors and add SAE-specific data to sample_result.
-        
+
         This is the method that subclasses should override to add their specific processing.
-        
+
         Args:
             sae: The sparse autoencoder model
             act_times: Tensor of activation times for each feature
@@ -160,7 +166,7 @@ _post_analysis_registry: dict[str, type[PostAnalysisProcessor]] = {}
 
 def register_post_analysis_processor(sae_type: str, processor_class: type[PostAnalysisProcessor]) -> None:
     """Register a post-analysis processor for a specific SAE type.
-    
+
     Args:
         sae_type: The SAE type identifier
         processor_class: The processor class to register
@@ -170,34 +176,30 @@ def register_post_analysis_processor(sae_type: str, processor_class: type[PostAn
 
 def get_post_analysis_processor(sae_type: str) -> PostAnalysisProcessor:
     """Get the post-analysis processor for a specific SAE type.
-    
+
     Args:
         sae_type: The SAE type identifier
-        
+
     Returns:
         The post-analysis processor instance
-        
+
     Raises:
         KeyError: If no processor is registered for the given SAE type
     """
     if sae_type not in _post_analysis_registry:
         raise KeyError(f"No post-analysis processor registered for SAE type: {sae_type}")
-    
+
     return _post_analysis_registry[sae_type]()
 
 
 # Import processors to register them
-from .crosscoder import CrossCoderPostAnalysisProcessor
-from .generic import GenericPostAnalysisProcessor
-from .lorsa import LorsaPostAnalysisProcessor
-from .clt import CLTPostAnalysisProcessor
 
 __all__ = [
     "PostAnalysisProcessor",
-    "register_post_analysis_processor", 
+    "register_post_analysis_processor",
     "get_post_analysis_processor",
     "CrossCoderPostAnalysisProcessor",
     "GenericPostAnalysisProcessor",
     "LorsaPostAnalysisProcessor",
     "CLTPostAnalysisProcessor",
-] 
+]

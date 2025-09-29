@@ -5,8 +5,8 @@ including JumpReLU and its associated STEFunction.
 """
 
 import torch
-import torch.nn as nn
 import torch.distributed.tensor
+import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
 from typing_extensions import cast
 
@@ -19,7 +19,13 @@ class STEFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, input: torch.Tensor, jumprelu_threshold: torch.Tensor, jumprelu_threshold_window: float, dims_to_keep_in_bwd: tuple[int, ...]):
+    def forward(
+        ctx,
+        input: torch.Tensor,
+        jumprelu_threshold: torch.Tensor,
+        jumprelu_threshold_window: float,
+        dims_to_keep_in_bwd: tuple[int, ...],
+    ):
         mask = input.gt(jumprelu_threshold)
         ctx.save_for_backward(
             input,
@@ -37,19 +43,22 @@ class STEFunction(torch.autograd.Function):
 
         input, jumprelu_threshold, jumprelu_threshold_window, mask = ctx.saved_tensors
 
-        grad_jumprelu_threshold = torch.where(
-            ((input - jumprelu_threshold).abs() < jumprelu_threshold_window * 0.5) * (input > 0.0),
-            -jumprelu_threshold / jumprelu_threshold_window,
-            0.0,
-        ) * grad_output
+        grad_jumprelu_threshold = (
+            torch.where(
+                ((input - jumprelu_threshold).abs() < jumprelu_threshold_window * 0.5) * (input > 0.0),
+                -jumprelu_threshold / jumprelu_threshold_window,
+                0.0,
+            )
+            * grad_output
+        )
 
         x_grad = grad_output * mask
 
         grad_jumprelu_threshold = grad_jumprelu_threshold.sum(
             dim=tuple(
-                i for i in range(grad_jumprelu_threshold.ndim)
-                if i not in ctx.dims_to_keep_in_bwd
-                    and i - grad_jumprelu_threshold.ndim not in ctx.dims_to_keep_in_bwd
+                i
+                for i in range(grad_jumprelu_threshold.ndim)
+                if i not in ctx.dims_to_keep_in_bwd and i - grad_jumprelu_threshold.ndim not in ctx.dims_to_keep_in_bwd
             )
         )
 
@@ -112,7 +121,7 @@ class JumpReLU(torch.nn.Module):
                 self.dims_to_keep_in_bwd,
             ),
         ).to(input.dtype)
-    
+
     def get_jumprelu_threshold(self) -> torch.Tensor:
         return self.log_jumprelu_threshold.exp()
 
@@ -133,7 +142,9 @@ class JumpReLU(torch.nn.Module):
     def override_dtypes(self) -> dict[str, torch.dtype]:
         return {
             "log_jumprelu_threshold": self.dtype,
-        } 
+        }
 
     def _check_dims_to_keep_in_bwd(self):
-        assert len(self.dims_to_keep_in_bwd) == len(self.shape), f"dims_to_keep_in_bwd must have the same length as shape, got {self.dims_to_keep_in_bwd} and {self.shape}"
+        assert len(self.dims_to_keep_in_bwd) == len(self.shape), (
+            f"dims_to_keep_in_bwd must have the same length as shape, got {self.dims_to_keep_in_bwd} and {self.shape}"
+        )

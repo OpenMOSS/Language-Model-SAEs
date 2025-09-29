@@ -1,29 +1,23 @@
-from torch._tensor import Tensor
-
-
+import json
 from typing import Iterable
 
 import torch
 import torch.distributed.tensor
 from einops import reduce
+from torch._tensor import Tensor
 from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
-from wandb.sdk.wandb_run import Run
-import json
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
-from lm_saes.config import EvalConfig
+from lm_saes.circuit.attribution import attribute
+from lm_saes.circuit.graph import Graph, compute_influence, normalize_matrix
+from lm_saes.circuit.replacement_model import ReplacementModel
+from lm_saes.config import EvalConfig, GraphEvalConfig
 from lm_saes.sae import SparseAutoEncoder
-from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.timer import timer
-from lm_saes.circuit.graph import Graph
-from lm_saes.circuit.graph import *
-
-from lm_saes.circuit.replacement_model import ReplacementModel
-from lm_saes.circuit.attribution import attribute
-from lm_saes.config import GraphEvalConfig
+from wandb.sdk.wandb_run import Run
 
 logger = get_distributed_logger("evaluator")
 
@@ -86,12 +80,10 @@ class Evaluator:
         if sae.cfg.sae_type == "clt":
             label = label.permute(1, 0, 2)
             reconstructed = reconstructed.permute(1, 0, 2)
-            l0_dict = {
-                f"l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))
-            }
+            l0_dict = {f"l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))}
             for key, value in l0_dict.items():
                 log_metric(key, value)
-            
+
             l0 = l0.sum(-1)  # for clt, l0 is the sum of l0s of all layers
 
         log_metric("l0", item(l0.mean()))
@@ -120,12 +112,11 @@ class Evaluator:
         if sae.cfg.sae_type == "clt":
             per_layer_ev = explained_variance.mean(0)
             per_layer_ev_dict = {
-                f"explained_variance_layer{l}": per_layer_ev[l].item()
-                for l in range(per_layer_ev.size(0))
+                f"explained_variance_layer{l}": per_layer_ev[l].item() for l in range(per_layer_ev.size(0))
             }
             for key, value in per_layer_ev_dict.items():
                 log_metric(key, value)
-            
+
         # 5. Update feature activation tracking
         if sae.cfg.sae_type == "clt":
             reduce_str = "... layers d_sae -> layers d_sae"
@@ -152,7 +143,7 @@ class Evaluator:
                 below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
                 below_1e_6 = (feature_sparsity < 1e-6).sum(-1)
                 sparsity_results = {}
-                
+
                 for l in range(sae.cfg.n_layers):
                     sparsity_results[f"above_1e-1_layer{l}"] = above_1e_1[l].item()
                     sparsity_results[f"above_1e-2_layer{l}"] = above_1e_2[l].item()
@@ -165,7 +156,7 @@ class Evaluator:
                 sparsity_results["above_1e-2"] = above_1e_2.sum().item()
                 sparsity_results["below_1e-5"] = below_1e_5.sum().item()
                 sparsity_results["below_1e-6"] = below_1e_6.sum().item()
-            
+
             else:
                 sparsity_results = {
                     "above_1e-1": (feature_sparsity > 1e-1).sum(-1).item(),
@@ -173,7 +164,7 @@ class Evaluator:
                     "below_1e-5": (feature_sparsity < 1e-5).sum(-1).item(),
                     "below_1e-6": (feature_sparsity < 1e-6).sum(-1).item(),
                 }
-            
+
             for key, value in sparsity_results.items():
                 log_metric(key, value)
 
@@ -187,7 +178,7 @@ class Evaluator:
             return item(
                 torch.sum(self.metrics[metric] * self.metrics["n_tokens"]) / torch.sum(self.metrics["n_tokens"])
             )
-        
+
         sparsity_metrics = [k for k in self.metrics.keys() if "above_1e" in k or "below_1e" in k]
         for metric in sparsity_metrics:
             self.metrics[metric] = self.metrics[metric].float().mean().item()
@@ -212,7 +203,7 @@ class Evaluator:
 
         if wandb_logger is not None:
             wandb_logger.log(self.metrics)
-        
+
         self.metrics.pop("n_tokens")
         log_metrics(logger.logger, self.metrics, title="Evaluation Metrics")
 
@@ -289,8 +280,8 @@ class Evaluator:
         self.process_metrics(wandb_logger)
 
 
-def compute_graph_scores(graph: Graph, use_lorsa:bool=True) -> tuple[float, float]:
-    """Copy from circuit-tracer 
+def compute_graph_scores(graph: Graph, use_lorsa: bool = True) -> tuple[float, float]:
+    """Copy from circuit-tracer
     Compute metrics for evaluating how well the graph captures the model's computation.
     This function calculates two complementary scores that measure how much of the model's
     computation flows through interpretable feature nodes versus reconstruction error nodes:
@@ -314,7 +305,7 @@ def compute_graph_scores(graph: Graph, use_lorsa:bool=True) -> tuple[float, floa
         reconstruction where all computation flows through interpretable features. Lower
         scores indicate more reliance on error nodes, suggesting incomplete feature coverage.
     """
-    
+
     # Extract dimensions
     n_logits = len(graph.logit_tokens)
     n_features = len(graph.selected_features)
@@ -322,9 +313,7 @@ def compute_graph_scores(graph: Graph, use_lorsa:bool=True) -> tuple[float, floa
     error_end_idx = n_features + 2 * graph.n_pos * layers if use_lorsa else n_features + graph.n_pos * layers
     token_end_idx = error_end_idx + len(graph.input_tokens)
 
-    logit_weights = torch.zeros(
-        graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device
-    )
+    logit_weights = torch.zeros(graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device)
     logit_weights[-n_logits:] = graph.logit_probabilities
 
     normalized_matrix = normalize_matrix(graph.adjacency_matrix)
@@ -335,12 +324,12 @@ def compute_graph_scores(graph: Graph, use_lorsa:bool=True) -> tuple[float, floa
     replacement_score = token_influence / (token_influence + error_influence)
 
     # non_error_fractions = normalized_matrix[:, :].sum(dim=-1) - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1) # not from error (Ibelieve this is correct)
-    non_error_fractions = 1 - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1)  # not from error 
+    non_error_fractions = 1 - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1)  # not from error
     output_influence = node_influence + logit_weights
     completeness_score = (non_error_fractions * output_influence).sum() / output_influence.sum()
-    
 
     return replacement_score.item(), completeness_score.item()
+
 
 class GrahEval:
     def __init__(self, cfg: GraphEvalConfig):
@@ -348,29 +337,27 @@ class GrahEval:
         self.replacement_scores = []
         self.completeness_scores = []
         self.prompt = []
-    
+
     def eval(
         self,
-        replacement_model : ReplacementModel,
+        replacement_model: ReplacementModel,
         dataset_path: str,
-        use_lorsa:bool= True,
-        show:bool = False,
-        add_bos:bool = True,
+        use_lorsa: bool = True,
+        show: bool = False,
+        add_bos: bool = True,
     ):
         timer.reset()
-        
+
         with timer.time("Init. dataset"):
-            dataset = json.load(open(dataset_path, 'r'))
-        
-        
-        
+            dataset = json.load(open(dataset_path, "r"))
+
         for i in range(self.cfg.start_from, len(dataset)):
             data = dataset[i]
-            
+
             # Add <BOS> if there doesn't have
-            if add_bos and data['prompt'][0]!='<':
-                prompt = "<|endoftext|> "+data['prompt']
-                                  
+            if add_bos and data["prompt"][0] != "<":
+                prompt = "<|endoftext|> " + data["prompt"]
+
             replacement_model._configure_gradient_flow()
             replacement_model._deduplicate_attention_buffers()
             replacement_model.setup()
@@ -384,14 +371,13 @@ class GrahEval:
                 offload=self.cfg.offload,
                 use_lorsa=use_lorsa,
             )
-            
+
             replacement_score, completeness_score = compute_graph_scores(graph, use_lorsa=use_lorsa)
 
             self.replacement_scores.append(replacement_score)
             self.completeness_scores.append(completeness_score)
-            
+
             if show:
-                print('prompt:', prompt)
-                print(f'complete: {completeness_score}')
-                print(f'replace: {replacement_score}')
-            
+                print("prompt:", prompt)
+                print(f"complete: {completeness_score}")
+                print(f"replace: {replacement_score}")

@@ -1,21 +1,17 @@
-from typing import Any, Any, Union
+from typing import Union
 
 import torch
 from jaxtyping import Float
 
-from .kernels import TritonDecoderAutogradTopK, TritonEncoderAutogradDynamicK
-from .kernels import get_sparse_representation
-
 from lm_saes.utils.logging import get_logger
+
+from .kernels import TritonDecoderAutogradTopK, TritonEncoderAutogradDynamicK, get_sparse_representation
 
 logger = get_logger("kernels")
 
 
 def decode_with_triton_spmm_kernel(
-    feature_acts: Union[
-        Float[torch.Tensor, "batch d_sae"],
-        Float[torch.sparse.Tensor, "batch d_sae"]
-    ],
+    feature_acts: Union[Float[torch.Tensor, "batch d_sae"], Float[torch.sparse.Tensor, "batch d_sae"]],
     decoder_weight: Float[torch.Tensor, "d_sae d_model"],
 ) -> Union[
     Float[torch.Tensor, "batch d_model"],
@@ -40,6 +36,7 @@ def decode_with_triton_spmm_kernel(
         sparse_indices, sparse_values = get_sparse_representation(feature_acts)
     return TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.contiguous().T)  # type: ignore[return-value]
 
+
 def encode_with_triton_spmm_kernel(
     x: Float[torch.Tensor, "batch n_layers d_model"],
     W_E: Float[torch.Tensor, "n_layers d_model d_sae"],
@@ -63,37 +60,35 @@ def encode_with_triton_spmm_kernel(
     """
     batch_size, n_layers, _ = x.shape
     d_sae = W_E.shape[2]
-    
+
     # For-loop implementation as originally requested
     output = torch.zeros(batch_size, n_layers, d_sae, device=x.device, dtype=x.dtype)
-    
+
     # Process each layer separately using the approach suggested by the user
     for layer_idx in range(n_layers):
         # Extract activations for this layer: (batch, d_model)
         x_layer = x[:, layer_idx, :]
-        
+
         # Extract encoder weights for this layer: (d_model, d_sae)
         W_E_layer = W_E[layer_idx, :, :]
-        
+
         # Extract bias for this layer: (d_sae,)
         b_E_layer = b_E[layer_idx, :]
-        
+
         # Compute: x_layer @ W_E_layer + b_E_layer
         # Result shape: (batch, d_sae)
         layer_output = TritonEncoderAutogradDynamicK.apply(x_layer, W_E_layer, b_E_layer, sparsity_threshold)
         assert isinstance(layer_output, torch.Tensor), "TritonEncoderAutogradDynamicK must return a tensor"
-        
+
         # Store result in output tensor
         output[:, layer_idx, :] = layer_output
-    
+
     return output
 
 
 if __name__ == "__main__":
     import torch
     import torch.nn as nn
-    import triton
-    import triton.language as tl
 
     def test_triton_decoder(
         B, d_sae, d_model, sparsity=0.9, dtype=torch.float32, require_precise_feature_acts_grad=True

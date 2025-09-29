@@ -321,9 +321,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         ):  # triton kernel cannot handle empty feature_acts
             from .kernels import decode_with_triton_spmm_kernel
 
-            reconstructed = decode_with_triton_spmm_kernel(
-                feature_acts, self.W_D.T.contiguous()
-            )
+            reconstructed = decode_with_triton_spmm_kernel(feature_acts, self.W_D.T.contiguous())
         else:
             reconstructed = feature_acts @ self.W_D
 
@@ -333,7 +331,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         reconstructed = self.hook_reconstructed(reconstructed)
 
         if isinstance(reconstructed, DTensor):
-            reconstructed = DimMap({}).redistribute(reconstructed)
+            reconstructed = DimMap({"data": 0}).redistribute(reconstructed)
 
         return reconstructed
 
@@ -408,28 +406,22 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @override
     def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
-        if self.device_mesh is not None:
-            x = DimMap({}).distribute(batch[self.cfg.hook_point_in], self.device_mesh)
-        else:
-            x = batch[self.cfg.hook_point_in]
+        x = batch[self.cfg.hook_point_in]
         return x, {}
 
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
-        if self.device_mesh is not None:
-            label = DimMap({}).distribute(batch[self.cfg.hook_point_out], self.device_mesh)
-        else:
-            label = batch[self.cfg.hook_point_out]
+        label = batch[self.cfg.hook_point_out]
         return label
 
     def get_parameters(self) -> list[dict[str, Any]]:
         return [{"params": self.parameters()}]
-    
+
     @override
     @torch.no_grad()
     def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
         """Initialize W_D with the active subspace.
-        
+
         Args:
             activation_batch: The activation batch.
             d_active_subspace: The dimension of the active subspace.
@@ -437,9 +429,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         label = self.prepare_label(activation_batch)
         demeaned_label = label - label.mean(dim=0)
         U, S, V = torch.svd(demeaned_label.T.to(torch.float32))
-        proj_weight = U[:, :d_active_subspace] # [d_model, d_active_subspace]
+        proj_weight = U[:, :d_active_subspace]  # [d_model, d_active_subspace]
         self.W_D.data.copy_(self.W_D.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
-        
+
     @torch.no_grad()
     def init_encoder_bias_with_mean_hidden_pre(self, activation_batch):
         x, _ = self.prepare_input(activation_batch)

@@ -11,8 +11,8 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
-from lm_saes.crosscoder import CrossCoder
 from lm_saes.activation.factory import ActivationFactory
+from lm_saes.crosscoder import CrossCoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap
 
@@ -21,13 +21,13 @@ from . import PostAnalysisProcessor, register_post_analysis_processor
 
 class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):
     """Post-analysis processor for CrossCoder SAE.
-    
+
     This processor handles CrossCoder-specific analysis results including:
     - Decoder norms
-    - Decoder similarity matrices  
+    - Decoder similarity matrices
     - Decoder inner product matrices
     """
-    
+
     def process(
         self,
         sae: AbstractSparseAutoEncoder,
@@ -82,9 +82,7 @@ class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):
             if decoder_similarity_matrices.device_mesh is not device_mesh:
                 decoder_similarity_matrices = DTensor.from_local(
                     decoder_similarity_matrices.redistribute(
-                        placements=DimMap({"head": 0, "model": 0}).placements(
-                            decoder_similarity_matrices.device_mesh
-                        )
+                        placements=DimMap({"head": 0, "model": 0}).placements(decoder_similarity_matrices.device_mesh)
                     ).to_local(),
                     device_mesh,
                     placements=DimMap({"model": 0}).placements(device_mesh),

@@ -1,27 +1,28 @@
 import logging
 import os
 import time
-from typing import List, Union
+from typing import List
+
 import torch
-from transformers import AutoTokenizer
 from pydantic import BaseModel
+from transformers import AutoTokenizer
 
 from ..graph import Graph, prune_graph
 
-from lm_saes import MongoDBConfig, MongoClient
-
 logger = logging.getLogger(__name__)
+
 
 class Metadata(BaseModel):
     slug: str
     sae_series: str
     prompt_tokens: List[str]
     prompt: str
-    
+
     node_threshold: float | None = None
     schema_version: int | None = 1
     lorsa_analysis_name: str | None = None
     clt_analysis_name: str | None = None
+
 
 class Node(BaseModel):
     node_id: str
@@ -128,8 +129,10 @@ class Model(BaseModel):
     nodes: List[Node]
     links: List[dict]
 
+
 def process_token(token: str) -> str:
     return token.replace("\n", "⏎").replace("\t", "→").replace("\r", "↵")
+
 
 def load_graph_data(file_path) -> Graph:
     """Load graph data from a PyTorch file."""
@@ -177,7 +180,7 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
                 activation=interested_activation[orig_feature_idx],
                 lorsa_pattern=graph.lorsa_pattern[node_idx],
             )
-            
+
         elif node_idx in range(n_features, error_end_idx):
             layer, pos = divmod(node_idx - n_features, graph.n_pos)
             if use_lorsa:
@@ -192,9 +195,7 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
             nodes[node_idx] = Node.error_node(layer, pos, is_lorsa, influence=cumulative_scores[node_idx])
         elif node_idx in range(error_end_idx, token_end_idx):
             pos = node_idx - error_end_idx
-            nodes[node_idx] = Node.token_node(
-                pos, graph.input_tokens[pos], influence=cumulative_scores[node_idx]
-            )
+            nodes[node_idx] = Node.token_node(pos, graph.input_tokens[pos], influence=cumulative_scores[node_idx])
         elif node_idx in range(token_end_idx, len(cumulative_scores)):
             pos = node_idx - token_end_idx
             nodes[node_idx] = Node.logit_node(
@@ -232,9 +233,7 @@ def create_used_nodes_and_edges(graph: Graph, nodes, edge_mask):
 
     nodes_before = len(nodes)
     used_nodes = [
-        node
-        for node in nodes.values()
-        if node.node_id in connected_ids or node.feature_type in ["embedding", "logit"]
+        node for node in nodes.values() if node.node_id in connected_ids or node.feature_type in ["embedding", "logit"]
     ]
     nodes_after = len(used_nodes)
     logger.info(f"Filtered {nodes_before - nodes_after} nodes")
@@ -291,7 +290,7 @@ def create_graph_files(
     sae_series=None,
     lorsa_analysis_name="",
     clt_analysis_name="",
-    use_lorsa:bool=True,
+    use_lorsa: bool = True,
 ):
     total_start_time = time.time()
 
@@ -314,7 +313,7 @@ def create_graph_files(
         el.to(device) for el in prune_graph(graph, node_threshold, edge_threshold)
     )
 
-    print(f'{graph.cfg.tokenizer_name=}')
+    print(f"{graph.cfg.tokenizer_name=}")
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
     nodes = create_nodes(graph, node_mask, tokenizer, cumulative_scores, use_lorsa=use_lorsa)
     used_nodes, used_edges = create_used_nodes_and_edges(graph, nodes, edge_mask)
@@ -337,7 +336,3 @@ def create_graph_files(
 
     total_time_ms = (time.time() - total_start_time) * 1000
     logger.info(f"Total execution time: {total_time_ms=:.2f} ms")
-
-def create_graph_files_with_interp_logits(graph_path: str, mongo: MongoDBConfig, ):
-    mongo_client = MongoClient(settings.mongo)
-    

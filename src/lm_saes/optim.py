@@ -4,11 +4,11 @@ Took the LR scheduler from: https://github.com/jbloomAus/DecisionTransformerInte
 
 import math
 from typing import Any, Optional
-import torch
 
+import torch
 import torch.optim as optim
-from torch.optim import Optimizer
 import torch.optim.lr_scheduler as lr_scheduler
+from torch.optim import Optimizer
 
 
 #  None
@@ -138,12 +138,12 @@ class SparseAdam(Optimizer):
     """
     Implements SparseAdam algorithm, which only updates parameters and their momentum
     when their gradients are non-zero.
-    
+
     This optimizer is specifically designed for Sparse Autoencoders (SAE) training,
     with the following key features:
     1. Only updates parameters and momentum when gradients are non-zero
     2. Prevents gradient amplification for long-inactive features when they suddenly activate
-    
+
     Args:
         params: Iterable of parameters to optimize
         lr: Learning rate (default: 1e-3)
@@ -191,13 +191,13 @@ class SparseAdam(Optimizer):
             for p in group["params"]:
                 if p.grad is None:
                     continue
-                
+
                 grad = p.grad
-                
+
                 # Skip if all gradients are zero
                 if not grad.any():
                     continue
-                    
+
                 state = self.state[p]
 
                 # State initialization
@@ -209,7 +209,7 @@ class SparseAdam(Optimizer):
                     state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
 
                 exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
-                
+
                 state["step"] += 1
                 bias_correction1 = 1 - beta1 ** state["step"]
                 bias_correction2 = 1 - beta2 ** state["step"]
@@ -219,22 +219,22 @@ class SparseAdam(Optimizer):
 
                 # Only update momentum for non-zero gradients
                 mask = grad != 0
-                
+
                 # Update momentum
                 exp_avg = exp_avg * beta1
                 exp_avg = torch.where(mask, exp_avg + (1 - beta1) * grad, exp_avg)
-                
+
                 # Update squared momentum
                 exp_avg_sq = exp_avg_sq * beta2
                 exp_avg_sq = torch.where(mask, exp_avg_sq + (1 - beta2) * grad * grad, exp_avg_sq)
-                
+
                 # Save back to state
                 state["exp_avg"] = exp_avg
                 state["exp_avg_sq"] = exp_avg_sq
 
                 # Compute step size
                 step_size = lr * math.sqrt(bias_correction2) / bias_correction1
-                
+
                 # Apply updates
                 denom = exp_avg_sq.sqrt().add_(eps)
                 update = torch.where(mask, step_size * exp_avg / denom, torch.zeros_like(p))
