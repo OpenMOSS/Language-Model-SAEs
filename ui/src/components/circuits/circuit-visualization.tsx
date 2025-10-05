@@ -40,7 +40,6 @@ export const CircuitVisualization = () => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [connectedFeatures, setConnectedFeatures] = useState<Feature[]>([]);
-  const [isLoadingConnectedFeatures, setIsLoadingConnectedFeatures] = useState(false);
   const [originalCircuitJson, setOriginalCircuitJson] = useState<any>(null); // 存储原始JSON数据（单图或合并后的）
   const [editingClerp, setEditingClerp] = useState<string>(''); // 当前编辑的clerp
   const [isSaving, setIsSaving] = useState(false); // 保存状态
@@ -48,11 +47,13 @@ export const CircuitVisualization = () => {
   const [updateCounter, setUpdateCounter] = useState(0); // 用于强制更新的计数器
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false); // 是否有未保存的更改
   const [saveHistory, setSaveHistory] = useState<string[]>([]); // 保存历史记录
+  const [topActivations, setTopActivations] = useState<any[]>([]); // Top Activation 数据
+  const [loadingTopActivations, setLoadingTopActivations] = useState(false); // 加载状态
 
   // 多图支持：存放多份原始 JSON 及其文件名
   const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
 
-  // 为“各自独有”的节点/边分配的颜色表（最多4个图）
+  // 为"各自独有"的节点/边分配的颜色表（最多4个图）
   const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // 蓝、橙、绿、红
 
   // 将多个图的 JSON 合并为一个 LinkGraphData（节点按 node_id 合并，边按(source,target)合并）
@@ -94,7 +95,7 @@ export const CircuitVisualization = () => {
     // 为节点设置颜色：
     // - 若 presentIn.length > 1（多个图共有）：使用 transformCircuitData 原有的 feature_type 颜色（acc.base.nodeColor）
     // - 若仅在某个单图中：覆盖为 UNIQUE_GRAPH_COLORS[graphIndex]
-    const mergedNodes: any[] = [];
+    let mergedNodes: any[] = [];
     nodeMap.forEach(({ base, presentIn }) => {
       const isShared = presentIn.length > 1;
       const isError = typeof base.feature_type === 'string' && base.feature_type.toLowerCase().includes('error');
@@ -113,6 +114,10 @@ export const CircuitVisualization = () => {
         sourceFiles,
       });
     });
+
+    // 移除备用颜色逻辑：多文件场景仅保留
+    // - 共有节点：使用各自类型颜色（来自 transformCircuitData）
+    // - 独有节点：使用该文件唯一颜色 UNIQUE_GRAPH_COLORS[index]
 
     // 合并边：以(source,target)为键；
     // - 若多图共有：保留 transform 中的颜色（红/绿取决于权重正负）和 strokeWidth（取最大）并将权重求和或取平均
@@ -168,7 +173,7 @@ export const CircuitVisualization = () => {
         source,
         target,
         pathStr: "",
-        color: isShared ? color : color, // 共有与独有均保持正负配色，便于解读
+        color: isShared ? color : color,
         strokeWidth: acc.maxStroke,
         weight: avgWeight,
         pctInput: avgPct,
@@ -223,11 +228,10 @@ export const CircuitVisualization = () => {
 
   const handleConnectedFeaturesSelect = useCallback((features: Feature[]) => {
     setConnectedFeatures(features);
-    setIsLoadingConnectedFeatures(false);
   }, []);
 
-  const handleConnectedFeaturesLoading = useCallback((loading: boolean) => {
-    setIsLoadingConnectedFeatures(loading);
+  const handleConnectedFeaturesLoading = useCallback((_loading: boolean) => {
+    // 保留回调函数以保持接口兼容性
   }, []);
 
   // 单文件上传（保留，兼容）
@@ -246,7 +250,7 @@ export const CircuitVisualization = () => {
       // 基础变换
       const data = transformCircuitData(jsonData);
       // 注入来源信息（单文件索引为 0）
-      const annotated = {
+      let annotated = {
         ...data,
         nodes: data.nodes.map(n => ({
           ...n,
@@ -258,7 +262,8 @@ export const CircuitVisualization = () => {
           ...data.metadata,
           sourceFileNames: [file.name],
         }
-      };
+      } as any;
+
       setLinkGraphData(annotated);
       // Reset circuit state when loading new data
       setClickedId(null);
@@ -338,10 +343,6 @@ export const CircuitVisualization = () => {
     }
   }, [mergeGraphs, setLinkGraphData, setLoading, setError, setClickedId, setHoveredId, setPinnedIds, setHiddenIds, setSelectedFeature, setConnectedFeatures]);
 
-  const handleFileUpload = useCallback(async (file: File) => {
-    // 兼容旧调用，保留单文件路径
-    return handleSingleFileUpload(file);
-  }, [handleSingleFileUpload]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -393,7 +394,7 @@ export const CircuitVisualization = () => {
       if (trimmed.includes('/')) {
         const parts = trimmed.split(/\s+/);
         if (parts.length >= 6) {
-          const [boardPart, activeColor, castling, enPassant, halfmove, fullmove] = parts;
+          const [boardPart, activeColor] = parts;
           const boardRows = boardPart.split('/');
           
           if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
@@ -437,37 +438,56 @@ export const CircuitVisualization = () => {
  
   // 从prompt中提取输出移动
   const extractOutputMove = useCallback(() => {
+    if (!linkGraphData) return null;
+
+    // 1) 优先从 metadata 中读取 target_move 或 logit_moves[0]
+    const tm = (linkGraphData as any)?.metadata?.target_move;
+    if (typeof tm === 'string' && /^[a-h][1-8][a-h][1-8]([qrbn])?$/i.test(tm)) {
+      return tm.toLowerCase();
+    }
+    const lm0 = (linkGraphData as any)?.metadata?.logit_moves?.[0];
+    if (typeof lm0 === 'string' && /^[a-h][1-8][a-h][1-8]([qrbn])?$/i.test(lm0)) {
+      return lm0.toLowerCase();
+    }
+
+    // 2) 回退到从 prompt_tokens 中解析
     if (!linkGraphData?.metadata?.prompt_tokens) return null;
-    
     const promptText = linkGraphData.metadata.prompt_tokens.join(' ');
-    console.log('🔍 搜索输出移动:', promptText);
-    
-    // 尝试从prompt中找到输出移动的模式
-    // 可能格式: "Output: a2a4" 或 "Move: a2a4" 或直接的移动字符串
+
     const movePatterns = [
       /(?:Output|Move|下一步|移动)[:：]\s*([a-h][1-8][a-h][1-8])/i,
       /\b([a-h][1-8][a-h][1-8])\b/g
     ];
-    
+
     for (const pattern of movePatterns) {
       const matches = promptText.match(pattern);
       if (matches) {
-        // 取最后一个匹配项（通常是输出）
         const lastMatch = Array.isArray(matches) ? matches[matches.length - 1] : matches;
         const moveMatch = lastMatch.match(/[a-h][1-8][a-h][1-8]/);
         if (moveMatch) {
-          console.log('✅ 找到移动:', moveMatch[0]);
-          return moveMatch[0];
+          return moveMatch[0].toLowerCase();
         }
       }
     }
-    
-    console.log('❌ 未找到输出移动');
+
     return null;
   }, [linkGraphData]);
 
   // 按文件提取输出移动
   const extractOutputMoveFromCircuitJson = useCallback((json: any): string | null => {
+    if (!json) return null;
+
+    // 1) 优先从 metadata 中读取 target_move 或 logit_moves[0]
+    const tm = json?.metadata?.target_move;
+    if (typeof tm === 'string' && /^[a-h][1-8][a-h][1-8]([qrbn])?$/i.test(tm)) {
+      return tm.toLowerCase();
+    }
+    const lm0 = json?.metadata?.logit_moves?.[0];
+    if (typeof lm0 === 'string' && /^[a-h][1-8][a-h][1-8]([qrbn])?$/i.test(lm0)) {
+      return lm0.toLowerCase();
+    }
+
+    // 2) 回退到从 prompt_tokens 中解析
     const tokens = json?.metadata?.prompt_tokens;
     if (!tokens) return null;
     const promptText = Array.isArray(tokens) ? tokens.join(' ') : String(tokens);
@@ -480,7 +500,7 @@ export const CircuitVisualization = () => {
       if (matches) {
         const lastMatch = Array.isArray(matches) ? matches[matches.length - 1] : matches;
         const moveMatch = lastMatch.match(/[a-h][1-8][a-h][1-8]/);
-        if (moveMatch) return moveMatch[0];
+        if (moveMatch) return moveMatch[0].toLowerCase();
       }
     }
     return null;
@@ -566,7 +586,6 @@ export const CircuitVisualization = () => {
       if (Array.isArray(obj)) {
         for (const item of obj) {
           if (item && typeof item === 'object') {
-            const keys = Object.keys(item);
             const hasActivationShape = ('layer' in item) && ('position' in item) && ('activations' in item);
             const hasZShape = ('zPatternIndices' in item) && ('zPatternValues' in item);
             const hasIndexKey = ('head_idx' in item) || ('feature_idx' in item);
@@ -946,6 +965,187 @@ export const CircuitVisualization = () => {
     alert(`📤 文件已导出到Downloads文件夹:\n${exportFileName}\n\n💡 要使用更新后的文件:\n1. 用新文件替换原文件\n2. 或者拖拽新文件到此页面重新加载`);
   }, [originalCircuitJson, originalFileName]);
 
+  // 获取 Top Activation 数据的函数
+  const fetchTopActivations = useCallback(async (nodeId: string) => {
+    if (!nodeId) return;
+    
+    setLoadingTopActivations(true);
+    try {
+      // 从 nodeId 解析出 feature 信息
+      const parts = nodeId.split('_');
+      const rawLayer = Number(parts[0]) || 0;
+      const featureIndex = Number(parts[1]) || 0;
+      const layerIdx = Math.floor(rawLayer / 2);
+      
+      // 确定节点类型和对应的字典名
+      const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
+      const isLorsa = currentNode?.feature_type?.toLowerCase() === 'lorsa';
+      const dictionary = isLorsa 
+        ? `lc0-lorsa-L${layerIdx}`
+        : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+      
+      console.log('🔍 获取 Top Activation 数据:', {
+        nodeId,
+        layerIdx,
+        featureIndex,
+        dictionary,
+        isLorsa
+      });
+      
+      // 调用后端 API 获取 feature 数据
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/x-msgpack",
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const decoded = await import("@msgpack/msgpack").then(module => module.decode(new Uint8Array(arrayBuffer)));
+      const camelcaseKeys = await import("camelcase-keys").then(module => module.default);
+      
+      // 解析数据
+      const camelData = camelcaseKeys(decoded as Record<string, unknown>, {
+        deep: true,
+        stopPaths: ["sample_groups.samples.context"],
+      }) as any;
+      
+      // 提取样本数据
+      const sampleGroups = camelData?.sampleGroups || camelData?.sample_groups || [];
+      const allSamples: any[] = [];
+      
+      for (const group of sampleGroups) {
+        if (group.samples && Array.isArray(group.samples)) {
+          allSamples.push(...group.samples);
+        }
+      }
+      
+      // 查找包含 FEN 的样本并提取激活值
+      const chessSamples: any[] = [];
+      
+      for (const sample of allSamples) {
+        if (sample.text) {
+          const lines = sample.text.split('\n');
+          
+          for (const line of lines) {
+            const trimmed = line.trim();
+            
+            // 检查是否包含 FEN 格式
+            if (trimmed.includes('/')) {
+              const parts = trimmed.split(/\s+/);
+              
+              if (parts.length >= 6) {
+                const [boardPart, activeColor] = parts;
+                const boardRows = boardPart.split('/');
+                
+                if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
+                  // 验证 FEN 格式
+                  let isValidBoard = true;
+                  let totalSquares = 0;
+                  
+                  for (const row of boardRows) {
+                    if (!/^[rnbqkpRNBQKP1-8]+$/.test(row)) {
+                      isValidBoard = false;
+                      break;
+                    }
+                    
+                    let rowSquares = 0;
+                    for (const char of row) {
+                      if (/\d/.test(char)) {
+                        rowSquares += parseInt(char);
+                      } else {
+                        rowSquares += 1;
+                      }
+                    }
+                    totalSquares += rowSquares;
+                  }
+                  
+                  if (isValidBoard && totalSquares === 64) {
+                    // 处理稀疏激活数据 - 正确映射到64格棋盘
+                    let activationsArray: number[] | undefined = undefined;
+                    let activationStrength = 0;
+                    
+                    if (sample.featureActsIndices && sample.featureActsValues && 
+                        Array.isArray(sample.featureActsIndices) && Array.isArray(sample.featureActsValues)) {
+                      
+                      // 创建64格的激活数组
+                      activationsArray = new Array(64).fill(0);
+                      
+                      // 将稀疏激活值映射到正确的棋盘位置
+                      for (let i = 0; i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length); i++) {
+                        const index = sample.featureActsIndices[i];
+                        const value = sample.featureActsValues[i];
+                        
+                        // 确保索引在有效范围内
+                        if (index >= 0 && index < 64) {
+                          activationsArray[index] = value;
+                          activationStrength += Math.abs(value);
+                        }
+                      }
+                      
+                      console.log('🔍 处理激活数据:', {
+                        indicesLength: sample.featureActsIndices.length,
+                        valuesLength: sample.featureActsValues.length,
+                        nonZeroCount: activationsArray.filter(v => v !== 0).length,
+                        activationStrength
+                      });
+                    }
+                    
+                    chessSamples.push({
+                      fen: trimmed,
+                      activationStrength,
+                      activations: activationsArray,
+                      zPatternIndices: sample.zPatternIndices,
+                      zPatternValues: sample.zPatternValues,
+                      contextId: sample.contextIdx || sample.context_idx,
+                      sampleIndex: sample.sampleIndex || 0
+                    });
+                    
+                    break; // 找到一个有效 FEN 就跳出
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // 按激活强度排序并取前8个
+      const topSamples = chessSamples
+        .sort((a, b) => b.activationStrength - a.activationStrength)
+        .slice(0, 8);
+      
+      console.log('✅ 获取到 Top Activation 数据:', {
+        totalChessSamples: chessSamples.length,
+        topSamplesCount: topSamples.length
+      });
+      
+      setTopActivations(topSamples);
+      
+    } catch (error) {
+      console.error('❌ 获取 Top Activation 数据失败:', error);
+      setTopActivations([]);
+    } finally {
+      setLoadingTopActivations(false);
+    }
+  }, [linkGraphData]);
+
+  // 当点击节点时获取 Top Activation 数据
+  React.useEffect(() => {
+    if (clickedId) {
+      fetchTopActivations(clickedId);
+    } else {
+      setTopActivations([]);
+    }
+  }, [clickedId, fetchTopActivations]);
+
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1142,9 +1342,10 @@ export const CircuitVisualization = () => {
               activations={nodeActivationData?.activations}
               zPatternIndices={nodeActivationData?.zPatternIndices}
               zPatternValues={nodeActivationData?.zPatternValues}
-              flip_activation={true}
+              flip_activation={false}
               sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
               analysisName={nodeActivationData?.nodeType || 'Circuit Node'}
+              moveColor={(clickedId ? (linkGraphData.nodes.find(n => n.nodeId === clickedId)?.nodeColor) : undefined) as any}
             />
           </div>
         </div>
@@ -1196,9 +1397,10 @@ export const CircuitVisualization = () => {
                   activations={belongs ? perFileActivation.activations : undefined}
                   zPatternIndices={belongs ? perFileActivation.zPatternIndices : undefined}
                   zPatternValues={belongs ? perFileActivation.zPatternValues : undefined}
-                  flip_activation={true}
+                  flip_activation={false}
                   sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
                   analysisName={(perFileActivation?.nodeType || 'Circuit Node') + ` @${idx+1}`}
+                  moveColor={UNIQUE_GRAPH_COLORS[idx % UNIQUE_GRAPH_COLORS.length]}
                 />
               </div>
             );
@@ -1241,6 +1443,64 @@ export const CircuitVisualization = () => {
             />
           </div>
         </div>
+
+        {/* Top Activation Section */}
+        {clickedId && (
+          <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Top Activation 棋盘</h3>
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-600">节点: {clickedId}</span>
+                {loadingTopActivations && (
+                  <div className="flex items-center space-x-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                    <span className="text-sm text-gray-500">加载中...</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            {loadingTopActivations ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                  <p className="text-gray-600">正在获取 Top Activation 数据...</p>
+                </div>
+              </div>
+            ) : topActivations.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {topActivations.map((sample, index) => (
+                  <div key={index} className="bg-gray-50 rounded-lg p-3 border">
+                    <div className="text-center mb-2">
+                      <div className="text-sm font-medium text-gray-700">
+                        Top #{index + 1}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        激活强度: {sample.activationStrength.toFixed(3)}
+                      </div>
+                    </div>
+                    <ChessBoard
+                      fen={sample.fen}
+                      size="small"
+                      showCoordinates={false}
+                      activations={sample.activations}
+                      zPatternIndices={sample.zPatternIndices}
+                      zPatternValues={sample.zPatternValues}
+                      sampleIndex={sample.sampleIndex}
+                      analysisName={`Context ${sample.contextId}`}
+                      flip_activation={true}
+                      autoFlipWhenBlack={true}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <p>未找到包含棋盘的激活样本</p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Clerp Editor - New Section */}
         {clickedId && nodeActivationData && (
@@ -1444,4 +1704,6 @@ export const CircuitVisualization = () => {
       </div>
     </div>
   );
-}; 
+};
+
+export default CircuitVisualization;

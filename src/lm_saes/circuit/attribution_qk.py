@@ -1686,7 +1686,7 @@ def attribute(
     lboard: Optional[Any] = None,
     move_idx: int | tuple[int, int] | None = None, 
     encoder_demean: bool = False,
-    act_times_max: Optional[int] = 60_000_000,
+    act_times_max: Optional[int] = None,
     mongo_client = None,
     sae_series: str = 'lc0-tc',
     analysis_name: str = 'default',
@@ -1761,7 +1761,7 @@ def _run_attribution(
     verbose: bool = False,               # 可用于增强日志
     encoder_demean: bool = False,
     # 过滤相关
-    act_times_max: Optional[int] = 60_000_000,
+    act_times_max: Optional[int] = None,
     mongo_client = None,
     sae_series: str = 'lc0-tc',
     analysis_name: str = 'default',
@@ -1790,6 +1790,7 @@ def _run_attribution(
         print(f'{positive_move_idx = }')
         
     # ========== Phase 0: 预计算 ==========
+    print("Phase 0: Precomputing activations and vectors")
     logger.info("Phase 0: Precomputing activations and vectors")
     phase_start = time.time()
 
@@ -1852,6 +1853,9 @@ def _run_attribution(
     policy_out = model_out[0]
     n_layers, n_pos, _ = tc_activation_matrix.shape
     total_active_feats = lorsa_activation_matrix._nnz() + tc_activation_matrix._nnz()
+    phase2_time = time.time() - phase_start
+    print(f"Phase 2: Building input vectors completed in {phase2_time:.2f}s")
+    logger.info(f"Phase 2: Building input vectors completed in {phase2_time:.2f}s")
 
     # 初始化变量
     logit_idx_positive = None
@@ -1921,9 +1925,7 @@ def _run_attribution(
             logit_vecs_k_negative, move_positions_negative, logit_vecs_negative
         )
     
-    print(f'{move_positions = }')
-
-
+    # print(f'{move_positions = }')
     logger.info(
         f"Selected {len(logit_idx)} logits with cumulative probability {logit_p.sum().item():.4f}"
     )
@@ -2027,7 +2029,7 @@ def _run_attribution(
         dtype = ctx._policy_q_activations.dtype
         
         idx = batch_move_positions[0]
-        print(f'{idx.shape = }, {idx[0] = }, {idx[1] = }')
+        # print(f'{idx.shape = }, {idx[0] = }, {idx[1] = }')
         
         # 处理castle的位置调整（确保在正确的设备上）
         idx_adjusted = idx.clone().to(device)
@@ -2078,7 +2080,7 @@ def _run_attribution(
                 expected_q -= q_dot_negative
                 expected_k -= k_dot_negative
         
-        print(f'验证: expected_q={expected_q:.6f}, actual_q={bias_q + rows_q[0].sum():.6f}')
+        # print(f'验证: expected_q={expected_q:.6f}, actual_q={bias_q + rows_q[0].sum():.6f}')
         print(f'验证: expected_k={expected_k:.6f}, actual_k={bias_k + rows_k[0].sum():.6f}')
         
         assert torch.allclose(bias_q + rows_q[0].sum(), expected_q, rtol=1e-3), f'{bias_q + rows_q[0].sum() = }, {expected_q = }'
@@ -2096,10 +2098,13 @@ def _run_attribution(
 
         rows_q_last = rows_q  # 暂存最后一个 batch，作为"rows_*"返回
         rows_k_last = rows_k
+    print(f"Logit attributions completed in {time.time() - phase_start:.2f}s")
     logger.info(f"Logit attributions completed in {time.time() - phase_start:.2f}s")
 
     # ========== Phase 4: feature attribution（按 side） ==========
     logger.info("Phase 4: Computing feature attributions")
+    print("Phase 4: Computing feature attributions")
+    phase_start = time.time()
 
     # 逐层均值（用于 encoder_demean）
     with torch.no_grad():
@@ -2179,19 +2184,19 @@ def _run_attribution(
             if at is not None and at > act_times_max:
                 allow_mask[gid] = False
         
-        print(f'LoRSA features: {lorsa_activation_matrix._nnz()} (filtered by max_activation_times)')
-        print(f'TC features: {tc_activation_matrix._nnz()} (filtered by max_activation_times)')
+        # print(f'LoRSA features: {lorsa_activation_matrix._nnz()} (filtered by max_activation_times)')
+        # print(f'TC features: {tc_activation_matrix._nnz()} (filtered by max_activation_times)')
     
     # 打印统计信息
     lorsa_kept = allow_mask[:lorsa_activation_matrix._nnz()].sum().item()
     tc_kept = allow_mask[lorsa_activation_matrix._nnz():].sum().item()
-    print(f'Features kept: LORSA={lorsa_kept}/{lorsa_activation_matrix._nnz()}, TC={tc_kept}/{tc_activation_matrix._nnz()}')
+    # print(f'Features kept: LORSA={lorsa_kept}/{lorsa_activation_matrix._nnz()}, TC={tc_kept}/{tc_activation_matrix._nnz()}')
     # print(f'{allow_mask = }')
     # 一些打印信息
     masked_idx = (~allow_mask).nonzero(as_tuple=True)[0]          # LongTensor
     num_masked = masked_idx.numel()
 
-    print(f"not allow feature idx: {((~allow_mask).nonzero(as_tuple=True)[0]).tolist()}")
+    # print(f"not allow feature idx: {((~allow_mask).nonzero(as_tuple=True)[0]).tolist()}")
     # if num_masked > 0:
     #     # 2) 保证下标和索引目标在同一 device
     #     if masked_idx.device != tc_feat_layer.device:
@@ -2315,6 +2320,7 @@ def _run_attribution(
 
             return tc_activation_matrix.values()[local_idx] - bias_val
 
+    print("go into feature attribution loop")
     fa_result = run_feature_attribution(
         side=side,
         ctx=ctx,
@@ -2342,7 +2348,12 @@ def _run_attribution(
         order_mode = order_mode,
     )
 
+    print(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
+    logger.info(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
+
     # ========== Phase 5: 打包（每个 side） ==========
+    print("Phase 5: Packaging")
+    phase_start = time.time()
     def package_side(
         visited: torch.Tensor,
         edge_matrix: torch.Tensor,
@@ -2451,6 +2462,9 @@ def _run_attribution(
             "max_feature_rows": int(allowed_rows_available),
             "filtered_feature_cols": int(selected_features.numel()),
         }
+
+        print(f"Packaging completed in {time.time() - phase_start:.2f}s")
+        logger.info(f"Packaging completed in {time.time() - phase_start:.2f}s")
 
         # 处理move_idx，根据side提取对应的位置信息
         side_move_positions = None

@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import io
 from functools import lru_cache
-from typing import Any, Optional, Tuple, List, Dict
+from typing import Any, Optional
 
 import msgpack
 import numpy as np
@@ -183,9 +183,11 @@ def trim_minimum(
     if has_fen_data:
         # 对于国际象棋模型，强制最小长度为64（棋盘格子数）
         min_length = max(64, feature_acts_indices[-1] + 10)
+        print(f"🔍 检测到国际象棋模型（通过FEN数据），强制最小长度: {min_length}")
     else:
         # 对于其他模型，使用原有逻辑
         min_length = min(len(origins), feature_acts_indices[-1] + 10)
+        print(f"🔍 通用模型，计算最小长度: {min_length}")
     
     feature_acts_indices_mask = feature_acts_indices <= min_length
     return origins[:int(min_length)], feature_acts_indices[feature_acts_indices_mask], feature_acts_values[feature_acts_indices_mask]
@@ -367,6 +369,16 @@ def get_feature(
             # 对于国际象棋模型，创建长度为64的密集激活数组
             dense_feature_acts = np.zeros(64)
             
+            # 添加调试信息
+            print(f"🔍 处理国际象棋模型数据:")
+            print(f"   - 模型名称: {model_name}")
+            print(f"   - 数据集名称: {dataset_name}")
+            print(f"   - 检测方式: {'FEN数据' if has_fen_data else '模型/数据集名称'}")
+            print(f"   - feature_acts_indices shape: {feature_acts_indices.shape}")
+            print(f"   - feature_acts_values shape: {feature_acts_values.shape}")
+            print(f"   - 前几个索引: {feature_acts_indices[:5] if len(feature_acts_indices) > 0 else 'empty'}")
+            print(f"   - 前几个值: {feature_acts_values[:5] if len(feature_acts_values) > 0 else 'empty'}")
+            
             # 强制类型
             feature_acts_indices = np.asarray(feature_acts_indices, dtype=np.int64)
             feature_acts_values = np.asarray(feature_acts_values, dtype=np.float32)
@@ -397,9 +409,19 @@ def get_feature(
                     # 如果完全没有FEN信息，创建一个默认的
                     data["fen"] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
             
+            print(f" 国际象棋模型: 创建64长度激活数组，非零激活数: {np.count_nonzero(dense_feature_acts)}")
+            print(f" FEN数据: {data.get('fen', 'Not found')[:50]}...")
         else:
             # 对于其他模型，使用原有逻辑
             dense_feature_acts = np.zeros(len(origins))
+            
+            # 添加调试信息
+            print(f"🔍 处理通用模型数据:")
+            print(f"   - 模型名称: {model_name}")
+            print(f"   - 数据集名称: {dataset_name}")
+            print(f"   - feature_acts_indices shape: {feature_acts_indices.shape}")
+            print(f"   - feature_acts_values shape: {feature_acts_values.shape}")
+            print(f"   - origins length: {len(origins)}")
             
             for i, (idx, val) in enumerate(zip(feature_acts_indices, feature_acts_values)):
                 try:
@@ -422,9 +444,14 @@ def get_feature(
                     # 检查索引范围
                     if 0 <= idx < len(origins):
                         dense_feature_acts[idx] = val
+                    else:
+                        print(f"⚠️ 索引 {idx} 超出范围 [0, {len(origins)})，跳过")
                         
-                except (ValueError, TypeError, IndexError):
+                except (ValueError, TypeError, IndexError) as e:
+                    print(f"⚠️ 处理索引 {idx} 和值 {val} 时出错: {e}")
                     continue
+            
+            print(f"🔍 通用模型: 创建{len(origins)}长度激活数组，非零激活数: {np.count_nonzero(dense_feature_acts)}")
 
         # Process text data if present
         if "text" in data:
@@ -439,6 +466,19 @@ def get_feature(
         # 对于国际象棋模型，使用FEN作为文本
         if is_chess_model:
             data["text"] = data.get("fen", "No FEN data")
+
+        # 打印 z_pattern 的形状与前几项
+        print(f"   - z_pattern_indices shape: {z_pattern_indices.shape if z_pattern_indices is not None else 'None'}")
+        print(f"   - z_pattern_values shape: {z_pattern_values.shape if z_pattern_values is not None else 'None'}")
+
+        if z_pattern_indices is not None and z_pattern_values is not None and z_pattern_values.size > 0:
+            n_head = min(5, z_pattern_values.shape[0])
+            if z_pattern_indices.ndim == 2:
+                z_head_idx = z_pattern_indices[:, :n_head].T.tolist()  # 例如 [ [i,j], ... ]
+            else:
+                z_head_idx = z_pattern_indices[:n_head].tolist()
+            print(f"   - z 前几个索引: {z_head_idx}")
+            print(f"   - z 前几个值: {np.round(z_pattern_values[:n_head], 6).tolist()}")
 
         return {
             **data,
@@ -466,9 +506,29 @@ def get_feature(
         
         TODO: This is really ugly, we should find a better way to do this.
         """
+        # 添加详细的原始数据结构调试
+        print(f"🔍 原始数据结构调试:")
+        print(f"   - feature_acts_indices shape: {feature_acts_indices.shape}")
+        print(f"   - feature_acts_values shape: {feature_acts_values.shape}")
+        print(f"   - z_pattern_indices shape: {z_pattern_indices.shape if z_pattern_indices is not None else 'None'}")
+        print(f"   - z_pattern_values shape: {z_pattern_values.shape if z_pattern_values is not None else 'None'}")
+        if z_pattern_indices is None or z_pattern_values is None:
+            print("   - 说明: z_pattern 为空（对 transcoder 分析属正常情况）")
+        
         # 分析第一维的唯一值（样本数量）
         if feature_acts_indices.size == 0 or feature_acts_indices.shape[1] == 0:
+            print("   - feature_acts 无样本（空稀疏索引）")
             return
+        unique_samples = np.unique(feature_acts_indices[0])
+        print(f"   - feature_acts 第一维唯一值: {len(unique_samples)} 个样本")
+        if unique_samples.size > 0:
+            print(f"   - feature_acts 样本范围: {unique_samples.min()} 到 {unique_samples.max()}")
+        
+        if z_pattern_indices is not None and z_pattern_indices.size > 0 and z_pattern_indices.shape[1] > 0:
+            unique_z_samples = np.unique(z_pattern_indices[0])
+            print(f"   - z_pattern 第一维唯一值: {len(unique_z_samples)} 个样本")
+            if unique_z_samples.size > 0:
+                print(f"   - z_pattern 样本范围: {unique_z_samples.min()} 到 {unique_z_samples.max()}")
  
         _, feature_acts_counts = np.unique(
             feature_acts_indices[0],
@@ -499,6 +559,7 @@ def get_feature(
             )
             # 长度不匹配时，退化为 None 区间
             if len(feature_acts_sample_ranges) != len(z_pattern_sample_ranges):
+                print("❌ 数据不匹配：使用 feature_acts 长度对齐 z_pattern")
                 z_pattern_sample_ranges = [(None, None)] * len(feature_acts_sample_ranges)
         else:
             # z_pattern 为空时，构造等长的 None 区间占位
@@ -509,6 +570,30 @@ def get_feature(
             feature_acts_values_i = feature_acts_values[feature_acts_start:feature_acts_end]
             z_pattern_indices_i = z_pattern_indices[1:, z_pattern_start:z_pattern_end] if z_pattern_indices is not None else None
             z_pattern_values_i = z_pattern_values[z_pattern_start:z_pattern_end] if z_pattern_values is not None else None
+            
+            # 稀疏 z_pattern 每样本完整打印
+            if z_pattern_indices_i is not None and z_pattern_values_i is not None:
+                nnz_z = z_pattern_values_i.shape[0]
+                print(f"🧪 z_pattern sample: nnz={nnz_z}")
+                if nnz_z > 0:
+                    if z_pattern_indices_i.ndim == 2:
+                        # 例如形状 [2, N]，逐列即每个坐标
+                        z_all_idx = z_pattern_indices_i.T.tolist()
+                    else:
+                        # 例如形状 [N]
+                        z_all_idx = z_pattern_indices_i.tolist()
+                    z_all_val = z_pattern_values_i.tolist()
+
+                    # 分别打印所有索引与所有值
+                    print(f"   z all idx: {z_all_idx}")
+                    print(f"   z all val: {z_all_val}")
+
+                    # 若你想按"(idx, val)"配对一起打印（更直观），可用：
+                    if z_pattern_indices_i.ndim == 2:
+                        z_pairs = list(zip(z_all_idx, z_all_val))  # [([i,j], val), ...]
+                    else:
+                        z_pairs = list(zip(z_all_idx, z_all_val))  # [(i, val), ...]
+                    print(f"   z pairs: {z_pairs}")
 
             yield feature_acts_indices_i, feature_acts_values_i, z_pattern_indices_i, z_pattern_values_i
 
@@ -548,6 +633,13 @@ def get_feature(
                 }
             )
         except Exception as e:
+            print(f"❌ 处理sampling '{sampling.name}' 时出错:")
+            print(f"   - 错误类型: {type(e).__name__}")
+            print(f"   - 错误信息: {str(e)}")
+            import traceback
+            print(f"   - 详细堆栈:")
+            traceback.print_exc()
+            
             # 返回400错误响应
             return Response(
                 content=f"处理sampling '{sampling.name}' 时出错: {str(e)}", 
@@ -736,27 +828,267 @@ def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = N
         return Response(content="Bookmark not found", status_code=404)
 
 
-# 在play_game接口后添加局面分析接口
-@app.post("/analyze/board")
-def analyze_board(request: dict):
-    """使用HookedTransformer模型分析当前局面，并返回行棋方胜率、和棋率及对方胜率"""
+@app.post("/analyze/stockfish")
+def analyze_stockfish(request: dict):
+    """使用 Stockfish 分析国际象棋位置
+    
+    Args:
+        request: 包含 FEN 字符串的请求体
+        
+    Returns:
+        Stockfish 分析结果
+    """
+    try:
+        fen = request.get("fen")
+        if not fen:
+            return Response(content="FEN string is required", status_code=400)
+        
+        # 验证 FEN 格式（基本检查）
+        parts = fen.split()
+        if len(parts) < 4:
+            return Response(content="Invalid FEN format", status_code=400)
+        
+        # 检查 Stockfish 是否可用
+        try:
+            result = subprocess.run(
+                ["stockfish", "--version"], 
+                capture_output=True, 
+                text=True, 
+                timeout=5
+            )
+            if result.returncode != 0:
+                return Response(content="Stockfish not available", status_code=503)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return Response(content="Stockfish not found or not responding", status_code=503)
+        
+        # 创建临时文件用于 Stockfish 输入
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+            f.write(f"position fen {fen}\n")
+            f.write("go depth 15\n")
+            f.write("quit\n")
+            temp_file = f.name
+        
+        try:
+            # 运行 Stockfish 分析
+            result = subprocess.run(
+                ["stockfish"],
+                stdin=open(temp_file, 'r'),
+                capture_output=True,
+                text=True,
+                timeout=30  # 30秒超时
+            )
+            
+            if result.returncode != 0:
+                return Response(content=f"Stockfish analysis failed: {result.stderr}", status_code=500)
+            
+            # 解析 Stockfish 输出
+            output_lines = result.stdout.strip().split('\n')
+            
+            # 提取最佳走法
+            best_move = None
+            ponder = None
+            evaluation = None
+            depth = None
+            nodes = None
+            
+            for line in output_lines:
+                if line.startswith('bestmove'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        best_move = parts[1]
+                    if len(parts) >= 4 and parts[2] == 'ponder':
+                        ponder = parts[3]
+                elif 'info' in line and 'depth' in line:
+                    # 解析评估信息
+                    info_parts = line.split()
+                    for i, part in enumerate(info_parts):
+                        if part == 'depth' and i + 1 < len(info_parts):
+                            depth = int(info_parts[i + 1])
+                        elif part == 'score' and i + 1 < len(info_parts):
+                            if info_parts[i + 1] == 'cp':
+                                evaluation = int(info_parts[i + 2]) / 100.0  # 转换为兵值
+                            elif info_parts[i + 1] == 'mate':
+                                evaluation = float('inf') if int(info_parts[i + 2]) > 0 else float('-inf')
+                        elif part == 'nodes' and i + 1 < len(info_parts):
+                            nodes = int(info_parts[i + 1])
+            
+            # 计算胜率（基于评估值）
+            wdl = None
+            if evaluation is not None and evaluation != float('inf') and evaluation != float('-inf'):
+                # 使用简单的 sigmoid 函数估算胜率
+                import math
+                win_prob = 1 / (1 + math.exp(-evaluation / 0.7))
+                draw_prob = 0.1  # 简化假设
+                loss_prob = 1 - win_prob - draw_prob
+                
+                wdl = {
+                    "winProb": max(0, min(1, win_prob)),
+                    "drawProb": max(0, min(1, draw_prob)),
+                    "lossProb": max(0, min(1, loss_prob))
+                }
+            
+            # 检查将军状态
+            is_check = False
+            if 'check' in result.stdout.lower():
+                is_check = True
+            
+            # 计算物质力量（简化版本）
+            material = {
+                "white_material": 0,
+                "black_material": 0
+            }
+            
+            # 从 FEN 中计算物质力量
+            board_part = fen.split()[0]
+            piece_values = {
+                'p': 1, 'n': 3, 'b': 3, 'r': 5, 'q': 9, 'k': 0,
+                'P': 1, 'N': 3, 'B': 3, 'R': 5, 'Q': 9, 'K': 0
+            }
+            
+            for char in board_part:
+                if char in piece_values:
+                    if char.isupper():
+                        material["white_material"] += piece_values[char]
+                    else:
+                        material["black_material"] += piece_values[char]
+            
+            response_data = {
+                "status": "success",
+                "fen": fen,
+                "bestMove": best_move,
+                "ponder": ponder,
+                "evaluation": evaluation,
+                "depth": depth,
+                "nodes": nodes,
+                "wdl": wdl,
+                "isCheck": is_check,
+                "material": material,
+                "rules": "Standard chess rules apply"
+            }
+            
+            return response_data
+            
+        finally:
+            # 清理临时文件
+            if os.path.exists(temp_file):
+                os.unlink(temp_file)
+                
+    except subprocess.TimeoutExpired:
+        return Response(content="Stockfish analysis timeout", status_code=504)
+    except Exception as e:
+        return Response(content=f"Analysis error: {str(e)}", status_code=500)
+
+
+# 在文件末尾添加 LC0Engine 类和新的后端接口 /play_game
+
+class LC0Engine:
+    """简化版 LC0 模型引擎包装器，用于与模型对战"""
+    def __init__(self, model):
+        self.model = model
+        self.model.eval()
+
+    def play(self, chess_board):
+        try:
+            # 使用 notebook 同款接口进行推理
+            fen = chess_board.fen()
+            print(f"🔍 处理FEN: {fen}")
+
+            with torch.no_grad():
+                output, cache = self.model.run_with_cache(fen, prepend_bos=False)
+                
+                # LC0模型输出格式：outputs[0]是策略，outputs[1]是价值，outputs[2]是MLH
+                if isinstance(output, (list, tuple)) and len(output) >= 1:
+                    policy_output = output[0]  # 形状应该是 (1, 1858)
+                else:
+                    policy_output = output
+
+                # 取策略输出的logits，形状应该是 (1858,)
+                if policy_output.dim() == 2:
+                    policy_logits = policy_output[0]  # 从 (1, 1858) 取出 (1858,)
+                else:
+                    policy_logits = policy_output
+
+            legal_moves = list(chess_board.legal_moves)
+            legal_uci_set = set(move.uci() for move in legal_moves)
+            sorted_token_ids = torch.argsort(policy_logits, descending=True)
+
+            # 使用 LC0 映射将索引转换为 UCI
+            try:
+                mapping_index = get_mapping_index(chess_board)
+                idx_to_uci = idx_to_uci_mappings[mapping_index]
+            except Exception as e:
+                print(f"❌ 获取LC0映射失败: {e}")
+                idx_to_uci = {}
+
+            print("🔍 模型输出调试信息:")
+            print(f"   - policy_logits shape: {tuple(policy_logits.shape)}")
+            print(f"   - 合法移动数量: {len(legal_moves)}")
+            
+            # 打印前10个最高概率的 UCI 及其logit
+            top10 = []
+            for idx in sorted_token_ids[:10].tolist():
+                uci = idx_to_uci.get(idx)
+                logit = float(policy_logits[idx].item())
+                top10.append((uci, logit))
+            print("   - 前10个最高概率move (uci, logit):")
+            print("     " + ", ".join([f"{uci if uci is not None else 'None'}:{logit:.4f}" for uci, logit in top10]))
+
+            # 依次尝试最高概率索引对应的 UCI，选择第一个合法移动
+            for rank, idx in enumerate(sorted_token_ids.tolist(), start=1):
+                uci = idx_to_uci.get(idx)
+                if not uci:
+                    continue
+                if uci in legal_uci_set:
+                    move = chess.Move.from_uci(uci)
+                    print(f"✅ 选择最大概率合法移动: {uci} (概率排名: {rank}, logit: {policy_logits[idx].item():.4f})")
+                    return move
+
+            # 如果未找到合法移动，打印报错并抛异常
+            print("❌ 错误：模型未能找到任何合法移动！")
+            print(f"   - 当前局面 FEN: {fen}")
+            print(f"   - 示例合法移动: {[m.uci() for m in legal_moves[:10]]}")
+            print(f"   - 尝试了前 {min(len(sorted_token_ids), 50)} 个最高概率的token")
+            raise ValueError("模型未能找到任何合法移动")
+
+        except Exception as e:
+            print(f"❌ LC0Engine.play() 出错: {e}")
+            raise e
+
+
+@app.post("/play_game")
+def play_game(request: dict):
+    """
+    与模型对战：输入当前局面 FEN，返回模型建议的下一步移动 (UCI 格式)
+    """
     fen = request.get("fen")
     if not fen:
-        raise HTTPException(status_code=400, detail="FEN字符串不能为空")
+        raise HTTPException(status_code=400, detail="FEN 字符串不能为空")
+    
     try:
-        if not HOOKED_TRANSFORMER_AVAILABLE:
-            raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
-        model = get_hooked_model()
-        with torch.no_grad():
-            output, _ = model.run_with_cache(fen, prepend_bos=False)
-        # 假设output[1]为形状(1,3)的张量，表示[行棋方胜率, 和棋率, 对方胜率]
-        if output[1].dim() == 2:
-            evaluation = output[1].tolist()[0]
-        else:
-            evaluation = output[1].tolist()
-        return {"evaluation": evaluation}
+        board = chess.Board(fen)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"局面分析出错: {str(e)}")
+        raise HTTPException(status_code=400, detail="无效的 FEN 字符串")
+    
+    try:
+        # 检查HookedTransformer是否可用
+        if not HOOKED_TRANSFORMER_AVAILABLE:
+            print("❌ 错误：HookedTransformer不可用")
+            raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
+        
+        # 使用缓存模型（仅首次加载）
+        model = get_hooked_model()
+        
+        # 创建引擎并获取移动（不做随机回退）
+        engine = LC0Engine(model)
+        move = engine.play(board)
+        return {"move": move.uci()}
+        
+    except ValueError as e:
+        print(f"❌ 模型找不到合法移动: {e}")
+        raise HTTPException(status_code=400, detail=f"模型找不到合法移动: {str(e)}")
+    except Exception as e:
+        print(f"❌ 处理移动时出错: {e}")
+        raise HTTPException(status_code=500, detail=f"处理移动时出错: {str(e)}")
 
 
 app.add_middleware(
@@ -826,10 +1158,13 @@ def circuit_trace(request: dict):
         encoder_demean = request.get("encoder_demean", False)
         save_activation_info = request.get("save_activation_info", False)
         
-        # 获取已缓存的HookedTransformer模型
-        hooked_model = get_hooked_model()
+        print(f"🔍 开始circuit trace分析:")
+        print(f"   - FEN: {fen}")
+        print(f"   - Move UCI: {move_uci}")
+        print(f"   - Side: {side}")
+        print(f"   - Max feature nodes: {max_feature_nodes}")
         
-        # 运行circuit trace，传递已缓存的模型
+        # 运行circuit trace
         graph_data = run_circuit_trace(
             prompt=fen,
             move_uci=move_uci,
@@ -843,13 +1178,14 @@ def circuit_trace(request: dict):
             order_mode=order_mode,
             encoder_demean=encoder_demean,
             save_activation_info=save_activation_info,
-            log_level="INFO",
-            hooked_model=hooked_model  # 传递已缓存的模型
+            log_level="INFO"
         )
         
+        print(f"✅ Circuit trace分析完成，返回graph数据")
         return graph_data
         
     except Exception as e:
+        print(f"❌ Circuit trace分析出错: {e}")
         raise HTTPException(status_code=500, detail=f"Circuit trace analysis failed: {str(e)}")
 
 

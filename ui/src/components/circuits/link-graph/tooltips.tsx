@@ -79,8 +79,12 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
 
       // 追加来源文件信息（如果有）
       if (hoveredNode.sourceFiles && hoveredNode.sourceFiles.length) {
-        const files = hoveredNode.sourceFiles.join(', ');
-        tooltipText = `${tooltipText} | Source: ${files}`;
+        const nodeType = (hoveredNode.feature_type || '').toLowerCase();
+        // 对于 logit 和 embedding 节点，不显示来源文件信息
+        if (nodeType !== 'logit' && nodeType !== 'embedding') {
+          const files = hoveredNode.sourceFiles.join(', ');
+          tooltipText = `${tooltipText} | Source: ${files}`;
+        }
       }
  
       // Calculate tooltip dimensions based on text content

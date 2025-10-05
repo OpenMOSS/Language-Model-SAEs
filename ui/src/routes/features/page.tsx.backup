@@ -63,8 +63,7 @@ const AnalysisChessBoard = ({
   contextId,
   delayMs = 0,
   autoAnalyze = true,
-  globalAnalysisCollapsed = false,
-  autoFlipWhenBlack = false
+  globalAnalysisCollapsed = false
 }: {
   fen: string;
   activations?: number[];
@@ -76,7 +75,6 @@ const AnalysisChessBoard = ({
   delayMs?: number;
   autoAnalyze?: boolean;
   globalAnalysisCollapsed?: boolean;
-  autoFlipWhenBlack?: boolean;
 }) => {
   // 生成唯一的分析状态键
   const analysisKey = `${fen}_${sampleIndex}_${contextId}`;
@@ -111,12 +109,12 @@ const AnalysisChessBoard = ({
       
       const analyzePosition = async () => {
         try {
-          console.log(`📡 发送HookTransformer请求 for ${fen.substring(0, 20)}...`);
+          console.log(`📡 发送Stockfish请求 for ${fen.substring(0, 20)}...`);
           
-          const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/board`, {
+          const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/stockfish`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fen })
+            body: JSON.stringify({ fen }),
           });
 
           if (!response.ok) {
@@ -125,13 +123,23 @@ const AnalysisChessBoard = ({
 
           const result = await response.json();
           
-          console.log(`✅ 收到HookTransformer结果 for ${fen.substring(0, 20)}...`, result);
+          console.log(`✅ 收到结果 for ${fen.substring(0, 20)}...`, {
+            bestMove: result.best_move || result.bestMove,
+            status: result.status
+          });
           
-          // 假设result格式为: { evaluation: [win, draw, loss] }
+          // 规范化结果
           const normalizedResult = {
-            status: 'success',
-            evaluation: result.evaluation,
-            fen: fen
+            ...result,
+            bestMove: result.best_move || result.bestMove,
+            ponder: result.ponder,
+            status: result.status || 'success',
+            error: result.error,
+            fen: result.fen || fen,
+            isCheck: result.is_check || result.isCheck,
+            rules: result.rules,
+            material: result.material,
+            wdl: result.wdl
           };
           
           setStockfishAnalysis(normalizedResult);
@@ -192,7 +200,6 @@ const AnalysisChessBoard = ({
         sampleIndex={sampleIndex}
         analysisName={analysisName}
         contextId={contextId}
-        autoFlipWhenBlack={autoFlipWhenBlack}
       />
       
       {/* 分析状态卡片 */}
@@ -223,23 +230,58 @@ const AnalysisChessBoard = ({
             ) : stockfishAnalysis?.status === 'success' ? (
               <div className="text-green-700">
                 <div className="mb-2">✅ 分析完成</div>
-                {stockfishAnalysis.evaluation && (
+                
+                {/* 最佳走法 */}
+                {stockfishAnalysis.bestMove && (
+                  <div className="text-blue-700 text-xs mb-1">
+                    <strong>最佳走法:</strong> {stockfishAnalysis.bestMove}
+                  </div>
+                )}
+                
+                {/* 预想走法 */}
+                {stockfishAnalysis.ponder && (
+                  <div className="text-blue-600 text-xs mb-1">
+                    <strong>预想走法:</strong> {stockfishAnalysis.ponder}
+                  </div>
+                )}
+                
+                {/* WDL 胜率信息 */}
+                {wdlData && (
                   <div className="mt-2 p-2 bg-blue-50 rounded">
                     <div className="text-xs font-medium text-blue-800 mb-1">胜率分析:</div>
                     <div className="grid grid-cols-3 gap-1 text-xs">
                       <div className="text-center">
-                        <div className="text-green-600 font-bold">{(stockfishAnalysis.evaluation[0] * 100).toFixed(1)}%</div>
+                        <div className="text-green-600 font-bold">{wdlData.winProb}%</div>
                         <div className="text-gray-500">胜</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-gray-600 font-bold">{(stockfishAnalysis.evaluation[1] * 100).toFixed(1)}%</div>
+                        <div className="text-gray-600 font-bold">{wdlData.drawProb}%</div>
                         <div className="text-gray-500">和</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-red-600 font-bold">{(stockfishAnalysis.evaluation[2] * 100).toFixed(1)}%</div>
+                        <div className="text-red-600 font-bold">{wdlData.lossProb}%</div>
                         <div className="text-gray-500">负</div>
                       </div>
                     </div>
+                  </div>
+                )}
+                
+                {/* 物质力量信息 */}
+                {stockfishAnalysis.material && (
+                  <div className="mt-2 p-2 bg-green-50 rounded">
+                    <div className="text-xs font-medium text-green-800 mb-1">物质力量:</div>
+                    <div className="text-xs">
+                      <div>白方: {stockfishAnalysis.material.white_material || 0}</div>
+                      <div>黑方: {stockfishAnalysis.material.black_material || 0}</div>
+                      <div>差值: {(stockfishAnalysis.material.white_material || 0) - (stockfishAnalysis.material.black_material || 0)}</div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* 将军状态 */}
+                {stockfishAnalysis.isCheck && (
+                  <div className="mt-1 text-red-600 text-xs font-bold">
+                    ⚠️ 将军状态
                   </div>
                 )}
               </div>
@@ -736,7 +778,6 @@ export const FeaturesPage = () => {
                               delayMs={validFENFound * 1000} // 每个棋盘延迟1秒分析，避免同时请求
                               autoAnalyze={globalAnalysisEnabled}
                               globalAnalysisCollapsed={globalAnalysisCollapsed}
-                              autoFlipWhenBlack={true}
                             />
                           );
                           
