@@ -2,7 +2,8 @@ import einops
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes import CrossLayerTranscoder, LowRankSparseAttention
+from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.backend import LanguageModel
 from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.config import DirectLogitAttributorConfig

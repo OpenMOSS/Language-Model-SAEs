@@ -36,7 +36,7 @@ from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.logging import get_distributed_logger
 
-from . import PostAnalysisProcessor, register_post_analysis_processor
+from .base import PostAnalysisProcessor, register_post_analysis_processor
 
 logger = get_distributed_logger("lorsa_post_analysis")
 

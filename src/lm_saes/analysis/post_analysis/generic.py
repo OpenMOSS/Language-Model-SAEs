@@ -13,7 +13,7 @@ from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 
-from . import PostAnalysisProcessor, register_post_analysis_processor
+from .base import PostAnalysisProcessor, register_post_analysis_processor
 
 
 class GenericPostAnalysisProcessor(PostAnalysisProcessor):

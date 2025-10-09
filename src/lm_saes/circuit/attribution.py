@@ -32,7 +32,8 @@ from einops import einsum
 from tqdm import tqdm
 from transformer_lens.hook_points import HookPoint
 
-from lm_saes import CrossLayerTranscoder, LowRankSparseAttention
+from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.lorsa import LowRankSparseAttention
 
 from ..utils.logging import get_distributed_logger
 from .graph import Graph

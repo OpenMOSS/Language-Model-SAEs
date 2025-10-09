@@ -714,9 +714,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             # Lp loss calculation: λ_P * Σ_i ReLU(exp(t) - f_i(x)) ||W_{d,i}||_2
             if lp_coefficient > 0.0 and isinstance(self.activation_function, JumpReLU):
                 with timer.time("lp_loss_calculation"):
-                    # ReLU(exp(lp_threshold) - feature_acts) * decoder_norm
+                    # ReLU(exp(lp_threshold) - hidden_pre) * decoder_norm
                     jumprelu_threshold = self.activation_function.get_jumprelu_threshold()
-                    l_p = torch.nn.functional.relu(jumprelu_threshold - feature_acts) * self.decoder_norm()
+                    l_p = torch.nn.functional.relu(jumprelu_threshold - hidden_pre) * self.decoder_norm()
                     l_p = l_p.sum(dim=-1)
                     if isinstance(l_p, DTensor):
                         l_p = l_p.full_tensor()
