@@ -16,7 +16,7 @@ from lm_saes.crosscoder import CrossCoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap
 
-from . import PostAnalysisProcessor, register_post_analysis_processor
+from .base import PostAnalysisProcessor, register_post_analysis_processor
 
 
 class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):

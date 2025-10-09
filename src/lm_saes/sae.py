@@ -298,6 +298,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
         if self.cfg.sparsity_include_decoder_norm:
             feature_acts = feature_acts / self.decoder_norm()
+            hidden_pre = hidden_pre / self.decoder_norm()
 
         if return_hidden_pre:
             return feature_acts, hidden_pre
@@ -413,9 +414,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         label = batch[self.cfg.hook_point_out]
         return label
-
-    def get_parameters(self) -> list[dict[str, Any]]:
-        return [{"params": self.parameters()}]
 
     @override
     @torch.no_grad()

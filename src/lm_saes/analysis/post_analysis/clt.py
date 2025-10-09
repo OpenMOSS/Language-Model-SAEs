@@ -14,7 +14,7 @@ from lm_saes.activation.factory import ActivationFactory
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 
-from . import PostAnalysisProcessor, register_post_analysis_processor
+from .base import PostAnalysisProcessor, register_post_analysis_processor
 
 
 class CLTPostAnalysisProcessor(PostAnalysisProcessor):
