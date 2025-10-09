@@ -1,21 +1,74 @@
+import itertools
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Tuple, cast
+from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, cast
 
 import torch
 from safetensors.torch import load_file
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
-from torch.utils.data import DataLoader, Dataset
-from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import DataLoader, Dataset, Sampler
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import all_gather_dict, is_master
 from lm_saes.utils.tensor_dict import move_dict_of_tensor_to_device
+
+
+class DistributedSampler(Sampler[Any]):
+    def __init__(
+        self,
+        dataset: Dataset,
+        chunk_to_index: dict[int, dict[str, int]],
+        device_mesh: DeviceMesh,
+    ) -> None:
+        self.dataset = dataset
+        self.chunk_to_index = chunk_to_index
+        self.device_mesh = device_mesh
+        self.n_samples = self._compute_n_samples()
+
+    def _compute_n_samples(self) -> int:
+        n_chunks = len(self.chunk_to_index)
+        n_hook_points = len(next(iter(self.chunk_to_index.values())))
+
+        dp_size = self.device_mesh.get_group("data").size()
+        tp_size = self.device_mesh.get_group("model").size()
+
+        # Min chunk unit is decided by how many iterations are required to collect exact all hook points of some chunks in tensor parallel.
+        min_chunk_unit = dp_size * tp_size // math.gcd(n_hook_points, tp_size)
+        n_samples_total = n_chunks // min_chunk_unit * min_chunk_unit * n_hook_points
+        n_samples_local = n_samples_total // dp_size // tp_size
+        return n_samples_local
+
+    def __iter__(self) -> Iterator[Any]:
+        n_chunks = len(self.chunk_to_index)
+        n_hook_points = len(next(iter(self.chunk_to_index.values())))
+
+        dp_size = self.device_mesh.get_group("data").size()
+        tp_size = self.device_mesh.get_group("model").size()
+
+        min_chunk_unit = dp_size * tp_size // math.gcd(n_hook_points, tp_size)
+        n_chunks_effective = n_chunks // min_chunk_unit * min_chunk_unit
+        # First assign chunks based on data groups to ensure each data group own self-contained chunks.
+        chunks = list(self.chunk_to_index.keys())[
+            self.device_mesh.get_group("data").rank() : n_chunks_effective : dp_size
+        ]
+
+        # In the local dp group: concat all chunks and assign chunks to model groups.
+        indices = list(itertools.chain.from_iterable([list(self.chunk_to_index[k].values()) for k in chunks]))[
+            self.device_mesh.get_group("model").rank() :: tp_size
+        ]
+
+        assert len(indices) == self.n_samples, f"len(indices) {len(indices)} != self.n_samples {self.n_samples}"
+
+        return iter(indices)
+
+    def __len__(self) -> int:
+        return self.n_samples
 
 
 @dataclass
@@ -176,7 +229,30 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         else:
             raise ValueError(f"Invalid chunk file format: {chunk_path}. Expected .safetensors or .pt")
 
-    def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]], num_chunks: int) -> Iterator[dict[str, Any]]:
+    def _build_chunk_index_mappings(
+        self, hook_chunks: dict[str, list[ChunkInfo]]
+    ) -> tuple[dict[int, dict[str, int]], dict[int, tuple[int, str]]]:
+        """Build index mappings between chunks and global indices."""
+        num_chunks = len(next(iter(hook_chunks.values())))
+        hook_points = list(hook_chunks.keys())
+        num_hook_points = len(hook_points)
+
+        index_to_chunk = {
+            chunk_idx * num_hook_points + hook_idx: (chunk_idx, hook_points[hook_idx])
+            for chunk_idx in range(num_chunks)
+            for hook_idx in range(num_hook_points)
+        }
+
+        chunk_to_index = {
+            chunk_idx: {
+                hook_points[hook_idx]: chunk_idx * num_hook_points + hook_idx for hook_idx in range(num_hook_points)
+            }
+            for chunk_idx in range(num_chunks)
+        }
+
+        return chunk_to_index, index_to_chunk
+
+    def _process_chunks(self, hook_chunks: dict[str, list[ChunkInfo]]) -> Iterator[dict[str, Any]]:
         """Process chunks using the appropriate method based on distributed setting.
 
         Args:
@@ -186,10 +262,11 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         Returns:
             Iterator over chunk data
         """
+        chunk_to_index, index_to_chunk = self._build_chunk_index_mappings(hook_chunks)
         cached_activation_dataset = CachedActivationDataset(
             self,
             hook_chunks,
-            num_chunks,
+            index_to_chunk,
         )
         dataloader = DataLoader(
             cached_activation_dataset,
@@ -201,12 +278,10 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             collate_fn=first_data_collate_fn,
             sampler=DistributedSampler(
                 cached_activation_dataset,
-                num_replicas=self.device_mesh.get_group("model").size(),
-                rank=self.device_mesh.get_group("model").rank(),
-                shuffle=False,
-                drop_last=True,
+                chunk_to_index,
+                self.device_mesh,
             )
-            if self.device_mesh is not None  # abundant condition to make mypy happy
+            if self.device_mesh is not None
             else None,
         )
 
@@ -257,11 +332,9 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 "All hook points must have the same number of chunks."
             )
 
-        num_chunks = len(hook_chunks[list(self.cache_dirs.keys())[0]]) if hook_chunks else 0
-
         # Group data by chunk_idx to maintain the same output structure
         chunk_buffer: dict[int, dict[str, Any]] = {}
-        stream = self._process_chunks(hook_chunks, num_chunks)
+        stream = self._process_chunks(hook_chunks)
 
         for single_hook_data in stream:
             chunk_idx = single_hook_data["chunk_idx"]
@@ -326,24 +399,17 @@ class CachedActivationDataset(Dataset):
         self,
         activation_loader: CachedActivationLoader,
         hook_chunks: dict[str, list[ChunkInfo]],
-        num_chunks: int,
+        index_to_chunk: dict[int, tuple[int, str]],
     ):
         self.activation_loader = activation_loader
         self.hook_chunks = hook_chunks
-        self.num_chunks = num_chunks
-        self.hook_points = list(hook_chunks.keys())
-
-        # Create index mapping: (chunk_idx, hook_point) -> dataset_idx
-        self.index_mapping: list[Tuple[int, str]] = []
-        for chunk_idx in range(num_chunks):
-            for hook_point in self.hook_points:
-                self.index_mapping.append((chunk_idx, hook_point))
+        self.index_to_chunk = index_to_chunk
 
     def __len__(self):
-        return len(self.index_mapping)
+        return len(self.index_to_chunk)
 
     def __getitem__(self, dataset_idx):
-        chunk_idx, hook_point = self.index_mapping[dataset_idx]
+        chunk_idx, hook_point = self.index_to_chunk[dataset_idx]
         return self.activation_loader.load_single_hook_chunk(
             chunk_idx,
             hook_point,
