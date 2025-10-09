@@ -99,7 +99,7 @@ def train_sae(settings: TrainSAESettings) -> None:
             mesh_shape=(settings.data_parallel_size, settings.model_parallel_size),
             mesh_dim_names=("data", "model"),
         )
-        if settings.model_parallel_size > 1
+        if settings.model_parallel_size > 1 or settings.data_parallel_size > 1
         else None
     )
 
