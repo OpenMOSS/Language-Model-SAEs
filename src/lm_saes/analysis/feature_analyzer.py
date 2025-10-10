@@ -11,6 +11,7 @@ from tqdm import tqdm
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.analysis.post_analysis import get_post_analysis_processor
+from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
@@ -65,14 +66,7 @@ class FeatureAnalyzer:
             Updated sampling results with new batch incorporated
         """
         # Compute exponential lottery ticket values for sampling if enabled
-        if self.cfg.enable_sampling:
-            weights = (
-                feature_acts.clamp(min=0.0).pow(self.cfg.sample_weight_exponent).max(dim=1).values
-            )  # [batch_size, d_sae]
-            elt = torch.rand_like(weights).log() / weights  # [batch_size, d_sae]
-            elt[weights == 0.0] = -torch.inf
-        else:
-            elt = feature_acts.clamp(min=0.0).max(dim=1).values
+        elt = feature_acts.clamp(min=0.0).max(dim=1).values
 
         # Process each subsample type (e.g. top activations)
         for name in self.cfg.subsamples.keys():
@@ -126,63 +120,6 @@ class FeatureAnalyzer:
 
             # Update main sample result with current batch results out of place
             sample_result = {**sample_result, name: sample_result_cur}
-
-        return sample_result
-
-    def _sample_non_activating_examples(
-        self,
-        feature_acts: torch.Tensor,  # [batch_size, context_size, d_sae]
-        discrete_meta: dict[str, torch.Tensor],
-        sample_result: Mapping[str, dict[str, torch.Tensor] | None],
-        max_feature_acts: torch.Tensor,
-    ) -> Mapping[str, dict[str, torch.Tensor] | None]:
-        """Sample non-activating examples.
-
-        Args:
-            feature_acts: Feature activation values for current batch
-            discrete_meta: Metadata tensors like dataset/context IDs
-            sample_result: Current sampling results to update
-        """
-        if self.cfg.non_activating_subsample is None:
-            return sample_result
-
-        feature_acts = feature_acts[:, : self.cfg.non_activating_subsample["max_length"], :]
-        sample_result_cur = sample_result.get("non_activating", None)
-        if sample_result_cur is not None and all(
-            sample_result_cur["elt"].min(dim=-1).values > -torch.inf
-        ):  # [n_samples, d_sae]
-            return sample_result
-
-        elt = feature_acts.clamp(min=0.0).max(dim=1).values  # [batch_size, d_sae]
-        elt[
-            feature_acts.max(dim=1).values
-            > max_feature_acts.unsqueeze(0) * self.cfg.non_activating_subsample["threshold"]
-        ] = -torch.inf
-
-        batch_data = {
-            "elt": elt,
-            "feature_acts": rearrange(
-                feature_acts,
-                "batch_size context_size d_sae -> batch_size d_sae context_size",
-            ),
-            **{
-                k: repeat(
-                    v,
-                    "batch_size -> batch_size d_sae",
-                    d_sae=feature_acts.size(-1),
-                )
-                for k, v in discrete_meta.items()
-            },
-        }
-        if sample_result_cur is None:
-            sample_result_cur = batch_data
-        else:
-            sample_result_cur = concat_dict_of_tensor(sample_result_cur, batch_data)
-        sample_result_cur = sort_dict_of_tensor(sample_result_cur, sort_dim=0, sort_key="elt", descending=True)
-        sample_result_cur = {
-            k: v[: self.cfg.non_activating_subsample["n_samples"]] for k, v in sample_result_cur.items()
-        }
-        sample_result = {**sample_result, "non_activating": sample_result_cur}
 
         return sample_result
 
@@ -270,7 +207,7 @@ class FeatureAnalyzer:
         max_feature_acts = torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
         mapper = KeyedDiscreteMapper()
 
-        if sae.cfg.sae_type == "clt":
+        if isinstance(sae, CrossLayerTranscoder):
             sae.encode = partial(sae.encode_single_layer, layer=self.cfg.clt_layer)
             sae.prepare_input = partial(sae.prepare_input_single_layer, layer=self.cfg.clt_layer)
             sae.decoder_norm_per_feature = partial(sae.decoder_norm_per_feature, layer=self.cfg.clt_layer)
@@ -283,9 +220,8 @@ class FeatureAnalyzer:
             meta = {k: [m[k] for m in batch["meta"]] for k in batch["meta"][0].keys()}
 
             # Get feature activations from SAE
-            x, kwargs = sae.prepare_input(batch)
-            feature_acts: torch.Tensor = sae.encode(x, **kwargs)
-
+            x, encoder_kwargs, _ = sae.prepare_input(batch)
+            feature_acts: torch.Tensor = sae.encode(x, **encoder_kwargs)
             if isinstance(feature_acts, DTensor):
                 assert device_mesh is not None, "Device mesh is required for DTensor feature activations"
                 if device_mesh is not feature_acts.device_mesh:
@@ -327,9 +263,6 @@ class FeatureAnalyzer:
                     # Keep non-string metadata as-is (assuming they are already tensors or can be converted)
                     discrete_meta[k] = torch.tensor(v, device=sae.cfg.device)
             sample_result = self._process_batch(feature_acts, discrete_meta, sample_result, max_feature_acts)
-            sample_result = self._sample_non_activating_examples(
-                feature_acts, discrete_meta, sample_result, max_feature_acts
-            )
 
             # Update progress
             n_tokens_current = batch["tokens"].numel()

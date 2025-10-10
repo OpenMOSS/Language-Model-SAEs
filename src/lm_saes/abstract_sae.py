@@ -359,14 +359,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
             self.set_dataset_average_activation_norm(dataset_norm)
             state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
-        if device_mesh is None or any(isinstance(v, DTensor) for v in state_dict.values()):
+        if device_mesh is None:
             # Non-distributed checkpoint or DCP checkpoint
             # Load the state dict through torch API
-            for k, v in state_dict.items():
-                if any(isinstance(v, DTensor) for v in state_dict.values()) and not isinstance(v, DTensor):
-                    state_dict[k] = DimMap({}).distribute(v, device_mesh)
             self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
         else:
+            for k, v in state_dict.items():
+                if not isinstance(v, DTensor):
+                    state_dict[k] = DimMap({}).distribute(v, device_mesh)
             # Full checkpoint (in .safetensors or .pt format) to be loaded distributedly
             self.load_distributed_state_dict(state_dict, device_mesh)
 
@@ -664,13 +664,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Compute the loss for the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
         """
-        x, encoder_kwargs = self.prepare_input(batch)
+        x, encoder_kwargs, decoder_kwargs = self.prepare_input(batch)
+
         label = self.prepare_label(batch, **kwargs)
 
         with timer.time("encode"):
             feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         with timer.time("decode"):
-            reconstructed = self.decode(feature_acts, **kwargs)
+            reconstructed = self.decode(feature_acts, **decoder_kwargs)
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
@@ -736,9 +737,16 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         return loss
 
     @abstractmethod
-    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
-        """Prepare the input for the encoder.
-        Returns a tuple of (input, kwargs) where kwargs is a dictionary of additional arguments for the encoder computation.
+    def prepare_input(
+        self, batch: dict[str, torch.Tensor], **kwargs
+    ) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
+        """Prepare the input for the encoder and decoder.
+
+        Returns:
+            tuple: (input_tensor, encoder_kwargs, decoder_kwargs)
+                - input_tensor: The input tensor for the encoder
+                - encoder_kwargs: Additional arguments for the encoder
+                - decoder_kwargs: Additional arguments for the decoder
         """
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -747,10 +755,12 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Prepare the label for the loss computation."""
         raise NotImplementedError("Subclasses must implement this method")
 
-    # @abstractmethod
-    # def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
-    #     """Initialize the W and D parameters with the active subspace."""
-    #     raise NotImplementedError("Subclasses must implement this method")
+    def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
+        """Initialize the W and D parameters with the active subspace."""
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch: dict[str, torch.Tensor]):
+        raise NotImplementedError("Subclasses must implement this method")
 
     def dim_maps(self) -> dict[str, DimMap]:
         """Return a dictionary mapping parameter names to dimension maps.

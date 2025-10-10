@@ -152,7 +152,7 @@ def test_distributed_clt_tensor_parallel():
 
         # Test forward pass with tensor parallel model
         simple_batch = create_simple_batch(device)
-        input_tensor, _ = clt_model.prepare_input(simple_batch)
+        input_tensor = clt_model.prepare_input(simple_batch)[0]
 
         # Forward pass
         output = clt_model(input_tensor)

@@ -213,7 +213,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """
         Initialize W_D with the active subspace for each head.
         """
-        x, _ = self.prepare_input(activation_batch)
+        x = self.prepare_input(activation_batch)[0]
         captured_z = None
 
         def capture_hook(z, hook):
@@ -720,11 +720,11 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Compute the loss for the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
         """
-        x, encoder_kwargs = self.prepare_input(batch)
+        x, encoder_kwargs, decoder_kwargs = self.prepare_input(batch)
         label = self.prepare_label(batch, **kwargs)
 
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
-        reconstructed = self.decode(feature_acts, **kwargs)
+        reconstructed = self.decode(feature_acts, **decoder_kwargs)
 
         l_rec = (reconstructed - label).pow(2)
         if use_batch_norm_mse:
@@ -804,16 +804,18 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         }
 
     @override
-    def prepare_input(self, batch, **kwargs):
+    def prepare_input(
+        self, batch: dict[str, torch.Tensor], **kwargs
+    ) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
         """Prepare input tensor."""
         if self.device_mesh is not None:
             x = DimMap({}).distribute(batch[self.cfg.hook_point_in], self.device_mesh)
         else:
             x = batch[self.cfg.hook_point_in]
-        return x, {}
+        return x, {}, {}
 
     @override
-    def prepare_label(self, batch, **kwargs):
+    def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs):
         """Prepare label tensor."""
         label = batch[self.cfg.hook_point_out]
         if self.cfg.skip_bos:

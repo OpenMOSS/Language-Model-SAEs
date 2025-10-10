@@ -6,11 +6,12 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
-from lm_saes.backend.language_model import LanguageModel
+from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
@@ -59,6 +60,7 @@ class Initializer:
                     hook_point_out = sae.cfg.hook_points_out[i]
                     normalized_mean_activation = batch[hook_point_out].mean(0)
                     if isinstance(sae.b_D[i], DTensor):
+                        assert sae.device_mesh is not None, "Device mesh should exist if b_D is a DTensor"
                         normalized_mean_activation = DTensor.from_local(
                             normalized_mean_activation,
                             device_mesh=sae.device_mesh,
@@ -66,10 +68,18 @@ class Initializer:
                         )
 
                     sae.b_D[i].copy_(normalized_mean_activation)
-            else:
+            elif (
+                isinstance(sae, MixtureOfLinearTransform)
+                or isinstance(sae, LowRankSparseAttention)
+                or isinstance(sae, SparseAutoEncoder)
+            ):
                 label = sae.prepare_label(batch)
                 normalized_mean_activation = label.mean(dim=list(range((batch[sae.cfg.hook_point_out].ndim - 1))))
                 sae.b_D.copy_(normalized_mean_activation)
+            else:
+                raise ValueError(
+                    f"Bias initialization method {self.cfg.bias_init_method} is not supported for {sae.cfg.sae_type}"
+                )
 
         @torch.autocast(device_type=sae.cfg.device, dtype=sae.cfg.dtype)
         def grid_search_best_init_norm(search_range: List[float]) -> float:
@@ -125,6 +135,7 @@ class Initializer:
                 "crosscoder": CrossCoder,
                 "clt": CrossLayerTranscoder,
                 "lorsa": LowRankSparseAttention,
+                "molt": MixtureOfLinearTransform,
             }[cfg.sae_type]
         except KeyError:
             raise ValueError(f"SAE type {cfg.sae_type} not supported.")
@@ -148,9 +159,15 @@ class Initializer:
                     )
                 sae.set_dataset_average_activation_norm(activation_norm)
 
-            if cfg.sae_type == "lorsa" and self.cfg.initialize_lorsa_with_mhsa:
+            if isinstance(sae, LowRankSparseAttention) and self.cfg.initialize_lorsa_with_mhsa:
                 assert sae.cfg.norm_activation == "dataset-wise", (
                     "Norm activation must be dataset-wise for Lorsa if use initialize_lorsa_with_mhsa"
+                )
+                assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
+                    "Only support TransformerLens backend for initializing Lorsa with Original Multi Head Sparse Attention"
+                )
+                assert self.cfg.model_layer is not None, (
+                    "Model layer must be provided for initializing Lorsa with Original Multi Head Sparse Attention"
                 )
                 sae.init_lorsa_with_mhsa(model.model.blocks[self.cfg.model_layer].attn)
 
@@ -159,14 +176,23 @@ class Initializer:
 
             if self.cfg.initialize_W_D_with_active_subspace:
                 batch = sae.normalize_activations(activation_batch)
-                if cfg.sae_type == "lorsa":
+                if isinstance(sae, LowRankSparseAttention):
                     assert sae.cfg.norm_activation == "dataset-wise", (
                         "Norm activation must be dataset-wise for Lorsa if use initialize_W_D_with_active_subspace"
+                    )
+                    assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
+                        "Only support TransformerLens backend for initializing Lorsa decoder weight with active subspace"
+                    )
+                    assert self.cfg.model_layer is not None, (
+                        "Model layer must be provided for initializing Lorsa decoder weight with active subspace"
                     )
                     sae.init_W_D_with_active_subspace_per_head(
                         batch, mhsa=model.model.blocks[self.cfg.model_layer].attn
                     )
                 else:
+                    assert self.cfg.d_active_subspace is not None, (
+                        "d_active_subspace must be provided for initializing other SAEs with active subspace"
+                    )
                     sae.init_W_D_with_active_subspace(batch, self.cfg.d_active_subspace)
 
             sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)

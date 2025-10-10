@@ -32,8 +32,8 @@ def topk_to_jumprelu_conversion(
     activation_stream = iter(activations_stream)
     activation_batch = next(activation_stream)
     activation_batch = sae.normalize_activations(activation_batch)
-    x, kwargs = sae.prepare_input(activation_batch)
-    _, hidden_pre = sae.encode(x, **kwargs, return_hidden_pre=True)
+    x, encoder_kwargs, _ = sae.prepare_input(activation_batch)
+    _, hidden_pre = sae.encode(x, **encoder_kwargs, return_hidden_pre=True)
     hidden_pre = torch.clamp(hidden_pre, min=0.0)
 
     topk_func = topk if device_mesh is None else distributed_topk
@@ -84,8 +84,8 @@ def topk_to_jumprelu_conversion(
 
     validation_batch = next(activation_stream)
     validation_batch = sae.normalize_activations(validation_batch)
-    x, kwargs = sae.prepare_input(validation_batch)
-    feature_acts = sae.encode(x, **kwargs)
+    x, encoder_kwargs, _ = sae.prepare_input(validation_batch)
+    feature_acts = sae.encode(x, **encoder_kwargs)
 
     l0 = feature_acts.gt(0).float().sum() / feature_acts.size(0)
     logger.info(f"converted sae got L0 of {l0.item()}, should be {sae.cfg.top_k}")

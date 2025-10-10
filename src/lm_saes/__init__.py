@@ -18,6 +18,7 @@ from .config import (
     LanguageModelConfig,
     LLaDAConfig,
     LorsaConfig,
+    MOLTConfig,
     MongoDBConfig,
     SAEConfig,
     TrainerConfig,
@@ -27,6 +28,7 @@ from .crosscoder import CrossCoder
 from .database import MongoClient
 from .evaluator import EvalConfig, Evaluator
 from .lorsa import LowRankSparseAttention
+from .molt import MixtureOfLinearTransform
 from .resource_loaders import load_dataset, load_model
 from .runners import (
     AnalyzeCrossCoderSettings,
@@ -42,6 +44,7 @@ from .runners import (
     TrainCLTSettings,
     TrainCrossCoderSettings,
     TrainLorsaSettings,
+    TrainMOLTSettings,
     TrainSAESettings,
     analyze_crosscoder,
     analyze_sae,
@@ -55,6 +58,7 @@ from .runners import (
     train_clt,
     train_crosscoder,
     train_lorsa,
+    train_molt,
     train_sae,
 )
 from .sae import SparseAutoEncoder
@@ -121,4 +125,8 @@ __all__ = [
     "DirectLogitAttributor",
     "DirectLogitAttributeSettings",
     "direct_logit_attribute",
+    "MOLTConfig",
+    "MixtureOfLinearTransform",
+    "train_molt",
+    "TrainMOLTSettings",
 ]

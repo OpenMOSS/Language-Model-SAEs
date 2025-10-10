@@ -13,6 +13,7 @@ from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.circuit.attribution import attribute
 from lm_saes.circuit.graph import Graph, compute_influence, normalize_matrix
 from lm_saes.circuit.replacement_model import ReplacementModel
+from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import EvalConfig, GraphEvalConfig
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
@@ -68,10 +69,11 @@ class Evaluator:
                 log_metric(loss_key, item(log_info.pop(loss_key)))
 
         # 2. Get activations and compute reconstructions
-        x, encode_kwargs = sae.prepare_input(batch)
+        batch = sae.normalize_activations(batch)
+        x, encode_kwargs, decode_kwargs = sae.prepare_input(batch)
         label = sae.prepare_label(batch)
         feature_acts = sae.encode(x, **encode_kwargs)
-        reconstructed = sae.decode(feature_acts)
+        reconstructed = sae.decode(feature_acts, **decode_kwargs)
 
         # 3. Compute sparsity metrics
         l0 = (feature_acts > 0).float().sum(-1)
@@ -137,7 +139,7 @@ class Evaluator:
         # 6. Periodic feature sparsity logging
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
-            if sae.cfg.sae_type == "clt":
+            if isinstance(sae, CrossLayerTranscoder):
                 above_1e_1 = (feature_sparsity > 1e-1).sum(-1)
                 above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
                 below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
