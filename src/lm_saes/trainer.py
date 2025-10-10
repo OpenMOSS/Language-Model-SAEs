@@ -43,7 +43,7 @@ class Trainer:
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
 
-    def save_checkpoint(self, sae: AbstractSparseAutoEncoder, checkpoint_path: str | Path) -> None:
+    def save_checkpoint(self, sae: AbstractSparseAutoEncoder, checkpoint_path: Path | str) -> None:
         """
         Save a complete checkpoint including model, optimizer, scheduler, and
         trainer state.
@@ -446,13 +446,20 @@ class Trainer:
             )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
             l2_norm_error = per_token_l2_loss.sqrt().mean()
             l2_norm_error_ratio = l2_norm_error / label.norm(p=2, dim=-1).mean()
-            explained_variance = (
+            explained_variance_legacy = (
                 1 - per_token_l2_loss / total_variance
             )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
-            if isinstance(explained_variance, DTensor):
-                explained_variance = explained_variance.full_tensor()
+            if isinstance(explained_variance_legacy, DTensor):
+                explained_variance_legacy = explained_variance_legacy.full_tensor()
+            l2_loss_mean = per_token_l2_loss.mean()
+            if isinstance(l2_loss_mean, DTensor):
+                l2_loss_mean = l2_loss_mean.full_tensor()
+            total_variance_mean = total_variance.mean()
+            if isinstance(total_variance_mean, DTensor):
+                total_variance_mean = total_variance_mean.full_tensor()
+            explained_variance = 1 - l2_loss_mean / total_variance_mean
             if sae.cfg.sae_type == "clt":
-                per_layer_ev = explained_variance.mean(0)
+                per_layer_ev = explained_variance_legacy.mean(0)
                 clt_per_layer_ev_dict = {
                     f"metrics/explained_variance_L{l}": per_layer_ev[l].item() for l in range(per_layer_ev.size(0))
                 }
@@ -487,7 +494,8 @@ class Trainer:
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
                 **clt_per_layer_ev_dict,
-                "metrics/explained_variance": explained_variance.mean().item(),
+                "metrics/explained_variance": explained_variance.item(),
+                "metrics/explained_variance_legacy": explained_variance_legacy.mean().item(),
                 # sparsity
                 "metrics/l0": l0.mean().item(),
                 **clt_per_layer_l0_dict,
