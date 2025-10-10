@@ -28,7 +28,7 @@ from transformer_lens.hook_points import HookedRootModule
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.config import BaseSAEConfig
 from lm_saes.database import MongoClient
-from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed import DimMap, distributed_topk
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import is_primary_rank
@@ -508,7 +508,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
         elif self.cfg.act_fn.lower() == "topk":
             if self.device_mesh is not None:
-                from lm_saes.utils.distributed import distributed_topk
 
                 def topk_activation(
                     x: Union[
@@ -543,7 +542,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
         elif self.cfg.act_fn.lower() == "batchtopk":
             if device_mesh is not None:
-                from lm_saes.utils.distributed import distributed_topk
 
                 def batch_topk(
                     x: Union[
