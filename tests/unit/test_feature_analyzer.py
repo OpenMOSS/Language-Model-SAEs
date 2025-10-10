@@ -224,7 +224,7 @@ def test_analyze_chunk_no_sampling(
     ]
 
     mock_sae.normalize_activations.return_value = activation_stream[0]
-    mock_sae.prepare_input.return_value = (activations_in, {})
+    mock_sae.prepare_input.return_value = (activations_in, {}, {})
 
     # Run analysis
     results = feature_analyzer.analyze_chunk(activation_stream, mock_sae)

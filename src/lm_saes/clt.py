@@ -405,7 +405,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     @torch.no_grad()
     @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
     def init_encoder_bias_with_mean_hidden_pre(self, activation_batch):
-        x, _ = self.prepare_input(activation_batch)
+        x = self.prepare_input(activation_batch)[0]
         if self.device_mesh is None:
             _, hidden_pre = self.encode(x, return_hidden_pre=True)
             self.b_E.copy_(-hidden_pre.mean(dim=0))
@@ -416,10 +416,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 b_E_local, device_mesh=self.device_mesh, placements=self.dim_maps()["b_E"].placements(self.device_mesh)
             )
             self.b_E.copy_(b_E)
-
-    def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
-        """Initialize the W and D parameters with the active subspace."""
-        raise NotImplementedError("Subclasses must implement this method")
 
     def get_decoder_weights(self, layer_to: int) -> torch.Tensor:
         """Get decoder weights for all layers from 0..layer_to to layer_to.
@@ -869,12 +865,13 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         """Standardize parameters for dataset-wise normalization during inference."""
         assert self.cfg.norm_activation == "dataset-wise"
         assert self.dataset_average_activation_norm is not None
+        dataset_average_activation_norm = self.dataset_average_activation_norm
 
         def input_norm_factor(layer: int) -> float:
-            return math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_points_in[layer]]
+            return math.sqrt(self.cfg.d_model) / dataset_average_activation_norm[self.cfg.hook_points_in[layer]]
 
         def output_norm_factor(layer: int) -> float:
-            return math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_points_out[layer]]
+            return math.sqrt(self.cfg.d_model) / dataset_average_activation_norm[self.cfg.hook_points_out[layer]]
 
         # For CLT, we need to handle multiple input and output layers
         for layer_from in range(self.cfg.n_layers):
@@ -900,7 +897,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         raise NotImplementedError("init_encoder_with_decoder_transpose does not make sense for CLT")
 
     @override
-    def prepare_input(self, batch: "dict[str, torch.Tensor]", **kwargs) -> "tuple[torch.Tensor, dict[str, Any]]":
+    def prepare_input(
+        self, batch: "dict[str, torch.Tensor]", **kwargs
+    ) -> "tuple[torch.Tensor, dict[str, Any], dict[str, Any]]":
         """Prepare input tensor from batch by stacking all layer activations from hook_points_in."""
         x_layers = []
         for hook_point in self.cfg.hook_points_in:
@@ -912,11 +911,13 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         if isinstance(self.W_E, DTensor) and not isinstance(x, DTensor):
             assert self.device_mesh is not None
             x = DTensor.from_local(x, device_mesh=self.device_mesh, placements=[torch.distributed.tensor.Replicate()])
-        return x, {}
+        encoder_kwargs = {}
+        decoder_kwargs = {}
+        return x, encoder_kwargs, decoder_kwargs
 
     def prepare_input_single_layer(
         self, batch: "dict[str, torch.Tensor]", layer: int, **kwargs
-    ) -> "tuple[torch.Tensor, dict[str, Any]]":
+    ) -> "tuple[torch.Tensor, dict[str, Any], dict[str, Any]]":
         """Prepare input tensor from batch by stacking all layer activations from hook_points_in."""
         hook_point_in = self.cfg.hook_points_in[layer]
         if hook_point_in not in batch:
@@ -925,7 +926,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         if isinstance(self.W_E, DTensor) and not isinstance(x, DTensor):
             assert self.device_mesh is not None
             x = DTensor.from_local(x, device_mesh=self.device_mesh, placements=[torch.distributed.tensor.Replicate()])
-        return x, {}
+        return x, {}, {}
 
     @override
     def prepare_label(self, batch: "dict[str, torch.Tensor]", **kwargs) -> torch.Tensor:
@@ -1000,14 +1001,14 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         """Compute the loss for the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
         """
-        x, encoder_kwargs = self.prepare_input(batch)
+        x, encoder_kwargs, decoder_kwargs = self.prepare_input(batch)
         label = self.prepare_label(batch, **kwargs)
 
         with timer.time("encode"):
             feature_acts = self.encode(x, **encoder_kwargs)
 
         with timer.time("decode"):
-            reconstructed = self.decode(feature_acts, **kwargs)
+            reconstructed = self.decode(feature_acts, **decoder_kwargs)
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)

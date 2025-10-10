@@ -21,12 +21,14 @@ from lm_saes.config import (
     FeatureAnalyzerConfig,
     LanguageModelConfig,
     LorsaConfig,
+    MOLTConfig,
     MongoDBConfig,
     SAEConfig,
 )
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient
 from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.sae import SparseAutoEncoder
@@ -124,6 +126,13 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
         if settings.datasets is not None
         else None
     )
+    logger.info("Loading SAE model")
+    if isinstance(settings.sae, CrossCoderConfig):
+        sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
+    elif isinstance(settings.sae, MOLTConfig):
+        sae = MixtureOfLinearTransform.from_config(settings.sae, device_mesh=device_mesh)
+    else:
+        sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
 
     model = load_model(model_cfg) if model_cfg is not None else None
     datasets = (
@@ -254,13 +263,13 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
     analyzer = FeatureAnalyzer(settings.analyzer)
 
     logger.info("Processing activations for CrossCoder analysis")
-    activations = activation_factory.process()
 
-    result = analyzer.analyze_chunk(
-        activations,
-        sae=sae,
-        device_mesh=device_mesh,
-    )
+    with torch.amp.autocast(device_type=settings.device_type, dtype=settings.amp_dtype):
+        result = analyzer.analyze_chunk(
+            activation_factory,
+            sae=sae,
+            device_mesh=device_mesh,
+        )
 
     logger.info("CrossCoder analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)

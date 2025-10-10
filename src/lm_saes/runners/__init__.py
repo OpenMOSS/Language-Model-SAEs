@@ -27,11 +27,13 @@ from .train import (
     TrainCLTSettings,
     TrainCrossCoderSettings,
     TrainLorsaSettings,
+    TrainMOLTSettings,
     TrainSAESettings,
     sweep_sae,
     train_clt,
     train_crosscoder,
     train_lorsa,
+    train_molt,
     train_sae,
 )
 from .utils import load_config
@@ -67,4 +69,6 @@ __all__ = [
     "train_lorsa",
     "DirectLogitAttributeSettings",
     "direct_logit_attribute",
+    "TrainMOLTSettings",
+    "train_molt",
 ]

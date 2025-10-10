@@ -230,6 +230,6 @@ def test_forward(sae_config: SAEConfig, sae: SparseAutoEncoder):
     )
     batch = {"in": torch.tensor([[4.0, 4.0]], device=sae_config.device, dtype=sae_config.dtype)}
     batch = sae.normalize_activations(batch)
-    x, _ = sae.prepare_input(batch)
+    x = sae.prepare_input(batch)[0]
     output = sae.forward(x)
     assert torch.allclose(output, torch.tensor([[212.0, 449.0]], device=sae_config.device, dtype=sae_config.dtype))

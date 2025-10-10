@@ -362,10 +362,11 @@ def test_prepare_input(crosscoder: CrossCoder):
     )
 
     # Test prepare_input
-    x, kwargs = crosscoder.prepare_input(batch)
+    x, encoder_kwargs, decoder_kwargs = crosscoder.prepare_input(batch)
 
     assert torch.allclose(x, expected_input, atol=1e-5)
-    assert kwargs == {}
+    assert encoder_kwargs == {}
+    assert decoder_kwargs == {}
 
 
 def test_prepare_label(crosscoder: CrossCoder):
@@ -421,7 +422,7 @@ def test_compute_loss(crosscoder: CrossCoder):
     assert "hidden_pre" in aux_data
 
     # Check reconstruction matches forward pass
-    x, _ = crosscoder.prepare_input(batch)
+    x = crosscoder.prepare_input(batch)[0]
     expected_output = crosscoder.forward(x)
 
     assert torch.allclose(aux_data["reconstructed"], expected_output, atol=1e-5)

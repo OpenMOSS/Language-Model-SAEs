@@ -13,8 +13,10 @@ from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import TrainerConfig
 from lm_saes.crosscoder import CrossCoder
+from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.optim import SparseAdam, get_scheduler
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
@@ -41,7 +43,7 @@ class Trainer:
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
 
-    def save_checkpoint(self, sae: AbstractSparseAutoEncoder, checkpoint_path: str) -> None:
+    def save_checkpoint(self, sae: AbstractSparseAutoEncoder, checkpoint_path: str | Path) -> None:
         """
         Save a complete checkpoint including model, optimizer, scheduler, and
         trainer state.
@@ -157,6 +159,9 @@ class Trainer:
             raise ValueError(f"Trainer checkpoint not found at {trainer_path}")
 
         trainer._initialize_optimizer(sae)
+        assert trainer.optimizer is not None and trainer.scheduler is not None, (
+            "Optimizer and scheduler should be already initialized"
+        )
 
         # Load optimizer state
         if sae.device_mesh is None:
@@ -330,12 +335,8 @@ class Trainer:
             l1_coefficient=l1_coefficient,
             lp_coefficient=lp_coefficient,
         )
-        if not self.cfg.skip_metrics_calculation:
-            loss, (loss_data, aux_data) = result
-        else:
-            loss = result
-            loss_data = {}
-            aux_data = {}
+
+        loss, (loss_data, aux_data) = result if not self.cfg.skip_metrics_calculation else (result, ({}, {}))
         loss_dict = (
             {
                 "loss": loss,
@@ -373,7 +374,7 @@ class Trainer:
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
-            if sae.cfg.sae_type == "clt":
+            if isinstance(sae, CrossLayerTranscoder):
                 above_1e_1 = (feature_sparsity > 1e-1).sum(-1)
                 above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
                 below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
@@ -426,7 +427,7 @@ class Trainer:
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
 
-            l_s = log_info["l_s"]
+            l_s = log_info.get("l_s", None)
             if isinstance(l_s, DTensor):
                 l_s = l_s.full_tensor()
 
@@ -481,7 +482,7 @@ class Trainer:
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.mean().item(),
-                **({"losses/sparsity_loss": l_s.mean().item()} if log_info.get("l_s", None) is not None else {}),
+                **({"losses/sparsity_loss": l_s.mean().item()} if log_info.get("l_s", None) is not None else {}),  # pyright: ignore[reportOptionalMemberAccess]
                 **({"losses/lp_loss": l_p.mean().item()} if log_info.get("l_p", None) is not None else {}),
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
@@ -520,6 +521,45 @@ class Trainer:
                             f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
                         }
                     )
+            elif isinstance(sae, MixtureOfLinearTransform):
+                # MOLT sparsity metrics: track activation per rank group
+                feature_acts_for_rank = feature_acts
+                if isinstance(feature_acts_for_rank, DTensor):
+                    feature_acts_for_rank = feature_acts_for_rank.full_tensor()
+
+                # Calculate l0 per rank group and total rank sum
+                feature_idx = 0
+                total_rank_sum = 0.0
+
+                for rank in sae.cfg.available_ranks:
+                    rank_str = str(rank)
+                    if rank_str in sae.U_matrices:
+                        # Get global count for this rank group
+                        if hasattr(sae, "_global_rank_count_map"):
+                            # In distributed case, use global count
+                            global_count = sae._global_rank_count_map[rank]
+                        else:
+                            # Non-distributed case
+                            global_count = sae.U_matrices[rank_str].shape[0]
+
+                        if global_count > 0:
+                            # Extract features for this rank group
+                            end_idx = feature_idx + global_count
+                            rank_features = feature_acts_for_rank[..., feature_idx:end_idx]
+
+                            # Count active transforms (l0) for this rank group
+                            rank_l0 = (rank_features > 0).float().sum(-1)
+                            rank_l0_mean = rank_l0.mean().item()
+
+                            # Record metrics
+                            wandb_log_dict[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean
+                            wandb_log_dict[f"molt_metrics/l0_rank{rank}_ratio"] = rank_l0_mean / global_count
+                            total_rank_sum += rank_l0_mean * rank
+
+                            feature_idx += global_count
+
+                # Record total rank sum
+                wandb_log_dict["molt_metrics/total_rank_sum"] = total_rank_sum
 
             if is_primary_rank(sae.device_mesh):
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Training Metrics")
@@ -556,8 +596,10 @@ class Trainer:
             logger.info("Initializing trainer and optimizer")
             self._initialize_trainer(sae, activation_stream, wandb_logger)
             self._initialize_optimizer(sae)
-            assert self.optimizer is not None
-            assert self.scheduler is not None
+
+        assert self.optimizer is not None and self.scheduler is not None, (
+            "Optimizer and scheduler should be already initialized"
+        )
 
         maybe_local_d_sae = sae.cfg.d_sae  # if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
         if sae.cfg.sae_type == "clt":

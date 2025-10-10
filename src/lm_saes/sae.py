@@ -169,9 +169,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         self.W_D.mul_(1 / self.decoder_norm(keepdim=False))
 
     @torch.no_grad()
-    def standardize_parameters_of_dataset_norm(
-        self, dataset_average_activation_norm: dict[str, float] | None
-    ):  # should be overridden by subclasses due to side effects
+    def standardize_parameters_of_dataset_norm(self):  # should be overridden by subclasses due to side effects
         """
         Standardize the parameters of the model to account for dataset_norm during inference.
         This function should be called during inference by the Initializer.
@@ -197,9 +195,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             None: Updates the internal parameters to reflect the standardized activations and change the norm_activation to "inference" mode.
         """
         assert self.cfg.norm_activation == "dataset-wise"
-        assert self.dataset_average_activation_norm is not None or dataset_average_activation_norm is not None
-        if dataset_average_activation_norm is not None:
-            self.set_dataset_average_activation_norm(dataset_average_activation_norm)
         assert self.dataset_average_activation_norm is not None
         input_norm_factor: float = (
             math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_in]
@@ -406,9 +401,11 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             self.W_E_glu.copy_(W_E_glu)
 
     @override
-    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
+    def prepare_input(
+        self, batch: dict[str, torch.Tensor], **kwargs
+    ) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
         x = batch[self.cfg.hook_point_in]
-        return x, {}
+        return x, {}, {}
 
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
@@ -431,7 +428,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         self.W_D.data.copy_(self.W_D.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
 
     @torch.no_grad()
-    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch):
-        x, _ = self.prepare_input(activation_batch)
+    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch: dict[str, torch.Tensor]):
+        x = self.prepare_input(activation_batch)[0]
         _, hidden_pre = self.encode(x, return_hidden_pre=True)
         self.b_E.data.copy_(-hidden_pre.mean(dim=0))
