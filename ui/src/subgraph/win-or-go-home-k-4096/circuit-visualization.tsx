@@ -40,6 +40,7 @@ export const CircuitVisualization = () => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [connectedFeatures, setConnectedFeatures] = useState<Feature[]>([]);
+  const [isLoadingConnectedFeatures, setIsLoadingConnectedFeatures] = useState(false);
   const [originalCircuitJson, setOriginalCircuitJson] = useState<any>(null); // 存储原始JSON数据（单图或合并后的）
   const [editingClerp, setEditingClerp] = useState<string>(''); // 当前编辑的clerp
   const [isSaving, setIsSaving] = useState(false); // 保存状态
@@ -47,18 +48,13 @@ export const CircuitVisualization = () => {
   const [updateCounter, setUpdateCounter] = useState(0); // 用于强制更新的计数器
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false); // 是否有未保存的更改
   const [saveHistory, setSaveHistory] = useState<string[]>([]); // 保存历史记录
-  const [topActivations, setTopActivations] = useState<any[]>([]); // Top Activation 数据
-  const [loadingTopActivations, setLoadingTopActivations] = useState(false); // 加载状态
-  const [tokenPredictions, setTokenPredictions] = useState<any>(null); // Token Predictions 数据
-  const [loadingTokenPredictions, setLoadingTokenPredictions] = useState(false); // 加载状态
-  const [steeringScale, setSteeringScale] = useState<number>(0); // steering 放大系数
-  const [steeringScaleInput, setSteeringScaleInput] = useState<string>('0'); // 文本输入，用于支持暂存 "-"
 
   // 多图支持：存放多份原始 JSON 及其文件名
   const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
 
-  // 为"各自独有"的节点/边分配的颜色表（最多4个图）
+  // 为“各自独有”的节点/边分配的颜色表（最多4个图）
   const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // 蓝、橙、绿、红
+  const DUPLICATE_FEATURE_ALT_COLOR = "#FF9800"; // 同一feature不同位置的备用颜色（琥珀橙）
 
   // 将多个图的 JSON 合并为一个 LinkGraphData（节点按 node_id 合并，边按(source,target)合并）
   const mergeGraphs = useCallback((jsons: CircuitJsonData[], fileNames?: string[]) => {
@@ -232,10 +228,11 @@ export const CircuitVisualization = () => {
 
   const handleConnectedFeaturesSelect = useCallback((features: Feature[]) => {
     setConnectedFeatures(features);
+    setIsLoadingConnectedFeatures(false);
   }, []);
 
-  const handleConnectedFeaturesLoading = useCallback((_loading: boolean) => {
-    // 保留回调函数以保持接口兼容性
+  const handleConnectedFeaturesLoading = useCallback((loading: boolean) => {
+    setIsLoadingConnectedFeatures(loading);
   }, []);
 
   // 单文件上传（保留，兼容）
@@ -347,6 +344,10 @@ export const CircuitVisualization = () => {
     }
   }, [mergeGraphs, setLinkGraphData, setLoading, setError, setClickedId, setHoveredId, setPinnedIds, setHiddenIds, setSelectedFeature, setConnectedFeatures]);
 
+  const handleFileUpload = useCallback(async (file: File) => {
+    // 兼容旧调用，保留单文件路径
+    return handleSingleFileUpload(file);
+  }, [handleSingleFileUpload]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -398,7 +399,7 @@ export const CircuitVisualization = () => {
       if (trimmed.includes('/')) {
         const parts = trimmed.split(/\s+/);
         if (parts.length >= 6) {
-          const [boardPart, activeColor] = parts;
+          const [boardPart, activeColor, castling, enPassant, halfmove, fullmove] = parts;
           const boardRows = boardPart.split('/');
           
           if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
@@ -457,6 +458,7 @@ export const CircuitVisualization = () => {
     // 2) 回退到从 prompt_tokens 中解析
     if (!linkGraphData?.metadata?.prompt_tokens) return null;
     const promptText = linkGraphData.metadata.prompt_tokens.join(' ');
+    console.log('🔍 搜索输出移动:', promptText);
 
     const movePatterns = [
       /(?:Output|Move|下一步|移动)[:：]\s*([a-h][1-8][a-h][1-8])/i,
@@ -469,11 +471,13 @@ export const CircuitVisualization = () => {
         const lastMatch = Array.isArray(matches) ? matches[matches.length - 1] : matches;
         const moveMatch = lastMatch.match(/[a-h][1-8][a-h][1-8]/);
         if (moveMatch) {
+          console.log('✅ 找到移动:', moveMatch[0]);
           return moveMatch[0].toLowerCase();
         }
       }
     }
 
+    console.log('❌ 未找到输出移动');
     return null;
   }, [linkGraphData]);
 
@@ -590,6 +594,7 @@ export const CircuitVisualization = () => {
       if (Array.isArray(obj)) {
         for (const item of obj) {
           if (item && typeof item === 'object') {
+            const keys = Object.keys(item);
             const hasActivationShape = ('layer' in item) && ('position' in item) && ('activations' in item);
             const hasZShape = ('zPatternIndices' in item) && ('zPatternValues' in item);
             const hasIndexKey = ('head_idx' in item) || ('feature_idx' in item);
@@ -969,252 +974,6 @@ export const CircuitVisualization = () => {
     alert(`📤 文件已导出到Downloads文件夹:\n${exportFileName}\n\n💡 要使用更新后的文件:\n1. 用新文件替换原文件\n2. 或者拖拽新文件到此页面重新加载`);
   }, [originalCircuitJson, originalFileName]);
 
-  // 获取 Top Activation 数据的函数
-  const fetchTopActivations = useCallback(async (nodeId: string) => {
-    if (!nodeId) return;
-    
-    setLoadingTopActivations(true);
-    try {
-      // 从 nodeId 解析出 feature 信息
-      const parts = nodeId.split('_');
-      const rawLayer = Number(parts[0]) || 0;
-      const featureIndex = Number(parts[1]) || 0;
-      const layerIdx = Math.floor(rawLayer / 2);
-      
-      // 确定节点类型和对应的字典名
-      const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
-      const isLorsa = currentNode?.feature_type?.toLowerCase() === 'lorsa';
-      const dictionary = isLorsa 
-        ? `lc0-lorsa-L${layerIdx}`
-        : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
-      
-      console.log('🔍 获取 Top Activation 数据:', {
-        nodeId,
-        layerIdx,
-        featureIndex,
-        dictionary,
-        isLorsa
-      });
-      
-      // 调用后端 API 获取 feature 数据
-      const response = await fetch(
-        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}`,
-        {
-          method: "GET",
-          headers: {
-            Accept: "application/x-msgpack",
-          },
-        }
-      );
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-      
-      const arrayBuffer = await response.arrayBuffer();
-      const decoded = await import("@msgpack/msgpack").then(module => module.decode(new Uint8Array(arrayBuffer)));
-      const camelcaseKeys = await import("camelcase-keys").then(module => module.default);
-      
-      // 解析数据
-      const camelData = camelcaseKeys(decoded as Record<string, unknown>, {
-        deep: true,
-        stopPaths: ["sample_groups.samples.context"],
-      }) as any;
-      
-      // 提取样本数据
-      const sampleGroups = camelData?.sampleGroups || camelData?.sample_groups || [];
-      const allSamples: any[] = [];
-      
-      for (const group of sampleGroups) {
-        if (group.samples && Array.isArray(group.samples)) {
-          allSamples.push(...group.samples);
-        }
-      }
-      
-      // 查找包含 FEN 的样本并提取激活值
-      const chessSamples: any[] = [];
-      
-      for (const sample of allSamples) {
-        if (sample.text) {
-          const lines = sample.text.split('\n');
-          
-          for (const line of lines) {
-            const trimmed = line.trim();
-            
-            // 检查是否包含 FEN 格式
-            if (trimmed.includes('/')) {
-              const parts = trimmed.split(/\s+/);
-              
-              if (parts.length >= 6) {
-                const [boardPart, activeColor] = parts;
-                const boardRows = boardPart.split('/');
-                
-                if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
-                  // 验证 FEN 格式
-                  let isValidBoard = true;
-                  let totalSquares = 0;
-                  
-                  for (const row of boardRows) {
-                    if (!/^[rnbqkpRNBQKP1-8]+$/.test(row)) {
-                      isValidBoard = false;
-                      break;
-                    }
-                    
-                    let rowSquares = 0;
-                    for (const char of row) {
-                      if (/\d/.test(char)) {
-                        rowSquares += parseInt(char);
-                      } else {
-                        rowSquares += 1;
-                      }
-                    }
-                    totalSquares += rowSquares;
-                  }
-                  
-                  if (isValidBoard && totalSquares === 64) {
-                    // 处理稀疏激活数据 - 正确映射到64格棋盘
-                    let activationsArray: number[] | undefined = undefined;
-                    let activationStrength = 0;
-                    
-                    if (sample.featureActsIndices && sample.featureActsValues && 
-                        Array.isArray(sample.featureActsIndices) && Array.isArray(sample.featureActsValues)) {
-                      
-                      // 创建64格的激活数组
-                      activationsArray = new Array(64).fill(0);
-                      
-                      // 将稀疏激活值映射到正确的棋盘位置
-                      for (let i = 0; i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length); i++) {
-                        const index = sample.featureActsIndices[i];
-                        const value = sample.featureActsValues[i];
-                        
-                        // 确保索引在有效范围内
-                        if (index >= 0 && index < 64) {
-                          activationsArray[index] = value;
-                          activationStrength += Math.abs(value);
-                        }
-                      }
-                      
-                      console.log('🔍 处理激活数据:', {
-                        indicesLength: sample.featureActsIndices.length,
-                        valuesLength: sample.featureActsValues.length,
-                        nonZeroCount: activationsArray.filter(v => v !== 0).length,
-                        activationStrength
-                      });
-                    }
-                    
-                    chessSamples.push({
-                      fen: trimmed,
-                      activationStrength,
-                      activations: activationsArray,
-                      zPatternIndices: sample.zPatternIndices,
-                      zPatternValues: sample.zPatternValues,
-                      contextId: sample.contextIdx || sample.context_idx,
-                      sampleIndex: sample.sampleIndex || 0
-                    });
-                    
-                    break; // 找到一个有效 FEN 就跳出
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-      
-      // 按激活强度排序并取前8个
-      const topSamples = chessSamples
-        .sort((a, b) => b.activationStrength - a.activationStrength)
-        .slice(0, 8);
-      
-      console.log('✅ 获取到 Top Activation 数据:', {
-        totalChessSamples: chessSamples.length,
-        topSamplesCount: topSamples.length
-      });
-      
-      setTopActivations(topSamples);
-      
-    } catch (error) {
-      console.error('❌ 获取 Top Activation 数据失败:', error);
-      setTopActivations([]);
-    } finally {
-      setLoadingTopActivations(false);
-    }
-  }, [linkGraphData]);
-
-  // 获取 Token Predictions 数据的函数
-  const fetchTokenPredictions = useCallback(async (nodeId: string) => {
-    if (!nodeId || !fen) return;
-    
-    setLoadingTokenPredictions(true);
-    try {
-      // 从 nodeId 解析出特征信息
-      const parts = nodeId.split('_');
-      const rawLayer = Number(parts[0]) || 0;
-      const featureIndex = Number(parts[1]) || 0;
-      const pos = Number(parts[2]) || 0;
-      const layerIdx = Math.floor(rawLayer / 2);
-      
-      // 确定节点类型
-      const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
-      const featureType = currentNode?.feature_type?.toLowerCase() === 'lorsa' ? 'lorsa' : 'transcoder';
-      
-      console.log('🔍 获取 Token Predictions 数据:', {
-        nodeId,
-        layerIdx,
-        featureIndex,
-        pos,
-        featureType,
-        fen
-      });
-      
-      // 调用后端 API 进行 steering 分析（支持 steering_scale 参数）
-      const response = await fetch(
-        `${import.meta.env.VITE_BACKEND_URL}/steering_analysis`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            fen: fen,
-            feature_type: featureType,
-            layer: layerIdx,
-            pos: pos,
-            feature: featureIndex,
-            steering_scale: steeringScale
-          })
-        }
-      );
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-      
-      const result = await response.json();
-      
-      console.log('✅ 获取到 Token Predictions 数据:', result);
-      
-      setTokenPredictions(result);
-      
-    } catch (error) {
-      console.error('❌ 获取 Token Predictions 数据失败:', error);
-      setTokenPredictions(null);
-    } finally {
-      setLoadingTokenPredictions(false);
-    }
-  }, [fen, linkGraphData, steeringScale]);
-
-  // 当点击节点时获取 Top Activation 和 Token Predictions 数据
-  React.useEffect(() => {
-    if (clickedId) {
-      fetchTopActivations(clickedId);
-      fetchTokenPredictions(clickedId);
-    } else {
-      setTopActivations([]);
-      setTokenPredictions(null);
-    }
-  }, [clickedId, fetchTopActivations, fetchTokenPredictions]);
-
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1411,7 +1170,7 @@ export const CircuitVisualization = () => {
               activations={nodeActivationData?.activations}
               zPatternIndices={nodeActivationData?.zPatternIndices}
               zPatternValues={nodeActivationData?.zPatternValues}
-              flip_activation={Boolean(fen && fen.split(' ')[1] === 'w')}
+              flip_activation={false}
               sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
               analysisName={nodeActivationData?.nodeType || 'Circuit Node'}
               moveColor={(clickedId ? (linkGraphData.nodes.find(n => n.nodeId === clickedId)?.nodeColor) : undefined) as any}
@@ -1512,188 +1271,6 @@ export const CircuitVisualization = () => {
             />
           </div>
         </div>
-
-        {/* Top Activation Section */}
-        {clickedId && (
-          <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Top Activation 棋盘</h3>
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">节点: {clickedId}</span>
-                {loadingTopActivations && (
-                  <div className="flex items-center space-x-2">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                    <span className="text-sm text-gray-500">加载中...</span>
-                  </div>
-                )}
-              </div>
-            </div>
-            
-            {loadingTopActivations ? (
-              <div className="flex items-center justify-center py-8">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                  <p className="text-gray-600">正在获取 Top Activation 数据...</p>
-                </div>
-              </div>
-            ) : topActivations.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {topActivations.map((sample, index) => (
-                  <div key={index} className="bg-gray-50 rounded-lg p-3 border">
-                    <div className="text-center mb-2">
-                      <div className="text-sm font-medium text-gray-700">
-                        Top #{index + 1}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        激活强度: {sample.activationStrength.toFixed(3)}
-                      </div>
-                    </div>
-                    <ChessBoard
-                      fen={sample.fen}
-                      size="small"
-                      showCoordinates={false}
-                      activations={sample.activations}
-                      zPatternIndices={sample.zPatternIndices}
-                      zPatternValues={sample.zPatternValues}
-                      sampleIndex={sample.sampleIndex}
-                      analysisName={`Context ${sample.contextId}`}
-                      flip_activation={true}
-                      autoFlipWhenBlack={true}
-                    />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-gray-500">
-                <p>未找到包含棋盘的激活样本</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Token Predictions Section (简化版) */}
-        {clickedId && (
-          <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Token Predictions</h3>
-              <div className="flex items-center space-x-3">
-                <div className="flex items-center space-x-2">
-                  <label className="text-sm text-gray-600" htmlFor="steering-scale-input">steering_scale:</label>
-                  <input
-                    id="steering-scale-input"
-                    type="number"
-                    step={0.1}
-                    className="w-24 px-2 py-1 border rounded text-sm"
-                    value={steeringScaleInput}
-                    onChange={(e) => {
-                      const inputValue = e.target.value;
-                      setSteeringScaleInput(inputValue);
-                      const v = parseFloat(inputValue);
-                      if (Number.isFinite(v)) {
-                        setSteeringScale(v);
-                      }
-                    }}
-                    onBlur={() => {
-                      if (steeringScaleInput === '' || steeringScaleInput === '-') {
-                        setSteeringScale(0);
-                        setSteeringScaleInput('0');
-                      }
-                    }}
-                    title="调节steering放大系数，支持负数输入，修改后将自动重新分析"
-                  />
-                </div>
-                {loadingTokenPredictions && (
-                  <div className="flex items-center space-x-2">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                    <span className="text-sm text-gray-500">分析中...</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {loadingTokenPredictions ? (
-              <div className="flex items-center justify-center py-8">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                  <p className="text-gray-600">正在运行特征干预分析...</p>
-                </div>
-              </div>
-            ) : tokenPredictions ? (
-              <div className="space-y-4">
-                <div className="bg-gray-50 rounded-lg p-3 border">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                    <div>
-                      <span className="text-gray-600">steering_scale:</span>
-                      <span className="ml-1 font-medium">{Number(steeringScale).toFixed(2)}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">合法移动数:</span>
-                      <span className="ml-1 font-medium">{tokenPredictions.statistics?.total_legal_moves}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">平均概率差:</span>
-                      <span className="ml-1 font-medium">{tokenPredictions.statistics?.avg_prob_diff?.toFixed(4)}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">平均Logit差:</span>
-                      <span className="ml-1 font-medium">{tokenPredictions.statistics?.avg_logit_diff?.toFixed(4)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 概率差异最大前5（增加最多） */}
-                {tokenPredictions.promoting_moves && tokenPredictions.promoting_moves.length > 0 && (
-                  <div className="bg-white rounded-lg p-3 border">
-                    <h4 className="text-sm font-semibold text-gray-900 mb-2">概率差异最大（增加最多）Top 5</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-                      {tokenPredictions.promoting_moves.map((move: any, index: number) => (
-                        <div key={index} className="bg-gray-50 rounded p-3 border">
-                          <div className="text-center">
-                            <div className="text-lg font-bold text-gray-800 mb-1">{move.uci}</div>
-                            <div className="text-xs text-gray-600 space-y-1">
-                              <div>排名: #{index + 1}</div>
-                              <div>概率差: <span className="font-medium">{(move.prob_diff * 100).toFixed(2)}%</span></div>
-                              <div>原始概率: {(move.original_prob * 100).toFixed(2)}%</div>
-                              <div>修改后概率: {(move.modified_prob * 100).toFixed(2)}%</div>
-                              <div>Logit差: {move.diff?.toFixed(4)}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* 概率差异最小前5（减少最多，负数最小） */}
-                {tokenPredictions.inhibiting_moves && tokenPredictions.inhibiting_moves.length > 0 && (
-                  <div className="bg-white rounded-lg p-3 border">
-                    <h4 className="text-sm font-semibold text-gray-900 mb-2">概率差异最小（减少最多）Top 5</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-                      {tokenPredictions.inhibiting_moves.map((move: any, index: number) => (
-                        <div key={index} className="bg-gray-50 rounded p-3 border">
-                          <div className="text-center">
-                            <div className="text-lg font-bold text-gray-800 mb-1">{move.uci}</div>
-                            <div className="text-xs text-gray-600 space-y-1">
-                              <div>排名: #{index + 1}</div>
-                              <div>概率差: <span className="font-medium">{(move.prob_diff * 100).toFixed(2)}%</span></div>
-                              <div>原始概率: {(move.original_prob * 100).toFixed(2)}%</div>
-                              <div>修改后概率: {(move.modified_prob * 100).toFixed(2)}%</div>
-                              <div>Logit差: {move.diff?.toFixed(4)}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-gray-500">
-                <p>点击节点以运行Token Predictions分析</p>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Clerp Editor - New Section */}
         {clickedId && nodeActivationData && (

@@ -737,6 +737,7 @@ export const PlayGamePage = () => {
                   isInteractive={isHumanTurn && !isTracing}
                   autoFlipWhenBlack={autoFlipWhenBlack}
                   analysisName="对局棋盘"
+                  showSelfPlay={true}  // 启用自对弈功能
                 />
               </div>
               

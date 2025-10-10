@@ -32,6 +32,7 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "cmdk": "1.0.0",
+    "d3": "^7.9.0",
     "d3-force": "^3.0.0",
     "dagre": "^0.8.5",
     "lucide-react": "^0.358.0",

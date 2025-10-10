@@ -1,5 +1,4 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import React, { useMemo, useState, useEffect } from 'react';
 
 interface ChessBoardProps {
   fen: string;
@@ -19,7 +18,6 @@ interface ChessBoardProps {
   isInteractive?: boolean; // 新增：是否允许交互
   autoFlipWhenBlack?: boolean; // 新增：到黑方行棋时自动翻转
   moveColor?: string; // 新增：箭头颜色（与节点颜色一致）
-  showSelfPlay?: boolean; // 新增：是否显示自对弈功能
 }
 
 // 棋子Unicode符号映射
@@ -179,16 +177,17 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   zPatternValues,
   sampleIndex,
   analysisName,
+  contextId,
   size = 'medium',
   showCoordinates = true,
   move,
+  orientation = 'auto',
   flip_activation = true,
   onMove,
   onSquareClick,
   isInteractive = false,
   autoFlipWhenBlack = false,
   moveColor,
-  showSelfPlay = false,
 }) => {
   // 一行精简日志：直接打印用于显示的数据结构
   console.log(`[CB#${sampleIndex ?? 'NA'}] activations:`, activations);
@@ -200,14 +199,8 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   
   // 新增：点击选择状态管理
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null);
+  const [possibleMoves, setPossibleMoves] = useState<string[]>([]);
   const [boardEvaluation, setBoardEvaluation] = useState<number[] | null>(null);
-
-  // 自对弈相关状态
-  const [selfPlayData, setSelfPlayData] = useState<any>(null);
-  const [selfPlayLoading, setSelfPlayLoading] = useState(false);
-  const [selfPlayError, setSelfPlayError] = useState<string | null>(null);
-  const [currentSelfPlayStep, setCurrentSelfPlayStep] = useState(0);
-  const [showSelfPlayPanel, setShowSelfPlayPanel] = useState(false);
 
   // 修改handleAnalyze函数，移除JSON.stringify中对象的尾随逗号
   const handleAnalyze = async () => {
@@ -228,56 +221,6 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   useEffect(() => {
     handleAnalyze();
   }, [fen]);
-
-  // 自对弈函数
-  const handleSelfPlay = useCallback(async () => {
-    setSelfPlayLoading(true);
-    setSelfPlayError(null);
-    
-    try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/self_play`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          initial_fen: fen,
-          max_moves: 5, // 固定5步
-          temperature: 1.0
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-
-      const result = await response.json();
-      setSelfPlayData(result);
-      setCurrentSelfPlayStep(0);
-      setShowSelfPlayPanel(true);
-      
-    } catch (err) {
-      console.error('自对弈失败:', err);
-      setSelfPlayError(err instanceof Error ? err.message : '自对弈失败');
-    } finally {
-      setSelfPlayLoading(false);
-    }
-  }, [fen]);
-
-  // 准备图表数据
-  const chartData = useMemo(() => {
-    if (!selfPlayData || !selfPlayData.wdl_history.length) return [];
-    
-    return selfPlayData.wdl_history.map((wdl: any, index: number) => ({
-      move: index + 1,
-      win: (wdl.win * 100).toFixed(1),
-      draw: (wdl.draw * 100).toFixed(1),
-      loss: (wdl.loss * 100).toFixed(1),
-      win_num: wdl.win,
-      draw_num: wdl.draw,
-      loss_num: wdl.loss
-    }));
-  }, [selfPlayData]);
 
   const parsedBoard = useMemo(() => {
     try {
@@ -325,11 +268,29 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     return originalRow * 8 + col;
   };
 
+  // 根据实际squareIndex计算显示位置（用于箭头绘制）
+  const getDisplayPosition = (actualSquareIndex: number) => {
+    const actualRow = Math.floor(actualSquareIndex / 8);
+    const col = actualSquareIndex % 8;
+    const displayRow = flip_activation ? (7 - actualRow) : actualRow;
+    return { row: displayRow, col };
+  };
+
   // 新增：根据棋盘朝向(flip)计算显示位置（用于棋盘元素/箭头对齐棋盘格子）
   const getBoardDisplayPosition = (actualSquareIndex: number) => {
     const actualRow = Math.floor(actualSquareIndex / 8);
     const col = actualSquareIndex % 8;
     const displayRow = flip ? (7 - actualRow) : actualRow;
+    return { row: displayRow, col };
+  };
+
+  // Z模式和激活值的显示位置映射 - 始终保持在原始绝对位置
+  const getDisplayPositionFromActivationIndex = (activationIndex: number) => {
+    const originalRow = Math.floor(activationIndex / 8);
+    const col = activationIndex % 8;
+    
+    // 根据棋盘是否翻转来确定显示行，但激活值索引本身不变
+    const displayRow = flip_activation ? (7 - originalRow) : originalRow;
     return { row: displayRow, col };
   };
 
@@ -347,7 +308,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   };
 
   // 新增：处理格子点击
-  const handleSquareClick = (activationIndex: number) => {
+  const handleSquareClick = (activationIndex: number, displayRow: number, col: number) => {
     if (!isInteractive) return;
     
     const squareName = getSquareNameFromActivationIndex(activationIndex);
@@ -356,11 +317,13 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     if (selectedSquare === null) {
       // 第一次点击：选择起点
       setSelectedSquare(activationIndex);
+      setPossibleMoves([]);
       onSquareClick?.(squareName);
       console.log('选择起点:', squareName);
     } else if (selectedSquare === activationIndex) {
       // 点击同一格子：取消选择
       setSelectedSquare(null);
+      setPossibleMoves([]);
       console.log('取消选择');
     } else {
       // 第二次点击：尝试移动
@@ -374,6 +337,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       
       // 清除选择状态
       setSelectedSquare(null);
+      setPossibleMoves([]);
     }
   };
 
@@ -511,7 +475,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                   onMouseLeave={() => {
                     setHoveredSquare(null);
                   }}
-                  onClick={() => handleSquareClick(activationIndex)}
+                  onClick={() => handleSquareClick(activationIndex, displayRowIndex, colIndex)}
                   title={`${String.fromCharCode(97 + colIndex)}${getDisplayRowNumber(displayRowIndex)}${
                     activation !== 0 ? ` (激活: ${activation.toFixed(3)})` : ''
                   }${
@@ -616,6 +580,90 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             })()}
           </svg>
         )}
+
+        {/* 新增：绘制 graph 节点与边 */}
+        {(() => {
+          // 在现有的 svg 上新增一个图层，用于绘制 graph 节点和边
+          const graphGroup = document.querySelector('.graph-overlay')?.appendChild(document.createElement('g'));
+          if (!graphGroup) return;
+
+          // 边绘制：遍历 graph.edges，绘制连线（粗线，圆角）
+          graphGroup.setAttribute('class', 'graph-overlay');
+          graph.edges.forEach(edge => {
+            const sourceNode = graph.getNodeById(edge.sourceId);
+            const targetNode = graph.getNodeById(edge.targetId);
+            if (!sourceNode || !targetNode) return;
+
+            // 根据棋盘状态计算节点的屏幕坐标
+            const getCoordinates = (position) => {
+              const row = Math.floor(position / 8);
+              const col = position % 8;
+              const displayRow = boardState.flipped ? (7 - row) : row;
+              return {
+                x: col * SQUARE_SIZE + SQUARE_SIZE / 2,
+                y: displayRow * SQUARE_SIZE + SQUARE_SIZE / 2
+              };
+            };
+
+            const sourceCoords = getCoordinates(sourceNode.position);
+            const targetCoords = getCoordinates(targetNode.position);
+
+            graphGroup.appendChild(document.createElement('line'))
+              .setAttribute('x1', sourceCoords.x.toString())
+              .setAttribute('y1', sourceCoords.y.toString())
+              .setAttribute('x2', targetCoords.x.toString())
+              .setAttribute('y2', targetCoords.y.toString())
+              .style.stroke = globalColors.deepBlue
+              .style.strokeWidth = '4'
+              .style.strokeLinecap = 'round'
+              .style.strokeLinejoin = 'round';
+          });
+
+          // 节点绘制：遍历 graph.nodes，非 embedding 节点绘制矩形，子节点以圆形显示
+          graph.nodes.forEach(node => {
+            // 如果是 embedding 节点，则不单独显示
+            if (node.type === 'embedding') return;
+
+            // 计算节点位置：node.position 为棋盘格索引
+            const row = Math.floor(node.position / 8);
+            const col = node.position % 8;
+            const displayRow = boardState.flipped ? (7 - row) : row;
+            const x = col * SQUARE_SIZE + SQUARE_SIZE * 0.1; // 留边距
+            const y = displayRow * SQUARE_SIZE + SQUARE_SIZE * 0.1;
+            const width = SQUARE_SIZE * 0.8;
+            const height = SQUARE_SIZE * 0.8;
+
+            // 绘制节点矩形（深蓝色边框，无填充）
+            graphGroup.appendChild(document.createElement('rect'))
+              .setAttribute('x', x.toString())
+              .setAttribute('y', y.toString())
+              .setAttribute('width', width.toString())
+              .setAttribute('height', height.toString())
+              .style.fill = 'none'
+              .style.stroke = globalColors.deepBlue
+              .style.strokeWidth = '3'
+              .style.rx = '8';
+
+            // 绘制子节点：遍历当前节点的 childrenIds，对每个子节点绘制圆形（浅蓝色边框）
+            node.childrenIds.forEach(childId => {
+              const childNode = graph.getNodeById(childId);
+              if (!childNode) return;
+              const childRow = Math.floor(childNode.position / 8);
+              const childCol = childNode.position % 8;
+              const displayChildRow = boardState.flipped ? (7 - childRow) : childRow;
+              const cx = childCol * SQUARE_SIZE + SQUARE_SIZE / 2;
+              const cy = displayChildRow * SQUARE_SIZE + SQUARE_SIZE / 2;
+
+              graphGroup.appendChild(document.createElement('circle'))
+                .setAttribute('cx', cx.toString())
+                .setAttribute('cy', cy.toString())
+                .setAttribute('r', (SQUARE_SIZE * 0.15).toString())
+                .style.fill = 'none'
+                .style.stroke = globalColors.lightBlue
+                .style.strokeWidth = '2';
+            });
+          });
+        })()}
       </div>
 
               {/* FEN字符串和移动信息显示 */}
@@ -707,300 +755,6 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
           </div>
         );
       })()}
-
-      {/* 自对弈功能 */}
-      {showSelfPlay && (
-        <div className="mt-6 space-y-4">
-          {/* 自对弈控制按钮 */}
-          <div className="flex justify-center space-x-4">
-            <button
-              onClick={handleSelfPlay}
-              disabled={selfPlayLoading}
-              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-            >
-              {selfPlayLoading ? '进行中...' : '开始自对弈 (5步)'}
-            </button>
-            {selfPlayData && (
-              <button
-                onClick={() => setShowSelfPlayPanel(!showSelfPlayPanel)}
-                className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
-              >
-                {showSelfPlayPanel ? '隐藏结果' : '显示结果'}
-              </button>
-            )}
-          </div>
-
-          {/* 错误显示 */}
-          {selfPlayError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <p className="text-red-700 text-sm">{selfPlayError}</p>
-            </div>
-          )}
-
-          {/* 自对弈结果显示 */}
-          {selfPlayData && showSelfPlayPanel && (
-            <div className="space-y-4">
-              {/* 步骤导航 */}
-              <div className="bg-white rounded-lg border p-4">
-                <h3 className="text-lg font-semibold mb-3">自对弈步骤导航</h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      当前步骤: {currentSelfPlayStep + 1} / {selfPlayData.positions.length}
-                    </label>
-                    <input
-                      type="range"
-                      min="0"
-                      max={selfPlayData.positions.length - 1}
-                      value={currentSelfPlayStep}
-                      onChange={(e) => setCurrentSelfPlayStep(parseInt(e.target.value))}
-                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                    />
-                  </div>
-                  
-                  {/* 步骤信息摘要 */}
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                    <div className="text-sm font-medium text-blue-800 mb-2">步骤 {currentSelfPlayStep + 1} 信息:</div>
-                    <div className="space-y-1 text-xs text-blue-700">
-                      {currentSelfPlayStep > 0 && (
-                        <div>
-                          <span className="font-medium">执行移动:</span> 
-                          <span className="font-mono ml-1 px-1 bg-blue-100 rounded">
-                            {selfPlayData.moves[currentSelfPlayStep - 1]}
-                          </span>
-                        </div>
-                      )}
-                      <div>
-                        <span className="font-medium">局面FEN:</span>
-                        <div className="font-mono text-xs mt-1 p-2 bg-white rounded border break-all">
-                          {selfPlayData.positions[currentSelfPlayStep]}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-center space-x-2">
-                    <button
-                      onClick={() => setCurrentSelfPlayStep(0)}
-                      className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-sm"
-                    >
-                      开始
-                    </button>
-                    <button
-                      onClick={() => setCurrentSelfPlayStep(Math.max(0, currentSelfPlayStep - 1))}
-                      className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-sm"
-                      disabled={currentSelfPlayStep === 0}
-                    >
-                      上一步
-                    </button>
-                    <button
-                      onClick={() => setCurrentSelfPlayStep(Math.min(selfPlayData.positions.length - 1, currentSelfPlayStep + 1))}
-                      className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-sm"
-                      disabled={currentSelfPlayStep === selfPlayData.positions.length - 1}
-                    >
-                      下一步
-                    </button>
-                    <button
-                      onClick={() => setCurrentSelfPlayStep(selfPlayData.positions.length - 1)}
-                      className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-sm"
-                    >
-                      结束
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* 自对弈棋盘 */}
-              <div className="bg-white rounded-lg border p-4">
-                <h3 className="text-lg font-semibold mb-3">
-                  自对弈局面 {currentSelfPlayStep + 1}
-                  {currentSelfPlayStep < selfPlayData.moves.length && (
-                    <span className="text-green-600 ml-2">
-                      (移动: {selfPlayData.moves[currentSelfPlayStep]})
-                    </span>
-                  )}
-                </h3>
-                
-                {/* FEN字符串显示 */}
-                <div className="mb-4 p-3 bg-gray-50 rounded-lg border">
-                  <div className="text-sm font-medium text-gray-700 mb-2">当前FEN:</div>
-                  <div className="font-mono text-xs text-gray-800 break-all select-all bg-white p-2 rounded border">
-                    {selfPlayData.positions[currentSelfPlayStep]}
-                  </div>
-                </div>
-                <div className="flex justify-center">
-                  <div className="relative w-80 h-80 border-4 border-gray-800 rounded-lg overflow-hidden shadow-lg">
-                    <div className="w-full h-full grid grid-cols-8 grid-rows-8">
-                      {(() => {
-                        try {
-                          const parsedBoard = parseFEN(selfPlayData.positions[currentSelfPlayStep]);
-                          const currentMove = currentSelfPlayStep > 0 ? selfPlayData.moves[currentSelfPlayStep - 1] : undefined;
-                          const parsedMove = currentMove ? parseMove(currentMove) : null;
-                          
-                          return parsedBoard.board.map((row, displayRowIndex) =>
-                            row.map((piece, colIndex) => {
-                              const isLight = (displayRowIndex + colIndex) % 2 === 0;
-                              const squareIndex = displayRowIndex * 8 + colIndex;
-                              const isMoveFromSquare = parsedMove && parsedMove.from.index === squareIndex;
-                              const isMoveToSquare = parsedMove && parsedMove.to.index === squareIndex;
-                              
-                              return (
-                                <div
-                                  key={`${displayRowIndex}-${colIndex}`}
-                                  className={`
-                                    w-10 h-10 relative flex items-center justify-center
-                                    ${isLight ? 'bg-amber-100' : 'bg-amber-800'}
-                                    ${isMoveFromSquare ? 'bg-green-400' : ''}
-                                    ${isMoveToSquare ? 'bg-green-600' : ''}
-                                  `}
-                                >
-                                  {piece && (
-                                    <span className="text-xl select-none">
-                                      {PIECE_SYMBOLS[piece] || piece}
-                                    </span>
-                                  )}
-                                </div>
-                              );
-                            })
-                          );
-                        } catch (error) {
-                          return <div className="col-span-8 row-span-8 flex items-center justify-center text-red-500">无效FEN</div>;
-                        }
-                      })()}
-                    </div>
-                    
-                    {/* 移动箭头 */}
-                    {(() => {
-                      const currentMove = currentSelfPlayStep > 0 ? selfPlayData.moves[currentSelfPlayStep - 1] : undefined;
-                      const parsedMove = currentMove ? parseMove(currentMove) : null;
-                      if (!parsedMove) return null;
-                      
-                      const fromX = parsedMove.from.col * 40 + 20;
-                      const fromY = parsedMove.from.row * 40 + 20;
-                      const toX = parsedMove.to.col * 40 + 20;
-                      const toY = parsedMove.to.row * 40 + 20;
-                      
-                      return (
-                        <svg className="absolute inset-0 pointer-events-none" width="320" height="320">
-                          <defs>
-                            <marker id="arrow-head-selfplay" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
-                              <path d="M0,0 L0,6 L6,3 z" fill="#3b82f6" />
-                            </marker>
-                          </defs>
-                          <line
-                            x1={fromX}
-                            y1={fromY}
-                            x2={toX}
-                            y2={toY}
-                            stroke="#3b82f6"
-                            strokeWidth={3}
-                            markerEnd="url(#arrow-head-selfplay)"
-                          />
-                        </svg>
-                      );
-                    })()}
-                  </div>
-                </div>
-              </div>
-
-              {/* WDL曲线图 */}
-              {chartData.length > 0 && (
-                <div className="bg-white rounded-lg border p-4">
-                  <h3 className="text-lg font-semibold mb-3">WDL变化曲线</h3>
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={chartData}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="move" />
-                        <YAxis />
-                        <Tooltip 
-                          formatter={(value: any, name: string) => [
-                            `${parseFloat(value).toFixed(1)}%`, 
-                            name === 'win' ? '白方胜率' : name === 'draw' ? '和棋率' : '黑方胜率'
-                          ]}
-                        />
-                        <Legend />
-                        <Line 
-                          type="monotone" 
-                          dataKey="win" 
-                          stroke="#10b981" 
-                          strokeWidth={2}
-                          name="白方胜率"
-                          dot={{ fill: '#10b981', strokeWidth: 2, r: 3 }}
-                        />
-                        <Line 
-                          type="monotone" 
-                          dataKey="draw" 
-                          stroke="#f59e0b" 
-                          strokeWidth={2}
-                          name="和棋率"
-                          dot={{ fill: '#f59e0b', strokeWidth: 2, r: 3 }}
-                        />
-                        <Line 
-                          type="monotone" 
-                          dataKey="loss" 
-                          stroke="#ef4444" 
-                          strokeWidth={2}
-                          name="黑方胜率"
-                          dot={{ fill: '#ef4444', strokeWidth: 2, r: 3 }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              )}
-
-              {/* 当前步骤WDL评估 */}
-              {currentSelfPlayStep < selfPlayData.wdl_history.length && (
-                <div className="bg-white rounded-lg border p-4">
-                  <h3 className="text-lg font-semibold mb-3">步骤 {currentSelfPlayStep + 1} WDL评估</h3>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-green-600">
-                        {(selfPlayData.wdl_history[currentSelfPlayStep].win * 100).toFixed(1)}%
-                      </div>
-                      <div className="text-sm text-gray-600">白方胜率</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-yellow-600">
-                        {(selfPlayData.wdl_history[currentSelfPlayStep].draw * 100).toFixed(1)}%
-                      </div>
-                      <div className="text-sm text-gray-600">和棋率</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-red-600">
-                        {(selfPlayData.wdl_history[currentSelfPlayStep].loss * 100).toFixed(1)}%
-                      </div>
-                      <div className="text-sm text-gray-600">黑方胜率</div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 移动概率 */}
-              {currentSelfPlayStep < selfPlayData.move_probabilities.length && 
-               Object.keys(selfPlayData.move_probabilities[currentSelfPlayStep]).length > 0 && (
-                <div className="bg-white rounded-lg border p-4">
-                  <h3 className="text-lg font-semibold mb-3">步骤 {currentSelfPlayStep + 1} 移动概率</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
-                    {Object.entries(selfPlayData.move_probabilities[currentSelfPlayStep])
-                      .sort(([,a], [,b]) => (b as number) - (a as number))
-                      .slice(0, 10)
-                      .map(([move, prob]) => (
-                        <div key={move} className="bg-gray-50 rounded p-2 text-center">
-                          <div className="font-mono text-sm font-medium">{move}</div>
-                          <div className="text-xs text-gray-600">
-                            {((prob as number) * 100).toFixed(1)}%
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 };

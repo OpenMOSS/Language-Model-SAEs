@@ -193,6 +193,7 @@ const AnalysisChessBoard = ({
         analysisName={analysisName}
         contextId={contextId}
         autoFlipWhenBlack={autoFlipWhenBlack}
+        showSelfPlay={true}  // 启用自对弈功能
       />
       
       {/* 分析状态卡片 */}

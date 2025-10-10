@@ -746,14 +746,48 @@ def analyze_board(request: dict):
     try:
         if not HOOKED_TRANSFORMER_AVAILABLE:
             raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
+        
+        # 使用已缓存的模型，避免重复加载
         model = get_hooked_model()
+        
         with torch.no_grad():
             output, _ = model.run_with_cache(fen, prepend_bos=False)
-        # 假设output[1]为形状(1,3)的张量，表示[行棋方胜率, 和棋率, 对方胜率]
-        if output[1].dim() == 2:
-            evaluation = output[1].tolist()[0]
+        
+        # 模型输出是一个列表，包含三个元素：
+        # output[0]: logits, shape [1, 1858]
+        # output[1]: WDL, shape [1, 3] - [当前行棋方胜率, 和棋率, 当前行棋方败率]
+        # output[2]: 其他输出, shape [1, 1]
+        
+        if isinstance(output, (list, tuple)) and len(output) >= 2:
+            wdl_tensor = output[1]  # 获取WDL输出
+            if wdl_tensor.shape == torch.Size([1, 3]):
+                # WDL已经是概率分布，不需要softmax
+                current_player_win = wdl_tensor[0][0].item()  # 当前行棋方胜率
+                draw_prob = wdl_tensor[0][1].item()  # 和棋率
+                current_player_loss = wdl_tensor[0][2].item()  # 当前行棋方败率
+                
+                # 判断当前行棋方是谁
+                board = chess.Board(fen)
+                is_white_to_move = board.turn == chess.WHITE
+                
+                # 转换为白方视角的WDL
+                if is_white_to_move:
+                    # 白方行棋，直接使用模型输出
+                    white_win = current_player_win
+                    white_loss = current_player_loss
+                else:
+                    # 黑方行棋，需要翻转胜败率
+                    white_win = current_player_loss  # 黑方败率 = 白方胜率
+                    white_loss = current_player_win  # 黑方胜率 = 白方败率
+                
+                evaluation = [white_win, draw_prob, white_loss]
+            else:
+                print(f"WDL输出形状不正确: {wdl_tensor.shape}, 期望 [1, 3]")
+                evaluation = [0.5, 0.2, 0.3]
         else:
-            evaluation = output[1].tolist()
+            print(f"模型输出格式不正确，期望包含至少2个元素的列表，实际得到: {type(output)}")
+            evaluation = [0.5, 0.2, 0.3]
+        
         return {"evaluation": evaluation}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"局面分析出错: {str(e)}")
@@ -775,6 +809,34 @@ except ImportError:
     run_circuit_trace = None
     CIRCUITS_SERVICE_AVAILABLE = False
     print("WARNING: circuits_service not found, circuit tracing will not be available")
+
+# 导入patching服务
+try:
+    from patching import run_patching_analysis
+    PATCHING_SERVICE_AVAILABLE = True
+except ImportError:
+    run_patching_analysis = None
+    PATCHING_SERVICE_AVAILABLE = False
+    print("WARNING: patching service not found, patching analysis will not be available")
+
+# 导入intervention服务
+try:
+    from intervention import run_feature_steering_analysis
+    INTERVENTION_SERVICE_AVAILABLE = True
+except ImportError:
+    run_feature_steering_analysis = None
+    INTERVENTION_SERVICE_AVAILABLE = False
+    print("WARNING: intervention service not found, steering analysis will not be available")
+
+# 导入自对弈服务
+try:
+    from self_play import run_self_play, analyze_game_positions
+    SELF_PLAY_SERVICE_AVAILABLE = True
+except ImportError:
+    run_self_play = None
+    analyze_game_positions = None
+    SELF_PLAY_SERVICE_AVAILABLE = False
+    print("WARNING: self-play service not found, self-play functionality will not be available")
 
 
 
@@ -858,5 +920,263 @@ def circuit_trace_status():
     """检查circuit trace服务的状态"""
     return {
         "available": CIRCUITS_SERVICE_AVAILABLE,
+        "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE
+    }
+
+
+@app.post("/patching_analysis")
+def patching_analysis(request: dict):
+    """
+    运行patching分析并返回Token Predictions结果
+    
+    Args:
+        request: 包含分析参数的请求体
+            - fen: FEN字符串 (必需)
+            - feature_type: 特征类型 ('transcoder' 或 'lorsa') (必需)
+            - layer: 层数 (必需)
+            - pos: 位置 (必需)
+            - feature: 特征索引 (必需)
+    
+    Returns:
+        Token Predictions分析结果 (JSON格式)
+    """
+    try:
+        # 检查patching服务是否可用
+        if not PATCHING_SERVICE_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Patching service not available")
+        
+        # 提取参数
+        fen = request.get("fen")
+        if not fen:
+            raise HTTPException(status_code=400, detail="FEN string is required")
+        
+        feature_type = request.get("feature_type")
+        if feature_type not in ['transcoder', 'lorsa']:
+            raise HTTPException(status_code=400, detail="feature_type must be 'transcoder' or 'lorsa'")
+        
+        layer = request.get("layer")
+        if layer is None or not isinstance(layer, int):
+            raise HTTPException(status_code=400, detail="layer must be an integer")
+        
+        pos = request.get("pos")
+        if pos is None or not isinstance(pos, int):
+            raise HTTPException(status_code=400, detail="pos must be an integer")
+        
+        feature = request.get("feature")
+        if feature is None or not isinstance(feature, int):
+            raise HTTPException(status_code=400, detail="feature must be an integer")
+        
+        print(f"🔍 运行patching分析: {feature_type} L{layer} pos{pos} feature{feature}")
+        
+        # 运行patching分析
+        result = run_patching_analysis(
+            fen=fen,
+            feature_type=feature_type,
+            layer=layer,
+            pos=pos,
+            feature=feature
+        )
+        
+        if 'error' in result:
+            raise HTTPException(status_code=400, detail=result['error'])
+        
+        print(f"✅ Patching分析完成，找到 {result['statistics']['total_legal_moves']} 个合法移动")
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ Patching分析失败: {e}")
+        raise HTTPException(status_code=500, detail=f"Patching analysis failed: {str(e)}")
+
+
+@app.get("/patching_analysis/status")
+def patching_analysis_status():
+    """检查patching分析服务的状态"""
+    return {
+        "available": PATCHING_SERVICE_AVAILABLE,
+        "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE
+    }
+
+
+@app.post("/steering_analysis")
+def steering_analysis(request: dict):
+    """
+    运行steering分析并返回Token Predictions结果，支持可调的steering_scale
+    
+    Args:
+        request: 包含分析参数的请求体
+            - fen: FEN字符串 (必需)
+            - feature_type: 特征类型 ('transcoder' 或 'lorsa') (必需)
+            - layer: 层数 (必需)
+            - pos: 位置 (必需)
+            - feature: 特征索引 (必需)
+            - steering_scale: 放大系数 (可选，默认 1)
+    
+    Returns:
+        Token Predictions分析结果 (JSON格式)
+    """
+    try:
+        if not INTERVENTION_SERVICE_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Steering service not available")
+
+        fen = request.get("fen")
+        if not fen:
+            raise HTTPException(status_code=400, detail="FEN string is required")
+
+        feature_type = request.get("feature_type")
+        if feature_type not in ['transcoder', 'lorsa']:
+            raise HTTPException(status_code=400, detail="feature_type must be 'transcoder' or 'lorsa'")
+
+        layer = request.get("layer")
+        if layer is None or not isinstance(layer, int):
+            raise HTTPException(status_code=400, detail="layer must be an integer")
+
+        pos = request.get("pos")
+        if pos is None or not isinstance(pos, int):
+            raise HTTPException(status_code=400, detail="pos must be an integer")
+
+        feature = request.get("feature")
+        if feature is None or not isinstance(feature, int):
+            raise HTTPException(status_code=400, detail="feature must be an integer")
+
+        steering_scale = request.get("steering_scale", 1)
+        if not isinstance(steering_scale, (int, float)):
+            raise HTTPException(status_code=400, detail="steering_scale must be a number")
+
+        print(f"🔍 运行steering分析: {feature_type} L{layer} pos{pos} feature{feature} scale{steering_scale}")
+
+        result = run_feature_steering_analysis(
+            fen=fen,
+            feature_type=feature_type,
+            layer=layer,
+            pos=pos,
+            feature=feature,
+            steering_scale=steering_scale,
+        )
+
+        if 'error' in result:
+            raise HTTPException(status_code=400, detail=result['error'])
+
+        print(f"✅ Steering分析完成，找到 {result['statistics']['total_legal_moves']} 个合法移动")
+        return result
+
+    except Exception as e:
+        print(f"❌ Steering分析失败: {e}")
+        raise HTTPException(status_code=500, detail=f"Steering analysis failed: {str(e)}")
+
+
+@app.get("/steering_analysis/status")
+def steering_analysis_status():
+    """检查steering分析服务的状态"""
+    return {
+        "available": INTERVENTION_SERVICE_AVAILABLE,
+        "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE
+    }
+
+
+@app.post("/self_play")
+def start_self_play(request: dict):
+    """
+    开始自对弈并返回游戏数据
+    
+    Args:
+        request: 包含游戏参数的请求体
+            - initial_fen: 初始FEN字符串 (可选，默认起始局面)
+            - max_moves: 最大移动数 (默认: 10)
+            - temperature: 温度参数 (默认: 1.0)
+    
+    Returns:
+        自对弈游戏数据 (JSON格式)
+    """
+    try:
+        # 检查自对弈服务是否可用
+        if not SELF_PLAY_SERVICE_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Self-play service not available")
+        
+        # 提取参数
+        initial_fen = request.get("initial_fen", "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        max_moves = request.get("max_moves", 10)
+        temperature = request.get("temperature", 1.0)
+        
+        # 验证参数
+        if not isinstance(max_moves, int) or max_moves <= 0:
+            raise HTTPException(status_code=400, detail="max_moves must be a positive integer")
+        
+        if not isinstance(temperature, (int, float)) or temperature < 0:
+            raise HTTPException(status_code=400, detail="temperature must be a non-negative number")
+        
+        print(f"🎮 开始自对弈: {initial_fen[:50]}..., 最大移动数: {max_moves}, 温度: {temperature}")
+        
+        # 获取已缓存的HookedTransformer模型
+        hooked_model = get_hooked_model()
+        
+        # 运行自对弈
+        game_result = run_self_play(
+            initial_fen=initial_fen,
+            max_moves=max_moves,
+            temperature=temperature,
+            model=hooked_model
+        )
+        
+        print(f"✅ 自对弈完成，共进行了 {len(game_result['moves'])} 步")
+        
+        return game_result
+        
+    except Exception as e:
+        print(f"❌ 自对弈失败: {e}")
+        raise HTTPException(status_code=500, detail=f"Self-play failed: {str(e)}")
+
+
+@app.post("/self_play/analyze")
+def analyze_self_play_positions(request: dict):
+    """
+    分析自对弈中的位置序列
+    
+    Args:
+        request: 包含位置序列的请求体
+            - positions: FEN字符串列表
+    
+    Returns:
+        位置分析结果 (JSON格式)
+    """
+    try:
+        # 检查自对弈服务是否可用
+        if not SELF_PLAY_SERVICE_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Self-play service not available")
+        
+        # 提取参数
+        positions = request.get("positions", [])
+        
+        if not isinstance(positions, list) or not positions:
+            raise HTTPException(status_code=400, detail="positions must be a non-empty list of FEN strings")
+        
+        print(f"🔍 分析位置序列，共 {len(positions)} 个位置")
+        
+        # 获取已缓存的HookedTransformer模型
+        hooked_model = get_hooked_model()
+        
+        # 分析位置序列
+        analysis_result = analyze_game_positions(
+            positions=positions,
+            model=hooked_model
+        )
+        
+        print(f"✅ 位置分析完成")
+        
+        return {
+            "positions_analysis": analysis_result,
+            "total_positions": len(positions)
+        }
+        
+    except Exception as e:
+        print(f"❌ 位置分析失败: {e}")
+        raise HTTPException(status_code=500, detail=f"Position analysis failed: {str(e)}")
+
+
+@app.get("/self_play/status")
+def self_play_status():
+    """检查自对弈服务的状态"""
+    return {
+        "available": SELF_PLAY_SERVICE_AVAILABLE,
         "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE
     }
