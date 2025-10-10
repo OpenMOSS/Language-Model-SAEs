@@ -505,7 +505,6 @@ class AttributionContext:
                 except TypeError:
                     pass
             q_side_result[k_pos, self._row_size] = sum(bias_attributions)
-            # print('q', q_side_result[k_pos].sum().item(), self._attn_scores[layer][0, qk_idx, q_pos, k_pos].item()) # debug, must equal
 
             # trace k side
             self._batch_buffer = torch.zeros(
@@ -545,7 +544,6 @@ class AttributionContext:
                 except TypeError:
                     pass
             k_side_result[k_pos, self._row_size] = sum(bias_attributions)
-            # print('k', k_side_result[k_pos].sum().item(), self._attn_scores[layer][0, qk_idx, q_pos, k_pos].item()) # debug, must equal
 
         return q_side_result, k_side_result
 
@@ -633,7 +631,6 @@ def select_encoder_rows_lorsa(
     """Return encoder rows for **active** features only."""
     rows: List[torch.Tensor] = []
     patterns: List[torch.Tensor] = []
-    # print(f'{activation_matrix.shape}')
     for layer, row in enumerate(activation_matrix):
         qpos, head_idx = row.coalesce().indices()
         qk_idx = head_idx // (lorsas[layer].cfg.n_ov_heads // lorsas[layer].cfg.n_qk_heads)

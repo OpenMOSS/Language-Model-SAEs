@@ -123,7 +123,7 @@ def normalize_matrix(matrix: torch.Tensor) -> torch.Tensor:
     return normalized / normalized.sum(dim=1, keepdim=True).clamp(min=1e-10)
 
 
-def compute_influence(A: torch.Tensor, logit_weights: torch.Tensor, max_iter: int = 1000):
+def compute_influence(A: torch.Tensor, logit_weights: torch.Tensor, max_iter: int = 10000):
     # Normally we calculate total influence B using A + A^2 + ... or (I - A)^-1 - I,
     # and do logit_weights @ B
     # But it's faster / more efficient to compute logit_weights @ A + logit_weights @ A^2
