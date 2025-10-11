@@ -513,9 +513,9 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                   }}
                   onClick={() => handleSquareClick(activationIndex)}
                   title={`${String.fromCharCode(97 + colIndex)}${getDisplayRowNumber(displayRowIndex)}${
-                    activation !== 0 ? ` (激活: ${activation.toFixed(3)})` : ''
+                    activation !== 0 ? ` (${activation.toFixed(3)})` : ''
                   }${
-                    isZPatternTarget ? ` [Z模式目标: ${targetStrength.toFixed(3)}]` : ''
+                    isZPatternTarget ? ` [目标: ${targetStrength.toFixed(3)}]` : ''
                   }${
                     isMoveFromSquare ? ' [移动起点]' : ''
                   }${
@@ -655,20 +655,6 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
           <div className="flex space-x-4">
             <span>激活格子: {activations.filter(a => a !== 0).length}</span>
             <span>最大值: {Math.max(...activations.map(Math.abs)).toFixed(3)}</span>
-            <span className="text-red-600">🔴 激活值</span>
-            {hoveredSquare !== null && <span className="text-blue-600">🔵 Z模式连接 (最强8个)</span>}
-          </div>
-        </div>
-      )}
-
-      {/* Z模式统计 */}
-      {zPatternValues && zPatternValues.length > 0 && (
-        <div className="text-xs text-gray-600 space-y-1">
-          <div>Z模式连接: {zPatternValues.length}个</div>
-          <div>强度范围: {Math.min(...zPatternValues).toFixed(3)} ~ {Math.max(...zPatternValues).toFixed(3)}</div>
-          <div className="flex space-x-4">
-            <span className="text-blue-600">🔵 正值连接</span>
-            <span className="text-orange-600">🟠 负值连接</span>
           </div>
         </div>
       )}
@@ -681,11 +667,11 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         return (
           <div className="text-xs bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
             <div className="font-medium text-blue-800">
-              格子 {squareName} (激活值: {activation.toFixed(3)})
+              格子 {squareName} ({activation.toFixed(3)})
             </div>
             {zPatternTargets.length > 0 ? (
               <>
-                <div className="text-blue-700">Z模式最强连接 ({zPatternTargets.length}个):</div>
+                <div className="text-blue-700">({zPatternTargets.length}个):</div>
                 <div className="grid grid-cols-2 gap-1">
                   {zPatternTargets.slice(0, 6).map((target, idx) => {
                     const targetName = getSquareNameFromActivationIndex(target.square);
@@ -702,7 +688,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                 </div>
               </>
             ) : (
-              <div className="text-blue-600">无Z模式连接</div>
+              <div className="text-blue-600">无连接</div>
             )}
           </div>
         );
