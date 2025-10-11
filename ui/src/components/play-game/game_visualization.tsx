@@ -8,7 +8,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, RotateCcw, Play, Square, Move, Undo2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Loader2, RotateCcw, Play, Square, Move, Undo2, Download, X } from 'lucide-react';
 
 interface GameState {
   fen: string;
@@ -16,6 +18,44 @@ interface GameState {
   isGameOver: boolean;
   winner: string | null;
   isPlayerTurn: boolean;
+  gameEndReason: 'checkmate' | 'resignation' | 'draw' | null;
+}
+
+interface TimerState {
+  whiteTime: number; // 剩余时间（秒）
+  blackTime: number;
+  whiteIncrement: number; // 每步增加时间（秒）
+  blackIncrement: number;
+  isRunning: boolean;
+  currentPlayer: 'w' | 'b';
+  lastMoveTime: number;
+}
+
+interface PgnHeaders {
+  Event: string;
+  Date: string;
+  Round: string;
+  White: string;
+  Black: string;
+  Result: string;
+  TimeControl: string;
+  WhiteFideId: string;
+  BlackFideId: string;
+  WhiteTitle: string;
+  BlackTitle: string;
+  WhiteElo: string;
+  BlackElo: string;
+  WhiteTeam: string;
+  BlackTeam: string;
+  WhiteClock: string;
+  BlackClock: string;
+  Variant: string;
+}
+
+interface MoveWithTime {
+  move: string;
+  time: number;
+  clock: string;
 }
 
 interface StockfishAnalysis {
@@ -57,7 +97,55 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     isGameOver: false,
     winner: null,
     isPlayerTurn: true,
+    gameEndReason: null,
   });
+
+  // 计时器状态
+  const [timer, setTimer] = useState<TimerState>({
+    whiteTime: 180 * 60, // 3小时 = 180分钟 = 180*60秒
+    blackTime: 180 * 60,
+    whiteIncrement: 60, // 1分钟
+    blackIncrement: 60,
+    isRunning: false,
+    currentPlayer: 'w',
+    lastMoveTime: Date.now(),
+  });
+
+  // 移动历史（包含时间信息）
+  const [moveHistory, setMoveHistory] = useState<MoveWithTime[]>([]);
+
+  // PGN保存对话框状态
+  const [showPgnDialog, setShowPgnDialog] = useState(false);
+  const [pgnHeaders, setPgnHeaders] = useState<PgnHeaders>({
+    Event: new Date().toLocaleString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }),
+    Date: new Date().toISOString().split('T')[0].replace(/-/g, '.'),
+    Round: '1',
+    White: 'P1',
+    Black: 'P2',
+    Result: '*',
+    TimeControl: '180+1',
+    WhiteFideId: '12345678',
+    BlackFideId: '87654321',
+    WhiteTitle: 'CM',
+    BlackTitle: 'CM',
+    WhiteElo: '2000',
+    BlackElo: '2000',
+    WhiteTeam: 'CHN',
+    BlackTeam: 'CHN',
+    WhiteClock: '03:00:00',
+    BlackClock: '03:00:00',
+    Variant: 'Standard',
+  });
+
+  // 认输/和棋对话框状态
+  const [showEndGameDialog, setShowEndGameDialog] = useState(false);
+  const [endGameType, setEndGameType] = useState<'resign' | 'draw' | null>(null);
   const [selectedOpening, setSelectedOpening] = useState(OPENING_POSITIONS[0]);
   const [customFen, setCustomFen] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -97,40 +185,193 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     (matchMode === 'human-model' && !isHumanTurn)
   ) && !gameState.isGameOver;
 
+  // 格式化时间为MM:SS或HH:MM:SS格式
+  const formatTime = (seconds: number): string => {
+    const totalSeconds = Math.floor(seconds); // 只取整数秒
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    
+    if (hours > 0) {
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    } else {
+      return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+  };
+
+  // 计时器更新
+  useEffect(() => {
+    if (!timer.isRunning || gameState.isGameOver) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setTimer(prev => {
+        const now = Date.now();
+        const elapsed = (now - prev.lastMoveTime) / 1000;
+        
+        if (prev.currentPlayer === 'w') {
+          const newWhiteTime = Math.max(0, prev.whiteTime - elapsed);
+          if (newWhiteTime <= 0) {
+            // 白方超时
+            endGame('resignation', 'Black');
+            return { ...prev, whiteTime: 0, isRunning: false };
+          }
+          return { ...prev, whiteTime: newWhiteTime, lastMoveTime: now };
+        } else {
+          const newBlackTime = Math.max(0, prev.blackTime - elapsed);
+          if (newBlackTime <= 0) {
+            // 黑方超时
+            endGame('resignation', 'White');
+            return { ...prev, blackTime: 0, isRunning: false };
+          }
+          return { ...prev, blackTime: newBlackTime, lastMoveTime: now };
+        }
+      });
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [timer.isRunning, gameState.isGameOver]);
+
+  // 结束游戏
+  const endGame = useCallback((reason: 'checkmate' | 'resignation' | 'draw', winner?: string | null) => {
+    setGameState(prev => ({
+      ...prev,
+      isGameOver: true,
+      winner: winner || null,
+      gameEndReason: reason,
+    }));
+    
+    setTimer(prev => ({ ...prev, isRunning: false }));
+    
+    // 更新PGN头信息
+    let result = '*';
+    if (reason === 'checkmate') {
+      result = winner === 'White' ? '1-0' : '0-1';
+    } else if (reason === 'resignation') {
+      result = winner === 'White' ? '1-0' : '0-1';
+    } else if (reason === 'draw') {
+      result = '1/2-1/2';
+    }
+    
+    setPgnHeaders(prev => ({
+      ...prev,
+      Result: result,
+      WhiteClock: formatTime(timer.whiteTime),
+      BlackClock: formatTime(timer.blackTime),
+    }));
+    
+    // 显示PGN保存对话框
+    setTimeout(() => {
+      setShowPgnDialog(true);
+    }, 1000);
+  }, [timer.whiteTime, timer.blackTime, formatTime]);
+
   // 更新游戏状态
-  const updateGameState = useCallback((newGame: Chess) => {
+  const updateGameState = useCallback((newGame: Chess, moveNotation?: string) => {
     const historyVerbose = newGame.history({ verbose: true });
     const moves = historyVerbose.map(m => m.from + m.to + (m.promotion ? m.promotion : ''));
     const isGameOver = newGame.isGameOver();
     let winner = null;
+    let gameEndReason: 'checkmate' | 'resignation' | 'draw' | null = null;
     
     if (isGameOver) {
       if (newGame.isCheckmate()) {
         winner = newGame.turn() === 'w' ? 'Black' : 'White';
+        gameEndReason = 'checkmate';
       } else if (newGame.isDraw()) {
         winner = 'Draw';
+        gameEndReason = 'draw';
       }
     }
 
-      setGameState({
-        fen: newGame.fen(),
-        moves,
-        isGameOver,
-        winner,
-        isPlayerTurn: newGame.turn() === 'w', // 假设玩家执白
-      });
+    // 更新计时器
+    setTimer(prev => {
+      const now = Date.now();
+      const elapsed = (now - prev.lastMoveTime) / 1000;
+      
+      let newWhiteTime = prev.whiteTime;
+      let newBlackTime = prev.blackTime;
+      
+      if (prev.currentPlayer === 'w') {
+        newWhiteTime = Math.max(0, prev.whiteTime - elapsed);
+        if (newWhiteTime > 0) {
+          newWhiteTime += prev.whiteIncrement;
+        }
+      } else {
+        newBlackTime = Math.max(0, prev.blackTime - elapsed);
+        if (newBlackTime > 0) {
+          newBlackTime += prev.blackIncrement;
+        }
+      }
+      
+      return {
+        ...prev,
+        whiteTime: newWhiteTime,
+        blackTime: newBlackTime,
+        currentPlayer: newGame.turn(),
+        lastMoveTime: now,
+      };
+    });
 
-      // 通知父组件游戏状态更新
-      onGameStateUpdate?.(newGame.fen(), moves);
-  }, [onGameStateUpdate]);
+    // 记录移动历史
+    if (moveNotation && !isGameOver) {
+      const now = Date.now();
+      const timeUsed = timer.currentPlayer === 'w' ? 
+        timer.whiteTime - Math.max(0, timer.whiteTime - (now - timer.lastMoveTime) / 1000) :
+        timer.blackTime - Math.max(0, timer.blackTime - (now - timer.lastMoveTime) / 1000);
+      
+      const clockFormat = formatTime(timer.currentPlayer === 'w' ? timer.whiteTime : timer.blackTime);
+      
+      setMoveHistory(prev => [...prev, {
+        move: moveNotation,
+        time: timeUsed,
+        clock: clockFormat,
+      }]);
+    }
+
+    setGameState({
+      fen: newGame.fen(),
+      moves,
+      isGameOver,
+      winner,
+      isPlayerTurn: newGame.turn() === 'w',
+      gameEndReason,
+    });
+
+    // 如果游戏结束，调用endGame
+    if (isGameOver && gameEndReason) {
+      endGame(gameEndReason, winner);
+    }
+
+    // 通知父组件游戏状态更新
+    onGameStateUpdate?.(newGame.fen(), moves);
+  }, [onGameStateUpdate, timer, formatTime, endGame]);
 
   // 开始新游戏
   const startNewGame = useCallback((fen?: string) => {
     const newGame = new Chess(fen || selectedOpening.fen);
     setGame(newGame);
+    
+    // 重置计时器
+    setTimer(prev => ({
+      ...prev,
+      whiteTime: 180 * 60,
+      blackTime: 180 * 60,
+      isRunning: false,
+      currentPlayer: 'w',
+      lastMoveTime: Date.now(),
+    }));
+    
+    // 重置移动历史
+    setMoveHistory([]);
+    
     updateGameState(newGame);
     setAnalysis(null);
     setIsAutoPlay(false);
+    setShowPgnDialog(false);
+    setShowEndGameDialog(false);
+    
     if (autoPlayInterval) {
       clearInterval(autoPlayInterval);
       setAutoPlayInterval(null);
@@ -219,19 +460,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     return m; // 兼容SAN等其他格式
   }, []);
 
-  // 当轮到黑方走且棋盘点击以白方视角产生UCI时，镜像rank（e2e3 -> e7e6）
-  const mirrorUciRanks = useCallback((uci: string) => {
-    const m = (uci || '').trim();
-    const match = m.match(/^([a-h])([1-8])([a-h])([1-8])([qrbn])?$/i);
-    if (!match) return uci;
-    const fromFile = match[1];
-    const fromRank = 9 - parseInt(match[2], 10);
-    const toFile = match[3];
-    const toRank = 9 - parseInt(match[4], 10);
-    const promo = match[5] ? match[5].toLowerCase() : '';
-    return `${fromFile}${fromRank}${toFile}${toRank}${promo}`;
-  }, []);
-
   // 执行移动
   const makeMove = useCallback((move: any) => {
     try {
@@ -280,17 +508,8 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       }
       setGame(replaced);
 
-      // 直接设置游戏状态，保留完整历史
-      setGameState({
-        fen: nextFen,
-        moves: movesUci,
-        isGameOver,
-        winner,
-        isPlayerTurn,
-      });
-
-      // 通知父组件游戏状态更新
-      onGameStateUpdate?.(nextFen, movesUci);
+      // 使用updateGameState来更新状态（包含计时器更新）
+      updateGameState(replaced, movesUci[movesUci.length - 1]);
 
       setDummy(prev => prev + 1); // 强制触发刷新
       return true;
@@ -298,14 +517,16 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       console.error('移动失败:', error);
     }
     return false;
-  }, [game, toChessJsMove, onGameStateUpdate]);
+  }, [game, toChessJsMove, updateGameState]);
 
   // 处理玩家移动：仅在人类回合允许
   const handlePlayerMove = useCallback((move: string) => {
-    if (!isHumanTurn) return false;
+    if (!isHumanTurn) {
+      return false;
+    }
 
-    // 若当前轮到黑方走子，则将UCI按rank镜像（棋盘点击以白视角）
-    const uci = game.turn() === 'b' ? mirrorUciRanks(move) : move;
+    // ChessBoard组件现在已经正确处理了翻转逻辑，直接使用返回的UCI
+    const uci = move;
 
     const ok = makeMove(uci);
     if (ok) {
@@ -317,7 +538,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       return true;
     }
     return false;
-  }, [isHumanTurn, makeMove, gameMode, getStockfishAnalysis, game, mirrorUciRanks]);
+  }, [isHumanTurn, makeMove, gameMode, getStockfishAnalysis, game]);
 
   // 处理模型移动：仅在模型回合触发
   const handleModelMove = useCallback(async () => {
@@ -430,6 +651,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         isGameOver,
         winner,
         isPlayerTurn,
+        gameEndReason: null,
       });
 
       // 通知父组件游戏状态更新
@@ -465,7 +687,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       
       if (result) {
         setGame(newGame);
-        updateGameState(newGame);
+        updateGameState(newGame, manualMove.trim());
         setManualMove('');
         setMoveError('');
         
@@ -481,6 +703,78 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       setMoveError('无效的走法格式');
     }
   }, [manualMove, isHumanTurn, gameState.isGameOver, game, updateGameState, gameMode, getStockfishAnalysis, toChessJsMove]);
+
+  // 生成PGN字符串
+  const generatePgn = useCallback(() => {
+    let pgn = '';
+    
+    // 添加头部信息
+    Object.entries(pgnHeaders).forEach(([key, value]) => {
+      pgn += `[${key} "${value}"]\n`;
+    });
+    
+    pgn += '\n';
+    
+    // 添加移动历史
+    const moves = game.history();
+    for (let i = 0; i < moves.length; i++) {
+      const moveNum = Math.floor(i / 2) + 1;
+      const isWhiteMove = i % 2 === 0;
+      
+      if (isWhiteMove) {
+        pgn += `${moveNum}. `;
+      }
+      
+      pgn += `${moves[i]} `;
+      
+      // 添加时间信息
+      if (moveHistory[i]) {
+        const timeUsed = Math.round(moveHistory[i].time);
+        const minutes = Math.floor(timeUsed / 60);
+        const seconds = timeUsed % 60;
+        pgn += `{[%clk 0:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}]} `;
+      }
+      
+      if (i % 2 === 1) {
+        pgn += '\n';
+      }
+    }
+    
+    pgn += ` ${pgnHeaders.Result}`;
+    
+    return pgn;
+  }, [pgnHeaders, game, moveHistory]);
+
+  // 保存PGN文件
+  const savePgnFile = useCallback(() => {
+    const pgn = generatePgn();
+    const blob = new Blob([pgn], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${pgnHeaders.Event.replace(/[^a-zA-Z0-9]/g, '_')}_${pgnHeaders.Date.replace(/\./g, '-')}.pgn`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [generatePgn, pgnHeaders]);
+
+  // 处理认输
+  const handleResign = useCallback((player: 'White' | 'Black') => {
+    setEndGameType('resign');
+    endGame('resignation', player === 'White' ? 'Black' : 'White');
+  }, [endGame]);
+
+  // 处理和棋
+  const handleDraw = useCallback(() => {
+    setEndGameType('draw');
+    endGame('draw');
+  }, [endGame]);
+
+  // 开始计时器
+  const startTimer = useCallback(() => {
+    setTimer(prev => ({ ...prev, isRunning: true, lastMoveTime: Date.now() }));
+  }, []);
 
 
   useEffect(() => {
@@ -561,6 +855,31 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {/* 计时器显示 */}
+              <div className="mb-4 flex justify-center gap-8">
+                <div className={`text-center p-3 rounded-lg ${game.turn() === 'w' ? 'bg-blue-100 border-2 border-blue-500' : 'bg-gray-100'}`}>
+                  <div className="text-sm font-medium text-gray-600">白方</div>
+                  <div className={`text-2xl font-mono font-bold ${timer.whiteTime < 60 ? 'text-red-600' : 'text-gray-900'}`}>
+                    {formatTime(timer.whiteTime)}
+                  </div>
+                </div>
+                <div className="flex items-center">
+                  <Button
+                    onClick={timer.isRunning ? () => setTimer(prev => ({ ...prev, isRunning: false })) : startTimer}
+                    variant={timer.isRunning ? "destructive" : "default"}
+                    size="sm"
+                  >
+                    {timer.isRunning ? '暂停' : '开始'}
+                  </Button>
+                </div>
+                <div className={`text-center p-3 rounded-lg ${game.turn() === 'b' ? 'bg-blue-100 border-2 border-blue-500' : 'bg-gray-100'}`}>
+                  <div className="text-sm font-medium text-gray-600">黑方</div>
+                  <div className={`text-2xl font-mono font-bold ${timer.blackTime < 60 ? 'text-red-600' : 'text-gray-900'}`}>
+                    {formatTime(timer.blackTime)}
+                  </div>
+                </div>
+              </div>
+
               <div className="flex justify-center">
                 <ChessBoard
                   fen={gameState.fen}
@@ -835,6 +1154,43 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             </Card>
           )}
 
+          {/* 游戏结束控制 */}
+          {!gameState.isGameOver && (
+            <Card>
+              <CardHeader>
+                <CardTitle>结束游戏</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    onClick={() => handleResign('White')}
+                    variant="outline"
+                    size="sm"
+                    className="text-red-600 hover:text-red-700"
+                  >
+                    白方认输
+                  </Button>
+                  <Button
+                    onClick={() => handleResign('Black')}
+                    variant="outline"
+                    size="sm"
+                    className="text-red-600 hover:text-red-700"
+                  >
+                    黑方认输
+                  </Button>
+                </div>
+                <Button
+                  onClick={handleDraw}
+                  variant="outline"
+                  size="sm"
+                  className="w-full text-blue-600 hover:text-blue-700"
+                >
+                  提议和棋
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           {/* 游戏状态 */}
           <Card>
             <CardHeader>
@@ -853,10 +1209,208 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
               <div className="text-sm">
                 <strong>当前回合:</strong> {game.turn() === 'w' ? '白方' : '黑方'}
               </div>
+              {gameState.isGameOver && (
+                <div className="text-sm">
+                  <strong>游戏结束原因:</strong> {
+                    gameState.gameEndReason === 'checkmate' ? '将死' :
+                    gameState.gameEndReason === 'resignation' ? '认输' :
+                    gameState.gameEndReason === 'draw' ? '和棋' : '未知'
+                  }
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
       </div>
+
+      {/* PGN保存对话框 */}
+      <Dialog open={showPgnDialog} onOpenChange={setShowPgnDialog}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Download className="w-5 h-5" />
+              保存对局为PGN文件
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="text-sm text-gray-600">
+              游戏已结束！请确认以下信息后保存对局。
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="event">Event</Label>
+                <Input
+                  id="event"
+                  value={pgnHeaders.Event}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, Event: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="date">Date</Label>
+                <Input
+                  id="date"
+                  value={pgnHeaders.Date}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, Date: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="round">Round</Label>
+                <Input
+                  id="round"
+                  value={pgnHeaders.Round}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, Round: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="white">White</Label>
+                <Input
+                  id="white"
+                  value={pgnHeaders.White}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, White: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="black">Black</Label>
+                <Input
+                  id="black"
+                  value={pgnHeaders.Black}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, Black: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="result">Result</Label>
+                <Input
+                  id="result"
+                  value={pgnHeaders.Result}
+                  readOnly
+                  className="bg-gray-100"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="timeControl">TimeControl</Label>
+                <Input
+                  id="timeControl"
+                  value={pgnHeaders.TimeControl}
+                  readOnly
+                  className="bg-gray-100"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="whiteElo">WhiteElo</Label>
+                <Input
+                  id="whiteElo"
+                  value={pgnHeaders.WhiteElo}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, WhiteElo: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="blackElo">BlackElo</Label>
+                <Input
+                  id="blackElo"
+                  value={pgnHeaders.BlackElo}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, BlackElo: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="whiteTitle">WhiteTitle</Label>
+                <Input
+                  id="whiteTitle"
+                  value={pgnHeaders.WhiteTitle}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, WhiteTitle: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="blackTitle">BlackTitle</Label>
+                <Input
+                  id="blackTitle"
+                  value={pgnHeaders.BlackTitle}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, BlackTitle: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="whiteTeam">WhiteTeam</Label>
+                <Input
+                  id="whiteTeam"
+                  value={pgnHeaders.WhiteTeam}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, WhiteTeam: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="blackTeam">BlackTeam</Label>
+                <Input
+                  id="blackTeam"
+                  value={pgnHeaders.BlackTeam}
+                  onChange={(e) => setPgnHeaders(prev => ({ ...prev, BlackTeam: e.target.value }))}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="whiteClock">WhiteClock</Label>
+                <Input
+                  id="whiteClock"
+                  value={pgnHeaders.WhiteClock}
+                  readOnly
+                  className="bg-gray-100"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="blackClock">BlackClock</Label>
+                <Input
+                  id="blackClock"
+                  value={pgnHeaders.BlackClock}
+                  readOnly
+                  className="bg-gray-100"
+                />
+              </div>
+            </div>
+            
+            {/* 显示PGN预览 */}
+            <div className="space-y-2">
+              <Label>PGN预览</Label>
+              <Textarea
+                value={generatePgn()}
+                readOnly
+                rows={8}
+                className="font-mono text-xs"
+              />
+            </div>
+          </div>
+          
+          <DialogFooter className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowPgnDialog(false)}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={() => {
+                savePgnFile();
+                setShowPgnDialog(false);
+              }}
+              className="flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              保存PGN文件
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -317,11 +317,11 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     return getSquareIndex(actualRow, col);
   };
 
-  // 激活值索引映射 - 始终保持在原始绝对位置，不受翻转影响
+  // 激活值索引映射 - 与棋盘显示翻转保持一致
   const getActivationIndex = (displayRow: number, col: number): number => {
-    // 将显示行转换回原始棋盘行（如果棋盘被翻转）
-    const originalRow = flip_activation ? (7 - displayRow) : displayRow;
-    // 激活值始终使用原始位置索引
+    // 将显示行转换回原始棋盘行（根据棋盘是否翻转）
+    const originalRow = flip ? (7 - displayRow) : displayRow;
+    // 使用与棋盘显示一致的翻转逻辑
     return originalRow * 8 + col;
   };
 
