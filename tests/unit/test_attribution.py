@@ -110,7 +110,7 @@ class TestAttribution:
             rotary_base=1_000_000,
             rotary_dim=2,
             rotary_adjacent_pairs=False,
-            tokenizer_name = "/inspire/hdd/global_user/hezhengfu-240208120186/models/Qwen3-0.6B",
+            tokenizer_name = "Qwen3-0.6B",
         )
         _model = HookedTransformer(transformer_cfg)
         # Initialize model weights
