@@ -95,7 +95,7 @@ flash-attn = [
 
 [project.optional-dependencies]
 # NPU variant of PyTorch (for Huawei Ascend hardware)
-default = ["torch==2.7.1", "torchvision>=0.22.1"]
+default = ["torch==2.8.0", "torchvision>=0.22.1"]
 
 npu = [
     "torch==2.6.0",
