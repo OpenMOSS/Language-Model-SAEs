@@ -736,6 +736,117 @@ def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = N
         return Response(content="Bookmark not found", status_code=404)
 
 
+# LC0 引擎类
+class LC0Engine:
+    """简化版 LC0 模型引擎包装器，用于与模型对战"""
+    def __init__(self, model):
+        self.model = model
+        self.model.eval()
+
+    def play(self, chess_board):
+        try:
+            # 使用 notebook 同款接口进行推理
+            fen = chess_board.fen()
+            print(f"🔍 处理FEN: {fen}")
+
+            with torch.no_grad():
+                output, cache = self.model.run_with_cache(fen, prepend_bos=False)
+                
+                # LC0模型输出格式：outputs[0]是策略，outputs[1]是价值，outputs[2]是MLH
+                if isinstance(output, (list, tuple)) and len(output) >= 1:
+                    policy_output = output[0]  # 形状应该是 (1, 1858)
+                else:
+                    policy_output = output
+
+                # 取策略输出的logits，形状应该是 (1858,)
+                if policy_output.dim() == 2:
+                    policy_logits = policy_output[0]  # 从 (1, 1858) 取出 (1858,)
+                else:
+                    policy_logits = policy_output
+
+            legal_moves = list(chess_board.legal_moves)
+            legal_uci_set = set(move.uci() for move in legal_moves)
+            sorted_token_ids = torch.argsort(policy_logits, descending=True)
+
+            # 使用 LC0 映射将索引转换为 UCI
+            try:
+                mapping_index = get_mapping_index(chess_board)
+                idx_to_uci = idx_to_uci_mappings[mapping_index]
+            except Exception as e:
+                print(f"❌ 获取LC0映射失败: {e}")
+                idx_to_uci = {}
+
+            print("🔍 模型输出调试信息:")
+            print(f"   - policy_logits shape: {tuple(policy_logits.shape)}")
+            print(f"   - 合法移动数量: {len(legal_moves)}")
+            
+            # 打印前10个最高概率的 UCI 及其logit
+            top10 = []
+            for idx in sorted_token_ids[:10].tolist():
+                uci = idx_to_uci.get(idx)
+                logit = float(policy_logits[idx].item())
+                top10.append((uci, logit))
+            print("   - 前10个最高概率move (uci, logit):")
+            print("     " + ", ".join([f"{uci if uci is not None else 'None'}:{logit:.4f}" for uci, logit in top10]))
+
+            # 依次尝试最高概率索引对应的 UCI，选择第一个合法移动
+            for rank, idx in enumerate(sorted_token_ids.tolist(), start=1):
+                uci = idx_to_uci.get(idx)
+                if not uci:
+                    continue
+                if uci in legal_uci_set:
+                    move = chess.Move.from_uci(uci)
+                    print(f"✅ 选择最大概率合法移动: {uci} (概率排名: {rank}, logit: {policy_logits[idx].item():.4f})")
+                    return move
+
+            # 如果未找到合法移动，打印报错并抛异常
+            print("❌ 错误：模型未能找到任何合法移动！")
+            print(f"   - 当前局面 FEN: {fen}")
+            print(f"   - 示例合法移动: {[m.uci() for m in legal_moves[:10]]}")
+            print(f"   - 尝试了前 {min(len(sorted_token_ids), 50)} 个最高概率的token")
+            raise ValueError("模型未能找到任何合法移动")
+
+        except Exception as e:
+            print(f"❌ LC0Engine.play() 出错: {e}")
+            raise e
+
+
+@app.post("/play_game")
+def play_game(request: dict):
+    """
+    与模型对战：输入当前局面 FEN，返回模型建议的下一步移动 (UCI 格式)
+    """
+    fen = request.get("fen")
+    if not fen:
+        raise HTTPException(status_code=400, detail="FEN 字符串不能为空")
+    
+    try:
+        board = chess.Board(fen)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="无效的 FEN 字符串")
+    
+    try:
+        # 检查HookedTransformer是否可用
+        if not HOOKED_TRANSFORMER_AVAILABLE:
+            print("❌ 错误：HookedTransformer不可用")
+            raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
+        
+        # 使用缓存模型（仅首次加载）
+        model = get_hooked_model()
+        
+        # 创建引擎并获取移动（不做随机回退）
+        engine = LC0Engine(model)
+        move = engine.play(board)
+        return {"move": move.uci()}
+        
+    except ValueError as e:
+        print(f"❌ 模型找不到合法移动: {e}")
+        raise HTTPException(status_code=400, detail=f"模型找不到合法移动: {str(e)}")
+    except Exception as e:
+        print(f"❌ 处理移动时出错: {e}")
+        raise HTTPException(status_code=500, detail=f"处理移动时出错: {str(e)}")
+
+
 # 在play_game接口后添加局面分析接口
 @app.post("/analyze/board")
 def analyze_board(request: dict):
