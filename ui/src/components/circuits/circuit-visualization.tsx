@@ -1411,7 +1411,7 @@ export const CircuitVisualization = () => {
               activations={nodeActivationData?.activations}
               zPatternIndices={nodeActivationData?.zPatternIndices}
               zPatternValues={nodeActivationData?.zPatternValues}
-              flip_activation={Boolean(fen && fen.split(' ')[1] === 'w')}
+              flip_activation={Boolean(fen && fen.split(' ')[1] === 'b')}
               sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
               analysisName={nodeActivationData?.nodeType || 'Circuit Node'}
               moveColor={(clickedId ? (linkGraphData.nodes.find(n => n.nodeId === clickedId)?.nodeColor) : undefined) as any}
@@ -1466,7 +1466,7 @@ export const CircuitVisualization = () => {
                   activations={belongs ? perFileActivation.activations : undefined}
                   zPatternIndices={belongs ? perFileActivation.zPatternIndices : undefined}
                   zPatternValues={belongs ? perFileActivation.zPatternValues : undefined}
-                  flip_activation={false}
+                  flip_activation={Boolean(fileFen && fileFen.split(' ')[1] === 'b')}
                   sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
                   analysisName={(perFileActivation?.nodeType || 'Circuit Node') + ` @${idx+1}`}
                   moveColor={UNIQUE_GRAPH_COLORS[idx % UNIQUE_GRAPH_COLORS.length]}
@@ -1557,7 +1557,7 @@ export const CircuitVisualization = () => {
                       zPatternValues={sample.zPatternValues}
                       sampleIndex={sample.sampleIndex}
                       analysisName={`Context ${sample.contextId}`}
-                      flip_activation={true}
+                      flip_activation={Boolean(sample.fen && sample.fen.split(' ')[1] === 'b')}
                       autoFlipWhenBlack={true}
                     />
                   </div>

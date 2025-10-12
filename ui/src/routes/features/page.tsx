@@ -64,7 +64,8 @@ const AnalysisChessBoard = ({
   delayMs = 0,
   autoAnalyze = true,
   globalAnalysisCollapsed = false,
-  autoFlipWhenBlack = false
+  autoFlipWhenBlack = false,
+  flip_activation = false
 }: {
   fen: string;
   activations?: number[];
@@ -77,6 +78,7 @@ const AnalysisChessBoard = ({
   autoAnalyze?: boolean;
   globalAnalysisCollapsed?: boolean;
   autoFlipWhenBlack?: boolean;
+  flip_activation?: boolean;
 }) => {
   // 生成唯一的分析状态键
   const analysisKey = `${fen}_${sampleIndex}_${contextId}`;
@@ -193,6 +195,7 @@ const AnalysisChessBoard = ({
         analysisName={analysisName}
         contextId={contextId}
         autoFlipWhenBlack={autoFlipWhenBlack}
+        flip_activation={flip_activation}
         showSelfPlay={true}  // 启用自对弈功能
       />
       
@@ -738,6 +741,7 @@ export const FeaturesPage = () => {
                               autoAnalyze={globalAnalysisEnabled}
                               globalAnalysisCollapsed={globalAnalysisCollapsed}
                               autoFlipWhenBlack={true}
+                              flip_activation={Boolean(activeColor === 'b')}
                             />
                           );
                           

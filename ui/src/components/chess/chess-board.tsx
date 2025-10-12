@@ -317,12 +317,19 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     return getSquareIndex(actualRow, col);
   };
 
-  // 激活值索引映射 - 与棋盘显示翻转保持一致
+  // 激活值索引映射 - 激活值数组按照标准棋盘坐标：a1=0, b1=1, ..., h8=63
   const getActivationIndex = (displayRow: number, col: number): number => {
     // 将显示行转换回原始棋盘行（根据棋盘是否翻转）
     const originalRow = flip ? (7 - displayRow) : displayRow;
-    // 使用与棋盘显示一致的翻转逻辑
-    return originalRow * 8 + col;
+    // 根据flip_activation参数决定是否翻转激活值索引
+    if (flip_activation) {
+      // 翻转激活值索引：FEN第0行对应第1行，FEN第7行对应第8行
+      return originalRow * 8 + col;
+    } else {
+      // 不翻转激活值索引：FEN第0行对应第8行，FEN第7行对应第1行
+      const standardRow = 7 - originalRow;
+      return standardRow * 8 + col;
+    }
   };
 
   // 新增：根据棋盘朝向(flip)计算显示位置（用于棋盘元素/箭头对齐棋盘格子）
@@ -341,9 +348,18 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   // 统一的 从索引到标准坐标的命名（不依赖行棋方）
   const getSquareNameFromActivationIndex = (activationIndex: number) => {
-    const activationRow = Math.floor(activationIndex / 8);
+    const row = Math.floor(activationIndex / 8);
     const col = activationIndex % 8;
-    return `${String.fromCharCode(97 + col)}${8 - activationRow}`;
+    // 根据flip_activation参数决定如何转换行号
+    if (flip_activation) {
+      // 翻转模式：激活索引直接对应FEN棋盘位置
+      // FEN第0行对应第8行，FEN第7行对应第1行
+      return `${String.fromCharCode(97 + col)}${8 - row}`;
+    } else {
+      // 标准模式：激活值数组按照标准棋盘坐标：a1=0, ..., h8=63
+      // 标准行0对应第1行，标准行7对应第8行
+      return `${String.fromCharCode(97 + col)}${row + 1}`;
+    }
   };
 
   // 新增：处理格子点击
