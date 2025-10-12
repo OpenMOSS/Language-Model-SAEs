@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 from typing import Dict, Any, List, Tuple, Optional
 from transformer_lens import HookedTransformer
 import sys
@@ -49,11 +48,24 @@ class ChessSelfPlay:
         """运行模型推理并缓存结果"""
         # 如果FEN没有变化，直接返回缓存的结果
         if self.current_fen == fen and self.cached_outputs is not None:
+            print(f"使用缓存的模型输出 (FEN: {fen})")
             return self.cached_outputs
         
+        print(f"运行新的模型推理 (FEN: {fen})")
         # 运行新的推理
         with torch.no_grad():
             outputs, _ = self.model.run_with_cache(fen, prepend_bos=False)
+        
+        # 打印模型输出信息用于调试
+        if isinstance(outputs, (list, tuple)):
+            print(f"模型输出类型: {type(outputs)}, 长度: {len(outputs)}")
+            for i, output in enumerate(outputs):
+                if hasattr(output, 'shape'):
+                    print(f"  outputs[{i}] shape: {output.shape}")
+                else:
+                    print(f"  outputs[{i}] type: {type(output)}")
+        else:
+            print(f"模型输出类型: {type(outputs)}")
         
         # 缓存结果
         self.current_fen = fen
@@ -62,7 +74,7 @@ class ChessSelfPlay:
         return outputs
     
     def get_model_evaluation(self, fen: str) -> Tuple[float, float, float]:
-        """获取模型对当前局面的评估 (WDL: Win, Draw, Loss) - 统一从白方视角"""
+        """获取模型对当前局面的评估 (WDL: Win, Draw, Loss) - 直接返回当前行棋方胜率"""
         try:
             # 使用缓存的模型推理结果
             outputs = self.run_model_inference(fen)
@@ -80,21 +92,8 @@ class ChessSelfPlay:
                     draw_prob = wdl_tensor[0][1].item()  # 和棋率
                     current_player_loss = wdl_tensor[0][2].item()  # 当前行棋方败率
                     
-                    # 判断当前行棋方是谁
-                    board = chess.Board(fen)
-                    is_white_to_move = board.turn == chess.WHITE
-                    
-                    # 转换为白方视角的WDL
-                    if is_white_to_move:
-                        # 白方行棋，直接使用模型输出
-                        white_win = current_player_win
-                        white_loss = current_player_loss
-                    else:
-                        # 黑方行棋，需要翻转胜败率
-                        white_win = current_player_loss  # 黑方败率 = 白方胜率
-                        white_loss = current_player_win  # 黑方胜率 = 白方败率
-                    
-                    return white_win, draw_prob, white_loss
+                    # 直接返回当前行棋方的胜率信息，不进行翻转
+                    return current_player_win, draw_prob, current_player_loss
                 else:
                     print(f"WDL输出形状不正确: {wdl_tensor.shape}, 期望 [1, 3]")
                     return 0.5, 0.2, 0.3
@@ -116,7 +115,7 @@ class ChessSelfPlay:
             return []
     
     def get_move_probabilities(self, fen: str, legal_moves: List[str]) -> Dict[str, float]:
-        """获取每个合法移动的概率"""
+        """获取每个合法移动的概率 - 按照notebook中的正确逻辑"""
         try:
             # 使用缓存的模型推理结果
             outputs = self.run_model_inference(fen)
@@ -128,28 +127,95 @@ class ChessSelfPlay:
             
             move_probs = {}
             if isinstance(outputs, (list, tuple)) and len(outputs) >= 1:
-                logits = outputs[0]  # 获取logits输出
-                if logits.shape == torch.Size([1, 1858]):
-                    # 对logits进行softmax得到概率分布
-                    probs = torch.softmax(logits[0], dim=-1)
+                policy_logits = outputs[0][0]  # 从 (1, 1858) 取出 (1858,)
+                
+                if policy_logits.shape == torch.Size([1858,]):
+                    print(f"策略输出形状: {policy_logits.shape}")
+                    print(f"分数范围: [{policy_logits.min():.3f}, {policy_logits.max():.3f}]")
                     
                     if self.lboard and LEELA_BOARD_AVAILABLE:
-                        # 使用LeelaBoard获取移动索引
-                        for move in legal_moves:
-                            try:
-                                move_idx = self.lboard.uci2idx(move)
-                                if move_idx is not None and move_idx < probs.shape[0]:
-                                    move_probs[move] = probs[move_idx].item()
-                            except Exception as move_error:
-                                print(f"获取移动 {move} 的索引失败: {move_error}")
-                                continue
+                        # 重要：更新LeelaBoard的状态以匹配当前FEN
+                        try:
+                            # 创建一个新的LeelaBoard实例来匹配当前FEN
+                            temp_lboard = LeelaBoard.from_fen(fen, history_synthesis=True)
+                            print(f"当前FEN: {fen}")
+                            print(f"LeelaBoard行棋方: {'白方' if temp_lboard.turn else '黑方'}")
+                            
+                            # 按分数从高到低排序所有索引
+                            sorted_indices = torch.argsort(policy_logits, descending=True)
+                            
+                            # 找到所有合法移动的概率
+                            legal_uci_set = set(legal_moves)
+                            print(f"合法移动数量: {len(legal_moves)}")
+                            
+                            # 遍历所有索引，找到合法移动并记录其logit
+                            found_moves = []
+                            for idx in sorted_indices:
+                                try:
+                                    uci = temp_lboard.idx2uci(idx.item())
+                                    if uci in legal_uci_set:
+                                        # 记录这个合法移动的logit
+                                        move_probs[uci] = policy_logits[idx].item()
+                                        found_moves.append((uci, idx.item(), policy_logits[idx].item()))
+                                        print(f"Move {uci} -> idx {idx.item()}, logit {policy_logits[idx].item():.4f}")
+                                        
+                                        # 只显示前5个最佳移动的详细信息
+                                        if len(found_moves) >= 5:
+                                            break
+                                except Exception as move_error:
+                                    # 跳过无效的索引
+                                    continue
+                            
+                            print(f"找到 {len(found_moves)} 个合法移动")
+                            
+                            # 如果找到了合法移动，计算softmax概率
+                            if move_probs:
+                                # 获取所有合法移动的logits
+                                legal_logits = []
+                                valid_moves = []
+                                
+                                for move in legal_moves:
+                                    try:
+                                        move_idx = temp_lboard.uci2idx(move)
+                                        if move_idx is not None:
+                                            legal_logits.append(policy_logits[move_idx].item())
+                                            valid_moves.append(move)
+                                    except Exception:
+                                        continue
+                                
+                                if legal_logits:
+                                    legal_logits_tensor = torch.tensor(legal_logits)
+                                    # 计算softmax概率
+                                    legal_probs = torch.softmax(legal_logits_tensor, dim=-1)
+                                    
+                                    # 更新概率字典
+                                    move_probs = {}
+                                    for i, move in enumerate(valid_moves):
+                                        move_probs[move] = legal_probs[i].item()
+                                else:
+                                    print("无法获取任何合法移动的logits")
+                                    uniform_prob = 1.0 / len(legal_moves) if legal_moves else 0
+                                    for move in legal_moves:
+                                        move_probs[move] = uniform_prob
+                            else:
+                                print("未找到任何合法移动，使用均匀分布")
+                                uniform_prob = 1.0 / len(legal_moves) if legal_moves else 0
+                                for move in legal_moves:
+                                    move_probs[move] = uniform_prob
+                                    
+                        except Exception as lboard_error:
+                            print(f"LeelaBoard处理失败: {lboard_error}")
+                            uniform_prob = 1.0 / len(legal_moves) if legal_moves else 0
+                            for move in legal_moves:
+                                move_probs[move] = uniform_prob
                     else:
+                        print("LeelaBoard不可用，使用均匀分布")
                         # 回退方法：均匀分布
                         uniform_prob = 1.0 / len(legal_moves) if legal_moves else 0
                         for move in legal_moves:
                             move_probs[move] = uniform_prob
                 else:
-                    print(f"Logits输出形状不正确: {logits.shape}, 期望 [1, 1858]")
+                    print(f"Policy logits输出形状不正确: {policy_logits.shape}, 期望 [1858]")
                     # 回退到均匀分布
                     uniform_prob = 1.0 / len(legal_moves) if legal_moves else 0
                     for move in legal_moves:
@@ -161,11 +227,10 @@ class ChessSelfPlay:
                 for move in legal_moves:
                     move_probs[move] = uniform_prob
             
-            # 归一化概率
-            total_prob = sum(move_probs.values())
-            if total_prob > 0:
-                for move in move_probs:
-                    move_probs[move] /= total_prob
+            # 打印概率信息用于调试
+            if move_probs:
+                sorted_moves = sorted(move_probs.items(), key=lambda x: x[1], reverse=True)
+                print(f"Top 5 moves with probabilities: {sorted_moves[:5]}")
             
             return move_probs
             
@@ -176,15 +241,23 @@ class ChessSelfPlay:
             return {move: uniform_prob for move in legal_moves}
     
     def select_move(self, move_probs: Dict[str, float], temperature: float = 1.0) -> str:
-        """根据概率分布选择移动"""
+        """根据概率分布选择移动 - 选择概率最高的移动"""
         if not move_probs:
             return ""
         
-        moves = list(move_probs.keys())
-        probs = list(move_probs.values())
+        # 按概率从高到低排序
+        sorted_moves = sorted(move_probs.items(), key=lambda x: x[1], reverse=True)
         
-        # 始终选择概率最大的移动（贪婪选择）
-        return moves[np.argmax(probs)]
+        if not sorted_moves:
+            return ""
+        
+        # 选择概率最高的移动
+        selected_move, selected_prob = sorted_moves[0]
+        
+        print(f"Selected move: {selected_move} (prob: {selected_prob:.4f})")
+        print(f"Top 5 moves: {sorted_moves[:5]}")
+        
+        return selected_move
     
     def make_move(self, fen: str, move: str) -> str:
         """执行移动并返回新的FEN"""
@@ -213,10 +286,17 @@ class ChessSelfPlay:
         }
         
         current_fen = initial_fen
+        print("=== 开始自对弈 ===")
+        print(f"初始FEN: {current_fen}")
         
         for move_num in range(max_moves):
+            print(f"\n--- 第 {move_num + 1} 步 ---")
+            print(f"当前FEN: {current_fen}")
+            
             # 获取当前局面的合法移动
             legal_moves = self.get_legal_moves(current_fen)
+            print(f"合法移动数量: {len(legal_moves)}")
+            print(f"合法移动: {legal_moves[:10]}...")  # 只显示前10个移动
             
             if not legal_moves:
                 print(f"游戏结束于第{move_num}步")
@@ -224,6 +304,7 @@ class ChessSelfPlay:
             
             # 获取模型评估
             win_prob, draw_prob, loss_prob = self.get_model_evaluation(current_fen)
+            print(f"模型评估: 胜率={win_prob:.3f}, 和棋率={draw_prob:.3f}, 败率={loss_prob:.3f}")
             
             # 获取移动概率
             move_probs = self.get_move_probabilities(current_fen, legal_moves)
@@ -242,17 +323,23 @@ class ChessSelfPlay:
             game_data['move_probabilities'].append(move_probs)
             
             if selected_move:
+                print(f"执行移动: {selected_move}")
                 game_data['moves'].append(selected_move)
                 current_fen = self.make_move(current_fen, selected_move)
+                print(f"移动后FEN: {current_fen}")
                 
                 # 切换玩家
                 game_data['current_player'] = 'black' if game_data['current_player'] == 'white' else 'white'
+                print(f"当前玩家: {game_data['current_player']}")
             else:
                 print(f"第{move_num + 1}步无法选择移动")
                 break
         
         # 添加最终位置
         game_data['positions'].append(current_fen)
+        print("\n=== 自对弈结束 ===")
+        print(f"最终FEN: {current_fen}")
+        print(f"总步数: {len(game_data['moves'])}")
         
         return game_data
     

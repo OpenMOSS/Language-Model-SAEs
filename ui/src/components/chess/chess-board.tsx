@@ -212,15 +212,17 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   // 修改handleAnalyze函数，移除JSON.stringify中对象的尾随逗号
   const handleAnalyze = async () => {
     try {
-      const res = await fetch("/analyze/board", {
+      console.log(`[CB#${sampleIndex ?? 'NA'}] 正在分析局面: ${fen.substring(0, 50)}...`);
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/board`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fen })
       });
       const data = await res.json();
       setBoardEvaluation(data.evaluation);
+      console.log(`[CB#${sampleIndex ?? 'NA'}] 局面分析完成:`, data.evaluation);
     } catch (error) {
-      console.error("分析局面失败", error);
+      console.error(`[CB#${sampleIndex ?? 'NA'}] 分析局面失败:`, error);
     }
   };
 
@@ -268,15 +270,32 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   const chartData = useMemo(() => {
     if (!selfPlayData || !selfPlayData.wdl_history.length) return [];
     
-    return selfPlayData.wdl_history.map((wdl: any, index: number) => ({
-      move: index + 1,
-      win: (wdl.win * 100).toFixed(1),
-      draw: (wdl.draw * 100).toFixed(1),
-      loss: (wdl.loss * 100).toFixed(1),
-      win_num: wdl.win,
-      draw_num: wdl.draw,
-      loss_num: wdl.loss
-    }));
+    return selfPlayData.wdl_history.map((wdl: any, index: number) => {
+      // 根据当前局面判断行棋方，转换为固定的白方/黑方胜率
+      const currentFen = selfPlayData.positions[index];
+      const isWhiteToMove = currentFen.includes(' w ');
+      
+      let whiteWinRate, blackWinRate;
+      if (isWhiteToMove) {
+        // 白方行棋时：win=白方胜率，loss=黑方胜率
+        whiteWinRate = wdl.win;
+        blackWinRate = wdl.loss;
+      } else {
+        // 黑方行棋时：win=黑方胜率，loss=白方胜率
+        whiteWinRate = wdl.loss;
+        blackWinRate = wdl.win;
+      }
+      
+      return {
+        move: index + 1,
+        whiteWin: (whiteWinRate * 100).toFixed(1),
+        draw: (wdl.draw * 100).toFixed(1),
+        blackWin: (blackWinRate * 100).toFixed(1),
+        whiteWin_num: whiteWinRate,
+        draw_num: wdl.draw,
+        blackWin_num: blackWinRate
+      };
+    });
   }, [selfPlayData]);
 
   const parsedBoard = useMemo(() => {
@@ -657,7 +676,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       <div className="mt-2">
         {boardEvaluation ? (
           <div className="mt-1 text-sm text-gray-700">
-            胜率: {boardEvaluation[0].toFixed(2)}, 和棋率: {boardEvaluation[1].toFixed(2)}, 对方胜率: {boardEvaluation[2].toFixed(2)}
+            w:{boardEvaluation[0].toFixed(2)}, d:{boardEvaluation[1].toFixed(2)}, l:{boardEvaluation[2].toFixed(2)}
           </div>
         ) : (
           <div className="mt-1 text-sm text-gray-700">正在分析局面...</div>
@@ -918,13 +937,13 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                         <Tooltip 
                           formatter={(value: any, name: string) => [
                             `${parseFloat(value).toFixed(1)}%`, 
-                            name === 'win' ? '白方胜率' : name === 'draw' ? '和棋率' : '黑方胜率'
+                            name === 'whiteWin' ? '白方胜率' : name === 'draw' ? '和棋率' : name === 'blackWin' ? '黑方胜率' : name
                           ]}
                         />
                         <Legend />
                         <Line 
                           type="monotone" 
-                          dataKey="win" 
+                          dataKey="whiteWin" 
                           stroke="#10b981" 
                           strokeWidth={2}
                           name="白方胜率"
@@ -940,7 +959,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                         />
                         <Line 
                           type="monotone" 
-                          dataKey="loss" 
+                          dataKey="blackWin" 
                           stroke="#ef4444" 
                           strokeWidth={2}
                           name="黑方胜率"
@@ -957,24 +976,61 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                 <div className="bg-white rounded-lg border p-4">
                   <h3 className="text-lg font-semibold mb-3">步骤 {currentSelfPlayStep + 1} WDL评估</h3>
                   <div className="grid grid-cols-3 gap-4">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-green-600">
-                        {(selfPlayData.wdl_history[currentSelfPlayStep].win * 100).toFixed(1)}%
-                      </div>
-                      <div className="text-sm text-gray-600">白方胜率</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-yellow-600">
-                        {(selfPlayData.wdl_history[currentSelfPlayStep].draw * 100).toFixed(1)}%
-                      </div>
-                      <div className="text-sm text-gray-600">和棋率</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-red-600">
-                        {(selfPlayData.wdl_history[currentSelfPlayStep].loss * 100).toFixed(1)}%
-                      </div>
-                      <div className="text-sm text-gray-600">黑方胜率</div>
-                    </div>
+                    {(() => {
+                      // 根据当前局面判断行棋方
+                      const currentFen = selfPlayData.positions[currentSelfPlayStep];
+                      const currentIsWhiteToMove = currentFen.includes(' w ');
+                      
+                      if (currentIsWhiteToMove) {
+                        // 白方行棋：显示白方胜率、和棋率、黑方胜率
+                        return (
+                          <>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-green-600">
+                                {(selfPlayData.wdl_history[currentSelfPlayStep].win * 100).toFixed(1)}%
+                              </div>
+                              <div className="text-sm text-gray-600">白方胜率</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-yellow-600">
+                                {(selfPlayData.wdl_history[currentSelfPlayStep].draw * 100).toFixed(1)}%
+                              </div>
+                              <div className="text-sm text-gray-600">和棋率</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-red-600">
+                                {(selfPlayData.wdl_history[currentSelfPlayStep].loss * 100).toFixed(1)}%
+                              </div>
+                              <div className="text-sm text-gray-600">黑方胜率</div>
+                            </div>
+                          </>
+                        );
+                      } else {
+                        // 黑方行棋：显示黑方胜率、和棋率、白方胜率
+                        return (
+                          <>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-green-600">
+                                {(selfPlayData.wdl_history[currentSelfPlayStep].win * 100).toFixed(1)}%
+                              </div>
+                              <div className="text-sm text-gray-600">黑方胜率</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-yellow-600">
+                                {(selfPlayData.wdl_history[currentSelfPlayStep].draw * 100).toFixed(1)}%
+                              </div>
+                              <div className="text-sm text-gray-600">和棋率</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-red-600">
+                                {(selfPlayData.wdl_history[currentSelfPlayStep].loss * 100).toFixed(1)}%
+                              </div>
+                              <div className="text-sm text-gray-600">白方胜率</div>
+                            </div>
+                          </>
+                        );
+                      }
+                    })()}
                   </div>
                 </div>
               )}

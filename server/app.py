@@ -877,21 +877,9 @@ def analyze_board(request: dict):
                 draw_prob = wdl_tensor[0][1].item()  # 和棋率
                 current_player_loss = wdl_tensor[0][2].item()  # 当前行棋方败率
                 
-                # 判断当前行棋方是谁
-                board = chess.Board(fen)
-                is_white_to_move = board.turn == chess.WHITE
-                
-                # 转换为白方视角的WDL
-                if is_white_to_move:
-                    # 白方行棋，直接使用模型输出
-                    white_win = current_player_win
-                    white_loss = current_player_loss
-                else:
-                    # 黑方行棋，需要翻转胜败率
-                    white_win = current_player_loss  # 黑方败率 = 白方胜率
-                    white_loss = current_player_win  # 黑方胜率 = 白方败率
-                
-                evaluation = [white_win, draw_prob, white_loss]
+                # 直接返回当前行棋方的胜率信息，不进行翻转
+                # [当前行棋方胜率, 和棋率, 对方胜率]
+                evaluation = [current_player_win, draw_prob, current_player_loss]
             else:
                 print(f"WDL输出形状不正确: {wdl_tensor.shape}, 期望 [1, 3]")
                 evaluation = [0.5, 0.2, 0.3]
