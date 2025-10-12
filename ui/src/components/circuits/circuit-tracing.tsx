@@ -11,8 +11,11 @@ import { Feature } from '@/types/feature';
 import { transformCircuitData } from './link-graph/utils';
 
 interface CircuitTracingProps {
-  gameFen: string;
+  gameFen: string; // move之前的FEN
+  previousFen?: string | null; // 上一个FEN状态
+  currentFen?: string; // 当前FEN状态
   gameHistory: string[];
+  lastMove?: string | null; // 最后一个移动
   onCircuitTraceStart?: () => void;
   onCircuitTraceEnd?: () => void;
   isTracing?: boolean;
@@ -20,7 +23,10 @@ interface CircuitTracingProps {
 
 export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   gameFen,
+  previousFen,
+  currentFen,
   gameHistory,
+  lastMove,
   onCircuitTraceStart,
   onCircuitTraceEnd,
   isTracing = false,
@@ -100,13 +106,20 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
 
   // 修改handleCircuitTrace函数
   const handleCircuitTrace = useCallback(async () => {
-    if (gameHistory.length === 0) {
+    if (!lastMove) {
       alert('请先走一步棋，再进行Circuit Trace');
       return;
     }
     
-    const lastMove = gameHistory[gameHistory.length - 1];
-    const moveUci = lastMove; // 假设已经是UCI格式
+    // 使用传入的lastMove，它应该是UCI格式
+    const moveUci = lastMove;
+    
+    console.log('🔍 Circuit Trace 参数:', {
+      fen: gameFen, // move之前的FEN
+      move_uci: moveUci,
+      current_fen: currentFen,
+      game_history: gameHistory
+    });
     
     onCircuitTraceStart?.();
     
@@ -116,7 +129,10 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ fen: gameFen, move_uci: moveUci }),
+        body: JSON.stringify({ 
+          fen: gameFen, // 使用move之前的FEN
+          move_uci: moveUci 
+        }),
       });
       
       if (response.ok) {
@@ -129,11 +145,11 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       }
     } catch (error) {
       console.error('Circuit trace出错:', error);
-      alert('Circuit trace出错');
+      alert('Circuit trace出错: ' + (error instanceof Error ? error.message : '未知错误'));
     } finally {
       onCircuitTraceEnd?.();
     }
-  }, [gameFen, gameHistory, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult]);
+  }, [gameFen, currentFen, lastMove, gameHistory, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult]);
 
   // 新增：保存原始graph JSON（与后端create_graph_files一致的数据结构）
   const handleSaveGraphJson = useCallback(() => {
@@ -198,9 +214,24 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <span className="font-medium text-gray-700">当前FEN:</span>
-                <div className="font-mono text-xs bg-gray-100 p-2 rounded mt-1 break-all">
+                <span className="font-medium text-gray-700">分析FEN (移动前):</span>
+                <div className="font-mono text-xs bg-blue-50 p-2 rounded mt-1 break-all border border-blue-200">
                   {gameFen}
+                </div>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700">当前FEN (移动后):</span>
+                <div className="font-mono text-xs bg-green-50 p-2 rounded mt-1 break-all border border-green-200">
+                  {currentFen || gameFen}
+                </div>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="font-medium text-gray-700">分析的移动:</span>
+                <div className="font-mono text-xs bg-yellow-50 p-2 rounded mt-1 border border-yellow-200">
+                  {lastMove || '暂无移动'}
                 </div>
               </div>
               <div>
