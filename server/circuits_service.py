@@ -299,13 +299,13 @@ def create_graph_json_data(
 
 
 def run_circuit_trace(
+    prompt: str,
+    move_uci: str,
     model_name: str = "lc0/T82-768x15x24h",
     device: str = "cuda",
     tc_base_path: str = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/tc",
     lorsa_base_path: str = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/lorsa",
     n_layers: int = 15,
-    prompt: str,
-    move_uci: str,
     side: str = "k",
     max_n_logits: int = 1,
     desired_logit_prob: float = 0.95,
@@ -341,7 +341,7 @@ def run_circuit_trace(
         
         # 设置MongoDB
         mongo_client = setup_mongodb(mongo_uri, mongo_db)
-        
+        print(f'DEBUG: mongo_client = {mongo_client}')
         # 生成slug
         slug = f'circuit_trace_{side}_{max_feature_nodes}'
         
