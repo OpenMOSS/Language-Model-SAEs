@@ -184,4 +184,3 @@ def get_post_analysis_processor(sae_type: str) -> PostAnalysisProcessor:
         raise KeyError(f"No post-analysis processor registered for SAE type: {sae_type}")
 
     return _post_analysis_registry[sae_type]()
-

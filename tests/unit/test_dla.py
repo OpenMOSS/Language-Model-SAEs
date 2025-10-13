@@ -1,16 +1,15 @@
-
 import pytest
 import torch
 
 from lm_saes import (
     CLTConfig,
     DirectLogitAttributeSettings,
+    DirectLogitAttributorConfig,
     LanguageModelConfig,
     LorsaConfig,
     MongoDBConfig,
     direct_logit_attribute,
 )
-from lm_saes.config import CLTConfig, DirectLogitAttributorConfig, LanguageModelConfig
 
 
 class TestDLA:
@@ -28,10 +27,10 @@ class TestDLA:
             norm_activation="inference",  # No normalization for simplicity
             sparsity_include_decoder_norm=False,
             force_unit_decoder_norm=False,
-            device= "cuda",
+            device="cuda",
             dtype=torch.float32,
         )
-    
+
     @pytest.fixture
     def simple_lorsa_config(self):
         """a simple lorsa setting for qwen3-0.6b"""
@@ -48,21 +47,21 @@ class TestDLA:
             skip_bos=True,
             device="cuda",
             dtype=torch.float32,
-            normalization_type = "RMS",
-            use_post_qk_ln = True,
+            normalization_type="RMS",
+            use_post_qk_ln=True,
             rotary_dim=6,
             rotary_adjacent_pairs=False,
         )
-    
+
     def test_dla_clt(self, simple_clt_config):
         """test the DLA for CLT"""
         layer_idx = 1
         settings = DirectLogitAttributeSettings(
             sae=simple_clt_config,
-            sae_name= 'test',
-            layer_idx = layer_idx,
-            sae_series = "test",
-            model = LanguageModelConfig(
+            sae_name="test",
+            layer_idx=layer_idx,
+            sae_series="test",
+            model=LanguageModelConfig(
                 model_name="Qwen/Qwen3-0.6B",
                 device="cuda",
                 dtype="torch.bfloat16",
@@ -78,16 +77,16 @@ class TestDLA:
         )
 
         direct_logit_attribute(settings)
-    
+
     def test_dla_lorsa(self, simple_lorsa_config):
         """test the DLA for Lorsa"""
         layer_idx = 1
         settings = DirectLogitAttributeSettings(
             sae=simple_lorsa_config,
-            sae_name= 'test',
-            layer_idx = layer_idx,
-            sae_series = "test",
-            model = LanguageModelConfig(
+            sae_name="test",
+            layer_idx=layer_idx,
+            sae_series="test",
+            model=LanguageModelConfig(
                 model_name="Qwen/Qwen3-0.6B",
                 device="cuda",
                 dtype="torch.bfloat16",

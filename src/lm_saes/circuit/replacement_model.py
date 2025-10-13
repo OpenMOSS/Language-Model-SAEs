@@ -15,9 +15,8 @@ from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_model
 
 # Type definition for an intervention tuple (layer, position, feature_idx, value)
-Intervention = tuple[
-    int | torch.Tensor, int | slice | torch.Tensor, int | torch.Tensor, int | torch.Tensor, str
-]
+Intervention = tuple[int | torch.Tensor, int | slice | torch.Tensor, int | torch.Tensor, int | torch.Tensor, str]
+
 
 class ReplacementMLP(nn.Module):
     """Wrapper for a TransformerLens MLP layer that adds in extra hooks"""
@@ -700,9 +699,7 @@ class ReplacementModel(HookedTransformer):
         # only freeze outputs in constrained range
         selected_hook_points = []
         for hook_point, hook_obj in self.hook_dict.items():
-            if any(
-                hookpoint_to_freeze in hook_point for hookpoint_to_freeze in hookpoints_to_freeze
-            ):
+            if any(hookpoint_to_freeze in hook_point for hookpoint_to_freeze in hookpoints_to_freeze):
                 # don't freeze feature outputs if the layer is not in the constrained range
                 if (
                     (self.mlp_input_hook in hook_point or self.attn_input_hook in hook_point)
@@ -733,7 +730,7 @@ class ReplacementModel(HookedTransformer):
         ]
 
         return torch.stack(original_activations), fwd_hooks
-    
+
     def _get_feature_intervention_hooks(
         self,
         inputs: str | torch.Tensor,
@@ -786,7 +783,7 @@ class ReplacementModel(HookedTransformer):
             dtype=self.cfg.dtype,
             device=self.cfg.device,
         )
-        
+
         layer_deltas_lorsa = torch.zeros(
             [self.cfg.n_layers, n_pos, self.cfg.d_model],
             dtype=self.cfg.dtype,
@@ -802,12 +799,12 @@ class ReplacementModel(HookedTransformer):
         def calculate_delta_hook_mlp(activations, hook, layer: int, layer_interventions):
             if constrained_layers:
                 # base deltas on original activations; don't let effects propagate
-                transcoder_activations = original_activations[self.cfg.n_layers:]
-                transcoder_activations = transcoder_activations.permute(1,0,2)
+                transcoder_activations = original_activations[self.cfg.n_layers :]
+                transcoder_activations = transcoder_activations.permute(1, 0, 2)
             for i in range(len(transcoder_activations)):
                 if transcoder_activations[i] is None:
                     transcoder_activations[i] = torch.zeros_like(transcoder_activations[0])
-                    
+
             activation_deltas = transcoder_activations.clone().detach()
             for pos, feature_idx, value in layer_interventions:
                 activation_deltas[pos, layer, feature_idx] = value
@@ -816,8 +813,8 @@ class ReplacementModel(HookedTransformer):
             reconstruct_new = self.transcoders.decode(activation_deltas)
             reconstruct_old = self.transcoders.decode(transcoder_activations)
             reconstruct = reconstruct_new - reconstruct_old
-            layer_deltas_mlp[:,:,:] += reconstruct[:,:,:]
-        
+            layer_deltas_mlp[:, :, :] += reconstruct[:, :, :]
+
         def calculate_delta_hook_lorsa(activations, hook, layer: int, layer_interventions):
             if constrained_layers:
                 # base deltas on original activations; don't let effects propagate
