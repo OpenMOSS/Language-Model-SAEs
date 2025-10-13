@@ -263,7 +263,7 @@ class Trainer:
 
         # 构建optimizer参数
         optimizer_kwargs = {
-            "params": sae.get_parameters(),
+            "params": params,
             "lr": self.cfg.lr,
             "betas": self.cfg.betas,
         }
@@ -451,10 +451,10 @@ class Trainer:
             )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
             if isinstance(explained_variance_legacy, DTensor):
                 explained_variance_legacy = explained_variance_legacy.full_tensor()
-            l2_loss_mean = per_token_l2_loss.mean()
+            l2_loss_mean = per_token_l2_loss.mean(dim=0)
             if isinstance(l2_loss_mean, DTensor):
                 l2_loss_mean = l2_loss_mean.full_tensor()
-            total_variance_mean = total_variance.mean()
+            total_variance_mean = total_variance.mean(dim=0)
             if isinstance(total_variance_mean, DTensor):
                 total_variance_mean = total_variance_mean.full_tensor()
             explained_variance = 1 - l2_loss_mean / total_variance_mean
@@ -494,7 +494,7 @@ class Trainer:
                 "losses/overall_loss": log_info["loss"].item(),
                 # variance explained
                 **clt_per_layer_ev_dict,
-                "metrics/explained_variance": explained_variance.item(),
+                "metrics/explained_variance": explained_variance.mean().item(),
                 "metrics/explained_variance_legacy": explained_variance_legacy.mean().item(),
                 # sparsity
                 "metrics/l0": l0.mean().item(),
@@ -519,12 +519,11 @@ class Trainer:
             wandb_log_dict.update(sae.log_statistics())
 
             if isinstance(sae, CrossCoder):
-                assert explained_variance.ndim == 2 and explained_variance.shape[1] == len(sae.cfg.hook_points)
+                assert explained_variance.ndim == 1 and len(explained_variance) == len(sae.cfg.hook_points)
                 for i, k in enumerate(sae.cfg.hook_points):
                     wandb_log_dict.update(
                         {
-                            f"crosscoder_metrics/{k}/explained_variance": explained_variance[:, i].mean().item(),
-                            f"crosscoder_metrics/{k}/explained_variance_std": explained_variance[:, i].std().item(),
+                            f"crosscoder_metrics/{k}/explained_variance": explained_variance[i].mean().item(),
                             f"crosscoder_metrics/{k}/l0": l0[:, i].mean().item(),
                             f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
                         }
@@ -642,9 +641,6 @@ class Trainer:
                     proc_bar.set_description(
                         f"loss: {log_info['loss'].item():.2f}, learning rate: {self.optimizer.param_groups[0]['lr']:.2e}"
                     )
-
-                    if timer.enabled:
-                        logger.info(f"\nTimer Summary:\n{timer.summary()}\n")
 
                     if not self.cfg.skip_metrics_calculation:
                         self._log(sae, log_info, batch)
