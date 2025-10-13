@@ -21,7 +21,6 @@ from lm_saes.config import (
     FeatureAnalyzerConfig,
     LanguageModelConfig,
     LorsaConfig,
-    MOLTConfig,
     MongoDBConfig,
     SAEConfig,
 )
