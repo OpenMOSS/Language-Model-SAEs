@@ -33,6 +33,7 @@ class GenericPostAnalysisProcessor(PostAnalysisProcessor):
         mapper: KeyedDiscreteMapper,
         device_mesh: DeviceMesh | None = None,
         activation_factory: ActivationFactory | None = None,
+        activation_factory_process_kwargs: dict[str, Any] = {},
     ) -> tuple[dict[str, dict[str, torch.Tensor]], list[dict[str, Any]] | None]:
         """Generic processor doesn't add any additional tensor data."""
         return sample_result, None
