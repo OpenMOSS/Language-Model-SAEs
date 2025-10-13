@@ -13,6 +13,7 @@ from .config import (
     CLTConfig,
     CrossCoderConfig,
     DatasetConfig,
+    DirectLogitAttributorConfig,
     FeatureAnalyzerConfig,
     InitializerConfig,
     LanguageModelConfig,
@@ -129,4 +130,5 @@ __all__ = [
     "MixtureOfLinearTransform",
     "train_molt",
     "TrainMOLTSettings",
+    "DirectLogitAttributorConfig",
 ]

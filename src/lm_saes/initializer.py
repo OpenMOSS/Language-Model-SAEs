@@ -4,6 +4,7 @@ import torch
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
@@ -15,7 +16,6 @@ from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
-from wandb.sdk.wandb_run import Run
 
 logger = get_distributed_logger("initializer")
 
