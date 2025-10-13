@@ -126,13 +126,6 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
         if settings.datasets is not None
         else None
     )
-    logger.info("Loading SAE model")
-    if isinstance(settings.sae, CrossCoderConfig):
-        sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
-    elif isinstance(settings.sae, MOLTConfig):
-        sae = MixtureOfLinearTransform.from_config(settings.sae, device_mesh=device_mesh)
-    else:
-        sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
 
     model = load_model(model_cfg) if model_cfg is not None else None
     datasets = (
@@ -151,6 +144,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
         "sae": SparseAutoEncoder,
         "clt": CrossLayerTranscoder,
         "lorsa": LowRankSparseAttention,
+        "molt": MixtureOfLinearTransform,
     }[settings.sae.sae_type]
     sae = sae_cls.from_config(settings.sae, device_mesh=device_mesh)
 
