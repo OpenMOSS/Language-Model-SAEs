@@ -1,12 +1,16 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Loader2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Loader2, Settings } from 'lucide-react';
 import { LinkGraphContainer } from './link-graph-container';
 import { NodeConnections } from './node-connections';
 import { FeatureCard } from '@/components/feature/feature-card';
+import { ChessBoard } from '@/components/chess/chess-board';
 import { Feature } from '@/types/feature';
 import { transformCircuitData } from './link-graph/utils';
 
@@ -23,7 +27,7 @@ interface CircuitTracingProps {
 
 export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   gameFen,
-  previousFen,
+  previousFen: _previousFen,
   currentFen,
   gameHistory,
   lastMove,
@@ -40,6 +44,18 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [connectedFeatures, setConnectedFeatures] = useState<Feature[]>([]);
   const [, setIsLoadingConnectedFeatures] = useState(false);
+
+  // Circuit Trace 参数状态
+  const [showParamsDialog, setShowParamsDialog] = useState(false);
+  const [circuitParams, setCircuitParams] = useState({
+    max_feature_nodes: 1024,
+    node_threshold: 0.9,
+    edge_threshold: 0.69,
+  });
+
+  // Top Activation 相关状态
+  const [topActivations, setTopActivations] = useState<any[]>([]);
+  const [loadingTopActivations, setLoadingTopActivations] = useState(false);
 
   // 新增：handleCircuitTrace函数
   const handleCircuitTraceResult = useCallback((result: any) => {
@@ -131,7 +147,10 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         },
         body: JSON.stringify({ 
           fen: gameFen, // 使用move之前的FEN
-          move_uci: moveUci 
+          move_uci: moveUci,
+          max_feature_nodes: circuitParams.max_feature_nodes,
+          node_threshold: circuitParams.node_threshold,
+          edge_threshold: circuitParams.edge_threshold
         }),
       });
       
@@ -149,7 +168,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     } finally {
       onCircuitTraceEnd?.();
     }
-  }, [gameFen, currentFen, lastMove, gameHistory, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult]);
+  }, [gameFen, currentFen, lastMove, gameHistory, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams]);
 
   // 新增：保存原始graph JSON（与后端create_graph_files一致的数据结构）
   const handleSaveGraphJson = useCallback(() => {
@@ -184,6 +203,199 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
   }, [circuitTraceResult, circuitVisualizationData, gameFen, gameHistory]);
 
+  // 处理参数设置
+  const handleParamsChange = useCallback((key: keyof typeof circuitParams, value: string) => {
+    setCircuitParams(prev => ({
+      ...prev,
+      [key]: key === 'max_feature_nodes' ? parseInt(value) || 1024 : parseFloat(value) || prev[key]
+    }));
+  }, []);
+
+  const handleSaveParams = useCallback(() => {
+    setShowParamsDialog(false);
+  }, []);
+
+  // 获取 Top Activation 数据的函数
+  const fetchTopActivations = useCallback(async (nodeId: string) => {
+    if (!nodeId) return;
+    
+    setLoadingTopActivations(true);
+    try {
+      // 从 nodeId 解析出 feature 信息
+      const parts = nodeId.split('_');
+      const rawLayer = Number(parts[0]) || 0;
+      const featureIndex = Number(parts[1]) || 0;
+      const layerIdx = Math.floor(rawLayer / 2);
+      
+      // 确定节点类型和对应的字典名
+      const currentNode = circuitVisualizationData?.nodes.find((n: any) => n.nodeId === nodeId);
+      const isLorsa = currentNode?.feature_type?.toLowerCase() === 'lorsa';
+      const dictionary = isLorsa 
+        ? `lc0-lorsa-L${layerIdx}`
+        : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+      
+      console.log('🔍 获取 Top Activation 数据:', {
+        nodeId,
+        layerIdx,
+        featureIndex,
+        dictionary,
+        isLorsa
+      });
+      
+      // 调用后端 API 获取 feature 数据
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/x-msgpack",
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const decoded = await import("@msgpack/msgpack").then(module => module.decode(new Uint8Array(arrayBuffer)));
+      const camelcaseKeys = await import("camelcase-keys").then(module => module.default);
+      
+      // 解析数据
+      const camelData = camelcaseKeys(decoded as Record<string, unknown>, {
+        deep: true,
+        stopPaths: ["sample_groups.samples.context"],
+      }) as any;
+      
+      // 提取样本数据
+      const sampleGroups = camelData?.sampleGroups || camelData?.sample_groups || [];
+      const allSamples: any[] = [];
+      
+      for (const group of sampleGroups) {
+        if (group.samples && Array.isArray(group.samples)) {
+          allSamples.push(...group.samples);
+        }
+      }
+      
+      // 查找包含 FEN 的样本并提取激活值
+      const chessSamples: any[] = [];
+      
+      for (const sample of allSamples) {
+        if (sample.text) {
+          const lines = sample.text.split('\n');
+          
+          for (const line of lines) {
+            const trimmed = line.trim();
+            
+            // 检查是否包含 FEN 格式
+            if (trimmed.includes('/')) {
+              const parts = trimmed.split(/\s+/);
+              
+              if (parts.length >= 6) {
+                const [boardPart, activeColor] = parts;
+                const boardRows = boardPart.split('/');
+                
+                if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
+                  // 验证 FEN 格式
+                  let isValidBoard = true;
+                  let totalSquares = 0;
+                  
+                  for (const row of boardRows) {
+                    if (!/^[rnbqkpRNBQKP1-8]+$/.test(row)) {
+                      isValidBoard = false;
+                      break;
+                    }
+                    
+                    let rowSquares = 0;
+                    for (const char of row) {
+                      if (/\d/.test(char)) {
+                        rowSquares += parseInt(char);
+                      } else {
+                        rowSquares += 1;
+                      }
+                    }
+                    totalSquares += rowSquares;
+                  }
+                  
+                  if (isValidBoard && totalSquares === 64) {
+                    // 处理稀疏激活数据 - 正确映射到64格棋盘
+                    let activationsArray: number[] | undefined = undefined;
+                    let activationStrength = 0;
+                    
+                    if (sample.featureActsIndices && sample.featureActsValues && 
+                        Array.isArray(sample.featureActsIndices) && Array.isArray(sample.featureActsValues)) {
+                      
+                      // 创建64格的激活数组
+                      activationsArray = new Array(64).fill(0);
+                      
+                      // 将稀疏激活值映射到正确的棋盘位置
+                      for (let i = 0; i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length); i++) {
+                        const index = sample.featureActsIndices[i];
+                        const value = sample.featureActsValues[i];
+                        
+                        // 确保索引在有效范围内
+                        if (index >= 0 && index < 64) {
+                          activationsArray[index] = value;
+                          activationStrength += Math.abs(value);
+                        }
+                      }
+                      
+                      console.log('🔍 处理激活数据:', {
+                        indicesLength: sample.featureActsIndices.length,
+                        valuesLength: sample.featureActsValues.length,
+                        nonZeroCount: activationsArray.filter(v => v !== 0).length,
+                        activationStrength
+                      });
+                    }
+                    
+                    chessSamples.push({
+                      fen: trimmed,
+                      activationStrength,
+                      activations: activationsArray,
+                      zPatternIndices: sample.zPatternIndices,
+                      zPatternValues: sample.zPatternValues,
+                      contextId: sample.contextIdx || sample.context_idx,
+                      sampleIndex: sample.sampleIndex || 0
+                    });
+                    
+                    break; // 找到一个有效 FEN 就跳出
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // 按激活强度排序并取前8个
+      const topSamples = chessSamples
+        .sort((a, b) => b.activationStrength - a.activationStrength)
+        .slice(0, 8);
+      
+      console.log('✅ 获取到 Top Activation 数据:', {
+        totalChessSamples: chessSamples.length,
+        topSamplesCount: topSamples.length
+      });
+      
+      setTopActivations(topSamples);
+      
+    } catch (error) {
+      console.error('❌ 获取 Top Activation 数据失败:', error);
+      setTopActivations([]);
+    } finally {
+      setLoadingTopActivations(false);
+    }
+  }, [circuitVisualizationData]);
+
+  // 当点击节点时获取 Top Activation 数据
+  useEffect(() => {
+    if (clickedNodeId) {
+      fetchTopActivations(clickedNodeId);
+    } else {
+      setTopActivations([]);
+    }
+  }, [clickedNodeId, fetchTopActivations]);
+
   return (
     <div className="space-y-6">
       {/* Circuit Trace 控制面板 */}
@@ -192,6 +404,14 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           <CardTitle className="flex items-center justify-between">
             <span>Circuit Trace 分析</span>
             <div className="flex gap-2">
+              <Button
+                onClick={() => setShowParamsDialog(true)}
+                variant="outline"
+                size="sm"
+              >
+                <Settings className="w-4 h-4 mr-2" />
+                参数设置
+              </Button>
               <Button
                 onClick={handleCircuitTrace}
                 disabled={isTracing || gameHistory.length === 0}
@@ -238,6 +458,28 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                 <span className="font-medium text-gray-700">移动历史:</span>
                 <div className="font-mono text-xs bg-gray-100 p-2 rounded mt-1">
                   {gameHistory.length > 0 ? gameHistory.join(' ') : '暂无移动'}
+                </div>
+              </div>
+            </div>
+            
+            {/* 当前参数显示 */}
+            <div className="grid grid-cols-3 gap-4 text-sm">
+              <div>
+                <span className="font-medium text-gray-700">最大特征节点数:</span>
+                <div className="font-mono text-xs bg-blue-50 p-2 rounded mt-1 border border-blue-200">
+                  {circuitParams.max_feature_nodes}
+                </div>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700">节点阈值:</span>
+                <div className="font-mono text-xs bg-green-50 p-2 rounded mt-1 border border-green-200">
+                  {circuitParams.node_threshold}
+                </div>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700">边阈值:</span>
+                <div className="font-mono text-xs bg-purple-50 p-2 rounded mt-1 border border-purple-200">
+                  {circuitParams.edge_threshold}
                 </div>
               </div>
             </div>
@@ -504,6 +746,180 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           </CardContent>
         </Card>
       )}
+
+      {/* Top Activation Section */}
+      {clickedNodeId && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <span>Top Activation 棋盘</span>
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-600">节点: {clickedNodeId}</span>
+                {loadingTopActivations && (
+                  <div className="flex items-center space-x-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                    <span className="text-sm text-gray-500">加载中...</span>
+                  </div>
+                )}
+              </div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loadingTopActivations ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                  <p className="text-gray-600">正在获取 Top Activation 数据...</p>
+                </div>
+              </div>
+            ) : topActivations.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {topActivations.map((sample, index) => (
+                  <div key={index} className="bg-gray-50 rounded-lg p-3 border">
+                    <div className="text-center mb-2">
+                      <div className="text-sm font-medium text-gray-700">
+                        Top #{index + 1}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        激活强度: {sample.activationStrength.toFixed(3)}
+                      </div>
+                    </div>
+                    <ChessBoard
+                      fen={sample.fen}
+                      size="small"
+                      showCoordinates={false}
+                      activations={sample.activations}
+                      zPatternIndices={sample.zPatternIndices}
+                      zPatternValues={sample.zPatternValues}
+                      sampleIndex={sample.sampleIndex}
+                      analysisName={`Context ${sample.contextId}`}
+                      flip_activation={Boolean(sample.fen && sample.fen.split(' ')[1] === 'b')}
+                      autoFlipWhenBlack={true}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <p>未找到包含棋盘的激活样本</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 参数设置对话框 */}
+      <Dialog open={showParamsDialog} onOpenChange={setShowParamsDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="w-5 h-5" />
+              Circuit Trace 参数设置
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-6 py-4">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="max_feature_nodes">最大特征节点数 (Max Feature Nodes)</Label>
+                <Input
+                  id="max_feature_nodes"
+                  type="number"
+                  min="1"
+                  max="10000"
+                  step="1"
+                  value={circuitParams.max_feature_nodes}
+                  onChange={(e) => handleParamsChange('max_feature_nodes', e.target.value)}
+                  className="font-mono"
+                />
+                <p className="text-xs text-gray-500">
+                  控制circuit trace中考虑的最大特征节点数量。默认值: 1024
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="node_threshold">节点阈值 (Node Threshold)</Label>
+                <Input
+                  id="node_threshold"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={circuitParams.node_threshold}
+                  onChange={(e) => handleParamsChange('node_threshold', e.target.value)}
+                  className="font-mono"
+                />
+                <p className="text-xs text-gray-500">
+                  节点重要性阈值，用于过滤不重要的节点。默认值: 0.9
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="edge_threshold">边阈值 (Edge Threshold)</Label>
+                <Input
+                  id="edge_threshold"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={circuitParams.edge_threshold}
+                  onChange={(e) => handleParamsChange('edge_threshold', e.target.value)}
+                  className="font-mono"
+                />
+                <p className="text-xs text-gray-500">
+                  边重要性阈值，用于过滤不重要的连接。默认值: 0.69
+                </p>
+              </div>
+            </div>
+            
+            {/* 当前参数预览 */}
+            <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+              <h4 className="font-medium text-sm text-gray-700">当前参数预览:</h4>
+              <div className="grid grid-cols-1 gap-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">最大特征节点数:</span>
+                  <span className="font-mono text-blue-600">{circuitParams.max_feature_nodes}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">节点阈值:</span>
+                  <span className="font-mono text-green-600">{circuitParams.node_threshold}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">边阈值:</span>
+                  <span className="font-mono text-purple-600">{circuitParams.edge_threshold}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <DialogFooter className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowParamsDialog(false)}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={() => {
+                // 重置为默认值
+                setCircuitParams({
+                  max_feature_nodes: 1024,
+                  node_threshold: 0.9,
+                  edge_threshold: 0.69,
+                });
+              }}
+              variant="outline"
+            >
+              重置默认
+            </Button>
+            <Button
+              onClick={handleSaveParams}
+            >
+              保存设置
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
