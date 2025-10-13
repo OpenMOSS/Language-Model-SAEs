@@ -768,6 +768,8 @@ class FeatureAnalyzerConfig(BaseConfig):
         - `max_length`: Maximum length of the sample
     """
 
+    clt_layer: int | None = None
+    """ Layer to analyze for CLT. Provided iff analyzing CLT. """
 
 class DirectLogitAttributorConfig(BaseConfig):
     top_k: int = 10

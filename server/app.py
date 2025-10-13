@@ -469,7 +469,6 @@ def get_feature(
         "sample_groups": sample_groups,
         "is_bookmarked": client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature.index),
     }
-    print(f"{response_data=}")
 
     return Response(
         content=msgpack.packb(make_serializable(response_data)),
