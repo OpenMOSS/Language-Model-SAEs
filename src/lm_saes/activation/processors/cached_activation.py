@@ -14,8 +14,8 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
-from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.misc import all_gather_dict, is_master
+from lm_saes.utils.distributed import DimMap, all_gather_dict
+from lm_saes.utils.misc import is_master
 from lm_saes.utils.tensor_dict import move_dict_of_tensor_to_device
 
 
