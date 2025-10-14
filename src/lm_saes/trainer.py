@@ -261,19 +261,17 @@ class Trainer:
             "sparseadam": SparseAdam,
         }[self.cfg.optimizer_class]
 
-        # 构建optimizer参数
         optimizer_kwargs = {
             "params": params,
             "lr": self.cfg.lr,
             "betas": self.cfg.betas,
         }
 
-        # 只有adam optimizer才支持foreach参数
+        # only adam optimizer supports foreach parameter
         if self.cfg.optimizer_class == "adam":
             optimizer_kwargs["foreach"] = self.cfg.optimizer_foreach
 
         optimizer = optim_cls(**optimizer_kwargs)
-        # TODO: make this elegant
 
         scheduler = get_scheduler(
             scheduler_name=self.cfg.lr_scheduler_name,
