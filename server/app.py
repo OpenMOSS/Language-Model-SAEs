@@ -46,6 +46,7 @@ from lm_saes.lc0_mapping.lc0_mapping import (
     idx_to_uci_mappings,
     get_mapping_index,
 )
+from lm_saes.circuit.leela_board import LeelaBoard
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -738,7 +739,6 @@ def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = N
 
 # LC0 引擎类
 class LC0Engine:
-    """简化版 LC0 模型引擎包装器，用于与模型对战"""
     def __init__(self, model):
         self.model = model
         self.model.eval()
@@ -748,6 +748,10 @@ class LC0Engine:
             # 使用 notebook 同款接口进行推理
             fen = chess_board.fen()
             print(f"🔍 处理FEN: {fen}")
+
+            # 创建 LeelaBoard 实例来处理映射
+            lboard = LeelaBoard.from_fen(fen, history_synthesis=True)
+            lboard.pc_board = chess_board  # 使用现有的棋盘状态
 
             with torch.no_grad():
                 output, cache = self.model.run_with_cache(fen, prepend_bos=False)
@@ -766,44 +770,38 @@ class LC0Engine:
 
             legal_moves = list(chess_board.legal_moves)
             legal_uci_set = set(move.uci() for move in legal_moves)
-            sorted_token_ids = torch.argsort(policy_logits, descending=True)
+            sorted_indices = torch.argsort(policy_logits, descending=True)
 
-            # 使用 LC0 映射将索引转换为 UCI
-            try:
-                mapping_index = get_mapping_index(chess_board)
-                idx_to_uci = idx_to_uci_mappings[mapping_index]
-            except Exception as e:
-                print(f"❌ 获取LC0映射失败: {e}")
-                idx_to_uci = {}
-
-            print("🔍 模型输出调试信息:")
-            print(f"   - policy_logits shape: {tuple(policy_logits.shape)}")
-            print(f"   - 合法移动数量: {len(legal_moves)}")
-            
-            # 打印前10个最高概率的 UCI 及其logit
             top10 = []
-            for idx in sorted_token_ids[:10].tolist():
-                uci = idx_to_uci.get(idx)
-                logit = float(policy_logits[idx].item())
-                top10.append((uci, logit))
+            for idx in sorted_indices[:10].tolist():
+                try:
+                    uci = lboard.idx2uci(idx)
+                    logit = float(policy_logits[idx].item())
+                    top10.append((uci, logit))
+                except Exception as e:
+                    print(f"   - 警告：索引 {idx} 无法转换为UCI: {e}")
+                    top10.append((f"ERROR_{idx}", float(policy_logits[idx].item())))
+            
             print("   - 前10个最高概率move (uci, logit):")
             print("     " + ", ".join([f"{uci if uci is not None else 'None'}:{logit:.4f}" for uci, logit in top10]))
 
             # 依次尝试最高概率索引对应的 UCI，选择第一个合法移动
-            for rank, idx in enumerate(sorted_token_ids.tolist(), start=1):
-                uci = idx_to_uci.get(idx)
-                if not uci:
+            for rank, idx in enumerate(sorted_indices.tolist(), start=1):
+                try:
+                    uci = lboard.idx2uci(idx)
+                    if uci in legal_uci_set:
+                        move = chess.Move.from_uci(uci)
+                        print(f"✅ 选择最大概率合法移动: {uci} (概率排名: {rank}, logit: {policy_logits[idx].item():.4f})")
+                        return move
+                except Exception as e:
+                    print(f"   - 警告：索引 {idx} 转换UCI失败: {e}")
                     continue
-                if uci in legal_uci_set:
-                    move = chess.Move.from_uci(uci)
-                    print(f"✅ 选择最大概率合法移动: {uci} (概率排名: {rank}, logit: {policy_logits[idx].item():.4f})")
-                    return move
 
             # 如果未找到合法移动，打印报错并抛异常
             print("❌ 错误：模型未能找到任何合法移动！")
             print(f"   - 当前局面 FEN: {fen}")
             print(f"   - 示例合法移动: {[m.uci() for m in legal_moves[:10]]}")
-            print(f"   - 尝试了前 {min(len(sorted_token_ids), 50)} 个最高概率的token")
+            print(f"   - 尝试了前 {min(len(sorted_indices), 50)} 个最高概率的token")
             raise ValueError("模型未能找到任何合法移动")
 
         except Exception as e:
