@@ -275,8 +275,8 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
 
     device_mesh = init_device_mesh(
         device_type=settings.device_type,
-        mesh_shape=(head_parallel_size, settings.data_parallel_size, settings.model_parallel_size),
-        mesh_dim_names=("head", "data", "model"),
+        mesh_shape=(settings.data_parallel_size, head_parallel_size, settings.model_parallel_size),
+        mesh_dim_names=("data", "head", "model"),
     )
 
     logger.info(
