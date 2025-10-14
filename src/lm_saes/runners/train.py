@@ -30,8 +30,8 @@ from lm_saes.initializer import Initializer
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.trainer import Trainer
+from lm_saes.utils.distributed import is_primary_rank, mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import get_mesh_rank, is_primary_rank
 
 logger = get_distributed_logger("runners.train")
 
@@ -169,7 +169,7 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -356,7 +356,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -516,7 +516,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -874,7 +874,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
 
