@@ -17,6 +17,7 @@ from typing import (
 import einops
 import safetensors.torch as safe
 import torch
+import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
 from jaxtyping import Float
 from safetensors import safe_open
@@ -693,11 +694,27 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     elif sparsity_loss_type == "tanh":
                         l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
                     elif sparsity_loss_type == "tanh-quad":
-                        approx_frequency = einops.reduce(
-                            torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()),
-                            "... d_sae -> d_sae",
-                            "mean",
-                        )
+                        score = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm())
+                        if isinstance(score, DTensor):
+                            score_local = score.to_local()
+                            approx_frequency = einops.reduce(
+                                score_local,
+                                "... d_sae -> d_sae",
+                                "mean",
+                            )
+
+                            dist.all_reduce(approx_frequency, op=dist.ReduceOp.AVG)
+                            approx_frequency = DTensor.from_local(
+                                approx_frequency,
+                                device_mesh=self.device_mesh,
+                                placements=DimMap({"model": 0}).placements(self.device_mesh),
+                            )
+                        else:
+                            approx_frequency = einops.reduce(
+                                score,
+                                "... d_sae -> d_sae",
+                                "mean",
+                            )
                         l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
                     else:
                         raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
