@@ -63,14 +63,14 @@ class DimMap:
 
         return {v: k for k, v in self._dim_map.items()}
 
-    def placements(self, device_mesh: DeviceMesh) -> tuple[Placement, ...]:
+    def placements(self, device_mesh: DeviceMesh) -> list[Placement]:
         """Get the placements for a tensor based on the dimension map and device mesh.
 
         Args:
             device_mesh: The device mesh to get placements for.
 
         Returns:
-            A tuple of placements for the tensor.
+            A list of placements for the tensor.
 
         Raises:
             ValueError: If the device mesh does not have mesh dimension names.
@@ -78,10 +78,10 @@ class DimMap:
         if device_mesh.mesh_dim_names is None:
             raise ValueError("Device mesh does not have mesh dimension names.")
 
-        return tuple(
+        return [
             Shard(self._dim_map[dim_name]) if dim_name in self._dim_map else Replicate()
             for dim_name in device_mesh.mesh_dim_names
-        )
+        ]
 
     def local_slices(self, shape: tuple[int, ...], device_mesh: DeviceMesh) -> tuple[slice, ...]:
         """Get the local slices for a tensor based on the dimension map and device mesh.
