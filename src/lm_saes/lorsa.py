@@ -6,7 +6,7 @@ inheriting from AbstractSparseAutoEncoder and supporting head parallelization.
 """
 
 import math
-from typing import Any, Dict, Literal, Optional, Sequence, Tuple, Union, overload
+from typing import Any, Literal, Optional, Sequence, Tuple, Union, overload
 
 import einops
 import torch
@@ -18,15 +18,14 @@ from torch._tensor import Tensor
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.nn.attention import SDPBackend, sdpa_kernel
-from transformer_lens.hook_points import HookPoint
 from transformer_lens.components import Attention, GroupedQueryAttention
+from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import LorsaConfig
-from .utils.distributed import DimMap
+from .utils.distributed import DimMap, mesh_dim_size
 from .utils.logging import get_distributed_logger
-from .utils.misc import get_mesh_dim_size
 
 logger = get_distributed_logger("lorsa")
 
@@ -150,12 +149,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 cos = DimMap({}).distribute(cos, self.device_mesh)
             self.register_buffer("rotary_sin", sin)
             self.register_buffer("rotary_cos", cos)
-            
+
     @property
     def attn_scale(self) -> float:
         assert self.cfg.attn_scale is not None, "attn_scale must be initialized during config post initialization"
         return self.cfg.attn_scale
-    
+
     def init_parameters(self, **kwargs):
         """Initialize parameters."""
         super().init_parameters(**kwargs)
@@ -185,7 +184,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         qk_exp_factor = self.cfg.n_qk_heads // mhsa.W_Q.size(0)
         if self.device_mesh is not None:
             model_parallel_rank = self.device_mesh.get_local_rank(mesh_dim="model")
-            model_parallel_size = get_mesh_dim_size(self.device_mesh, "model")
+            model_parallel_size = mesh_dim_size(self.device_mesh, "model")
             lorsa_qk_start_idx = model_parallel_rank * self.cfg.n_qk_heads // model_parallel_size
             lorsa_qk_end_idx = lorsa_qk_start_idx + self.cfg.n_qk_heads // model_parallel_size
             lorsa_qk_indices = torch.arange(lorsa_qk_start_idx, lorsa_qk_end_idx)
@@ -226,7 +225,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 torch.repeat_interleave(mhsa.W_K, qk_exp_factor, dim=0).to(self.cfg.dtype) / input_norm_factor
             )
             if self.cfg.use_post_qk_ln and self.cfg.normalization_type == "RMS":
-                self.ln_q.w = nn.Parameter(torch.repeat_interleave(mhsa.ln_q.w, qk_exp_factor, dim=0).to(self.cfg.dtype))
+                self.ln_q.w = nn.Parameter(
+                    torch.repeat_interleave(mhsa.ln_q.w, qk_exp_factor, dim=0).to(self.cfg.dtype)
+                )
                 self.ln_k.w = nn.Parameter(
                     torch.repeat_interleave(mhsa.ln_k.w, self.ln_k.w.size(0) // mhsa.ln_k.w.size(0), dim=0).to(
                         self.cfg.dtype
@@ -235,14 +236,16 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
     @torch.no_grad()
     @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-    def init_W_D_with_active_subspace_per_head(self, activation_batch: dict[str, torch.Tensor], mhsa: Attention | GroupedQueryAttention):
+    def init_W_D_with_active_subspace_per_head(
+        self, activation_batch: dict[str, torch.Tensor], mhsa: Attention | GroupedQueryAttention
+    ):
         """
         Initialize W_D with the active subspace for each head.
         """
         x = self.prepare_input(activation_batch)[0]
         if isinstance(x, DTensor):
             x = x.to_local()
-        
+
         captured_z = None
 
         def capture_hook(tensor, hook):
@@ -262,7 +265,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             assert isinstance(self.W_O, DTensor)
             assert isinstance(self.W_V, DTensor)
             model_parallel_rank = self.device_mesh.get_local_rank(mesh_dim="model")
-            model_parallel_size = get_mesh_dim_size(self.device_mesh, "model")
+            model_parallel_size = mesh_dim_size(self.device_mesh, "model")
             orig_start_idx = model_parallel_rank * mhsa.cfg.n_heads // model_parallel_size
             orig_end_idx = orig_start_idx + mhsa.cfg.n_heads // model_parallel_size
             W_O_local = torch.empty_like(self.W_O.to_local())
@@ -274,21 +277,23 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 U, S, V = torch.svd(demeaned_output.T.to(torch.float32))
                 proj_weight = U[:, : self.cfg.d_qk_head]
                 start_idx = (orig_head_index - orig_start_idx) * n_ov_per_orig_head
-                end_idx = min(start_idx + n_ov_per_orig_head,W_O_local.size(0))
-                W_O_local[start_idx : end_idx] = (
-                    self.W_O.to_local()[start_idx : end_idx, : self.cfg.d_qk_head]
-                    @ proj_weight.T
+                end_idx = min(start_idx + n_ov_per_orig_head, W_O_local.size(0))
+                W_O_local[start_idx:end_idx] = (
+                    self.W_O.to_local()[start_idx:end_idx, : self.cfg.d_qk_head] @ proj_weight.T
                 )
-                W_V_local[start_idx : end_idx] = (
-                    W_O_local[start_idx : end_idx]
-                    @ (mhsa.W_V[orig_head_index] @ mhsa.W_O[orig_head_index]).T
+                W_V_local[start_idx:end_idx] = (
+                    W_O_local[start_idx:end_idx] @ (mhsa.W_V[orig_head_index] @ mhsa.W_O[orig_head_index]).T
                 )
             W_V_local = W_V_local / W_V_local.norm(dim=1, keepdim=True)
             W_O_local = W_O_local / W_O_local.norm(dim=1, keepdim=True)
             torch.distributed.broadcast(tensor=W_O_local, group=self.device_mesh.get_group("data"), group_src=0)
             torch.distributed.broadcast(tensor=W_V_local, group=self.device_mesh.get_group("data"), group_src=0)
-            W_O_global = DTensor.from_local(W_O_local, device_mesh=self.device_mesh, placements=self.dim_maps()["W_O"].placements(self.device_mesh))
-            W_V_global = DTensor.from_local(W_V_local, device_mesh=self.device_mesh, placements=self.dim_maps()["W_V"].placements(self.device_mesh))
+            W_O_global = DTensor.from_local(
+                W_O_local, device_mesh=self.device_mesh, placements=self.dim_maps()["W_O"].placements(self.device_mesh)
+            )
+            W_V_global = DTensor.from_local(
+                W_V_local, device_mesh=self.device_mesh, placements=self.dim_maps()["W_V"].placements(self.device_mesh)
+            )
             self.W_O.copy_(W_O_global)
             self.W_V.copy_(W_V_global)
         else:
