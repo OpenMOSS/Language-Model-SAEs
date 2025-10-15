@@ -17,13 +17,13 @@ from typing import (
 import einops
 import safetensors.torch as safe
 import torch
-import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
 from jaxtyping import Float
 from safetensors import safe_open
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.experimental import local_map
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.activation_functions import JumpReLU
@@ -695,20 +695,17 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
                     elif sparsity_loss_type == "tanh-quad":
                         score = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm())
-                        if isinstance(score, DTensor):
-                            score_local = score.to_local()
-                            approx_frequency = einops.reduce(
-                                score_local,
-                                "... d_sae -> d_sae",
-                                "mean",
-                            )
 
-                            dist.all_reduce(approx_frequency, op=dist.ReduceOp.AVG)
-                            approx_frequency = DTensor.from_local(
-                                approx_frequency,
-                                device_mesh=self.device_mesh,
-                                placements=DimMap({"model": 0}).placements(self.device_mesh),
-                            )
+                        # Use local_map to perform mean reduction locally. This will lower the backward memory usage (likely due to DTensor bug).
+                        if isinstance(score, DTensor):
+                            approx_frequency = local_map(
+                                lambda x: einops.reduce(
+                                    x,
+                                    "... d_sae -> 1 d_sae",
+                                    "mean",
+                                ),
+                                DimMap({"model": 1, "data": 0, "head": 0}).placements(score.device_mesh),
+                            )(score).mean(0)
                         else:
                             approx_frequency = einops.reduce(
                                 score,
