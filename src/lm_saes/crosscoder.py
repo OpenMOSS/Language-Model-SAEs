@@ -282,7 +282,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 )
 
         # Apply activation function
-        feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
+        feature_acts = self.activation_function(accumulated_hidden_pre * self.decoder_norm())
 
         if return_hidden_pre:
             return feature_acts, accumulated_hidden_pre
