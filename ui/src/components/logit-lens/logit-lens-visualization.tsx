@@ -1,0 +1,491 @@
+import React, { useState, useCallback, useEffect } from 'react';
+import { ChessBoard } from '@/components/chess/chess-board';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Loader2, Play, Layers } from 'lucide-react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
+interface LayerMoveData {
+  idx: number;
+  uci: string;
+  score: number;
+}
+
+interface MoveRanking {
+  move: string;
+  layer_score: number;
+  final_rank: number | null;
+  final_score: number | null;
+  rank_change: number | null;
+}
+
+interface TargetInfo {
+  uci: string;
+  rank: number | null;
+  score: number | null;
+  error?: string;
+}
+
+interface LayerAnalysis {
+  top_legal_moves: LayerMoveData[];
+  move_rankings: MoveRanking[];
+  target: TargetInfo | null;
+}
+
+interface LogitLensResult {
+  fen: string;
+  final_layer_predictions: LayerMoveData[];
+  layer_analysis: Record<string, LayerAnalysis>;
+  target_move: string | null;
+  num_layers: number;
+  model_used: string;
+}
+
+export const LogitLensVisualization: React.FC = () => {
+  const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+  const [targetMove, setTargetMove] = useState('');
+  const [selectedModel, setSelectedModel] = useState('lc0/T82-768x15x24h');
+  const [availableModels, setAvailableModels] = useState([
+    { name: 'lc0/T82-768x15x24h', display_name: 'T82-768x15x24h' },
+    { name: 'lc0/BT4-1024x15x32h', display_name: 'BT4-1024x15x32h' },
+  ]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<LogitLensResult | null>(null);
+  const [selectedLayer, setSelectedLayer] = useState<number>(0);
+
+  // 获取可用模型列表
+  const fetchAvailableModels = useCallback(async () => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/models`);
+      if (response.ok) {
+        const data = await response.json();
+        setAvailableModels(data.models);
+      }
+    } catch (error) {
+      console.error('获取模型列表失败:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAvailableModels();
+  }, [fetchAvailableModels]);
+
+  // 运行Logit Lens分析
+  const runAnalysis = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/logit_lens/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fen,
+          model_name: selectedModel,
+          target_move: targetMove || null,
+          topk_vocab: 2000,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setAnalysisResult(data);
+        setSelectedLayer(data.num_layers - 1); // 默认选择最后一层
+      } else {
+        const errorText = await response.text();
+        console.error('分析失败:', errorText);
+        alert(`分析失败: ${errorText}`);
+      }
+    } catch (error) {
+      console.error('运行分析失败:', error);
+      alert('运行分析失败，请检查后端服务');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [fen, selectedModel, targetMove]);
+
+  // 获取当前选中层的分析数据
+  const getLayerData = useCallback((layer: number): LayerAnalysis | null => {
+    if (!analysisResult) return null;
+    return analysisResult.layer_analysis[`layer_${layer}`] || null;
+  }, [analysisResult]);
+
+  const currentLayerData = getLayerData(selectedLayer);
+
+  // 计算softmax概率
+  const softmax = (scores: number[]): number[] => {
+    const maxScore = Math.max(...scores);
+    const expScores = scores.map(s => Math.exp(s - maxScore));
+    const sumExp = expScores.reduce((a, b) => a + b, 0);
+    return expScores.map(s => s / sumExp);
+  };
+
+  // 为当前层的top移动计算概率
+  const getCurrentLayerProbs = useCallback(() => {
+    if (!currentLayerData) return [];
+    const scores = currentLayerData.top_legal_moves.map(m => m.score);
+    return softmax(scores);
+  }, [currentLayerData]);
+
+  // 为最终层分数计算概率（仅针对当前层显示的这些移动）
+  const getFinalLayerProbs = useCallback(() => {
+    if (!currentLayerData) return [];
+    const scores = currentLayerData.move_rankings
+      .map(r => r.final_score !== null ? r.final_score : -Infinity);
+    return softmax(scores);
+  }, [currentLayerData]);
+
+  const currentLayerProbs = getCurrentLayerProbs();
+  const finalLayerProbs = getFinalLayerProbs();
+
+  return (
+    <div className="container mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold flex items-center gap-2">
+          <Layers className="w-8 h-8" />
+          Logit Lens分析
+        </h1>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 左侧：输入和控制 */}
+        <div className="space-y-4">
+          {/* 模型选择 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>模型选择</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">选择模型</label>
+                <Select value={selectedModel} onValueChange={setSelectedModel}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableModels.map((model) => (
+                      <SelectItem key={model.name} value={model.name}>
+                        {model.display_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* FEN输入 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>局面设置</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">FEN字符串</label>
+                <Textarea
+                  placeholder="输入FEN字符串..."
+                  value={fen}
+                  onChange={(e) => setFen(e.target.value)}
+                  rows={3}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">目标移动 (可选)</label>
+                <Input
+                  placeholder="例如: e2e4"
+                  value={targetMove}
+                  onChange={(e) => setTargetMove(e.target.value)}
+                  className="mt-1"
+                />
+                <div className="text-xs text-gray-500 mt-1">
+                  输入UCI格式的移动来追踪其在各层的排名
+                </div>
+              </div>
+              <Button
+                onClick={runAnalysis}
+                disabled={isLoading || !fen.trim()}
+                className="w-full"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    分析中...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 mr-2" />
+                    运行分析
+                  </>
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* 棋盘显示 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>当前局面</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ChessBoard
+                fen={fen}
+                size="medium"
+                showCoordinates={true}
+                isInteractive={false}
+                analysisName="Logit Lens"
+              />
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* 右侧：分析结果 */}
+        <div className="lg:col-span-2 space-y-4">
+          {analysisResult ? (
+            <>
+              {/* 层选择器 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center justify-between">
+                    <span>层级分析</span>
+                    <Badge variant="outline">
+                      使用模型: {analysisResult.model_used.split('/')[1]}
+                    </Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-sm font-medium">
+                        选择层级: Layer {selectedLayer}
+                      </label>
+                      {analysisResult.target_move && currentLayerData?.target && (
+                        <Badge variant={currentLayerData.target.rank && currentLayerData.target.rank <= 3 ? "default" : "secondary"}>
+                          目标移动 {analysisResult.target_move}: 
+                          {currentLayerData.target.rank ? ` Rank #${currentLayerData.target.rank}` : ' 不在前列'}
+                        </Badge>
+                      )}
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max={analysisResult.num_layers - 1}
+                      value={selectedLayer}
+                      onChange={(e) => setSelectedLayer(parseInt(e.target.value))}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                      <span>Layer 0</span>
+                      <span>Layer {analysisResult.num_layers - 1}</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 当前层Top移动 */}
+              {currentLayerData && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Layer {selectedLayer} - Top 10合法移动</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-16">排名</TableHead>
+                          <TableHead>移动</TableHead>
+                          <TableHead>当前层分数</TableHead>
+                          <TableHead>当前层概率</TableHead>
+                          <TableHead>最终层排名</TableHead>
+                          <TableHead>最终层分数</TableHead>
+                          <TableHead>最终层概率</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {currentLayerData.top_legal_moves.map((move, idx) => {
+                          const ranking = currentLayerData.move_rankings.find(r => r.move === move.uci);
+                          const isTargetMove = analysisResult.target_move === move.uci;
+                          
+                          return (
+                            <TableRow key={idx} className={isTargetMove ? 'bg-yellow-50' : ''}>
+                              <TableCell className="font-medium">#{idx + 1}</TableCell>
+                              <TableCell>
+                                <span className={`font-mono ${isTargetMove ? 'font-bold text-yellow-700' : ''}`}>
+                                  {move.uci}
+                                </span>
+                              </TableCell>
+                              <TableCell>{move.score.toFixed(4)}</TableCell>
+                              <TableCell>
+                                <span className="text-blue-600 font-medium">
+                                  {(currentLayerProbs[idx] * 100).toFixed(2)}%
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                {ranking?.final_rank ? (
+                                  <Badge variant={ranking.final_rank <= 3 ? 'default' : 'secondary'}>
+                                    #{ranking.final_rank}
+                                  </Badge>
+                                ) : 'N/A'}
+                              </TableCell>
+                              <TableCell>
+                                {ranking?.final_score !== null && ranking?.final_score !== undefined
+                                  ? ranking.final_score.toFixed(4)
+                                  : 'N/A'}
+                              </TableCell>
+                              <TableCell>
+                                {finalLayerProbs[idx] !== undefined ? (
+                                  <span className="text-green-600 font-medium">
+                                    {(finalLayerProbs[idx] * 100).toFixed(2)}%
+                                  </span>
+                                ) : 'N/A'}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* 每层Top 3移动汇总 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>每层Top 3移动汇总</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-24">层级</TableHead>
+                          <TableHead>Top 1</TableHead>
+                          <TableHead>Top 2</TableHead>
+                          <TableHead>Top 3</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {Array.from({ length: analysisResult.num_layers }, (_, i) => {
+                          const layerData = getLayerData(i);
+                          const top3 = layerData?.top_legal_moves.slice(0, 3) || [];
+                          
+                          // 计算这一层的softmax概率
+                          const layerScores = layerData?.top_legal_moves.map(m => m.score) || [];
+                          const layerProbs = layerScores.length > 0 ? softmax(layerScores) : [];
+                          
+                          return (
+                            <TableRow key={i} className={i === selectedLayer ? 'bg-blue-50' : ''}>
+                              <TableCell className="font-medium">
+                                Layer {i}
+                                {i === selectedLayer && (
+                                  <Badge variant="outline" className="ml-2">当前</Badge>
+                                )}
+                              </TableCell>
+                              {[0, 1, 2].map((rank) => {
+                                const move = top3[rank];
+                                const prob = layerProbs[rank];
+                                const isTargetMove = move && analysisResult.target_move === move.uci;
+                                
+                                return (
+                                  <TableCell key={rank}>
+                                    {move ? (
+                                      <div className={`space-y-1 ${isTargetMove ? 'bg-yellow-100 p-2 rounded' : ''}`}>
+                                        <div className={`font-mono text-sm ${isTargetMove ? 'font-bold text-yellow-700' : ''}`}>
+                                          {move.uci}
+                                        </div>
+                                        <div className="text-xs text-gray-600">
+                                          分数: {move.score.toFixed(3)}
+                                        </div>
+                                        {prob !== undefined && (
+                                          <div className="text-xs font-medium text-blue-600">
+                                            概率: {(prob * 100).toFixed(1)}%
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-gray-400">N/A</span>
+                                    )}
+                                  </TableCell>
+                                );
+                              })}
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 目标移动追踪 */}
+              {analysisResult.target_move && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>目标移动追踪: {analysisResult.target_move}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>层级</TableHead>
+                          <TableHead>排名</TableHead>
+                          <TableHead>分数</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {Array.from({ length: analysisResult.num_layers }, (_, i) => {
+                          const layerData = getLayerData(i);
+                          const target = layerData?.target;
+                          
+                          return (
+                            <TableRow key={i} className={i === selectedLayer ? 'bg-blue-50' : ''}>
+                              <TableCell className="font-medium">Layer {i}</TableCell>
+                              <TableCell>
+                                {target?.rank ? (
+                                  <Badge variant={target.rank <= 3 ? 'default' : 'secondary'}>
+                                    #{target.rank}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-gray-400">{target?.error || 'N/A'}</span>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {target?.score !== null && target?.score !== undefined
+                                  ? target.score.toFixed(4)
+                                  : 'N/A'}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          ) : (
+            <Card>
+              <CardContent className="py-12">
+                <div className="text-center text-gray-500">
+                  <Layers className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>输入FEN并点击"运行分析"开始Logit Lens分析</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

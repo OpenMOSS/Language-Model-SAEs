@@ -100,7 +100,7 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
             print("loading a searchless_chess model, welcome to play chess with me.  ^^")
             # assert isinstance(cfg, SearchlessChessConfig), "cfg is not a SearchlessChessConfig"
             return SearchlessChessBehavioralCloningModel(cfg)
-        elif cfg.model_name.startswith("lc0/T82-768x15x24h"):
+        elif cfg.model_name.startswith("lc0"):
             print("loading a leela chess model, welcome to play chess with me.  ^^")
             return LeelaChessModel(cfg)
         else:

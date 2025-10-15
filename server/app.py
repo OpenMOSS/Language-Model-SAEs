@@ -899,14 +899,6 @@ def get_models():
     return {"models": get_available_models()}
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # 导入circuits_service
 try:
     from circuits_service import run_circuit_trace
@@ -943,6 +935,18 @@ except ImportError:
     analyze_game_positions = None
     SELF_PLAY_SERVICE_AVAILABLE = False
     print("WARNING: self-play service not found, self-play functionality will not be available")
+
+# 导入Logit Lens服务
+try:
+    from logit_lens import IntegratedPolicyLens
+    LOGIT_LENS_AVAILABLE = True
+except ImportError:
+    IntegratedPolicyLens = None
+    LOGIT_LENS_AVAILABLE = False
+    print("WARNING: logit_lens not found, logit lens functionality will not be available")
+
+# 全局Logit Lens缓存
+_logit_lens_instances = {}
 
 
 
@@ -1291,3 +1295,87 @@ def self_play_status():
         "available": SELF_PLAY_SERVICE_AVAILABLE,
         "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE
     }
+
+
+@app.post("/logit_lens/analyze")
+def logit_lens_analyze(request: dict):
+    """
+    运行Logit Lens分析
+    
+    Args:
+        request: 包含分析参数的请求体
+            - fen: FEN字符串 (必需)
+            - model_name: 模型名称 (可选，默认: lc0/T82-768x15x24h)
+            - target_move: 目标移动UCI (可选)
+            - topk_vocab: 考虑的顶部词汇数量 (可选，默认: 2000)
+    
+    Returns:
+        Logit Lens分析结果 (JSON格式)
+    """
+    try:
+        # 检查Logit Lens服务是否可用
+        if not LOGIT_LENS_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Logit Lens service not available")
+        
+        # 提取参数
+        fen = request.get("fen")
+        if not fen:
+            raise HTTPException(status_code=400, detail="FEN string is required")
+        
+        model_name = request.get("model_name", "lc0/T82-768x15x24h")
+        target_move = request.get("target_move")
+        topk_vocab = request.get("topk_vocab", 2000)
+        
+        print(f"🔍 运行Logit Lens分析: FEN={fen[:50]}..., model={model_name}, target={target_move}")
+        
+        # 获取或创建Logit Lens实例
+        global _logit_lens_instances
+        if model_name not in _logit_lens_instances:
+            # 获取模型
+            hooked_model = get_hooked_model(model_name)
+            # 创建Logit Lens实例
+            _logit_lens_instances[model_name] = IntegratedPolicyLens(hooked_model)
+        
+        lens = _logit_lens_instances[model_name]
+        
+        # 运行分析
+        result = lens.analyze_single_fen(
+            fen=fen,
+            target_move=target_move,
+            topk_vocab=topk_vocab
+        )
+        
+        if 'error' in result:
+            raise HTTPException(status_code=400, detail=result['error'])
+        
+        print(f"✅ Logit Lens分析完成，分析了 {result['num_layers']} 层")
+        
+        return {
+            **result,
+            "model_used": model_name
+        }
+        
+    except Exception as e:
+        print(f"❌ Logit Lens分析失败: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Logit Lens analysis failed: {str(e)}")
+
+
+@app.get("/logit_lens/status")
+def logit_lens_status():
+    """检查Logit Lens服务的状态"""
+    return {
+        "available": LOGIT_LENS_AVAILABLE,
+        "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE
+    }
+
+
+# 添加CORS中间件 - 必须在所有路由定义之后
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)

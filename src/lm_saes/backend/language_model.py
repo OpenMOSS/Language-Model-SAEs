@@ -665,6 +665,7 @@ class LeelaChessModel(TransformerLensLanguageModel):
     def __init__(self, cfg: LanguageModelConfig):
         # 不调用父类的 __init__ 方法，这样可以避免继承父类的 tokenizer 初始化
         self.cfg = cfg
+        print(f'{self.cfg = }')
         
         self.device = (
             torch.device(f"cuda:{torch.cuda.current_device()}") if cfg.device == "cuda" else torch.device(cfg.device)
@@ -677,20 +678,16 @@ class LeelaChessModel(TransformerLensLanguageModel):
         # 使用 TransformerLens 的标准加载方式
         print("Loading searchless_chess model using TransformerLens...")
         self.model = HookedTransformer.from_pretrained_no_processing(
-            'lc0/T82-768x15x24h',
+            self.cfg.model_name,
             dtype=torch.float32,
             device=self.device,
         ).eval()
         
-        
-        # 使用 SearchlessChessBehavioralCloningTokenizer
         self.tokenizer = LeelaBoard()
         self.embed = LeelaEmbed(self.cfg.d_model)
-
-    # 你可以根据需要覆写 tokenizer 相关的属性和方法
+        
     @property
     def eos_token_id(self) -> int | None:
-        # 如果没有 tokenizer，可以直接返回 None 或者实现默认行为
         return None
 
     @property
