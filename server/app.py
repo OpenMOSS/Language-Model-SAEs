@@ -128,23 +128,31 @@ def get_sae(name: str) -> SparseAutoEncoder:
 
 
 # 添加全局模型缓存
-_hooked_model = None
+_hooked_models = {}
 
-def get_hooked_model():
+def get_hooked_model(model_name: str = 'lc0/T82-768x15x24h'):
     """获取或加载HookedTransformer模型"""
-    global _hooked_model
-    if _hooked_model is None:
+    global _hooked_models
+    
+    if model_name not in _hooked_models:
         if not HOOKED_TRANSFORMER_AVAILABLE:
             raise ValueError("HookedTransformer不可用，请安装transformer_lens")
         
-        print("🔍 正在加载HookedTransformer模型...")
-        _hooked_model = HookedTransformer.from_pretrained_no_processing(
-            'lc0/T82-768x15x24h',
+        print(f"🔍 正在加载HookedTransformer模型: {model_name}")
+        _hooked_models[model_name] = HookedTransformer.from_pretrained_no_processing(
+            model_name,
             dtype=torch.float32,
         ).eval()
-        print("✅ HookedTransformer模型加载成功")
+        print(f"✅ HookedTransformer模型 {model_name} 加载成功")
     
-    return _hooked_model
+    return _hooked_models[model_name]
+
+def get_available_models():
+    """获取可用的模型列表"""
+    return [
+        {'name': 'lc0/T82-768x15x24h', 'display_name': 'T82-768x15x24h'},
+        {'name': 'lc0/BT4-1024x15x32h', 'display_name': 'BT4-1024x15x32h'},
+    ]
 
 
 def make_serializable(obj):
@@ -755,16 +763,12 @@ class LC0Engine:
 
             with torch.no_grad():
                 output, cache = self.model.run_with_cache(fen, prepend_bos=False)
-                
-                # LC0模型输出格式：outputs[0]是策略，outputs[1]是价值，outputs[2]是MLH
                 if isinstance(output, (list, tuple)) and len(output) >= 1:
-                    policy_output = output[0]  # 形状应该是 (1, 1858)
+                    policy_output = output[0]
                 else:
                     policy_output = output
-
-                # 取策略输出的logits，形状应该是 (1858,)
                 if policy_output.dim() == 2:
-                    policy_logits = policy_output[0]  # 从 (1, 1858) 取出 (1858,)
+                    policy_logits = policy_output[0]
                 else:
                     policy_logits = policy_output
 
@@ -774,28 +778,23 @@ class LC0Engine:
 
             top10 = []
             for idx in sorted_indices[:10].tolist():
-                try:
-                    uci = lboard.idx2uci(idx)
-                    logit = float(policy_logits[idx].item())
-                    top10.append((uci, logit))
-                except Exception as e:
-                    print(f"   - 警告：索引 {idx} 无法转换为UCI: {e}")
-                    top10.append((f"ERROR_{idx}", float(policy_logits[idx].item())))
+                uci = lboard.idx2uci(idx)
+                logit = float(policy_logits[idx].item())
+                top10.append((uci, logit))
             
+            print("🔍 模型输出调试信息:")
+            print(f"   - policy_logits shape: {tuple(policy_logits.shape)}")
+            print(f"   - 合法移动数量: {len(legal_moves)}")
             print("   - 前10个最高概率move (uci, logit):")
-            print("     " + ", ".join([f"{uci if uci is not None else 'None'}:{logit:.4f}" for uci, logit in top10]))
+            print("     " + ", ".join([f"{uci}:{logit:.4f}" for uci, logit in top10]))
 
             # 依次尝试最高概率索引对应的 UCI，选择第一个合法移动
             for rank, idx in enumerate(sorted_indices.tolist(), start=1):
-                try:
-                    uci = lboard.idx2uci(idx)
-                    if uci in legal_uci_set:
-                        move = chess.Move.from_uci(uci)
-                        print(f"✅ 选择最大概率合法移动: {uci} (概率排名: {rank}, logit: {policy_logits[idx].item():.4f})")
-                        return move
-                except Exception as e:
-                    print(f"   - 警告：索引 {idx} 转换UCI失败: {e}")
-                    continue
+                uci = lboard.idx2uci(idx)
+                if uci in legal_uci_set:
+                    move = chess.Move.from_uci(uci)
+                    print(f"✅ 选择最大概率合法移动: {uci} (概率排名: {rank}, logit: {policy_logits[idx].item():.4f})")
+                    return move
 
             # 如果未找到合法移动，打印报错并抛异常
             print("❌ 错误：模型未能找到任何合法移动！")
@@ -815,6 +814,8 @@ def play_game(request: dict):
     与模型对战：输入当前局面 FEN，返回模型建议的下一步移动 (UCI 格式)
     """
     fen = request.get("fen")
+    model_name = request.get("model_name", "lc0/T82-768x15x24h")
+    
     if not fen:
         raise HTTPException(status_code=400, detail="FEN 字符串不能为空")
     
@@ -829,13 +830,13 @@ def play_game(request: dict):
             print("❌ 错误：HookedTransformer不可用")
             raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
         
-        # 使用缓存模型（仅首次加载）
-        model = get_hooked_model()
+        # 使用指定的模型
+        model = get_hooked_model(model_name)
         
         # 创建引擎并获取移动（不做随机回退）
         engine = LC0Engine(model)
         move = engine.play(board)
-        return {"move": move.uci()}
+        return {"move": move.uci(), "model_used": model_name}
         
     except ValueError as e:
         print(f"❌ 模型找不到合法移动: {e}")
@@ -850,14 +851,16 @@ def play_game(request: dict):
 def analyze_board(request: dict):
     """使用HookedTransformer模型分析当前局面，并返回行棋方胜率、和棋率及对方胜率"""
     fen = request.get("fen")
+    model_name = request.get("model_name", "lc0/T82-768x15x24h")
+    
     if not fen:
         raise HTTPException(status_code=400, detail="FEN字符串不能为空")
     try:
         if not HOOKED_TRANSFORMER_AVAILABLE:
             raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
         
-        # 使用已缓存的模型，避免重复加载
-        model = get_hooked_model()
+        # 使用指定的模型
+        model = get_hooked_model(model_name)
         
         with torch.no_grad():
             output, _ = model.run_with_cache(fen, prepend_bos=False)
@@ -885,9 +888,15 @@ def analyze_board(request: dict):
             print(f"模型输出格式不正确，期望包含至少2个元素的列表，实际得到: {type(output)}")
             evaluation = [0.5, 0.2, 0.3]
         
-        return {"evaluation": evaluation}
+        return {"evaluation": evaluation, "model_used": model_name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"局面分析出错: {str(e)}")
+
+
+@app.get("/models")
+def get_models():
+    """获取可用的模型列表"""
+    return {"models": get_available_models()}
 
 
 app.add_middleware(
@@ -953,7 +962,7 @@ def circuit_trace(request: dict):
             - max_n_logits: 最大logit数量 (默认: 1)
             - desired_logit_prob: 期望logit概率 (默认: 0.95)
             - batch_size: 批处理大小 (默认: 1)
-            - order_mode: 排序模式 (默认: "positive")
+            - order_mode: 排序模式 (positive/negative, 默认: "positive")
             - encoder_demean: 是否对encoder进行demean (默认: False)
             - save_activation_info: 是否保存激活信息 (默认: False)
     
@@ -984,6 +993,10 @@ def circuit_trace(request: dict):
         order_mode = request.get("order_mode", "positive")
         encoder_demean = request.get("encoder_demean", False)
         save_activation_info = request.get("save_activation_info", False)
+        
+        # 验证 order_mode 参数
+        if order_mode not in ["positive", "negative"]:
+            raise HTTPException(status_code=400, detail="order_mode must be 'positive' or 'negative'")
         
         # 获取已缓存的HookedTransformer模型
         hooked_model = get_hooked_model()
@@ -1204,8 +1217,9 @@ def start_self_play(request: dict):
         
         print(f"🎮 开始自对弈: {initial_fen[:50]}..., 最大移动数: {max_moves}, 温度: {temperature}")
         
-        # 获取已缓存的HookedTransformer模型
-        hooked_model = get_hooked_model()
+        # 获取指定的模型
+        model_name = request.get("model_name", "lc0/T82-768x15x24h")
+        hooked_model = get_hooked_model(model_name)
         
         # 运行自对弈
         game_result = run_self_play(

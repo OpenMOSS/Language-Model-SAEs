@@ -165,6 +165,13 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   // 新增：手动输入走法的状态
   const [manualMove, setManualMove] = useState('');
   const [moveError, setMoveError] = useState('');
+  
+  // 新增：模型选择状态
+  const [selectedModel, setSelectedModel] = useState('lc0/T82-768x15x24h');
+  const [availableModels, setAvailableModels] = useState([
+    { name: 'lc0/T82-768x15x24h', display_name: 'T82-768x15x24h' },
+    { name: 'lc0/BT4-1024x15x32h', display_name: 'BT4-1024x15x32h' },
+  ]);
 
   // 新增：用于强制更新组件（由于 Chess 实例是可变的）
   const [, setDummy] = useState(0);
@@ -394,32 +401,49 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   // 获取Stockfish分析
   const getStockfishAnalysis = useCallback(async (fen: string) => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/stockfish`, {
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/board`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ fen }),
+        body: JSON.stringify({ fen, model_name: selectedModel }),
       });
 
       if (response.ok) {
         const data = await response.json();
         setAnalysis({
-          bestMove: data.bestMove,
-          evaluation: data.evaluation,
-          depth: data.depth,
-          wdl: data.wdl,
+          bestMove: 'N/A', // 模型分析不提供最佳移动
+          evaluation: data.evaluation[0] - data.evaluation[2], // 胜率差值
+          depth: 0, // 模型分析没有深度概念
+          wdl: {
+            winProb: data.evaluation[0],
+            drawProb: data.evaluation[1],
+            lossProb: data.evaluation[2],
+          },
         });
         return data;
       } else {
-        console.error('Stockfish分析失败:', response.status, response.statusText);
+        console.error('模型分析失败:', response.status, response.statusText);
         const errorText = await response.text();
         console.error('错误详情:', errorText);
       }
     } catch (error) {
-      console.error('获取Stockfish分析失败:', error);
+      console.error('获取模型分析失败:', error);
     }
     return null;
+  }, [selectedModel]);
+
+  // 获取可用模型列表
+  const fetchAvailableModels = useCallback(async () => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/models`);
+      if (response.ok) {
+        const data = await response.json();
+        setAvailableModels(data.models);
+      }
+    } catch (error) {
+      console.error('获取模型列表失败:', error);
+    }
   }, []);
 
   // 获取模型建议的移动
@@ -430,7 +454,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ fen }),
+        body: JSON.stringify({ fen, model_name: selectedModel }),
       });
 
       if (response.ok) {
@@ -445,7 +469,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       console.error('获取模型移动失败:', error);
     }
     return null;
-  }, []);
+  }, [selectedModel]);
 
   // 将UCI字符串转换为chess.js可接受的move对象
   const toChessJsMove = useCallback((move: string) => {
@@ -778,6 +802,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   }, []);
 
 
+  // 组件加载时获取可用模型列表
+  useEffect(() => {
+    fetchAvailableModels();
+  }, [fetchAvailableModels]);
+
   useEffect(() => {
     if (justStartedFromCustomFen) {
       // 仅在从自定义FEN启动后的首次渲染尝试触发一次模型走棋
@@ -913,6 +942,33 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
 
         {/* 控制面板 */}
         <div className="space-y-4">
+          {/* 模型选择 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>模型选择</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">选择模型</label>
+                <Select value={selectedModel} onValueChange={setSelectedModel}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableModels.map((model) => (
+                      <SelectItem key={model.name} value={model.name}>
+                        {model.display_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="text-xs text-gray-500 mt-1">
+                  当前选择: {availableModels.find(m => m.name === selectedModel)?.display_name || selectedModel}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* 模式与人类方选择 */}
           <Card>
             <CardHeader>
@@ -1001,6 +1057,34 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   共 {game.moves().length} 种合法走法
                 </div>
               </div>
+
+              {/* 模型移动控制：移动到手动走棋下方 */}
+              <div className="border-t pt-4">
+                <Button
+                  onClick={handleModelMove}
+                  disabled={!isModelTurn || isLoading || isTracing}
+                  className="w-full"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      思考中...
+                    </>
+                  ) : (
+                    '让模型走棋'
+                  )}
+                </Button>
+                
+                {gameMode === 'analysis' && (
+                  <Button
+                    onClick={getCurrentAnalysis}
+                    variant="outline"
+                    className="w-full mt-2"
+                  >
+                    获取分析
+                  </Button>
+                )}
+              </div>
             </CardContent>
           </Card>
 
@@ -1080,39 +1164,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
               >
                 使用自定义FEN
               </Button>
-            </CardContent>
-          </Card>
-
-          {/* 模型移动控制：仅在模型回合可用 */}
-          <Card>
-            <CardHeader>
-              <CardTitle>模型控制</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button
-                onClick={handleModelMove}
-                disabled={!isModelTurn || isLoading || isTracing}
-                className="w-full"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    思考中...
-                  </>
-                ) : (
-                  '让模型走棋'
-                )}
-              </Button>
-              
-              {gameMode === 'analysis' && (
-                <Button
-                  onClick={getCurrentAnalysis}
-                  variant="outline"
-                  className="w-full"
-                >
-                  获取分析
-                </Button>
-              )}
             </CardContent>
           </Card>
 

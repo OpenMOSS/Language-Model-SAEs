@@ -53,6 +53,10 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     edge_threshold: 0.69,
   });
 
+  // 移动输入状态
+  const [inputMove, setInputMove] = useState<string>('');
+  const [moveError, setMoveError] = useState<string>('');
+
   // Top Activation 相关状态
   const [topActivations, setTopActivations] = useState<any[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
@@ -120,19 +124,44 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     setIsLoadingConnectedFeatures(loading);
   }, []);
 
-  // 修改handleCircuitTrace函数
-  const handleCircuitTrace = useCallback(async () => {
-    if (!lastMove) {
-      alert('请先走一步棋，再进行Circuit Trace');
+  // 验证移动合法性
+  const validateMove = useCallback((move: string, _fen: string): boolean => {
+    try {
+      // 简单的UCI格式验证
+      if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move)) {
+        setMoveError('移动格式不正确，应为UCI格式（如：e2e4）');
+        return false;
+      }
+
+      // 这里可以添加更复杂的合法性检查，比如调用chess.js库
+      // 暂时只做格式检查
+      setMoveError('');
+      return true;
+    } catch (error) {
+      setMoveError('移动验证失败');
+      return false;
+    }
+  }, []);
+
+  // 修改handleCircuitTrace函数来支持不同的order_mode
+  const handleCircuitTrace = useCallback(async (orderMode: 'positive' | 'negative' = 'positive') => {
+    // 使用输入的移动或最后一个移动
+    const moveUci = inputMove.trim() || lastMove;
+    
+    if (!moveUci) {
+      alert('请输入要分析的移动或先走一步棋');
       return;
     }
     
-    // 使用传入的lastMove，它应该是UCI格式
-    const moveUci = lastMove;
+    // 验证移动格式
+    if (!validateMove(moveUci, gameFen)) {
+      return;
+    }
     
     console.log('🔍 Circuit Trace 参数:', {
       fen: gameFen, // move之前的FEN
       move_uci: moveUci,
+      order_mode: orderMode,
       current_fen: currentFen,
       game_history: gameHistory
     });
@@ -148,6 +177,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         body: JSON.stringify({ 
           fen: gameFen, // 使用move之前的FEN
           move_uci: moveUci,
+          order_mode: orderMode,
           max_feature_nodes: circuitParams.max_feature_nodes,
           node_threshold: circuitParams.node_threshold,
           edge_threshold: circuitParams.edge_threshold
@@ -168,7 +198,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     } finally {
       onCircuitTraceEnd?.();
     }
-  }, [gameFen, currentFen, lastMove, gameHistory, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams]);
+  }, [gameFen, currentFen, lastMove, gameHistory, inputMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams]);
 
   // 新增：保存原始graph JSON（与后端create_graph_files一致的数据结构）
   const handleSaveGraphJson = useCallback(() => {
@@ -396,6 +426,13 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
   }, [clickedNodeId, fetchTopActivations]);
 
+  // 当lastMove变化时，更新inputMove
+  useEffect(() => {
+    if (lastMove && !inputMove) {
+      setInputMove(lastMove);
+    }
+  }, [lastMove, inputMove]);
+
   return (
     <div className="space-y-6">
       {/* Circuit Trace 控制面板 */}
@@ -413,18 +450,33 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                 参数设置
               </Button>
               <Button
-                onClick={handleCircuitTrace}
-                disabled={isTracing || gameHistory.length === 0}
+                onClick={() => handleCircuitTrace('positive')}
+                disabled={isTracing}
                 variant={isTracing ? 'destructive' : 'default'}
                 size="sm"
               >
                 {isTracing ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Circuit Trace中...
+                    Tracing中...
                   </>
                 ) : (
-                  'Circuit Trace'
+                  'Positive Trace'
+                )}
+              </Button>
+              <Button
+                onClick={() => handleCircuitTrace('negative')}
+                disabled={isTracing}
+                variant={isTracing ? 'destructive' : 'outline'}
+                size="sm"
+              >
+                {isTracing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Tracing中...
+                  </>
+                ) : (
+                  'Negative Trace'
                 )}
               </Button>
             </div>
@@ -432,6 +484,37 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
+            {/* 移动输入框 */}
+            <div className="space-y-2">
+              <Label htmlFor="move-input" className="text-sm font-medium text-gray-700">
+                分析的移动 (UCI格式，如：e2e4)
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="move-input"
+                  type="text"
+                  placeholder="输入UCI移动或使用最后一步移动"
+                  value={inputMove}
+                  onChange={(e) => {
+                    setInputMove(e.target.value);
+                    setMoveError('');
+                  }}
+                  className={`font-mono ${moveError ? 'border-red-500' : ''}`}
+                />
+                <Button
+                  onClick={() => setInputMove(lastMove || '')}
+                  variant="outline"
+                  size="sm"
+                  disabled={!lastMove}
+                >
+                  使用最后移动
+                </Button>
+              </div>
+              {moveError && (
+                <p className="text-sm text-red-600">{moveError}</p>
+              )}
+            </div>
+            
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <span className="font-medium text-gray-700">分析FEN (移动前):</span>
@@ -449,9 +532,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
             
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <span className="font-medium text-gray-700">分析的移动:</span>
+                <span className="font-medium text-gray-700">将要分析的移动:</span>
                 <div className="font-mono text-xs bg-yellow-50 p-2 rounded mt-1 border border-yellow-200">
-                  {lastMove || '暂无移动'}
+                  {inputMove || lastMove || '暂无移动'}
                 </div>
               </div>
               <div>
@@ -484,9 +567,10 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
               </div>
             </div>
             
-            {gameHistory.length === 0 && (
+            {!inputMove && !lastMove && (
               <div className="text-center py-4 text-gray-500 bg-yellow-50 rounded-lg border border-yellow-200">
-                <p>请先走一步棋，再进行Circuit Trace分析</p>
+                <p>请输入要分析的移动（UCI格式）或先走一步棋</p>
+                <p className="text-sm mt-1">例如：e2e4, Nf3, O-O (王车易位用e1g1), O-O-O (后翼易位用e1c1)</p>
               </div>
             )}
           </div>

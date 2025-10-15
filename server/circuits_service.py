@@ -343,7 +343,7 @@ def run_circuit_trace(
         mongo_client = setup_mongodb(mongo_uri, mongo_db)
         print(f'DEBUG: mongo_client = {mongo_client}')
         # 生成slug
-        slug = f'circuit_trace_{side}_{max_feature_nodes}'
+        slug = f'circuit_trace_{order_mode}_{side}_{max_feature_nodes}'
         
         # 运行attribution
         attribution_result = run_attribution(

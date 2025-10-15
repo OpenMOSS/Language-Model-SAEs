@@ -2319,64 +2319,32 @@ def _run_attribution(
             return tc_activation_matrix.values()[local_idx] - bias_val
 
     print("go into feature attribution loop")
-    
-    # 根据side决定调用哪个edge_matrix
-    fa_result = {}
-    side_lower = side.lower()
-    
-    if side_lower in ('q', 'both'):
-        print("Computing feature attributions for Q")
-        fa_result_q = run_feature_attribution(
-            ctx=ctx,
-            model=model,
-            tc_activation_matrix=tc_activation_matrix,
-            total_active_feats=total_active_feats,
-            max_feature_nodes=max_feature_nodes,
-            update_interval=update_interval,
-            batch_size=batch_size,
-            n_logits=n_logits,
-            logit_p=logit_p,
-            logit_offset=logit_offset,
-            idx_to_layer=idx_to_layer,
-            idx_to_pos=idx_to_pos,
-            idx_to_encoder_rows=idx_to_encoder_rows,
-            idx_to_encoder_bias=idx_to_encoder_bias,
-            idx_to_pattern=idx_to_pattern,
-            compute_partial_influences=compute_partial_influences,
-            bias_attr_now=bias_attr_now,
-            edge_matrix=edge_matrix_q,
-            row_to_node_index=row_to_node_index_q,
-            logger=logger,
-            order_mode=order_mode,
-        )
-        fa_result['q'] = fa_result_q
-    
-    if side_lower in ('k', 'both'):
-        print("Computing feature attributions for K")
-        fa_result_k = run_feature_attribution(
-            ctx=ctx,
-            model=model,
-            tc_activation_matrix=tc_activation_matrix,
-            total_active_feats=total_active_feats,
-            max_feature_nodes=max_feature_nodes,
-            update_interval=update_interval,
-            batch_size=batch_size,
-            n_logits=n_logits,
-            logit_p=logit_p,
-            logit_offset=logit_offset,
-            idx_to_layer=idx_to_layer,
-            idx_to_pos=idx_to_pos,
-            idx_to_encoder_rows=idx_to_encoder_rows,
-            idx_to_encoder_bias=idx_to_encoder_bias,
-            idx_to_pattern=idx_to_pattern,
-            compute_partial_influences=compute_partial_influences,
-            bias_attr_now=bias_attr_now,
-            edge_matrix=edge_matrix_k,
-            row_to_node_index=row_to_node_index_k,
-            logger=logger,
-            order_mode=order_mode,
-        )
-        fa_result['k'] = fa_result_k
+    fa_result = run_feature_attribution(
+        side=side,
+        ctx=ctx,
+        model=model,
+        tc_activation_matrix=tc_activation_matrix,
+        total_active_feats=total_active_feats,
+        max_feature_nodes=max_feature_nodes,
+        update_interval=update_interval,
+        batch_size=batch_size,
+        n_logits=n_logits,
+        logit_p=logit_p,
+        logit_offset=logit_offset,
+        idx_to_layer=idx_to_layer,
+        idx_to_pos=idx_to_pos,
+        idx_to_encoder_rows=idx_to_encoder_rows,
+        idx_to_encoder_bias=idx_to_encoder_bias,
+        idx_to_pattern=idx_to_pattern,
+        compute_partial_influences=compute_partial_influences,  # 假设在外层已定义
+        bias_attr_now=bias_attr_now,
+        edge_matrix_q=edge_matrix_q,
+        row_to_node_index_q=row_to_node_index_q,
+        edge_matrix_k=edge_matrix_k,
+        row_to_node_index_k=row_to_node_index_k,
+        logger=logger,
+        order_mode = order_mode,
+    )
 
     print(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
     logger.info(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
@@ -2881,6 +2849,7 @@ def _collect_activation_info_after_forward(
 
 def run_feature_attribution(
     *,
+    side: str,                           # 'q' | 'k' | 'both'
     ctx,
     model,
     tc_activation_matrix: torch.Tensor,
@@ -2899,15 +2868,18 @@ def run_feature_attribution(
     idx_to_pattern,
     compute_partial_influences,
     bias_attr_now,
-    # 只提供一个edge_matrix和row_to_node_index
-    edge_matrix: torch.Tensor,
-    row_to_node_index: torch.Tensor,
+    # 为 q / k 分别提供缓冲矩阵与行映射（会被原地写入）
+    edge_matrix_q: torch.Tensor,
+    row_to_node_index_q: torch.Tensor,
+    edge_matrix_k: torch.Tensor,
+    row_to_node_index_k: torch.Tensor,
     logger=None,
     order_mode: str = 'positive'
 ) -> dict:
     """
-    计算单个side的feature attribution。
-    返回值:
+    通过 side 控制仅计算 q 或 k，或两者都算。
+    返回: {"q": {...}, "k": {...}}（按请求的 side 填充）
+    每个 side 的返回值:
       - visited: [total_active_feats] 的 bool 张量（哪些 feature 被访问/入列）
       - edge_matrix: 计算后（行=feature+logit，列=所有节点）的矩阵（原地同传入对象）
       - row_to_node_index: 计算后（行→全局 gid）的映射（原地同传入对象）
@@ -2915,29 +2887,35 @@ def run_feature_attribution(
     rank_logits_signed = (order_mode == 'negative')
     if rank_logits_signed is True:
         print('order: from most negative')
+    
+    def _phase(side_tag: str,
+               edge_matrix: torch.Tensor,
+               row_to_node_index: torch.Tensor,
+               desc: str):
+        nonlocal ctx, model
 
-    if logger:
-        logger.info(f"Phase: Computing feature attributions")
+        if logger:
+            logger.info(f"Phase: Computing feature attributions in {side_tag}")
 
-    print("清空 ctx 中的计算状态…")
-    model.zero_grad(set_to_none=True)
-    if hasattr(ctx, 'clear'):
-        ctx.clear()
-    elif hasattr(ctx, 'reset'):
-        ctx.reset()
+        print("清空 ctx 中的计算状态…")
+        model.zero_grad(set_to_none=True)
+        if hasattr(ctx, 'clear'):
+            ctx.clear()
+        elif hasattr(ctx, 'reset'):
+            ctx.reset()
 
-    phase_start = time.time()
-    st = n_logits  # 行起点：先放 logit 行
+        phase_start = time.time()
+        st = n_logits  # 行起点：先放 logit 行
 
-    visited = torch.zeros(total_active_feats, dtype=torch.bool)
-    n_visited = 0
+        visited = torch.zeros(total_active_feats, dtype=torch.bool)
+        n_visited = 0
 
-    pbar = tqdm(total=max_feature_nodes, desc="Feature influence computation")
+        pbar = tqdm(total=max_feature_nodes, desc=desc)
 
-    feature_descending: bool = not rank_logits_signed
-    influence_sign_mode = "signed" if rank_logits_signed else "abs"
+        feature_descending: bool = not rank_logits_signed
+        influence_sign_mode = "signed" if rank_logits_signed else "abs"  # 需要你把 compute_partial_influences 加上这个开关
 
-    while n_visited < max_feature_nodes:
+        while n_visited < max_feature_nodes:
             if max_feature_nodes == total_active_feats:
                 pending = torch.arange(total_active_feats)
             else:
@@ -2993,16 +2971,27 @@ def run_feature_attribution(
                 st = end
                 pbar.update(len(idx_batch))
 
-    pbar.close()
-    print(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
+        pbar.close()
+        print(f"[{side_tag}] Feature attributions completed in {time.time() - phase_start:.2f}s")
 
-    # 返回结果
-    return {
-        "visited": visited,                     # [total_active_feats] bool
-        "edge_matrix": edge_matrix,             # 原地对象
-        "row_to_node_index": row_to_node_index,  # 原地对象
-        "tc_activation_matrix": tc_activation_matrix,
-    }
+        # 把当前 side 的结果返回
+        return {
+            "visited": visited,                     # [total_active_feats] bool
+            "edge_matrix": edge_matrix,             # 原地对象
+            "row_to_node_index": row_to_node_index  # 原地对象
+        }
+
+    side = side.lower()
+    out: dict = {}
+    if side in ('q', 'both'):
+        out['q'] = _phase('q', edge_matrix_q, row_to_node_index_q, desc="Feature influence computation (q)")
+    if side in ('k', 'both'):
+        out['k'] = _phase('k', edge_matrix_k, row_to_node_index_k, desc="Feature influence computation (k)")
+        
+        
+    out['tc_activation_matrix'] = tc_activation_matrix
+        
+    return out
 
 # def extract_feature_subgraph(
 #     graph_bundle: Dict[str, Any],
