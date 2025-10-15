@@ -13,7 +13,7 @@ dependencies = [
     "pymongo>=4.10.1",
     "tensorboardX>=2.6.2.2",
     # "torch>=2.5.0",
-    # "torchvision>=0.20.1",
+    "torchvision>=0.20.1",
     "transformer-lens",
     "uvicorn>=0.32.0",
     "wandb>=0.18.5",
