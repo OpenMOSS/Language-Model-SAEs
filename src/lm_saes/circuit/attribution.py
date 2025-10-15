@@ -687,6 +687,7 @@ def attribute(
     slug: str = "untitled",
     sae_series: Optional[Union[str, List[str]]] = None,
     use_lorsa: bool = True,
+    skip_qk_tracing: bool = True,
 ) -> Graph:
     """Compute an attribution graph for *prompt*.
 
@@ -721,6 +722,7 @@ def attribute(
             update_interval=update_interval,
             sae_series=sae_series,
             use_lorsa=use_lorsa,
+            skip_qk_tracing=skip_qk_tracing,
         )
     finally:
         for reload_handle in offload_handles:
@@ -739,6 +741,7 @@ def _run_attribution(
     update_interval=4,
     sae_series=None,
     use_lorsa: bool = True,
+    skip_qk_tracing: bool = True,
 ):
     start_time = time.time()
     # Phase 0: precompute
@@ -1005,26 +1008,27 @@ def _run_attribution(
     # ***** New Phase Begin *****
     # Phase 6: attribute attention scores
     # trace attention scores for every visited lorsa feature
-    def idx_to_ov_idx(idx: torch.Tensor) -> torch.Tensor:
-        return lorsa_activation_matrix.indices()[2][idx]
+    if not skip_qk_tracing:
+        def idx_to_ov_idx(idx: torch.Tensor) -> torch.Tensor:
+            return lorsa_activation_matrix.indices()[2][idx]
 
-    def idx_to_qk_idx(idx: torch.Tensor) -> torch.Tensor:
-        ov_idx = idx_to_ov_idx(idx)
-        ov_group_sizes = torch.tensor(
-            [model.lorsas[i].cfg.ov_group_size for i in range(model.cfg.n_layers)], device=ov_idx.device
-        )
-        return ov_idx // ov_group_sizes[lorsa_activation_matrix.indices()[0][idx]]
+        def idx_to_qk_idx(idx: torch.Tensor) -> torch.Tensor:
+            ov_idx = idx_to_ov_idx(idx)
+            ov_group_sizes = torch.tensor(
+                [model.lorsas[i].cfg.ov_group_size for i in range(model.cfg.n_layers)], device=ov_idx.device
+            )
+            return ov_idx // ov_group_sizes[lorsa_activation_matrix.indices()[0][idx]]
 
-    selected_lorsa_feature = torch.where(visited[: lorsa_activation_matrix._nnz()])[0]
-    selected_lorsa_feature_layer = lorsa_activation_matrix.indices()[0][selected_lorsa_feature]
-    selected_lorsa_feature_pos = idx_to_pos(selected_lorsa_feature)
-    selected_lorsa_feature_qk_idx = idx_to_qk_idx(selected_lorsa_feature)
-    q_side_result = [None] * selected_lorsa_feature.size(0)
-    k_side_result = [None] * selected_lorsa_feature.size(0)
-    for i in tqdm(range(selected_lorsa_feature.size(0)), desc="compute attention scores attribution"):
-        q_side_result[i], k_side_result[i] = ctx.compute_attn_scores_attribution(
-            model, selected_lorsa_feature_layer[i], selected_lorsa_feature_pos[i], selected_lorsa_feature_qk_idx[i]
-        )
+        selected_lorsa_feature = torch.where(visited[: lorsa_activation_matrix._nnz()])[0]
+        selected_lorsa_feature_layer = lorsa_activation_matrix.indices()[0][selected_lorsa_feature]
+        selected_lorsa_feature_pos = idx_to_pos(selected_lorsa_feature)
+        selected_lorsa_feature_qk_idx = idx_to_qk_idx(selected_lorsa_feature)
+        q_side_result = [None] * selected_lorsa_feature.size(0)
+        k_side_result = [None] * selected_lorsa_feature.size(0)
+        for i in tqdm(range(selected_lorsa_feature.size(0)), desc="compute attention scores attribution"):
+            q_side_result[i], k_side_result[i] = ctx.compute_attn_scores_attribution(
+                model, selected_lorsa_feature_layer[i], selected_lorsa_feature_pos[i], selected_lorsa_feature_qk_idx[i]
+            )
 
     # QK trace result remains unprocessed (not include to graph)
     # No further QK trace has been performed on the Lorsa feature found in the QK trace.

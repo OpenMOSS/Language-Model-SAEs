@@ -259,9 +259,10 @@ class ReplacementModel(HookedTransformer):
         self.use_lorsa = use_lorsa
 
         transcoders.to(self.cfg.device, self.cfg.dtype)
-        if lorsas is not None:
-            for lorsa in lorsas:
-                assert not lorsa.cfg.skip_bos, "Lorsa must not skip bos, will be handled by replacement model"
+        if use_lorsa:
+            if lorsas is not None:
+                for lorsa in lorsas:
+                    assert not lorsa.cfg.skip_bos, "Lorsa must not skip bos, will be handled by replacement model"
 
         self.add_module("transcoders", transcoders)
         if use_lorsa:
@@ -294,7 +295,8 @@ class ReplacementModel(HookedTransformer):
     def _configure_gradient_flow(self):
         for layer in range(self.cfg.n_layers):
             self._configure_skip_connection(self.blocks[layer], layer)
-            self.lorsas[layer]._configure_gradient_flow()
+            if self.use_lorsa:
+                self.lorsas[layer]._configure_gradient_flow()
 
         def stop_gradient(acts, hook):
             return acts.detach()
