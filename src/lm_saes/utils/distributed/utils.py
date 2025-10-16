@@ -5,6 +5,7 @@ from typing import Any, Optional, cast
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import Placement
 
 
 def all_gather_dict(
@@ -76,3 +77,14 @@ def mesh_rank(device_mesh: DeviceMesh | None) -> int:
     shape = device_mesh.shape
     assert coord is not None, "Device mesh does not have coordinate"
     return sum(coord[i] * functools.reduce(operator.mul, shape[i + 1 :], 1) for i in range(len(coord)))
+
+
+def replace_placements(
+    placements: tuple[Placement, ...], device_mesh: DeviceMesh, mesh_dim: str, new_placement: Placement
+) -> tuple[Placement, ...]:
+    assert device_mesh.mesh_dim_names is not None, "Device mesh does not have mesh dimension names"
+    if mesh_dim in device_mesh.mesh_dim_names:
+        return tuple(
+            new_placement if i == device_mesh.mesh_dim_names.index(mesh_dim) else p for i, p in enumerate(placements)
+        )
+    return placements
