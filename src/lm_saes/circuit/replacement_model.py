@@ -527,6 +527,7 @@ class ReplacementModel(HookedTransformer):
         sparse: bool = False,
         zero_bos: bool = True,
         apply_activation_function: bool = True,
+        use_lorsa: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get the transcoder activations for a given prompt
 
@@ -550,7 +551,8 @@ class ReplacementModel(HookedTransformer):
         with torch.inference_mode(), self.hooks(activation_hooks):
             logits = self(inputs)
         activation_cache = torch.stack(activation_cache)
-        lorsa_attention_pattern = torch.stack(lorsa_attention_pattern)
+        if use_lorsa:
+            lorsa_attention_pattern = torch.stack(lorsa_attention_pattern)
         if sparse:
             activation_cache = activation_cache.coalesce()
         return logits, activation_cache, lorsa_attention_pattern
@@ -675,7 +677,7 @@ class ReplacementModel(HookedTransformer):
         )
 
     def setup_intervention_with_freeze(
-        self, inputs: str | torch.Tensor, constrained_layers: range | None = None
+        self, inputs: str | torch.Tensor, constrained_layers: range | None = None, use_lorsa: bool = True,
     ) -> tuple[torch.Tensor, list[tuple[str, Callable]]]:
         """Sets up an intervention with either frozen attention + LayerNorm(default) or frozen
         attention, LayerNorm, and MLPs, for constrained layers
@@ -696,7 +698,8 @@ class ReplacementModel(HookedTransformer):
             if set(range(self.cfg.n_layers)).issubset(set(constrained_layers)):
                 hookpoints_to_freeze.append("hook_scale")
             hookpoints_to_freeze.append(self.mlp_input_hook)
-            hookpoints_to_freeze.append(self.attn_input_hook)
+            if use_lorsa:
+                hookpoints_to_freeze.append(self.attn_input_hook)
 
         # only freeze outputs in constrained range
         selected_hook_points = []
@@ -704,7 +707,7 @@ class ReplacementModel(HookedTransformer):
             if any(hookpoint_to_freeze in hook_point for hookpoint_to_freeze in hookpoints_to_freeze):
                 # don't freeze feature outputs if the layer is not in the constrained range
                 if (
-                    (self.mlp_input_hook in hook_point or self.attn_input_hook in hook_point)
+                    (self.mlp_input_hook in hook_point or (use_lorsa and self.attn_input_hook in hook_point))
                     and constrained_layers
                     and hook_obj.layer() not in constrained_layers
                 ):
@@ -724,12 +727,19 @@ class ReplacementModel(HookedTransformer):
                 f" shape {cached_values.shape} at hook {hook.name}"
             )
             return cached_values
-
-        fwd_hooks = [
-            (hookpoint, freeze_hook)
-            for hookpoint in freeze_cache.keys()
-            if self.mlp_input_hook not in hookpoint and self.attn_input_hook not in hookpoint
-        ]
+        
+        if use_lorsa:
+            fwd_hooks = [
+                (hookpoint, freeze_hook)
+                for hookpoint in freeze_cache.keys()
+                if self.mlp_input_hook not in hookpoint and self.attn_input_hook not in hookpoint
+            ]
+        else:
+            fwd_hooks = [
+                (hookpoint, freeze_hook)
+                for hookpoint in freeze_cache.keys()
+                if self.mlp_input_hook not in hookpoint 
+            ]
 
         return torch.stack(original_activations), fwd_hooks
 
@@ -741,6 +751,7 @@ class ReplacementModel(HookedTransformer):
         apply_activation_function: bool = True,
         sparse: bool = False,
         using_past_kv_cache: bool = False,
+        use_lorsa: bool = True,
     ):
         """Given the input, and a dictionary of features to intervene on, performs the
         intervention, allowing all effects to propagate (optionally allowing its effects to
@@ -776,7 +787,7 @@ class ReplacementModel(HookedTransformer):
 
         # We're generating one token at a time
         original_activations, freeze_hooks = self.setup_intervention_with_freeze(
-            inputs, constrained_layers=constrained_layers
+            inputs, constrained_layers=constrained_layers, use_lorsa=use_lorsa,
         )
         n_pos = inputs.size(0)
 
@@ -786,11 +797,12 @@ class ReplacementModel(HookedTransformer):
             device=self.cfg.device,
         )
 
-        layer_deltas_lorsa = torch.zeros(
-            [self.cfg.n_layers, n_pos, self.cfg.d_model],
-            dtype=self.cfg.dtype,
-            device=self.cfg.device,
-        )
+        if use_lorsa:
+            layer_deltas_lorsa = torch.zeros(
+                [self.cfg.n_layers, n_pos, self.cfg.d_model],
+                dtype=self.cfg.dtype,
+                device=self.cfg.device,
+            )
 
         # This activation cache will fill up during our forward intervention pass
         activation_cache, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
@@ -801,7 +813,10 @@ class ReplacementModel(HookedTransformer):
         def calculate_delta_hook_mlp(activations, hook, layer: int, layer_interventions):
             if constrained_layers:
                 # base deltas on original activations; don't let effects propagate
-                transcoder_activations = original_activations[self.cfg.n_layers :]
+                if use_lorsa:
+                    transcoder_activations = original_activations[self.cfg.n_layers :]
+                else:
+                    transcoder_activations = original_activations
                 transcoder_activations = transcoder_activations.permute(1, 0, 2)
             for i in range(len(transcoder_activations)):
                 if transcoder_activations[i] is None:
@@ -850,22 +865,26 @@ class ReplacementModel(HookedTransformer):
                 partial(calculate_delta_hook_mlp, layer=layer, layer_interventions=layer_interventions),
             )
             for layer, layer_interventions in interventions_by_layer_mlp.items()
-        ] + [
-            (
-                f"blocks.{layer}.{self.attn_output_hook}",
-                partial(calculate_delta_hook_lorsa, layer=layer, layer_interventions=layer_interventions),
-            )
-            for layer, layer_interventions in interventions_by_layer_lorsa.items()
         ]
+        if use_lorsa:
+            delta_hooks = delta_hooks + [
+                (
+                    f"blocks.{layer}.{self.attn_output_hook}",
+                    partial(calculate_delta_hook_lorsa, layer=layer, layer_interventions=layer_interventions),
+                )
+                for layer, layer_interventions in interventions_by_layer_lorsa.items()
+            ]
 
         intervention_range = constrained_layers if constrained_layers else range(self.cfg.n_layers)
         intervention_hooks = [
             (f"blocks.{layer}.{self.mlp_output_hook}", partial(intervention_hook_mlp, layer=layer))
             for layer in range(self.cfg.n_layers)
-        ] + [
-            (f"blocks.{layer}.{self.attn_output_hook}", partial(intervention_hook_lorsa, layer=layer))
-            for layer in range(self.cfg.n_layers)
         ]
+        if use_lorsa:
+            intervention_hooks = intervention_hooks + [
+                (f"blocks.{layer}.{self.attn_output_hook}", partial(intervention_hook_lorsa, layer=layer))
+                for layer in range(self.cfg.n_layers)
+            ]
 
         all_hooks = freeze_hooks + activation_hooks + delta_hooks + intervention_hooks
         cached_logits = [] if using_past_kv_cache else [None]
@@ -880,6 +899,7 @@ class ReplacementModel(HookedTransformer):
         constrained_layers: range | None = None,
         apply_activation_function: bool = True,
         sparse: bool = False,
+        use_lorsa: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Given the input, and a dictionary of features to intervene on, performs the
         intervention, and returns the logits and feature activations. If freeze_attention or
@@ -912,6 +932,7 @@ class ReplacementModel(HookedTransformer):
             constrained_layers=constrained_layers,
             apply_activation_function=apply_activation_function,
             sparse=sparse,
+            use_lorsa=use_lorsa,
         )
 
         with self.hooks(hooks):  # type: ignore
