@@ -652,6 +652,7 @@ class Trainer:
 
                     with timer.time("clip_grad_norm"):
                         # exclude the grad of the jumprelu threshold
+                        assert sae.device_mesh is None or self.cfg.clip_grad_norm <= 0, "clip_grad_norm must be 0 for distributed training"
                         loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
                             [
                                 param

@@ -23,6 +23,7 @@ from safetensors import safe_open
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.experimental import local_map
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.activation_functions import JumpReLU
@@ -693,11 +694,24 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     elif sparsity_loss_type == "tanh":
                         l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
                     elif sparsity_loss_type == "tanh-quad":
-                        approx_frequency = einops.reduce(
-                            torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()),
-                            "... d_sae -> d_sae",
-                            "mean",
-                        )
+                        score = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm())
+
+                        # Use local_map to perform mean reduction locally. This will lower the backward memory usage (likely due to DTensor bug).
+                        if isinstance(score, DTensor):
+                            approx_frequency = local_map(
+                                lambda x: einops.reduce(
+                                    x,
+                                    "... d_sae -> 1 d_sae",
+                                    "mean",
+                                ),
+                                DimMap({"model": 1, "data": 0, "head": 0}).placements(score.device_mesh),
+                            )(score).mean(0)
+                        else:
+                            approx_frequency = einops.reduce(
+                                score,
+                                "... d_sae -> d_sae",
+                                "mean",
+                            )
                         l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
                     else:
                         raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")

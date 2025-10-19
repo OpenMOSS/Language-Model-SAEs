@@ -30,8 +30,9 @@ from lm_saes.initializer import Initializer
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.trainer import Trainer
+from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import get_mesh_rank, is_primary_rank
+from lm_saes.utils.misc import is_primary_rank
 
 logger = get_distributed_logger("runners.train")
 
@@ -169,7 +170,7 @@ def train_sae(settings: TrainSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -356,7 +357,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -516,7 +517,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -600,6 +601,9 @@ class TrainLorsaSettings(BaseSettings):
 
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
+    
+    data_parallel_size: int = 1
+    """Size of data parallel mesh"""
 
     mongo: Optional[MongoDBConfig] = None
     """Configuration for MongoDB"""
@@ -629,10 +633,10 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
-            mesh_shape=(settings.model_parallel_size,),
-            mesh_dim_names=("model",),
+            mesh_shape=(settings.data_parallel_size, settings.model_parallel_size),
+            mesh_dim_names=("data", "model"),
         )
-        if settings.model_parallel_size > 1
+        if settings.model_parallel_size > 1 or settings.data_parallel_size > 1
         else None
     )
 
@@ -874,7 +878,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
 
