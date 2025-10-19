@@ -38,8 +38,8 @@ def get_input_with_manually_prepended_bos(tokenizer, input):
 
 
 def to_tokens(tokenizer, text, max_length, device="cpu"):
-    # tokenizer_prepends_bos = tokenizer.prepend_bos
-    # text = text if tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
+    tokenizer_prepends_bos = tokenizer.prepend_bos
+    text = text if tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
     tokens = tokenizer(
         text,
         return_tensors="pt",
