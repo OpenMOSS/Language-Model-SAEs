@@ -5,6 +5,8 @@ from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from wandb.sdk.wandb_run import Run
+from transformer_lens import HookedTransformer
+from transformer_lens.components import TransformerBlock, Attention, GroupedQueryAttention
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
@@ -169,6 +171,9 @@ class Initializer:
                 assert self.cfg.model_layer is not None, (
                     "Model layer must be provided for initializing Lorsa with Original Multi Head Sparse Attention"
                 )
+                assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
+                assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), "Block must be a TransformerBlock"
+                assert isinstance(model.model.blocks[self.cfg.model_layer].attn, Attention | GroupedQueryAttention), "Attention must be an Attention or GroupedQueryAttention"
                 sae.init_lorsa_with_mhsa(model.model.blocks[self.cfg.model_layer].attn)
 
             assert activation_stream is not None, "Activation iterator must be provided for initialization search"

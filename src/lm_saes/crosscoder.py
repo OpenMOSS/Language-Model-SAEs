@@ -7,12 +7,13 @@ import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor, Shard
+from torch.distributed.tensor import DTensor, Partial, Shard
 from typing_extensions import override
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import CrossCoderConfig
 from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed.utils import replace_placements
 from lm_saes.utils.misc import get_slice_length
 from lm_saes.utils.timer import timer
 
@@ -177,7 +178,19 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 def _apply_encoding_no_einsum(x: torch.Tensor, W_E: torch.Tensor, b_E: torch.Tensor) -> torch.Tensor:
                     assert isinstance(x, DTensor) and isinstance(W_E, DTensor) and isinstance(b_E, DTensor)
                     return DTensor.from_local(
-                        _apply_encoding_local_no_einsum(x.to_local(), W_E.to_local(), b_E.to_local()),
+                        _apply_encoding_local_no_einsum(
+                            x.to_local(),
+                            W_E.to_local(
+                                grad_placements=replace_placements(
+                                    W_E.placements, W_E.device_mesh, "data", Partial("sum")
+                                )
+                            ),
+                            b_E.to_local(
+                                grad_placements=replace_placements(
+                                    b_E.placements, b_E.device_mesh, "data", Partial("sum")
+                                )
+                            ),
+                        ),
                         device_mesh=self.device_mesh,
                         placements=out_placements,
                     )
@@ -282,7 +295,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 )
 
         # Apply activation function
-        feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
+        feature_acts = self.activation_function(accumulated_hidden_pre * self.decoder_norm())
 
         if return_hidden_pre:
             return feature_acts, accumulated_hidden_pre
@@ -324,7 +337,19 @@ class CrossCoder(AbstractSparseAutoEncoder):
                     assert isinstance(feature_acts, DTensor) and isinstance(W_D, DTensor) and isinstance(b_D, DTensor)
                     # feature_acts = DimMap({"head": -2, "model": -1}).redistribute(feature_acts)
                     return DTensor.from_local(
-                        _apply_decoding_local_no_einsum(feature_acts.to_local(), W_D.to_local(), b_D.to_local()),
+                        _apply_decoding_local_no_einsum(
+                            feature_acts.to_local(),
+                            W_D.to_local(
+                                grad_placements=replace_placements(
+                                    W_D.placements, W_D.device_mesh, "data", Partial("sum")
+                                )
+                            ),
+                            b_D.to_local(
+                                grad_placements=replace_placements(
+                                    b_D.placements, b_D.device_mesh, "data", Partial("sum")
+                                )
+                            ),
+                        ),
                         device_mesh=self.device_mesh,
                         placements=out_placements,
                     )

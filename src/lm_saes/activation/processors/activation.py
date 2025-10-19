@@ -11,8 +11,7 @@ from tqdm import tqdm
 from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.backend.language_model import LanguageModel
 from lm_saes.config import BufferShuffleConfig
-from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.misc import get_mesh_dim_size
+from lm_saes.utils.distributed import DimMap, mesh_dim_size
 
 
 @dataclass
@@ -108,7 +107,7 @@ class ActivationBuffer:
             For non-distributed setting, this is just x[:batch_size] and x[batch_size:].
             """
 
-            dp_size = get_mesh_dim_size(self.device_mesh, "data")
+            dp_size = mesh_dim_size(self.device_mesh, "data")
             local_batch_size = batch_size // dp_size  # For non-distributed setting, this is just batch_size
 
             if self.device_mesh is not None and isinstance(x, DTensor):
@@ -352,7 +351,7 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
         """
         buffer = ActivationBuffer(generator=self.perm_generator, device_mesh=self.device_mesh)
         pbar = tqdm(total=self.buffer_size, desc="Buffer monitor", miniters=1, disable=True)
-        dp_size = get_mesh_dim_size(self.device_mesh, "data")
+        dp_size = mesh_dim_size(self.device_mesh, "data")
         for d in data:
 
             def get_batch_size(x):
