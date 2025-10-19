@@ -167,18 +167,6 @@ class AttributionContext:
         proxy = weakref.proxy(self)
 
         def _hook_fn(grads: torch.Tensor, hook: HookPoint) -> None:
-            # print(hook.name)
-            # print(f" {read_index=} {write_index=}")
-            # print(f" {write_index=}")
-            # print(f" {output_vecs.shape=} {grads[read_index].shape=}")
-            # print(f" {proxy._batch_buffer.shape=}")
-            # print(f" {proxy._batch_buffer[write_index].shape=}")
-            # _tmp = einsum(
-            #     grads.to(output_vecs.dtype)[read_index],
-            #     output_vecs,
-            #     "batch position d_model, position d_model -> position batch",
-            # )
-            # print(f" compute.shape={_tmp.shape}")
             proxy._batch_buffer[write_index] += einsum(
                 grads.to(output_vecs.dtype)[read_index],
                 output_vecs,
@@ -336,7 +324,6 @@ class AttributionContext:
             size ((\sum_{i=0}^{n_layers} \sum_{j=0}^{i} n_active_features_layer_j), d_model)
         """
         
-        # print(f"{lorsa_offset=}")
         n_layers, n_pos, _ = activation_matrix.shape
         nnz_layers, nnz_positions, _ = activation_matrix.indices()
 
@@ -358,8 +345,6 @@ class AttributionContext:
             slice(start, end) for start, end in zip(decoder_layer_spans[:-1], decoder_layer_spans[1:])
         ]
 
-        # for layer in range(n_layers):
-        #     print(f" {layer=} {lorsa_offset + edges[layer]=}")
         # Feature nodes
         feature_hooks: list[Tuple[str, Callable[..., Any]]] = [
             self._compute_score_hook(
