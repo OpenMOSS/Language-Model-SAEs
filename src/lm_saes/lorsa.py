@@ -127,8 +127,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         if self.cfg.use_post_qk_ln:
             assert self.qk_ln_type is not None
-            self.ln_q = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_qk_heads)
-            self.ln_k = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_qk_heads)
+            self.ln_q = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_qk_heads, device_mesh=device_mesh)
+            self.ln_k = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_qk_heads, device_mesh=device_mesh)
 
         self.hook_k = HookPoint()  # [batch, pos, q_head_index, d_qk_head]
         self.hook_q = HookPoint()  # [batch, pos, q_head_index, d_qk_head]
@@ -204,16 +204,19 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             self.W_K.copy_(W_K)
             if self.cfg.use_post_qk_ln and self.cfg.normalization_type == "RMS":
                 ln_q_w_local = mhsa.ln_q.w[lorsa_qk_indices // qk_exp_factor]
-                ln_k_w_local = mhsa.ln_k.w[lorsa_qk_indices // qk_exp_factor]
+                if mhsa.cfg.n_key_value_heads is not None:
+                    ln_k_w_local = torch.repeat_interleave(mhsa.ln_k.w, mhsa.cfg.n_heads // mhsa.cfg.n_key_value_heads, dim=0)[lorsa_qk_indices // qk_exp_factor]
+                else:
+                    ln_k_w_local = mhsa.ln_k.w[lorsa_qk_indices // qk_exp_factor]
                 ln_q_w = DTensor.from_local(
                     ln_q_w_local,
                     device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["ln_q.w"].placements(self.device_mesh),
+                    placements=self.ln_q.dim_maps()["w"].placements(self.device_mesh),
                 )
                 ln_k_w = DTensor.from_local(
                     ln_k_w_local,
                     device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["ln_k.w"].placements(self.device_mesh),
+                    placements=self.ln_k.dim_maps()["w"].placements(self.device_mesh),
                 )
                 self.ln_q.w.copy_(ln_q_w)
                 self.ln_k.w.copy_(ln_k_w)
