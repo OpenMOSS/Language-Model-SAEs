@@ -182,44 +182,107 @@ def create_graph_from_attribution(
     slug: str,  # 将 slug 移到前面
     sae_series: Optional[str] = None,
 ) -> Graph:
-    """从attribution结果创建Graph对象"""
+    """
+    从attribution结果创建Graph对象
+    
+    Args:
+        model: 替换模型实例
+        attribution_result: Attribution结果字典
+        prompt: 输入提示
+        side: 分析侧 ('q', 'k', 或 'both')
+        slug: 图的标识符
+        sae_series: SAE系列名称
+    
+    Returns:
+        Graph: 创建的图对象
+    """
     logger = logging.getLogger(__name__)
+    logger.info(f"正在为侧'{side}'创建图对象...")
     
-    # 提取数据
-    lorsa_activation_matrix = attribution_result['lorsa_activations']['lorsa_activation_matrix']
-    tc_activation_matrix = attribution_result['tc_activations']['tc_activation_matrix']
-    input_embedding = attribution_result['input']['input_embedding']
-    logit_idx = attribution_result['logits']['indices']
-    logit_p = attribution_result['logits']['probabilities']
-    lorsa_active_features = attribution_result['lorsa_activations']['indices']
-    lorsa_activation_values = attribution_result['lorsa_activations']['values']
-    tc_active_features = attribution_result['tc_activations']['indices']
-    tc_activation_values = attribution_result['tc_activations']['values']
-    full_edge_matrix = attribution_result[side]['full_edge_matrix']
-    selected_features = attribution_result[side]['selected_features']
-    side_logit_position = attribution_result[side]['move_positions']
-    
-    # 创建Graph对象
-    graph = Graph(
-        input_string=prompt,
-        input_tokens=input_embedding,
-        logit_tokens=logit_idx,
-        logit_probabilities=logit_p,
-        logit_position=side_logit_position,
-        lorsa_active_features=lorsa_active_features,
-        lorsa_activation_values=lorsa_activation_values,
-        tc_active_features=tc_active_features,
-        tc_activation_values=tc_activation_values,
-        selected_features=selected_features,
-        adjacency_matrix=full_edge_matrix,
-        cfg=model.cfg,
-        sae_series=sae_series,
-        slug=slug,
-        activation_info=attribution_result.get('activation_info'),
-    )
-    
-    logger.info(f"Graph创建完成: {slug}")
-    return graph
+    try:
+        # 提取公共数据
+        lorsa_activation_matrix = attribution_result['lorsa_activations']['lorsa_activation_matrix']
+        tc_activation_matrix = attribution_result['tc_activations']['tc_activation_matrix']
+        input_embedding = attribution_result['input']['input_embedding']
+        logit_idx = attribution_result['logits']['indices']
+        logit_p = attribution_result['logits']['probabilities']
+        lorsa_active_features = attribution_result['lorsa_activations']['indices']
+        lorsa_activation_values = attribution_result['lorsa_activations']['values']
+        tc_active_features = attribution_result['tc_activations']['indices']
+        tc_activation_values = attribution_result['tc_activations']['values']
+        
+        # 根据side选择对应的数据
+        if side == 'q':
+            if attribution_result.get('q') is None:
+                raise ValueError("Attribution结果中没有找到'q'侧数据")
+            full_edge_matrix = attribution_result['q']['full_edge_matrix']
+            selected_features = attribution_result['q']['selected_features']
+            side_logit_position = attribution_result['q'].get('move_positions')
+            activation_info = attribution_result.get('activation_info', {}).get('q')
+            
+        elif side == 'k':
+            if attribution_result.get('k') is None:
+                raise ValueError("Attribution结果中没有找到'k'侧数据")
+            full_edge_matrix = attribution_result['k']['full_edge_matrix']
+            selected_features = attribution_result['k']['selected_features']
+            side_logit_position = attribution_result['k'].get('move_positions')
+            activation_info = attribution_result.get('activation_info', {}).get('k')
+            
+        elif side == 'both':
+            # 处理both情况，需要合并q和k侧的数据
+            if attribution_result.get('q') is None or attribution_result.get('k') is None:
+                raise ValueError("Attribution结果中没有找到'q'或'k'侧数据，无法进行both模式合并")
+            
+            # 导入merge_qk_graph函数
+            from lm_saes.circuit.attribution_qk import merge_qk_graph
+            
+            logger.info("开始合并q和k侧数据...")
+            merged = merge_qk_graph(attribution_result)
+            
+            full_edge_matrix = merged["adjacency_matrix"]
+            selected_features = merged["selected_features"]
+            side_logit_position = merged["logit_position"]
+            
+            # 合并激活信息
+            activation_info_q = attribution_result.get("activation_info", {}).get('q')
+            activation_info_k = attribution_result.get("activation_info", {}).get('k')
+            activation_info = None
+            if activation_info_q or activation_info_k:
+                activation_info = {
+                    'q': activation_info_q,
+                    'k': activation_info_k,
+                    'merged': True
+                }
+            logger.info(f"合并完成，包含 {len(selected_features)} 个选中特征")
+            
+        else:
+            raise ValueError(f"不支持的侧: {side}")
+        
+        # 创建Graph对象
+        graph = Graph(
+            input_string=prompt,
+            input_tokens=input_embedding,
+            logit_tokens=logit_idx,
+            logit_probabilities=logit_p,
+            logit_position=side_logit_position,
+            lorsa_active_features=lorsa_active_features,
+            lorsa_activation_values=lorsa_activation_values,
+            tc_active_features=tc_active_features,
+            tc_activation_values=tc_activation_values,
+            selected_features=selected_features,
+            adjacency_matrix=full_edge_matrix,
+            cfg=model.cfg,
+            sae_series=sae_series,
+            slug=slug,
+            activation_info=activation_info,
+        )
+        
+        logger.info(f"成功创建图对象，包含 {len(selected_features)} 个选中特征")
+        return graph
+        
+    except Exception as e:
+        logger.error(f"创建图对象时出错: {e}")
+        raise
 
 
 def create_graph_json_data(
@@ -312,7 +375,7 @@ def run_circuit_trace(
     max_feature_nodes: int = 1024,
     batch_size: int = 1,
     order_mode: str = "positive",
-    mongo_uri: str = "mongodb://10.244.136.216:27017",
+    mongo_uri: str = "mongodb://10.244.136.183:27017",
     mongo_db: str = "mechinterp",
     sae_series: str = "lc0-circuit-tracing",
     act_times_max: Optional[int] = None,
@@ -457,7 +520,7 @@ def main():
                        help="排序模式")
     
     # MongoDB参数
-    parser.add_argument("--mongo_uri", type=str, default="mongodb://10.244.136.216:27017",
+    parser.add_argument("--mongo_uri", type=str, default="mongodb://10.244.136.183:27017",
                        help="MongoDB URI")
     parser.add_argument("--mongo_db", type=str, default="mechinterp",
                        help="MongoDB数据库名")

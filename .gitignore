@@ -192,6 +192,7 @@ pyrightconfig.json
 /analysis
 /results
 /result
+/result_BT4
 /graphs
 /ui_bakup
 .vscode/settings.json

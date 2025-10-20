@@ -1,23 +1,26 @@
 """
-Build an **attribution graph** that captures the *direct*, *linear* effects
-between features and next-token logits for a *prompt-specific*
-**local replacement model**.
+# Logit Lens attribution from layer 5 with specific move
+attribution_result = attribute_logit_lens(
+    prompt=fen,
+    model=model,
+    logit_lens_layer=5,   # Start attribution from layer 5
+    side='both',          # Analyze both Q and K sides
+    move_idx=1234,        # Focus on specific move
+    max_n_logits=10,
+    batch_size=512,
+)
+```
 
-High-level algorithm (matches the 2025 ``Attribution Graphs`` paper):
-https://transformer-circuits.pub/2025/attribution-graphs/methods.html
+## Key Features:
 
-1. **Local replacement model** - we configure gradients to flow only through
-   linear components of the network, effectively bypassing attention mechanisms,
-   MLP non-linearities, and layer normalization scales.
-2. **Forward pass** - record residual-stream activations and mark every active
-   feature.
-3. **Backward passes** - for each source node (feature or logit), inject a
-   *custom* gradient that selects its encoder/decoder direction.  Because the
-   model is linear in the residual stream under our freezes, this contraction
-   equals the *direct effect* A_{s->t}.
-4. **Assemble graph** - store edge weights in a dense matrix and package a
-   ``Graph`` object.  Downstream utilities can *prune* the graph to the subset
-   needed for interpretation.
+- **Logit Lens Support**: Use `logit_lens_layer` parameter to start attribution
+  from any intermediate layer instead of the final layer.
+- **Layer Filtering**: Only processes features from layers up to and including
+  the specified logit lens layer.
+- **Efficient Caching**: Optimized hook placement to cache only necessary
+  activations when using logit lens.
+- **Backward Compatibility**: All existing functionality works unchanged when
+  `logit_lens_layer=None` (default).
 """
 
 import contextlib
@@ -42,6 +45,12 @@ from .utils.create_graph_files import create_graph_files
 from ..utils.logging import get_distributed_logger
 
 from .leela_board import *
+
+# Import the IntegratedPolicyLens for logit lens functionality
+try:
+    from ...server.logit_lens import IntegratedPolicyLens
+except ImportError:
+    IntegratedPolicyLens = None
 
 logger = get_distributed_logger("attribution")
 
@@ -80,6 +89,7 @@ class AttributionContext:
         tc_decoder_vecs: torch.Tensor,
         attn_output_hook: str,
         mlp_output_hook: str,
+        logit_lens_layer: Optional[int] = None,  # 新增：指定logit lens层
     ) -> None:
         # assert lorsa_activation_matrix.shape[:-1] == tc_activation_matrix.shape[:-1], "LORSAs and TCs must have the same shape"
         n_layers, n_pos, _ = tc_activation_matrix.shape # tc_activation_matrix.shape = torch.Size([15, 64, 12288])
@@ -94,6 +104,9 @@ class AttributionContext:
         self._batch_buffer: torch.Tensor | None = None
         self.n_layers: int = n_layers
 
+        # 存储logit lens层信息
+        self.logit_lens_layer = logit_lens_layer
+        
         # Assemble all backward hooks up-front
         self._attribution_hooks = self._make_attribution_hooks(
             lorsa_activation_matrix,
@@ -157,14 +170,29 @@ class AttributionContext:
             return acts
 
         hooks = []
-        for layer in range(self.n_layers):
-            hooks.append((f"blocks.{layer}.{attn_input_hook}", partial(_cache, index=layer * 2)))
-            hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer * 2 + 1)))
         
-        hooks.append(("policy_head.hook_pre", partial(_cache, index=2 * self.n_layers)))
-        # 添加policy head的q和k缓存hooks
-        hooks.append(("policy_head.hook_q", _cache_q))
-        hooks.append(("policy_head.hook_k", _cache_k))
+        # 如果指定了logit lens层，只缓存到该层（包含该层）
+        if self.logit_lens_layer is not None:
+            # 只缓存到指定层
+            for layer in range(min(self.logit_lens_layer + 1, self.n_layers)):
+                hooks.append((f"blocks.{layer}.{attn_input_hook}", partial(_cache, index=layer * 2)))
+                hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer * 2 + 1)))
+            
+            # 在logit lens层之后添加特殊的缓存点
+            if self.logit_lens_layer < self.n_layers:
+                # 缓存logit lens层的输出作为"policy_head输入"
+                hooks.append((f"blocks.{self.logit_lens_layer}.hook_resid_post", 
+                             partial(_cache, index=2 * self.n_layers)))
+        else:
+            # 原有逻辑：缓存所有层
+            for layer in range(self.n_layers):
+                hooks.append((f"blocks.{layer}.{attn_input_hook}", partial(_cache, index=layer * 2)))
+                hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer * 2 + 1)))
+            
+            hooks.append(("policy_head.hook_pre", partial(_cache, index=2 * self.n_layers)))
+            # 添加policy head的q和k缓存hooks
+            hooks.append(("policy_head.hook_q", _cache_q))
+            hooks.append(("policy_head.hook_k", _cache_k))
 
         return hooks
 
@@ -419,6 +447,19 @@ class AttributionContext:
         Returns:
             torch.Tensor: ``(batch, row_size)`` matrix - one row per node.
         """
+        # 如果指定了logit lens层，只处理该层及之前的层
+        if self.logit_lens_layer is not None:
+            # 过滤掉logit lens层之后的层
+            valid_mask = layers <= self.logit_lens_layer
+            if not valid_mask.any():
+                return torch.zeros(len(layers), self._row_size, device=inject_values.device)
+            
+            layers = layers[valid_mask]
+            positions = positions[valid_mask]
+            inject_values = inject_values[valid_mask]
+            if attention_patterns is not None:
+                attention_patterns = attention_patterns[valid_mask]
+        
         for resid_activation in self._resid_activations:
             assert resid_activation is not None, "Residual activations are not cached"
 
@@ -1668,11 +1709,12 @@ def compute_partial_influences(edge_matrix, logit_p, row_to_node_index,
     return influences
 
 
-def attribute(
+def attribute_logit_lens(
     prompt: Union[str, torch.Tensor, List[int]],
     model: ReplacementModel,
     is_castle: bool = False,
     *,
+    logit_lens_layer: Optional[int] = None,  # 新增：指定logit lens层
     max_n_logits: int = 10,
     side: str = 'k',                     # 'q' | 'k' | 'both'
     desired_logit_prob: float = 0.95,
@@ -1716,6 +1758,7 @@ def attribute(
         return _run_attribution(
             model=model,
             prompt=input_ids,
+            logit_lens_layer=logit_lens_layer,  # ★ 新增传递
             max_n_logits=max_n_logits,
             side=side,
             desired_logit_prob=desired_logit_prob,
@@ -1749,9 +1792,10 @@ def _run_attribution(
     side: str,                           # 'q' | 'k' | 'both'
     desired_logit_prob: float,
     batch_size: int,
-    max_feature_nodes: Optional[int],
     offload: Literal["cpu", "disk", None],
     offload_handles: list,
+    max_feature_nodes: Optional[int] = None,
+    logit_lens_layer: Optional[int] = None,  # 新增：logit lens层
     update_interval: int = 4,
     use_legal_moves_only: bool = True,
     fen: Optional[str] = None,
@@ -1792,12 +1836,24 @@ def _run_attribution(
     # ========== Phase 0: 预计算 ==========
     print("Phase 0: Precomputing activations and vectors")
     logger.info("Phase 0: Precomputing activations and vectors")
+    if logit_lens_layer is not None:
+        print(f"Using Logit Lens from layer {logit_lens_layer}")
+        logger.info(f"Using Logit Lens from layer {logit_lens_layer}")
     phase_start = time.time()
 
     input_ids = prompt
-    model_out, lorsa_activation_matrix, lorsa_attention_pattern, tc_activation_matrix, error_vecs, token_vecs = model.setup_attribution(
-        input_ids, sparse=True
-    )
+    
+    # 如果指定了logit lens层，需要特殊处理
+    if logit_lens_layer is not None:
+        # Logit Lens模式：只运行到指定层
+        model_out, lorsa_activation_matrix, lorsa_attention_pattern, tc_activation_matrix, error_vecs, token_vecs = model.setup_attribution(
+            input_ids, sparse=True, stop_at_layer=logit_lens_layer + 1
+        )
+    else:
+        # 原有逻辑：完整运行
+        model_out, lorsa_activation_matrix, lorsa_attention_pattern, tc_activation_matrix, error_vecs, token_vecs = model.setup_attribution(
+            input_ids, sparse=True
+        )
     print("set up attribution! ")
     
     lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas)
@@ -1816,7 +1872,8 @@ def _run_attribution(
         lorsa_decoder_vecs,
         tc_decoder_vecs,
         model.attn_output_hook,
-        model.mlp_output_hook
+        model.mlp_output_hook,
+        logit_lens_layer=logit_lens_layer  # ★ 传递logit lens层信息
     )
     logger.info(f"Precomputation completed in {time.time() - phase_start:.2f}s")
     logger.info(f"Found {tc_activation_matrix._nnz()} active features")
@@ -1830,10 +1887,25 @@ def _run_attribution(
     phase_start = time.time()
     
     with ctx.install_hooks(model):
-        residual = model.forward(input_ids, stop_at_layer=model.cfg.n_layers)
-        ctx._resid_activations[-1] = residual
-        if hasattr(model, 'policy_head'):
-            _ = model.policy_head(residual)
+        if logit_lens_layer is not None:
+            # Logit Lens模式：只前向传播到指定层
+            residual = model.forward(input_ids, stop_at_layer=logit_lens_layer + 1)
+            ctx._resid_activations[-1] = residual
+            
+            # 在指定层计算logit lens输出
+            if hasattr(model, 'policy_head'):
+                # 使用指定层的输出作为logit lens的输入
+                logit_lens_output = model.policy_head(residual)
+                model_out = [logit_lens_output]
+                # print(f'{model_out = }')
+            else:
+                raise ValueError("Model must have policy_head for logit lens")
+        else:
+            # 原有逻辑：完整前向传播
+            residual = model.forward(input_ids, stop_at_layer=model.cfg.n_layers)
+            ctx._resid_activations[-1] = residual
+            if hasattr(model, 'policy_head'):
+                _ = model.policy_head(residual)
     
     # 激活信息将在Phase 5中根据selected_features收集
     activation_info = None
@@ -1850,7 +1922,7 @@ def _run_attribution(
     logger.info("Phase 2: Building input vectors")
     phase_start = time.time()
 
-    policy_out = model_out[0]
+    policy_out = model_out[0]  # 在logit lens模式下，这就是logit lens的输出
     n_layers, n_pos, _ = tc_activation_matrix.shape
     total_active_feats = lorsa_activation_matrix._nnz() + tc_activation_matrix._nnz()
     phase2_time = time.time() - phase_start
@@ -2319,32 +2391,64 @@ def _run_attribution(
             return tc_activation_matrix.values()[local_idx] - bias_val
 
     print("go into feature attribution loop")
-    fa_result = run_feature_attribution(
-        side=side,
-        ctx=ctx,
-        model=model,
-        tc_activation_matrix=tc_activation_matrix,
-        total_active_feats=total_active_feats,
-        max_feature_nodes=max_feature_nodes,
-        update_interval=update_interval,
-        batch_size=batch_size,
-        n_logits=n_logits,
-        logit_p=logit_p,
-        logit_offset=logit_offset,
-        idx_to_layer=idx_to_layer,
-        idx_to_pos=idx_to_pos,
-        idx_to_encoder_rows=idx_to_encoder_rows,
-        idx_to_encoder_bias=idx_to_encoder_bias,
-        idx_to_pattern=idx_to_pattern,
-        compute_partial_influences=compute_partial_influences,  # 假设在外层已定义
-        bias_attr_now=bias_attr_now,
-        edge_matrix_q=edge_matrix_q,
-        row_to_node_index_q=row_to_node_index_q,
-        edge_matrix_k=edge_matrix_k,
-        row_to_node_index_k=row_to_node_index_k,
-        logger=logger,
-        order_mode = order_mode,
-    )
+    
+    # 根据side决定调用哪个edge_matrix
+    fa_result = {}
+    side_lower = side.lower()
+    
+    if side_lower in ('q', 'both'):
+        print("Computing feature attributions for Q")
+        fa_result_q = run_feature_attribution(
+            ctx=ctx,
+            model=model,
+            tc_activation_matrix=tc_activation_matrix,
+            total_active_feats=total_active_feats,
+            max_feature_nodes=max_feature_nodes,
+            update_interval=update_interval,
+            batch_size=batch_size,
+            n_logits=n_logits,
+            logit_p=logit_p,
+            logit_offset=logit_offset,
+            idx_to_layer=idx_to_layer,
+            idx_to_pos=idx_to_pos,
+            idx_to_encoder_rows=idx_to_encoder_rows,
+            idx_to_encoder_bias=idx_to_encoder_bias,
+            idx_to_pattern=idx_to_pattern,
+            compute_partial_influences=compute_partial_influences,
+            bias_attr_now=bias_attr_now,
+            edge_matrix=edge_matrix_q,
+            row_to_node_index=row_to_node_index_q,
+            logger=logger,
+            order_mode=order_mode,
+        )
+        fa_result['q'] = fa_result_q
+    
+    if side_lower in ('k', 'both'):
+        print("Computing feature attributions for K")
+        fa_result_k = run_feature_attribution(
+            ctx=ctx,
+            model=model,
+            tc_activation_matrix=tc_activation_matrix,
+            total_active_feats=total_active_feats,
+            max_feature_nodes=max_feature_nodes,
+            update_interval=update_interval,
+            batch_size=batch_size,
+            n_logits=n_logits,
+            logit_p=logit_p,
+            logit_offset=logit_offset,
+            idx_to_layer=idx_to_layer,
+            idx_to_pos=idx_to_pos,
+            idx_to_encoder_rows=idx_to_encoder_rows,
+            idx_to_encoder_bias=idx_to_encoder_bias,
+            idx_to_pattern=idx_to_pattern,
+            compute_partial_influences=compute_partial_influences,
+            bias_attr_now=bias_attr_now,
+            edge_matrix=edge_matrix_k,
+            row_to_node_index=row_to_node_index_k,
+            logger=logger,
+            order_mode=order_mode,
+        )
+        fa_result['k'] = fa_result_k
 
     print(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
     logger.info(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
@@ -2849,7 +2953,6 @@ def _collect_activation_info_after_forward(
 
 def run_feature_attribution(
     *,
-    side: str,                           # 'q' | 'k' | 'both'
     ctx,
     model,
     tc_activation_matrix: torch.Tensor,
@@ -2868,18 +2971,15 @@ def run_feature_attribution(
     idx_to_pattern,
     compute_partial_influences,
     bias_attr_now,
-    # 为 q / k 分别提供缓冲矩阵与行映射（会被原地写入）
-    edge_matrix_q: torch.Tensor,
-    row_to_node_index_q: torch.Tensor,
-    edge_matrix_k: torch.Tensor,
-    row_to_node_index_k: torch.Tensor,
+    # 只提供一个edge_matrix和row_to_node_index
+    edge_matrix: torch.Tensor,
+    row_to_node_index: torch.Tensor,
     logger=None,
     order_mode: str = 'positive'
 ) -> dict:
     """
-    通过 side 控制仅计算 q 或 k，或两者都算。
-    返回: {"q": {...}, "k": {...}}（按请求的 side 填充）
-    每个 side 的返回值:
+    计算单个side的feature attribution。
+    返回值:
       - visited: [total_active_feats] 的 bool 张量（哪些 feature 被访问/入列）
       - edge_matrix: 计算后（行=feature+logit，列=所有节点）的矩阵（原地同传入对象）
       - row_to_node_index: 计算后（行→全局 gid）的映射（原地同传入对象）
@@ -2887,35 +2987,29 @@ def run_feature_attribution(
     rank_logits_signed = (order_mode == 'negative')
     if rank_logits_signed is True:
         print('order: from most negative')
-    
-    def _phase(side_tag: str,
-               edge_matrix: torch.Tensor,
-               row_to_node_index: torch.Tensor,
-               desc: str):
-        nonlocal ctx, model
 
-        if logger:
-            logger.info(f"Phase: Computing feature attributions in {side_tag}")
+    if logger:
+        logger.info(f"Phase: Computing feature attributions")
 
-        print("清空 ctx 中的计算状态…")
-        model.zero_grad(set_to_none=True)
-        if hasattr(ctx, 'clear'):
-            ctx.clear()
-        elif hasattr(ctx, 'reset'):
-            ctx.reset()
+    print("清空 ctx 中的计算状态…")
+    model.zero_grad(set_to_none=True)
+    if hasattr(ctx, 'clear'):
+        ctx.clear()
+    elif hasattr(ctx, 'reset'):
+        ctx.reset()
 
-        phase_start = time.time()
-        st = n_logits  # 行起点：先放 logit 行
+    phase_start = time.time()
+    st = n_logits  # 行起点：先放 logit 行
 
-        visited = torch.zeros(total_active_feats, dtype=torch.bool)
-        n_visited = 0
+    visited = torch.zeros(total_active_feats, dtype=torch.bool)
+    n_visited = 0
 
-        pbar = tqdm(total=max_feature_nodes, desc=desc)
+    pbar = tqdm(total=max_feature_nodes, desc="Feature influence computation")
 
-        feature_descending: bool = not rank_logits_signed
-        influence_sign_mode = "signed" if rank_logits_signed else "abs"  # 需要你把 compute_partial_influences 加上这个开关
+    feature_descending: bool = not rank_logits_signed
+    influence_sign_mode = "signed" if rank_logits_signed else "abs"
 
-        while n_visited < max_feature_nodes:
+    while n_visited < max_feature_nodes:
             if max_feature_nodes == total_active_feats:
                 pending = torch.arange(total_active_feats)
             else:
@@ -2944,10 +3038,9 @@ def run_feature_attribution(
                 inject_values = idx_to_encoder_rows(idx_batch).detach()
                 encoder_bias = idx_to_encoder_bias(idx_batch)
                 attn_patterns = idx_to_pattern(idx_batch)
+
                 if isinstance(attn_patterns, torch.Tensor):
                     attn_patterns = attn_patterns.detach()
-                
-                print(f'{layers = }, {positions = }')
 
                 model.zero_grad(set_to_none=True)
 
@@ -2972,27 +3065,186 @@ def run_feature_attribution(
                 st = end
                 pbar.update(len(idx_batch))
 
-        pbar.close()
-        print(f"[{side_tag}] Feature attributions completed in {time.time() - phase_start:.2f}s")
+    pbar.close()
+    print(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
 
-        # 把当前 side 的结果返回
-        return {
-            "visited": visited,                     # [total_active_feats] bool
-            "edge_matrix": edge_matrix,             # 原地对象
-            "row_to_node_index": row_to_node_index  # 原地对象
-        }
+    # 返回结果
+    return {
+        "visited": visited,                     # [total_active_feats] bool
+        "edge_matrix": edge_matrix,             # 原地对象
+        "row_to_node_index": row_to_node_index,  # 原地对象
+        "tc_activation_matrix": tc_activation_matrix,
+    }
 
-    side = side.lower()
-    out: dict = {}
-    if side in ('q', 'both'):
-        out['q'] = _phase('q', edge_matrix_q, row_to_node_index_q, desc="Feature influence computation (q)")
-    if side in ('k', 'both'):
-        out['k'] = _phase('k', edge_matrix_k, row_to_node_index_k, desc="Feature influence computation (k)")
+# def extract_feature_subgraph(
+#     graph_bundle: Dict[str, Any],
+#     target_feature_gid: int,
+#     *,
+#     max_depth: int = 3,
+#     min_edge_weight: float = 0.0,
+#     include_self: bool = True,
+#     side: str = 'k',  # 'q', 'k', 'both'
+#     verbose: bool = False,
+# ) -> Dict[str, Any]:
+#     """
+#     从完整的attribution graph中提取指定feature的子图
+    
+#     Args:
+#         graph_bundle: 完整的attribution graph bundle，来自attribute()函数的输出
+#         target_feature_gid: 目标feature的全局ID (gid)
+#         max_depth: 最大搜索深度，控制子图的大小
+#         min_edge_weight: 最小边权重阈值，过滤掉权重太小的边
+#         include_self: 是否包含目标feature本身
+#         side: 选择使用哪个side的图 ('q', 'k', 'both')
+#         verbose: 是否打印详细信息
         
+#     Returns:
+#         Dict[str, Any]: 包含子图信息的字典
+#             - subgraph: 子图的邻接矩阵
+#             - node_mapping: 从子图节点索引到原图节点索引的映射
+#             - reverse_mapping: 从原图节点索引到子图节点索引的映射
+#             - target_feature_idx: 目标feature在子图中的索引
+#             - meta: 元信息
+#     """
+    
+#     def _extract_side_subgraph(side_data: Dict[str, Any], side_name: str) -> Dict[str, Any]:
+#         """为单个side提取子图，逻辑与package_side保持一致"""
+#         if side_data is None:
+#             return None
+            
+#         # 获取与package_side相同的数据结构
+#         edge_matrix = side_data['edge_matrix']  # 行已重排的矩阵
+#         row_to_node_index = side_data['row_to_node_index']  # 与edge_matrix同步的行映射
+#         selected_features = side_data['selected_features']  # 已过滤的feature gids
+#         full_edge_matrix = side_data['full_edge_matrix']  # 方阵
+#         meta = side_data['meta']
         
-    out['tc_activation_matrix'] = tc_activation_matrix
+#         n_rows = edge_matrix.shape[0]
+#         n_nodes = edge_matrix.shape[1]
         
-    return out
+#         # 检查目标feature是否在selected_features中
+#         if target_feature_gid not in selected_features:
+#             if verbose:
+#                 print(f"Warning: Target feature {target_feature_gid} not found in {side_name} selected_features")
+#             return None
+            
+#         # 找到目标feature在row_to_node_index中的行索引
+#         target_row_idx = None
+#         for i, node_idx in enumerate(row_to_node_index):
+#             if node_idx == target_feature_gid:
+#                 target_row_idx = i
+#                 break
+                
+#         if target_row_idx is None:
+#             if verbose:
+#                 print(f"Warning: Target feature {target_feature_gid} not found as a row in {side_name} graph")
+#             return None
+            
+#         # 使用BFS找到相关的节点（基于edge_matrix）
+#         visited_nodes = set()
+#         queue = [(target_row_idx, 0)]  # (row_idx, depth)
+        
+#         # 添加进度条
+#         max_possible_visits = min(n_rows, max_depth * (n_rows + n_nodes))  # 估算最大访问次数
+#         with tqdm(total=max_possible_visits, desc=f"BFS search ({side_name})", disable=not verbose) as pbar:
+#             while queue:
+#                 current_row, depth = queue.pop(0)
+                
+#                 if current_row in visited_nodes or depth > max_depth:
+#                     continue
+                    
+#                 visited_nodes.add(current_row)
+#                 pbar.update(1)
+#                 pbar.set_postfix({
+#                     'depth': depth,
+#                     'visited': len(visited_nodes),
+#                     'queue_size': len(queue)
+#                 })
+                
+#                 if depth < max_depth:
+#                     # 检查出边（当前行影响的其他节点）
+#                     for j in range(n_nodes):
+#                         if edge_matrix[current_row, j] > min_edge_weight:
+#                             # 找到对应的行索引
+#                             for i, node_idx in enumerate(row_to_node_index):
+#                                 if node_idx == j and i not in visited_nodes:
+#                                     queue.append((i, depth + 1))
+#                                     break
+                    
+#                     # 检查入边（影响当前行的其他节点）
+#                     for i in range(n_rows):
+#                         if edge_matrix[i, current_row] > min_edge_weight:
+#                             if i not in visited_nodes:
+#                                 queue.append((i, depth + 1))
+        
+#         # 转换为有序列表
+#         visited_rows_list = sorted(list(visited_nodes))
+        
+#         if not include_self and target_row_idx in visited_rows_list:
+#             visited_rows_list.remove(target_row_idx)
+            
+#         if not visited_rows_list:
+#             if verbose:
+#                 print(f"Warning: No nodes found for target feature {target_feature_gid} in {side_name} graph")
+#             return None
+            
+#         # 创建子图（基于edge_matrix的行和列）
+#         subgraph = edge_matrix[visited_rows_list][:, visited_rows_list]
+        
+#         # 创建行映射
+#         row_mapping = torch.tensor(visited_rows_list, dtype=torch.long)
+#         reverse_row_mapping = torch.full((n_rows,), -1, dtype=torch.long)
+#         reverse_row_mapping[row_mapping] = torch.arange(len(visited_rows_list))
+        
+#         # 找到目标feature在子图中的索引
+#         target_subgraph_idx = reverse_row_mapping[target_row_idx].item()
+        
+#         # 获取对应的row_to_node_index
+#         subgraph_row_to_node = row_to_node_index[row_mapping]
+        
+#         # 统计信息
+#         n_subgraph_nodes = len(visited_rows_list)
+#         n_subgraph_edges = (subgraph > min_edge_weight).sum().item()
+        
+#         if verbose:
+#             print(f"{side_name} subgraph: {n_subgraph_nodes} nodes, {n_subgraph_edges} edges")
+#             print(f"Target feature {target_feature_gid} at index {target_subgraph_idx}")
+        
+#         return {
+#             'subgraph': subgraph,
+#             'row_mapping': row_mapping,
+#             'reverse_row_mapping': reverse_row_mapping,
+#             'row_to_node_index': subgraph_row_to_node,
+#             'target_feature_idx': target_subgraph_idx,
+#             'meta': {
+#                 'n_nodes': n_subgraph_nodes,
+#                 'n_edges': n_subgraph_edges,
+#                 'max_depth': max_depth,
+#                 'min_edge_weight': min_edge_weight,
+#                 'target_feature_gid': target_feature_gid,
+#                 'original_meta': meta,
+#             }
+#         }
+    
+#     # 根据side参数选择要处理的图
+#     result = {}
+    
+#     if side in ('q', 'both') and 'q' in graph_bundle:
+#         result['q'] = _extract_side_subgraph(graph_bundle['q'], 'q')
+        
+#     if side in ('k', 'both') and 'k' in graph_bundle:
+#         result['k'] = _extract_side_subgraph(graph_bundle['k'], 'k')
+    
+#     # 添加一些全局信息
+#     result['target_feature_gid'] = target_feature_gid
+#     result['extraction_params'] = {
+#         'max_depth': max_depth,
+#         'min_edge_weight': min_edge_weight,
+#         'include_self': include_self,
+#         'side': side,
+#     }
+    
+#     return result
 
 def find_feature_gid(attribution_result, layer, feature_id, position, feature_type='tc'):
     """
@@ -3033,775 +3285,3 @@ def find_feature_gid(attribution_result, layer, feature_id, position, feature_ty
             return gid, activation_value
     
     return None, None
-
-
-def compute_feature_gradients(
-    model,
-    target_feature_gid: int,
-    lorsa_activation_matrix: torch.sparse.Tensor,
-    tc_activation_matrix: torch.sparse.Tensor,
-    lorsa_decoder_vecs: torch.Tensor,
-    tc_decoder_vecs: torch.Tensor,
-    ctx: AttributionContext,
-    *,
-    demean: bool = True,
-) -> torch.Tensor:
-    """
-    计算指定feature对residual stream的梯度
-    
-    Args:
-        model: 模型实例
-        target_feature_gid: 目标feature的全局ID
-        lorsa_activation_matrix: LoRSA激活矩阵
-        tc_activation_matrix: TC激活矩阵  
-        lorsa_decoder_vecs: LoRSA解码器向量
-        tc_decoder_vecs: TC解码器向量
-        ctx: Attribution上下文
-        demean: 是否去均值化
-    
-    Returns:
-        torch.Tensor: 梯度矩阵，形状为(seq_len, d_model)
-    """
-    
-    # 确定feature类型和位置
-    lorsa_nnz = lorsa_activation_matrix._nnz()
-    
-    if target_feature_gid < lorsa_nnz:
-        # LoRSA feature
-        feature_type = 'lorsa'
-        local_idx = target_feature_gid
-        layer = lorsa_activation_matrix.indices()[0, local_idx].item()
-        pos = lorsa_activation_matrix.indices()[1, local_idx].item()
-        head_idx = lorsa_activation_matrix.indices()[2, local_idx].item()
-        activation_value = lorsa_activation_matrix.values()[local_idx].item()
-        decoder_vec = lorsa_decoder_vecs[local_idx]  # 已经乘以激活值
-        
-        print(f"Target LoRSA feature: gid={target_feature_gid}, layer={layer}, pos={pos}, head={head_idx}, act={activation_value:.4f}")
-        
-    else:
-        # TC feature
-        feature_type = 'tc'
-        local_idx = target_feature_gid - lorsa_nnz
-        layer = tc_activation_matrix.indices()[0, local_idx].item()
-        pos = tc_activation_matrix.indices()[1, local_idx].item()
-        feat_idx = tc_activation_matrix.indices()[2, local_idx].item()
-        activation_value = tc_activation_matrix.values()[local_idx].item()
-        decoder_vec = tc_decoder_vecs[local_idx]  # 已经乘以激活值
-        
-        print(f"Target TC feature: gid={target_feature_gid}, layer={layer}, pos={pos}, feat={feat_idx}, act={activation_value:.4f}")
-    
-    # 使用现有的compute_batch方法来计算attribution
-    device = decoder_vec.device
-    seq_len, d_model = ctx._resid_activations[0].shape[1], ctx._resid_activations[0].shape[2]
-    
-    # 准备参数 - 确定正确的注入层
-    if feature_type == 'lorsa':
-        # LoRSA features在attention output层注入
-        inject_layer = layer * 2 + 1  # attention output
-    else:
-        # TC features在MLP output层注入
-        inject_layer = layer * 2 + 2  # MLP output
-        # 如果超出范围，使用最后一层
-        if inject_layer >= len(ctx._resid_activations):
-            inject_layer = len(ctx._resid_activations) - 1
-    
-    layers = torch.tensor([inject_layer], device=device)
-    positions = torch.tensor([pos], device=device)
-    inject_values = decoder_vec.unsqueeze(0)  # [1, d_model]
-    
-    # 使用compute_batch计算attribution
-    try:
-        attribution_row = ctx.compute_batch(
-            layers=layers,
-            positions=positions,
-            inject_values=inject_values,
-            attention_patterns=None,
-            retain_graph=False,
-        )
-        
-        # attribution_row的形状是[1, row_size]
-        # 我们将这个attribution作为"影响向量"，转换为梯度形式
-        seq_len, d_model = ctx._resid_activations[0].shape[1], ctx._resid_activations[0].shape[2]
-        result_gradient = torch.zeros(seq_len, d_model, device=device, dtype=decoder_vec.dtype)
-        
-        # 在目标位置放置decoder向量作为梯度
-        result_gradient[pos, :] = decoder_vec
-        
-        # 去均值化
-        if demean:
-            mean_gradient = result_gradient.mean(dim=0, keepdim=True)
-            result_gradient = result_gradient - mean_gradient
-        
-        return result_gradient
-        
-    except Exception as e:
-        print(f"Error in compute_batch: {e}")
-        # 回退到简单的decoder向量方法
-        result_gradient = torch.zeros(seq_len, d_model, device=device, dtype=decoder_vec.dtype)
-        result_gradient[pos, :] = decoder_vec
-        
-        if demean:
-            mean_gradient = result_gradient.mean(dim=0, keepdim=True)
-            result_gradient = result_gradient - mean_gradient
-        
-        return result_gradient
-
-
-def attribute_from_feature(
-    prompt: Union[str, torch.Tensor, List[int]],
-    model: ReplacementModel,
-    target_feature_spec: Dict[str, Any],
-    *,
-    batch_size: int = 512,
-    max_feature_nodes: Optional[int] = None,
-    offload: Literal["cpu", "disk", None] = None,
-    verbose: bool = False,
-    update_interval: int = 4,
-    fen: Optional[str] = None,
-    lboard: Optional[Any] = None,
-    move_idx: int | tuple[int, int] | None = None, 
-    encoder_demean: bool = False,
-    act_times_max: Optional[int] = None,
-    mongo_client = None,
-    sae_series: str = 'lc0-tc',
-    analysis_name: str = 'default',
-    save_activation_info: bool = False,
-) -> Dict[str, Any]:
-    """
-    从指定feature开始进行反向attribution追踪
-    
-    Args:
-        prompt: 输入prompt
-        model: ReplacementModel实例
-        target_feature_spec: 目标feature规格，包含以下字段：
-            - layer: 层索引
-            - feature_id: 特征ID  
-            - position: 位置索引
-            - feature_type: 'tc' 或 'lorsa'
-        batch_size: 批处理大小
-        max_feature_nodes: 最大feature节点数
-        offload: 卸载选项
-        verbose: 详细输出
-        update_interval: 更新间隔
-        fen: FEN字符串
-        encoder_demean: 编码器去均值化
-        act_times_max: 最大激活次数过滤
-        mongo_client: MongoDB客户端
-        sae_series: SAE系列
-        analysis_name: 分析名称
-        save_activation_info: 是否保存激活信息
-    
-    Returns:
-        Dict[str, Any]: 包含attribution图的字典
-    """
-    
-    offload_handles = []
-    input_ids = prompt
-    
-    try:
-        return _run_feature_attribution(
-        model=model,
-            prompt=input_ids,
-            target_feature_spec=target_feature_spec,
-            batch_size=batch_size,
-            max_feature_nodes=max_feature_nodes,
-            offload=offload,
-            offload_handles=offload_handles,
-            update_interval=update_interval,
-        fen=fen,
-            verbose=verbose,
-        encoder_demean=encoder_demean,
-        act_times_max=act_times_max,
-        mongo_client=mongo_client,
-        sae_series=sae_series,
-        analysis_name=analysis_name,
-            save_activation_info=save_activation_info,
-        )
-    finally:
-        for reload_handle in offload_handles:
-            reload_handle()
-
-
-def _run_feature_attribution(
-    model,
-    prompt: torch.Tensor,
-    target_feature_spec: Dict[str, Any],
-    batch_size: int,
-    max_feature_nodes: Optional[int],
-    offload: Literal["cpu", "disk", None],
-    offload_handles: list,
-    update_interval: int = 4,
-    fen: Optional[str] = None,
-    verbose: bool = False,
-    encoder_demean: bool = False,
-    act_times_max: Optional[int] = None,
-    mongo_client = None,
-    sae_series: str = 'lc0-tc',
-    analysis_name: str = 'default',
-    save_activation_info: bool = False,
-) -> Dict[str, Any]:
-    """
-    执行从feature开始的attribution计算
-    """
-    start_time = time.time()
-    
-    # ========== Phase 0: 预计算 ==========
-    print("Phase 0: Precomputing activations and vectors")
-    logger.info("Phase 0: Precomputing activations and vectors")
-    phase_start = time.time()
-
-    input_ids = prompt
-    model_out, lorsa_activation_matrix, lorsa_attention_pattern, tc_activation_matrix, error_vecs, token_vecs = model.setup_attribution(
-        input_ids, sparse=True
-    )
-    
-    lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas)
-    lorsa_encoder_rows, lorsa_attention_patterns = select_encoder_rows_lorsa(lorsa_activation_matrix, lorsa_attention_pattern, model.lorsas)
-    lorsa_encoder_bias = select_encoder_bias_lorsa(lorsa_activation_matrix, model.lorsas)
-    
-    tc_decoder_vecs = select_scaled_decoder_vecs_tc(tc_activation_matrix, model.transcoders)
-    tc_encoder_rows = select_encoder_rows_tc(tc_activation_matrix, model.transcoders)
-    tc_encoder_bias = select_encoder_bias_tc(tc_activation_matrix, model.transcoders)
-
-    ctx = AttributionContext(
-        lorsa_activation_matrix,
-        tc_activation_matrix,
-        error_vecs,
-        token_vecs,
-        lorsa_decoder_vecs,
-        tc_decoder_vecs,
-        model.attn_output_hook,
-        model.mlp_output_hook
-    )
-    
-    logger.info(f"Precomputation completed in {time.time() - phase_start:.2f}s")
-    
-    if offload:
-        offload_handles += offload_modules(model.transcoders, offload)
-
-    # ========== Phase 1: 前向传播 ==========
-    logger.info("Phase 1: Running forward pass")
-    phase_start = time.time()
-    
-    with ctx.install_hooks(model):
-        residual = model.forward(input_ids, stop_at_layer=model.cfg.n_layers)
-        ctx._resid_activations[-1] = residual
-        if hasattr(model, 'policy_head'):
-            logits = model.policy_head(residual)
-        else:
-            logits = None
-    
-    logger.info(f"Forward pass completed in {time.time() - phase_start:.2f}s")
-
-    # ========== Phase 2: 查找目标feature ==========
-    logger.info("Phase 2: Locating target feature")
-    phase_start = time.time()
-    
-    # 查找目标feature的gid
-    target_gid, target_activation = find_feature_gid(
-        {
-            'lorsa_activations': {
-                'indices': lorsa_activation_matrix.indices().T,
-                'values': lorsa_activation_matrix.values()
-            },
-            'tc_activations': {
-                'indices': tc_activation_matrix.indices().T,
-                'values': tc_activation_matrix.values()
-            }
-        },
-        layer=target_feature_spec['layer'],
-        feature_id=target_feature_spec['feature_id'],
-        position=target_feature_spec['position'],
-        feature_type=target_feature_spec['feature_type']
-    )
-    
-    if target_gid is None:
-        raise ValueError(f"Target feature not found: {target_feature_spec}")
-    
-    print(f"Found target feature: gid={target_gid}, activation={target_activation:.4f}")
-    
-    # ========== Phase 2.5: 计算logits信息 ==========
-    logger.info("Phase 2.5: Computing logits information")
-    phase_start = time.time()
-    
-    # 计算logits相关信息
-    logit_idx = None
-    logit_p = None
-    move_positions = None
-    
-    if logits is not None and fen is not None:
-        try:
-            # 使用compute_salient_logits_for_lc0计算logits信息
-            from lm_saes.circuit.utils import LeelaBoard
-            logit_idx, logit_p, _, move_positions = compute_salient_logits_for_lc0(
-                fen=fen,
-                logits=logits,
-                model=model,
-                residual_input=residual,
-                max_n_logits=1,  # 只选择一个top logit
-                desired_logit_prob=0.95,
-                demean=True
-            )
-            logger.info(f"Computed logits: idx={logit_idx}, prob={logit_p}")
-        except Exception as e:
-            logger.warning(f"Failed to compute logits: {e}")
-            # 使用默认值
-            logit_idx = torch.tensor([0], dtype=torch.long)
-            logit_p = torch.tensor([0.1], dtype=torch.float)
-            move_positions = torch.tensor([[0, 0]], dtype=torch.long)
-    else:
-        # 如果没有logits或fen，使用默认值
-        logger.warning("No logits or FEN available, using default values")
-        logit_idx = torch.tensor([0], dtype=torch.long)
-        logit_p = torch.tensor([0.1], dtype=torch.float)
-        move_positions = torch.tensor([[0, 0]], dtype=torch.long)
-    
-    logger.info(f"Logits computation completed in {time.time() - phase_start:.2f}s")
-    
-    # ========== Phase 3: 计算feature梯度 ==========
-    logger.info("Phase 3: Computing feature gradients")
-    phase_start = time.time()
-    
-    # 计算目标feature对residual stream的梯度
-    feature_gradients = compute_feature_gradients(
-        model=model,
-        target_feature_gid=target_gid,
-        lorsa_activation_matrix=lorsa_activation_matrix,
-        tc_activation_matrix=tc_activation_matrix,
-        lorsa_decoder_vecs=lorsa_decoder_vecs,
-        tc_decoder_vecs=tc_decoder_vecs,
-        ctx=ctx,
-        demean=encoder_demean,
-    )
-    
-    logger.info(f"Feature gradient computation completed in {time.time() - phase_start:.2f}s")
-    
-    # ========== Phase 4: 构建attribution图 ==========
-    logger.info("Phase 4: Building attribution graph")
-    phase_start = time.time()
-    
-    n_layers, n_pos, _ = tc_activation_matrix.shape
-    total_active_feats = lorsa_activation_matrix._nnz() + tc_activation_matrix._nnz()
-    
-    # 应用过滤掩码
-    allow_mask = torch.ones(total_active_feats, dtype=torch.bool, device='cpu')
-    if mongo_client is not None and act_times_max is not None:
-        print('Applying activation frequency filter')
-        # ... (与原始代码相同的过滤逻辑)
-    
-    max_feature_nodes = min(max_feature_nodes or total_active_feats, total_active_feats)
-    
-    # 计算所有features对目标feature的影响
-    influences = torch.zeros(total_active_feats)
-    
-    # 基于梯度计算影响
-    for i in range(total_active_feats):
-        if i < lorsa_activation_matrix._nnz():
-            # LoRSA feature
-            layer_idx = lorsa_activation_matrix.indices()[0, i].item()
-            pos_idx = lorsa_activation_matrix.indices()[1, i].item()
-            decoder_vec = lorsa_decoder_vecs[i]
-        else:
-            # TC feature  
-            local_idx = i - lorsa_activation_matrix._nnz()
-            layer_idx = tc_activation_matrix.indices()[0, local_idx].item()
-            pos_idx = tc_activation_matrix.indices()[1, local_idx].item()
-            decoder_vec = tc_decoder_vecs[local_idx]
-        
-        # 计算影响：decoder向量与梯度的点积
-        if pos_idx < feature_gradients.shape[0]:
-            influence = torch.dot(decoder_vec, feature_gradients[pos_idx])
-            influences[i] = influence.item()
-    
-    # 应用allow_mask过滤
-    if mongo_client is not None and act_times_max is not None:
-        influences = influences * allow_mask.float()
-    
-    # 选择top features，限制为max_feature_nodes
-    if max_feature_nodes < total_active_feats:
-        _, top_indices = torch.topk(influences.abs(), max_feature_nodes)
-        selected_features = top_indices
-    else:
-        # 如果allow_mask过滤后剩余features少于max_feature_nodes，使用所有剩余的
-        valid_features = torch.where(allow_mask)[0]
-        selected_features = valid_features[:min(max_feature_nodes, len(valid_features))]
-    
-    print(f"Selected {len(selected_features)} features out of {total_active_feats} total active features")
-    logger.info(f"Selected {len(selected_features)} features out of {total_active_feats} total active features")
-    
-    # ========== Phase 4.5: 使用正确的attribution方法计算边矩阵 ==========
-    logger.info("Phase 4.5: Computing feature attribution using inject method")
-    phase_start = time.time()
-    
-    # 定义辅助函数（类似_run_attribution中的定义）
-    lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = lorsa_activation_matrix.indices()
-    tc_feat_layer, tc_feat_pos, tc_feat_idx = tc_activation_matrix.indices()
-    
-    def idx_to_layer(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = idx < len(lorsa_feat_layer)
-        return torch.where(
-            is_lorsa.to(lorsa_feat_layer.device),
-            2 * lorsa_feat_layer[idx * is_lorsa],
-            2 * tc_feat_layer[(idx - len(lorsa_feat_layer)) * ~is_lorsa] + 1
-        )
-    
-    def idx_to_pos(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = idx < len(lorsa_feat_layer)
-        return torch.where(
-            is_lorsa.to(lorsa_feat_pos.device),
-            lorsa_feat_pos[idx * is_lorsa],
-            tc_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
-        )
-    
-    def idx_to_encoder_rows(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = idx < len(lorsa_feat_layer)
-        rows = torch.where(
-            is_lorsa.to(lorsa_encoder_rows.device)[:, None],
-            lorsa_encoder_rows[idx * is_lorsa],
-            tc_encoder_rows[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
-        )
-        # 不需要demean，因为我们要计算对目标feature的影响
-        return rows
-    
-    def idx_to_encoder_bias(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = (idx < len(lorsa_feat_layer))
-        l_idx = (idx * is_lorsa).to(torch.long)
-        t_idx = ((idx - len(lorsa_feat_layer)) * (~is_lorsa)).to(torch.long)
-        
-        return torch.where(
-            is_lorsa.to(lorsa_encoder_bias.device),
-            lorsa_encoder_bias[l_idx],
-            tc_encoder_bias[t_idx],
-        )
-    
-    def idx_to_pattern(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = idx < len(lorsa_feat_layer)
-        res = torch.where(
-            is_lorsa.to(lorsa_attention_patterns.device)[:, None],
-            lorsa_attention_patterns[idx * is_lorsa],
-            torch.nn.functional.one_hot(
-                tc_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa],
-                num_classes=n_pos
-            )
-        )
-        return res
-    
-    # 只对选中的features进行attribution计算
-    # 创建边矩阵：行数=选中的features数量，列数=所有active features数量
-    n_selected = len(selected_features)
-    edge_matrix = torch.zeros(n_selected, total_active_feats)
-    row_to_node_index = selected_features.clone()
-    
-    # 批量计算每个选中feature对其他features的attribution
-    batch_size_attr = min(batch_size, n_selected)
-    
-    for i in range(0, n_selected, batch_size_attr):
-        batch_end = min(i + batch_size_attr, n_selected)
-        batch_indices = selected_features[i:batch_end]
-        
-        # 准备注入参数
-        layers = idx_to_layer(batch_indices)
-        positions = idx_to_pos(batch_indices)
-        inject_values = idx_to_encoder_rows(batch_indices).detach()
-        encoder_bias_vals = idx_to_encoder_bias(batch_indices)
-        attn_patterns = idx_to_pattern(batch_indices)
-        
-        if isinstance(attn_patterns, torch.Tensor):
-            attn_patterns = attn_patterns.detach()
-        
-        model.zero_grad(set_to_none=True)
-        
-        print(f'{layers = }, {positions = }')
-        
-        # 使用compute_batch计算attribution
-        try:
-            rows_feature = ctx.compute_batch(
-                layers=layers,
-                positions=positions,
-                inject_values=inject_values,
-                attention_patterns=attn_patterns,
-                retain_graph=False,
-            )
-            
-            # 将结果存储到边矩阵中（只保留feature部分）
-            edge_matrix[i:batch_end, :total_active_feats] = rows_feature[:, :total_active_feats].cpu()
-            
-        except Exception as e:
-            print(f"Warning: Error in compute_batch for batch {i}: {e}")
-            # 使用简单的influences作为备选
-            for j, feat_idx in enumerate(batch_indices):
-                edge_matrix[i + j, feat_idx] = influences[feat_idx]
-        
-        if (i // batch_size_attr) % 10 == 0:
-            print(f"Processed {batch_end}/{n_selected} selected features")
-    
-    logger.info(f"Feature attribution computation completed in {time.time() - phase_start:.2f}s")
-    logger.info(f"Attribution graph construction completed")
-    
-    # ========== Phase 4.6: 构建full_edge_matrix（参考package_side逻辑）==========
-    logger.info("Phase 4.6: Building full edge matrix")
-    phase_start = time.time()
-    
-    # 创建full_edge_matrix，大小为 (n_selected, n_selected)
-    # 这样Graph对象会更小，只包含选中的features
-    final_node_count = n_selected
-    full_edge_matrix = torch.zeros(
-        final_node_count, final_node_count,
-        device='cpu', dtype=edge_matrix.dtype
-    )
-    
-    # 由于edge_matrix是(n_selected, total_active_feats)
-    # 我们需要只保留selected_features对应的列
-    # 创建一个映射：从total_active_feats的gid到n_selected的索引
-    gid_to_selected_idx = torch.full((total_active_feats,), -1, dtype=torch.long)
-    for i, gid in enumerate(selected_features):
-        gid_to_selected_idx[gid] = i
-    
-    # 填充full_edge_matrix：只保留selected_features之间的连接
-    for i in range(n_selected):
-        for j, gid in enumerate(selected_features):
-            if gid < total_active_feats:
-                full_edge_matrix[i, j] = edge_matrix[i, gid]
-    
-    # 更新row_to_node_index为局部索引（0到n_selected-1）
-    row_to_node_index_final = torch.arange(n_selected, dtype=torch.int32)
-    
-    logger.info(f"Full edge matrix construction completed in {time.time() - phase_start:.2f}s")
-    logger.info(f"Final graph size: {final_node_count} x {final_node_count}")
-    
-    # ========== Phase 5: 打包结果 ==========
-    logger.info("Phase 5: Packaging results")
-    
-    # 收集激活信息
-    activation_info = None
-    if save_activation_info:
-        activation_info = _collect_activation_info_after_forward(
-            lorsa_activation_matrix=lorsa_activation_matrix,
-            tc_activation_matrix=tc_activation_matrix,
-            lorsa_attention_pattern=lorsa_attention_pattern,
-            model=model,
-            input_ids=input_ids,
-            n_layers=n_layers,
-            n_pos=n_pos,
-            ctx=ctx,
-            selected_features=selected_features
-        )
-    
-    # 构建返回结果
-    result = {
-        "meta": {
-            "time_sec": float(time.time() - start_time),
-            "attribution_type": "feature_target",
-            "target_feature": target_feature_spec,
-            "target_gid": int(target_gid),
-            "target_activation": float(target_activation),
-            "verbose": verbose,
-            "offload": offload,
-        },
-        "input": {
-            "input_ids": prompt,
-            "input_embedding": token_vecs,
-        },
-        "target_feature": {
-            "gid": int(target_gid),
-            "spec": target_feature_spec,
-            "activation_value": float(target_activation),
-            "gradients": feature_gradients,
-        },
-        "dims": {
-            "n_layers": int(n_layers),
-            "n_pos": int(n_pos),
-            "total_active_feats": int(total_active_feats),
-            "max_feature_nodes": int(max_feature_nodes),
-        },
-        "lorsa_activations": {
-            "indices": lorsa_activation_matrix.indices().T,
-            "values": lorsa_activation_matrix.values(),
-            "lorsa_activation_matrix": lorsa_activation_matrix,
-        },
-        "tc_activations": {
-            "indices": tc_activation_matrix.indices().T,
-            "values": tc_activation_matrix.values(),
-            "tc_activation_matrix": tc_activation_matrix,
-        },
-        "attribution": {
-            "selected_features": selected_features,
-            "full_edge_matrix": full_edge_matrix,  # 使用full_edge_matrix代替原始edge_matrix
-            "row_to_node_index": row_to_node_index_final,  # 使用更新后的索引
-            "influences": influences,
-        },
-        "feature_allow_mask": allow_mask,
-        "activation_info": activation_info,
-        # 新增：为构建Graph对象提供的信息
-        "logits": {
-            "indices": logit_idx,  # move的logit索引
-            "probabilities": logit_p,  # move的概率
-            "move_positions": move_positions,  # move的位置
-        },
-    }
-    
-    return result
-
-
-# ========== 使用示例和文档 ==========
-
-"""
-从指定Feature开始的Attribution追踪使用示例：
-
-# 1. 基本使用方法
-target_feature_spec = {
-    'layer': 5,           # 第5层
-    'feature_id': 1234,   # 特征ID 1234
-    'position': 32,       # 位置32
-    'feature_type': 'tc'  # TC类型特征
-}
-
-result = attribute_from_feature(
-    prompt=input_ids,
-    model=model,
-    target_feature_spec=target_feature_spec,
-    max_feature_nodes=1024,
-    verbose=True,
-    save_activation_info=True
-)
-
-# 2. 结果解析
-target_gid = result['target_feature']['gid']
-target_activation = result['target_feature']['activation_value']
-feature_gradients = result['target_feature']['gradients']  # [seq_len, d_model]
-
-# 获取影响该feature的其他features
-influences = result['attribution']['influences']  # [total_active_feats]
-selected_features = result['attribution']['selected_features']  # 被选中的feature gids
-edge_matrix = result['attribution']['edge_matrix']  # 邻接矩阵
-
-# 3. 分析最有影响的features
-top_k = 10
-top_influences, top_indices = torch.topk(influences.abs(), top_k)
-print(f"Top {top_k} features influencing target feature {target_gid}:")
-for i, (influence, feat_gid) in enumerate(zip(top_influences, top_indices)):
-    print(f"  {i+1}. Feature {feat_gid}: influence = {influence:.4f}")
-
-# 4. 与原有logit attribution的区别：
-# - 原有方法：从logit开始，找影响logit的features
-#   result = attribute(prompt, model, move_idx=move_idx, side='k')
-#
-# - 新方法：从feature开始，找影响该feature的其他features  
-#   result = attribute_from_feature(prompt, model, target_feature_spec)
-
-# 5. 高级用法：结合MongoDB过滤
-result = attribute_from_feature(
-    prompt=input_ids,
-    model=model,
-    target_feature_spec=target_feature_spec,
-    act_times_max=1000,      # 过滤激活次数超过1000的features
-    mongo_client=mongo_client,
-    sae_series='lc0-tc',
-    analysis_name='default'
-)
-"""
-
-
-def create_feature_spec(layer: int, feature_id: int, position: int, feature_type: str = 'tc') -> Dict[str, Any]:
-    """
-    创建feature规格字典的便利函数
-    
-    Args:
-        layer: 层索引
-        feature_id: 特征ID
-        position: 位置索引  
-        feature_type: 特征类型 ('tc' 或 'lorsa')
-        
-    Returns:
-        Dict[str, Any]: feature规格字典
-    """
-    return {
-        'layer': layer,
-        'feature_id': feature_id,
-        'position': position,
-        'feature_type': feature_type
-    }
-
-
-def analyze_feature_influences(attribution_result: Dict[str, Any], top_k: int = 20) -> Dict[str, Any]:
-    """
-    分析feature attribution结果，返回最有影响的features
-    
-    Args:
-        attribution_result: attribute_from_feature的返回结果
-        top_k: 返回前k个最有影响的features
-        
-    Returns:
-        Dict[str, Any]: 分析结果
-    """
-    influences = attribution_result['attribution']['influences']
-    target_gid = attribution_result['target_feature']['gid']
-    target_spec = attribution_result['target_feature']['spec']
-    
-    # 获取top influences
-    top_influences, top_indices = torch.topk(influences.abs(), min(top_k, len(influences)))
-    
-    # 构建详细信息
-    top_features = []
-    for i, (influence, feat_gid) in enumerate(zip(top_influences, top_indices)):
-        feat_gid = feat_gid.item()
-        influence_val = influence.item()
-        
-        # 确定feature类型
-        lorsa_nnz = attribution_result['lorsa_activations']['indices'].shape[0]
-        if feat_gid < lorsa_nnz:
-            # LoRSA feature
-            lorsa_indices = attribution_result['lorsa_activations']['indices']
-            lorsa_values = attribution_result['lorsa_activations']['values']
-            layer = lorsa_indices[feat_gid, 0].item()
-            pos = lorsa_indices[feat_gid, 1].item()
-            head_idx = lorsa_indices[feat_gid, 2].item()
-            activation = lorsa_values[feat_gid].item()
-            
-            feature_info = {
-                'rank': i + 1,
-                'gid': feat_gid,
-                'influence': influence_val,
-                'type': 'lorsa',
-                'layer': layer,
-                'position': pos,
-                'head_idx': head_idx,
-                'activation_value': activation
-            }
-        else:
-            # TC feature
-            local_idx = feat_gid - lorsa_nnz
-            tc_indices = attribution_result['tc_activations']['indices']
-            tc_values = attribution_result['tc_activations']['values']
-            layer = tc_indices[local_idx, 0].item()
-            pos = tc_indices[local_idx, 1].item()
-            feat_idx = tc_indices[local_idx, 2].item()
-            activation = tc_values[local_idx].item()
-            
-            feature_info = {
-                'rank': i + 1,
-                'gid': feat_gid,
-                'influence': influence_val,
-                'type': 'tc',
-                'layer': layer,
-                'position': pos,
-                'feature_idx': feat_idx,
-                'activation_value': activation
-            }
-        
-        top_features.append(feature_info)
-        
-        return {
-        'target_feature': {
-            'gid': target_gid,
-            'spec': target_spec,
-            'activation_value': attribution_result['target_feature']['activation_value']
-        },
-        'top_influences': top_features,
-        'summary': {
-            'total_features': len(influences),
-            'max_influence': top_influences[0].item() if len(top_influences) > 0 else 0.0,
-            'mean_influence': influences.abs().mean().item(),
-            'std_influence': influences.abs().std().item()
-        }
-    }

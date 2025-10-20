@@ -185,10 +185,7 @@ def trim_minimum(
         origin is not None and origin.get("key") == "fen" 
         for origin in origins if origin is not None
     )
-    
-    # 如果没有找到FEN数据，检查模型名称或数据集名称来判断是否为棋类模型
-    # 这里可以添加更多的棋类模型检测逻辑
-    
+
     if has_fen_data:
         # 对于国际象棋模型，强制最小长度为64（棋盘格子数）
         min_length = max(64, feature_acts_indices[-1] + 10)
@@ -285,6 +282,7 @@ def get_feature(
         ),
         None,
     )
+    print(f'{analysis = }')
     if analysis is None:
         return Response(
             content=f"Feature analysis {feature_analysis_name} not found in SAE {name}"
@@ -317,7 +315,9 @@ def get_feature(
         Returns:
             dict: Processed sample data
         """  # Get model and dataset
+        print(f'{model_name = } in process_sample')
         model = get_model(model_name)
+        
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
 
         # Get origins for the features
@@ -475,44 +475,45 @@ def get_feature(
         
         TODO: This is really ugly, we should find a better way to do this.
         """
-        # 分析第一维的唯一值（样本数量）
+
         if feature_acts_indices.size == 0 or feature_acts_indices.shape[1] == 0:
             return
- 
+
+        print("function 1")
         _, feature_acts_counts = np.unique(
             feature_acts_indices[0],
             return_counts=True,
         )
+        print("function 2")
         _, z_pattern_counts = (
             np.unique(z_pattern_indices[0], return_counts=True)
             if z_pattern_indices is not None
             else (None, None)
         )
-
+        print("function 3")
         feature_acts_sample_ranges = np.concatenate(
             [[0], np.cumsum(feature_acts_counts)]
         )
+        print("function 4")
         z_pattern_sample_ranges = (
             np.concatenate([[0], np.cumsum(z_pattern_counts)])
             if z_pattern_counts is not None
             else None
         )
- 
-        # 组装为区间对列表
+        print("function 5")
         feature_acts_sample_ranges = list(
             zip(feature_acts_sample_ranges[:-1], feature_acts_sample_ranges[1:])
         )
+        print("function 6")
         if z_pattern_sample_ranges is not None:
             z_pattern_sample_ranges = list(
                 zip(z_pattern_sample_ranges[:-1], z_pattern_sample_ranges[1:])
             )
-            # 长度不匹配时，退化为 None 区间
             if len(feature_acts_sample_ranges) != len(z_pattern_sample_ranges):
                 z_pattern_sample_ranges = [(None, None)] * len(feature_acts_sample_ranges)
         else:
-            # z_pattern 为空时，构造等长的 None 区间占位
             z_pattern_sample_ranges = [(None, None)] * len(feature_acts_sample_ranges)
- 
+        print("function 7")
         for (feature_acts_start, feature_acts_end), (z_pattern_start, z_pattern_end) in zip(feature_acts_sample_ranges, z_pattern_sample_ranges):
             feature_acts_indices_i = feature_acts_indices[1, feature_acts_start:feature_acts_end]
             feature_acts_values_i = feature_acts_values[feature_acts_start:feature_acts_end]
@@ -521,10 +522,11 @@ def get_feature(
 
             yield feature_acts_indices_i, feature_acts_values_i, z_pattern_indices_i, z_pattern_values_i
 
-    # Process all samples for each sampling
+
     sample_groups = []
     for sampling in analysis.samplings:
         try:
+            print(f'go into process_sample loop')
             # Using zip to process correlated data instead of indexing
             samples = [
                 process_sample(
@@ -549,6 +551,7 @@ def get_feature(
                     sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts_indices),
                 )
             ]
+            
 
             sample_groups.append(
                 {
@@ -997,6 +1000,10 @@ def circuit_trace(request: dict):
         order_mode = request.get("order_mode", "positive")
         encoder_demean = request.get("encoder_demean", False)
         save_activation_info = request.get("save_activation_info", False)
+        
+        # 验证 side 参数
+        if side not in ["q", "k", "both"]:
+            raise HTTPException(status_code=400, detail="side must be 'q', 'k', or 'both'")
         
         # 验证 order_mode 参数
         if order_mode not in ["positive", "negative"]:

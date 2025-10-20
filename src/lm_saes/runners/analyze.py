@@ -95,6 +95,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     logger.info("MongoDB client initialized")
 
     # Load configurations
+    print(f'{settings.model_name = }')
     model_cfg = load_config(
         config=settings.model,
         name=settings.model_name,

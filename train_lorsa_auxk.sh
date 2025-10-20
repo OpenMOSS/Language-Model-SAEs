@@ -471,3 +471,157 @@ for L in $(seq 12 14); do
       --aux_coefficient 0.0625 \
     > "$LOGDIR/lorsa_a_3_layer_${L}.log" 2>&1
 done
+
+
+cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
+. .venv/bin/activate
+export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1
+
+LOGDIR="$(pwd)/logs"
+mkdir -p "$LOGDIR"
+
+L=14
+echo "===> layer $L"
+torchrun --nproc-per-node=1 --master-port=$((29440+L)) \
+  exp/train_lorsa.py \
+    --lr 8e-5 \
+    --layer "$L" \
+    --k 30 \
+    --exp_factor 16 \
+    --initialize_lorsa_with_mhsa \
+    --initialize_W_D_with_active_subspace \
+    --initialize_lorsa_attn_scale_from_encoder \
+    --use_smolgen \
+    --k_aux 4096 \
+    --dead_threshold 1000000 \
+    --aux_coefficient 0.0625 \
+  > "$LOGDIR/lorsa_a_3_layer_${L}.log" 2>&1
+
+
+
+# BT4
+
+cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
+. .venv/bin/activate
+export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1
+
+LOGDIR="$(pwd)/logs/BT4"
+mkdir -p "$LOGDIR"
+
+for L in $(seq 0 2); do
+  echo "===> layer $L"
+  torchrun --nproc-per-node=1 --master-port=$((29440+L)) \
+    exp/train_lorsa_BT4.py \
+      --lr 8e-5 \
+      --layer "$L" \
+      --k 30 \
+      --exp_factor 16 \
+      --initialize_lorsa_with_mhsa \
+      --initialize_W_D_with_active_subspace \
+      --initialize_lorsa_attn_scale_from_encoder \
+      --use_smolgen \
+      --k_aux 4096 \
+      --dead_threshold 1000000 \
+      --aux_coefficient 0.0625 \
+    > "$LOGDIR/lorsa_a_3_layer_${L}.log" 2>&1
+done
+
+cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
+. .venv/bin/activate
+export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1
+
+LOGDIR="$(pwd)/logs/BT4"
+mkdir -p "$LOGDIR"
+
+for L in $(seq 3 5); do
+  echo "===> layer $L"
+  torchrun --nproc-per-node=1 --master-port=$((29440+L)) \
+    exp/train_lorsa_BT4.py \
+      --lr 8e-5 \
+      --layer "$L" \
+      --k 30 \
+      --exp_factor 16 \
+      --initialize_lorsa_with_mhsa \
+      --initialize_W_D_with_active_subspace \
+      --initialize_lorsa_attn_scale_from_encoder \
+      --use_smolgen \
+      --k_aux 4096 \
+      --dead_threshold 1000000 \
+      --aux_coefficient 0.0625 \
+    > "$LOGDIR/lorsa_a_3_layer_${L}.log" 2>&1
+done
+
+cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
+. .venv/bin/activate
+export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1
+
+LOGDIR="$(pwd)/logs/BT4"
+mkdir -p "$LOGDIR"
+
+for L in $(seq 6 8); do
+  echo "===> layer $L"
+  torchrun --nproc-per-node=1 --master-port=$((29440+L)) \
+    exp/train_lorsa_BT4.py \
+      --lr 8e-5 \
+      --layer "$L" \
+      --k 30 \
+      --exp_factor 16 \
+      --initialize_lorsa_with_mhsa \
+      --initialize_W_D_with_active_subspace \
+      --initialize_lorsa_attn_scale_from_encoder \
+      --use_smolgen \
+      --k_aux 4096 \
+      --dead_threshold 1000000 \
+      --aux_coefficient 0.0625 \
+    > "$LOGDIR/lorsa_a_3_layer_${L}.log" 2>&1
+done
+
+cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
+. .venv/bin/activate
+export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1
+
+LOGDIR="$(pwd)/logs/BT4"
+mkdir -p "$LOGDIR"
+
+for L in $(seq 9 11); do
+  echo "===> layer $L"
+  torchrun --nproc-per-node=1 --master-port=$((29440+L)) \
+    exp/train_lorsa_BT4.py \
+      --lr 8e-5 \
+      --layer "$L" \
+      --k 30 \
+      --exp_factor 16 \
+      --initialize_lorsa_with_mhsa \
+      --initialize_W_D_with_active_subspace \
+      --initialize_lorsa_attn_scale_from_encoder \
+      --use_smolgen \
+      --k_aux 4096 \
+      --dead_threshold 1000000 \
+      --aux_coefficient 0.0625 \
+    > "$LOGDIR/lorsa_a_3_layer_${L}.log" 2>&1
+done
+
+cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
+. .venv/bin/activate
+export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1
+
+LOGDIR="$(pwd)/logs/BT4"
+mkdir -p "$LOGDIR"
+
+for L in $(seq 12 14); do
+  echo "===> layer $L"
+  torchrun --nproc-per-node=1 --master-port=$((29440+L)) \
+    exp/train_lorsa_BT4.py \
+      --lr 8e-5 \
+      --layer "$L" \
+      --k 30 \
+      --exp_factor 16 \
+      --initialize_lorsa_with_mhsa \
+      --initialize_W_D_with_active_subspace \
+      --initialize_lorsa_attn_scale_from_encoder \
+      --use_smolgen \
+      --k_aux 4096 \
+      --dead_threshold 1000000 \
+      --aux_coefficient 0.0625 \
+    > "$LOGDIR/lorsa_a_3_layer_${L}.log" 2>&1
+done

@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Loader2, RotateCcw, Play, Square, Move, Undo2, Download, X } from 'lucide-react';
+import { Loader2, RotateCcw, Play, Square, Move, Undo2, Download } from 'lucide-react';
 
 interface GameState {
   fen: string;
@@ -177,7 +177,8 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   const [, setDummy] = useState(0);
 
   // 新增：Circuit Trace状态
-  const [isTracing] = useState(false);
+  const [isTracing, setIsTracing] = useState(false);
+  const [traceSide, setTraceSide] = useState<'q' | 'k' | 'both'>('k');
 
   // 当使用自定义FEN开始且轮到模型走子时，自动触发一次模型走棋
   const [justStartedFromCustomFen, setJustStartedFromCustomFen] = useState(false);
@@ -205,6 +206,57 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     } else {
       return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
+  };
+
+  // Circuit Trace 处理函数
+  const handleCircuitTrace = async (moveUci: string) => {
+    try {
+      setIsTracing(true);
+      const response = await fetch('/api/circuit_trace', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fen: game.fen(),
+          move_uci: moveUci,
+          side: traceSide,
+          max_feature_nodes: 1024,
+          node_threshold: 0.9,
+          edge_threshold: 0.69,
+          max_n_logits: 1,
+          desired_logit_prob: 0.95,
+          batch_size: 1,
+          order_mode: "positive",
+          encoder_demean: false,
+          save_activation_info: false,
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Circuit trace failed: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('Circuit trace result:', data);
+      
+      // 如果有回调函数，调用它
+      // onCircuitTrace?.(data);
+      
+    } catch (error) {
+      console.error('Circuit trace error:', error);
+    } finally {
+      setIsTracing(false);
+    }
+  };
+
+  // 获取最后一步移动的UCI格式
+  const getLastMoveUci = (): string | null => {
+    const history = game.history({ verbose: true });
+    if (history.length === 0) return null;
+    
+    const lastMove = history[history.length - 1];
+    return lastMove.from + lastMove.to + (lastMove.promotion || '');
   };
 
   // 计时器更新
@@ -1085,6 +1137,56 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   </Button>
                 )}
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Circuit Trace 分析 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Square className="w-4 h-4" />
+                Circuit Trace 分析
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">分析侧选择</label>
+                <Select value={traceSide} onValueChange={(v: 'q' | 'k' | 'both') => setTraceSide(v)}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="q">Q侧 (Query)</SelectItem>
+                    <SelectItem value="k">K侧 (Key)</SelectItem>
+                    <SelectItem value="both">Q+K侧 (合并)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="text-xs text-gray-500 mt-1">
+                  选择要分析的注意力机制侧
+                </div>
+              </div>
+
+              <Button
+                onClick={() => {
+                  const lastMove = getLastMoveUci();
+                  if (lastMove) {
+                    handleCircuitTrace(lastMove);
+                  } else {
+                    console.warn('没有可分析的移动');
+                  }
+                }}
+                disabled={isTracing || !getLastMoveUci()}
+                className="w-full flex items-center gap-2"
+              >
+                {isTracing && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isTracing ? '分析中...' : `分析最后一步移动 (${traceSide.toUpperCase()}侧)`}
+              </Button>
+
+              {getLastMoveUci() && (
+                <div className="text-xs text-gray-600">
+                  最后移动: {getLastMoveUci()}
+                </div>
+              )}
             </CardContent>
           </Card>
 

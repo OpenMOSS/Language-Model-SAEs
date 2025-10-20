@@ -630,33 +630,23 @@ class AttributionContext:
 
         k_batch = move_positions.shape[0]
         device = inject_values.device
-        
-        # print(f'{inject_values.shape = }') # [1, 64, 768]
-        # rows = torch.nonzero((inject_values[0].abs() > 0).any(dim=1), as_tuple=True)[0]
-        # print(f'non zero rows in inject_values,{rows.cpu().tolist()}')
 
-        # 如果未提供is_castle，则默认不异位
         if castle_tensor is None:
             castle_tensor = torch.zeros(k_batch, dtype=torch.bool, device=device)
         else:
             castle_tensor = castle_tensor.to(device=device, dtype=torch.bool)
-        
-        # Ensure all tensors are on the same device
+    
         end_pos = move_positions.to(dtype=torch.long, device=device)
-
-        # 王车易位检测和K位置调整
         adjusted_end_pos = end_pos.clone()
         
         for i in range(k_batch):
             if castle_tensor[i]:
-                # 王车易位情况下的位置调整逻辑
-                # start_row, start_col = start_pos[i] // 8, start_pos[i] % 8
                 end_row, end_col = end_pos[i] // 8, end_pos[i] % 8
-                if end_col == 6:  # 短异位 (e->g)
-                    adjusted_end_pos[i] = end_row * 8 + 7  # h列车的位置
+                if end_col == 6: 
+                    adjusted_end_pos[i] = end_row * 8 + 7
                     print(f"检测到短异位:  end={end_pos[i].item()} -> 调整K位置为: {adjusted_end_pos[i].item()}")
-                elif end_col == 2:  # 长异位 (e->c)
-                    adjusted_end_pos[i] = end_row * 8 + 0  # a列车的位置
+                elif end_col == 2:
+                    adjusted_end_pos[i] = end_row * 8 + 0 
                     print(f"检测到长异位: nd={end_pos[i].item()} -> 调整K位置为: {adjusted_end_pos[i].item()}")
                 else:
                     print(f"警告: is_castle为True但移动不符合王车易位模式:end={end_pos[i].item()}")
@@ -1419,8 +1409,7 @@ def compute_logit_gradients_wrt_qk(
             if q_activations.grad is not None:
                 grad = q_activations.grad[0, :, :].clone()  # shape: (seq_len, d_model)
                 q_gradient_matrix[i, :, :] = grad
-            
-            # 收集k的梯度
+
             if k_activations.grad is not None:
                 grad = k_activations.grad[0, :, :].clone()  # shape: (seq_len, d_model)
                 k_gradient_matrix[i, :, :] = grad
@@ -2117,13 +2106,43 @@ def _run_attribution(
         layer_means = torch.stack(layer_means, dim=0)  # [n_layers, d_model]
         layer_means = layer_means.to(device=tc_encoder_rows.device, dtype=tc_encoder_rows.dtype)
 
-    model.zero_grad(set_to_none=True)
-    if hasattr(ctx, 'clear'):
-        ctx.clear()
-    elif hasattr(ctx, 'reset'):
-        ctx.reset()
+    def prepare_for_feature_attribution():
+        """为feature attribution准备计算图，保留原有激活值但重建计算图连接"""
+        # 清零梯度
+        model.zero_grad(set_to_none=True)
+        
+        # 保存当前的激活值
+        saved_activations = []
+        for activation in ctx._resid_activations:
+            if activation is not None:
+                saved_activations.append(activation.detach().clone())
+            else:
+                saved_activations.append(None)
+        
+        saved_q_activations = ctx._policy_q_activations.detach().clone() if ctx._policy_q_activations is not None else None
+        saved_k_activations = ctx._policy_k_activations.detach().clone() if ctx._policy_k_activations is not None else None
+        
+        # 重新进行前向传播以重建计算图，但使用保存的值
+        with ctx.install_hooks(model):
+            residual_rebuilt = model.forward(input_ids, stop_at_layer=model.cfg.n_layers)
+            ctx._resid_activations[-1] = residual_rebuilt
+            if hasattr(model, 'policy_head'):
+                _ = model.policy_head(residual_rebuilt)
+        
+        # 验证重新计算的值与保存的值是否一致（用于调试）
+        for i, (saved, current) in enumerate(zip(saved_activations, ctx._resid_activations)):
+            if saved is not None and current is not None:
+                if not torch.allclose(saved, current.detach(), rtol=1e-5, atol=1e-6):
+                    print(f"Warning: Activation mismatch at layer {i}, max diff: {(saved - current.detach()).abs().max().item()}")
+        
+        if saved_q_activations is not None and ctx._policy_q_activations is not None:
+            if not torch.allclose(saved_q_activations, ctx._policy_q_activations.detach(), rtol=1e-5, atol=1e-6):
+                print(f"Warning: Q activation mismatch, max diff: {(saved_q_activations - ctx._policy_q_activations.detach()).abs().max().item()}")
+        
+        if saved_k_activations is not None and ctx._policy_k_activations is not None:
+            if not torch.allclose(saved_k_activations, ctx._policy_k_activations.detach(), rtol=1e-5, atol=1e-6):
+                print(f"Warning: K activation mismatch, max diff: {(saved_k_activations - ctx._policy_k_activations.detach()).abs().max().item()}")
 
-    # 稀疏索引
     lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = lorsa_activation_matrix.indices()
     tc_feat_layer, tc_feat_pos, tc_feat_idx = tc_activation_matrix.indices()
 
@@ -2326,6 +2345,7 @@ def _run_attribution(
     
     if side_lower in ('q', 'both'):
         print("Computing feature attributions for Q")
+        prepare_for_feature_attribution()  # 准备计算图，保留激活值
         fa_result_q = run_feature_attribution(
             ctx=ctx,
             model=model,
@@ -2353,6 +2373,7 @@ def _run_attribution(
     
     if side_lower in ('k', 'both'):
         print("Computing feature attributions for K")
+        prepare_for_feature_attribution()  # 准备计算图，保留激活值
         fa_result_k = run_feature_attribution(
             ctx=ctx,
             model=model,
@@ -2919,12 +2940,13 @@ def run_feature_attribution(
     if logger:
         logger.info(f"Phase: Computing feature attributions")
 
-    print("清空 ctx 中的计算状态…")
-    model.zero_grad(set_to_none=True)
-    if hasattr(ctx, 'clear'):
-        ctx.clear()
-    elif hasattr(ctx, 'reset'):
-        ctx.reset()
+    # 注意：计算图已在外部重建，这里不需要再次清空
+    # print("清空 ctx 中的计算状态…")
+    # model.zero_grad(set_to_none=True)
+    # if hasattr(ctx, 'clear'):
+    #     ctx.clear()
+    # elif hasattr(ctx, 'reset'):
+    #     ctx.reset()
 
     phase_start = time.time()
     st = n_logits  # 行起点：先放 logit 行
@@ -3004,175 +3026,102 @@ def run_feature_attribution(
         "tc_activation_matrix": tc_activation_matrix,
     }
 
-# def extract_feature_subgraph(
-#     graph_bundle: Dict[str, Any],
-#     target_feature_gid: int,
-#     *,
-#     max_depth: int = 3,
-#     min_edge_weight: float = 0.0,
-#     include_self: bool = True,
-#     side: str = 'k',  # 'q', 'k', 'both'
-#     verbose: bool = False,
-# ) -> Dict[str, Any]:
-#     """
-#     从完整的attribution graph中提取指定feature的子图
-    
-#     Args:
-#         graph_bundle: 完整的attribution graph bundle，来自attribute()函数的输出
-#         target_feature_gid: 目标feature的全局ID (gid)
-#         max_depth: 最大搜索深度，控制子图的大小
-#         min_edge_weight: 最小边权重阈值，过滤掉权重太小的边
-#         include_self: 是否包含目标feature本身
-#         side: 选择使用哪个side的图 ('q', 'k', 'both')
-#         verbose: 是否打印详细信息
-        
-#     Returns:
-#         Dict[str, Any]: 包含子图信息的字典
-#             - subgraph: 子图的邻接矩阵
-#             - node_mapping: 从子图节点索引到原图节点索引的映射
-#             - reverse_mapping: 从原图节点索引到子图节点索引的映射
-#             - target_feature_idx: 目标feature在子图中的索引
-#             - meta: 元信息
-#     """
-    
-#     def _extract_side_subgraph(side_data: Dict[str, Any], side_name: str) -> Dict[str, Any]:
-#         """为单个side提取子图，逻辑与package_side保持一致"""
-#         if side_data is None:
-#             return None
-            
-#         # 获取与package_side相同的数据结构
-#         edge_matrix = side_data['edge_matrix']  # 行已重排的矩阵
-#         row_to_node_index = side_data['row_to_node_index']  # 与edge_matrix同步的行映射
-#         selected_features = side_data['selected_features']  # 已过滤的feature gids
-#         full_edge_matrix = side_data['full_edge_matrix']  # 方阵
-#         meta = side_data['meta']
-        
-#         n_rows = edge_matrix.shape[0]
-#         n_nodes = edge_matrix.shape[1]
-        
-#         # 检查目标feature是否在selected_features中
-#         if target_feature_gid not in selected_features:
-#             if verbose:
-#                 print(f"Warning: Target feature {target_feature_gid} not found in {side_name} selected_features")
-#             return None
-            
-#         # 找到目标feature在row_to_node_index中的行索引
-#         target_row_idx = None
-#         for i, node_idx in enumerate(row_to_node_index):
-#             if node_idx == target_feature_gid:
-#                 target_row_idx = i
-#                 break
-                
-#         if target_row_idx is None:
-#             if verbose:
-#                 print(f"Warning: Target feature {target_feature_gid} not found as a row in {side_name} graph")
-#             return None
-            
-#         # 使用BFS找到相关的节点（基于edge_matrix）
-#         visited_nodes = set()
-#         queue = [(target_row_idx, 0)]  # (row_idx, depth)
-        
-#         # 添加进度条
-#         max_possible_visits = min(n_rows, max_depth * (n_rows + n_nodes))  # 估算最大访问次数
-#         with tqdm(total=max_possible_visits, desc=f"BFS search ({side_name})", disable=not verbose) as pbar:
-#             while queue:
-#                 current_row, depth = queue.pop(0)
-                
-#                 if current_row in visited_nodes or depth > max_depth:
-#                     continue
-                    
-#                 visited_nodes.add(current_row)
-#                 pbar.update(1)
-#                 pbar.set_postfix({
-#                     'depth': depth,
-#                     'visited': len(visited_nodes),
-#                     'queue_size': len(queue)
-#                 })
-                
-#                 if depth < max_depth:
-#                     # 检查出边（当前行影响的其他节点）
-#                     for j in range(n_nodes):
-#                         if edge_matrix[current_row, j] > min_edge_weight:
-#                             # 找到对应的行索引
-#                             for i, node_idx in enumerate(row_to_node_index):
-#                                 if node_idx == j and i not in visited_nodes:
-#                                     queue.append((i, depth + 1))
-#                                     break
-                    
-#                     # 检查入边（影响当前行的其他节点）
-#                     for i in range(n_rows):
-#                         if edge_matrix[i, current_row] > min_edge_weight:
-#                             if i not in visited_nodes:
-#                                 queue.append((i, depth + 1))
-        
-#         # 转换为有序列表
-#         visited_rows_list = sorted(list(visited_nodes))
-        
-#         if not include_self and target_row_idx in visited_rows_list:
-#             visited_rows_list.remove(target_row_idx)
-            
-#         if not visited_rows_list:
-#             if verbose:
-#                 print(f"Warning: No nodes found for target feature {target_feature_gid} in {side_name} graph")
-#             return None
-            
-#         # 创建子图（基于edge_matrix的行和列）
-#         subgraph = edge_matrix[visited_rows_list][:, visited_rows_list]
-        
-#         # 创建行映射
-#         row_mapping = torch.tensor(visited_rows_list, dtype=torch.long)
-#         reverse_row_mapping = torch.full((n_rows,), -1, dtype=torch.long)
-#         reverse_row_mapping[row_mapping] = torch.arange(len(visited_rows_list))
-        
-#         # 找到目标feature在子图中的索引
-#         target_subgraph_idx = reverse_row_mapping[target_row_idx].item()
-        
-#         # 获取对应的row_to_node_index
-#         subgraph_row_to_node = row_to_node_index[row_mapping]
-        
-#         # 统计信息
-#         n_subgraph_nodes = len(visited_rows_list)
-#         n_subgraph_edges = (subgraph > min_edge_weight).sum().item()
-        
-#         if verbose:
-#             print(f"{side_name} subgraph: {n_subgraph_nodes} nodes, {n_subgraph_edges} edges")
-#             print(f"Target feature {target_feature_gid} at index {target_subgraph_idx}")
-        
-#         return {
-#             'subgraph': subgraph,
-#             'row_mapping': row_mapping,
-#             'reverse_row_mapping': reverse_row_mapping,
-#             'row_to_node_index': subgraph_row_to_node,
-#             'target_feature_idx': target_subgraph_idx,
-#             'meta': {
-#                 'n_nodes': n_subgraph_nodes,
-#                 'n_edges': n_subgraph_edges,
-#                 'max_depth': max_depth,
-#                 'min_edge_weight': min_edge_weight,
-#                 'target_feature_gid': target_feature_gid,
-#                 'original_meta': meta,
-#             }
-#         }
-    
-#     # 根据side参数选择要处理的图
-#     result = {}
-    
-#     if side in ('q', 'both') and 'q' in graph_bundle:
-#         result['q'] = _extract_side_subgraph(graph_bundle['q'], 'q')
-        
-#     if side in ('k', 'both') and 'k' in graph_bundle:
-#         result['k'] = _extract_side_subgraph(graph_bundle['k'], 'k')
-    
-#     # 添加一些全局信息
-#     result['target_feature_gid'] = target_feature_gid
-#     result['extraction_params'] = {
-#         'max_depth': max_depth,
-#         'min_edge_weight': min_edge_weight,
-#         'include_self': include_self,
-#         'side': side,
-#     }
-    
-#     return result
+def merge_qk_graph(attribution_result):
+    pkg_q = attribution_result.get('q')
+    pkg_k = attribution_result.get('k')
+    assert pkg_q is not None and pkg_k is not None, "side='both' 时需要同时存在 q/k 分支"
+
+    # 共有的维度信息
+    dims = attribution_result['dims']
+    total_active_feats = dims['total_active_feats']
+    logit_offset       = dims['logit_offset']
+    n_logits           = attribution_result['logits']['n_logits']
+    total_nodes        = logit_offset + n_logits
+
+    # 两侧 selected features 并集
+    sel_q = pkg_q['selected_features'].to('cpu')
+    sel_k = pkg_k['selected_features'].to('cpu')
+    selected_union = torch.unique(torch.cat([sel_q, sel_k], dim=0))
+
+    # 统一列顺序：并集的 feature 列 + 其余非 feature 节点列（error/token/logits）
+    non_feature_cols = torch.arange(total_active_feats, total_nodes, dtype=torch.long)
+    col_read_merged = torch.cat([selected_union, non_feature_cols], dim=0)
+
+    def expand_to_merged_cols(edge_matrix_side, col_read_side, col_read_target):
+        # 把单侧矩阵（按该侧 col_read）扩展/对齐到合并列坐标
+        M = torch.zeros(edge_matrix_side.shape[0], col_read_target.numel(), dtype=edge_matrix_side.dtype)
+        # 建立 side 列到真实列的映射
+        # col_read_side: [n_side_cols] 映射到真实列索引（gid或非feature列）
+        # 我们需要把这些真实列，找到它们在 col_read_target 中的位置
+        # 用哈希映射更稳妥
+        target_pos = {int(col_read_target[i].item()): i for i in range(col_read_target.numel())}
+        idx_target = torch.tensor([target_pos[int(c.item())] for c in col_read_side], dtype=torch.long)
+        M[:, idx_target] = edge_matrix_side
+        return M
+
+    # 展开两侧 full_edge_matrix 到统一列空间
+    em_q_full = expand_to_merged_cols(pkg_q['edge_matrix'], pkg_q['col_read'], col_read_merged)
+    em_k_full = expand_to_merged_cols(pkg_k['edge_matrix'], pkg_k['col_read'], col_read_merged)
+
+    # 合并行：
+    # - feature 行：两侧的 feature 行是在各自矩阵的顶端（最多 K 行），其行的 gid 在 row_to_node_index 中
+    # - 重复 gid 的行进行加和，得到 "gid -> 行向量" 的聚合
+    def accumulate_feature_rows(pkg, em_full):
+        row2node = pkg['row_to_node_index'].to('cpu')
+        is_feat_row = row2node < total_active_feats
+        feat_rows = torch.nonzero(is_feat_row, as_tuple=True)[0]
+        acc = {}
+        for r in feat_rows.tolist():
+            gid = int(row2node[r].item())
+            vec = em_full[r]
+            if gid in acc:
+                acc[gid] = acc[gid] + vec
+            else:
+                acc[gid] = vec.clone()
+        return acc
+
+    acc_q = accumulate_feature_rows(pkg_q, em_q_full)
+    acc_k = accumulate_feature_rows(pkg_k, em_k_full)
+
+    # 合并字典并对重复 gid 求和
+    acc = acc_q
+    for gid, vec in acc_k.items():
+        acc[gid] = acc.get(gid, torch.zeros_like(vec)) + vec
+
+    # 行顺序：把并集 selected_union 的前 K 行尽量按出现顺序取（或全取）
+    # 这里直接按 selected_union 的顺序取存在的 gid 行
+    merged_feature_rows = []
+    for gid in selected_union.tolist():
+        if gid in acc:
+            merged_feature_rows.append(acc[gid])
+    if len(merged_feature_rows) > 0:
+        merged_feature_block = torch.stack(merged_feature_rows, dim=0)
+    else:
+        merged_feature_block = torch.zeros(0, col_read_merged.numel(), dtype=em_q_full.dtype)
+
+    # 合并 logit 行：两侧 logit 行做逐元素相加（保持底部 n_logits 行）
+    logit_rows_q = em_q_full[-n_logits:]
+    logit_rows_k = em_k_full[-n_logits:]
+    merged_logit_block = logit_rows_q + logit_rows_k
+
+    # 组装最终方阵（节点数 = 列数）
+    final_node_count = col_read_merged.numel()
+    full_edge_matrix_merged = torch.zeros(final_node_count, final_node_count, dtype=merged_feature_block.dtype)
+    # 顶部：feature 行（可少于 selected_union 的大小，取决于是否有行）
+    if merged_feature_block.shape[0] > 0:
+        full_edge_matrix_merged[: merged_feature_block.shape[0]] = merged_feature_block
+    # 底部：logit 行
+    full_edge_matrix_merged[-n_logits:] = merged_logit_block
+
+    # 返回你构图需要的组件
+    return {
+        "adjacency_matrix": full_edge_matrix_merged,
+        "selected_features": selected_union,
+        # 使用k侧的move位置信息，如果k侧不存在则使用q侧
+        "logit_position": pkg_k["move_positions"] if pkg_k and "move_positions" in pkg_k else (pkg_q["move_positions"] if pkg_q and "move_positions" in pkg_q else None),
+        "col_read": col_read_merged,  # 如需后续对齐可用
+    }
+
 
 def find_feature_gid(attribution_result, layer, feature_id, position, feature_type='tc'):
     """

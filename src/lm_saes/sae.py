@@ -649,7 +649,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
             # Add AuxK auxiliary loss if enabled
             if self.cfg.use_auxk and self.cfg.act_fn == "topk":
-                print("======== use auxk loss ========")
+                # print("======== use auxk loss ========")
                 with timer.time("auxk_loss_calculation"):
                     # Get reconstruction error
                     e = label - reconstructed  # (batch, d_model) or (batch, seq_len, d_model)
