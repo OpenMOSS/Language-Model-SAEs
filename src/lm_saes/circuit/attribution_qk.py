@@ -1680,7 +1680,7 @@ def attribute(
     sae_series: str = 'lc0-tc',
     analysis_name: str = 'default',
     order_mode: str = 'positive',
-    save_activation_info: bool = False,  # 是否当前propmt保存激活信息和z_pattern
+    save_activation_info: bool = True,  # 是否当前propmt保存激活信息和z_pattern
 ) -> Dict[str, Any]:
     """Compute an attribution graph for *prompt* and return a structured bundle."""
     offload_handles = []
@@ -1755,7 +1755,7 @@ def _run_attribution(
     sae_series: str = 'lc0-tc',
     analysis_name: str = 'default',
     order_mode: str = 'positive', # ['positive', 'negative', 'move_pair', 'group']
-    save_activation_info: bool = False,  # 是否保存激活信息和z_pattern
+    save_activation_info: bool = True,  # 是否保存激活信息和z_pattern
 ) -> Dict[str, Any]:
     start_time = time.time()
 
@@ -2069,7 +2069,7 @@ def _run_attribution(
                 expected_q -= q_dot_negative
                 expected_k -= k_dot_negative
         
-        # print(f'验证: expected_q={expected_q:.6f}, actual_q={bias_q + rows_q[0].sum():.6f}')
+        print(f'验证: expected_q={expected_q:.6f}, actual_q={bias_q + rows_q[0].sum():.6f}')
         print(f'验证: expected_k={expected_k:.6f}, actual_k={bias_k + rows_k[0].sum():.6f}')
         
         assert torch.allclose(bias_q + rows_q[0].sum(), expected_q, rtol=1e-3), f'{bias_q + rows_q[0].sum() = }, {expected_q = }'
@@ -3113,6 +3113,44 @@ def merge_qk_graph(attribution_result):
     # 底部：logit 行
     full_edge_matrix_merged[-n_logits:] = merged_logit_block
 
+    # 合并激活信息
+    merged_activation_info = None
+    if attribution_result.get("activation_info") is not None:
+        activation_info = attribution_result["activation_info"]
+        q_activation_info = activation_info.get("q")
+        k_activation_info = activation_info.get("k")
+        
+        if q_activation_info is not None:
+            merged_activation_info = q_activation_info.copy()
+            
+            # 如果k侧也有激活信息，需要合并
+            if k_activation_info is not None:
+                # 合并features列表
+                if "features" in merged_activation_info and "features" in k_activation_info:
+                    # 创建feature ID到激活信息的映射，避免重复
+                    q_features_dict = {f["featureId"]: f for f in merged_activation_info["features"]}
+                    k_features_dict = {f["featureId"]: f for f in k_activation_info["features"]}
+                    
+                    # 合并features，优先使用q侧的信息（因为q侧通常更完整）
+                    all_feature_ids = set(q_features_dict.keys()) | set(k_features_dict.keys())
+                    merged_features = []
+                    
+                    for feature_id in sorted(all_feature_ids):
+                        if feature_id in q_features_dict:
+                            merged_features.append(q_features_dict[feature_id])
+                        elif feature_id in k_features_dict:
+                            merged_features.append(k_features_dict[feature_id])
+                    
+                    merged_activation_info["features"] = merged_features
+                
+                # 更新元信息
+                if "meta" in merged_activation_info and "meta" in k_activation_info:
+                    merged_activation_info["meta"]["total_features"] = len(merged_activation_info["features"])
+                    merged_activation_info["meta"]["merged_from_qk"] = True
+        elif k_activation_info is not None:
+            # 如果只有k侧有激活信息，使用k侧的
+            merged_activation_info = k_activation_info.copy()
+
     # 返回你构图需要的组件
     return {
         "adjacency_matrix": full_edge_matrix_merged,
@@ -3120,6 +3158,7 @@ def merge_qk_graph(attribution_result):
         # 使用k侧的move位置信息，如果k侧不存在则使用q侧
         "logit_position": pkg_k["move_positions"] if pkg_k and "move_positions" in pkg_k else (pkg_q["move_positions"] if pkg_q and "move_positions" in pkg_q else None),
         "col_read": col_read_merged,  # 如需后续对齐可用
+        "activation_info": merged_activation_info,  # 合并后的激活信息
     }
 
 

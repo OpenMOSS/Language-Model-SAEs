@@ -198,7 +198,6 @@ def create_graph_from_attribution(
     """
     logger = logging.getLogger(__name__)
     logger.info(f"正在为侧'{side}'创建图对象...")
-    
     try:
         # 提取公共数据
         lorsa_activation_matrix = attribution_result['lorsa_activations']['lorsa_activation_matrix']
@@ -213,24 +212,28 @@ def create_graph_from_attribution(
         
         # 根据side选择对应的数据
         if side == 'q':
-            if attribution_result.get('q') is None:
+            q_data = attribution_result.get('q')
+            if q_data is None:
                 raise ValueError("Attribution结果中没有找到'q'侧数据")
-            full_edge_matrix = attribution_result['q']['full_edge_matrix']
-            selected_features = attribution_result['q']['selected_features']
-            side_logit_position = attribution_result['q'].get('move_positions')
+            full_edge_matrix = q_data['full_edge_matrix']
+            selected_features = q_data['selected_features']
+            side_logit_position = q_data.get('move_positions')
             activation_info = attribution_result.get('activation_info', {}).get('q')
             
         elif side == 'k':
-            if attribution_result.get('k') is None:
+            k_data = attribution_result.get('k')
+            if k_data is None:
                 raise ValueError("Attribution结果中没有找到'k'侧数据")
-            full_edge_matrix = attribution_result['k']['full_edge_matrix']
-            selected_features = attribution_result['k']['selected_features']
-            side_logit_position = attribution_result['k'].get('move_positions')
+            full_edge_matrix = k_data['full_edge_matrix']
+            selected_features = k_data['selected_features']
+            side_logit_position = k_data.get('move_positions')
             activation_info = attribution_result.get('activation_info', {}).get('k')
             
         elif side == 'both':
             # 处理both情况，需要合并q和k侧的数据
-            if attribution_result.get('q') is None or attribution_result.get('k') is None:
+            q_data = attribution_result.get('q')
+            k_data = attribution_result.get('k')
+            if q_data is None or k_data is None:
                 raise ValueError("Attribution结果中没有找到'q'或'k'侧数据，无法进行both模式合并")
             
             # 导入merge_qk_graph函数
@@ -243,16 +246,8 @@ def create_graph_from_attribution(
             selected_features = merged["selected_features"]
             side_logit_position = merged["logit_position"]
             
-            # 合并激活信息
-            activation_info_q = attribution_result.get("activation_info", {}).get('q')
-            activation_info_k = attribution_result.get("activation_info", {}).get('k')
-            activation_info = None
-            if activation_info_q or activation_info_k:
-                activation_info = {
-                    'q': activation_info_q,
-                    'k': activation_info_k,
-                    'merged': True
-                }
+            # 使用merge_qk_graph返回的合并激活信息
+            activation_info = merged.get("activation_info")
             logger.info(f"合并完成，包含 {len(selected_features)} 个选中特征")
             
         else:
@@ -369,7 +364,7 @@ def run_circuit_trace(
     tc_base_path: str = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/tc",
     lorsa_base_path: str = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/lorsa",
     n_layers: int = 15,
-    side: str = "k",
+    side: str = "both",
     max_n_logits: int = 1,
     desired_logit_prob: float = 0.95,
     max_feature_nodes: int = 1024,
@@ -424,7 +419,7 @@ def run_circuit_trace(
             sae_series=sae_series,
             act_times_max=act_times_max,
             encoder_demean=encoder_demean,
-            save_activation_info=save_activation_info
+            save_activation_info=True  # 强制设置为True以获取激活信息
         )
         
         # 创建Graph

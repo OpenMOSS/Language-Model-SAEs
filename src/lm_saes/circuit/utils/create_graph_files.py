@@ -268,24 +268,42 @@ def extract_activation_info(graph: Graph) -> List[ActivationInfo] | None:
         
     activation_info_list = []
     
-    # 优先使用k side，如果没有则使用q side
-    for side in ['k', 'q']:
-        if side in graph.activation_info and graph.activation_info[side] is not None:
-            features = graph.activation_info[side].get('features', [])
-            for feature_info in features:
-                activation_info_list.append(ActivationInfo(
-                    featureId=feature_info['featureId'],
-                    type=feature_info['type'],
-                    layer=feature_info['layer'],
-                    position=feature_info['position'],
-                    head_idx=feature_info.get('head_idx'),
-                    feature_idx=feature_info.get('feature_idx'),
-                    activation_value=feature_info['activation_value'],
-                    activations=feature_info['activations'],
-                    zPatternIndices=feature_info.get('zPatternIndices'),
-                    zPatternValues=feature_info.get('zPatternValues'),
-                ))
-            break  # 找到一个side就停止
+    # 检查是否是合并后的激活信息（直接包含features）
+    if 'features' in graph.activation_info:
+        # 这是合并后的激活信息，直接使用
+        features = graph.activation_info.get('features', [])
+        for feature_info in features:
+            activation_info_list.append(ActivationInfo(
+                featureId=feature_info['featureId'],
+                type=feature_info['type'],
+                layer=feature_info['layer'],
+                position=feature_info['position'],
+                head_idx=feature_info.get('head_idx'),
+                feature_idx=feature_info.get('feature_idx'),
+                activation_value=feature_info['activation_value'],
+                activations=feature_info['activations'],
+                zPatternIndices=feature_info.get('zPatternIndices'),
+                zPatternValues=feature_info.get('zPatternValues'),
+            ))
+    else:
+        # 这是原始的q/k分支结构，优先使用k side，如果没有则使用q side
+        for side in ['k', 'q']:
+            if side in graph.activation_info and graph.activation_info[side] is not None:
+                features = graph.activation_info[side].get('features', [])
+                for feature_info in features:
+                    activation_info_list.append(ActivationInfo(
+                        featureId=feature_info['featureId'],
+                        type=feature_info['type'],
+                        layer=feature_info['layer'],
+                        position=feature_info['position'],
+                        head_idx=feature_info.get('head_idx'),
+                        feature_idx=feature_info.get('feature_idx'),
+                        activation_value=feature_info['activation_value'],
+                        activations=feature_info['activations'],
+                        zPatternIndices=feature_info.get('zPatternIndices'),
+                        zPatternValues=feature_info.get('zPatternValues'),
+                    ))
+                break  # 找到一个side就停止
     
     return activation_info_list if activation_info_list else None
 

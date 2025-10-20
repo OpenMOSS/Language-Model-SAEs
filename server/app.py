@@ -999,7 +999,7 @@ def circuit_trace(request: dict):
         batch_size = request.get("batch_size", 1)
         order_mode = request.get("order_mode", "positive")
         encoder_demean = request.get("encoder_demean", False)
-        save_activation_info = request.get("save_activation_info", False)
+        save_activation_info = request.get("save_activation_info", True)  # 默认启用激活信息保存
         
         # 验证 side 参数
         if side not in ["q", "k", "both"]:

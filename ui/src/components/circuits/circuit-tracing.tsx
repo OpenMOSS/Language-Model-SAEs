@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Settings } from 'lucide-react';
 import { LinkGraphContainer } from './link-graph-container';
 import { NodeConnections } from './node-connections';
@@ -57,9 +58,21 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   const [inputMove, setInputMove] = useState<string>('');
   const [moveError, setMoveError] = useState<string>('');
 
+  // Side选择状态
+  const [traceSide, setTraceSide] = useState<'q' | 'k' | 'both'>('k');
+
   // Top Activation 相关状态
   const [topActivations, setTopActivations] = useState<any[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
+
+  // 节点激活数据接口
+  interface NodeActivationData {
+    activations?: number[];
+    zPatternIndices?: any;
+    zPatternValues?: number[];
+    nodeType?: string;
+    clerp?: string;
+  }
 
   // 新增：handleCircuitTrace函数
   const handleCircuitTraceResult = useCallback((result: any) => {
@@ -177,10 +190,12 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         body: JSON.stringify({ 
           fen: gameFen, // 使用move之前的FEN
           move_uci: moveUci,
+          side: traceSide,
           order_mode: orderMode,
           max_feature_nodes: circuitParams.max_feature_nodes,
           node_threshold: circuitParams.node_threshold,
-          edge_threshold: circuitParams.edge_threshold
+          edge_threshold: circuitParams.edge_threshold,
+          save_activation_info: true
         }),
       });
       
@@ -198,7 +213,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     } finally {
       onCircuitTraceEnd?.();
     }
-  }, [gameFen, currentFen, lastMove, gameHistory, inputMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams]);
+  }, [gameFen, currentFen, lastMove, gameHistory, inputMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide]);
 
   // 新增：保存原始graph JSON（与后端create_graph_files一致的数据结构）
   const handleSaveGraphJson = useCallback(() => {
@@ -426,6 +441,276 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
   }, [clickedNodeId, fetchTopActivations]);
 
+  // 从circuit trace结果中提取FEN字符串
+  const extractFenFromCircuitTrace = useCallback(() => {
+    if (!circuitTraceResult?.metadata?.prompt_tokens) return null;
+    
+    const promptText = circuitTraceResult.metadata.prompt_tokens.join(' ');
+    console.log('🔍 搜索FEN字符串:', promptText);
+    
+    // 更宽松的FEN格式检测
+    const lines = promptText.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // 检查是否包含FEN格式 - 包含斜杠且有足够的字符
+      if (trimmed.includes('/')) {
+        const parts = trimmed.split(/\s+/);
+        if (parts.length >= 6) {
+          const [boardPart, activeColor] = parts;
+          const boardRows = boardPart.split('/');
+          
+          if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
+            console.log('✅ 找到FEN字符串:', trimmed);
+            return trimmed;
+          }
+        }
+      }
+    }
+    
+    // 如果没找到完整的FEN，尝试更简单的匹配
+    const simpleMatch = promptText.match(/[rnbqkpRNBQKP1-8\/]{15,}\s+[wb]\s+[KQkqA-Za-z-]+\s+[a-h][36-]?\s*\d*\s*\d*/);
+    if (simpleMatch) {
+      console.log('✅ 找到简单FEN匹配:', simpleMatch[0]);
+      return simpleMatch[0];
+    }
+    
+    console.log('❌ 未找到FEN字符串');
+    return null;
+  }, [circuitTraceResult]);
+
+
+  // 获取节点激活数据
+  const getNodeActivationData = useCallback((nodeId: string | null): NodeActivationData => {
+    if (!nodeId || !circuitTraceResult) {
+      console.log('❌ 缺少必要参数:', { nodeId, hasCircuitTraceResult: !!circuitTraceResult });
+      return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
+    }
+    
+    console.log(`🔍 查找节点 ${nodeId} 的激活数据...`);
+    console.log('📋 Circuit trace结果结构:', {
+      hasActivationInfo: !!circuitTraceResult.activation_info,
+      activationInfoKeys: circuitTraceResult.activation_info ? Object.keys(circuitTraceResult.activation_info) : [],
+      hasNodes: !!circuitTraceResult.nodes,
+      nodesLength: circuitTraceResult.nodes?.length || 0
+    });
+    
+    // 解析 node_id -> rawLayer, featureOrHead, ctx(position)
+    const parseFromNodeId = (id: string) => {
+      const parts = id.split('_');
+      const rawLayer = Number(parts[0]) || 0;
+      const featureOrHead = Number(parts[1]) || 0;
+      const ctxIdx = Number(parts[2]) || 0;
+      // 将原始层号除以2得到真实层号
+      const layerForActivation = Math.floor(rawLayer / 2);
+      return { rawLayer, layerForActivation, featureOrHead, ctxIdx };
+    };
+    const parsed = parseFromNodeId(nodeId);
+
+    // 首先确定节点类型
+    let featureTypeForNode: string | undefined = undefined;
+    if (circuitTraceResult.nodes && Array.isArray(circuitTraceResult.nodes)) {
+      const nodeMeta = circuitTraceResult.nodes.find((n: any) => n?.node_id === nodeId);
+      featureTypeForNode = nodeMeta?.feature_type;
+    }
+
+    console.log('🔍 节点解析信息:', {
+      nodeId,
+      parsed,
+      featureTypeForNode
+    });
+
+    // 1) 优先从activation_info中查找激活数据
+    if (circuitTraceResult.activation_info) {
+      console.log('🔍 从activation_info中查找激活数据...');
+      console.log('📋 activation_info结构:', {
+        hasActivationInfo: !!circuitTraceResult.activation_info,
+        activationInfoKeys: Object.keys(circuitTraceResult.activation_info),
+        traceSide,
+        hasDirectFeatures: !!circuitTraceResult.activation_info.features,
+        sideActivationInfo: circuitTraceResult.activation_info[traceSide]
+      });
+      
+      // 检查是否是合并后的激活信息（直接包含features）
+      let featuresToSearch = null;
+      if (circuitTraceResult.activation_info.features && Array.isArray(circuitTraceResult.activation_info.features)) {
+        // 这是合并后的激活信息，直接使用
+        featuresToSearch = circuitTraceResult.activation_info.features;
+        console.log(`🔍 使用合并后的激活信息，找到${featuresToSearch.length}个特征`);
+      } else {
+        // 这是原始的q/k分支结构，根据traceSide选择
+        const sideActivationInfo = circuitTraceResult.activation_info[traceSide];
+        if (sideActivationInfo && sideActivationInfo.features && Array.isArray(sideActivationInfo.features)) {
+          featuresToSearch = sideActivationInfo.features;
+          console.log(`🔍 在${traceSide}侧找到${featuresToSearch.length}个特征的激活信息`);
+        }
+      }
+      
+      if (featuresToSearch) {
+        // 在features数组中查找匹配的特征
+        for (const featureInfo of featuresToSearch) {
+          const matchesLayer = featureInfo.layer === parsed.layerForActivation;
+          const matchesPosition = featureInfo.position === parsed.ctxIdx;
+          
+          let matchesIndex = false;
+          if (featureTypeForNode) {
+            const t = featureTypeForNode.toLowerCase();
+            if (t === 'lorsa') {
+              matchesIndex = featureInfo.head_idx === parsed.featureOrHead;
+            } else if (t === 'cross layer transcoder' || t.includes('transcoder')) {
+              matchesIndex = featureInfo.feature_idx === parsed.featureOrHead;
+            }
+          } else {
+            // 回退：尝试匹配任一索引
+            matchesIndex = (featureInfo.head_idx === parsed.featureOrHead) || 
+                          (featureInfo.feature_idx === parsed.featureOrHead);
+          }
+          
+          if (matchesLayer && matchesPosition && matchesIndex) {
+            console.log('✅ 在activation_info中找到匹配的特征:', {
+              featureId: featureInfo.featureId,
+              type: featureInfo.type,
+              layer: featureInfo.layer,
+              position: featureInfo.position,
+              head_idx: featureInfo.head_idx,
+              feature_idx: featureInfo.feature_idx,
+              hasActivations: !!featureInfo.activations,
+              hasZPattern: !!(featureInfo.zPatternIndices && featureInfo.zPatternValues)
+            });
+            
+            return {
+              activations: featureInfo.activations,
+              zPatternIndices: featureInfo.zPatternIndices,
+              zPatternValues: featureInfo.zPatternValues,
+              nodeType: featureInfo.type,
+              clerp: undefined // activation_info中没有clerp信息
+            };
+          }
+        }
+        
+        console.log('❌ 在activation_info中未找到匹配的特征');
+      } else {
+        console.log(`❌ ${traceSide}侧没有activation_info或features数组`);
+      }
+    }
+
+    // 2) 回退到原有的节点内联字段检查
+    let nodesToSearch: any[] = [];
+    if (circuitTraceResult.nodes && Array.isArray(circuitTraceResult.nodes)) {
+      nodesToSearch = circuitTraceResult.nodes;
+    } else if (Array.isArray(circuitTraceResult)) {
+      nodesToSearch = circuitTraceResult;
+    }
+
+    if (nodesToSearch.length > 0) {
+      const exactMatch = nodesToSearch.find(node => node?.node_id === nodeId);
+      if (exactMatch) {
+        const inlineActs = exactMatch.activations;
+        const inlineZIdx = exactMatch.zPatternIndices;
+        const inlineZVal = exactMatch.zPatternValues;
+        console.log('✅ 节点内联字段检查:', {
+          hasInlineActivations: !!inlineActs,
+          hasInlineZIdx: !!inlineZIdx,
+          hasInlineZVal: !!inlineZVal,
+        });
+        if (inlineActs || (inlineZIdx && inlineZVal)) {
+          return {
+            activations: inlineActs,
+            zPatternIndices: inlineZIdx,
+            zPatternValues: inlineZVal,
+            nodeType: exactMatch.feature_type,
+            clerp: exactMatch.clerp,
+          };
+        } 
+      }
+    }
+
+    // 3) 深度扫描激活记录集合
+    const candidateRecords: any[] = [];
+    const pushCandidateArrays = (obj: any) => {
+      if (!obj) return;
+      if (Array.isArray(obj)) {
+        for (const item of obj) {
+          if (item && typeof item === 'object') {
+            const hasActivationShape = ('layer' in item) && ('position' in item) && ('activations' in item);
+            const hasZShape = ('zPatternIndices' in item) && ('zPatternValues' in item);
+            const hasIndexKey = ('head_idx' in item) || ('feature_idx' in item);
+            if (hasActivationShape || hasZShape || hasIndexKey) {
+              candidateRecords.push(item);
+            }
+          }
+        }
+      } else if (typeof obj === 'object') {
+        for (const v of Object.values(obj)) pushCandidateArrays(v);
+      }
+    };
+    pushCandidateArrays(circuitTraceResult);
+
+    console.log('🧭 候选记录数:', candidateRecords.length);
+
+    // 定义匹配函数
+    const tryMatchRecord = (rec: any, featureType?: string) => {
+      const recLayer = Number(rec?.layer);
+      const recPos = Number(rec?.position);
+      const recHead = rec?.head_idx;
+      const recFeatIdx = rec?.feature_idx;
+
+      const layerOk = !Number.isNaN(recLayer) && recLayer === parsed.layerForActivation;
+      const posOk = !Number.isNaN(recPos) && recPos === parsed.ctxIdx;
+
+      let indexOk = false;
+      if (featureType) {
+        const t = featureType.toLowerCase();
+        if (t === 'lorsa') indexOk = recHead === parsed.featureOrHead;
+        else if (t === 'cross layer transcoder' || t.includes('transcoder')) indexOk = recFeatIdx === parsed.featureOrHead;
+        else indexOk = (recHead === parsed.featureOrHead) || (recFeatIdx === parsed.featureOrHead);
+      } else {
+        indexOk = (recHead === parsed.featureOrHead) || (recFeatIdx === parsed.featureOrHead);
+      }
+
+      return layerOk && posOk && indexOk;
+    };
+
+    const matched = candidateRecords.find(rec => tryMatchRecord(rec, featureTypeForNode));
+    if (matched) {
+      console.log('✅ 通过解析匹配到activation记录:', {
+        nodeId,
+        layerForActivation: parsed.layerForActivation,
+        ctxIdx: parsed.ctxIdx,
+        featureOrHead: parsed.featureOrHead,
+        featureTypeForNode,
+      });
+      return {
+        activations: matched.activations,
+        zPatternIndices: matched.zPatternIndices,
+        zPatternValues: matched.zPatternValues,
+        nodeType: featureTypeForNode,
+        clerp: (nodesToSearch.find(n => n?.node_id === nodeId) || {}).clerp,
+      };
+    }
+
+    // 4) 最后的模糊匹配
+    if (nodesToSearch.length > 0) {
+      const fuzzyMatches = nodesToSearch.filter(node => node?.node_id && node.node_id.includes(nodeId.split('_')[0]));
+      if (fuzzyMatches.length > 0) {
+        const firstMatch = fuzzyMatches[0];
+        console.log('🔍 使用模糊匹配节点:', {
+          node_id: firstMatch.node_id,
+          hasActivations: !!firstMatch.activations,
+        });
+        return {
+          activations: firstMatch.activations,
+          zPatternIndices: firstMatch.zPatternIndices,
+          zPatternValues: firstMatch.zPatternValues,
+          nodeType: firstMatch.feature_type,
+          clerp: firstMatch.clerp,
+        };
+      }
+    }
+
+    console.log('❌ 未找到任何匹配的节点/记录');
+    return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
+  }, [circuitTraceResult, traceSide]);
+
   // 当lastMove变化时，更新inputMove
   useEffect(() => {
     if (lastMove && !inputMove) {
@@ -484,6 +769,26 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
+            {/* Side选择框 */}
+            <div className="space-y-2">
+              <Label htmlFor="side-select" className="text-sm font-medium text-gray-700">
+                分析侧选择
+              </Label>
+              <Select value={traceSide} onValueChange={(v: 'q' | 'k' | 'both') => setTraceSide(v)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="q">Q侧 (Query)</SelectItem>
+                  <SelectItem value="k">K侧 (Key)</SelectItem>
+                  <SelectItem value="both">Q+K侧 (合并)</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-gray-500">
+                选择要分析的注意力机制侧
+              </div>
+            </div>
+            
             {/* 移动输入框 */}
             <div className="space-y-2">
               <Label htmlFor="move-input" className="text-sm font-medium text-gray-700">
@@ -646,6 +951,48 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   />
                 </div>
               </div>
+
+              {/* Chess Board Display */}
+              {(() => {
+                const fen = extractFenFromCircuitTrace();
+                const nodeActivationData = getNodeActivationData(clickedNodeId);
+                
+                if (!fen) return null;
+                
+                return (
+                  <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
+                    <h3 className="text-lg font-semibold mb-4 text-center">
+                      Circuit Trace 棋盘状态
+                      {clickedNodeId && nodeActivationData && (
+                        <span className="text-sm font-normal text-blue-600 ml-2">
+                          (节点: {clickedNodeId}{nodeActivationData.nodeType ? ` - ${nodeActivationData.nodeType.toUpperCase()}` : ''})
+                        </span>
+                      )}
+                    </h3>
+                    {clickedNodeId && nodeActivationData && nodeActivationData.activations && (
+                      <div className="text-center mb-2 text-sm text-purple-600">
+                        激活数据: {nodeActivationData.activations.filter((v: number) => v !== 0).length} 个非零激活
+                        {nodeActivationData.zPatternIndices && nodeActivationData.zPatternValues && 
+                          `, ${nodeActivationData.zPatternValues.length} 个Z模式连接`
+                        }
+                      </div>
+                    )}
+                    <div className="flex justify-center">
+                      <ChessBoard
+                        fen={fen}
+                        size="medium"
+                        showCoordinates={true}
+                        activations={nodeActivationData?.activations}
+                        zPatternIndices={nodeActivationData?.zPatternIndices}
+                        zPatternValues={nodeActivationData?.zPatternValues}
+                        flip_activation={Boolean(fen && fen.split(' ')[1] === 'b')}
+                        sampleIndex={clickedNodeId ? parseInt(clickedNodeId.split('_')[1]) : undefined}
+                        analysisName={`${nodeActivationData?.nodeType || 'Circuit Node'} (${traceSide.toUpperCase()}侧)`}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Bottom Row: Feature Card */}
               {clickedNodeId && (() => {
