@@ -315,8 +315,7 @@ def get_feature(
 
         Returns:
             dict: Processed sample data
-        """  # Get model and dataset
-        print(f'{model_name = } in process_sample')
+        """
         model = get_model(model_name)
         
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
@@ -480,32 +479,32 @@ def get_feature(
         if feature_acts_indices.size == 0 or feature_acts_indices.shape[1] == 0:
             return
 
-        print("function 1")
+
         _, feature_acts_counts = np.unique(
             feature_acts_indices[0],
             return_counts=True,
         )
-        print("function 2")
+
         _, z_pattern_counts = (
             np.unique(z_pattern_indices[0], return_counts=True)
             if z_pattern_indices is not None
             else (None, None)
         )
-        print("function 3")
+
         feature_acts_sample_ranges = np.concatenate(
             [[0], np.cumsum(feature_acts_counts)]
         )
-        print("function 4")
+
         z_pattern_sample_ranges = (
             np.concatenate([[0], np.cumsum(z_pattern_counts)])
             if z_pattern_counts is not None
             else None
         )
-        print("function 5")
+
         feature_acts_sample_ranges = list(
             zip(feature_acts_sample_ranges[:-1], feature_acts_sample_ranges[1:])
         )
-        print("function 6")
+
         if z_pattern_sample_ranges is not None:
             z_pattern_sample_ranges = list(
                 zip(z_pattern_sample_ranges[:-1], z_pattern_sample_ranges[1:])
@@ -514,7 +513,7 @@ def get_feature(
                 z_pattern_sample_ranges = [(None, None)] * len(feature_acts_sample_ranges)
         else:
             z_pattern_sample_ranges = [(None, None)] * len(feature_acts_sample_ranges)
-        print("function 7")
+
         for (feature_acts_start, feature_acts_end), (z_pattern_start, z_pattern_end) in zip(feature_acts_sample_ranges, z_pattern_sample_ranges):
             feature_acts_indices_i = feature_acts_indices[1, feature_acts_start:feature_acts_end]
             feature_acts_values_i = feature_acts_values[feature_acts_start:feature_acts_end]
@@ -527,7 +526,6 @@ def get_feature(
     sample_groups = []
     for sampling in analysis.samplings:
         try:
-            print(f'go into process_sample loop')
             # Using zip to process correlated data instead of indexing
             samples = [
                 process_sample(
@@ -1020,13 +1018,24 @@ def circuit_trace(request: dict):
             raise HTTPException(status_code=400, detail="order_mode must be 'positive' or 'negative'")
         
         # 获取已缓存的HookedTransformer模型
-        hooked_model = get_hooked_model()
+        hooked_model = get_hooked_model(model_name)
+        
+        # 根据模型名称设置正确的路径
+        base_path = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs"
+        if 'BT4' in model_name:
+            tc_base_path = f"{base_path}/result_BT4/tc"
+            lorsa_base_path = f"{base_path}/result_BT4/lorsa"
+        else:
+            tc_base_path = f"{base_path}/result/tc"
+            lorsa_base_path = f"{base_path}/result/lorsa"
         
         # 运行circuit trace，传递已缓存的模型
         graph_data = run_circuit_trace(
             prompt=fen,
             move_uci=move_uci,
             model_name=model_name,  # 添加模型名称参数
+            tc_base_path=tc_base_path,  # 传递正确的TC路径
+            lorsa_base_path=lorsa_base_path,  # 传递正确的LORSA路径
             side=side,
             max_feature_nodes=max_feature_nodes,
             node_threshold=node_threshold,

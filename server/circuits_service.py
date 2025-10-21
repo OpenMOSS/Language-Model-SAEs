@@ -69,8 +69,8 @@ def load_model_and_transcoders(
     # 加载transcoders
     transcoders = {}
     for layer in range(n_layers):
-        # 根据路径类型选择不同的路径格式
-        if 'result_BT4' in tc_base_path:
+        # 根据模型名称选择不同的路径格式
+        if 'BT4' in model_name:
             # BT4路径格式: L{layer}
             tc_path = f"{tc_base_path}/L{layer}"
         else:
@@ -87,8 +87,8 @@ def load_model_and_transcoders(
     # 加载LORSA
     lorsas = []
     for layer in range(n_layers):
-        # 根据路径类型选择不同的路径格式
-        if 'result_BT4' in lorsa_base_path:
+        # 根据模型名称选择不同的路径格式
+        if 'BT4' in model_name:
             # BT4路径格式: L{layer}
             lorsa_path = f"{lorsa_base_path}/L{layer}"
         else:
@@ -407,6 +407,10 @@ def run_circuit_trace(
     
     try:
         # 加载模型
+        print("加载模型和transcoders...")
+        print(f'{lorsa_base_path = }')
+        print(f'{tc_base_path = }')
+        
         logger.info("加载模型和transcoders...")
         model, transcoders, lorsas = load_model_and_transcoders(
             model_name, device, tc_base_path, 
@@ -459,7 +463,8 @@ def run_circuit_trace(
         return graph_data
         
     except Exception as e:
-        logger.error(f"执行过程中发生错误: {e}")
+        logger.error(f"有点问题: {e}")
+        # logger.error(f"执行过程中发生错误: {e}")
         raise
 
 
