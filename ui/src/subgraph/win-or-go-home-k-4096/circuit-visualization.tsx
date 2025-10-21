@@ -1426,8 +1426,12 @@ export const CircuitVisualization = () => {
           
           // 根据节点类型构建正确的dictionary名
           const dictionary = isLorsa 
-            ? `lc0-lorsa-L${layerIdx}`
-            : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+            ? (linkGraphData?.metadata?.lorsa_analysis_name && linkGraphData.metadata.lorsa_analysis_name.includes('BT4')
+                ? `BT4_lorsa_L${layerIdx}A` 
+                : `lc0-lorsa-L${layerIdx}`)
+            : (linkGraphData?.metadata?.tc_analysis_name && linkGraphData.metadata.tc_analysis_name.includes('BT4')
+                ? `BT4_tc_L${layerIdx}M` 
+                : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`);
           
           const nodeTypeDisplay = isLorsa ? 'LORSA' : 'SAE';
           

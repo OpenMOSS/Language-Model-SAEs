@@ -60,6 +60,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
 
   // Side选择状态
   const [traceSide, setTraceSide] = useState<'q' | 'k' | 'both'>('k');
+  
+  // 模型选择状态
+  const [traceModel, setTraceModel] = useState<'T82' | 'BT4'>('T82');
 
   // Top Activation 相关状态
   const [topActivations, setTopActivations] = useState<any[]>([]);
@@ -176,12 +179,16 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       move_uci: moveUci,
       order_mode: orderMode,
       current_fen: currentFen,
-      game_history: gameHistory
+      game_history: gameHistory,
+      trace_model: traceModel
     });
     
     onCircuitTraceStart?.();
     
     try {
+      // 根据选择的模型构建正确的模型名称
+      const modelName = traceModel === 'BT4' ? 'lc0/BT4-1024x15x32h' : 'lc0/T82-768x15x24h';
+      
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace`, {
         method: 'POST',
         headers: {
@@ -195,12 +202,27 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           max_feature_nodes: circuitParams.max_feature_nodes,
           node_threshold: circuitParams.node_threshold,
           edge_threshold: circuitParams.edge_threshold,
-          save_activation_info: true
+          save_activation_info: true,
+          model_name: modelName // 添加模型名称
         }),
       });
       
       if (response.ok) {
         const data = await response.json();
+        
+        // 确保 metadata 中包含正确的模型信息
+        if (data.metadata) {
+          if (traceModel === 'BT4') {
+            data.metadata.lorsa_analysis_name = 'lc0/BT4-1024x15x32h';
+            data.metadata.tc_analysis_name = 'lc0/BT4-1024x15x32h';
+            console.log('🔍 设置 BT4 模型 metadata:', data.metadata);
+          } else {
+            data.metadata.lorsa_analysis_name = 'lc0-lorsa-L{}';
+            data.metadata.tc_analysis_name = 'lc0_L{}M_16x_k30_lr2e-03_auxk_sparseadam';
+            console.log('🔍 设置 T82 模型 metadata:', data.metadata);
+          }
+        }
+        
         handleCircuitTraceResult(data);
       } else {
         const errorText = await response.text();
@@ -213,7 +235,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     } finally {
       onCircuitTraceEnd?.();
     }
-  }, [gameFen, currentFen, lastMove, gameHistory, inputMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide]);
+  }, [gameFen, currentFen, lastMove, gameHistory, inputMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide, traceModel]);
 
   // 新增：保存原始graph JSON（与后端create_graph_files一致的数据结构）
   const handleSaveGraphJson = useCallback(() => {
@@ -275,9 +297,26 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       // 确定节点类型和对应的字典名
       const currentNode = circuitVisualizationData?.nodes.find((n: any) => n.nodeId === nodeId);
       const isLorsa = currentNode?.feature_type?.toLowerCase() === 'lorsa';
-      const dictionary = isLorsa 
-        ? `lc0-lorsa-L${layerIdx}`
-        : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+      
+      // 使用metadata信息确定字典名
+      let dictionary: string;
+      if (isLorsa) {
+        const lorsaAnalysisName = circuitVisualizationData?.metadata?.lorsa_analysis_name;
+        if (lorsaAnalysisName && lorsaAnalysisName.includes('BT4')) {
+          // BT4格式: BT4_lorsa_L{layer}A
+          dictionary = `BT4_lorsa_L${layerIdx}A`;
+        } else {
+          dictionary = lorsaAnalysisName ? lorsaAnalysisName.replace("{}", layerIdx.toString()) : `lc0-lorsa-L${layerIdx}`;
+        }
+      } else {
+        const tcAnalysisName = (circuitVisualizationData?.metadata as any)?.tc_analysis_name || circuitVisualizationData?.metadata?.clt_analysis_name;
+        if (tcAnalysisName && tcAnalysisName.includes('BT4')) {
+          // BT4格式: BT4_tc_L{layer}M
+          dictionary = `BT4_tc_L${layerIdx}M`;
+        } else {
+          dictionary = tcAnalysisName ? tcAnalysisName.replace("{}", layerIdx.toString()) : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+        }
+      }
       
       console.log('🔍 获取 Top Activation 数据:', {
         nodeId,
@@ -789,6 +828,25 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
               </div>
             </div>
             
+            {/* 模型选择框 */}
+            <div className="space-y-2">
+              <Label htmlFor="model-select" className="text-sm font-medium text-gray-700">
+                Trace 模型选择
+              </Label>
+              <Select value={traceModel} onValueChange={(v: 'T82' | 'BT4') => setTraceModel(v)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="T82">T82-768x15x24h</SelectItem>
+                  <SelectItem value="BT4">BT4-1024x15x32h</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-gray-500">
+                选择用于 circuit trace 的模型，影响节点分析的数据源
+              </div>
+            </div>
+            
             {/* 移动输入框 */}
             <div className="space-y-2">
               <Label htmlFor="move-input" className="text-sm font-medium text-gray-700">
@@ -1022,9 +1080,24 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                 const isLorsa = currentNode.feature_type?.toLowerCase() === 'lorsa';
                 
                 // 根据节点类型构建正确的dictionary名
-                const dictionary = isLorsa 
-                  ? `lc0-lorsa-L${layerIdx}`
-                  : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+                let dictionary: string;
+                if (isLorsa) {
+                  const lorsaAnalysisName = circuitVisualizationData?.metadata?.lorsa_analysis_name;
+                  if (lorsaAnalysisName && lorsaAnalysisName.includes('BT4')) {
+                    // BT4格式: BT4_lorsa_L{layer}A
+                    dictionary = `BT4_lorsa_L${layerIdx}A`;
+                  } else {
+                    dictionary = lorsaAnalysisName ? lorsaAnalysisName.replace("{}", layerIdx.toString()) : `lc0-lorsa-L${layerIdx}`;
+                  }
+                } else {
+                  const tcAnalysisName = (circuitVisualizationData?.metadata as any)?.tc_analysis_name || circuitVisualizationData?.metadata?.clt_analysis_name;
+                  if (tcAnalysisName && tcAnalysisName.includes('BT4')) {
+                    // BT4格式: BT4_tc_L{layer}M
+                    dictionary = `BT4_tc_L${layerIdx}M`;
+                  } else {
+                    dictionary = tcAnalysisName ? tcAnalysisName.replace("{}", layerIdx.toString()) : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+                  }
+                }
                 
                 const nodeTypeDisplay = isLorsa ? 'LORSA' : 'SAE';
                 

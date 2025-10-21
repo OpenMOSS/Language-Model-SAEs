@@ -984,9 +984,32 @@ export const CircuitVisualization = () => {
       // 确定节点类型和对应的字典名
       const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
       const isLorsa = currentNode?.feature_type?.toLowerCase() === 'lorsa';
-      const dictionary = isLorsa 
-        ? `lc0-lorsa-L${layerIdx}`
-        : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+      
+      // 使用metadata信息确定字典名
+      let dictionary: string;
+      if (isLorsa) {
+        const lorsaAnalysisName = linkGraphData?.metadata?.lorsa_analysis_name;
+        if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string' && lorsaAnalysisName.includes('BT4')) {
+          // BT4格式: BT4_lorsa_L{layer}A
+          dictionary = `BT4_lorsa_L${layerIdx}A`;
+        } else {
+          dictionary = lorsaAnalysisName ? lorsaAnalysisName.replace("{}", layerIdx.toString()) : `lc0-lorsa-L${layerIdx}`;
+        }
+      } else {
+        const tcAnalysisName = (linkGraphData?.metadata as any)?.tc_analysis_name || linkGraphData?.metadata?.clt_analysis_name;
+        console.log('🔍 Transcoders 调试信息:', {
+          tcAnalysisName,
+          tcAnalysisNameType: typeof tcAnalysisName,
+          includesBT4: tcAnalysisName && typeof tcAnalysisName === 'string' ? tcAnalysisName.includes('BT4') : false,
+          layerIdx
+        });
+        if (tcAnalysisName && typeof tcAnalysisName === 'string' && tcAnalysisName.includes('BT4')) {
+          // BT4格式: BT4_tc_L{layer}M
+          dictionary = `BT4_tc_L${layerIdx}M`;
+        } else {
+          dictionary = tcAnalysisName ? tcAnalysisName.replace("{}", layerIdx.toString()) : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+        }
+      }
       
       console.log('🔍 获取 Top Activation 数据:', {
         nodeId,
@@ -1181,7 +1204,8 @@ export const CircuitVisualization = () => {
             layer: layerIdx,
             pos: pos,
             feature: featureIndex,
-            steering_scale: steeringScale
+            steering_scale: steeringScale,
+            metadata: linkGraphData?.metadata
           })
         }
       );
@@ -1848,9 +1872,30 @@ export const CircuitVisualization = () => {
           });
           
           // 根据节点类型构建正确的dictionary名
-          const dictionary = isLorsa 
-            ? `lc0-lorsa-L${layerIdx}`
-            : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+          let dictionary: string;
+          if (isLorsa) {
+            const lorsaAnalysisName = linkGraphData?.metadata?.lorsa_analysis_name;
+            if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string' && lorsaAnalysisName.includes('BT4')) {
+              // BT4格式: BT4_lorsa_L{layer}A
+              dictionary = `BT4_lorsa_L${layerIdx}A`;
+            } else {
+              dictionary = lorsaAnalysisName ? lorsaAnalysisName.replace("{}", layerIdx.toString()) : `lc0-lorsa-L${layerIdx}`;
+            }
+          } else {
+            const tcAnalysisName = (linkGraphData?.metadata as any)?.tc_analysis_name || linkGraphData?.metadata?.clt_analysis_name;
+            console.log('🔍 Selected Feature Details Transcoders 调试信息:', {
+              tcAnalysisName,
+              tcAnalysisNameType: typeof tcAnalysisName,
+              includesBT4: tcAnalysisName && typeof tcAnalysisName === 'string' ? tcAnalysisName.includes('BT4') : false,
+              layerIdx
+            });
+            if (tcAnalysisName && typeof tcAnalysisName === 'string' && tcAnalysisName.includes('BT4')) {
+              // BT4格式: BT4_tc_L{layer}M
+              dictionary = `BT4_tc_L${layerIdx}M`;
+            } else {
+              dictionary = tcAnalysisName ? tcAnalysisName.replace("{}", layerIdx.toString()) : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
+            }
+          }
           
           const nodeTypeDisplay = isLorsa ? 'LORSA' : 'SAE';
           

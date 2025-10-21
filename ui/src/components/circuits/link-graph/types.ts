@@ -42,6 +42,7 @@ export interface LinkGraphData {
     prompt_tokens: string[];
     lorsa_analysis_name?: string;
     clt_analysis_name?: string;
+    tc_analysis_name?: string;
     // 多文件上传时，记录各文件名，index 与 Node.sourceIndex 对应
     sourceFileNames?: string[];
   };

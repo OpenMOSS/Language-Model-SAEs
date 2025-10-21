@@ -254,7 +254,8 @@ def get_feature(
                 content=f"Feature index {feature_index} is not a valid integer",
                 status_code=400,
             )
-
+    print(f'{feature_analysis_name = }')
+    print(f'{name = }')
     # Get feature data
     feature = (
         client.get_random_alive_feature(
@@ -962,6 +963,7 @@ def circuit_trace(request: dict):
         request: 包含分析参数的请求体
             - fen: FEN字符串 (必需)
             - move_uci: 要分析的UCI移动 (必需)
+            - model_name: 模型名称 (默认: "lc0/T82-768x15x24h")
             - side: 分析侧 (q/k/both, 默认: "k")
             - max_feature_nodes: 最大特征节点数 (默认: 1024)
             - node_threshold: 节点阈值 (默认: 0.9)
@@ -1000,6 +1002,14 @@ def circuit_trace(request: dict):
         order_mode = request.get("order_mode", "positive")
         encoder_demean = request.get("encoder_demean", False)
         save_activation_info = request.get("save_activation_info", True)  # 默认启用激活信息保存
+        model_name = request.get("model_name", "lc0/T82-768x15x24h")  # 添加模型名称参数
+        
+        print(f"🔍 Circuit Trace 请求参数:")
+        print(f"   - FEN: {fen}")
+        print(f"   - Move UCI: {move_uci}")
+        print(f"   - Model Name: {model_name}")
+        print(f"   - Side: {side}")
+        print(f"   - Order Mode: {order_mode}")
         
         # 验证 side 参数
         if side not in ["q", "k", "both"]:
@@ -1016,6 +1026,7 @@ def circuit_trace(request: dict):
         graph_data = run_circuit_trace(
             prompt=fen,
             move_uci=move_uci,
+            model_name=model_name,  # 添加模型名称参数
             side=side,
             max_feature_nodes=max_feature_nodes,
             node_threshold=node_threshold,
@@ -1164,7 +1175,11 @@ def steering_analysis(request: dict):
         if not isinstance(steering_scale, (int, float)):
             raise HTTPException(status_code=400, detail="steering_scale must be a number")
 
+        # 获取metadata信息
+        metadata = request.get("metadata", {})
+
         print(f"🔍 运行steering分析: {feature_type} L{layer} pos{pos} feature{feature} scale{steering_scale}")
+        print(f"📋 Metadata: {metadata}")
 
         result = run_feature_steering_analysis(
             fen=fen,
@@ -1173,6 +1188,7 @@ def steering_analysis(request: dict):
             pos=pos,
             feature=feature,
             steering_scale=steering_scale,
+            metadata=metadata
         )
 
         if 'error' in result:

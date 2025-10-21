@@ -279,31 +279,79 @@ class PatchingAnalyzer:
 
 # 全局分析器实例（延迟初始化）
 _patching_analyzer = None
+_current_model_type = None  # 跟踪当前模型类型
 
-def get_patching_analyzer() -> PatchingAnalyzer:
-    """获取或创建patching分析器实例"""
-    global _patching_analyzer
+def get_patching_analyzer(metadata: Optional[Dict[str, Any]] = None) -> PatchingAnalyzer:
+    """获取或创建patching分析器实例，支持根据metadata动态选择模型路径"""
+    global _patching_analyzer, _current_model_type
     
-    if _patching_analyzer is None:
+    # 根据metadata确定模型路径
+    if metadata:
+        lorsa_analysis_name = metadata.get('lorsa_analysis_name', '')
+        tc_analysis_name = metadata.get('tc_analysis_name', '')
+        
+        # 检查是否提供了analysis_name且包含BT4
+        if (lorsa_analysis_name and 'BT4' in lorsa_analysis_name) or (tc_analysis_name and 'BT4' in tc_analysis_name):
+            print("🔍 检测到BT4模型，使用BT4路径...")
+            tc_base_path = '/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result_BT4/tc'
+            lorsa_base_path = '/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result_BT4/lorsa'
+            model_type = 'BT4'
+        else:
+            print("🔍 使用默认T82模型路径...")
+            tc_base_path = '/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/tc'
+            lorsa_base_path = '/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/lorsa'
+            model_type = 'T82'
+    else:
+        print("🔍 无metadata信息，使用默认T82模型路径...")
+        tc_base_path = '/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/tc'
+        lorsa_base_path = '/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/lorsa'
+        model_type = 'T82'
+    
+    # 检查是否需要重新初始化分析器（模型类型变化时）
+    if _patching_analyzer is None or _current_model_type != model_type:
+        if _patching_analyzer is not None:
+            print(f"🔄 模型类型从 {_current_model_type} 切换到 {model_type}，重新初始化分析器...")
+            # 清理旧的模型资源
+            del _patching_analyzer
+            _patching_analyzer = None
         try:
             from transformer_lens import HookedTransformer
             from lm_saes import SparseAutoEncoder, LowRankSparseAttention
             
             print("🔍 正在初始化Patching分析器...")
+            print(f"📁 TC路径: {tc_base_path}")
+            print(f"📁 LORSA路径: {lorsa_base_path}")
+            
+            # 根据路径类型选择不同的模型
+            if 'result_BT4' in tc_base_path:
+                # BT4模型
+                model_name = 'lc0/BT4-1024x15x32h'
+                print("🔍 使用BT4模型: lc0/BT4-1024x15x32h")
+            else:
+                # 默认T82模型
+                model_name = 'lc0/T82-768x15x24h'
+                print("🔍 使用T82模型: lc0/T82-768x15x24h")
             
             # 加载模型
             model = HookedTransformer.from_pretrained_no_processing(
-                'lc0/T82-768x15x24h',
+                model_name,
                 dtype=torch.float32,
             ).eval()
             
             # 加载transcoders
             transcoders = {}
             for layer in range(15):
+                # 根据路径类型选择不同的路径格式
+                if 'result_BT4' in tc_base_path:
+                    # BT4路径格式: _L{layer}M
+                    tc_path = f"{tc_base_path}/L{layer}"
+                else:
+                    # 默认T82路径格式
+                    tc_path = f"{tc_base_path}/lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam"
+                
+                print(f"📁 加载TC L{layer}: {tc_path}")
                 transcoders[layer] = SparseAutoEncoder.from_pretrained(
-                    (f'/inspire/hdd/global_user/hezhengfu-240208120186/'
-                     f'rlin_projects/rlin_projects/chess-SAEs/result/tc/'
-                     f'lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam'),
+                    tc_path,
                     dtype=torch.float32,
                     device='cuda',
                 )
@@ -311,15 +359,22 @@ def get_patching_analyzer() -> PatchingAnalyzer:
             # 加载lorsas
             lorsas = []
             for layer in range(15):
+                # 根据路径类型选择不同的路径格式
+                if 'result_BT4' in lorsa_base_path:
+                    # BT4路径格式: BT4_lorsa_L{layer}A
+                    lorsa_path = f"{lorsa_base_path}/L{layer}"
+                else:
+                    # 默认T82路径格式
+                    lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr8e-05_k_aux4096_coefficient0.0625_dead_threshold1000000"
+                
+                print(f"📁 加载LORSA L{layer}: {lorsa_path}")
                 lorsas.append(LowRankSparseAttention.from_pretrained(
-                    (f'/inspire/hdd/global_user/hezhengfu-240208120186/'
-                     f'rlin_projects/rlin_projects/chess-SAEs/result/lorsa/'
-                     f'lc0_L{layer}_bidirectional_lr8e-05_k_aux4096_'
-                     f'coefficient0.0625_dead_threshold1000000'), 
+                    lorsa_path, 
                     device='cuda'
                 ))
             
             _patching_analyzer = PatchingAnalyzer(model, transcoders, lorsas)
+            _current_model_type = model_type  # 更新当前模型类型
             print("✅ Patching分析器初始化成功")
             
         except Exception as e:
@@ -330,9 +385,10 @@ def get_patching_analyzer() -> PatchingAnalyzer:
 
 
 def run_feature_steering_analysis(fen: str, feature_type: str, layer: int, 
-                         pos: int, feature: int, steering_scale: int) -> Dict[str, Any]:
+                         pos: int, feature: int, steering_scale: int, 
+                         metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """运行patching分析的公共接口"""
-    analyzer = get_patching_analyzer()
+    analyzer = get_patching_analyzer(metadata)
     
     # 运行消融分析
     # ablation_result = analyzer.hook_based_ablation_analysis(
