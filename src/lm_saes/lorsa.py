@@ -915,7 +915,7 @@ class RMSNormPerHead(nn.Module):
 
         if device_mesh is not None:
             self.w = nn.Parameter(
-                torch.distributed.tensor.empty(
+                torch.distributed.tensor.ones(
                     (self.n_heads, self.cfg.d_qk_head),
                     dtype=cfg.dtype,
                     device_mesh=device_mesh,
