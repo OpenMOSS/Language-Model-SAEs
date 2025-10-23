@@ -2147,96 +2147,8 @@ def _run_attribution(
     tc_feat_layer, tc_feat_pos, tc_feat_idx = tc_activation_matrix.indices()
 
     # —— 构建允许掩码：True=保留, False=剔除 —— #
+    # 初始时所有特征都允许
     allow_mask = torch.ones(total_active_feats, dtype=torch.bool, device='cpu')
-    if mongo_client is not None and act_times_max is not None:
-        print('wash dense nodes')
-        cache = {}
-        
-        # 处理LoRSA features
-        lorsa_Ls = lorsa_feat_layer.cpu().tolist()
-        lorsa_Fs = lorsa_feat_idx.cpu().tolist()
-        
-        print(f'{len(lorsa_Ls) = }, {len(lorsa_Fs) = }')
-        for i, (L, F) in enumerate(zip(lorsa_Ls, lorsa_Fs)):
-            gid = i  # LoRSA features start from index 0
-            key = (int(L), int(F), 'lorsa')  # 添加类型标识避免与TC混淆
-            if key not in cache:
-                try:
-                    sae_name = f"lc0-lorsa-L{L}"
-                    fr = mongo_client.get_feature(sae_name, sae_series, F)
-                    at = None
-                    if fr:
-                        for ana in fr.analyses:
-                            if ana.name == analysis_name:
-                                at = ana.act_times
-                                break
-                    cache[key] = at
-                except Exception:
-                    cache[key] = None
-            at = cache[key]
-            if at is not None and at > act_times_max:
-                allow_mask[gid] = False
-        
-        # 处理TC features
-        tc_Ls = tc_feat_layer.cpu().tolist()
-        tc_Fs = tc_feat_idx.cpu().tolist()
-        tc_offset = lorsa_activation_matrix._nnz()
-        
-        print(f'{len(tc_Ls) = }, {len(tc_Fs) = }')
-        for i, (L, F) in enumerate(zip(tc_Ls, tc_Fs)):
-            gid = tc_offset + i  # TC features start after LoRSA features
-            key = (int(L), int(F), 'tc')  # 添加类型标识避免与LoRSA混淆
-            if key not in cache:
-                try:
-                    sae_name = f"lc0_L{L}M_16x_k30_lr2e-03_auxk_sparseadam"
-                    fr = mongo_client.get_feature(sae_name, sae_series, F)
-                    at = None
-                    if fr:
-                        for ana in fr.analyses:
-                            if ana.name == analysis_name:
-                                at = ana.act_times
-                                break
-                    cache[key] = at
-                except Exception:
-                    cache[key] = None
-            at = cache[key]
-            if at is not None and at > act_times_max:
-                allow_mask[gid] = False
-        
-        # print(f'LoRSA features: {lorsa_activation_matrix._nnz()} (filtered by max_activation_times)')
-        # print(f'TC features: {tc_activation_matrix._nnz()} (filtered by max_activation_times)')
-    
-    # 打印统计信息
-    lorsa_kept = allow_mask[:lorsa_activation_matrix._nnz()].sum().item()
-    tc_kept = allow_mask[lorsa_activation_matrix._nnz():].sum().item()
-    # print(f'Features kept: LORSA={lorsa_kept}/{lorsa_activation_matrix._nnz()}, TC={tc_kept}/{tc_activation_matrix._nnz()}')
-    # print(f'{allow_mask = }')
-    # 一些打印信息
-    masked_idx = (~allow_mask).nonzero(as_tuple=True)[0]          # LongTensor
-    num_masked = masked_idx.numel()
-
-    # print(f"not allow feature idx: {((~allow_mask).nonzero(as_tuple=True)[0]).tolist()}")
-    # if num_masked > 0:
-    #     # 2) 保证下标和索引目标在同一 device
-    #     if masked_idx.device != tc_feat_layer.device:
-    #         masked_idx = masked_idx.to(tc_feat_layer.device)
-
-    #     # 3) 取出对应的 layer / feat（以及 pos 如需）
-    #     masked_layers = tc_feat_layer.index_select(0, masked_idx) # 或 tc_feat_layer[masked_idx]
-    #     masked_feats  = tc_feat_idx.index_select(0, masked_idx)   # 或 tc_feat_idx[masked_idx]
-    #     # 可选：位置
-    #     # masked_pos    = tc_feat_pos.index_select(0, masked_idx)
-
-    #     # 4) 打印前若干个
-    #     show_k = min(20, num_masked)
-    #     print(f'first {show_k} masked gids/layer/feat:')
-    #     for i in range(show_k):
-    #         gid   = int(masked_idx[i].item())
-    #         layer = int(masked_layers[i].item())
-    #         feat  = int(masked_feats[i].item())
-    #         print(f'  gid={gid:6d}  layer={layer:2d}  feat={feat:6d}')
-    # else:
-    #     print('no masked features')
 
     def idx_to_layer(idx: torch.Tensor) -> torch.Tensor:
         is_lorsa = idx < len(lorsa_feat_layer)
@@ -2413,14 +2325,83 @@ def _run_attribution(
         allow_mask: Optional[torch.Tensor] = None,   # ★ 新增：允许的 feature（gid 级）
         move_idx: Optional[torch.Tensor] = None,     # ★ 新增：move索引
         side: Optional[str] = None,                  # ★ 新增：'q' 或 'k'
+        # 新增参数用于密集特征过滤
+        mongo_client = None,
+        sae_series: str = 'lc0-tc',
+        analysis_name: str = 'default',
+        lorsa_feat_layer: torch.Tensor = None,
+        lorsa_feat_idx: torch.Tensor = None,
+        tc_feat_layer: torch.Tensor = None,
+        tc_feat_idx: torch.Tensor = None,
+        lorsa_activation_matrix: torch.sparse.Tensor = None,
+        tc_activation_matrix: torch.sparse.Tensor = None,
+        act_times_max: Optional[int] = None,
     ) -> Dict[str, Any]:
         total_nodes = logit_offset + n_logits
-
-        # 1) 选中的 feature（全局 gid），并在"列"层面过滤掉不允许的
+        
+        # 1) 先选择前max_feature_nodes个最重要的特征
         if max_feature_nodes < total_active_feats:
             selected_features = torch.where(visited)[0].to(edge_matrix.device)
         else:
             selected_features = torch.arange(total_active_feats, device=edge_matrix.device)
+        
+        # 2) 在选中的特征中进行密集特征过滤
+        if mongo_client is not None and act_times_max is not None and len(selected_features) > 0:
+            print(f'wash dense nodes in selected features only (side: {side})')
+            print(f'Selected {len(selected_features)} features, checking for dense features...')
+            
+            # 初始化allow_mask（如果未提供）
+            if allow_mask is None:
+                allow_mask = torch.ones(total_active_feats, dtype=torch.bool, device='cpu')
+            
+            # 使用缓存避免重复查询
+            cache = {}
+            
+            def get_act_times_cached(L, F, feature_type):
+                """带缓存的激活次数查询"""
+                key = (int(L), int(F), feature_type)
+                if key not in cache:
+                    try:
+                        if feature_type == 'lorsa':
+                            sae_name = f"lc0-lorsa-L{L}"
+                        else:  # tc
+                            sae_name = f"lc0_L{L}M_16x_k30_lr2e-03_auxk_sparseadam"
+                        
+                        fr = mongo_client.get_feature(sae_name, sae_series, F)
+                        at = None
+                        if fr:
+                            for ana in fr.analyses:
+                                if ana.name == analysis_name:
+                                    at = ana.act_times
+                                    break
+                        cache[key] = at
+                    except Exception:
+                        cache[key] = None
+                return cache[key]
+            
+            # 只检查选中的特征
+            dense_count = 0
+            for gid in selected_features:
+                gid = gid.item()
+                if gid < lorsa_activation_matrix._nnz():
+                    # LoRSA feature
+                    layer = lorsa_feat_layer[gid].item()
+                    feat_idx = lorsa_feat_idx[gid].item()
+                    act_times = get_act_times_cached(layer, feat_idx, 'lorsa')
+                    if act_times is not None and act_times > act_times_max:
+                        allow_mask[gid] = False
+                        dense_count += 1
+                else:
+                    # TC feature
+                    tc_gid = gid - lorsa_activation_matrix._nnz()
+                    layer = tc_feat_layer[tc_gid].item()
+                    feat_idx = tc_feat_idx[tc_gid].item()
+                    act_times = get_act_times_cached(layer, feat_idx, 'tc')
+                    if act_times is not None and act_times > act_times_max:
+                        allow_mask[gid] = False
+                        dense_count += 1
+            
+            print(f"Filtered {dense_count} dense features out of {len(selected_features)} selected features")
 
         # print(f'{selected_features.shape = }') # 1024
             
@@ -2581,6 +2562,16 @@ def _run_attribution(
             allow_mask=allow_mask,
             move_idx=move_positions,
             side='q',
+            mongo_client=mongo_client,
+            sae_series=sae_series,
+            analysis_name=analysis_name,
+            lorsa_feat_layer=lorsa_feat_layer,
+            lorsa_feat_idx=lorsa_feat_idx,
+            tc_feat_layer=tc_feat_layer,
+            tc_feat_idx=tc_feat_idx,
+            lorsa_activation_matrix=lorsa_activation_matrix,
+            tc_activation_matrix=tc_activation_matrix,
+            act_times_max=act_times_max,
         )
     if 'k' in fa_result:
         packaged_k = package_side(
@@ -2590,6 +2581,16 @@ def _run_attribution(
             allow_mask=allow_mask,
             move_idx=move_positions,
             side='k',
+            mongo_client=mongo_client,
+            sae_series=sae_series,
+            analysis_name=analysis_name,
+            lorsa_feat_layer=lorsa_feat_layer,
+            lorsa_feat_idx=lorsa_feat_idx,
+            tc_feat_layer=tc_feat_layer,
+            tc_feat_idx=tc_feat_idx,
+            lorsa_activation_matrix=lorsa_activation_matrix,
+            tc_activation_matrix=tc_activation_matrix,
+            act_times_max=act_times_max,
         )
 
     # —— 同步对 rows_q / rows_k 做掩码（不让被剔除的 gid 参与根选择） —— #

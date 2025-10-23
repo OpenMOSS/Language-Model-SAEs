@@ -52,6 +52,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     max_feature_nodes: 1024,
     node_threshold: 0.9,
     edge_threshold: 0.69,
+    max_act_times: null as number | null,
   });
 
   // 移动输入状态
@@ -202,6 +203,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           max_feature_nodes: circuitParams.max_feature_nodes,
           node_threshold: circuitParams.node_threshold,
           edge_threshold: circuitParams.edge_threshold,
+          max_act_times: circuitParams.max_act_times,
           save_activation_info: true,
           model_name: modelName // 添加模型名称
         }),
@@ -274,7 +276,17 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   const handleParamsChange = useCallback((key: keyof typeof circuitParams, value: string) => {
     setCircuitParams(prev => ({
       ...prev,
-      [key]: key === 'max_feature_nodes' ? parseInt(value) || 1024 : parseFloat(value) || prev[key]
+      [key]: key === 'max_feature_nodes' ? parseInt(value) || 1024 : 
+              key === 'max_act_times' ? (() => {
+                if (value === '') return null;
+                const num = parseInt(value);
+                if (isNaN(num)) return null;
+                // 限制在10M-100M范围内，按10M步长调整
+                const clamped = Math.max(10000000, Math.min(100000000, num));
+                // 四舍五入到最近的10M
+                return Math.round(clamped / 10000000) * 10000000;
+              })() :
+              parseFloat(value) || prev[key]
     }));
   }, []);
 
@@ -909,7 +921,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
             </div>
             
             {/* 当前参数显示 */}
-            <div className="grid grid-cols-3 gap-4 text-sm">
+            <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <span className="font-medium text-gray-700">最大特征节点数:</span>
                 <div className="font-mono text-xs bg-blue-50 p-2 rounded mt-1 border border-blue-200">
@@ -926,6 +938,15 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                 <span className="font-medium text-gray-700">边阈值:</span>
                 <div className="font-mono text-xs bg-purple-50 p-2 rounded mt-1 border border-purple-200">
                   {circuitParams.edge_threshold}
+                </div>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700">最大激活次数:</span>
+                <div className="font-mono text-xs bg-orange-50 p-2 rounded mt-1 border border-orange-200">
+                  {circuitParams.max_act_times === null ? '无限制' : 
+                   circuitParams.max_act_times >= 1000000 ? 
+                   `${(circuitParams.max_act_times / 1000000).toFixed(0)}M` : 
+                   circuitParams.max_act_times.toLocaleString()}
                 </div>
               </div>
             </div>
@@ -1052,8 +1073,8 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                 );
               })()}
 
-              {/* Bottom Row: Feature Card */}
-              {clickedNodeId && (() => {
+              {/* Bottom Row: Feature Card - 只在没有Top Activation时显示 */}
+              {clickedNodeId && topActivations.length === 0 && (() => {
                 const currentNode = circuitVisualizationData.nodes.find((node: any) => node.nodeId === clickedNodeId);
                 
                 if (!currentNode) {
@@ -1374,6 +1395,24 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   边重要性阈值，用于过滤不重要的连接。默认值: 0.69
                 </p>
               </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="max_act_times">最大激活次数 (Max Activation Times)</Label>
+                <Input
+                  id="max_act_times"
+                  type="number"
+                  min="10000000"
+                  max="100000000"
+                  step="10000000"
+                  value={circuitParams.max_act_times || ''}
+                  onChange={(e) => handleParamsChange('max_act_times', e.target.value)}
+                  className="font-mono"
+                  placeholder="留空表示无限制"
+                />
+                <p className="text-xs text-gray-500">
+                  过滤dense feature。范围：10M-100M，留空表示无限制
+                </p>
+              </div>
             </div>
             
             {/* 当前参数预览 */}
@@ -1391,6 +1430,15 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                 <div className="flex justify-between">
                   <span className="text-gray-600">边阈值:</span>
                   <span className="font-mono text-purple-600">{circuitParams.edge_threshold}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">最大激活次数:</span>
+                  <span className="font-mono text-orange-600">
+                    {circuitParams.max_act_times === null ? '无限制' : 
+                     circuitParams.max_act_times >= 1000000 ? 
+                     `${(circuitParams.max_act_times / 1000000).toFixed(0)}M` : 
+                     circuitParams.max_act_times.toLocaleString()}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1410,6 +1458,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   max_feature_nodes: 1024,
                   node_threshold: 0.9,
                   edge_threshold: 0.69,
+                  max_act_times: null,
                 });
               }}
               variant="outline"

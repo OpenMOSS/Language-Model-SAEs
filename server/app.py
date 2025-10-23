@@ -1000,6 +1000,7 @@ def circuit_trace(request: dict):
         order_mode = request.get("order_mode", "positive")
         encoder_demean = request.get("encoder_demean", False)
         save_activation_info = request.get("save_activation_info", True)  # 默认启用激活信息保存
+        max_act_times = request.get("max_act_times", None)  # 添加最大激活次数参数
         model_name = request.get("model_name", "lc0/T82-768x15x24h")  # 添加模型名称参数
         
         print(f"🔍 Circuit Trace 请求参数:")
@@ -1008,6 +1009,7 @@ def circuit_trace(request: dict):
         print(f"   - Model Name: {model_name}")
         print(f"   - Side: {side}")
         print(f"   - Order Mode: {order_mode}")
+        print(f"   - Max Act Times: {max_act_times}")
         
         # 验证 side 参数
         if side not in ["q", "k", "both"]:
@@ -1046,6 +1048,7 @@ def circuit_trace(request: dict):
             order_mode=order_mode,
             encoder_demean=encoder_demean,
             save_activation_info=save_activation_info,
+            act_times_max=max_act_times,  # 传递最大激活次数参数
             log_level="INFO",
             hooked_model=hooked_model  # 传递已缓存的模型
         )
