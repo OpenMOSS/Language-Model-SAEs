@@ -28,7 +28,7 @@ class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):
     - Decoder inner product matrices
     """
 
-    def process(
+    def _process_tensors(
         self,
         sae: AbstractSparseAutoEncoder,
         act_times: torch.Tensor,
@@ -38,7 +38,8 @@ class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):
         mapper: KeyedDiscreteMapper,
         device_mesh: DeviceMesh | None = None,
         activation_factory: ActivationFactory | None = None,
-    ) -> list[dict[str, Any]]:
+        activation_factory_process_kwargs: dict[str, Any] = {},
+    ) -> tuple[dict[str, dict[str, torch.Tensor]], list[dict[str, Any]]]:
         """Format the analysis results into the final per-feature format for CrossCoder.
 
         Args:
@@ -53,8 +54,6 @@ class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):
         Returns:
             List of dictionaries containing per-feature analysis results
         """
-        results = []
-
         assert isinstance(sae, CrossCoder), "CrossCoderPostAnalysisProcessor only supports CrossCoder SAE"
         decoder_norms = sae.decoder_norm()
         if isinstance(decoder_norms, DTensor):
@@ -118,32 +117,14 @@ class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):
             f"decoder_inner_product_matrices.shape: {decoder_inner_product_matrices.shape}, expected d_sae dim to match act_times length: {len(act_times)}"
         )
 
-        for i, _ in enumerate(act_times):
-            feature_result = {
-                "act_times": act_times[i].item(),
-                "n_analyzed_tokens": n_analyzed_tokens,
-                "max_feature_acts": max_feature_acts[i].item(),
-                "samplings": [
-                    {
-                        "name": k,
-                        "feature_acts": v["feature_acts"][i].tolist(),
-                        # TODO: Filter out meta that is not string
-                        **{k2: mapper.decode(k2, v[k2][i].tolist()) for k2 in mapper.keys()},
-                    }
-                    for k, v in sample_result.items()
-                ],
+        return sample_result, [
+            {
+                "decoder_norms": decoder_norms[:, i].tolist(),
+                "decoder_similarity_matrices": decoder_similarity_matrices[i, :, :].tolist(),
+                "decoder_inner_product_matrices": decoder_inner_product_matrices[i, :, :].tolist(),
             }
-
-            assert decoder_norms is not None, "decoder_norms is None"
-            assert decoder_similarity_matrices is not None, "decoder_similarity_matrices is None"
-            assert decoder_inner_product_matrices is not None, "decoder_inner_product_matrices is None"
-            feature_result["decoder_norms"] = decoder_norms[:, i].tolist()
-            feature_result["decoder_similarity_matrix"] = decoder_similarity_matrices[i, :, :].tolist()
-            feature_result["decoder_inner_product_matrix"] = decoder_inner_product_matrices[i, :, :].tolist()
-
-            results.append(feature_result)
-
-        return results
+            for i in range(len(act_times))
+        ]
 
 
 # Register the processor for CrossCoder SAE type
