@@ -53,8 +53,6 @@ export const FeaturesPage = () => {
       .then((res) => z.array(z.string()).parse(res));
   });
 
-  const [selectedAnalysis, setSelectedAnalysis] = useState<string | null>(null);
-
   // Metric filtering state
   const [metricsState, fetchMetrics] = useAsyncFn(async (dictionary: string) => {
     if (!dictionary) return [];
@@ -73,7 +71,6 @@ export const FeaturesPage = () => {
   const [metricFilters, setMetricFilters] = useState<Record<string, { min?: number; max?: number }>>({});
   const [featureCount, setFeatureCount] = useState<number | null>(null);
 
-  const [featureIndex, setFeatureIndex] = useState<number>(0);
   const [inputValue, setInputValue] = useState<string>("0");
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
 
@@ -154,7 +151,7 @@ export const FeaturesPage = () => {
     }
   );
 
-  const [featureState, fetchFeature] = useAsyncFn(
+  const [_, fetchFeature] = useAsyncFn(
     async (
       dictionary: string | null,
       featureIndex: number | string = "random",
@@ -231,7 +228,8 @@ export const FeaturesPage = () => {
         featureIndex: feature.featureIndex.toString(),
         analysis: feature.analysisName,
       });
-      return feature;
+      setCurrentFeature(feature);
+      setFeatureLoading(false);
     }
   );
 

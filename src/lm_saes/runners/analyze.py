@@ -250,7 +250,7 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
     activation_factory = ActivationFactory(settings.activation_factories[crosscoder_device_mesh.get_local_rank("head")])
 
     logger.info("Loading CrossCoder model")
-    sae = CrossCoder.from_config(settings.sae, device_mesh=crosscoder_device_mesh)
+    sae = CrossCoder.from_config(settings.sae, device_mesh=crosscoder_device_mesh, fold_activation_scale=False)
 
     logger.info("Feature analyzer initialized")
     analyzer = FeatureAnalyzer(settings.analyzer)

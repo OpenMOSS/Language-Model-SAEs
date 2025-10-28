@@ -8,6 +8,7 @@ import torch.nn as nn
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Partial, Shard
+from torch.distributed.tensor.experimental import local_map
 from typing_extensions import override
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
@@ -275,13 +276,15 @@ class CrossCoder(AbstractSparseAutoEncoder):
         hidden_pre = self._apply_encoding(x, no_einsum=no_einsum)
 
         # Sum across heads and add bias
-        if no_einsum:
-            accumulated_hidden_pre = torch.sum(hidden_pre, dim=-2)
+        if not isinstance(hidden_pre, DTensor):
+            accumulated_hidden_pre = torch.sum(hidden_pre, dim=-2)  # "... n_heads d_sae -> ... d_sae"
         else:
-            accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
+            accumulated_hidden_pre = local_map(
+                lambda x: torch.sum(x, dim=-2, keepdim=True),
+                list(hidden_pre.placements),
+            )(hidden_pre).sum(dim=-2)  # "... n_heads d_sae -> ... d_sae"
 
-        with timer.time("encode_redistribute_tensor_pre_repeat"):
-            if isinstance(accumulated_hidden_pre, DTensor):
+            with timer.time("encode_redistribute_tensor_pre_repeat"):
                 accumulated_hidden_pre = DimMap({"data": 0, "model": -1}).redistribute(accumulated_hidden_pre)
 
         accumulated_hidden_pre = einops.repeat(
@@ -295,7 +298,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 )
 
         # Apply activation function
-        feature_acts = self.activation_function(accumulated_hidden_pre * self.decoder_norm())
+        feature_acts = self.activation_function(accumulated_hidden_pre * self.decoder_norm()) / self.decoder_norm()
 
         if return_hidden_pre:
             return feature_acts, accumulated_hidden_pre
