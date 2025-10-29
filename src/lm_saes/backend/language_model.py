@@ -182,7 +182,7 @@ class TransformerLensLanguageModel(LanguageModel):
                 (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
                 cache_dir=cfg.cache_dir,
                 local_files_only=cfg.local_files_only,
-                torch_dtype=cfg.dtype,
+                dtype=cfg.dtype,
                 trust_remote_code=True,
             )
             if cfg.load_ckpt and not cfg.tokenizer_only
@@ -291,7 +291,7 @@ class HuggingFaceLanguageModel(LanguageModel):
             cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path,
             cache_dir=cfg.cache_dir,
             local_files_only=cfg.local_files_only,
-            torch_dtype=cfg.dtype,
+            dtype=cfg.dtype,
             trust_remote_code=True,
         ).to(self.device)  # type: ignore
 
@@ -463,7 +463,7 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
             cfg.model_name,
             cache_dir=cfg.cache_dir,
             local_files_only=cfg.local_files_only,
-            torch_dtype=cfg.dtype,
+            dtype=cfg.dtype,
             attn_implementation="flash_attention_2" if cfg.use_flash_attn else None,
         ).to(self.device)  # type: ignore
 
