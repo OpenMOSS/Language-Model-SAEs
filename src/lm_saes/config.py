@@ -177,7 +177,7 @@ class LorsaConfig(BaseSAEConfig):
         )
         assert self.hook_point_in != self.hook_point_out, "hook_point_in and hook_point_out must be different"
         assert self.n_ov_heads % self.n_qk_heads == 0, "n_ov_heads must be divisible by n_qk_heads"
-        
+
         if self.attn_scale is None:
             self.attn_scale = self.d_qk_head**0.5
 
@@ -773,6 +773,7 @@ class FeatureAnalyzerConfig(BaseConfig):
 
     clt_layer: int | None = None
     """ Layer to analyze for CLT. Provided iff analyzing CLT. """
+
 
 class DirectLogitAttributorConfig(BaseConfig):
     top_k: int = 10

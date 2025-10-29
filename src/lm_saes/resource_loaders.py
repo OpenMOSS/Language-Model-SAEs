@@ -5,9 +5,9 @@ import torch
 from torch.distributed.device_mesh import DeviceMesh
 
 from lm_saes.backend.language_model import (
+    HuggingFaceLanguageModel,
     LanguageModel,
     LLaDALanguageModel,
-    QwenLanguageModel,
     QwenVLLanguageModel,
     TransformerLensLanguageModel,
 )
@@ -85,10 +85,8 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
     if backend == "huggingface":
         if cfg.model_name.startswith("Qwen/Qwen2.5-VL"):
             return QwenVLLanguageModel(cfg)
-        elif cfg.model_name.startswith("Qwen/Qwen2.5"):
-            return QwenLanguageModel(cfg)
         else:
-            raise NotImplementedError(f"Model {cfg.model_name} not supported in HuggingFace backend.")
+            return HuggingFaceLanguageModel(cfg)
     elif backend == "transformer_lens":
         if cfg.model_name.startswith("GSAI-ML/LLaDA"):
             assert isinstance(cfg, LLaDAConfig)
