@@ -504,7 +504,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         x: Float[torch.Tensor, "batch seq_len d_model"],
         return_hidden_pre: bool = False,
         return_attention_pattern: bool = False,
-        return_attention_zpattern:bool = False,
         return_attention_score: bool = False,
         **kwargs,
     ) -> Union[
