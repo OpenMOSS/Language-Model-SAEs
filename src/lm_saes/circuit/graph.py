@@ -20,6 +20,7 @@ class Graph:
     slug: str
     use_lorsa: bool
     lorsa_pattern: torch.Tensor
+    z_pattern: torch.Tensor
 
     def __init__(
         self,
@@ -38,6 +39,7 @@ class Graph:
         sae_series: Optional[Union[str, List[str]]] = None,
         use_lorsa: bool = True,
         lorsa_pattern: torch.Tensor = None,
+        z_pattern: torch.Tensor = None,
     ):
         """
         A graph object containing the adjacency matrix describing the direct effect of each
@@ -72,6 +74,7 @@ class Graph:
         self.input_tokens = input_tokens
         self.use_lorsa = use_lorsa
         self.lorsa_pattern = lorsa_pattern
+        self.z_pattern = z_pattern
         if sae_series is None:
             print("Graph loaded without sae_series to identify it. Uploading will not be possible.")
         self.sae_series = sae_series
@@ -90,6 +93,7 @@ class Graph:
         self.selected_features = self.selected_features.to(device)
         self.input_tokens = self.input_tokens.to(device)
         self.lorsa_pattern = self.lorsa_pattern.to(device)
+        self.z_pattern = self.z_pattern.to(device)
 
     def to_pt(self, path: str):
         """Saves the graph at the given path"""
@@ -108,6 +112,7 @@ class Graph:
             "sae_series": self.sae_series,
             "slug": self.slug,
             "lorsa_pattern": self.lorsa_pattern,
+            "z_pattern": self.z_pattern
         }
         torch.save(d, path)
 

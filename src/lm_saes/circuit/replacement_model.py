@@ -421,6 +421,7 @@ class ReplacementModel(HookedTransformer):
         if self.use_lorsa:
             activation_matrix = [None] * self.cfg.n_layers * 2
             lorsa_attention_pattern = [None] * self.cfg.n_layers
+            z_attention_pattern = [None] * self.cfg.n_layers
         else:
             activation_matrix = [None] * self.cfg.n_layers
         activation_hooks = []
@@ -431,6 +432,7 @@ class ReplacementModel(HookedTransformer):
                 encode_result = self.lorsas[layer].encode(
                     acts, return_hidden_pre=not apply_activation_function, return_attention_pattern=True
                 )
+                z_pattern = self.lorsas[layer].encode_z_patterns(acts)
 
                 if not apply_activation_function:
                     lorsa_acts = encode_result[1].detach().squeeze(0)
@@ -446,6 +448,7 @@ class ReplacementModel(HookedTransformer):
 
                 activation_matrix[layer] = lorsa_acts
                 lorsa_attention_pattern[layer] = pattern
+                z_attention_pattern[layer] = z_pattern.detach()
 
             activation_hooks.extend(
                 [
@@ -488,6 +491,8 @@ class ReplacementModel(HookedTransformer):
             )
         else:
             lorsa_attention_pattern = None
+            z_attention_pattern = None
+            
 
             def cache_activations_mlp(acts, hook, layer, zero_bos):
                 transcoder_acts = self.transcoders.encode_single_layer(
@@ -519,7 +524,7 @@ class ReplacementModel(HookedTransformer):
                 ]
             )
 
-        return activation_matrix, lorsa_attention_pattern, activation_hooks
+        return activation_matrix, lorsa_attention_pattern, z_attention_pattern, activation_hooks
 
     def get_activations(
         self,
@@ -543,7 +548,7 @@ class ReplacementModel(HookedTransformer):
                 associated activation cache
         """
 
-        activation_cache, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
+        activation_cache, lorsa_attention_pattern, _, activation_hooks = self._get_activation_caching_hooks(
             sparse=sparse,
             zero_bos=zero_bos,
             apply_activation_function=apply_activation_function,
@@ -603,7 +608,7 @@ class ReplacementModel(HookedTransformer):
         zero_bos = zero_bos and tokens[0].cpu().item() in special_token_ids  # == self.tokenizer.bos_token_id
 
         # cache activations and MLP in
-        activation_matrix, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
+        activation_matrix, lorsa_attention_pattern, z_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
             sparse=sparse, zero_bos=zero_bos
         )
         if self.use_lorsa:
@@ -660,6 +665,7 @@ class ReplacementModel(HookedTransformer):
         if self.use_lorsa:
             lorsa_activation_matrix = torch.stack(lorsa_activation_matrix)
             lorsa_attention_pattern = torch.stack(lorsa_attention_pattern)
+            z_attention_pattern = torch.stack(z_attention_pattern)
         clt_activation_matrix = torch.stack(clt_activation_matrix)
         if sparse:
             if self.use_lorsa:
@@ -671,6 +677,7 @@ class ReplacementModel(HookedTransformer):
             logits,
             lorsa_activation_matrix,
             lorsa_attention_pattern,
+            z_attention_pattern,
             clt_activation_matrix,
             error_vectors,
             token_vectors,
@@ -716,7 +723,7 @@ class ReplacementModel(HookedTransformer):
 
         freeze_cache, cache_hooks, _ = self.get_caching_hooks(names_filter=selected_hook_points)
 
-        original_activations, _, activation_caching_hooks = self._get_activation_caching_hooks()
+        original_activations, _, _, activation_caching_hooks = self._get_activation_caching_hooks()
         self.run_with_hooks(inputs, fwd_hooks=cache_hooks + activation_caching_hooks)
 
         def freeze_hook(activations, hook):
@@ -805,7 +812,7 @@ class ReplacementModel(HookedTransformer):
             )
 
         # This activation cache will fill up during our forward intervention pass
-        activation_cache, lorsa_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
+        activation_cache, lorsa_attention_pattern, _, activation_hooks = self._get_activation_caching_hooks(
             apply_activation_function=apply_activation_function,
             sparse=sparse,
         )
