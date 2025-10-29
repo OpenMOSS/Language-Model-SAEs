@@ -630,18 +630,24 @@ def select_encoder_rows_clt(activation_matrix: torch.sparse.Tensor, transcoders:
 
 @torch.no_grad()
 def select_encoder_rows_lorsa(
-    activation_matrix: torch.sparse.Tensor, attention_pattern: torch.Tensor, lorsas: LowRankSparseAttention
+    activation_matrix: torch.sparse.Tensor, attention_pattern: torch.Tensor, z_attention_pattern: torch.Tensor, lorsas: LowRankSparseAttention
 ) -> torch.Tensor:
     """Return encoder rows for **active** features only."""
     rows: List[torch.Tensor] = []
     patterns: List[torch.Tensor] = []
+    z_patterns: List[torch.Tensor] = []
     for layer, row in enumerate(activation_matrix):
         qpos, head_idx = row.coalesce().indices()
+        
         qk_idx = head_idx // (lorsas[layer].cfg.n_ov_heads // lorsas[layer].cfg.n_qk_heads)
         pattern = attention_pattern[layer, qk_idx, qpos]
         patterns.append(pattern)
+        
+        z_pattern = z_attention_pattern[layer, :, qpos]
+        z_patterns.append(z_pattern)
+        
         rows.append(lorsas[layer].W_V[head_idx])
-    return torch.cat(rows), torch.cat(patterns)
+    return torch.cat(rows), torch.cat(patterns), torch.cat(z_patterns)
 
 
 def compute_partial_influences(edge_matrix, logit_p, row_to_node_index, max_iter=128, device=None):
@@ -752,13 +758,14 @@ def _run_attribution(
     logger.info("Phase 0: Precomputing activations and vectors")
     phase_start = time.time()
     input_ids = ensure_tokenized(prompt, model.tokenizer)
-    logits, lorsa_activation_matrix, lorsa_attention_pattern, clt_activation_matrix, error_vecs, token_vecs = (
+    logits, lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, clt_activation_matrix, error_vecs, token_vecs = (
         model.setup_attribution(input_ids, sparse=True)
     )
+    print(f"{lorsa_attention_pattern.shape=} {z_attention_pattern.shape=}")
     if use_lorsa:
         lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas)
-        lorsa_encoder_rows, lorsa_attention_patterns = select_encoder_rows_lorsa(
-            lorsa_activation_matrix, lorsa_attention_pattern, model.lorsas
+        lorsa_encoder_rows, lorsa_attention_patterns, z = select_encoder_rows_lorsa(
+            lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, model.lorsas
         )
     else:
         lorsa_decoder_vecs = None
@@ -832,6 +839,7 @@ def _run_attribution(
     edge_matrix = torch.zeros(max_feature_nodes + n_logits, total_nodes)
     # if use_lorsa:
     lorsa_pattern = torch.zeros(max_feature_nodes + n_logits, n_pos)
+    z_pattern = torch.zeros(max_feature_nodes + n_logits, n_pos)
     # Maps row indices in edge_matrix to original feature/node indices
     # First populated with logit node IDs, then feature IDs in attribution order
     row_to_node_index = torch.zeros(max_feature_nodes + n_logits, dtype=torch.int32)
@@ -1067,4 +1075,7 @@ def _run_attribution(
     total_time = time.time() - start_time
     logger.info(f"Attribution completed in {total_time:.2f}s")
 
-    return graph
+    if skip_qk_tracing:
+        return graph
+    else:
+        return graph, q_side_result, k_side_result

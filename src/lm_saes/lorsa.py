@@ -501,6 +501,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         x: Float[torch.Tensor, "batch seq_len d_model"],
         return_hidden_pre: bool = False,
         return_attention_pattern: bool = False,
+        return_attention_zpattern:bool = False,
         return_attention_score: bool = False,
         **kwargs,
     ) -> Union[
@@ -629,6 +630,20 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         head_idx: Int[torch.Tensor, " n_active_features"],
     ) -> Float[torch.Tensor, "n_active_features k_pos"]:
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
+        qk_idx: Tensor = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
+        q, k, v = self._compute_qkv(x)
+
+        # (n_active_features, q_pos, k_pos)
+        pattern = self._compute_attention_pattern(q, k)[qk_idx, 0]
+        return pattern.mul_(v[0, :, head_idx, None].permute(1, 2, 0))
+    
+    def encode_z_patterns(
+        self,
+        x: Float[torch.Tensor, "batch seq_len d_model"],
+    ):
+        assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
+        
+        head_idx = torch.range(self.cfg.d_sae)
         qk_idx: Tensor = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
         q, k, v = self._compute_qkv(x)
 
