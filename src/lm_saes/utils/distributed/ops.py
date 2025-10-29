@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Literal, Tuple, Union, overload
 
 import torch
 from jaxtyping import Float
@@ -6,6 +6,34 @@ from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.placement_types import Shard
+
+
+@overload
+def distributed_topk(
+    x: Float[DTensor, "batch n_layers d_sae"],
+    k: int,
+    device_mesh: DeviceMesh,
+    dim: Union[int, Tuple[int, ...]] = -1,
+    tolerance: int = 1,
+    max_iterations: int = 50,
+    mesh_dim_name: str = "model",
+    *,
+    return_threshold: Literal[False] = False,
+) -> Float[DTensor, "batch n_layers d_sae"]: ...
+
+
+@overload
+def distributed_topk(
+    x: Float[DTensor, "batch n_layers d_sae"],
+    k: int,
+    device_mesh: DeviceMesh,
+    dim: Union[int, Tuple[int, ...]] = -1,
+    tolerance: int = 1,
+    max_iterations: int = 50,
+    mesh_dim_name: str = "model",
+    *,
+    return_threshold: Literal[True],
+) -> Tuple[Float[DTensor, "batch n_layers d_sae"], Float[Tensor, ""]]: ...
 
 
 def distributed_topk(
@@ -16,20 +44,25 @@ def distributed_topk(
     tolerance: int = 1,
     max_iterations: int = 50,
     mesh_dim_name: str = "model",
+    *,
     return_threshold: bool = False,
-) -> Union[DTensor, Tuple[DTensor, Float[Tensor, ""]]]:
+) -> Union[Float[DTensor, "batch n_layers d_sae"], Tuple[Float[DTensor, "batch n_layers d_sae"], Float[Tensor, ""]]]:
     """
     Perform distributed batch kthvalue operation on a DTensor using binary search.
 
     Args:
         x: Input tensor of shape (batch, n_layers, d_sae)
         k: Target number of top elements to keep
-        k_range: Acceptable range for the number of elements above threshold (lower_bound, upper_bound)
         device_mesh: Device mesh for distributed training
+        dim: Dimension(s) along which to perform topk operation
+        tolerance: Acceptable range for the number of elements above threshold
+        max_iterations: Maximum number of binary search iterations
         mesh_dim_name: Name of the mesh dimension to shard along
+        return_threshold: If True, return both the result tensor and the threshold value
 
     Returns:
-        Tuple of (threshold, None) where threshold is a scalar value that gives acceptable k elements
+        If return_threshold is False, returns the filtered DTensor.
+        If return_threshold is True, returns a tuple of (filtered DTensor, threshold).
     """
     if not isinstance(x, DTensor) or device_mesh is None:
         raise ValueError("x must be a DTensor and device_mesh must be provided")
@@ -67,12 +100,13 @@ def distributed_topk(
 
         k_lower_bound, k_upper_bound = k - tolerance, k + tolerance
         search_low_val = torch.zeros(constant_dim_size, device=local_tensor.device)
-        search_high_val = torch.full(constant_dim_size, local_tensor.max(), device=local_tensor.device)
+        search_high_val = torch.full(constant_dim_size, local_tensor.max().item(), device=local_tensor.device)
 
         local_tensor_flat = local_tensor.flatten(start_dim=len(constant_dims))
 
         group = device_mesh.get_group(mesh_dim_name)
 
+        threshold = (search_low_val + search_high_val) / 2
         for _ in range(max_iterations):
             threshold = (search_low_val + search_high_val) / 2
             torch.distributed.all_reduce(threshold, group=group, op=torch.distributed.ReduceOp.AVG)
