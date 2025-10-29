@@ -601,7 +601,7 @@ class TrainLorsaSettings(BaseSettings):
 
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
-    
+
     data_parallel_size: int = 1
     """Size of data parallel mesh"""
 
