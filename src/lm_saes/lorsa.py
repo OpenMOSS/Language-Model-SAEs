@@ -643,7 +643,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     ):
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
         
-        head_idx = torch.range(self.cfg.d_sae)
+        head_idx = torch.arange(self.cfg.d_sae)
         qk_idx: Tensor = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
         q, k, v = self._compute_qkv(x)
 
