@@ -32,6 +32,7 @@ from lm_saes.database import MongoClient
 from lm_saes.utils.distributed import DimMap, distributed_topk
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.math import topk
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.timer import timer
 
@@ -508,14 +509,15 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             )
 
         elif self.cfg.act_fn.lower() == "topk":
-            if self.device_mesh is not None:
 
-                def topk_activation(
-                    x: Union[
-                        Float[torch.Tensor, "batch d_sae"],
-                        Float[torch.Tensor, "batch seq_len d_sae"],
-                    ],
-                ):
+            def topk_activation(
+                x: Union[
+                    Float[torch.Tensor, "batch d_sae"],
+                    Float[torch.Tensor, "batch seq_len d_sae"],
+                ],
+            ):
+                if self.device_mesh is not None:
+                    assert isinstance(x, DTensor)
                     return distributed_topk(
                         x,
                         k=self.current_k,
@@ -523,16 +525,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         dim=-1,
                         mesh_dim_name="model",
                     )
-            else:
-
-                def topk_activation(
-                    x: Union[
-                        Float[torch.Tensor, "batch d_sae"],
-                        Float[torch.Tensor, "batch seq_len d_sae"],
-                    ],
-                ):
-                    from lm_saes.utils.math import topk
-
+                else:
                     return topk(
                         x,
                         k=self.current_k,
@@ -542,52 +535,36 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             return topk_activation
 
         elif self.cfg.act_fn.lower() == "batchtopk":
-            if device_mesh is not None:
 
-                def batch_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch d_sae"],
-                        Float[torch.Tensor, "batch seq_len d_sae"],
-                    ],
-                ):
-                    x = x * x.gt(0).to(x.dtype)
-                    original_shape = None
-                    if x.ndim == 3:
-                        original_shape = (x.size(0), x.size(1))
-                        x = x.flatten(end_dim=1)
-                    result = distributed_topk(
+            def batch_topk(
+                x: Union[
+                    Float[torch.Tensor, "batch d_sae"],
+                    Float[torch.Tensor, "batch seq_len d_sae"],
+                ],
+            ):
+                x = x * x.gt(0).to(x.dtype)
+                original_shape = None
+                if x.ndim == 3:
+                    original_shape = (x.size(0), x.size(1))
+                    x = x.flatten(end_dim=1)
+                result = (
+                    distributed_topk(
                         x,
                         k=self.current_k * x.size(0),
-                        device_mesh=device_mesh,
+                        device_mesh=x.device_mesh,
                         dim=(-2, -1),
                         mesh_dim_name="model",
                     )
-                    if original_shape is not None:
-                        result = result.unflatten(dim=0, sizes=original_shape)
-                    return result
-            else:
-                # single-GPU batchtopk
-                from lm_saes.utils.math import topk
-
-                def batch_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch d_sae"],
-                        Float[torch.Tensor, "batch seq_len d_sae"],
-                    ],
-                ):
-                    x = x * x.gt(0).to(x.dtype)
-                    original_shape = None
-                    if x.ndim == 3:
-                        original_shape = (x.size(0), x.size(1))
-                        x = x.flatten(end_dim=1)
-                    result = topk(
+                    if isinstance(x, DTensor)
+                    else topk(
                         x,
                         k=self.current_k * x.size(0),
                         dim=(-2, -1),
                     )
-                    if original_shape is not None:
-                        result = result.unflatten(dim=0, sizes=original_shape)
-                    return result
+                )
+                if original_shape is not None:
+                    result = result.unflatten(dim=0, sizes=original_shape)
+                return result
 
             return batch_topk
 

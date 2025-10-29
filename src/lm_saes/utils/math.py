@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Literal, Tuple, Union, overload
 
 import torch
 from jaxtyping import Float
@@ -37,26 +37,55 @@ def norm_ratio(a, b):
     return a_norm / b_norm
 
 
+@overload
 def topk(
     x: Float[torch.Tensor, "batch n_layers d_sae"],
     k: int,
     dim: Union[int, Tuple[int, ...]] = -1,
     tolerance: int = 1,
     max_iterations: int = 50,
+    *,
+    return_threshold: Literal[False] = False,
+) -> Float[torch.Tensor, "batch n_layers d_sae"]: ...
+
+
+@overload
+def topk(
+    x: Float[torch.Tensor, "batch n_layers d_sae"],
+    k: int,
+    dim: Union[int, Tuple[int, ...]] = -1,
+    tolerance: int = 1,
+    max_iterations: int = 50,
+    *,
+    return_threshold: Literal[True],
+) -> tuple[Float[torch.Tensor, "batch n_layers d_sae"], torch.Tensor]: ...
+
+
+def topk(
+    x: Float[torch.Tensor, "batch n_layers d_sae"],
+    k: int,
+    dim: Union[int, Tuple[int, ...]] = -1,
+    tolerance: int = 1,
+    max_iterations: int = 50,
+    *,
     return_threshold: bool = False,
-):
+) -> Union[
+    Float[torch.Tensor, "batch n_layers d_sae"], Tuple[Float[torch.Tensor, "batch n_layers d_sae"], torch.Tensor]
+]:
     """
     Perform distributed batch kthvalue operation on a DTensor using binary search.
 
     Args:
         x: Input tensor of shape (batch, n_layers, d_sae)
         k: Target number of top elements to keep
-        k_range: Acceptable range for the number of elements above threshold (lower_bound, upper_bound)
-        device_mesh: Device mesh for distributed training
-        mesh_dim_name: Name of the mesh dimension to shard along
+        dim: Dimension(s) along which to perform topk operation
+        tolerance: Acceptable range for the number of elements above threshold
+        max_iterations: Maximum number of binary search iterations
+        return_threshold: If True, return both the result tensor and the threshold value
 
     Returns:
-        Tuple of (threshold, None) where threshold is a scalar value that gives acceptable k elements
+        If return_threshold is False, returns the filtered tensor.
+        If return_threshold is True, returns a tuple of (filtered tensor, threshold).
     """
     with torch.no_grad():
         if isinstance(dim, int):
@@ -73,10 +102,11 @@ def topk(
 
         k_lower_bound, k_upper_bound = k - tolerance, k + tolerance
         search_low_val = torch.zeros(constant_dim_size, device=x.device)
-        search_high_val = torch.full(constant_dim_size, x.max(), device=x.device)
+        search_high_val = torch.full(constant_dim_size, x.max().item(), device=x.device)
 
         x_flat = x.flatten(start_dim=len(constant_dims))
 
+        threshold = (search_low_val + search_high_val) / 2
         for _ in range(max_iterations):
             threshold = (search_low_val + search_high_val) / 2
 

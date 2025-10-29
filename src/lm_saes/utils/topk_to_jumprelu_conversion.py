@@ -4,6 +4,7 @@ from typing import Iterable, Optional
 import torch
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation_functions import JumpReLU
@@ -36,22 +37,22 @@ def topk_to_jumprelu_conversion(
     _, hidden_pre = sae.encode(x, **encoder_kwargs, return_hidden_pre=True)
     hidden_pre = torch.clamp(hidden_pre, min=0.0)
 
-    topk_func = topk if device_mesh is None else distributed_topk
-    kwargs = (
-        {}
-        if device_mesh is None
-        else {
-            "device_mesh": device_mesh,
-            "mesh_dim_name": "model",
-        }
-    )
-
-    topk_acts, threshold = topk_func(
-        hidden_pre,
-        k=sae.cfg.top_k * hidden_pre.size(0),
-        dim=(-3, -2, -1),
-        return_threshold=True,
-        **kwargs,
+    topk_acts, threshold = (
+        topk(
+            hidden_pre,
+            k=sae.cfg.top_k * hidden_pre.size(0),
+            dim=(-3, -2, -1),
+            return_threshold=True,
+        )
+        if not isinstance(hidden_pre, DTensor)
+        else distributed_topk(
+            hidden_pre,
+            k=sae.cfg.top_k * hidden_pre.size(0),
+            device_mesh=hidden_pre.device_mesh,
+            dim=(-2, -1),
+            mesh_dim_name="model",
+            return_threshold=True,
+        )
     )
 
     origin_rec = sae(x)
