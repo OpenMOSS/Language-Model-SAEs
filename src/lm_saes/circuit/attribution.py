@@ -633,6 +633,7 @@ def select_encoder_rows_lorsa(
     activation_matrix: torch.sparse.Tensor, attention_pattern: torch.Tensor, z_attention_pattern: torch.Tensor, lorsas: LowRankSparseAttention
 ) -> torch.Tensor:
     """Return encoder rows for **active** features only."""
+    print(f"{attention_pattern.shape=} {z_attention_pattern.shape=}")
     rows: List[torch.Tensor] = []
     patterns: List[torch.Tensor] = []
     z_patterns: List[torch.Tensor] = []
@@ -643,7 +644,7 @@ def select_encoder_rows_lorsa(
         pattern = attention_pattern[layer, qk_idx, qpos]
         patterns.append(pattern)
         
-        z_pattern = z_attention_pattern[layer, :, qpos]
+        z_pattern = z_attention_pattern[layer, head_idx, qpos]
         z_patterns.append(z_pattern)
         
         rows.append(lorsas[layer].W_V[head_idx])
@@ -764,12 +765,12 @@ def _run_attribution(
     print(f"{lorsa_attention_pattern.shape=} {z_attention_pattern.shape=}")
     if use_lorsa:
         lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas)
-        lorsa_encoder_rows, lorsa_attention_patterns, z = select_encoder_rows_lorsa(
+        lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = select_encoder_rows_lorsa(
             lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, model.lorsas
         )
     else:
         lorsa_decoder_vecs = None
-        lorsa_encoder_rows, lorsa_attention_patterns = None, None
+        lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = None, None, None
 
     clt_decoder_vecs = select_scaled_decoder_vecs_clt(clt_activation_matrix, model.transcoders)
     clt_encoder_rows = select_encoder_rows_clt(clt_activation_matrix, model.transcoders)
@@ -943,6 +944,19 @@ def _run_attribution(
 
         return res
 
+    def idx_to_z_pattern(idx: torch.Tensor) -> torch.Tensor:
+        if use_lorsa:
+            is_lorsa = idx < len(lorsa_feat_layer)
+            res = torch.where(
+                is_lorsa.to(z_attention_patterns.device)[:, None],
+                z_attention_patterns[idx * is_lorsa],
+                torch.nn.functional.one_hot(clt_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa], num_classes=n_pos),
+            )
+        else:
+            res = torch.nn.functional.one_hot(clt_feat_pos[idx], num_classes=n_pos)
+
+        return res
+    
     # def idx_to_activation_values(idx: torch.Tensor) -> torch.Tensor:
     #     is_lorsa = idx < len(lorsa_feat_layer)
     #     if is_lorsa.squeeze().item():
@@ -1002,6 +1016,7 @@ def _run_attribution(
             edge_matrix[st:end, :logit_offset] = rows.cpu()
             # if use_lorsa:
             lorsa_pattern[st:end, :] = idx_to_pattern(idx_batch)
+            z_pattern[st:end, :] = idx_to_z_pattern(idx_batch)
             row_to_node_index[st:end] = idx_batch
             visited[idx_batch] = True
             st = end
@@ -1050,6 +1065,7 @@ def _run_attribution(
     edge_matrix = edge_matrix[row_to_node_index.argsort()]
     # if use_lorsa:
     lorsa_pattern = lorsa_pattern[row_to_node_index.argsort()]
+    z_pattern = z_pattern[row_to_node_index.argsort()]
     final_node_count = edge_matrix.shape[1]
     full_edge_matrix = torch.zeros(final_node_count, final_node_count)
     full_edge_matrix[:max_feature_nodes] = edge_matrix[:max_feature_nodes]
@@ -1070,6 +1086,7 @@ def _run_attribution(
         sae_series=sae_series,
         use_lorsa=use_lorsa,
         lorsa_pattern=lorsa_pattern,
+        z_pattern=z_pattern,
     )
 
     total_time = time.time() - start_time
