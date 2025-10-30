@@ -270,6 +270,7 @@ class TransformerLensLanguageModel(LanguageModel):
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
             )
             tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
+        tokens = tokens.contiguous()
         with timer.time("run_with_cache_until"):
             # _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points, use_flash_attn=False)
             _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)

@@ -471,6 +471,7 @@ class TrainerConfig(BaseConfig):
     ] = Field(default=torch.bfloat16, exclude=True, validate_default=False)
     sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None
     tanh_stretch_coefficient: float = 4.0
+    frequency_scale: float = 0.01
     p: int = 1
     initial_k: int | float | None = None
     k_warmup_steps: int | float = 0.1

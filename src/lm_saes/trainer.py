@@ -332,6 +332,7 @@ class Trainer:
             return_aux_data=not self.cfg.skip_metrics_calculation,
             l1_coefficient=l1_coefficient,
             lp_coefficient=lp_coefficient,
+            frequency_scale=self.cfg.frequency_scale,
         )
 
         loss, (loss_data, aux_data) = result if not self.cfg.skip_metrics_calculation else (result, ({}, {}))
