@@ -408,14 +408,15 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         # Standard encoder: ϕ(et ⋅ x − bt)
         hidden_pre = x @ self.W_E + self.b_E
 
-        # Apply activation function with decoder norm for sparsity
+        # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
-            sparsity_scores = hidden_pre * self.decoder_norm()
-        else:
-            sparsity_scores = hidden_pre
+            hidden_pre = hidden_pre * self.decoder_norm()
 
-        activation_mask = self.activation_function(sparsity_scores)
-        feature_acts = hidden_pre * activation_mask
+        feature_acts = self.activation_function(hidden_pre)
+        
+        if self.cfg.sparsity_include_decoder_norm:
+            feature_acts = feature_acts / self.decoder_norm()
+            hidden_pre = hidden_pre / self.decoder_norm()
 
         if return_hidden_pre:
             return feature_acts, hidden_pre
