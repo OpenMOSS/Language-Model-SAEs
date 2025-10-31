@@ -179,8 +179,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   // 新增：Circuit Trace状态
   const [isTracing, setIsTracing] = useState(false);
 
-  // 当使用自定义FEN开始且轮到模型走子时，自动触发一次模型走棋
-  const [justStartedFromCustomFen, setJustStartedFromCustomFen] = useState(false);
+  // 移除：不在初始化或任何自动时机触发模型走棋，改为仅按按钮触发
 
   // 根据模式与当前局面导出当前是否人类/模型回合
   const isWhiteToMove = game.turn() === 'w';
@@ -391,13 +390,39 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   const startWithCustomFen = useCallback(() => {
     if (customFen.trim()) {
     try {
-      startNewGame(customFen.trim());
-      setJustStartedFromCustomFen(true);
+      // 直接用自定义fen新建Chess实例
+      const newGame = new Chess(customFen.trim());
+      setGame(newGame);
+      // 直接同步设置当前游戏state
+      setGameState({
+        fen: newGame.fen(),
+        moves: [],
+        isGameOver: newGame.isGameOver(),
+        winner: null,
+        isPlayerTurn: newGame.turn() === 'w',
+        gameEndReason: null,
+      });
+      // 同步通知外部（如 Circuit Tracing）当前FEN与空历史，用于立刻更新“分析FEN(移动前)”与“当前FEN”
+      onGameStateUpdate?.(newGame.fen(), []);
+      // 额外：写入本地缓存，供 Circuit Tracing 直接读取
+      try {
+        localStorage.setItem('circuit_game_fen', newGame.fen());
+      } catch {}
+      // 重置计时/分析状态
+      setTimer(prev => ({ ...prev, whiteTime: 180 * 60, blackTime: 180 * 60, isRunning: false, currentPlayer: 'w', lastMoveTime: Date.now() }));
+      setMoveHistory([]);
+      setAnalysis(null); // 清空旧分析
+      setIsAutoPlay(false);
+      setShowPgnDialog(false);
+      setShowEndGameDialog(false);
+      if (autoPlayInterval) { clearInterval(autoPlayInterval); setAutoPlayInterval(null); }
+      // 刷新分析（如有需要，可注释掉）
+      // getStockfishAnalysis(newGame.fen()); // 如果你希望用“分析模式”自动刷新分析结果，请取消注释
     } catch (error) {
       alert('无效的FEN字符串');
     }
     }
-  }, [customFen, startNewGame]);
+  }, [customFen, autoPlayInterval]);
 
   // 获取Stockfish分析
   const getStockfishAnalysis = useCallback(async (fen: string) => {
@@ -808,15 +833,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     fetchAvailableModels();
   }, [fetchAvailableModels]);
 
-  useEffect(() => {
-    if (justStartedFromCustomFen) {
-      // 仅在从自定义FEN启动后的首次渲染尝试触发一次模型走棋
-      if (isModelTurn && !isLoading && !isTracing) {
-        handleModelMove();
-      }
-      setJustStartedFromCustomFen(false);
-    }
-  }, [justStartedFromCustomFen, isModelTurn, isLoading, isTracing, handleModelMove]);
+  // 不自动触发模型走棋，用户需点击“让模型走棋”按钮
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -924,7 +941,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   isInteractive={isHumanTurn && !isTracing}
                   autoFlipWhenBlack={autoFlipWhenBlack}
                   analysisName="对局棋盘"
-                  showSelfPlay={true}  // 启用自对弈功能
+                  showSelfPlay={false}
                 />
               </div>
               

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -68,6 +68,39 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   // Top Activation 相关状态
   const [topActivations, setTopActivations] = useState<any[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
+
+  // 优先使用本地缓存中的自定义FEN（当父组件prop未及时更新时）
+  const effectiveGameFen = useMemo(() => {
+    try {
+      const cached = localStorage.getItem('circuit_game_fen');
+      return (cached && cached.length > 0) ? cached : gameFen;
+    } catch {
+      return gameFen;
+    }
+  }, [gameFen]);
+
+  // 本地缓存：按FEN缓存最近一次输入的UCI移动
+  const MOVE_CACHE_KEY = 'circuit_move_by_fen_v1';
+  const loadCachedMove = useCallback((fen: string): string => {
+    try {
+      const raw = localStorage.getItem(MOVE_CACHE_KEY);
+      if (!raw) return '';
+      const obj = JSON.parse(raw) as Record<string, string>;
+      return obj[fen] || '';
+    } catch {
+      return '';
+    }
+  }, []);
+  const saveCachedMove = useCallback((fen: string, move: string) => {
+    try {
+      const raw = localStorage.getItem(MOVE_CACHE_KEY);
+      const obj = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+      obj[fen] = move;
+      localStorage.setItem(MOVE_CACHE_KEY, JSON.stringify(obj));
+    } catch {
+      /* no-op */
+    }
+  }, []);
 
   // 节点激活数据接口
   interface NodeActivationData {
@@ -162,8 +195,8 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
 
   // 修改handleCircuitTrace函数来支持不同的order_mode
   const handleCircuitTrace = useCallback(async (orderMode: 'positive' | 'negative' = 'positive') => {
-    // 使用输入的移动或最后一个移动
-    const moveUci = inputMove.trim() || lastMove;
+    // 使用输入的移动、缓存的该FEN移动，或最后一个移动
+    const moveUci = inputMove.trim() || loadCachedMove(effectiveGameFen) || lastMove;
     
     if (!moveUci) {
       alert('请输入要分析的移动或先走一步棋');
@@ -176,7 +209,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
     
     console.log('🔍 Circuit Trace 参数:', {
-      fen: gameFen, // move之前的FEN
+      fen: effectiveGameFen, // move之前的FEN
       move_uci: moveUci,
       order_mode: orderMode,
       current_fen: currentFen,
@@ -196,7 +229,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ 
-          fen: gameFen, // 使用move之前的FEN
+          fen: effectiveGameFen, // 使用move之前的FEN
           move_uci: moveUci,
           side: traceSide,
           order_mode: orderMode,
@@ -211,6 +244,10 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       
       if (response.ok) {
         const data = await response.json();
+        // 成功后缓存本次移动
+        if (moveUci) {
+          saveCachedMove(effectiveGameFen, moveUci);
+        }
         
         // 确保 metadata 中包含正确的模型信息
         if (data.metadata) {
@@ -237,7 +274,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     } finally {
       onCircuitTraceEnd?.();
     }
-  }, [gameFen, currentFen, lastMove, gameHistory, inputMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide, traceModel]);
+  }, [gameFen, currentFen, lastMove, gameHistory, inputMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide, traceModel, loadCachedMove, saveCachedMove]);
 
   // 新增：保存原始graph JSON（与后端create_graph_files一致的数据结构）
   const handleSaveGraphJson = useCallback(() => {
@@ -250,7 +287,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const slug = raw?.metadata?.slug || 'circuit_trace';
       // 从当前FEN解析全回合数（第6段），若解析失败则回退为基于历史长度估算
-      const fenParts = gameFen.split(' ');
+      const fenParts = effectiveGameFen.split(' ');
       const fullmove = fenParts.length >= 6 && !Number.isNaN(parseInt(fenParts[5]))
         ? parseInt(fenParts[5])
         : Math.max(1, Math.ceil(gameHistory.length / 2));
@@ -769,6 +806,12 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
   }, [lastMove, inputMove]);
 
+  // 当有效分析FEN变化时：清空待分析移动，避免自动带入旧移动/缓存
+  useEffect(() => {
+    setInputMove('');
+    setMoveError('');
+  }, [effectiveGameFen]);
+
   return (
     <div className="space-y-6">
       {/* Circuit Trace 控制面板 */}
@@ -873,6 +916,8 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   onChange={(e) => {
                     setInputMove(e.target.value);
                     setMoveError('');
+                    // 写入缓存（按当前分析fen）
+                  saveCachedMove(effectiveGameFen, e.target.value);
                   }}
                   className={`font-mono ${moveError ? 'border-red-500' : ''}`}
                 />
@@ -894,13 +939,13 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
               <div>
                 <span className="font-medium text-gray-700">分析FEN (移动前):</span>
                 <div className="font-mono text-xs bg-blue-50 p-2 rounded mt-1 break-all border border-blue-200">
-                  {gameFen}
+                  {effectiveGameFen}
                 </div>
               </div>
               <div>
                 <span className="font-medium text-gray-700">当前FEN (移动后):</span>
                 <div className="font-mono text-xs bg-green-50 p-2 rounded mt-1 break-all border border-green-200">
-                  {currentFen || gameFen}
+                  {currentFen || effectiveGameFen}
                 </div>
               </div>
             </div>

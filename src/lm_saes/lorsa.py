@@ -159,6 +159,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         self.register_buffer("IGNORE", IGNORE)
 
         if self.cfg.positional_embedding_type == "rotary":
+            print("use rotary positional embedding !!!!!")
             # Applies a rotation to each two-element chunk of keys and queries pre dot producting to bake in relative position.
             if self.cfg.rotary_dim is None:  # keep mypy happy
                 raise ValueError("Rotary dim must be provided for rotary positional embeddings")
@@ -397,7 +398,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         x, _ = self.prepare_input(activation_batch)
         
         d_model = self.W_O.shape[1]
-        print(f'd_model in WDDDD:{d_model = }')
+
         leela_d_head = encoder_layer.mha.d_k
         leela_n_heads = encoder_layer.mha.n_heads
         
@@ -413,8 +414,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             return z
         handle = encoder_layer.mha.hook_z.add_hook(capture_hook)
         _ = encoder_layer.forward(x)
-        print(f'{captured_z.shape = }') #[256, 24, 64, 32]
-        print(f'{leela_W_O.shape = }')
+        # print(f'{captured_z.shape = }') #[256, 24, 64, 32]
+        # print(f'{leela_W_O.shape = }') #[32, n_heads, d_model]
         output_per_head = torch.einsum('b n s h, n h d -> b s n d', captured_z, leela_W_O)
         n_ov_per_orig_head = self.cfg.n_ov_heads // encoder_layer.n_heads
         for orig_head_index in range(encoder_layer.n_heads):
@@ -794,10 +795,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             raise ValueError("This LORSA has no attn_scale to initialize.")
         if not hasattr(encoder_layer.mha, "qk_scale"):
             raise ValueError("Encoder layer has no qk_scale to initialize from.")
-        
-        # 注意：原始注意力是乘，LORSA是除，所以需要取倒数
+
         self.attn_scale.data = 1.0 / encoder_layer.mha.qk_scale.data
-        print(f'init_attn_scale_from_encoder: {self.attn_scale.data = }')
 
 
     @torch.no_grad()

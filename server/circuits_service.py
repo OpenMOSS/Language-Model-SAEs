@@ -406,6 +406,13 @@ def run_circuit_trace(
         device = "cpu"
     
     try:
+        # 合法性检测：验证move_uci在prompt fen下是否合法
+        board = chess.Board(prompt)
+        legal_uci_moves = [move.uci() for move in board.legal_moves]
+        if move_uci not in legal_uci_moves:
+            logger.error(f"❌ 移动 {move_uci} 在fen {prompt} 下不合法！")
+            raise Exception(f"不合法的UCI移动: {move_uci} 不在fen {prompt}的合法走法中。\n合法走法列表: {legal_uci_moves}")
+
         # 加载模型
         print("加载模型和transcoders...")
         print(f'{lorsa_base_path = }')
