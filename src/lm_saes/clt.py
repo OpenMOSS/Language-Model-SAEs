@@ -331,7 +331,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         Decoders at layer L: uniformly initialized in range (-1/sqrt(L*d_model), 1/sqrt(L*d_model))
         """
         super().init_parameters(**kwargs)  # jump ReLU threshold is initialized in super()
-        super().init_parameters(**kwargs)  # jump ReLU threshold is initialized in super()
 
         # Initialize encoder weights and biases
         encoder_bound = 1.0 / math.sqrt(self.cfg.d_sae)
@@ -630,7 +629,8 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             # Add bias contribution (single bias vector for this target layer)
             contribution = contribution + decoder_bias
             if isinstance(contribution, DTensor):
-                contribution = contribution.full_tensor()
+                contribution = DimMap({"data": 0}).redistribute(contribution)
+
             reconstructed.append(contribution)
 
         return torch.stack(reconstructed, dim=1 if batch_first else 0)
@@ -658,6 +658,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         feature_acts: Union[
             Float[torch.Tensor, "batch n_layers d_sae"],
             Float[torch.Tensor, "batch seq_len n_layers d_sae"],
+            List[Float[torch.sparse.Tensor, "seq_len d_sae"]],
         ],
         layer_to: int,
     ) -> Union[
@@ -693,7 +694,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             contribution = DTensor.from_local(
                 contribution.unsqueeze(1),
                 device_mesh=self.device_mesh,
-                placements=self.dim_maps()["W_D"].placements(self.device_mesh),
+                placements=DimMap({'data': 0, 'model': 1}).placements(self.device_mesh),
             )
             contribution = contribution.sum(dim=1)
 
@@ -906,11 +907,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             if hook_point not in batch:
                 raise ValueError(f"Missing hook point {hook_point} in batch")
             x_layers.append(batch[hook_point])
-        x = torch.stack(x_layers, dim=-2)  # (..., n_layers, d_model)
+        # it is a bug of DTensor, ideally, we should stack along dim=-2,but it will cause an error on shard dim.
+        x = torch.stack(x_layers, dim=x_layers[0].ndim - 1)  # (..., n_layers, d_model)
 
-        if isinstance(self.W_E, DTensor) and not isinstance(x, DTensor):
-            assert self.device_mesh is not None
-            x = DTensor.from_local(x, device_mesh=self.device_mesh, placements=[torch.distributed.tensor.Replicate()])
         encoder_kwargs = {}
         decoder_kwargs = {}
         return x, encoder_kwargs, decoder_kwargs
@@ -923,9 +922,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         if hook_point_in not in batch:
             raise ValueError(f"Missing hook point {hook_point_in} in batch")
         x = batch[hook_point_in]
-        if isinstance(self.W_E, DTensor) and not isinstance(x, DTensor):
-            assert self.device_mesh is not None
-            x = DTensor.from_local(x, device_mesh=self.device_mesh, placements=[torch.distributed.tensor.Replicate()])
         return x, {}, {}
 
     @override

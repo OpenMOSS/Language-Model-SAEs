@@ -430,7 +430,7 @@ class Trainer:
             if isinstance(l_s, DTensor):
                 l_s = l_s.full_tensor()
 
-            l_p = log_info["l_p"]
+            l_p = log_info.get("l_p", None)
             if isinstance(l_p, DTensor):
                 l_p = l_p.full_tensor()
 

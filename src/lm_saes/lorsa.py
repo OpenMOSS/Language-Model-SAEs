@@ -205,7 +205,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             if self.cfg.use_post_qk_ln and self.cfg.normalization_type == "RMS":
                 ln_q_w_local = mhsa.ln_q.w[lorsa_qk_indices // qk_exp_factor]
                 if mhsa.cfg.n_key_value_heads is not None:
-                    ln_k_w_local = torch.repeat_interleave(mhsa.ln_k.w, mhsa.cfg.n_heads // mhsa.cfg.n_key_value_heads, dim=0)[lorsa_qk_indices // qk_exp_factor]
+                    ln_k_w_local = torch.repeat_interleave(
+                        mhsa.ln_k.w, mhsa.cfg.n_heads // mhsa.cfg.n_key_value_heads, dim=0
+                    )[lorsa_qk_indices // qk_exp_factor]
                 else:
                     ln_k_w_local = mhsa.ln_k.w[lorsa_qk_indices // qk_exp_factor]
                 ln_q_w = DTensor.from_local(
@@ -317,8 +319,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                     self.W_O.data[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head]
                     @ (mhsa.W_V[orig_head_index] @ mhsa.W_O[orig_head_index]).T
                 )
-            self.W_V.data.copy_(self.W_V.data / self.W_V.data.norm(dim=1, keepdim=True))
-            self.W_O.data.copy_(self.W_O.data / self.W_O.data.norm(dim=1, keepdim=True))
+            self.W_V.copy_(self.W_V.data / self.W_V.data.norm(dim=1, keepdim=True))
+            self.W_O.copy_(self.W_O.data / self.W_O.data.norm(dim=1, keepdim=True))
 
     def _calculate_sin_cos_rotary(
         self,
