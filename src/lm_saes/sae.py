@@ -425,10 +425,10 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         demeaned_label = label - label.mean(dim=0)
         U, S, V = torch.svd(demeaned_label.T.to(torch.float32))
         proj_weight = U[:, :d_active_subspace]  # [d_model, d_active_subspace]
-        self.W_D.data.copy_(self.W_D.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
+        self.W_D.copy_(self.W_D.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
 
     @torch.no_grad()
     def init_encoder_bias_with_mean_hidden_pre(self, activation_batch: dict[str, torch.Tensor]):
         x = self.prepare_input(activation_batch)[0]
         _, hidden_pre = self.encode(x, return_hidden_pre=True)
-        self.b_E.data.copy_(-hidden_pre.mean(dim=0))
+        self.b_E.copy_(-hidden_pre.mean(dim=0))

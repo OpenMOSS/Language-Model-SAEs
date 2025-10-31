@@ -61,14 +61,6 @@ class Initializer:
                 for i in range(sae.cfg.n_layers):
                     hook_point_out = sae.cfg.hook_points_out[i]
                     normalized_mean_activation = batch[hook_point_out].mean(0)
-                    if isinstance(sae.b_D[i], DTensor):
-                        assert sae.device_mesh is not None, "Device mesh should exist if b_D is a DTensor"
-                        normalized_mean_activation = DTensor.from_local(
-                            normalized_mean_activation,
-                            device_mesh=sae.device_mesh,
-                            placements=sae.dim_maps()["b_D"].placements(sae.device_mesh),
-                        )
-
                     sae.b_D[i].copy_(normalized_mean_activation)
             elif (
                 isinstance(sae, MixtureOfLinearTransform)
