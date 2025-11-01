@@ -19,38 +19,23 @@ from lm_saes.utils.misc import pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
 
 
-def get_input_with_manually_prepended_bos(tokenizer, input):
-    """
-    Manually prepends the bos token to the input.
-
-    Args:
-        tokenizer (AutoTokenizer): The tokenizer to use for prepending the bos token.
-        input (Union[str, List[str]]): The input to prepend the bos token to.
-
-    Returns:
-        Union[str, List[str]]: The input with the bos token manually prepended.
-    """
-    if isinstance(input, str):
-        input = tokenizer.bos_token + input
-    else:
-        input = [tokenizer.bos_token + string for string in input]
-    return input
-
-
-def to_tokens(tokenizer, text, max_length, device="cpu"):
-    tokenizer_prepends_bos = tokenizer.prepend_bos
-    text = text if tokenizer_prepends_bos else get_input_with_manually_prepended_bos(tokenizer, text)
+def to_tokens(tokenizer, text, max_length, device="cpu", prepend_bos=True):
     tokens = tokenizer(
         text,
         return_tensors="pt",
         padding=True,
         truncation=True,
         max_length=max_length,
-    )["input_ids"]
-    return tokens.to(device)
+    )["input_ids"].to(device)
+    has_bos_prepended = torch.all(tokens[:, 0] == tokenizer.bos_token_id)
+    if prepend_bos and not has_bos_prepended:
+        tokens = torch.cat([torch.tensor([tokenizer.bos_token_id]).unsqueeze(0).to(device), tokens], dim=1)
+    elif not prepend_bos and has_bos_prepended:
+        tokens = tokens[:, 1:]
+    return tokens
 
 
-def set_tokens(tokenizer, bos_token_id, eos_token_id, pad_token_id, prepend_bos=True):
+def set_tokens(tokenizer, bos_token_id, eos_token_id, pad_token_id):
     if tokenizer.eos_token is None:
         if eos_token_id is None:
             tokenizer.eos_token = "<|endoftext|>"
@@ -66,7 +51,6 @@ def set_tokens(tokenizer, bos_token_id, eos_token_id, pad_token_id, prepend_bos=
             tokenizer.bos_token = tokenizer.eos_token
         else:
             tokenizer.bos_token = tokenizer.decode(bos_token_id)
-    tokenizer.prepend_bos = prepend_bos
     return tokenizer
 
 
@@ -201,7 +185,6 @@ class TransformerLensLanguageModel(LanguageModel):
             cfg.bos_token_id,
             cfg.eos_token_id,
             cfg.pad_token_id,
-            cfg.prepend_bos,
         )
         self.model = (
             HookedTransformer.from_pretrained_no_processing(
@@ -238,11 +221,13 @@ class TransformerLensLanguageModel(LanguageModel):
             warnings.warn(
                 "Tracing with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
-        tokens = to_tokens(self.tokenizer, raw["text"], max_length=self.cfg.max_length, device=self.cfg.device)
-        if raw["text"][0].startswith("US Soccer"):
-            import json
-
-            json.dump(raw, open("raw.json", "w"))
+        tokens = to_tokens(
+            self.tokenizer,
+            raw["text"],
+            max_length=self.cfg.max_length,
+            device=self.cfg.device,
+            prepend_bos=self.cfg.prepend_bos,
+        )
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
@@ -263,8 +248,13 @@ class TransformerLensLanguageModel(LanguageModel):
             warnings.warn(
                 "Activations with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
-        with timer.time("to_tokens"):
-            tokens = self.model.to_tokens(raw["text"], prepend_bos=self.cfg.prepend_bos)
+        tokens = to_tokens(
+            self.tokenizer,
+            raw["text"],
+            max_length=self.cfg.max_length,
+            device=self.cfg.device,
+            prepend_bos=self.cfg.prepend_bos,
+        )
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
@@ -326,36 +316,35 @@ class HuggingFaceLanguageModel(LanguageModel):
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
     ) -> dict[str, torch.Tensor]:
         layer_indices = _get_layer_indices_from_hook_points(hook_points)
-        inputs = self.tokenizer(
+        tokens = to_tokens(
+            self.tokenizer,
             raw["text"],
-            return_tensors="pt",
-            padding="max_length",
             max_length=self.cfg.max_length,
-            truncation=True,
-        ).to(self.device)
+            device=self.cfg.device,
+            prepend_bos=self.cfg.prepend_bos,
+        )
         if n_context is not None:
             assert self.pad_token_id is not None, "Pad token ID must be set when n_context is provided"
-            inputs["input_ids"] = pad_and_truncate_tokens(
-                inputs["input_ids"], n_context, pad_token_id=self.pad_token_id
-            )
-        outputs = self.model(**inputs, output_hidden_states=True)
+            tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
+        outputs = self.model(tokens, output_hidden_states=True)
         activations = {
             hook_points[i]: outputs.hidden_states[layer_index + 1] for i, layer_index in enumerate(layer_indices)
         }
-        activations["tokens"] = inputs["input_ids"]
+        activations["tokens"] = tokens
         return activations
 
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
-        inputs = self.tokenizer(
-            raw["text"], return_tensors="pt", padding="max_length", max_length=self.cfg.max_length, truncation=True
+        tokens = to_tokens(
+            self.tokenizer,
+            raw["text"],
+            max_length=self.cfg.max_length,
+            device=self.cfg.device,
+            prepend_bos=self.cfg.prepend_bos,
         )
-        input_ids = inputs["input_ids"]
         if n_context is not None:
             assert self.pad_token_id is not None, "Pad token ID must be set when n_context is provided"
-            input_ids = pad_and_truncate_tokens(input_ids, n_context, pad_token_id=self.pad_token_id)
-        batch_str_tokens = [
-            self.tokenizer.batch_decode(input_id, clean_up_tokenization_spaces=False) for input_id in input_ids
-        ]
+            tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
+        batch_str_tokens = [self.tokenizer.batch_decode(token, clean_up_tokenization_spaces=False) for token in tokens]
         return [
             _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
         ]
@@ -418,7 +407,13 @@ class LLaDALanguageModel(TransformerLensLanguageModel):
     @torch.no_grad()
     def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
         assert self.model is not None
-        tokens = self.model.to_tokens(raw["text"], prepend_bos=self.cfg.prepend_bos)
+        tokens = to_tokens(
+            self.tokenizer,
+            raw["text"],
+            max_length=self.cfg.max_length,
+            device=self.cfg.device,
+            prepend_bos=self.cfg.prepend_bos,
+        )
         pad_mask = tokens == self.pad_token_id
         masked_tokens = self._get_masked_tokens(tokens, pad_mask)
         raw["text"] = self.tokenizer.batch_decode(masked_tokens)
@@ -436,7 +431,13 @@ class LLaDALanguageModel(TransformerLensLanguageModel):
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
     ) -> dict[str, torch.Tensor]:
         assert self.model is not None
-        tokens = self.model.to_tokens(raw["text"], prepend_bos=self.cfg.prepend_bos)
+        tokens = to_tokens(
+            self.tokenizer,
+            raw["text"],
+            max_length=self.cfg.max_length,
+            device=self.cfg.device,
+            prepend_bos=self.cfg.prepend_bos,
+        )
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for LLaDALanguageModel when n_context is provided"
