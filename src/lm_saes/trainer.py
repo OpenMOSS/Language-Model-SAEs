@@ -8,17 +8,14 @@ import torch.distributed.checkpoint as dcp
 import torch.optim.lr_scheduler as lr_scheduler
 from torch import Tensor
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
-from torch.distributed.tensor import DTensor
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
-from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import TrainerConfig
-from lm_saes.crosscoder import CrossCoder
-from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.optim import SparseAdam, get_scheduler
+from lm_saes.utils.distributed.ops import full_tensor
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
@@ -350,59 +347,28 @@ class Trainer:
     @torch.no_grad()
     @timer.time("log")
     def _log(self, sae: AbstractSparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
-        # TODO: add full distributed support
+        """Log training metrics and sparsity statistics.
+
+        Delegates model-specific logging to the model's methods.
+        """
         assert self.optimizer is not None, "Optimizer must be initialized"
         label = sae.prepare_label(batch)
-        act_freq_scores = (log_info["feature_acts"] > 0).float().sum(0)
-        if sae.cfg.sae_type == "crosscoder":
-            if not isinstance(act_freq_scores, DTensor):
-                act_freq_scores = act_freq_scores.amax(dim=0)
-            else:
-                # Operator aten.amax.default does not have a sharding strategy registered.
-                act_freq_scores = act_freq_scores.full_tensor().amax(dim=0)
-        elif sae.cfg.sae_type == "clt":
-            log_info["reconstructed"] = log_info["reconstructed"].permute(1, 0, 2)
-            label = label.permute(1, 0, 2)
-        elif sae.cfg.sae_type == "lorsa":
-            act_freq_scores = act_freq_scores.mean(0)
-        if isinstance(act_freq_scores, DTensor):
-            act_freq_scores = act_freq_scores.full_tensor()
+
+        # Prepare logging data (model-specific transformations)
+        log_info, label = sae.prepare_logging_data(log_info.copy(), label)
+
+        # Compute activation frequency scores
+        act_freq_scores = sae.compute_activation_frequency_scores(log_info["feature_acts"])
+        act_freq_scores = full_tensor(act_freq_scores)
 
         log_info["act_freq_scores"] += act_freq_scores
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
+
+        # Log sparsity metrics periodically
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
-            if isinstance(sae, CrossLayerTranscoder):
-                above_1e_1 = (feature_sparsity > 1e-1).sum(-1)
-                above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
-                below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
-                below_1e_6 = (feature_sparsity < 1e-6).sum(-1)
-                below_1e_7 = (feature_sparsity < 1e-7).sum(-1)
-                wandb_log_dict = {}
+            wandb_log_dict = sae.compute_sparsity_metrics(feature_sparsity)
 
-                for l in range(sae.cfg.n_layers):
-                    wandb_log_dict[f"sparsity/above_1e-1_layer{l}"] = above_1e_1[l].item()
-                    wandb_log_dict[f"sparsity/above_1e-2_layer{l}"] = above_1e_2[l].item()
-
-                for l in range(sae.cfg.n_layers):
-                    wandb_log_dict[f"sparsity/below_1e-5_layer{l}"] = below_1e_5[l].item()
-                    wandb_log_dict[f"sparsity/below_1e-6_layer{l}"] = below_1e_6[l].item()
-                    wandb_log_dict[f"sparsity/below_1e-7_layer{l}"] = below_1e_7[l].item()
-
-                wandb_log_dict["sparsity/above_1e-1"] = above_1e_1.sum().item()
-                wandb_log_dict["sparsity/above_1e-2"] = above_1e_2.sum().item()
-                wandb_log_dict["sparsity/below_1e-5"] = below_1e_5.sum().item()
-                wandb_log_dict["sparsity/below_1e-6"] = below_1e_6.sum().item()
-                wandb_log_dict["sparsity/below_1e-7"] = below_1e_7.sum().item()
-
-            else:
-                wandb_log_dict = {
-                    "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum(-1).item(),
-                    "sparsity/above_1e-2": (feature_sparsity > 1e-2).sum(-1).item(),
-                    "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum(-1).item(),
-                    "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum(-1).item(),
-                    "sparsity/below_1e-7": (feature_sparsity < 1e-7).sum(-1).item(),
-                }
             if is_primary_rank(sae.device_mesh):
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Sparsity Metrics")
             if self.wandb_logger is not None:
@@ -410,161 +376,79 @@ class Trainer:
             log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
             log_info["n_frac_active_tokens"] = torch.zeros_like(log_info["n_frac_active_tokens"])
 
+        # Log training metrics periodically
         if (self.cur_step + 1) % self.cfg.log_frequency == 0:
             feature_acts = log_info["feature_acts"]
+            reconstructed = log_info["reconstructed"]
+
+            # Convert DTensors to regular tensors for computation
+            feature_acts = full_tensor(feature_acts)
+            reconstructed = full_tensor(reconstructed)
+            label = full_tensor(label)
+
+            # Compute common metrics
             act_feature_counts = feature_acts.gt(0).float().sum()
             mean_feature_act = feature_acts.sum() / act_feature_counts
-            if isinstance(mean_feature_act, DTensor):
-                mean_feature_act = mean_feature_act.full_tensor()
+            mean_feature_act = full_tensor(mean_feature_act)
 
-            l0 = (feature_acts > 0).float().sum(-1)  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
-            if isinstance(l0, DTensor):
-                l0 = l0.full_tensor()
+            l0 = (feature_acts > 0).float().sum(-1)
+            l0 = full_tensor(l0)
 
-            l_rec = log_info["l_rec"]
-            if isinstance(l_rec, DTensor):
-                l_rec = l_rec.full_tensor()
+            l_rec = full_tensor(log_info["l_rec"])
+            l_s = full_tensor(log_info.get("l_s", None)) if log_info.get("l_s", None) is not None else None  # pyright: ignore[reportArgumentType]
+            l_p = full_tensor(log_info.get("l_p", None)) if log_info.get("l_p", None) is not None else None  # pyright: ignore[reportArgumentType]
 
-            l_s = log_info.get("l_s", None)
-            if isinstance(l_s, DTensor):
-                l_s = l_s.full_tensor()
-
-            l_p = log_info.get("l_p", None)
-            if isinstance(l_p, DTensor):
-                l_p = l_p.full_tensor()
-
-            if sae.cfg.sae_type == "lorsa":
-                label = label.flatten(0, 1)
-                log_info["reconstructed"] = log_info["reconstructed"].flatten(0, 1)
-            per_token_l2_loss = (
-                (log_info["reconstructed"] - label).pow(2).sum(dim=-1)
-            )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
-            total_variance = (
-                (label - label.mean(dim=0)).pow(2).sum(dim=-1)
-            )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
+            # Compute reconstruction metrics
+            per_token_l2_loss = (reconstructed - label).pow(2).sum(dim=-1)
+            total_variance = (label - label.mean(dim=0)).pow(2).sum(dim=-1)
             l2_norm_error = per_token_l2_loss.sqrt().mean()
             l2_norm_error_ratio = l2_norm_error / label.norm(p=2, dim=-1).mean()
-            explained_variance_legacy = (
-                1 - per_token_l2_loss / total_variance
-            )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
-            if isinstance(explained_variance_legacy, DTensor):
-                explained_variance_legacy = explained_variance_legacy.full_tensor()
+            explained_variance_legacy = 1 - per_token_l2_loss / total_variance
             l2_loss_mean = per_token_l2_loss.mean(dim=0)
-            if isinstance(l2_loss_mean, DTensor):
-                l2_loss_mean = l2_loss_mean.full_tensor()
             total_variance_mean = total_variance.mean(dim=0)
-            if isinstance(total_variance_mean, DTensor):
-                total_variance_mean = total_variance_mean.full_tensor()
             explained_variance = 1 - l2_loss_mean / total_variance_mean
-            if sae.cfg.sae_type == "clt":
-                per_layer_ev = explained_variance_legacy.mean(0)
-                clt_per_layer_ev_dict = {
-                    f"metrics/explained_variance_L{l}": per_layer_ev[l].item() for l in range(per_layer_ev.size(0))
-                }
-                clt_per_layer_l0_dict = {f"metrics/l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))}
-                l0 = l0.sum(-1)  # [batch_size]
-                ####
-                # per_decoder_norm = sae.decoder_norm_per_decoder()
-                # if isinstance(per_decoder_norm, DTensor):
-                #     per_decoder_norm = per_decoder_norm.full_tensor()  ## TODO: check if this is correct
-                # clt_per_decoder_norm_dict = {
-                #     f"metrics/decoder_norm_per_decoder_{i}": per_decoder_norm[i].item() for i in range(per_decoder_norm.shape[0])
-                # }
-            else:
-                clt_per_layer_ev_dict = {}
-                clt_per_layer_l0_dict = {}
-                # clt_per_decoder_norm_dict = {}
 
-            if isinstance(l2_norm_error, DTensor):
-                l2_norm_error = l2_norm_error.full_tensor()
-            if isinstance(l2_norm_error_ratio, DTensor):
-                l2_norm_error_ratio = l2_norm_error_ratio.full_tensor()
+            # Add model-specific training metrics (may modify l0 shape)
+            model_metrics = sae.compute_training_metrics(
+                feature_acts=feature_acts,
+                reconstructed=reconstructed,
+                label=label,
+                l_rec=l_rec,
+                l0=l0,
+                explained_variance=explained_variance,
+                explained_variance_legacy=explained_variance_legacy,
+            )
 
-            # grad_norm = log_info["grad_norm"]
-            # if isinstance(grad_norm, DTensor):
-            #     grad_norm = grad_norm.full_tensor()
+            # Aggregate l0 for overall metric if needed (e.g., CLT sums over layers)
+            l0_for_overall = sae.aggregate_l0(l0)
 
+            # Build base metrics dictionary
             wandb_log_dict = {
                 # losses
                 "losses/mse_loss": l_rec.mean().item(),
-                **({"losses/sparsity_loss": l_s.mean().item()} if log_info.get("l_s", None) is not None else {}),  # pyright: ignore[reportOptionalMemberAccess]
-                **({"losses/lp_loss": l_p.mean().item()} if log_info.get("l_p", None) is not None else {}),
-                "losses/overall_loss": log_info["loss"].item(),
+                **({"losses/sparsity_loss": l_s.mean().item()} if l_s is not None else {}),
+                **({"losses/lp_loss": l_p.mean().item()} if l_p is not None else {}),
+                "losses/overall_loss": full_tensor(log_info["loss"]).item(),
                 # variance explained
-                **clt_per_layer_ev_dict,
                 "metrics/explained_variance": explained_variance.mean().item(),
                 "metrics/explained_variance_legacy": explained_variance_legacy.mean().item(),
                 # sparsity
-                "metrics/l0": l0.mean().item(),
-                **clt_per_layer_l0_dict,
-                # **clt_per_decoder_norm_dict,
+                "metrics/l0": l0_for_overall.mean().item(),
                 "metrics/mean_feature_act": mean_feature_act.item(),
                 "metrics/l2_norm_error": l2_norm_error.item(),
                 "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
-                # norm
-                # "metrics/gradients_norm": grad_norm.item(),
+                # details
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
                 "details/l1_coefficient": log_info["l1_coefficient"],
                 "details/lp_coefficient": log_info["lp_coefficient"],
             }
 
+            # Add model-specific metrics
+            wandb_log_dict.update(model_metrics)
+
             # Add timer information
-            timer_data = {f"time/{name}": time_value for name, time_value in timer.get_all_timers().items()}
-            timer_avg_data = {f"time_avg/{name}": avg_time for name, avg_time in timer.get_all_average_times().items()}
-            wandb_log_dict.update(timer_data)
-            wandb_log_dict.update(timer_avg_data)
             wandb_log_dict.update(sae.log_statistics())
-
-            if isinstance(sae, CrossCoder):
-                assert explained_variance.ndim == 1 and len(explained_variance) == len(sae.cfg.hook_points)
-                for i, k in enumerate(sae.cfg.hook_points):
-                    wandb_log_dict.update(
-                        {
-                            f"crosscoder_metrics/{k}/explained_variance": explained_variance[i].mean().item(),
-                            f"crosscoder_metrics/{k}/l0": l0[:, i].mean().item(),
-                            f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
-                        }
-                    )
-            elif isinstance(sae, MixtureOfLinearTransform):
-                # MOLT sparsity metrics: track activation per rank group
-                feature_acts_for_rank = feature_acts
-                if isinstance(feature_acts_for_rank, DTensor):
-                    feature_acts_for_rank = feature_acts_for_rank.full_tensor()
-
-                # Calculate l0 per rank group and total rank sum
-                feature_idx = 0
-                total_rank_sum = 0.0
-
-                for rank in sae.cfg.available_ranks:
-                    rank_str = str(rank)
-                    if rank_str in sae.U_matrices:
-                        # Get global count for this rank group
-                        if hasattr(sae, "_global_rank_count_map"):
-                            # In distributed case, use global count
-                            global_count = sae._global_rank_count_map[rank]
-                        else:
-                            # Non-distributed case
-                            global_count = sae.U_matrices[rank_str].shape[0]
-
-                        if global_count > 0:
-                            # Extract features for this rank group
-                            end_idx = feature_idx + global_count
-                            rank_features = feature_acts_for_rank[..., feature_idx:end_idx]
-
-                            # Count active transforms (l0) for this rank group
-                            rank_l0 = (rank_features > 0).float().sum(-1)
-                            rank_l0_mean = rank_l0.mean().item()
-
-                            # Record metrics
-                            wandb_log_dict[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean
-                            wandb_log_dict[f"molt_metrics/l0_rank{rank}_ratio"] = rank_l0_mean / global_count
-                            total_rank_sum += rank_l0_mean * rank
-
-                            feature_idx += global_count
-
-                # Record total rank sum
-                wandb_log_dict["molt_metrics/total_rank_sum"] = total_rank_sum
 
             if is_primary_rank(sae.device_mesh):
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Training Metrics")

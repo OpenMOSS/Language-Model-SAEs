@@ -8,6 +8,13 @@ from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.placement_types import Shard
 
 
+def full_tensor(x: Tensor) -> Tensor:
+    """Convert DTensor to regular Tensor if needed."""
+    if isinstance(x, DTensor):
+        return x.full_tensor()
+    return x
+
+
 @overload
 def distributed_topk(
     x: Float[DTensor, "batch n_layers d_sae"],
@@ -64,9 +71,6 @@ def distributed_topk(
         If return_threshold is False, returns the filtered DTensor.
         If return_threshold is True, returns a tuple of (filtered DTensor, threshold).
     """
-    if not isinstance(x, DTensor) or device_mesh is None:
-        raise ValueError("x must be a DTensor and device_mesh must be provided")
-
     local_tensor = x.to_local()
     placements = x.placements
 

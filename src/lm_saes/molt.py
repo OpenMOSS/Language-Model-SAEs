@@ -413,7 +413,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             hidden_pre = hidden_pre * self.decoder_norm()
 
         feature_acts = self.activation_function(hidden_pre)
-        
+
         if self.cfg.sparsity_include_decoder_norm:
             feature_acts = feature_acts / self.decoder_norm()
             hidden_pre = hidden_pre / self.decoder_norm()
@@ -668,6 +668,54 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     @timer.time("prepare_label")
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         return batch[self.cfg.hook_point_out]
+
+    @override
+    @torch.no_grad()
+    def compute_training_metrics(
+        self,
+        feature_acts: torch.Tensor,
+        reconstructed: torch.Tensor,
+        label: torch.Tensor,
+        l_rec: torch.Tensor,
+        l0: torch.Tensor,
+        explained_variance: torch.Tensor,
+        explained_variance_legacy: torch.Tensor,
+    ) -> dict[str, float]:
+        """Compute per-rank group training metrics for MOLT."""
+        metrics = {}
+        feature_idx = 0
+        total_rank_sum = 0.0
+
+        for rank in self.cfg.available_ranks:
+            rank_str = str(rank)
+            if rank_str in self.U_matrices:
+                # Get global count for this rank group
+                if hasattr(self, "_global_rank_count_map"):
+                    # In distributed case, use global count
+                    global_count = self._global_rank_count_map[rank]
+                else:
+                    # Non-distributed case
+                    global_count = self.U_matrices[rank_str].shape[0]
+
+                if global_count > 0:
+                    # Extract features for this rank group
+                    end_idx = feature_idx + global_count
+                    rank_features = feature_acts[..., feature_idx:end_idx]
+
+                    # Count active transforms (l0) for this rank group
+                    rank_l0 = (rank_features > 0).float().sum(-1)
+                    rank_l0_mean = rank_l0.mean().item()
+
+                    # Record metrics
+                    metrics[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean
+                    metrics[f"molt_metrics/l0_rank{rank}_ratio"] = rank_l0_mean / global_count
+                    total_rank_sum += rank_l0_mean * rank
+
+                    feature_idx += global_count
+
+        # Record total rank sum
+        metrics["molt_metrics/total_rank_sum"] = total_rank_sum
+        return metrics
 
     @override
     @timer.time("forward")

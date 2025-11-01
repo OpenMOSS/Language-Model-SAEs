@@ -744,6 +744,101 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Prepare the label for the loss computation."""
         raise NotImplementedError("Subclasses must implement this method")
 
+    @torch.no_grad()
+    def prepare_logging_data(
+        self,
+        log_info: dict[str, torch.Tensor],
+        label: torch.Tensor,
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        """Prepare model-specific data transformations for logging.
+
+        This method handles model-specific transformations needed before computing metrics,
+        such as permuting dimensions, flattening, etc.
+
+        Args:
+            log_info: Dictionary containing logging information (feature_acts, reconstructed, etc.)
+            label: The label tensor for computing reconstruction metrics
+
+        Returns:
+            Tuple of (updated_log_info, updated_label) with appropriate transformations applied.
+            Default implementation returns inputs unchanged.
+        """
+        return log_info, label
+
+    @torch.no_grad()
+    def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
+        """Compute activation frequency scores for feature sparsity tracking.
+
+        Args:
+            feature_acts: Feature activations tensor
+
+        Returns:
+            Activation frequency scores tensor, aggregated appropriately for the model type.
+            Default implementation returns sum over batch dimension.
+        """
+        return (feature_acts > 0).float().sum(0)
+
+    @torch.no_grad()
+    def compute_sparsity_metrics(self, feature_sparsity: torch.Tensor) -> dict[str, float]:
+        """Compute model-specific sparsity metrics.
+
+        Args:
+            feature_sparsity: Feature sparsity tensor (act_freq_scores / n_frac_active_tokens)
+
+        Returns:
+            Dictionary of sparsity metric names to values.
+        """
+        return {
+            "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum(-1).item(),
+            "sparsity/above_1e-2": (feature_sparsity > 1e-2).sum(-1).item(),
+            "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum(-1).item(),
+            "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum(-1).item(),
+            "sparsity/below_1e-7": (feature_sparsity < 1e-7).sum(-1).item(),
+        }
+
+    @torch.no_grad()
+    def compute_training_metrics(
+        self,
+        feature_acts: torch.Tensor,
+        reconstructed: torch.Tensor,
+        label: torch.Tensor,
+        l_rec: torch.Tensor,
+        l0: torch.Tensor,
+        explained_variance: torch.Tensor,
+        explained_variance_legacy: torch.Tensor,
+    ) -> dict[str, float]:
+        """Compute model-specific training metrics.
+
+        Args:
+            feature_acts: Feature activations tensor
+            reconstructed: Reconstructed input tensor
+            label: Label tensor
+            l_rec: Reconstruction loss tensor
+            l0: L0 sparsity tensor
+            explained_variance: Explained variance tensor
+            explained_variance_legacy: Legacy explained variance tensor
+
+        Returns:
+            Dictionary of metric names to values. Should include model-specific metrics
+            (e.g., per-layer metrics for CLT, per-head metrics for CrossCoder).
+        """
+        return {}
+
+    @torch.no_grad()
+    def aggregate_l0(self, l0: torch.Tensor) -> torch.Tensor:
+        """Aggregate l0 tensor for computing overall metric if needed.
+
+        Some models (e.g., CLT) need to aggregate l0 across certain dimensions
+        before computing the overall metric. Default implementation returns l0 unchanged.
+
+        Args:
+            l0: L0 sparsity tensor
+
+        Returns:
+            Aggregated l0 tensor for overall metric computation.
+        """
+        return l0
+
     def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
         """Initialize the W and D parameters with the active subspace."""
         raise NotImplementedError("Subclasses must implement this method")

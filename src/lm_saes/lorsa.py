@@ -640,13 +640,13 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         # (n_active_features, q_pos, k_pos)
         pattern = self._compute_attention_pattern(q, k)[qk_idx, 0]
         return pattern.mul_(v[0, :, head_idx, None].permute(1, 2, 0))
-    
+
     def encode_z_patterns(
         self,
         x: Float[torch.Tensor, "batch seq_len d_model"],
     ):
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
-        
+
         head_idx = torch.arange(self.cfg.d_sae)
         qk_idx: Tensor = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
         q, k, v = self._compute_qkv(x)
@@ -906,6 +906,25 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         if self.cfg.skip_bos:
             label = label[:, 1:]
         return label
+
+    @override
+    @torch.no_grad()
+    def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
+        """Compute activation frequency scores for LoRSA (mean over batch)."""
+        return (feature_acts > 0).float().sum(0).mean(0)
+
+    @override
+    @torch.no_grad()
+    def prepare_logging_data(
+        self,
+        log_info: dict[str, torch.Tensor],
+        label: torch.Tensor,
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        """Prepare logging data by flattening dimensions for LoRSA."""
+        log_info = log_info.copy()
+        log_info["reconstructed"] = log_info["reconstructed"].flatten(0, 1)
+        label = label.flatten(0, 1)
+        return log_info, label
 
     def _configure_gradient_flow(self):
         def stop_gradient(acts, hook):

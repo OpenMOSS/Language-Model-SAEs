@@ -3,7 +3,6 @@ from typing import Dict, Iterable, List
 import torch
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
 from transformer_lens import HookedTransformer
 from transformer_lens.components import Attention, GroupedQueryAttention, TransformerBlock
 from wandb.sdk.wandb_run import Run
