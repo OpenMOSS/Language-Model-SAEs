@@ -323,19 +323,18 @@ class Trainer:
 
         lp_coefficient = self.cfg.lp_coefficient if self.cfg.lp_coefficient is not None else 0.0
 
-        result = sae.compute_loss(
+        loss, (loss_data, aux_data) = sae.compute_loss(
             batch,
             sparsity_loss_type=self.cfg.sparsity_loss_type,
             tanh_stretch_coefficient=self.cfg.tanh_stretch_coefficient,
             p=self.cfg.p,
             use_batch_norm_mse=self.cfg.use_batch_norm_mse,
-            return_aux_data=not self.cfg.skip_metrics_calculation,
+            return_aux_data=True,
             l1_coefficient=l1_coefficient,
             lp_coefficient=lp_coefficient,
             frequency_scale=self.cfg.frequency_scale,
         )
 
-        loss, (loss_data, aux_data) = result if not self.cfg.skip_metrics_calculation else (result, ({}, {}))
         loss_dict = (
             {
                 "loss": loss,
