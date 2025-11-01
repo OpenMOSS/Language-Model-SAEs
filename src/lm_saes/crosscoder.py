@@ -559,6 +559,43 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     @override
     @torch.no_grad()
+    def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
+        """Compute activation frequency scores for CrossCoder (max over heads)."""
+        act_freq_scores = (feature_acts > 0).float().sum(0)
+        if isinstance(act_freq_scores, DTensor):
+            # Operator aten.amax.default does not have a sharding strategy registered.
+            act_freq_scores = act_freq_scores.full_tensor().amax(dim=0)
+        else:
+            act_freq_scores = act_freq_scores.amax(dim=0)
+        return act_freq_scores
+
+    @override
+    @torch.no_grad()
+    def compute_training_metrics(
+        self,
+        feature_acts: torch.Tensor,
+        reconstructed: torch.Tensor,
+        label: torch.Tensor,
+        l_rec: torch.Tensor,
+        l0: torch.Tensor,
+        explained_variance: torch.Tensor,
+        explained_variance_legacy: torch.Tensor,
+    ) -> dict[str, float]:
+        """Compute per-head training metrics for CrossCoder."""
+        assert explained_variance.ndim == 1 and len(explained_variance) == len(self.cfg.hook_points)
+        metrics = {}
+        for i, k in enumerate(self.cfg.hook_points):
+            metrics.update(
+                {
+                    f"crosscoder_metrics/{k}/explained_variance": explained_variance[i].mean().item(),
+                    f"crosscoder_metrics/{k}/l0": l0[:, i].mean().item(),
+                    f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
+                }
+            )
+        return metrics
+
+    @override
+    @torch.no_grad()
     def transform_to_unit_decoder_norm(self):
         raise NotImplementedError("Transform to unit decoder norm is not supported for CrossCoder")
 
