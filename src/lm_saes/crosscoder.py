@@ -14,6 +14,7 @@ from typing_extensions import override
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import CrossCoderConfig
 from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed.ops import full_tensor
 from lm_saes.utils.distributed.utils import replace_placements
 from lm_saes.utils.misc import get_slice_length
 from lm_saes.utils.timer import timer
@@ -592,6 +593,19 @@ class CrossCoder(AbstractSparseAutoEncoder):
                     f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
                 }
             )
+        indices = feature_acts.amax(dim=1).nonzero(as_tuple=True)
+        activated_feature_acts = feature_acts.permute(0, 2, 1)[indices].permute(1, 0)
+        activated_decoder_norms = full_tensor(self.decoder_norm())[:, indices[1]]
+        mean_decoder_norm_non_activated_in_activated = (
+            activated_decoder_norms[activated_feature_acts == 0].mean().item()
+        )
+        mean_decoder_norm_activated_in_activated = activated_decoder_norms[activated_feature_acts != 0].mean().item()
+        metrics.update(
+            {
+                "crosscoder_metrics/mean_decoder_norm_non_activated_in_activated": mean_decoder_norm_non_activated_in_activated,
+                "crosscoder_metrics/mean_decoder_norm_activated_in_activated": mean_decoder_norm_activated_in_activated,
+            }
+        )
         return metrics
 
     @override
