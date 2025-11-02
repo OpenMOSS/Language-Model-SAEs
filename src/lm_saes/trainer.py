@@ -265,7 +265,7 @@ class Trainer:
                 feature_acts_full = feature_acts.full_tensor()
                 decoder_norm_full = sae.decoder_norm().full_tensor()
                 indices = feature_acts_full.amax(dim=1).nonzero(as_tuple=True)
-                activated_feature_acts = feature_acts_full.transpose(0, 2, 1)[indices].transpose(1, 0)
+                activated_feature_acts = feature_acts_full.permute(0, 2, 1)[indices].permute(1, 0)
                 activated_decoder_norms = decoder_norm_full[:, indices[1]]
                 mean_decoder_norm_non_activated_in_activated = (
                     activated_decoder_norms[activated_feature_acts == 0].mean().item()
