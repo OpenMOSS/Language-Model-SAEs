@@ -8,7 +8,6 @@ from torch import Tensor
 from torch.distributed.tensor import DTensor
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
-from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
@@ -18,6 +17,7 @@ from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
 from lm_saes.utils.timer import timer
+from wandb.sdk.wandb_run import Run
 
 logger = get_distributed_logger("trainer")
 
@@ -261,6 +261,24 @@ class Trainer:
                             f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
                         }
                     )
+
+                feature_acts_full = feature_acts.full_tensor()
+                decoder_norm_full = sae.decoder_norm().full_tensor()
+                indices = feature_acts_full.amax(dim=1).nonzero(as_tuple=True)
+                activated_feature_acts = feature_acts_full.transpose(0, 2, 1)[indices].transpose(1, 0)
+                activated_decoder_norms = decoder_norm_full[:, indices[1]]
+                mean_decoder_norm_non_activated_in_activated = (
+                    activated_decoder_norms[activated_feature_acts == 0].mean().item()
+                )
+                mean_decoder_norm_activated_in_activated = (
+                    activated_decoder_norms[activated_feature_acts != 0].mean().item()
+                )
+                wandb_log_dict.update(
+                    {
+                        "crosscoder_metrics/mean_decoder_norm_non_activated_in_activated": mean_decoder_norm_non_activated_in_activated,
+                        "crosscoder_metrics/mean_decoder_norm_activated_in_activated": mean_decoder_norm_activated_in_activated,
+                    }
+                )
 
             if is_primary_rank(sae.device_mesh):
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Training Metrics")
