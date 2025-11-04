@@ -1,5 +1,7 @@
 from .activation import ActivationFactory, ActivationWriter
-from .analysis import FeatureAnalyzer
+from .activation_functions import JumpReLU
+from .analysis import DirectLogitAttributor, FeatureAnalyzer
+from .circuit import ReplacementModel, attribute
 from .clt import CrossLayerTranscoder
 from .config import (
     ActivationFactoryActivationsSource,
@@ -16,6 +18,8 @@ from .config import (
     InitializerConfig,
     LanguageModelConfig,
     LLaDAConfig,
+    LorsaConfig,
+    MOLTConfig,
     MongoDBConfig,
     SAEConfig,
     TrainerConfig,
@@ -24,6 +28,8 @@ from .config import (
 from .crosscoder import CrossCoder
 from .database import MongoClient
 from .evaluator import EvalConfig, Evaluator
+from .lorsa import LowRankSparseAttention
+from .molt import MixtureOfLinearTransform
 from .resource_loaders import load_dataset, load_model
 from .runners import (
     AnalyzeCrossCoderSettings,
@@ -38,6 +44,8 @@ from .runners import (
     SweepSAESettings,
     TrainCLTSettings,
     TrainCrossCoderSettings,
+    TrainLorsaSettings,
+    TrainMOLTSettings,
     TrainSAESettings,
     analyze_crosscoder,
     analyze_sae,
@@ -50,6 +58,8 @@ from .runners import (
     sweep_sae,
     train_clt,
     train_crosscoder,
+    train_lorsa,
+    train_molt,
     train_sae,
 )
 from .sae import SparseAutoEncoder
@@ -62,6 +72,7 @@ __all__ = [
     "CrossCoderConfig",
     "CrossCoder",
     "SparseAutoEncoder",
+    "JumpReLU",
     "LanguageModelConfig",
     "DatasetConfig",
     "ActivationFactoryActivationsSource",
@@ -106,7 +117,18 @@ __all__ = [
     "sweep_sae",
     "LLaDAConfig",
     "train_crosscoder",
+    "ReplacementModel",
+    "attribute",
+    "LowRankSparseAttention",
+    "TrainLorsaSettings",
+    "train_lorsa",
+    "LorsaConfig",
+    "DirectLogitAttributor",
     "DirectLogitAttributeSettings",
     "direct_logit_attribute",
+    "MOLTConfig",
+    "MixtureOfLinearTransform",
+    "train_molt",
+    "TrainMOLTSettings",
     "DirectLogitAttributorConfig",
 ]

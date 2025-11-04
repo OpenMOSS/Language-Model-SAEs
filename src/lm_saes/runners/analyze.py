@@ -10,23 +10,28 @@ from lm_saes.activation.factory import ActivationFactory
 from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
 from lm_saes.backend.language_model import TransformerLensLanguageModel
+from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import (
     ActivationFactoryConfig,
     BaseSAEConfig,
+    CLTConfig,
     CrossCoderConfig,
+    DatasetConfig,
     DirectLogitAttributorConfig,
     FeatureAnalyzerConfig,
     LanguageModelConfig,
+    LorsaConfig,
     MongoDBConfig,
     SAEConfig,
 )
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient
-from lm_saes.resource_loaders import load_model
+from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.molt import MixtureOfLinearTransform
+from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import is_master
 
 logger = get_distributed_logger("runners.analyze")
 
@@ -49,8 +54,16 @@ class AnalyzeSAESettings(BaseSettings):
     model: Optional[LanguageModelConfig] = None
     """Configuration for the language model. Required if using dataset sources."""
 
+    model_name: Optional[str] = None
+    """Name of the tokenizer to load. LORSA may require a tokenizer to get the modality indices."""
+
+    datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
+    """Name to dataset config mapping. Required if using dataset sources."""
+
     analyzer: FeatureAnalyzerConfig
     """Configuration for feature analysis"""
+
+    amp_dtype: torch.dtype = torch.bfloat16
 
     mongo: MongoDBConfig
     """Configuration for the MongoDB database."""
@@ -65,6 +78,7 @@ class AnalyzeSAESettings(BaseSettings):
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
 
+@torch.no_grad()
 def analyze_sae(settings: AnalyzeSAESettings) -> None:
     """Analyze a SAE model.
 
@@ -89,22 +103,69 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     mongo_client = MongoClient(settings.mongo)
     logger.info("MongoDB client initialized")
 
-    activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
+    # Load configurations
+    model_cfg = load_config(
+        config=settings.model,
+        name=settings.model_name,
+        mongo_client=mongo_client,
+        config_type="model",
+        required=False,
+    )
 
-    logger.info("Loading SAE model")
-    if isinstance(settings.sae, CrossCoderConfig):
-        sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
-    else:
-        sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+    dataset_cfgs = (
+        {
+            dataset_name: load_config(
+                config=dataset_cfg,
+                name=dataset_name,
+                mongo_client=mongo_client,
+                config_type="dataset",
+            )
+            for dataset_name, dataset_cfg in settings.datasets.items()
+        }
+        if settings.datasets is not None
+        else None
+    )
 
-    logger.info(f"SAE model loaded: {type(sae).__name__}")
+    model = load_model(model_cfg) if model_cfg is not None else None
+    datasets = (
+        {
+            dataset_name: load_dataset(dataset_cfg, device_mesh=device_mesh)
+            for dataset_name, dataset_cfg in dataset_cfgs.items()
+        }
+        if dataset_cfgs is not None
+        else None
+    )
+
+    activation_factory = ActivationFactory(settings.activation_factory)
+
+    logger.info(f"Loading {settings.sae.sae_type} model")
+    sae_cls = {
+        "sae": SparseAutoEncoder,
+        "clt": CrossLayerTranscoder,
+        "lorsa": LowRankSparseAttention,
+        "molt": MixtureOfLinearTransform,
+    }[settings.sae.sae_type]
+    sae = sae_cls.from_config(settings.sae, device_mesh=device_mesh)
+
+    logger.info(f"{settings.sae.sae_type} model loaded: {type(sae).__name__}")
 
     analyzer = FeatureAnalyzer(settings.analyzer)
     logger.info("Feature analyzer initialized")
 
     logger.info("Processing activations for analysis")
-    activations = activation_factory.process()
-    result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
+
+    with torch.amp.autocast(device_type=settings.device_type, dtype=settings.amp_dtype):
+        result = analyzer.analyze_chunk(
+            activation_factory,
+            sae=sae,
+            device_mesh=device_mesh,
+            activation_factory_process_kwargs={
+                "model": model,
+                "model_name": settings.model_name,
+                "datasets": datasets,
+            },
+        )
+
     logger.info("Analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
     if device_mesh is None or settings.data_parallel_size == 1 or device_mesh.get_local_rank("data") == 0:
@@ -116,7 +177,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
             start_idx=start_idx,
         )
 
-        logger.info("SAE analysis completed successfully")
+    logger.info(f"{settings.sae.sae_type} analysis completed successfully")
 
 
 class AnalyzeCrossCoderSettings(BaseSettings):
@@ -136,6 +197,9 @@ class AnalyzeCrossCoderSettings(BaseSettings):
 
     analyzer: FeatureAnalyzerConfig
     """Configuration for feature analysis"""
+
+    amp_dtype: torch.dtype = torch.bfloat16
+    """ The dtype to use for outputting activations. If `None`, will not override the dtype. """
 
     feature_analysis_name: str = "default"
     """Name of the feature analysis."""
@@ -186,14 +250,19 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
     activation_factory = ActivationFactory(settings.activation_factories[crosscoder_device_mesh.get_local_rank("head")])
 
     logger.info("Loading CrossCoder model")
-    sae = CrossCoder.from_config(settings.sae, device_mesh=crosscoder_device_mesh)
+    sae = CrossCoder.from_config(settings.sae, device_mesh=crosscoder_device_mesh, fold_activation_scale=False)
 
     logger.info("Feature analyzer initialized")
     analyzer = FeatureAnalyzer(settings.analyzer)
 
     logger.info("Processing activations for CrossCoder analysis")
-    activations = activation_factory.process()
-    result = analyzer.analyze_chunk(activations, sae=sae, device_mesh=device_mesh)
+
+    with torch.amp.autocast(device_type=settings.device_type, dtype=settings.amp_dtype):
+        result = analyzer.analyze_chunk(
+            activation_factory,
+            sae=sae,
+            device_mesh=device_mesh,
+        )
 
     logger.info("CrossCoder analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
@@ -216,6 +285,9 @@ class DirectLogitAttributeSettings(BaseSettings):
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
+
+    layer_idx: Optional[int | None] = None
+    """The index of layer to DLA."""
 
     sae_series: str
     """Series of the SAE model. Use as identifier for the SAE model in the database."""
@@ -273,6 +345,10 @@ def direct_logit_attribute(settings: DirectLogitAttributeSettings) -> None:
         sae = CrossCoder.from_config(settings.sae)
     elif isinstance(settings.sae, SAEConfig):
         sae = SparseAutoEncoder.from_config(settings.sae)
+    elif isinstance(settings.sae, CLTConfig):
+        sae = CrossLayerTranscoder.from_config(settings.sae)
+    elif isinstance(settings.sae, LorsaConfig):
+        sae = LowRankSparseAttention.from_config(settings.sae)
     else:
         raise ValueError(f"Unsupported SAE config type: {type(settings.sae)}")
 
@@ -294,14 +370,14 @@ def direct_logit_attribute(settings: DirectLogitAttributeSettings) -> None:
 
     logger.info("Direct logit attribution")
     direct_logit_attributor = DirectLogitAttributor(settings.direct_logit_attributor)
-    results = direct_logit_attributor.direct_logit_attribute(sae, model)
+    results = direct_logit_attributor.direct_logit_attribute(sae, model, settings.layer_idx)
 
-    if is_master():
-        logger.info("Direct logit attribution completed, saving results to MongoDB")
-        mongo_client.update_features(
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            update_data=[{"logits": result} for result in results],
-            start_idx=0,
-        )
+    # if is_master():
+    logger.info("Direct logit attribution completed, saving results to MongoDB")
+    mongo_client.update_features(
+        sae_name=settings.sae_name,
+        sae_series=settings.sae_series,
+        update_data=[{"logits": result} for result in results],
+        start_idx=0,
+    )
     logger.info("Direct logit attribution completed successfully")

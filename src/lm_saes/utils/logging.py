@@ -123,6 +123,8 @@ def log_metrics(logger: logging.Logger, metrics: dict, step: Optional[int] = Non
         step: Optional step number to include
         title: Title for the metrics section
     """
+    if dist.is_initialized() and dist.get_rank() != 0:
+        return
     if step is not None:
         title = f"{title} - Step {step}"
 

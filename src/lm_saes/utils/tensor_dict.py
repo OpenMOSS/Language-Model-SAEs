@@ -24,10 +24,12 @@ def sort_dict_of_tensor(
         A dictionary of tensors sorted by the values of the specified tensor
     """
     sorted_idx = tensor_dict[sort_key].argsort(dim=sort_dim, descending=descending)
-    return {
-        k: v.gather(sort_dim, sorted_idx.unsqueeze(-1).expand_as(v.reshape(*sorted_idx.shape, -1)).reshape_as(v))
-        for k, v in tensor_dict.items()
-    }
+    for k, v in tensor_dict.items():
+        tmp_sorted_idx = sorted_idx
+        while v.ndim > tmp_sorted_idx.ndim:
+            tmp_sorted_idx = tmp_sorted_idx.unsqueeze(-1)
+        tensor_dict[k] = v.gather(sort_dim, tmp_sorted_idx.expand_as(v))
+    return tensor_dict
 
 
 def concat_dict_of_tensor(*dicts: dict[str, torch.Tensor], dim: int = 0) -> dict[str, torch.Tensor]:

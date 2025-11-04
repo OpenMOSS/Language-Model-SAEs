@@ -6,6 +6,13 @@ import { cn } from "@/lib/utils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card";
 import { Switch } from "../ui/switch";
 import { Input } from "../ui/input";
+import { getZPatternForToken, findHighestActivatingToken } from "@/utils/token";
+
+// Helper function to get activation value for a given index from COO format
+const getActivationValue = (indices: number[], values: number[], targetIndex: number): number => {
+  const indexPosition = indices.indexOf(targetIndex);
+  return indexPosition !== -1 ? values[indexPosition] : 0;
+};
 
 export const FeatureSampleGroup = ({
   feature,
@@ -25,7 +32,7 @@ export const FeatureSampleGroup = ({
   );
 
   const maxActivation = useMemo(() => 
-    sampleGroup.samples.length > 0 ? Math.max(...sampleGroup.samples[0].featureActs) : 0,
+    sampleGroup.samples.length > 0 ? Math.max(...sampleGroup.samples[0].featureActsValues.flat()) : 0,
     [sampleGroup.samples]
   );
 
@@ -47,6 +54,7 @@ export const FeatureSampleGroup = ({
           <div className="text-sm font-bold min-w-[120px]">Visible Range:</div>
           <Input
             type="number"
+            id="visible-range"
             value={visibleRange.toString()}
             onChange={handleRangeChange}
             className="w-[100px]"
@@ -114,15 +122,18 @@ export const FeatureActivationSample = memo(({
   maxFeatureAct,
   visibleRange,
 }: FeatureActivationSampleProps) => {
+  // State to track which token is being hovered
+  const [hoveredTokenIndex, setHoveredTokenIndex] = useState<number | null>(null);
+
   // Memoize text highlights processing
   const textHighlights = useMemo(() => 
     sample.origins
       .map((origin, index) => ({
         origin,
-        featureAct: sample.featureActs[index],
+        featureAct: getActivationValue(sample.featureActsIndices, sample.featureActsValues, index),
       }))
       .filter((item): item is { origin: TextTokenOrigin; featureAct: number } => item.origin?.key === "text"),
-    [sample.origins, sample.featureActs]
+    [sample.origins, sample.featureActsIndices, sample.featureActsValues]
   );
 
   // Memoize max activation highlight
@@ -135,6 +146,22 @@ export const FeatureActivationSample = memo(({
       : null,
     [textHighlights]
   );
+
+  // Find the highest activating token for z pattern highlighting
+  const highestActivatingToken = useMemo(() => 
+    findHighestActivatingToken(sample.featureActsIndices, sample.featureActsValues),
+    [sample.featureActsIndices, sample.featureActsValues]
+  );
+
+  // Get z pattern for hovered token
+  const hoveredZPattern = useMemo(() => {
+    if (hoveredTokenIndex === null) return null;
+    return getZPatternForToken(
+      sample.zPatternIndices,
+      sample.zPatternValues,
+      hoveredTokenIndex
+    );
+  }, [hoveredTokenIndex, sample.zPatternIndices, sample.zPatternValues]);
 
   // Memoize segments calculation
   const segments = useMemo(() => {
@@ -189,14 +216,14 @@ export const FeatureActivationSample = memo(({
   );
 
   // Memoize image highlights processing
-  const imageHighlights = useMemo(() =>
+  const imageHighlights = useMemo(() => 
     sample.origins
       .map((origin, index) => ({
         origin,
-        featureAct: sample.featureActs[index],
+        featureAct: getActivationValue(sample.featureActsIndices, sample.featureActsValues, index),
       }))
       .filter((item): item is { origin: ImageTokenOrigin; featureAct: number } => item.origin?.key === "image"),
-    [sample.origins, sample.featureActs]
+    [sample.origins, sample.featureActsIndices, sample.featureActsValues]
   );
 
   const [showImageHighlights, setShowImageHighlights] = useState(true);
@@ -205,9 +232,49 @@ export const FeatureActivationSample = memo(({
   // Determine if we have any images to display
   const hasImages = sample.images && sample.images.length > 0;
 
+  // Helper function to determine if a segment should be highlighted
+  const getSegmentHighlightClass = (segment: typeof visibleSegments[0]) => {
+    if (hoveredTokenIndex !== null) {        
+      // Check if this segment contains contributing tokens
+      if (hoveredZPattern) {
+          const Contribution = segment.highlights.map(highlight => {
+            // Find the token index for this highlight's origin
+            const tokenIndex = sample.origins.findIndex(origin => origin === highlight.origin);
+            const isContributing = hoveredZPattern.contributingTokens.includes(tokenIndex);
+            return isContributing ? hoveredZPattern.contributions[hoveredZPattern.contributingTokens.indexOf(tokenIndex)] : 0;
+          });
+        
+        return getAccentClassname(Contribution.reduce((a, b) => a + b, 0), maxFeatureAct, "zpattern"); // Green for contributing tokens
+      }
+
+      // Check if this segment contains the hovered token
+      const containsHoveredToken = segment.highlights.some(highlight => {
+        // Check if this highlight's origin corresponds to the hovered token index
+        const hoveredOrigin = sample.origins[hoveredTokenIndex];
+        return hoveredOrigin === highlight.origin;
+      });
+
+      if (containsHoveredToken) {
+        return "bg-orange-500 text-white"; // Keep orange for the hovered token
+      }
+      
+      return ""; // No highlight for other tokens when hovering
+    }
+    
+    // Default state: only highlight activating tokens in orange
+    return segment.maxSegmentAct > 0 ? getAccentClassname(segment.maxSegmentAct, maxFeatureAct, "bg") : "";
+  };
+
   return (
     <div className="border rounded p-4 w-full flex flex-col gap-2">
-      <h3 className="font-bold mb-2">{sampleName}</h3>
+      <div className="flex items-center gap-2 mb-2">
+        <h3 className="font-bold">{sampleName}</h3>
+        {highestActivatingToken && (
+          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+            Max: {highestActivatingToken.activationValue.toFixed(3)}
+          </span>
+        )}
+      </div>
 
       <div className="flex flex-col gap-4 w-full">
         <div className="flex gap-4 w-full justify-between">
@@ -220,14 +287,41 @@ export const FeatureActivationSample = memo(({
 
                   return (
                     <span key={index}>
-                      {segment.maxSegmentAct > 0 ? (
                         <HoverCard>
                           <HoverCardTrigger>
                             <span
                               className={cn(
-                                "relative cursor-help",
-                                getAccentClassname(segment.maxSegmentAct, maxFeatureAct, "bg")
+                                "relative",
+                                getSegmentHighlightClass(segment)
                               )}
+                              onMouseEnter={() => {
+                                // Find the token index for this segment by looking at the feature acts indices
+                                // We want to find the token that has the highest activation in this segment
+                                let maxActivation = -1;
+                                let maxTokenIndex = -1;
+                                
+                                for (let i = 0; i < sample.featureActsIndices.length; i++) {
+                                  const tokenIndex = sample.featureActsIndices[i];
+                                  const activation = sample.featureActsValues[i];
+                                  
+                                  // Check if this token's origin is in our segment
+                                  const origin = sample.origins[tokenIndex];
+                                  if (origin?.key === "text" && 
+                                      segment.highlights.some(highlight => highlight.origin === origin)) {
+                                    if (activation > maxActivation) {
+                                      maxActivation = activation;
+                                      maxTokenIndex = tokenIndex;
+                                    }
+                                  }
+                                }
+                                
+                                if (maxTokenIndex !== -1) {
+                                  setHoveredTokenIndex(maxTokenIndex);
+                                }
+                              }}
+                              onMouseLeave={() => {
+                                setHoveredTokenIndex(null);
+                              }}
                             >
                               {segmentText.replaceAll("\n", "↵").replaceAll("\t", "→")}
                             </span>
@@ -245,9 +339,6 @@ export const FeatureActivationSample = memo(({
                             </div>
                           </HoverCardContent>
                         </HoverCard>
-                      ) : (
-                        <span>{segmentText.replaceAll("\n", "↵").replaceAll("\t", "→")}</span>
-                      )}
                     </span>
                   );
                 })}

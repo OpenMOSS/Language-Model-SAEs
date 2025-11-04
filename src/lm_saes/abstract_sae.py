@@ -18,137 +18,25 @@ import einops
 import safetensors.torch as safe
 import torch
 import torch.distributed.checkpoint as dcp
-import torch.distributed.tensor
 from jaxtyping import Float
 from safetensors import safe_open
-from torch import nn
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.experimental import local_map
 from transformer_lens.hook_points import HookedRootModule
 
+from lm_saes.activation_functions import JumpReLU
+from lm_saes.config import BaseSAEConfig
 from lm_saes.database import MongoClient
-from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed import DimMap, distributed_topk
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.math import topk
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.timer import timer
 
-from .config import BaseSAEConfig
-
 logger = get_distributed_logger("abstract_sae")
-
-
-class STEFunction(torch.autograd.Function):
-    """
-    STE function for the jumprelu activation function.
-    """
-
-    @staticmethod
-    def forward(
-        ctx,
-        input: torch.Tensor,
-        log_jumprelu_threshold: torch.Tensor,
-        jumprelu_threshold_window: float,
-    ):
-        jumprelu_threshold = log_jumprelu_threshold.exp()
-        ctx.save_for_backward(
-            input,
-            jumprelu_threshold,
-            torch.tensor(jumprelu_threshold_window, dtype=input.dtype, device=input.device),
-        )
-        return input.gt(jumprelu_threshold).to(input.dtype)
-
-    @staticmethod
-    def backward(ctx, *grad_outputs: torch.Tensor, **args):
-        assert len(grad_outputs) == 1
-        grad_output = grad_outputs[0]
-
-        input, jumprelu_threshold, jumprelu_threshold_window = ctx.saved_tensors
-
-        grad_log_jumprelu_threshold_unscaled = torch.where(
-            (input - jumprelu_threshold).abs() < jumprelu_threshold_window * 0.5,
-            -(jumprelu_threshold**2) / jumprelu_threshold_window,
-            0.0,
-        )
-        grad_log_jumprelu_threshold = (
-            grad_log_jumprelu_threshold_unscaled
-            / torch.where(
-                ((input - jumprelu_threshold).abs() < jumprelu_threshold_window * 0.5) * (input != 0.0),
-                input,
-                1.0,
-            )
-            * grad_output
-        )
-        grad_log_jumprelu_threshold = grad_log_jumprelu_threshold.sum(
-            dim=tuple(range(grad_log_jumprelu_threshold.ndim - 1))
-        )
-
-        return torch.zeros_like(input), grad_log_jumprelu_threshold, None
-
-
-class JumpReLU(torch.nn.Module):
-    """
-    JumpReLU activation function.
-    """
-
-    def __init__(
-        self,
-        jumprelu_threshold_window: float,
-        *,
-        shape: tuple[int, ...],
-        device: torch.device | str | None = None,
-        dtype: torch.dtype,
-        device_mesh: DeviceMesh | None = None,
-    ):
-        super(JumpReLU, self).__init__()
-        self.jumprelu_threshold_window = jumprelu_threshold_window
-        self.shape = shape
-        self.device_mesh = device_mesh
-        self.dtype = dtype
-        if device_mesh is None:
-            self.log_jumprelu_threshold = torch.nn.Parameter(torch.empty(shape, device=device, dtype=dtype))
-        else:
-            self.log_jumprelu_threshold = torch.nn.Parameter(
-                torch.distributed.tensor.empty(
-                    shape,
-                    dtype=dtype,
-                    device_mesh=device_mesh,
-                    placements=self.dim_maps()["log_jumprelu_threshold"].placements(device_mesh),
-                )
-            )
-
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        return cast(
-            torch.Tensor,
-            STEFunction.apply(
-                input.to(self.dtype),
-                self.log_jumprelu_threshold,
-                self.jumprelu_threshold_window,
-            ),
-        ).to(input.dtype)
-
-    def load_distributed_state_dict(
-        self,
-        state_dict: dict[str, torch.Tensor],
-        device_mesh: DeviceMesh,
-        prefix: str = "",
-    ) -> None:
-        self.device_mesh = device_mesh
-        self.register_parameter(
-            "log_jumprelu_threshold",
-            nn.Parameter(state_dict[f"{prefix}log_jumprelu_threshold"].to(self.log_jumprelu_threshold.dtype)),
-        )
-
-    def dim_maps(self) -> dict[str, DimMap]:
-        return {
-            "log_jumprelu_threshold": DimMap({"model": 0}),
-        }
-
-    def override_dtypes(self) -> dict[str, torch.dtype]:
-        return {
-            "log_jumprelu_threshold": self.dtype,
-        }
 
 
 class AbstractSparseAutoEncoder(HookedRootModule, ABC):
@@ -172,6 +60,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         self.device_mesh: DeviceMesh | None = device_mesh
 
         self.activation_function: Callable[[torch.Tensor], torch.Tensor] = self.activation_function_factory(device_mesh)
+        self.circuit_tracing_mode: bool = cfg.circuit_tracing_mode
 
     @torch.no_grad()
     def set_dataset_average_activation_norm(self, dataset_average_activation_norm: dict[str, float]):
@@ -207,7 +96,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
     @abstractmethod
     @torch.no_grad()
-    def standardize_parameters_of_dataset_norm(self, dataset_average_activation_norm: dict[str, float] | None):
+    def standardize_parameters_of_dataset_norm(self):
         """Standardize the parameters of the model to account for dataset_norm during inference."""
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -264,6 +153,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         sae_series: str | None = None,
         mongo_client: MongoClient | None = None,
     ) -> None:
+        os.makedirs(Path(save_path), exist_ok=True)
+
         if self.device_mesh is None:
             self.save_checkpoint(Path(save_path) / "sae_weights.safetensors")
         else:
@@ -470,18 +361,25 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
             self.set_dataset_average_activation_norm(dataset_norm)
             state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
-        if device_mesh is None or any(isinstance(v, DTensor) for v in state_dict.values()):
+        if device_mesh is None:
             # Non-distributed checkpoint or DCP checkpoint
             # Load the state dict through torch API
             self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
         else:
+            for k, v in state_dict.items():
+                if not isinstance(v, DTensor):
+                    state_dict[k] = DimMap({}).distribute(v, device_mesh)
             # Full checkpoint (in .safetensors or .pt format) to be loaded distributedly
             self.load_distributed_state_dict(state_dict, device_mesh)
 
     @classmethod
-    def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None) -> Self:
+    def from_config(
+        cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = True
+    ) -> Self:
         model = cls(cfg, device_mesh)
         if cfg.sae_pretrained_name_or_path is None:
+            total_params = sum(param.numel() for param in model.parameters()) / 1e9
+            logger.info(f"Initializing {cfg.sae_type} from scratch with {total_params:.2f} B parameters")
             return model
 
         path = parse_pretrained_name_or_path(cfg.sae_pretrained_name_or_path)
@@ -539,6 +437,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             raise ValueError(f"Unsupported checkpoint format: {ckpt_path}")
 
         model.load_full_state_dict(state_dict, device_mesh)
+        if fold_activation_scale:
+            model.standardize_parameters_of_dataset_norm()
         return model
 
     @classmethod
@@ -590,7 +490,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
     def activation_function_factory(
         self, device_mesh: DeviceMesh | None = None
-    ) -> Callable[[torch.Tensor], torch.Tensor]:
+    ) -> Callable[[torch.Tensor], torch.Tensor] | JumpReLU:
         assert self.cfg.act_fn.lower() in [
             "relu",
             "topk",
@@ -598,7 +498,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             "batchtopk",
         ], f"Not implemented activation function {self.cfg.act_fn}"
         if self.cfg.act_fn.lower() == "relu":
-            return lambda x: x.gt(0).to(x.dtype)
+            return lambda x: x * x.gt(0).to(x.dtype)
         elif self.cfg.act_fn.lower() == "jumprelu":
             return JumpReLU(
                 self.cfg.jumprelu_threshold_window,
@@ -616,34 +516,57 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     Float[torch.Tensor, "batch seq_len d_sae"],
                 ],
             ):
-                x = torch.clamp(x, min=0.0)
-                k = x.shape[-1] - self.current_k + 1
-                k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
-                k_th_value = k_th_value.unsqueeze(dim=-1)
-                return x.ge(k_th_value)
+                if self.device_mesh is not None:
+                    assert isinstance(x, DTensor)
+                    return distributed_topk(
+                        x,
+                        k=self.current_k,
+                        device_mesh=self.device_mesh,
+                        dim=-1,
+                        mesh_dim_name="model",
+                    )
+                else:
+                    return topk(
+                        x,
+                        k=self.current_k,
+                        dim=-1,
+                    )
 
             return topk_activation
 
         elif self.cfg.act_fn.lower() == "batchtopk":
 
-            def topk_activation(x: torch.Tensor):
-                assert x.dim() == 2
-                batch_size = x.size(0)
+            def batch_topk(
+                x: Union[
+                    Float[torch.Tensor, "batch d_sae"],
+                    Float[torch.Tensor, "batch seq_len d_sae"],
+                ],
+            ):
+                x = x * x.gt(0).to(x.dtype)
+                original_shape = None
+                if x.ndim == 3:
+                    original_shape = (x.size(0), x.size(1))
+                    x = x.flatten(end_dim=1)
+                result = (
+                    distributed_topk(
+                        x,
+                        k=self.current_k * x.size(0),
+                        device_mesh=x.device_mesh,
+                        dim=(-2, -1),
+                        mesh_dim_name="model",
+                    )
+                    if isinstance(x, DTensor)
+                    else topk(
+                        x,
+                        k=self.current_k * x.size(0),
+                        dim=(-2, -1),
+                    )
+                )
+                if original_shape is not None:
+                    result = result.unflatten(dim=0, sizes=original_shape)
+                return result
 
-                x = torch.clamp(x, min=0.0)
-
-                flattened_x = x.flatten()
-                non_zero_entries = flattened_x[flattened_x.gt(0)]
-
-                if non_zero_entries.numel() < batch_size * self.current_k:
-                    return x.gt(0)
-                else:
-                    k = non_zero_entries.numel() - self.current_k + 1
-
-                    k_th_value, _ = torch.kthvalue(non_zero_entries, k=k, dim=-1)
-                    return x.ge(k_th_value)
-
-            return topk_activation
+            return batch_topk
 
         raise ValueError(f"Not implemented activation function {self.cfg.act_fn}")
 
@@ -663,11 +586,12 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
         l1_coefficient: float = 1.0,
+        lp_coefficient: float = 0.0,
         return_aux_data: Literal[True] = True,
         **kwargs,
     ) -> tuple[
         Float[torch.Tensor, " batch"],
-        tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
+        tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
     ]: ...
 
     @overload
@@ -680,6 +604,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
         l1_coefficient: float = 1.0,
+        lp_coefficient: float = 0.0,
         return_aux_data: Literal[False],
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
@@ -702,23 +627,27 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         frequency_scale: float = 0.01,
         p: int = 1,
         l1_coefficient: float = 1.0,
+        lp_coefficient: float = 0.0,
         return_aux_data: bool = True,
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, " batch"],
         tuple[
             Float[torch.Tensor, " batch"],
-            tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
+            tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
         ],
     ]:
         """Compute the loss for the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
         """
-        x, encoder_kwargs = self.prepare_input(batch)
+        x, encoder_kwargs, decoder_kwargs = self.prepare_input(batch)
+
         label = self.prepare_label(batch, **kwargs)
 
-        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
-        reconstructed = self.decode(feature_acts, **kwargs)
+        with timer.time("encode"):
+            feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
+        with timer.time("decode"):
+            reconstructed = self.decode(feature_acts, **decoder_kwargs)
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
@@ -730,24 +659,36 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             l_rec = l_rec.sum(dim=-1)
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
-            loss_dict = {
+            loss_dict: dict[str, Optional[torch.Tensor]] = {
                 "l_rec": l_rec,
             }
             loss = l_rec.mean()
 
             if sparsity_loss_type is not None:
                 with timer.time("sparsity_loss_calculation"):
-                    decoder_norm = self.decoder_norm() if self.cfg.sparsity_include_decoder_norm else 1.0
                     if sparsity_loss_type == "power":
-                        l_s = torch.norm(feature_acts * decoder_norm, p=p, dim=-1)
+                        l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
                     elif sparsity_loss_type == "tanh":
-                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm).sum(dim=-1)
+                        l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
                     elif sparsity_loss_type == "tanh-quad":
-                        approx_frequency = einops.reduce(
-                            torch.tanh(tanh_stretch_coefficient * feature_acts * decoder_norm),
-                            "... d_sae -> d_sae",
-                            "mean",
-                        )
+                        score = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm())
+
+                        # Use local_map to perform mean reduction locally. This will lower the backward memory usage (likely due to DTensor bug).
+                        if isinstance(score, DTensor):
+                            approx_frequency = local_map(
+                                lambda x: einops.reduce(
+                                    x,
+                                    "... d_sae -> 1 d_sae",
+                                    "mean",
+                                ),
+                                DimMap({"model": 1, "data": 0, "head": 0}).placements(score.device_mesh),
+                            )(score).mean(0)
+                        else:
+                            approx_frequency = einops.reduce(
+                                score,
+                                "... d_sae -> d_sae",
+                                "mean",
+                            )
                         l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
                     else:
                         raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
@@ -757,6 +698,23 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     # WARNING: Some DTensor bugs make if l1_coefficient * l_s goes before full_tensor, the l1_coefficient value will be internally cached. Furthermore, it will cause the backward pass to fail with redistribution error. See https://github.com/pytorch/pytorch/issues/153603 and https://github.com/pytorch/pytorch/issues/153615 .
                     loss_dict["l_s"] = l_s
                     loss = loss + l_s.mean()
+            else:
+                loss_dict["l_s"] = None
+
+            # Lp loss calculation: λ_P * Σ_i ReLU(exp(t) - f_i(x)) ||W_{d,i}||_2
+            if lp_coefficient > 0.0 and isinstance(self.activation_function, JumpReLU):
+                with timer.time("lp_loss_calculation"):
+                    # ReLU(exp(lp_threshold) - hidden_pre) * decoder_norm
+                    jumprelu_threshold = self.activation_function.get_jumprelu_threshold()
+                    l_p = torch.nn.functional.relu(jumprelu_threshold - hidden_pre) * self.decoder_norm()
+                    l_p = l_p.sum(dim=-1)
+                    if isinstance(l_p, DTensor):
+                        l_p = l_p.full_tensor()
+                    l_p = lp_coefficient * l_p
+                    loss_dict["l_p"] = l_p
+                    loss = loss + l_p.mean()
+            else:
+                loss_dict["l_p"] = None
 
         if return_aux_data:
             aux_data = {
@@ -768,15 +726,124 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         return loss
 
     @abstractmethod
-    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
-        """Prepare the input for the encoder.
-        Returns a tuple of (input, kwargs) where kwargs is a dictionary of additional arguments for the encoder computation.
+    def prepare_input(
+        self, batch: dict[str, torch.Tensor], **kwargs
+    ) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
+        """Prepare the input for the encoder and decoder.
+
+        Returns:
+            tuple: (input_tensor, encoder_kwargs, decoder_kwargs)
+                - input_tensor: The input tensor for the encoder
+                - encoder_kwargs: Additional arguments for the encoder
+                - decoder_kwargs: Additional arguments for the decoder
         """
         raise NotImplementedError("Subclasses must implement this method")
 
     @abstractmethod
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         """Prepare the label for the loss computation."""
+        raise NotImplementedError("Subclasses must implement this method")
+
+    @torch.no_grad()
+    def prepare_logging_data(
+        self,
+        log_info: dict[str, torch.Tensor],
+        label: torch.Tensor,
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        """Prepare model-specific data transformations for logging.
+
+        This method handles model-specific transformations needed before computing metrics,
+        such as permuting dimensions, flattening, etc.
+
+        Args:
+            log_info: Dictionary containing logging information (feature_acts, reconstructed, etc.)
+            label: The label tensor for computing reconstruction metrics
+
+        Returns:
+            Tuple of (updated_log_info, updated_label) with appropriate transformations applied.
+            Default implementation returns inputs unchanged.
+        """
+        return log_info, label
+
+    @torch.no_grad()
+    def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
+        """Compute activation frequency scores for feature sparsity tracking.
+
+        Args:
+            feature_acts: Feature activations tensor
+
+        Returns:
+            Activation frequency scores tensor, aggregated appropriately for the model type.
+            Default implementation returns sum over batch dimension.
+        """
+        return (feature_acts > 0).float().sum(0)
+
+    @torch.no_grad()
+    def compute_sparsity_metrics(self, feature_sparsity: torch.Tensor) -> dict[str, float]:
+        """Compute model-specific sparsity metrics.
+
+        Args:
+            feature_sparsity: Feature sparsity tensor (act_freq_scores / n_frac_active_tokens)
+
+        Returns:
+            Dictionary of sparsity metric names to values.
+        """
+        return {
+            "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum(-1).item(),
+            "sparsity/above_1e-2": (feature_sparsity > 1e-2).sum(-1).item(),
+            "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum(-1).item(),
+            "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum(-1).item(),
+            "sparsity/below_1e-7": (feature_sparsity < 1e-7).sum(-1).item(),
+        }
+
+    @torch.no_grad()
+    def compute_training_metrics(
+        self,
+        feature_acts: torch.Tensor,
+        reconstructed: torch.Tensor,
+        label: torch.Tensor,
+        l_rec: torch.Tensor,
+        l0: torch.Tensor,
+        explained_variance: torch.Tensor,
+        explained_variance_legacy: torch.Tensor,
+    ) -> dict[str, float]:
+        """Compute model-specific training metrics.
+
+        Args:
+            feature_acts: Feature activations tensor
+            reconstructed: Reconstructed input tensor
+            label: Label tensor
+            l_rec: Reconstruction loss tensor
+            l0: L0 sparsity tensor
+            explained_variance: Explained variance tensor
+            explained_variance_legacy: Legacy explained variance tensor
+
+        Returns:
+            Dictionary of metric names to values. Should include model-specific metrics
+            (e.g., per-layer metrics for CLT, per-head metrics for CrossCoder).
+        """
+        return {}
+
+    @torch.no_grad()
+    def aggregate_l0(self, l0: torch.Tensor) -> torch.Tensor:
+        """Aggregate l0 tensor for computing overall metric if needed.
+
+        Some models (e.g., CLT) need to aggregate l0 across certain dimensions
+        before computing the overall metric. Default implementation returns l0 unchanged.
+
+        Args:
+            l0: L0 sparsity tensor
+
+        Returns:
+            Aggregated l0 tensor for overall metric computation.
+        """
+        return l0
+
+    def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
+        """Initialize the W and D parameters with the active subspace."""
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch: dict[str, torch.Tensor]):
         raise NotImplementedError("Subclasses must implement this method")
 
     def dim_maps(self) -> dict[str, DimMap]:

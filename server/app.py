@@ -9,10 +9,15 @@ import numpy as np
 import plotly.graph_objects as go
 import torch
 from datasets import Dataset
-from fastapi import FastAPI, Response
+from fastapi import Body, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from torchvision import transforms
+
+try:
+    from torchvision import transforms
+except ImportError:
+    transforms = None
+    print("WARNING: torchvision not found, image processing will be disabled")
 
 from lm_saes.backend import LanguageModel
 from lm_saes.config import MongoDBConfig, SAEConfig
@@ -26,8 +31,13 @@ app = FastAPI()
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+print(os.environ.get("MONGO_URI", "mongodb://localhost:27017/"))
+print(os.environ.get("MONGO_DB", "mechinterp"))
 client = MongoClient(MongoDBConfig())
 sae_series = os.environ.get("SAE_SERIES", "default")
+tokenizer_only = os.environ.get("TOKENIZER_ONLY", "false").lower() == "true"
+if tokenizer_only:
+    print("WARNING: Tokenizer only mode is enabled, some features may not be available")
 
 # Remove global caches in favor of LRU cache
 # sae_cache: dict[str, SparseAutoEncoder] = {}
@@ -51,6 +61,7 @@ def get_model(name: str) -> LanguageModel:
     cfg = client.get_model_cfg(name)
     if cfg is None:
         raise ValueError(f"Model {name} not found")
+    cfg.tokenizer_only = tokenizer_only
     return load_model(cfg)
 
 
@@ -105,24 +116,29 @@ def make_serializable(obj):
     return obj
 
 
-def trim_minimum(*arrs: list[Any] | None) -> list[list[Any] | None]:
+def trim_minimum(
+    origins: list[dict[str, Any] | None],
+    feature_acts_indices: np.ndarray,
+    feature_acts_values: np.ndarray,
+) -> tuple[list[dict[str, Any] | None], np.ndarray, np.ndarray]:
     """Trim multiple arrays to the length of the shortest non-None array.
 
     Args:
-        *arrs: Arrays to trim
+        origins: Origins
+        feature_acts_indices: Feature acts indices
+        feature_acts_values: Feature acts values
 
     Returns:
         list: List of trimmed arrays
-
-    Example:
-        >>> a = [1, 2, 3, 4]
-        >>> b = [5, 6, 7]
-        >>> c = [8, 9, 10, 11, 12]
-        >>> trim_minimum(a, b, c)
-        [[1, 2, 3], [5, 6, 7], [8, 9, 10]]
     """
-    min_length = min(len(arr) for arr in arrs if arr is not None)
-    return [arr[:min_length] if arr is not None else None for arr in arrs]
+
+    min_length = min(len(origins), feature_acts_indices[-1] + 10)
+    feature_acts_indices_mask = feature_acts_indices <= min_length
+    return (
+        origins[: int(min_length)],
+        feature_acts_indices[feature_acts_indices_mask],
+        feature_acts_values[feature_acts_indices_mask],
+    )
 
 
 @app.exception_handler(AssertionError)
@@ -259,7 +275,8 @@ def get_feature(
         )
 
     analysis = next(
-        (a for a in feature.analyses if a.name == feature_analysis_name or feature_analysis_name is None), None
+        (a for a in feature.analyses if a.name == feature_analysis_name or feature_analysis_name is None),
+        None,
     )
     if analysis is None:
         return Response(
@@ -269,11 +286,20 @@ def get_feature(
             status_code=404,
         )
 
-    def process_sample(*, feature_acts, context_idx, dataset_name, model_name, shard_idx=None, n_shards=None):
+    def process_sample(
+        *,
+        sparse_feature_acts,
+        context_idx,
+        dataset_name,
+        model_name,
+        shard_idx=None,
+        n_shards=None,
+    ):
         """Process a sample to extract and format feature data.
 
         Args:
-            feature_acts: Feature activations
+            sparse_feature_acts: Sparse feature activations,
+                optional z pattern activations
             decoder_norms: Decoder norms
             context_idx: Context index in the dataset
             dataset_name: Name of the dataset
@@ -285,24 +311,43 @@ def get_feature(
             dict: Processed sample data
         """  # Get model and dataset
         model = get_model(model_name)
-        data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx]
+        # model = None
+        data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
 
         # Get origins for the features
         origins = model.trace({k: [v] for k, v in data.items()})[0]
 
         # Process image data if present
-        image_key = next((key for key in ["image", "images"] if key in data), None)
+        image_key = next(
+            (key for key in ["image", "images"] if key in data),
+            None,
+        )
         if image_key is not None:
             image_urls = [
-                f"/images/{dataset_name}?context_idx={context_idx}&shard_idx={shard_idx}&n_shards={n_shards}&image_idx={img_idx}"
+                f"/images/{dataset_name}?context_idx={context_idx}&"
+                f"shard_idx={shard_idx}&n_shards={n_shards}&"
+                f"image_idx={img_idx}"
                 for img_idx in range(len(data[image_key]))
             ]
             del data[image_key]
             data["images"] = image_urls
 
         # Trim to matching lengths
-        origins, feature_acts = trim_minimum(origins, feature_acts)
-        assert origins is not None and feature_acts is not None, "Origins and feature acts must not be None"
+        (
+            feature_acts_indices,
+            feature_acts_values,
+            z_pattern_indices,
+            z_pattern_values,
+        ) = sparse_feature_acts
+
+        origins, feature_acts_indices, feature_acts_values = trim_minimum(
+            origins,
+            feature_acts_indices,
+            feature_acts_values,
+        )
+        assert origins is not None and feature_acts_indices is not None and feature_acts_values is not None, (
+            "Origins and feature acts must not be None"
+        )
 
         # Process text data if present
         if "text" in data:
@@ -311,7 +356,67 @@ def get_feature(
                 max_text_origin = max(text_ranges, key=lambda x: x[1])
                 data["text"] = data["text"][: max_text_origin[1]]
 
-        return {**data, "origins": origins, "feature_acts": feature_acts}
+        return {
+            **data,
+            "origins": origins,
+            "feature_acts_indices": feature_acts_indices,
+            "feature_acts_values": feature_acts_values,
+            "z_pattern_indices": z_pattern_indices,
+            "z_pattern_values": z_pattern_values,
+        }
+
+    def process_sparse_feature_acts(
+        feature_acts_indices: np.ndarray,
+        feature_acts_values: np.ndarray,
+        z_pattern_indices: np.ndarray | None = None,
+        z_pattern_values: np.ndarray | None = None,
+    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]]:
+        """Process sparse feature acts.
+
+        Args:
+            feature_acts_indices: Feature acts indices
+            feature_acts_values: Feature acts values
+            z_pattern_indices: Z pattern indices
+            z_pattern_values: Z pattern values
+
+        TODO: This is really ugly, we should find a better way to do this.
+        """
+        _, feature_acts_counts = np.unique(
+            feature_acts_indices[0],
+            return_counts=True,
+        )
+        _, z_pattern_counts = (
+            np.unique(z_pattern_indices[0], return_counts=True) if z_pattern_indices is not None else (None, None)
+        )
+
+        feature_acts_sample_ranges = np.concatenate([[0], np.cumsum(feature_acts_counts)])
+        z_pattern_sample_ranges = (
+            np.concatenate([[0], np.cumsum(z_pattern_counts)]) if z_pattern_counts is not None else None
+        )
+
+        feature_acts_sample_ranges = list(zip(feature_acts_sample_ranges[:-1], feature_acts_sample_ranges[1:]))
+        z_pattern_sample_ranges = (
+            list(zip(z_pattern_sample_ranges[:-1], z_pattern_sample_ranges[1:]))
+            if z_pattern_sample_ranges is not None
+            else [(None, None)] * len(feature_acts_sample_ranges)
+        )
+        if z_pattern_sample_ranges[0][0] is not None:
+            assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), (
+                "Feature acts and z pattern must have the same number of samples"
+            )
+
+        for (feature_acts_start, feature_acts_end), (z_pattern_start, z_pattern_end) in zip(
+            feature_acts_sample_ranges, z_pattern_sample_ranges
+        ):
+            feature_acts_indices_i = feature_acts_indices[1, feature_acts_start:feature_acts_end]
+            feature_acts_values_i = feature_acts_values[feature_acts_start:feature_acts_end]
+            z_pattern_indices_i = (
+                z_pattern_indices[1:, z_pattern_start:z_pattern_end] if z_pattern_indices is not None else None
+            )
+            z_pattern_values_i = (
+                z_pattern_values[z_pattern_start:z_pattern_end] if z_pattern_values is not None else None
+            )
+            yield feature_acts_indices_i, feature_acts_values_i, z_pattern_indices_i, z_pattern_values_i
 
     # Process all samples for each sampling
     sample_groups = []
@@ -319,20 +424,25 @@ def get_feature(
         # Using zip to process correlated data instead of indexing
         samples = [
             process_sample(
-                feature_acts=feature_acts,
+                sparse_feature_acts=sparse_feature_acts,
                 context_idx=context_idx,
                 dataset_name=dataset_name,
                 model_name=model_name,
                 shard_idx=shard_idx,
                 n_shards=n_shards,
             )
-            for feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
-                sampling.feature_acts,
+            for sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
+                process_sparse_feature_acts(
+                    sampling.feature_acts_indices,
+                    sampling.feature_acts_values,
+                    sampling.z_pattern_indices,
+                    sampling.z_pattern_values,
+                ),
                 sampling.context_idx,
                 sampling.dataset_name,
                 sampling.model_name,
-                sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts),
-                sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts),
+                sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts_indices),
+                sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts_indices),
             )
         ]
 
@@ -364,6 +474,84 @@ def get_feature(
         content=msgpack.packb(make_serializable(response_data)),
         media_type="application/x-msgpack",
     )
+
+
+@app.post("/dictionaries/{name}/cache_features")
+def cache_features(
+    name: str,
+    features: list[dict[str, Any]] = Body(..., embed=True),
+    output_dir: str = Body(...),
+):
+    """Batch-fetch and persist feature payloads for offline reuse.
+
+    Args:
+        name: Dictionary/SAE name.
+        features: List of feature specs currently on screen. Each item should contain
+            - feature_id: int
+            - layer: int
+            - is_lorsa: bool
+            - analysis_name: Optional[str] (overrides auto selection)
+        output_dir: Directory on the server filesystem to write files into.
+
+    Returns:
+        Dict with count and directory path.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    saved = 0
+    for f in features:
+        feature_id = int(f["feature_id"])  # may raise KeyError which FastAPI will surface
+        layer = int(f["layer"])  # required for formatting analysis name
+        is_lorsa = bool(f.get("is_lorsa", False))
+        analysis_name_override = f.get("analysis_name")
+
+        # Determine analysis name for this feature
+        formatted_analysis_name: str | None = None
+        if analysis_name_override is not None:
+            formatted_analysis_name = analysis_name_override
+        else:
+            try:
+                base_name = (
+                    client.get_lorsa_analysis_name(name, sae_series)
+                    if is_lorsa
+                    else client.get_clt_analysis_name(name, sae_series)
+                )
+            except AttributeError:
+                base_name = None
+            if base_name is None:
+                feat = client.get_random_alive_feature(sae_name=name, sae_series=sae_series)
+                if feat is None:
+                    return Response(content=f"Dictionary {name} not found", status_code=404)
+                available = [a.name for a in feat.analyses]
+                preferred = [a for a in available if ("lorsa" in a) == is_lorsa]
+                base_name = preferred[0] if preferred else available[0]
+            formatted_analysis_name = base_name.replace("{}", str(layer))
+
+        # Reuse existing single-feature endpoint logic. Align with frontend usage where
+        # the path 'name' is the formatted analysis name used by GET /dictionaries/{name}/features/{id}.
+        res = get_feature(name=formatted_analysis_name, feature_index=feature_id, feature_analysis_name=None)
+        if isinstance(res, Response) and res.status_code != 200:
+            # Skip but continue
+            continue
+
+        payload = res.body if isinstance(res, Response) else res
+        # Write as msgpack for fidelity and also a JSON alongside for convenience
+        base = os.path.join(output_dir, f"layer{layer}__feature{feature_id}__{formatted_analysis_name}.msgpack")
+        with open(base, "wb") as fbin:
+            fbin.write(payload)
+        try:
+            decoded = msgpack.unpackb(payload, raw=False)
+            json_path = base.replace(".msgpack", ".json")
+            # make_serializable handles tensors/np arrays
+            import json as _json
+
+            with open(json_path, "w") as fj:
+                _json.dump(make_serializable(decoded), fj)
+        except Exception:
+            pass
+        saved += 1
+
+    return {"saved": saved, "output_dir": output_dir}
 
 
 @app.get("/dictionaries/{name}")

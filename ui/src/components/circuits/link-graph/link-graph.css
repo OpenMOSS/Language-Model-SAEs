@@ -1,0 +1,129 @@
+.link-graph-container {
+  position: relative;
+  width: 100%;
+  height: 600px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.link-graph-container svg {
+  /* Ensure SVG can receive mouse events */
+  pointer-events: auto;
+}
+
+.link-graph-container svg g {
+  /* Ensure all SVG groups can receive mouse events */
+  pointer-events: auto;
+}
+
+.link-graph-container-wrapper {
+  width: 100%;
+}
+
+.node {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.node:hover {
+  font-weight: bold;
+}
+
+.node.pinned {
+  font-weight: bold;
+  stroke: #f59e0b;
+  stroke-width: 2;
+}
+
+.node.clicked {
+  font-weight: bold;
+  stroke: #ef4444;
+  stroke-width: 2;
+}
+
+.node.connected {
+  font-weight: bold;
+  stroke: #10b981;
+  stroke-width: 2;
+  r: 6;
+}
+
+.hover-indicator {
+  pointer-events: none;
+}
+
+/* Link edge styling */
+.link {
+  transition: opacity 0.3s ease, stroke-width 0.3s ease, stroke 0.3s ease;
+}
+
+.link:hover {
+  opacity: 0.06;
+}
+
+.link {
+  opacity: 0.05;
+}
+
+/* Connected links when a node is clicked */
+.link.connected {
+  opacity: 0.9;
+  stroke-width: 3px;
+}
+
+/* Connected links when hovering over a node */
+.link.connected:hover {
+  opacity: 0.5;
+  stroke-width: 4px;
+}
+
+.link-graph-container-wrapper .controls {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background-color: #f9fafb;
+  border-radius: 6px;
+}
+
+.link-graph-container-wrapper .controls select,
+.link-graph-container-wrapper .controls button {
+  margin-right: 0.5rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background-color: white;
+  font-size: 0.875rem;
+}
+
+.link-graph-container-wrapper .controls button:hover {
+  background-color: #f3f4f6;
+}
+
+.link-graph-container-wrapper .controls button.active {
+  background-color: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+}
+
+.link-graph-container-wrapper .pinned-nodes {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background-color: #fef3c7;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+/* Token label styling */
+.token-label {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  fill: #374151;
+  text-anchor: middle;
+  dominant-baseline: hanging;
+}
+
+.token-label:hover {
+  fill: #1f2937;
+  font-weight: 600;
+} 

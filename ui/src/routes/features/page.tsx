@@ -3,6 +3,7 @@ import { SectionNavigator } from "@/components/app/section-navigator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useFeatureState } from "@/contexts/AppStateContext";
 import { FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
@@ -15,14 +16,28 @@ const FeatureCard = lazy(() => import("@/components/feature/feature-card").then(
 
 export const FeaturesPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  
+  // Use global state for features
+  const {
+    selectedDictionary,
+    selectedAnalysis,
+    featureIndex,
+    currentFeature,
+    isLoading: featureLoading,
+    error: featureError,
+    setDictionary: setSelectedDictionary,
+    setAnalysis: setSelectedAnalysis,
+    setFeatureIndex,
+    setCurrentFeature,
+    setLoading: setFeatureLoading,
+    setError: setFeatureError,
+  } = useFeatureState();
 
   const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
     return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries`)
       .then(async (res) => await res.json())
       .then((res) => z.array(z.string()).parse(res));
   });
-
-  const [selectedDictionary, setSelectedDictionary] = useState<string | null>(null);
 
   const [analysesState, fetchAnalyses] = useAsyncFn(async (dictionary: string) => {
     if (!dictionary) return [];
@@ -37,8 +52,6 @@ export const FeaturesPage = () => {
       .then(async (res) => await res.json())
       .then((res) => z.array(z.string()).parse(res));
   });
-
-  const [selectedAnalysis, setSelectedAnalysis] = useState<string | null>(null);
 
   // Metric filtering state
   const [metricsState, fetchMetrics] = useAsyncFn(async (dictionary: string) => {
@@ -58,7 +71,6 @@ export const FeaturesPage = () => {
   const [metricFilters, setMetricFilters] = useState<Record<string, { min?: number; max?: number }>>({});
   const [featureCount, setFeatureCount] = useState<number | null>(null);
 
-  const [featureIndex, setFeatureIndex] = useState<number>(0);
   const [inputValue, setInputValue] = useState<string>("0");
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
 
@@ -139,7 +151,7 @@ export const FeaturesPage = () => {
     }
   );
 
-  const [featureState, fetchFeature] = useAsyncFn(
+  const [_, fetchFeature] = useAsyncFn(
     async (
       dictionary: string | null,
       featureIndex: number | string = "random",
@@ -152,6 +164,8 @@ export const FeaturesPage = () => {
       }
 
       setLoadingRandomFeature(featureIndex === "random");
+      setFeatureLoading(true);
+      setFeatureError(null);
 
       // Build query parameters
       const params = new URLSearchParams();
@@ -214,7 +228,8 @@ export const FeaturesPage = () => {
         featureIndex: feature.featureIndex.toString(),
         analysis: feature.analysisName,
       });
-      return feature;
+      setCurrentFeature(feature);
+      setFeatureLoading(false);
     }
   );
 
@@ -311,7 +326,7 @@ export const FeaturesPage = () => {
       title: "Top Activation",
       id: "Activation",
     },
-  ].filter((section) => (featureState.value && featureState.value.logits != null) || section.id !== "Logits"), [featureState.value]);
+  ].filter((section) => (currentFeature && currentFeature.logits != null) || section.id !== "Logits"), [currentFeature]);
 
   return (
     <div id="Top">
@@ -320,7 +335,7 @@ export const FeaturesPage = () => {
         <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
           <span className="font-bold justify-self-end">Select dictionary:</span>
           <Select
-            disabled={dictionariesState.loading || featureState.loading}
+            disabled={dictionariesState.loading || featureLoading}
             value={selectedDictionary || undefined}
             onValueChange={(value) => {
               setSelectedDictionary(value);
@@ -338,7 +353,7 @@ export const FeaturesPage = () => {
             </SelectContent>
           </Select>
           <Button
-            disabled={dictionariesState.loading || featureState.loading}
+            disabled={dictionariesState.loading || featureLoading}
             onClick={async () => {
               await fetchFeature(selectedDictionary, "random", selectedAnalysis);
             }}
@@ -349,7 +364,7 @@ export const FeaturesPage = () => {
 
           <span className="font-bold justify-self-end">Select analysis:</span>
           <Select
-            disabled={analysesState.loading || !selectedDictionary || featureState.loading}
+            disabled={analysesState.loading || !selectedDictionary || featureLoading}
             value={selectedAnalysis || undefined}
             onValueChange={setSelectedAnalysis}
           >
@@ -365,7 +380,7 @@ export const FeaturesPage = () => {
             </SelectContent>
           </Select>
           <Button
-            disabled={analysesState.loading || !selectedDictionary || featureState.loading}
+            disabled={analysesState.loading || !selectedDictionary || featureLoading}
             onClick={async () => {
               await fetchFeature(selectedDictionary, featureIndex, selectedAnalysis);
             }}
@@ -376,7 +391,7 @@ export const FeaturesPage = () => {
 
           <span className="font-bold justify-self-end">Choose a specific feature:</span>
           <Input
-            disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
+            disabled={dictionariesState.loading || selectedDictionary === null || featureLoading}
             id="feature-input"
             className="bg-white"
             type="number"
@@ -384,13 +399,13 @@ export const FeaturesPage = () => {
             onChange={handleFeatureIndexChange}
           />
           <Button
-            disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
+            disabled={dictionariesState.loading || selectedDictionary === null || featureLoading}
             onClick={async () => await fetchFeature(selectedDictionary, featureIndex, selectedAnalysis)}
           >
             Go
           </Button>
           <Button
-            disabled={dictionariesState.loading || selectedDictionary === null || featureState.loading}
+            disabled={dictionariesState.loading || selectedDictionary === null || featureLoading}
             onClick={async () => {
               await fetchFeature(selectedDictionary, "random", selectedAnalysis, metricFilters);
             }}
@@ -458,17 +473,17 @@ export const FeaturesPage = () => {
           )}
         </div>
 
-        {featureState.loading && !loadingRandomFeature && (
+        {featureLoading && !loadingRandomFeature && (
           <div>
             Loading Feature <span className="font-bold">#{featureIndex}</span>...
           </div>
         )}
-        {featureState.loading && loadingRandomFeature && <div>Loading Random Living Feature...</div>}
-        {featureState.error && <div className="text-red-500 font-bold">Error: {featureState.error.message}</div>}
-        {!featureState.loading && featureState.value && (
+        {featureLoading && loadingRandomFeature && <div>Loading Random Living Feature...</div>}
+        {featureError && <div className="text-red-500 font-bold">Error: {featureError}</div>}
+        {!featureLoading && currentFeature && (
           <div className="flex gap-12 w-full">
             <Suspense fallback={<div>Loading Feature Card...</div>}>
-              <FeatureCard feature={featureState.value} />
+              <FeatureCard feature={currentFeature} />
             </Suspense>
             <SectionNavigator sections={sections} />
           </div>

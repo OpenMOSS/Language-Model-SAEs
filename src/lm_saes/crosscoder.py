@@ -7,12 +7,15 @@ import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor, Shard
+from torch.distributed.tensor import DTensor, Partial, Shard
+from torch.distributed.tensor.experimental import local_map
 from typing_extensions import override
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import CrossCoderConfig
 from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed.ops import full_tensor
+from lm_saes.utils.distributed.utils import replace_placements
 from lm_saes.utils.misc import get_slice_length
 from lm_saes.utils.timer import timer
 
@@ -177,7 +180,19 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 def _apply_encoding_no_einsum(x: torch.Tensor, W_E: torch.Tensor, b_E: torch.Tensor) -> torch.Tensor:
                     assert isinstance(x, DTensor) and isinstance(W_E, DTensor) and isinstance(b_E, DTensor)
                     return DTensor.from_local(
-                        _apply_encoding_local_no_einsum(x.to_local(), W_E.to_local(), b_E.to_local()),
+                        _apply_encoding_local_no_einsum(
+                            x.to_local(),
+                            W_E.to_local(
+                                grad_placements=replace_placements(
+                                    W_E.placements, W_E.device_mesh, "data", Partial("sum")
+                                )
+                            ),
+                            b_E.to_local(
+                                grad_placements=replace_placements(
+                                    b_E.placements, b_E.device_mesh, "data", Partial("sum")
+                                )
+                            ),
+                        ),
                         device_mesh=self.device_mesh,
                         placements=out_placements,
                     )
@@ -262,13 +277,15 @@ class CrossCoder(AbstractSparseAutoEncoder):
         hidden_pre = self._apply_encoding(x, no_einsum=no_einsum)
 
         # Sum across heads and add bias
-        if no_einsum:
-            accumulated_hidden_pre = torch.sum(hidden_pre, dim=-2)
+        if not isinstance(hidden_pre, DTensor):
+            accumulated_hidden_pre = torch.sum(hidden_pre, dim=-2)  # "... n_heads d_sae -> ... d_sae"
         else:
-            accumulated_hidden_pre = einops.einsum(hidden_pre, "... n_heads d_sae -> ... d_sae")
+            accumulated_hidden_pre = local_map(
+                lambda x: torch.sum(x, dim=-2, keepdim=True),
+                list(hidden_pre.placements),
+            )(hidden_pre).sum(dim=-2)  # "... n_heads d_sae -> ... d_sae"
 
-        with timer.time("encode_redistribute_tensor_pre_repeat"):
-            if isinstance(accumulated_hidden_pre, DTensor):
+            with timer.time("encode_redistribute_tensor_pre_repeat"):
                 accumulated_hidden_pre = DimMap({"data": 0, "model": -1}).redistribute(accumulated_hidden_pre)
 
         accumulated_hidden_pre = einops.repeat(
@@ -282,7 +299,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
                 )
 
         # Apply activation function
-        feature_acts = accumulated_hidden_pre * self.activation_function(accumulated_hidden_pre * self.decoder_norm())
+        feature_acts = self.activation_function(accumulated_hidden_pre * self.decoder_norm()) / self.decoder_norm()
 
         if return_hidden_pre:
             return feature_acts, accumulated_hidden_pre
@@ -324,7 +341,19 @@ class CrossCoder(AbstractSparseAutoEncoder):
                     assert isinstance(feature_acts, DTensor) and isinstance(W_D, DTensor) and isinstance(b_D, DTensor)
                     # feature_acts = DimMap({"head": -2, "model": -1}).redistribute(feature_acts)
                     return DTensor.from_local(
-                        _apply_decoding_local_no_einsum(feature_acts.to_local(), W_D.to_local(), b_D.to_local()),
+                        _apply_decoding_local_no_einsum(
+                            feature_acts.to_local(),
+                            W_D.to_local(
+                                grad_placements=replace_placements(
+                                    W_D.placements, W_D.device_mesh, "data", Partial("sum")
+                                )
+                            ),
+                            b_D.to_local(
+                                grad_placements=replace_placements(
+                                    b_D.placements, b_D.device_mesh, "data", Partial("sum")
+                                )
+                            ),
+                        ),
                         device_mesh=self.device_mesh,
                         placements=out_placements,
                     )
@@ -414,14 +443,11 @@ class CrossCoder(AbstractSparseAutoEncoder):
     @override
     @timer.time("standardize_parameters_of_dataset_norm")
     @torch.no_grad()
-    def standardize_parameters_of_dataset_norm(self, dataset_average_activation_norm: dict[str, float] | None):
+    def standardize_parameters_of_dataset_norm(self):
         """
         Standardize the parameters of the model to account for dataset_norm during inference.
         """
         assert self.cfg.norm_activation == "dataset-wise"
-        assert self.dataset_average_activation_norm is not None or dataset_average_activation_norm is not None
-        if dataset_average_activation_norm is not None:
-            self.set_dataset_average_activation_norm(dataset_average_activation_norm)
         assert self.dataset_average_activation_norm is not None
         norm_factors = torch.tensor(
             [
@@ -446,7 +472,9 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     @override
     @timer.time("prepare_input")
-    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
+    def prepare_input(
+        self, batch: dict[str, torch.Tensor], **kwargs
+    ) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
         def pad_to_d_model(x: torch.Tensor) -> torch.Tensor:
             # TODO: Support padding for distributed setting
             if x.shape[-1] > self.cfg.d_model:
@@ -462,7 +490,13 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
         # The following code is to stack the activations per head to (batch, ..., n_heads, d_model)
         if self.device_mesh is None or "head" not in cast(tuple[str, ...], self.device_mesh.mesh_dim_names):
-            return torch.stack([pad_to_d_model(batch[hook_point]) for hook_point in self.cfg.hook_points], dim=-2), {}
+            encoder_kwargs = {}
+            decoder_kwargs = {}
+            return (
+                torch.stack([pad_to_d_model(batch[hook_point]) for hook_point in self.cfg.hook_points], dim=-2),
+                encoder_kwargs,
+                decoder_kwargs,
+            )
         else:
             # The following code stacks the activations in a distributed setting. It's a bit complicated so I'll try to explain it in detail.
 
@@ -507,16 +541,72 @@ class CrossCoder(AbstractSparseAutoEncoder):
                     first_hook_point_activations.placements, first_hook_point_activations.device_mesh
                 )
 
-            return DTensor.from_local(
-                per_process_activations,
-                device_mesh=self.device_mesh,
-                placements=output_dim_map.placements(self.device_mesh),
-            ), {}
+            encoder_kwargs = {}
+            decoder_kwargs = {}
+            return (
+                DTensor.from_local(
+                    per_process_activations,
+                    device_mesh=self.device_mesh,
+                    placements=output_dim_map.placements(self.device_mesh),
+                ),
+                encoder_kwargs,
+                decoder_kwargs,
+            )
 
     @override
     @timer.time("prepare_label")
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         return self.prepare_input(batch)[0]
+
+    @override
+    @torch.no_grad()
+    def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
+        """Compute activation frequency scores for CrossCoder (max over heads)."""
+        act_freq_scores = (feature_acts > 0).float().sum(0)
+        if isinstance(act_freq_scores, DTensor):
+            # Operator aten.amax.default does not have a sharding strategy registered.
+            act_freq_scores = act_freq_scores.full_tensor().amax(dim=0)
+        else:
+            act_freq_scores = act_freq_scores.amax(dim=0)
+        return act_freq_scores
+
+    @override
+    @torch.no_grad()
+    def compute_training_metrics(
+        self,
+        feature_acts: torch.Tensor,
+        reconstructed: torch.Tensor,
+        label: torch.Tensor,
+        l_rec: torch.Tensor,
+        l0: torch.Tensor,
+        explained_variance: torch.Tensor,
+        explained_variance_legacy: torch.Tensor,
+    ) -> dict[str, float]:
+        """Compute per-head training metrics for CrossCoder."""
+        assert explained_variance.ndim == 1 and len(explained_variance) == len(self.cfg.hook_points)
+        metrics = {}
+        for i, k in enumerate(self.cfg.hook_points):
+            metrics.update(
+                {
+                    f"crosscoder_metrics/{k}/explained_variance": explained_variance[i].mean().item(),
+                    f"crosscoder_metrics/{k}/l0": l0[:, i].mean().item(),
+                    f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
+                }
+            )
+        indices = feature_acts.amax(dim=1).nonzero(as_tuple=True)
+        activated_feature_acts = feature_acts.permute(0, 2, 1)[indices].permute(1, 0)
+        activated_decoder_norms = full_tensor(self.decoder_norm())[:, indices[1]]
+        mean_decoder_norm_non_activated_in_activated = (
+            activated_decoder_norms[activated_feature_acts == 0].mean().item()
+        )
+        mean_decoder_norm_activated_in_activated = activated_decoder_norms[activated_feature_acts != 0].mean().item()
+        metrics.update(
+            {
+                "crosscoder_metrics/mean_decoder_norm_non_activated_in_activated": mean_decoder_norm_non_activated_in_activated,
+                "crosscoder_metrics/mean_decoder_norm_activated_in_activated": mean_decoder_norm_activated_in_activated,
+            }
+        )
+        return metrics
 
     @override
     @torch.no_grad()
