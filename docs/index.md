@@ -10,7 +10,39 @@ This library provides:
 
 - **Scalability**: Our framework is fully distributed with arbitrary combinations of data, model, and head parallelism for both training and analysis. Enjoy training SAEs with millions of features!
 - **Flexibility**: We support a wide range of SAE variants, including vanilla SAEs, Lorsa (Low-rank Sparse Attention), CLT (Cross-layer Transcoder), MoLT (Mixture of Linear Transforms), CrossCoder, and more. Each variant can be combined with different activation functions (e.g., ReLU, JumpReLU, TopK, BatchTopK) and sparsity penalties (e.g., L1, Tanh).
-- **Easy to Use**: We provide high-level `runners` APIs to quickly launch experiments with simple configurations. Check our [examples](examples) for verified hyperparameters.
+- **Easy to Use**: We provide high-level `runners` APIs to quickly launch experiments with simple configurations. Check our [examples](https://github.com/OpenMOSS/Language-Model-SAEs/tree/main/examples) for verified hyperparameters.
 - **Visualization**: We provide a unified web interface to visualize learned SAE variants and their features.
 
-## Getting Started
+## Quick Start
+
+=== "Astral uv"
+
+    We strongly recommend users to use [uv](https://docs.astral.sh/uv/) for dependency management. uv is a modern drop-in replacement of poetry or pdm, with a lightning fast dependency resolution and package installation. See their [instructions](https://docs.astral.sh/uv/getting-started/) on how to initialize a Python project with uv.
+
+    To add our library as a project dependency, run:
+
+    ```bash
+    uv add lm-saes
+    ```
+
+    We also support [Ascend NPU](https://github.com/Ascend/pytorch) as an accelerator backend. To add our library as a project dependency with NPU dependency constraints, run:
+
+    ```bash
+    uv add lm-saes[npu]
+    ```
+
+=== "Pip"
+
+    Of course, you can also directly use [pip](https://pypi.org/project/pip/) to install our library. To install our library with pip, run:
+
+    ```bash
+    pip install lm-saes
+    ```
+
+    Note that since we use a forked version of [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens), so it'll be better to install the package in a seperate environment created by [conda](https://github.com/conda-forge/miniforge) or [virtualenv](https://virtualenv.pypa.io/en/latest/) to avoid conflicts.
+
+    We also support [Ascend NPU](https://github.com/Ascend/pytorch) as an accelerator backend. To install our library with NPU dependency constraints, run:
+
+    ```bash
+    pip install lm-saes[npu]
+    ```
