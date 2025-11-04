@@ -1,3 +1,4 @@
+from .direct_logit_attributor import DirectLogitAttributor
 from .feature_analyzer import FeatureAnalyzer
 from .feature_interpreter import (
     AutoInterpConfig,
@@ -14,4 +15,5 @@ __all__ = [
     "TokenizedSample",
     "ExplainerType",
     "ScorerType",
+    "DirectLogitAttributor",
 ]

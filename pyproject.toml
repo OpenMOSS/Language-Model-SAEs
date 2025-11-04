@@ -1,6 +1,6 @@
 [project]
 name = "lm-saes"
-version = "0.1.0"
+version = "2.0.0b1"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
     "datasets>=3.0.2",
@@ -13,7 +13,7 @@ dependencies = [
     "pymongo>=4.10.1",
     "tensorboardX>=2.6.2.2",
     # "torch>=2.5.0",
-    # "torchvision>=0.20.1",
+    "torchvision>=0.20.1",
     "transformer-lens",
     "uvicorn>=0.32.0",
     "wandb>=0.18.5",
@@ -66,6 +66,10 @@ text = "MIT"
 [project.scripts]
 lm-saes = "lm_saes.entrypoint:entrypoint"
 
+[build-system]
+requires = ["uv_build>=0.9.6,<0.10.0"]
+build-backend = "uv_build"
+
 [dependency-groups]
 dev = [
     "transformer-lens",
@@ -89,13 +93,20 @@ dev = [
     "tabulate>=0.9.0",
     "gradio>=5.34.0",
 ]
+docs = [
+    "mkdocs-gen-files>=0.5.0",
+    "mkdocs-literate-nav>=0.6.2",
+    "mkdocs-material>=9.6.22",
+    "mkdocs-section-index>=0.3.10",
+    "mkdocstrings[python]>=0.30.1",
+]
 flash-attn = [
     "flash-attn>=2.7.4.post1; (sys_platform == 'win32' or sys_platform == 'linux')",
 ]
 
 [project.optional-dependencies]
 # NPU variant of PyTorch (for Huawei Ascend hardware)
-default = ["torch==2.7.1", "torchvision>=0.22.1"]
+default = ["torch==2.8.0", "torchvision>=0.22.1"]
 
 npu = [
     "torch==2.6.0",
@@ -155,6 +166,9 @@ ignore = ["E741", "F722"]
 fixable = ["ALL"]
 unfixable = []
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.isort]
+known-third-party = ["wandb"]
 
 [tool.ruff.format]
 quote-style = "double"

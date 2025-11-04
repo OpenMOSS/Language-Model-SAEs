@@ -3,13 +3,59 @@
 from typing import cast
 
 import torch
-import triton  # type: ignore
-import triton.language as tl  # type: ignore
-from jaxtyping import Float
+import triton
+import triton.language as tl
 
 from lm_saes.utils.logging import get_logger
 
 logger = get_logger("kernels")
+
+
+def get_sparse_representation(x, pad_val=0):
+    """
+    Efficiently extracts sparse indices and values from a batched dense tensor x.
+
+    Args:
+        x (torch.Tensor): (B, d_sae) dense tensor with sparsity.
+        pad_val (int, optional): Value to use for padding (default: 0).
+
+    Returns:
+        sparse_indices (torch.Tensor): (B, nnz_max) Tensor containing column indices of nonzero elements.
+        sparse_values (torch.Tensor): (B, nnz_max) Tensor containing corresponding nonzero values.
+        nnz_per_row (torch.Tensor): (B,) Number of nonzero elements per row.
+    """
+    B, d_sae = x.shape
+
+    # Get nonzero indices and values
+    nonzero_idx = (x != 0).nonzero(as_tuple=True)  # (batch_idx, col_idx)
+    batch_indices, col_indices = nonzero_idx
+    values = x[nonzero_idx]
+
+    # Count nonzero elements per row
+    nnz_per_row = torch.bincount(batch_indices, minlength=B)
+    nnz_max = nnz_per_row.max().item()
+
+    # Prepare output tensors (handle case where there are no nonzero elements)
+    if nnz_max == 0:
+        # No nonzero elements - return minimal zerotensors
+        sparse_indices = torch.zeros((B, 1), dtype=torch.long, device=x.device)
+        sparse_values = torch.zeros((B, 1), dtype=x.dtype, device=x.device)
+    else:
+        sparse_indices = torch.full((B, cast(int, nnz_max)), pad_val, dtype=torch.long, device=x.device)
+        sparse_values = torch.zeros((B, cast(int, nnz_max)), dtype=x.dtype, device=x.device)
+
+    # Only perform scattering if we have nonzero elements
+    if nnz_max > 0 and len(batch_indices) > 0:
+        # Compute position indices for scattering
+        cum_nnzs = torch.cumsum(nnz_per_row, dim=0)
+        row_offsets = torch.cat([torch.tensor([0], device=x.device), cum_nnzs[:-1]])  # Shift right for offsets
+        positions = torch.arange(len(batch_indices), device=x.device) - row_offsets[batch_indices]
+
+        # Scatter indices and values
+        sparse_indices[batch_indices, positions] = col_indices
+        sparse_values[batch_indices, positions] = values
+
+    return sparse_indices, sparse_values
 
 
 def triton_sparse_transpose_dense_matmul(
@@ -39,6 +85,12 @@ def triton_sparse_transpose_dense_matmul(
     A = dense.shape[0]
     assert sparse_indices.shape[0] == A
 
+    # Validate sparse indices are within bounds
+    if sparse_indices.numel() > 0:
+        max_idx = sparse_indices.max().item()
+        if max_idx >= N:
+            raise ValueError(f"Sparse indices out of bounds: max_idx={max_idx}, N={N}")
+
     # COO-format and sorted
     sorted_indices = sparse_indices.view(-1).sort()
     coo_indices = torch.stack(
@@ -61,7 +113,7 @@ def triton_coo_sparse_dense_matmul(
     AK = coo_indices.shape[1]
     B = dense.shape[1]
 
-    out = torch.zeros(N, B, device=dense.device, dtype=coo_values.dtype)
+    out = torch.zeros(N, B, device=dense.device, dtype=torch.float32)
 
     def grid(META):
         return triton.cdiv(AK, META["BLOCK_SIZE_AK"]), 1
@@ -79,7 +131,7 @@ def triton_coo_sparse_dense_matmul(
         BLOCK_SIZE_AK=BLOCK_SIZE_AK,  # type: ignore
         BLOCK_SIZE_B=triton.next_power_of_2(B),  # type: ignore
     )
-    return out
+    return out.to(coo_values.dtype)
 
 
 @triton.jit
@@ -184,7 +236,7 @@ def triton_sparse_dense_matmul(
 
     sparse_indices is shape (batch_size, k)
     sparse_values is shape (batch_size, k)
-    dense is shape (d_sae, d_model)
+    dense is shape (d_sae, d_model)   ## TODO: check if this is correct, this is compatible with current situation
 
     output is shape (batch_size, d_model)
     """
@@ -241,8 +293,8 @@ def triton_dense_dense_sparseout_matmul(
     assert dense1.stride(1) == 1, "dense1 must be contiguous along B"
     assert dense2.stride(0) == 1, "dense2 must be contiguous along B"
 
-    if K > 512:
-        logger.warning("Using naive matmul for large K")
+    if K > 2048:
+        logger.warning(f"Using naive matmul for large K: {K}")
         # naive is more efficient for large K
         return (dense1 @ dense2).gather(1, at_indices)
 
@@ -384,69 +436,107 @@ def triton_sparse_dense_matmul_kernel(
     tl.store(out_ptr + pid * B + offsets_b, accum.to(sparse_values.dtype), mask=offsets_b < B)
 
 
-def get_sparse_representation(x, pad_val=0):
-    """
-    Efficiently extracts sparse indices and values from a batched dense tensor x.
-
-    Args:
-        x (torch.Tensor): (B, d_sae) dense tensor with sparsity.
-        pad_val (int, optional): Value to use for padding (default: 0).
-
-    Returns:
-        sparse_indices (torch.Tensor): (B, nnz_max) Tensor containing column indices of nonzero elements.
-        sparse_values (torch.Tensor): (B, nnz_max) Tensor containing corresponding nonzero values.
-        nnz_per_row (torch.Tensor): (B,) Number of nonzero elements per row.
-    """
-    B, d_sae = x.shape
-
-    # Get nonzero indices and values
-    nonzero_idx = (x != 0).nonzero(as_tuple=True)  # (batch_idx, col_idx)
-    batch_indices, col_indices = nonzero_idx
-    values = x[nonzero_idx]
-
-    # Count nonzero elements per row
-    nnz_per_row = torch.bincount(batch_indices, minlength=B)
-    nnz_max = nnz_per_row.max().item()
-
-    # Prepare output tensors
-    sparse_indices = torch.full((B, cast(int, nnz_max)), pad_val, dtype=torch.long, device=x.device)
-    sparse_values = torch.zeros((B, cast(int, nnz_max)), dtype=x.dtype, device=x.device)
-
-    # Compute position indices for scattering
-    cum_nnzs = torch.cumsum(nnz_per_row, dim=0)
-    row_offsets = torch.cat([torch.tensor([0], device=x.device), cum_nnzs[:-1]])  # Shift right for offsets
-    positions = torch.arange(len(batch_indices), device=x.device) - row_offsets[batch_indices]
-
-    # Scatter indices and values
-    sparse_indices[batch_indices, positions] = col_indices
-    sparse_values[batch_indices, positions] = values
-
-    return sparse_indices, sparse_values
-
-
-class TritonDecoderAutogradJumpReLU(torch.autograd.Function):
+class TritonEncoderAutogradDynamicK(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, feature_acts, decoder_weight):
-        sparse_indices, sparse_values = get_sparse_representation(feature_acts)
-        ctx.save_for_backward(sparse_indices, sparse_values, decoder_weight)
-        return triton_sparse_dense_matmul(sparse_indices, sparse_values, decoder_weight.T)
+    def forward(ctx, x, W_E, b_E, sparsity_threshold):
+        """
+        Forward pass: x @ W_E + b_E using dense operations.
+
+        Args:
+            ctx: autograd context
+            x: (batch, d_model) - Input activations
+            W_E: (d_model, d_sae) - Encoder weights
+            b_E: (d_sae,) - Encoder bias
+            sparsity_threshold: (float) - Sparsity threshold for using sparse kernels.
+
+        Returns:
+            output: (batch, d_sae) - Encoded activations
+        """
+        # Save tensors for backward pass
+        ctx.save_for_backward(x, W_E, b_E)
+        # Save non-tensor values separately
+        ctx.sparsity_threshold = sparsity_threshold
+
+        # Forward pass using dense operations (no triton kernel needed)
+        output = torch.mm(x, W_E) + b_E
+        return output
 
     @staticmethod
-    def backward(ctx, *grad_outputs, **args):
-        assert len(grad_outputs) == 1, "grad_outputs must be a single tensor"
+    def backward(ctx, *grad_outputs):
+        """
+        Backward pass: Use triton sparse kernels when grad_output is sparse (after topk).
+
+        Args:
+            grad_outputs: Tuple containing grad_output (batch, d_sae) - Gradient w.r.t. output (sparse after topk)
+
+        Returns:
+            grad_x: (batch, d_model) - Gradient w.r.t. input
+            grad_W_E: (d_model, d_sae) - Gradient w.r.t. encoder weights
+            grad_b_E: (d_sae,) - Gradient w.r.t. encoder bias
+            None: For sparsity_threshold (no gradient needed)
+        """
+        assert len(grad_outputs) == 1, "Expected exactly one gradient output"
         grad_output = grad_outputs[0]
-        sparse_indices, sparse_values, decoder_weight = ctx.saved_tensors
 
-        assert grad_output.is_contiguous(), (
-            "grad_output must be contiguous; this is probably because the subsequent op was a .sum() or something like that, which returns a non contiguous gradient"
-        )
+        x, W_E, b_E = ctx.saved_tensors
+        sparsity_threshold = ctx.sparsity_threshold
 
-        decoder_grad = triton_sparse_transpose_dense_matmul(
-            sparse_indices, sparse_values, grad_output, N=decoder_weight.size(1)
-        ).T
+        assert grad_output.is_contiguous(), "grad_output must be contiguous for triton kernels"
 
-        # decoder is contiguous when transposed so this is a matching layout
-        return grad_output @ decoder_weight, decoder_grad
+        # Check if grad_output is sparse (after topk activation)
+        sparsity_ratio = (grad_output == 0).float().mean().item()
+        use_sparse_kernels = (
+            sparsity_ratio > sparsity_threshold
+        )  # Use sparse kernels if sparsity_ratio > sparsity_threshold
+
+        if use_sparse_kernels:
+            # Use triton sparse kernels for backward pass
+            sparse_indices, sparse_values = get_sparse_representation(grad_output)
+
+            # Validate sparse indices are within bounds (skip if no active features)
+            if sparse_indices.numel() > 0:
+                max_sparse_idx = sparse_indices.max().item()
+                if max_sparse_idx >= W_E.size(1):
+                    raise ValueError(
+                        f"Sparse indices out of bounds: max_idx={max_sparse_idx}, expected < {W_E.size(1)}"
+                    )
+
+            # grad_x = grad_output @ W_E.T (sparse @ dense)
+            grad_x = triton_sparse_dense_matmul(sparse_indices, sparse_values, W_E.T.contiguous())
+
+            # grad_W_E = x.T @ grad_output (dense.T @ sparse)
+            # This is equivalent to sparse.T @ dense, so we can use transpose matmul
+            grad_W_E = triton_sparse_transpose_dense_matmul(
+                sparse_indices, sparse_values, x.contiguous(), N=W_E.size(1)
+            ).T
+
+            # grad_b_E = grad_output.sum(dim=0) for sparse tensor
+            grad_b_E = torch.zeros_like(b_E)
+
+            # sparse_indices: (batch, k) - feature indices for each batch sample
+            # sparse_values: (batch, k) - corresponding values
+            # We need to sum all values that correspond to the same feature index
+
+            # Flatten to get all (batch_idx, feature_idx) pairs and their values
+            batch_size, k = sparse_indices.shape
+
+            # Get valid (non-padded) entries
+            if sparse_indices.numel() > 0:
+                valid_mask = sparse_indices < W_E.size(1)  # Valid feature indices
+                valid_feature_indices = sparse_indices[valid_mask]
+                valid_values = sparse_values[valid_mask]
+
+                # Sum values by feature index to compute bias gradient (only if we have valid features)
+                if valid_feature_indices.numel() > 0:
+                    grad_b_E.index_add_(0, valid_feature_indices, valid_values)
+
+        else:
+            # Fall back to dense operations when not sparse enough
+            grad_x = grad_output @ W_E.T
+            grad_W_E = x.T @ grad_output
+            grad_b_E = grad_output.sum(dim=0)
+
+        return grad_x, grad_W_E, grad_b_E, None
 
 
 class TritonDecoderAutogradTopK(torch.autograd.Function):
@@ -469,184 +559,8 @@ class TritonDecoderAutogradTopK(torch.autograd.Function):
             sparse_indices, sparse_values, grad_output, N=decoder_weight.size(1)
         ).T
 
+        feature_acts_grad = triton_dense_dense_sparseout_matmul(grad_output, decoder_weight, sparse_indices)
+        feature_acts_grad *= sparse_values.ne(0).to(feature_acts_grad.dtype)
+
         # decoder is contiguous when transposed so this is a matching layout
-        return None, triton_dense_dense_sparseout_matmul(grad_output, decoder_weight, sparse_indices), decoder_grad
-
-
-def decode_with_triton_spmm_kernel(
-    feature_acts: Float[torch.Tensor, "batch d_sae"],
-    decoder_weight: Float[torch.Tensor, "d_model d_sae"],
-    require_precise_feature_acts_grad: bool,
-):
-    """
-    Perform sparse-dense matrix multiplication using Triton.
-
-    Args:
-        feature_acts: (B, d_sae) - Sparse feature activations (input).
-        decoder_weight: (d_model d_sae) - Decoder weight matrix.
-
-    Returns:
-        output: (B, d_model) - The decoded output.
-    """
-    if require_precise_feature_acts_grad:
-        output = TritonDecoderAutogradJumpReLU.apply(feature_acts, decoder_weight.T.contiguous().T)
-    else:
-        sparse_indices, sparse_values = get_sparse_representation(feature_acts)
-        output = TritonDecoderAutogradTopK.apply(sparse_indices, sparse_values, decoder_weight.T.contiguous().T)
-    return output
-
-
-if __name__ == "__main__":
-    import torch
-    import torch.nn as nn
-    import triton  # type: ignore
-    import triton.language as tl  # type: ignore
-
-    def test_triton_decoder(
-        B, d_sae, d_model, sparsity=0.9, dtype=torch.float32, require_precise_feature_acts_grad=True
-    ):
-        # Set parameters
-
-        # Create a random dense weight matrix (as in nn.Linear)
-        decoder = nn.Linear(d_sae, d_model, bias=False, dtype=dtype, device="cuda")
-
-        # Create a random sparse input matrix
-        dense_input = torch.randn((B, d_sae), dtype=dtype, device="cuda")
-
-        # Zero out some values to simulate sparsity
-        dense_input[torch.rand_like(dense_input) < sparsity] = 0
-
-        # Enable gradient tracking
-        decoder.weight.requires_grad_(True)
-        dense_input.requires_grad_(True)
-
-        grad_output = torch.randn((B, d_model), dtype=dtype, device="cuda")
-
-        # Run forward pass with Triton
-        triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight, require_precise_feature_acts_grad)
-        assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
-
-        triton_output.backward(grad_output)
-
-        triton_decoder_weight_grad, triton_dense_input_grad = decoder.weight.grad.clone(), dense_input.grad.clone()  # pyright: ignore
-
-        decoder.weight.grad.zero_()  # pyright: ignore
-        dense_input.grad.zero_()  # pyright: ignore
-
-        torch_output = decoder(dense_input)
-        torch_output.backward(grad_output)
-
-        torch_decoder_weight_grad, torch_dense_input_grad = decoder.weight.grad.clone(), dense_input.grad.clone()  # pyright: ignore
-
-        # Compare gradients
-        assert decoder.weight.grad is not None, "decoder.weight.grad is None"
-        assert torch.allclose(triton_output, torch_output, atol=1e-5), "Mismatch between Triton and PyTorch outputs!"
-        assert torch.allclose(triton_decoder_weight_grad, torch_decoder_weight_grad, atol=1e-5), (
-            f"Mismatch between Triton and PyTorch gradients on decoder weights! {triton_decoder_weight_grad=}, {torch_decoder_weight_grad=}"
-        )
-
-        if require_precise_feature_acts_grad:
-            assert torch.allclose(triton_dense_input_grad, torch_dense_input_grad, atol=1e-5), (
-                f"Mismatch between Triton and PyTorch gradients on dense input! {triton_dense_input_grad=}, {torch_dense_input_grad=}"
-            )
-        else:
-            assert torch.allclose(
-                triton_dense_input_grad[dense_input.ne(0)], torch_dense_input_grad[dense_input.ne(0)], atol=1e-5
-            ), (
-                f"Mismatch between Triton and PyTorch gradients on dense input! {triton_dense_input_grad=}, {torch_dense_input_grad=}"
-            )
-
-        logger.info("✅ Triton forward and backward pass matches nn.Linear!")
-
-    # Ensure we have the Triton-based kernel
-    def benchmark_triton_vs_torch(
-        B=32,
-        d_sae=512,
-        d_model=256,
-        sparsity=0.7,
-        warmup=5,
-        iters=20,
-        dtype=torch.float32,
-        require_precise_feature_acts_grad=True,
-    ):
-        """
-        Benchmarks Triton-based sparse-dense multiplication vs PyTorch's nn.Linear.
-
-        Args:): Batch size.
-            d_sae (int): Input feature dimension.
-            d_model (int): Output feature dimension.
-            sparsity (float): Percentage of zeros in the input.
-            warmup (int): Number of warmup iterations.
-            iters (int): Number of timed iterations.
-        """
-
-        # Create weight matrix similar to nn.Linear
-        decoder = nn.Linear(d_sae, d_model, bias=False, dtype=dtype, device="cuda")
-
-        # Generate a dense input
-        dense_input = torch.randn((B, d_sae), dtype=dtype, device="cuda")
-
-        # Introduce sparsity
-        dense_input[torch.rand_like(dense_input) < sparsity] = 0
-
-        # Warmup runs (to eliminate startup overhead)
-        for _ in range(warmup):
-            torch_output = decoder(dense_input)
-            triton_output = decode_with_triton_spmm_kernel(
-                dense_input, decoder.weight, require_precise_feature_acts_grad
-            )
-            assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
-            grad_output = torch.randn_like(triton_output)
-            triton_output.backward(grad_output)
-            torch_output.backward(grad_output)
-
-        # Measure nn.Linear time
-        torch.cuda.synchronize()
-        start_torch = torch.cuda.Event(enable_timing=True)
-        end_torch = torch.cuda.Event(enable_timing=True)
-
-        start_torch.record()  # type: ignore ; There should be a stream argument and we don't know why
-        for _ in range(iters):
-            torch_output = decoder(dense_input)
-            grad_output = torch.randn_like(torch_output)
-            torch_output.backward(grad_output)
-
-        end_torch.record()  # type: ignore
-        torch.cuda.synchronize()
-        torch_time = start_torch.elapsed_time(end_torch) / iters  # Average time in ms
-
-        # Measure Triton Kernel time
-        torch.cuda.synchronize()
-        start_triton = torch.cuda.Event(enable_timing=True)
-        end_triton = torch.cuda.Event(enable_timing=True)
-
-        start_triton.record()  # type: ignore
-        for _ in range(iters):
-            triton_output = decode_with_triton_spmm_kernel(
-                dense_input, decoder.weight, require_precise_feature_acts_grad
-            )
-            assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
-            grad_output = torch.randn_like(triton_output)
-            triton_output.backward(grad_output)
-
-        end_triton.record()  # type: ignore
-        torch.cuda.synchronize()
-        triton_time = start_triton.elapsed_time(end_triton) / iters  # Average time in ms
-
-        # Print results
-        logger.info(f"🔹 PyTorch nn.Linear Avg Time: {torch_time:.3f} ms")
-        logger.info(f"⚡ Triton Sparse-Dense Avg Time: {triton_time:.3f} ms")
-        logger.info(f"🚀 Speedup: {torch_time / triton_time:.2f}x")
-
-    # Run test
-    test_triton_decoder(B=16, d_sae=4096, d_model=256, sparsity=0.9, require_precise_feature_acts_grad=True)
-    # Run benchmark
-    benchmark_triton_vs_torch(
-        B=8192,
-        d_sae=4096 * 32,
-        d_model=4096,
-        sparsity=0.999,
-        warmup=10,
-        iters=10,
-        require_precise_feature_acts_grad=True,
-    )
+        return None, feature_acts_grad, decoder_grad

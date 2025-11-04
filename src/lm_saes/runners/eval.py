@@ -8,22 +8,50 @@ import wandb
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
+from lm_saes import ReplacementModel
 from lm_saes.activation.factory import ActivationFactory
+from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import (
     ActivationFactoryConfig,
     BaseSAEConfig,
     CrossCoderConfig,
     EvalConfig,
+    GraphEvalConfig,
     LanguageModelConfig,
     WandbConfig,
 )
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.evaluator import Evaluator
+from lm_saes.evaluator import Evaluator, GrahEval
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import get_mesh_rank
 
 logger = get_distributed_logger("runners.eval")
+
+
+class EvalGraphSettings(BaseSettings):
+    model_cfg: LanguageModelConfig
+    """Configuration for the language model."""
+
+    transcoders_path: str
+    """The save path of CLT."""
+
+    lorsas_path: list
+    """The save path of lorsa."""
+
+    dataset_path: str
+    """The path of evaluation json file."""
+
+    eval: GraphEvalConfig
+    """Configuration for the GrahEval"""
+
+    device: str = "cuda"
+    """Device type to use for distributed training ('cuda' or 'cpu')"""
+
+    show: bool = False
+
+    use_lorsa: bool = True
 
 
 class EvaluateSAESettings(BaseSettings):
@@ -81,10 +109,18 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
     activation_factory = ActivationFactory(settings.activation_factory)
 
     logger.info("Loading SAE model")
-    if isinstance(settings.sae, CrossCoderConfig):
-        sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
-    else:
-        sae = SparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+
+    cls = {
+        "crosscoder": CrossCoder,
+        "sae": SparseAutoEncoder,
+        "clt": CrossLayerTranscoder,
+        "lorsa": LowRankSparseAttention,
+    }[settings.sae.sae_type]
+    sae = cls.from_config(
+        settings.sae,
+        device_mesh=device_mesh,
+        fold_activation_scale=settings.eval.fold_activation_scale,
+    )
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
 
@@ -97,7 +133,7 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
 
@@ -109,6 +145,41 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
     evaluator = Evaluator(settings.eval)
     evaluator.evaluate(sae, activations, wandb_logger)
     logger.info("Evaluation completed")
+
+
+def eval_graph(settings: EvalGraphSettings) -> None:
+    # Set up logging
+    setup_logging(level="INFO")
+
+    logger.info("Loading transcoder and lorsa")
+    transcoders = CrossLayerTranscoder.from_pretrained(
+        settings.transcoders_path,
+        device=settings.device,
+    )
+
+    if settings.use_lorsa:
+        lorsas = [
+            LowRankSparseAttention.from_pretrained(lorsa_cfg, device=settings.device)
+            for lorsa_cfg in settings.lorsas_path
+        ]
+        for lorsa in lorsas:
+            lorsa.cfg.skip_bos = False
+    else:
+        lorsas = None
+
+    logger.info("Loading replacement model")
+    replacement_model = ReplacementModel.from_pretrained(
+        settings.model_cfg, transcoders, lorsas, use_lorsa=settings.use_lorsa
+    )
+
+    grapheval = GrahEval(settings.eval)
+
+    grapheval.eval(
+        replacement_model,
+        settings.dataset_path,
+        use_lorsa=settings.use_lorsa,
+        show=settings.show,
+    )
 
 
 class EvaluateCrossCoderSettings(BaseSettings):
@@ -177,7 +248,7 @@ def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
         )
-        if settings.wandb is not None and (device_mesh is None or get_mesh_rank(device_mesh) == 0)
+        if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
 

@@ -169,9 +169,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         self.W_D.mul_(1 / self.decoder_norm(keepdim=False))
 
     @torch.no_grad()
-    def standardize_parameters_of_dataset_norm(
-        self, dataset_average_activation_norm: dict[str, float] | None
-    ):  # should be overridden by subclasses due to side effects
+    def standardize_parameters_of_dataset_norm(self):  # should be overridden by subclasses due to side effects
         """
         Standardize the parameters of the model to account for dataset_norm during inference.
         This function should be called during inference by the Initializer.
@@ -197,9 +195,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             None: Updates the internal parameters to reflect the standardized activations and change the norm_activation to "inference" mode.
         """
         assert self.cfg.norm_activation == "dataset-wise"
-        assert self.dataset_average_activation_norm is not None or dataset_average_activation_norm is not None
-        if dataset_average_activation_norm is not None:
-            self.set_dataset_average_activation_norm(dataset_average_activation_norm)
         assert self.dataset_average_activation_norm is not None
         input_norm_factor: float = (
             math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_in]
@@ -291,15 +286,14 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
-            sparsity_scores = hidden_pre * self.decoder_norm()
-        else:
-            sparsity_scores = hidden_pre
+            hidden_pre = hidden_pre * self.decoder_norm()
 
-        # Apply activation function. The activation function here differs from a common activation function,
-        # since it computes a scaling of the input tensor, which is, suppose the common activation function
-        # is $f(x)$, then here it computes $f(x) / x$. For simple ReLU case, it computes a mask of 1s and 0s.
-        activation_mask = self.activation_function(sparsity_scores)
-        feature_acts = self.hook_feature_acts(hidden_pre * activation_mask)
+        feature_acts = self.activation_function(hidden_pre)
+        feature_acts = self.hook_feature_acts(feature_acts)
+
+        if self.cfg.sparsity_include_decoder_norm:
+            feature_acts = feature_acts / self.decoder_norm()
+            hidden_pre = hidden_pre / self.decoder_norm()
 
         if return_hidden_pre:
             return feature_acts, hidden_pre
@@ -323,10 +317,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         ):  # triton kernel cannot handle empty feature_acts
             from .kernels import decode_with_triton_spmm_kernel
 
-            require_precise_feature_acts_grad = "topk" not in self.cfg.act_fn
-            reconstructed = decode_with_triton_spmm_kernel(
-                feature_acts, self.W_D.T.contiguous(), require_precise_feature_acts_grad
-            )  # TODO: remove the transpose
+            reconstructed = decode_with_triton_spmm_kernel(feature_acts, self.W_D.T.contiguous())
         else:
             reconstructed = feature_acts @ self.W_D
 
@@ -410,11 +401,34 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             self.W_E_glu.copy_(W_E_glu)
 
     @override
-    def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
+    def prepare_input(
+        self, batch: dict[str, torch.Tensor], **kwargs
+    ) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
         x = batch[self.cfg.hook_point_in]
-        return x, {}
+        return x, {}, {}
 
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         label = batch[self.cfg.hook_point_out]
         return label
+
+    @override
+    @torch.no_grad()
+    def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
+        """Initialize W_D with the active subspace.
+
+        Args:
+            activation_batch: The activation batch.
+            d_active_subspace: The dimension of the active subspace.
+        """
+        label = self.prepare_label(activation_batch)
+        demeaned_label = label - label.mean(dim=0)
+        U, S, V = torch.svd(demeaned_label.T.to(torch.float32))
+        proj_weight = U[:, :d_active_subspace]  # [d_model, d_active_subspace]
+        self.W_D.copy_(self.W_D.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
+
+    @torch.no_grad()
+    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch: dict[str, torch.Tensor]):
+        x = self.prepare_input(activation_batch)[0]
+        _, hidden_pre = self.encode(x, return_hidden_pre=True)
+        self.b_E.copy_(-hidden_pre.mean(dim=0))

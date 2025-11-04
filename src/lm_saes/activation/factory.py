@@ -8,6 +8,7 @@ from lm_saes.activation.processors.activation import (
     ActivationBatchler,
     ActivationGenerator,
     ActivationTransformer,
+    OverrideDtypeProcessor,
 )
 from lm_saes.activation.processors.cached_activation import CachedActivationLoader
 from lm_saes.activation.processors.core import BaseActivationProcessor
@@ -208,7 +209,18 @@ class ActivationFactory:
                 device_mesh=self.device_mesh,
             )
 
-        processors = [build_batchler()] if self.cfg.batch_size is not None else []
+        def build_override_dtype_processor():
+            """Create processor that overrides the dtype of the activations."""
+            assert self.cfg.override_dtype is not None, (
+                "Override dtype must be provided for outputting activations with different dtype"
+            )
+            return OverrideDtypeProcessor(dtype=self.cfg.override_dtype)
+
+        processors = []
+        if self.cfg.batch_size is not None:
+            processors.append(build_batchler())
+        if self.cfg.override_dtype is not None:
+            processors.append(build_override_dtype_processor())
 
         def process_activations(activations: Iterable[dict[str, Any]], **kwargs: Any):
             """Process aggregated activations through post-processors.

@@ -68,7 +68,7 @@ class TestCrossLayerTranscoder:
     def test_prepare_input_and_label(self, clt_model, simple_batch):
         """Test input and label preparation."""
         # Test input preparation (uses hook_points_in)
-        x, kwargs = clt_model.prepare_input(simple_batch)
+        x = clt_model.prepare_input(simple_batch)[0]
         assert x.shape == (2, 3, 2, 4)  # (batch_size, seq_len, n_layers, d_model)
         assert torch.allclose(x[:, :, 0, :], torch.ones(2, 3, 4, device=clt_model.cfg.device))  # layer_0_in
         assert torch.allclose(x[:, :, 1, :], torch.zeros(2, 3, 4, device=clt_model.cfg.device))  # layer_1_in
@@ -81,7 +81,7 @@ class TestCrossLayerTranscoder:
 
     def test_encoder_decoder_shapes(self, clt_model, simple_batch):
         """Test encoder and decoder forward pass shapes."""
-        x, _ = clt_model.prepare_input(simple_batch)
+        x = clt_model.prepare_input(simple_batch)[0]
 
         # Test encoding
         feature_acts = clt_model.encode(x)
@@ -98,7 +98,7 @@ class TestCrossLayerTranscoder:
 
     def test_forward_pass(self, clt_model, simple_batch):
         """Test full forward pass."""
-        x, _ = clt_model.prepare_input(simple_batch)
+        x = clt_model.prepare_input(simple_batch)[0]
 
         # Test forward method
         reconstructed = clt_model.forward(x)
@@ -226,7 +226,7 @@ class TestCrossLayerTranscoder:
             random_batch[f"layer_{layer_idx}_out"] = random_tensor  # Use same for out (just for testing)
 
         # Prepare input and run forward pass
-        input_tensor, _ = large_clt_model.prepare_input(random_batch)
+        input_tensor = large_clt_model.prepare_input(random_batch)[0]
 
         # Get feature activations and final output
         feature_acts, hidden_pre = large_clt_model.encode(input_tensor, return_hidden_pre=True)

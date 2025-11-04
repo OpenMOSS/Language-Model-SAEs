@@ -36,7 +36,6 @@ def mixcoder_config() -> MixCoderConfig:
 @pytest.fixture
 def initializer_config() -> InitializerConfig:
     return InitializerConfig(
-        state="training",
         init_search=False,
     )
 
