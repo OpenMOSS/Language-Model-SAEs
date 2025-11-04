@@ -27,3 +27,8 @@ plugins:
 nav:
   - Home: index.md
   - Code Reference: reference/
+
+markdown_extensions:
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
