@@ -151,6 +151,8 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   const [customFen, setCustomFen] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [analysis, setAnalysis] = useState<StockfishAnalysis | null>(null);
+  const [lastFenBeforeMove, setLastFenBeforeMove] = useState<string | null>(null);
+  const [lastMoveEval, setLastMoveEval] = useState<any | null>(null);
   const [gameMode, setGameMode] = useState<'player-vs-model' | 'analysis'>('player-vs-model');
   const [isAutoPlay, setIsAutoPlay] = useState(false);
   const [autoPlayInterval, setAutoPlayInterval] = useState<NodeJS.Timeout | null>(null);
@@ -514,6 +516,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   // 执行移动
   const makeMove = useCallback((move: any) => {
     try {
+      const prevFenBefore = game.fen();
       const parsed0 = typeof move === 'string' ? toChessJsMove(move) : move;
       const parsed = typeof parsed0 === 'string' ? parsed0 : {
         from: String(parsed0.from || '').toLowerCase(),
@@ -558,6 +561,9 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         (replaced as any).load_pgn(pgn);
       }
       setGame(replaced);
+
+      // 记录本步前的FEN，供评测使用
+      setLastFenBeforeMove(prevFenBefore);
 
       // 使用updateGameState来更新状态（包含计时器更新）
       updateGameState(replaced, movesUci[movesUci.length - 1]);
@@ -732,6 +738,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       return;
     }
     try {
+      const prevFenBefore = game.fen();
       const newGame = new Chess(game.fen());
       const parsed = toChessJsMove(manualMove.trim());
       const result = newGame.move(parsed as any);
@@ -739,6 +746,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       if (result) {
         setGame(newGame);
         updateGameState(newGame, manualMove.trim());
+        setLastFenBeforeMove(prevFenBefore);
         setManualMove('');
         setMoveError('');
         
@@ -754,6 +762,31 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       setMoveError('无效的走法格式');
     }
   }, [manualMove, isHumanTurn, gameState.isGameOver, game, updateGameState, gameMode, getStockfishAnalysis, toChessJsMove]);
+
+  // 调用后端进行走法评测（基于上一步之前的FEN与上一步UCI）
+  const evaluateLastMove = useCallback(async () => {
+    try {
+      const lastMove = gameState.moves[gameState.moves.length - 1];
+      if (!lastMove || !lastFenBeforeMove) {
+        alert('没有可评测的上一步或缺少前一FEN');
+        return;
+      }
+      const resp = await fetch(`${import.meta.env.VITE_BACKEND_URL}/evaluate_move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fen: lastFenBeforeMove, move: lastMove, time_limit: 0.2 }),
+      });
+      if (!resp.ok) {
+        const t = await resp.text();
+        throw new Error(t || '评测失败');
+      }
+      const data = await resp.json();
+      setLastMoveEval(data);
+    } catch (e) {
+      console.error('评测失败:', e);
+      alert('评测失败，请查看控制台日志');
+    }
+  }, [gameState.moves, lastFenBeforeMove]);
 
   // 生成PGN字符串
   const generatePgn = useCallback(() => {
@@ -1102,6 +1135,16 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                     获取分析
                   </Button>
                 )}
+
+                {/* 评测上一步 */}
+                <Button
+                  onClick={evaluateLastMove}
+                  variant="outline"
+                  className="w-full mt-2"
+                  disabled={!lastFenBeforeMove || gameState.moves.length === 0}
+                >
+                  评测上一步
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -1225,6 +1268,39 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             </Card>
           )}
 
+          {/* 上一步评测结果展示 */}
+          {lastMoveEval && (
+            <Card>
+              <CardHeader>
+                <CardTitle>上一步评测结果</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div><strong>我的走法:</strong> {lastMoveEval.my_move}</div>
+                <div><strong>最佳走法:</strong> {lastMoveEval.best_move || 'N/A'}</div>
+                <div><strong>评分(0-100):</strong> {typeof lastMoveEval.score_100 === 'number' ? lastMoveEval.score_100.toFixed(1) : 'N/A'}</div>
+                <div><strong>CP损失:</strong> {lastMoveEval.cp_loss !== null && lastMoveEval.cp_loss !== undefined ? lastMoveEval.cp_loss.toFixed(1) : 'N/A'}</div>
+                <div><strong>根局面CP:</strong> {lastMoveEval.root_cp !== null && lastMoveEval.root_cp !== undefined ? lastMoveEval.root_cp.toFixed(1) : 'N/A'}</div>
+                <div><strong>最佳后CP:</strong> {lastMoveEval.best_cp !== null && lastMoveEval.best_cp !== undefined ? lastMoveEval.best_cp.toFixed(1) : 'N/A'}</div>
+                <div><strong>我的后CP:</strong> {lastMoveEval.my_cp !== null && lastMoveEval.my_cp !== undefined ? lastMoveEval.my_cp.toFixed(1) : 'N/A'}</div>
+                {lastMoveEval.root_wdl && (
+                  <div>
+                    <strong>根局面WDL:</strong> 白胜 {(lastMoveEval.root_wdl[0]*100).toFixed(1)}% / 和棋 {(lastMoveEval.root_wdl[1]*100).toFixed(1)}% / 黑胜 {(lastMoveEval.root_wdl[2]*100).toFixed(1)}%
+                  </div>
+                )}
+                {lastMoveEval.best_wdl && (
+                  <div>
+                    <strong>最佳后WDL:</strong> 白胜 {(lastMoveEval.best_wdl[0]*100).toFixed(1)}% / 和棋 {(lastMoveEval.best_wdl[1]*100).toFixed(1)}% / 黑胜 {(lastMoveEval.best_wdl[2]*100).toFixed(1)}%
+                  </div>
+                )}
+                {lastMoveEval.my_wdl && (
+                  <div>
+                    <strong>我的后WDL:</strong> 白胜 {(lastMoveEval.my_wdl[0]*100).toFixed(1)}% / 和棋 {(lastMoveEval.my_wdl[1]*100).toFixed(1)}% / 黑胜 {(lastMoveEval.my_wdl[2]*100).toFixed(1)}%
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* 游戏结束控制 */}
           {!gameState.isGameOver && (
             <Card>
@@ -1274,6 +1350,14 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   {gameState.fen}
                 </div>
               </div>
+              {lastFenBeforeMove && (
+                <div className="text-sm">
+                  <strong>上一步前FEN:</strong>
+                  <div className="font-mono text-xs bg-gray-100 p-2 rounded mt-1 break-all">
+                    {lastFenBeforeMove}
+                  </div>
+                </div>
+              )}
               <div className="text-sm">
                 <strong>移动数:</strong> {gameState.moves.length}
               </div>

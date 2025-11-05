@@ -41,6 +41,12 @@ interface LayerAnalysis {
   top_legal_moves: LayerMoveData[];
   move_rankings: MoveRanking[];
   target: TargetInfo | null;
+  final_top_move?: {
+    uci: string;
+    rank: number | null;
+    score: number | null;
+    prob?: number | null;
+  } | null;
 }
 
 interface LogitLensResult {
@@ -50,6 +56,7 @@ interface LogitLensResult {
   target_move: string | null;
   num_layers: number;
   model_used: string;
+  final_top_move_uci?: string | null;
 }
 
 export const LogitLensVisualization: React.FC = () => {
@@ -300,6 +307,18 @@ export const LogitLensVisualization: React.FC = () => {
                     <CardTitle>Layer {selectedLayer} - Top 10合法移动</CardTitle>
                   </CardHeader>
                   <CardContent>
+                    {analysisResult?.final_top_move_uci && (
+                      <div className="mb-3 text-sm">
+                        <Badge variant="outline">最终层Top移动: {analysisResult.final_top_move_uci}</Badge>
+                        {currentLayerData.final_top_move && (
+                          <span className="ml-3">
+                            在本层 - 排名: <strong>#{currentLayerData.final_top_move.rank ?? 'N/A'}</strong>,
+                            分数: <strong>{currentLayerData.final_top_move.score !== null && currentLayerData.final_top_move.score !== undefined ? currentLayerData.final_top_move.score.toFixed(4) : 'N/A'}</strong>,
+                            概率: <strong>{currentLayerData.final_top_move.prob !== null && currentLayerData.final_top_move.prob !== undefined ? (currentLayerData.final_top_move.prob * 100).toFixed(2) + '%' : 'N/A'}</strong>
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -359,12 +378,12 @@ export const LogitLensVisualization: React.FC = () => {
                 </Card>
               )}
 
-              {/* 每层Top 3移动汇总 */}
+              {/* 每层Top 3移动 + 最终层Top在各层的表现 */}
               <Card>
                 <CardHeader>
-                  <CardTitle>每层Top 3移动汇总</CardTitle>
+                  <CardTitle>每层Top 3 及“最终层Top”在各层的排名/概率/分数</CardTitle>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-2">
                   <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
@@ -373,52 +392,51 @@ export const LogitLensVisualization: React.FC = () => {
                           <TableHead>Top 1</TableHead>
                           <TableHead>Top 2</TableHead>
                           <TableHead>Top 3</TableHead>
+                          <TableHead>最终Top@本层<br/>rank / prob / score</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {Array.from({ length: analysisResult.num_layers }, (_, i) => {
+                        {Array.from({ length: analysisResult!.num_layers }, (_, i) => {
                           const layerData = getLayerData(i);
                           const top3 = layerData?.top_legal_moves.slice(0, 3) || [];
-                          
-                          // 计算这一层的softmax概率
                           const layerScores = layerData?.top_legal_moves.map(m => m.score) || [];
-                          const layerProbs = layerScores.length > 0 ? softmax(layerScores) : [];
-                          
+                          const layerProbs = layerScores.length > 0 ? softmax(layerScores): [];
                           return (
                             <TableRow key={i} className={i === selectedLayer ? 'bg-blue-50' : ''}>
-                              <TableCell className="font-medium">
-                                Layer {i}
-                                {i === selectedLayer && (
-                                  <Badge variant="outline" className="ml-2">当前</Badge>
-                                )}
+                              <TableCell className="text-sm">
+                                <strong>{`Layer ${i}`}</strong>
                               </TableCell>
                               {[0, 1, 2].map((rank) => {
                                 const move = top3[rank];
-                                const prob = layerProbs[rank];
-                                const isTargetMove = move && analysisResult.target_move === move.uci;
-                                
+                                const prob = (layerData && move) ? layerProbs[rank] : undefined;
+                                const isTargetMove = move && analysisResult?.target_move === move.uci;
                                 return (
                                   <TableCell key={rank}>
                                     {move ? (
-                                      <div className={`space-y-1 ${isTargetMove ? 'bg-yellow-100 p-2 rounded' : ''}`}>
-                                        <div className={`font-mono text-sm ${isTargetMove ? 'font-bold text-yellow-700' : ''}`}>
-                                          {move.uci}
-                                        </div>
-                                        <div className="text-xs text-gray-600">
-                                          分数: {move.score.toFixed(3)}
-                                        </div>
-                                        {prob !== undefined && (
-                                          <div className="text-xs font-medium text-blue-600">
-                                            概率: {(prob * 100).toFixed(1)}%
-                                          </div>
-                                        )}
+                                      <div className={`space-between ${isTargetMove ? 'bg-yellow-100 p-2 rounded' : ''}`}>
+                                        <div className={`font-mono text-sm ${isTargetMove ? 'font-bold text-yellow-700' : ''}`}>{move.uci}</div>
+                                        <div className="text-xs text-gray-600">分数: {move.score.toFixed(3)}</div>
+                                        {prob !== undefined ? (
+                                          <div className="text-xs text-gray-600">概率: {(prob * 100).toFixed(1)}%</div>
+                                        ) : null}
                                       </div>
                                     ) : (
-                                      <span className="text-gray-400">N/A</span>
+                                      <span className="text-xs text-gray-400">N/A</span>
                                     )}
                                   </TableCell>
                                 );
                               })}
+                              <TableCell>
+                                {layerData?.final_top_move ? (
+                                  <div className="text-xs">
+                                    <div>rank: {layerData.final_top_move.rank ?? 'N/A'}</div>
+                                    <div>prob: {layerData.final_top_move.prob !== undefined && layerData.final_top_move.prob !== null ? `${(layerData.final_top_move.prob * 100).toFixed(1)}%` : 'N/A'}</div>
+                                    <div>score: {layerData.final_top_move.score !== undefined && layerData.final_top_move.score !== null ? layerData.final_top_move.score.toFixed(3) : 'N/A'}</div>
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-gray-400">N/A</span>
+                                )}
+                              </TableCell>
                             </TableRow>
                           );
                         })}
@@ -427,7 +445,7 @@ export const LogitLensVisualization: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
-
+              
               {/* 目标移动追踪 */}
               {analysisResult.target_move && (
                 <Card>

@@ -47,6 +47,7 @@ from lm_saes.lc0_mapping.lc0_mapping import (
     get_mapping_index,
 )
 from lm_saes.circuit.leela_board import LeelaBoard
+from move_evaluation import evaluate_move_quality  # 引入走法评测
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -1405,6 +1406,29 @@ def logit_lens_status():
         "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE
     }
 
+
+# 新增：走法评测接口（基于Stockfish）
+@app.post("/evaluate_move")
+def evaluate_move(request: dict):
+    """
+    评测一次移动：输入上一步之前的FEN与该步UCI，返回0-100评分、cp差、WDL等。
+
+    body: { "fen": str, "move": str, "time_limit": float? }
+    """
+    fen = request.get("fen")
+    move = request.get("move")
+    time_limit = request.get("time_limit", 0.2)
+    if not fen or not move:
+        raise HTTPException(status_code=400, detail="fen与move必填")
+    try:
+        _ = chess.Board(fen)
+    except Exception:
+        raise HTTPException(status_code=400, detail="无效的FEN")
+
+    res = evaluate_move_quality(fen, move, time_limit=time_limit)
+    if res is None:
+        raise HTTPException(status_code=400, detail="评测失败或走法不合法")
+    return res
 
 # 添加CORS中间件 - 必须在所有路由定义之后
 app.add_middleware(

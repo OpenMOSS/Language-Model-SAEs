@@ -162,6 +162,8 @@ class IntegratedPolicyLens:
         
         # Analyze each layer using Post-LN logit-lens
         layer_analysis = {}
+        # 选择最终层的ground truth: final_top_legal_moves的第一个
+        final_top_move_uci = final_top_legal_moves[0]['uci'] if len(final_top_legal_moves) > 0 else None
         
         for layer in range(self.num_layers):
             print(f"Analyzing layer {layer}...")
@@ -216,21 +218,34 @@ class IntegratedPolicyLens:
             # sort legal_scores by score desc
             legal_scores.sort(key=lambda x: x[1], reverse=True)
             
+            # 计算softmax概率（在所有合法移动上）
+            if len(legal_scores) > 0:
+                import math
+                max_logit = max(s for _, s, _ in legal_scores)
+                exp_vals = [math.exp(s - max_logit) for _, s, _ in legal_scores]
+                sum_exp = sum(exp_vals)
+                probs = [ev / sum_exp for ev in exp_vals]
+            else:
+                probs = []
+
             # Compute target rank if requested
             target_info = None
             if target_move is not None:
                 if target_move in legal_uci_set:
                     rank = None
                     t_score = None
+                    t_prob = None
                     for i, (uci, score_val, idx_val) in enumerate(legal_scores):
                         if uci == target_move:
                             rank = i + 1  # 1-based
                             t_score = score_val
+                            t_prob = probs[i] if i < len(probs) else None
                             break
                     target_info = {
                         'uci': target_move,
                         'rank': rank,
-                        'score': t_score
+                        'score': t_score,
+                        'prob': t_prob
                     }
                 else:
                     target_info = {
@@ -239,6 +254,25 @@ class IntegratedPolicyLens:
                         'score': None,
                         'error': 'Target move is not legal'
                     }
+
+            # 计算“最终层Top移动”在本层的rank/score/prob
+            final_top_info = None
+            if final_top_move_uci is not None:
+                f_rank = None
+                f_score = None
+                f_prob = None
+                for i, (uci, score_val, idx_val) in enumerate(legal_scores):
+                    if uci == final_top_move_uci:
+                        f_rank = i + 1
+                        f_score = score_val
+                        f_prob = probs[i] if i < len(probs) else None
+                        break
+                final_top_info = {
+                    'uci': final_top_move_uci,
+                    'rank': f_rank,
+                    'score': f_score,
+                    'prob': f_prob,
+                }
             
             # Build move rankings
             move_rankings = []
@@ -266,7 +300,8 @@ class IntegratedPolicyLens:
             layer_analysis[f'layer_{layer}'] = {
                 'top_legal_moves': current_top_legal_moves,
                 'move_rankings': move_rankings,
-                'target': target_info
+                'target': target_info,
+                'final_top_move': final_top_info
             }
         
         return {
@@ -274,5 +309,6 @@ class IntegratedPolicyLens:
             'final_layer_predictions': final_top_legal_moves,
             'layer_analysis': layer_analysis,
             'target_move': target_move,
-            'num_layers': self.num_layers
+            'num_layers': self.num_layers,
+            'final_top_move_uci': final_top_move_uci
         }
