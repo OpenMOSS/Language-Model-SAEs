@@ -1,6 +1,8 @@
 from typing import Any, TypeVar, overload
 
 import torch
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 
 T = TypeVar("T")
 
@@ -10,6 +12,7 @@ def sort_dict_of_tensor(
     sort_key: str,
     sort_dim: int = 0,
     descending: bool = True,
+    device_mesh: DeviceMesh | None = None,
 ):
     """
     Sort a dictionary of tensors by the values of a tensor.
@@ -23,12 +26,27 @@ def sort_dict_of_tensor(
     Returns:
         A dictionary of tensors sorted by the values of the specified tensor
     """
-    sorted_idx = tensor_dict[sort_key].argsort(dim=sort_dim, descending=descending)
-    for k, v in tensor_dict.items():
-        tmp_sorted_idx = sorted_idx
-        while v.ndim > tmp_sorted_idx.ndim:
-            tmp_sorted_idx = tmp_sorted_idx.unsqueeze(-1)
-        tensor_dict[k] = v.gather(sort_dim, tmp_sorted_idx.expand_as(v))
+    if device_mesh is not None:
+        assert isinstance(tensor_dict[sort_key], DTensor), "tensor_dict[sort_key] must be a DTensor"
+        sorted_idx_local = tensor_dict[sort_key].to_local().argsort(dim=sort_dim, descending=descending)
+        for k, v in tensor_dict.items():
+            assert isinstance(v, DTensor), "v must be a DTensor"
+            v_local = v.to_local()
+            tmp_sorted_idx = sorted_idx_local
+            while v_local.ndim > tmp_sorted_idx.ndim:
+                tmp_sorted_idx = tmp_sorted_idx.unsqueeze(-1)
+            tensor_dict[k] = DTensor.from_local(
+                local_tensor=v_local.gather(sort_dim, tmp_sorted_idx.expand_as(v_local)),
+                device_mesh=device_mesh,
+                placements=v.placements,
+            )
+    else:
+        sorted_idx = tensor_dict[sort_key].argsort(dim=sort_dim, descending=descending)
+        for k, v in tensor_dict.items():
+            tmp_sorted_idx = sorted_idx
+            while v.ndim > tmp_sorted_idx.ndim:
+                tmp_sorted_idx = tmp_sorted_idx.unsqueeze(-1)
+            tensor_dict[k] = v.gather(sort_dim, tmp_sorted_idx.expand_as(v))
     return tensor_dict
 
 

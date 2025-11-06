@@ -152,3 +152,21 @@ def distributed_topk(
         return result, threshold
     else:
         return result
+
+
+def distributed_masked_fill(
+    x: Float[Tensor | DTensor, "..."], mask: Float[Tensor | DTensor, "..."], value: float
+) -> Float[Tensor | DTensor, "..."]:
+    """
+    Perform distributed masked fill operation on a DTensor.
+    """
+    if isinstance(x, DTensor):
+        assert isinstance(mask, DTensor), "mask must be a DTensor"
+        x_local = x.to_local()
+        mask_local = mask.to_local()
+        x_local[mask_local] = value
+        return DTensor.from_local(x_local, device_mesh=x.device_mesh, placements=x.placements)
+    else:
+        assert isinstance(mask, Tensor), "mask must be a Tensor"
+        x[mask] = value
+        return x
