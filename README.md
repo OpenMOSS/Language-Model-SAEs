@@ -92,7 +92,7 @@ Please cite this library as:
 ```
 @misc{Ge2024OpenMossSAEs,
     title  = {OpenMoss Language Model Sparse Autoencoders},
-    author = {Xuyang Ge, Fukang Zhu, Junxuan Wang, Wentao Shu, Lingjie Chen, Zhengfu He},
+    author = {Xuyang Ge, Wentao Shu, Junxuan Wang, Guancheng Zhou, Jiaxing Wu, Fukang Zhu, Lingjie Chen, Zhengfu He},
     url    = {https://github.com/OpenMOSS/Language-Model-SAEs},
     year   = {2024}
 }
