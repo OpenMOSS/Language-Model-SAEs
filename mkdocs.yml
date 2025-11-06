@@ -1,5 +1,7 @@
 site_name: Language Model SAEs
 site_url: https://lm-saes.readthedocs.io
+repo_url: https://github.com/OpenMOSS/Language-Model-SAEs
+
 theme:
   name: material
 
@@ -23,12 +25,17 @@ plugins:
             docstring_style: google
             merge_init_into_class: true
             show_signature_annotations: true
+  - glightbox
 
 nav:
   - Home: index.md
+  - Key Concepts: concepts.md
   - Code Reference: reference/
 
 markdown_extensions:
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
+  - attr_list
+  - md_in_html
+  - pymdownx.blocks.caption
