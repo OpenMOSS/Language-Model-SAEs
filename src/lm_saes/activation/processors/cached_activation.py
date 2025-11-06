@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
-from lm_saes.utils.distributed import DimMap, all_gather_dict
+from lm_saes.utils.distributed import DimMap, all_gather_dict, mesh_dim_rank, mesh_dim_size
 from lm_saes.utils.misc import is_master
 from lm_saes.utils.tensor_dict import move_dict_of_tensor_to_device
 
@@ -35,8 +35,8 @@ class DistributedSampler(Sampler[Any]):
         n_chunks = len(self.chunk_to_index)
         n_hook_points = len(next(iter(self.chunk_to_index.values())))
 
-        dp_size = self.device_mesh.get_group("data").size()
-        tp_size = self.device_mesh.get_group("model").size()
+        dp_size = mesh_dim_size(self.device_mesh, "data")
+        tp_size = mesh_dim_size(self.device_mesh, "model")
 
         # Min chunk unit is decided by how many iterations are required to collect exact all hook points of some chunks in tensor parallel.
         min_chunk_unit = dp_size * tp_size // math.gcd(n_hook_points, tp_size)
@@ -48,19 +48,19 @@ class DistributedSampler(Sampler[Any]):
         n_chunks = len(self.chunk_to_index)
         n_hook_points = len(next(iter(self.chunk_to_index.values())))
 
-        dp_size = self.device_mesh.get_group("data").size()
-        tp_size = self.device_mesh.get_group("model").size()
+        dp_size = mesh_dim_size(self.device_mesh, "data")
+        tp_size = mesh_dim_size(self.device_mesh, "model")
 
         min_chunk_unit = dp_size * tp_size // math.gcd(n_hook_points, tp_size)
         n_chunks_effective = n_chunks // min_chunk_unit * min_chunk_unit
         # First assign chunks based on data groups to ensure each data group own self-contained chunks.
         chunks = list(self.chunk_to_index.keys())[
-            self.device_mesh.get_group("data").rank() : n_chunks_effective : dp_size
+            mesh_dim_rank(self.device_mesh, "data") : n_chunks_effective : dp_size
         ]
 
         # In the local dp group: concat all chunks and assign chunks to model groups.
         indices = list(itertools.chain.from_iterable([list(self.chunk_to_index[k].values()) for k in chunks]))[
-            self.device_mesh.get_group("model").rank() :: tp_size
+            mesh_dim_rank(self.device_mesh, "model") :: tp_size
         ]
 
         assert len(indices) == self.n_samples, f"len(indices) {len(indices)} != self.n_samples {self.n_samples}"
