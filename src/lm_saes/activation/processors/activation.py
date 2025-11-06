@@ -113,7 +113,7 @@ class ActivationBuffer:
             if self.device_mesh is not None and isinstance(x, DTensor):
                 assert (
                     x.device_mesh == self.device_mesh
-                    and DimMap.from_placements(x.placements, self.device_mesh)["data"] == 0
+                    and DimMap.from_placements(x.placements, self.device_mesh).to_dict().get("data", 0) == 0
                 )
                 assert batch_size % dp_size == 0, "Batch size must be divisible by data parallel size"
 

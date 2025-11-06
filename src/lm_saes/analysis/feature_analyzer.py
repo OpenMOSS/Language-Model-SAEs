@@ -5,7 +5,8 @@ from typing import Any, Mapping, Optional, cast
 import torch
 from einops import rearrange, repeat
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
+import torch.distributed.tensor
+from torch.distributed.tensor import DTensor, Replicate, Shard
 from tqdm import tqdm
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
@@ -16,7 +17,7 @@ from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed import DimMap, distributed_masked_fill
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
@@ -44,10 +45,11 @@ class FeatureAnalyzer:
     def _process_batch(
         self,
         feature_acts: torch.Tensor,  # [batch_size, context_size, d_sae]
-        discrete_meta: dict[str, torch.Tensor],
-        sample_result: Mapping[str, dict[str, torch.Tensor] | None],
+        discrete_meta: dict[str, torch.Tensor | DTensor],
+        sample_result: Mapping[str, dict[str, torch.Tensor | DTensor] | None],
         max_feature_acts: torch.Tensor,  # [d_sae]
-    ) -> Mapping[str, dict[str, torch.Tensor] | None]:
+        device_mesh: DeviceMesh | None = None,
+    ) -> Mapping[str, dict[str, torch.Tensor | DTensor] | None]:
         """Process a batch of activations to update sampling results.
 
         For each subsample type:
@@ -61,7 +63,7 @@ class FeatureAnalyzer:
             discrete_meta: Metadata tensors like dataset/context IDs
             sample_result: Current sampling results to update
             max_feature_acts: Maximum activation seen so far per feature
-
+            device_mesh: Device mesh to use for distributed operations
         Returns:
             Updated sampling results with new batch incorporated
         """
@@ -72,9 +74,10 @@ class FeatureAnalyzer:
         for name in self.cfg.subsamples.keys():
             elt_cur = elt.clone()
             # Zero out samples above the subsample threshold
-            elt_cur[
+            index = (
                 feature_acts.max(dim=1).values > max_feature_acts.unsqueeze(0) * self.cfg.subsamples[name]["proportion"]
-            ] = -torch.inf
+            )
+            elt_cur = distributed_masked_fill(elt_cur, index, -torch.inf)
 
             sample_result_cur = sample_result[name]
 
@@ -85,14 +88,7 @@ class FeatureAnalyzer:
                     feature_acts,
                     "batch_size context_size d_sae -> batch_size d_sae context_size",
                 ),
-                **{
-                    k: repeat(
-                        v,
-                        "batch_size -> batch_size d_sae",
-                        d_sae=feature_acts.size(-1),
-                    )
-                    for k, v in discrete_meta.items()
-                },
+                **discrete_meta,
             }
 
             # Initialize or update sample collection
@@ -110,7 +106,9 @@ class FeatureAnalyzer:
                 continue
 
             # Sort and keep top N samples
-            sample_result_cur = sort_dict_of_tensor(sample_result_cur, sort_dim=0, sort_key="elt", descending=True)
+            sample_result_cur = sort_dict_of_tensor(
+                sample_result_cur, sort_dim=0, sort_key="elt", descending=True, device_mesh=device_mesh
+            )
             sample_result_cur = {
                 k: v[
                     : min(self.cfg.subsamples[name]["n_samples"], (sample_result_cur["elt"] != -torch.inf).sum().item())
@@ -203,8 +201,22 @@ class FeatureAnalyzer:
 
         # Initialize tracking variables
         sample_result = {k: None for k in self.cfg.subsamples.keys()}
-        act_times = torch.zeros((d_sae_local,), dtype=torch.long, device=sae.cfg.device)
-        max_feature_acts = torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
+        if device_mesh is not None:
+            act_times = torch.distributed.tensor.zeros(
+                (sae.cfg.d_sae,),
+                dtype=torch.long,
+                device_mesh=device_mesh,
+                placements=DimMap({"model": 0}).placements(device_mesh),
+            )
+            max_feature_acts = torch.distributed.tensor.zeros(
+                (sae.cfg.d_sae,),
+                dtype=sae.cfg.dtype,
+                device_mesh=device_mesh,
+                placements=DimMap({"model": 0}).placements(device_mesh),
+            )
+        else:
+            act_times = torch.zeros((d_sae_local,), dtype=torch.long, device=sae.cfg.device)
+            max_feature_acts = torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
         mapper = KeyedDiscreteMapper()
 
         if isinstance(sae, CrossLayerTranscoder):
@@ -233,20 +245,18 @@ class FeatureAnalyzer:
                         placements=DimMap({"model": -1}).placements(device_mesh),
                     )
                     # TODO: Remove this once redistributing across device meshes is supported
-                feature_acts = feature_acts.redistribute(
-                    placements=DimMap({"model": -1}).placements(device_mesh)
-                ).to_local()
+                feature_acts = feature_acts.redistribute(placements=DimMap({"model": -1}).placements(device_mesh))
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.max(dim=-2).values
             if isinstance(sae, LowRankSparseAttention) and sae.cfg.skip_bos:
                 feature_acts[:, 0, :] = 0
-            assert feature_acts.shape == (batch["tokens"].shape[0], batch["tokens"].shape[1], d_sae_local), (
+            assert feature_acts.shape == (batch["tokens"].shape[0], batch["tokens"].shape[1], sae.cfg.d_sae), (
                 f"feature_acts.shape: {feature_acts.shape}, expected: {(batch['tokens'].shape[0], batch['tokens'].shape[1], d_sae_local)}"
             )
 
             # Compute ignore token masks
             ignore_token_masks = self.compute_ignore_token_masks(batch["tokens"], self.cfg.ignore_token_ids)
-            feature_acts *= repeat(ignore_token_masks, "batch_size n_ctx -> batch_size n_ctx 1")
+            feature_acts *= rearrange(ignore_token_masks, "batch_size n_ctx -> batch_size n_ctx 1")
 
             # Update activation statistics
             active_feature_count = feature_acts.gt(0.0).sum(dim=[0, 1])
@@ -262,7 +272,18 @@ class FeatureAnalyzer:
                 else:
                     # Keep non-string metadata as-is (assuming they are already tensors or can be converted)
                     discrete_meta[k] = torch.tensor(v, device=sae.cfg.device)
-            sample_result = self._process_batch(feature_acts, discrete_meta, sample_result, max_feature_acts)
+            if device_mesh is not None:
+                discrete_meta = {
+                    k: DTensor.from_local(
+                        local_tensor=repeat(v, "batch_size -> batch_size d_sae", d_sae=d_sae_local),
+                        device_mesh=device_mesh,
+                        placements=DimMap({"model": 1}).placements(device_mesh),
+                    )
+                    for k, v in discrete_meta.items()
+                }
+            sample_result = self._process_batch(
+                feature_acts, discrete_meta, sample_result, max_feature_acts, device_mesh
+            )
 
             # Update progress
             n_tokens_current = batch["tokens"].numel()
@@ -276,11 +297,16 @@ class FeatureAnalyzer:
 
         # Filter out None values and format final per-feature results
         sample_result = {k: v for k, v in sample_result.items() if v is not None}
+        for name in sample_result.keys():
+            subsample = sample_result[name]
+            for k in subsample.keys():
+                if isinstance(subsample[k], DTensor):
+                    subsample[k] = subsample[k].to_local()
         return self.get_post_analysis_func(sae.cfg.sae_type).process(
             sae=sae,
-            act_times=act_times,
+            act_times=act_times.to_local(),
             n_analyzed_tokens=n_analyzed_tokens,
-            max_feature_acts=max_feature_acts,
+            max_feature_acts=max_feature_acts.to_local(),
             sample_result=sample_result,
             mapper=mapper,
             device_mesh=device_mesh,
