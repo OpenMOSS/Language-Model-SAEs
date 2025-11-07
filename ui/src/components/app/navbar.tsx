@@ -82,6 +82,15 @@ export const AppNavbar = () => {
           >
             Logit Lens
           </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/tactic-features" && "text-foreground"
+            )}
+            to="/tactic-features"
+          >
+            Tactic Features
+          </Link>
         </div>
       </div>
     </nav>

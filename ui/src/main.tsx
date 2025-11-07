@@ -15,6 +15,7 @@ import ThreeDVisualPage from "./routes/3D-visualization/page";
 import { PlayGamePage } from "./routes/play-game/page";
 import { PlotGraphPage } from "./routes/plot-graph/page";
 import { LogitLensPage } from "./routes/logit-lens/page";
+import { TacticFeaturesPage } from "./routes/tactic-features/page";
 
 const router = createBrowserRouter([
   {
@@ -56,6 +57,10 @@ const router = createBrowserRouter([
   {
     path: "/logit-lens",
     element: <LogitLensPage />,
+  },
+  {
+    path: "/tactic-features",
+    element: <TacticFeaturesPage />,
   },
   {
     path: "/",

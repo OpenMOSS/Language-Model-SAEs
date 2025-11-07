@@ -11,7 +11,8 @@ import numpy as np
 import plotly.graph_objects as go
 import torch
 from datasets import Dataset
-from fastapi import FastAPI, Response, HTTPException
+from fastapi import FastAPI, Response, HTTPException, UploadFile, File
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 try:
@@ -48,6 +49,18 @@ from lm_saes.lc0_mapping.lc0_mapping import (
 )
 from lm_saes.circuit.leela_board import LeelaBoard
 from move_evaluation import evaluate_move_quality  # 引入走法评测
+
+# 导入战术特征分析
+try:
+    from tactic_features import analyze_tactic_features, validate_fens
+    from lm_saes import LowRankSparseAttention
+    TACTIC_FEATURES_AVAILABLE = True
+except ImportError:
+    analyze_tactic_features = None
+    validate_fens = None
+    LowRankSparseAttention = None
+    TACTIC_FEATURES_AVAILABLE = False
+    print("WARNING: tactic_features not found, tactic analysis will not be available")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -1429,6 +1442,148 @@ def evaluate_move(request: dict):
     if res is None:
         raise HTTPException(status_code=400, detail="评测失败或走法不合法")
     return res
+
+
+# 战术特征分析接口
+@app.post("/tactic_features/analyze")
+async def analyze_tactic_features_api(
+    file: UploadFile = File(...),
+    model_name: str = "lc0/BT4-1024x15x32h",
+    n_random: int = 500,
+    top_k_lorsa: int = 10,
+    top_k_tc: int = 10,
+):
+    """
+    分析战术特征：上传FEN文件，与随机FEN比较，找出最相关的特征
+    
+    Args:
+        file: 上传的txt文件，每行一个FEN
+        model_name: 模型名称
+        n_random: 随机FEN数量
+        top_k_lorsa: 显示top k个LoRSA特征
+        top_k_tc: 显示top k个TC特征
+    """
+    if not TACTIC_FEATURES_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Tactic features analysis not available")
+    
+    if not HOOKED_TRANSFORMER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="HookedTransformer not available")
+    
+    try:
+        # 读取文件内容
+        contents = await file.read()
+        text = contents.decode('utf-8')
+        tactic_fens = [line.strip() for line in text.strip().split('\n') if line.strip()]
+        
+        if not tactic_fens:
+            raise HTTPException(status_code=400, detail="文件为空或没有有效的FEN行")
+        
+        # 验证FEN格式
+        valid_fens, invalid_fens = validate_fens(tactic_fens)
+        
+        if len(valid_fens) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"没有有效的FEN字符串。无效FEN示例: {invalid_fens[:5]}"
+            )
+        
+        # 加载模型
+        hooked_model = get_hooked_model(model_name)
+        
+        # 加载LoRSA和Transcoders
+        num_layers = 15
+        base_path = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs"
+        if 'BT4' in model_name:
+            tc_base_path = f"{base_path}/result_BT4/tc"
+            lorsa_base_path = f"{base_path}/result_BT4/lorsa"
+        else:
+            tc_base_path = f"{base_path}/result/tc"
+            lorsa_base_path = f"{base_path}/result/lorsa"
+        
+        transcoders = {}
+        lorsas = []
+        
+        for layer in range(num_layers):
+            # 加载Transcoder
+            tc_path = f"{tc_base_path}/L{layer}"
+            if os.path.exists(tc_path):
+                transcoders[layer] = SparseAutoEncoder.from_pretrained(
+                    tc_path,
+                    dtype=torch.float32,
+                    device=device,
+                )
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Transcoder not found at {tc_path}"
+                )
+            
+            # 加载LoRSA
+            lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
+            if os.path.exists(lorsa_path):
+                lorsas.append(LowRankSparseAttention.from_pretrained(
+                    lorsa_path,
+                    device=device,
+                ))
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"LoRSA not found at {lorsa_path}"
+                )
+        
+        # 执行分析
+        result = analyze_tactic_features(
+            tactic_fens=valid_fens,
+            model=hooked_model,
+            lorsas=lorsas,
+            transcoders=transcoders,
+            n_random=n_random,
+        )
+        
+        if "error" in result:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        # 排序并取top k
+        lorsa_diffs = sorted(result["lorsa_diffs"], key=lambda x: x[2], reverse=True)[:top_k_lorsa]
+        tc_diffs = sorted(result["tc_diffs"], key=lambda x: x[2], reverse=True)[:top_k_tc]
+        
+        # 格式化结果
+        def format_diff(diff_tuple):
+            layer, feature, diff, p_random, p_tactic, kind = diff_tuple
+            return {
+                "layer": layer,
+                "feature": feature,
+                "diff": float(diff),
+                "p_random": float(p_random),
+                "p_tactic": float(p_tactic),
+                "kind": kind
+            }
+        
+        return {
+            "valid_tactic_fens": result["valid_tactic_fens"],
+            "invalid_tactic_fens": result["invalid_tactic_fens"],
+            "random_fens": result["random_fens"],
+            "tactic_fens": result["tactic_fens"],
+            "top_lorsa_features": [format_diff(d) for d in lorsa_diffs],
+            "top_tc_features": [format_diff(d) for d in tc_diffs],
+            "invalid_fens_sample": result.get("invalid_fens_list", [])
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+
+
+@app.get("/tactic_features/status")
+def tactic_features_status():
+    """检查战术特征分析服务的状态"""
+    return {
+        "available": TACTIC_FEATURES_AVAILABLE,
+        "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE
+    }
 
 # 添加CORS中间件 - 必须在所有路由定义之后
 app.add_middleware(
