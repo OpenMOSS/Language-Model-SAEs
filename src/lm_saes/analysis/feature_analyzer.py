@@ -17,7 +17,7 @@ from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import DimMap, distributed_masked_fill
+from lm_saes.utils.distributed import DimMap, masked_fill, to_local
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
@@ -45,11 +45,11 @@ class FeatureAnalyzer:
     def _process_batch(
         self,
         feature_acts: torch.Tensor,  # [batch_size, context_size, d_sae]
-        discrete_meta: dict[str, torch.Tensor | DTensor],
-        sample_result: Mapping[str, dict[str, torch.Tensor | DTensor] | None],
+        discrete_meta: Mapping[str, torch.Tensor],
+        sample_result: Mapping[str, Mapping[str, torch.Tensor] | None],
         max_feature_acts: torch.Tensor,  # [d_sae]
         device_mesh: DeviceMesh | None = None,
-    ) -> Mapping[str, dict[str, torch.Tensor | DTensor] | None]:
+    ) -> Mapping[str, Mapping[str, torch.Tensor] | None]:
         """Process a batch of activations to update sampling results.
 
         For each subsample type:
@@ -77,7 +77,7 @@ class FeatureAnalyzer:
             index = (
                 feature_acts.max(dim=1).values > max_feature_acts.unsqueeze(0) * self.cfg.subsamples[name]["proportion"]
             )
-            elt_cur = distributed_masked_fill(elt_cur, index, -torch.inf)
+            elt_cur = masked_fill(elt_cur, index, -torch.inf)
 
             sample_result_cur = sample_result[name]
 
@@ -300,13 +300,13 @@ class FeatureAnalyzer:
         for name in sample_result.keys():
             subsample = sample_result[name]
             for k in subsample.keys():
-                if isinstance(subsample[k], DTensor):
-                    subsample[k] = subsample[k].to_local()
+                subsample[k] = to_local(subsample[k])
+
         return self.get_post_analysis_func(sae.cfg.sae_type).process(
             sae=sae,
-            act_times=act_times.to_local(),
+            act_times=to_local(act_times),
             n_analyzed_tokens=n_analyzed_tokens,
-            max_feature_acts=max_feature_acts.to_local(),
+            max_feature_acts=to_local(max_feature_acts),
             sample_result=sample_result,
             mapper=mapper,
             device_mesh=device_mesh,
