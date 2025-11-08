@@ -32,6 +32,9 @@ interface AnalysisResult {
   top_lorsa_features: FeatureResult[];
   top_tc_features: FeatureResult[];
   invalid_fens_sample: string[];
+  specific_layer_lorsa?: FeatureResult[];
+  specific_layer_tc?: FeatureResult[];
+  specific_layer?: number;
 }
 
 export const TacticFeaturesVisualization: React.FC = () => {
@@ -46,7 +49,9 @@ export const TacticFeaturesVisualization: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [topKLorsa, setTopKLorsa] = useState<number>(10);
   const [topKTC, setTopKTC] = useState<number>(10);
-  const [nRandom, setNRandom] = useState<number>(500);
+  const [nFens, setNFens] = useState<number>(200);
+  const [specificLayer, setSpecificLayer] = useState<string>('');
+  const [specificLayerTopK, setSpecificLayerTopK] = useState<number>(20);
 
   // 获取可用模型列表
   const fetchAvailableModels = useCallback(async () => {
@@ -113,9 +118,25 @@ export const TacticFeaturesVisualization: React.FC = () => {
       const formData = new FormData();
       formData.append('file', selectedFile);
       formData.append('model_name', selectedModel);
-      formData.append('n_random', nRandom.toString());
+      formData.append('n_random', nFens.toString());
+      formData.append('n_fens', nFens.toString());
       formData.append('top_k_lorsa', topKLorsa.toString());
       formData.append('top_k_tc', topKTC.toString());
+      
+      // 添加指定层参数
+      if (specificLayer && !isNaN(parseInt(specificLayer))) {
+        formData.append('specific_layer', specificLayer);
+        formData.append('specific_layer_top_k', specificLayerTopK.toString());
+      }
+      
+      console.log('🔍 发送分析请求:', {
+        model_name: selectedModel,
+        n_fens: nFens,
+        top_k_lorsa: topKLorsa,
+        top_k_tc: topKTC,
+        specific_layer: specificLayer,
+        specific_layer_top_k: specificLayerTopK
+      });
 
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/tactic_features/analyze`, {
         method: 'POST',
@@ -124,6 +145,14 @@ export const TacticFeaturesVisualization: React.FC = () => {
 
       if (response.ok) {
         const data = await response.json();
+        console.log('✅ 收到分析结果:', data);
+        console.log('🔍 指定层数据检查:', {
+          specific_layer: data.specific_layer,
+          has_specific_layer_lorsa: !!data.specific_layer_lorsa,
+          specific_layer_lorsa_length: data.specific_layer_lorsa?.length || 0,
+          has_specific_layer_tc: !!data.specific_layer_tc,
+          specific_layer_tc_length: data.specific_layer_tc?.length || 0,
+        });
         setAnalysisResult(data);
       } else {
         const errorText = await response.text();
@@ -135,7 +164,7 @@ export const TacticFeaturesVisualization: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedFile, selectedModel, nRandom, topKLorsa, topKTC]);
+  }, [selectedFile, selectedModel, nFens, topKLorsa, topKTC, specificLayer, specificLayerTopK]);
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -208,15 +237,18 @@ export const TacticFeaturesVisualization: React.FC = () => {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium">随机FEN数量</label>
+                <label className="text-sm font-medium">FEN数量</label>
                 <Input
                   type="number"
                   min="1"
                   max="1000"
-                  value={nRandom}
-                  onChange={(e) => setNRandom(parseInt(e.target.value) || 500)}
+                  value={nFens}
+                  onChange={(e) => setNFens(parseInt(e.target.value) || 200)}
                   className="mt-1"
                 />
+                <div className="text-xs text-gray-500 mt-1">
+                  从txt文件和随机FEN中各取这么多条（如果文件中FEN少于此数量则全部使用）
+                </div>
               </div>
               <div>
                 <label className="text-sm font-medium">显示Top K LoRSA特征</label>
@@ -237,6 +269,32 @@ export const TacticFeaturesVisualization: React.FC = () => {
                   max="100"
                   value={topKTC}
                   onChange={(e) => setTopKTC(parseInt(e.target.value) || 10)}
+                  className="mt-1"
+                />
+              </div>
+              <div className="border-t pt-4">
+                <label className="text-sm font-medium">指定层分析（可选）</label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="14"
+                  value={specificLayer}
+                  onChange={(e) => setSpecificLayer(e.target.value)}
+                  placeholder="留空则不分析特定层"
+                  className="mt-1"
+                />
+                <div className="text-xs text-gray-500 mt-1">
+                  输入层号（0-14）以获取该层的详细特征
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium">指定层Top K特征数</label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={specificLayerTopK}
+                  onChange={(e) => setSpecificLayerTopK(parseInt(e.target.value) || 20)}
                   className="mt-1"
                 />
               </div>
@@ -405,6 +463,122 @@ export const TacticFeaturesVisualization: React.FC = () => {
                   </Table>
                 </CardContent>
               </Card>
+
+              {/* 指定层的LoRSA特征 */}
+              {analysisResult.specific_layer !== undefined && analysisResult.specific_layer !== null && (
+                <Card className="border-2 border-purple-200">
+                  <CardHeader className="bg-purple-50">
+                    <CardTitle>Layer {analysisResult.specific_layer} - Top {specificLayerTopK} LoRSA特征</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {analysisResult.specific_layer_lorsa && analysisResult.specific_layer_lorsa.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>排名</TableHead>
+                            <TableHead>特征索引</TableHead>
+                            <TableHead>差异 (p_tactic - p_random)</TableHead>
+                            <TableHead>p_random</TableHead>
+                            <TableHead>p_tactic</TableHead>
+                            <TableHead>操作</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {analysisResult.specific_layer_lorsa.map((feat, idx) => {
+                          const dictionary = buildDictionaryName(feat.layer, 'LoRSA');
+                          const featureUrl = `/features?dictionary=${encodeURIComponent(dictionary)}&featureIndex=${feat.feature}`;
+                          return (
+                            <TableRow key={idx}>
+                              <TableCell className="font-medium">#{idx + 1}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline">Feature {feat.feature}</Badge>
+                              </TableCell>
+                              <TableCell className="font-bold text-purple-600">
+                                {feat.diff.toFixed(6)}
+                              </TableCell>
+                              <TableCell>{feat.p_random.toFixed(6)}</TableCell>
+                              <TableCell>{feat.p_tactic.toFixed(6)}</TableCell>
+                              <TableCell>
+                                <Link
+                                  to={featureUrl}
+                                  className="inline-flex items-center px-2 py-1 bg-blue-500 text-white text-xs font-medium rounded hover:bg-blue-600 transition-colors"
+                                  title={`查看Layer ${feat.layer} LoRSA Feature #${feat.feature}`}
+                                >
+                                  <ExternalLink className="w-3 h-3 mr-1" />
+                                  查看
+                                </Link>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">
+                        <p>Layer {analysisResult.specific_layer} 没有找到 LoRSA 特征</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* 指定层的TC特征 */}
+              {analysisResult.specific_layer !== undefined && analysisResult.specific_layer !== null && (
+                <Card className="border-2 border-purple-200">
+                  <CardHeader className="bg-purple-50">
+                    <CardTitle>Layer {analysisResult.specific_layer} - Top {specificLayerTopK} TC特征</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {analysisResult.specific_layer_tc && analysisResult.specific_layer_tc.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>排名</TableHead>
+                            <TableHead>特征索引</TableHead>
+                            <TableHead>差异 (p_tactic - p_random)</TableHead>
+                            <TableHead>p_random</TableHead>
+                            <TableHead>p_tactic</TableHead>
+                            <TableHead>操作</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {analysisResult.specific_layer_tc.map((feat, idx) => {
+                          const dictionary = buildDictionaryName(feat.layer, 'TC');
+                          const featureUrl = `/features?dictionary=${encodeURIComponent(dictionary)}&featureIndex=${feat.feature}`;
+                          return (
+                            <TableRow key={idx}>
+                              <TableCell className="font-medium">#{idx + 1}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline">Feature {feat.feature}</Badge>
+                              </TableCell>
+                              <TableCell className="font-bold text-purple-600">
+                                {feat.diff.toFixed(6)}
+                              </TableCell>
+                              <TableCell>{feat.p_random.toFixed(6)}</TableCell>
+                              <TableCell>{feat.p_tactic.toFixed(6)}</TableCell>
+                              <TableCell>
+                                <Link
+                                  to={featureUrl}
+                                  className="inline-flex items-center px-2 py-1 bg-blue-500 text-white text-xs font-medium rounded hover:bg-blue-600 transition-colors"
+                                  title={`查看Layer ${feat.layer} TC Feature #${feat.feature}`}
+                                >
+                                  <ExternalLink className="w-3 h-3 mr-1" />
+                                  查看
+                                </Link>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">
+                        <p>Layer {analysisResult.specific_layer} 没有找到 TC 特征</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
             </>
           ) : (
             <Card>

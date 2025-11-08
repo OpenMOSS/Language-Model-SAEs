@@ -90,7 +90,7 @@ def load_model_and_transcoders(
         # 根据模型名称选择不同的路径格式
         if 'BT4' in model_name:
             # BT4路径格式: L{layer}
-            lorsa_path = f"{lorsa_base_path}/L{layer}"
+            lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
         else:
             # 默认T82路径格式
             lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr8e-05_k_aux4096_coefficient0.0625_dead_threshold1000000"
@@ -629,6 +629,136 @@ def main():
     except Exception as e:
         logger.error(f"执行过程中发生错误: {e}")
         raise
+
+
+def check_dense_features(
+    nodes: List[Dict[str, Any]],
+    threshold: Optional[int],
+    mongo_client: Optional[MongoClient],
+    sae_series: str = "lc0-circuit-tracing",
+    lorsa_analysis_name: Optional[str] = None,
+    tc_analysis_name: Optional[str] = None
+) -> List[str]:
+    """
+    检查哪些节点是dense feature（激活次数超过阈值）
+    
+    Args:
+        nodes: 节点列表，每个节点包含node_id, feature, layer, feature_type等信息
+        threshold: 激活次数阈值，None表示无限大（所有节点都不是dense）
+        mongo_client: MongoDB客户端
+        sae_series: SAE系列名称
+        lorsa_analysis_name: LoRSA分析名称模板（如 "BT4_lorsa_L{}A"）
+        tc_analysis_name: TC分析名称模板（如 "BT4_tc_L{}M"）
+    
+    Returns:
+        dense节点的node_id列表
+    """
+    logger = logging.getLogger(__name__)
+    
+    if threshold is None:
+        # 阈值为None，所有节点都不是dense
+        return []
+    
+    if mongo_client is None:
+        logger.warning("MongoDB客户端不可用，无法检查dense features")
+        return []
+    
+    # 打印传入的模板参数
+    logger.info(f"🔍 Dense检查参数: lorsa_analysis_name={lorsa_analysis_name}, tc_analysis_name={tc_analysis_name}, threshold={threshold}")
+    
+    dense_node_ids = []
+    not_dense_nodes = []  # 记录非dense节点用于调试
+    
+    for node in nodes:
+        try:
+            node_id = node.get('node_id')
+            feature_idx = node.get('feature')
+            layer = node.get('layer')
+            feature_type = node.get('feature_type', '').lower()
+            
+            if node_id is None or feature_idx is None or layer is None:
+                logger.debug(f"跳过节点 {node_id}: 缺少必要信息")
+                continue
+            
+            # 构建SAE名称
+            sae_name = None
+            if 'lorsa' in feature_type:
+                if lorsa_analysis_name:
+                    # 使用提供的模板
+                    sae_name = lorsa_analysis_name.replace("{}", str(layer))
+                else:
+                    # 默认格式
+                    sae_name = f"lc0-lorsa-L{layer}"
+            elif 'transcoder' in feature_type or 'cross layer transcoder' in feature_type:
+                if tc_analysis_name:
+                    # 使用提供的模板
+                    sae_name = tc_analysis_name.replace("{}", str(layer))
+                else:
+                    # 默认格式
+                    sae_name = f"lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam"
+            else:
+                logger.debug(f"跳过节点 {node_id}: 未知特征类型 {feature_type}")
+                continue
+            
+            # 详细打印每个节点的analysis_name
+            logger.info(f"📋 节点 {node_id}: feature_type={feature_type}, layer={layer}, feature={feature_idx}, sae_name={sae_name}")
+            
+            # 从MongoDB获取该特征的激活次数
+            feature_data = mongo_client.get_feature(
+                sae_name=sae_name,
+                sae_series=sae_series,
+                index=feature_idx
+            )
+            
+            if feature_data is None:
+                logger.warning(f"❌ 节点 {node_id}: 在MongoDB中未找到特征数据 (sae={sae_name}, idx={feature_idx})")
+                not_dense_nodes.append({
+                    'node_id': node_id,
+                    'reason': 'MongoDB中未找到',
+                    'sae_name': sae_name,
+                    'feature_idx': feature_idx
+                })
+                continue
+            
+            # 获取该特征的激活次数
+            if feature_data.analyses:
+                analysis = feature_data.analyses[0]
+                act_times = getattr(analysis, 'act_times', 0)
+                
+                logger.info(f"📊 节点 {node_id}: act_times={act_times}, threshold={threshold}, sae_name={sae_name}")
+                
+                if act_times > threshold:
+                    dense_node_ids.append(node_id)
+                    logger.info(f"✅ Dense节点: {node_id} (act_times={act_times} > threshold={threshold})")
+                else:
+                    not_dense_nodes.append({
+                        'node_id': node_id,
+                        'reason': f'act_times={act_times} <= threshold={threshold}',
+                        'sae_name': sae_name,
+                        'act_times': act_times
+                    })
+                    logger.info(f"⚪ 非Dense节点: {node_id} (act_times={act_times} <= threshold={threshold})")
+            else:
+                logger.warning(f"❌ 节点 {node_id}: 没有分析数据")
+                not_dense_nodes.append({
+                    'node_id': node_id,
+                    'reason': '没有分析数据',
+                    'sae_name': sae_name
+                })
+            
+        except Exception as e:
+            logger.warning(f"检查节点 {node.get('node_id')} 时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    logger.info(f"📈 统计: 总节点={len(nodes)}, Dense节点={len(dense_node_ids)}, 非Dense节点={len(not_dense_nodes)}")
+    if not_dense_nodes:
+        logger.info(f"🔍 非Dense节点详情（前10个）:")
+        for node_info in not_dense_nodes[:10]:
+            logger.info(f"  - {node_info}")
+    
+    return dense_node_ids
 
 
 if __name__ == "__main__":

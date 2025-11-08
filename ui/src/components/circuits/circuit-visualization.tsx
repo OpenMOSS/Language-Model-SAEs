@@ -53,6 +53,9 @@ export const CircuitVisualization = () => {
   const [loadingTokenPredictions, setLoadingTokenPredictions] = useState(false); // 加载状态
   const [steeringScale, setSteeringScale] = useState<number>(0); // steering 放大系数
   const [steeringScaleInput, setSteeringScaleInput] = useState<string>('0'); // 文本输入，用于支持暂存 "-"
+  const [denseNodes, setDenseNodes] = useState<Set<string>>(new Set()); // Dense节点集合
+  const [denseThreshold, setDenseThreshold] = useState<string>(''); // Dense阈值（空字符串表示无限大）
+  const [checkingDenseFeatures, setCheckingDenseFeatures] = useState(false); // 是否正在检查dense features
 
   // 多图支持：存放多份原始 JSON 及其文件名
   const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
@@ -1239,6 +1242,133 @@ export const CircuitVisualization = () => {
     }
   }, [clickedId, fetchTopActivations, fetchTokenPredictions]);
 
+  // 检查dense features的函数
+  const checkDenseFeatures = useCallback(async () => {
+    if (!linkGraphData || !linkGraphData.nodes) {
+      console.warn('⚠️ 没有可用的节点数据');
+      return;
+    }
+    
+    setCheckingDenseFeatures(true);
+    try {
+      const threshold = denseThreshold === '' ? null : parseInt(denseThreshold);
+      
+      // 从linkGraphData中提取所有节点的信息
+      const nodes = linkGraphData.nodes.map(node => {
+        // 从nodeId解析layer和feature
+        const parts = node.nodeId.split('_');
+        const rawLayer = parseInt(parts[0]) || 0;
+        const featureIdx = parseInt(parts[1]) || 0;
+        const layerForActivation = Math.floor(rawLayer / 2);
+        
+        return {
+          node_id: node.nodeId,
+          feature: featureIdx,
+          layer: layerForActivation,
+          feature_type: node.feature_type || ''
+        };
+      });
+      
+      // 从metadata中提取模型名称并转换为analysis_name
+      const metadata = linkGraphData.metadata || {};
+      const lorsaModelName = metadata.lorsa_analysis_name;
+      const tcModelName = metadata.tc_analysis_name || metadata.clt_analysis_name;
+      
+      // 根据模型名称构建analysis_name模板
+      let lorsaAnalysisName = undefined;
+      let tcAnalysisName = undefined;
+      
+      if (lorsaModelName) {
+        if (lorsaModelName.includes('BT4')) {
+          lorsaAnalysisName = 'BT4_lorsa_L{}A';
+        } else if (lorsaModelName.includes('T82')) {
+          lorsaAnalysisName = 'lc0-lorsa-L{}';
+        }
+      }
+      
+      if (tcModelName) {
+        if (tcModelName.includes('BT4')) {
+          tcAnalysisName = 'BT4_tc_L{}M';
+        } else if (tcModelName.includes('T82')) {
+          tcAnalysisName = 'lc0_L{}M_16x_k30_lr2e-03_auxk_sparseadam';
+        }
+      }
+      
+      console.log('🔍 开始检查dense features:', {
+        totalNodes: nodes.length,
+        threshold: threshold,
+        lorsaModelName: lorsaModelName,
+        tcModelName: tcModelName,
+        lorsaAnalysisName: lorsaAnalysisName,
+        tcAnalysisName: tcAnalysisName,
+        sampleNodes: nodes.slice(0, 3)
+      });
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/circuit/check_dense_features`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            nodes: nodes,
+            threshold: threshold,
+            sae_series: 'lc0-circuit-tracing',
+            lorsa_analysis_name: lorsaAnalysisName,
+            tc_analysis_name: tcAnalysisName
+          })
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      
+      const result = await response.json();
+      
+      console.log('✅ Dense features检查完成:', {
+        denseNodeCount: result.dense_nodes.length,
+        totalNodes: result.total_nodes,
+        threshold: result.threshold
+      });
+      
+      setDenseNodes(new Set(result.dense_nodes));
+      
+    } catch (error) {
+      console.error('❌ 检查dense features失败:', error);
+      alert(`检查dense features失败: ${error}`);
+    } finally {
+      setCheckingDenseFeatures(false);
+    }
+  }, [linkGraphData, denseThreshold]);
+
+  // 应用dense节点颜色覆盖
+  const applyDenseNodeColors = useCallback((data: any) => {
+    if (!data || !data.nodes || denseNodes.size === 0) {
+      return data;
+    }
+    
+    return {
+      ...data,
+      nodes: data.nodes.map((node: any) => {
+        if (denseNodes.has(node.nodeId)) {
+          return {
+            ...node,
+            nodeColor: '#000000',  // 黑色
+            isDense: true  // 标记为dense节点
+          };
+        }
+        return node;
+      })
+    };
+  }, [denseNodes]);
+
+  // 获取应用了dense颜色的图数据
+  const displayLinkGraphData = React.useMemo(() => {
+    return applyDenseNodeColors(linkGraphData);
+  }, [linkGraphData, applyDenseNodeColors]);
+
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1343,13 +1473,46 @@ export const CircuitVisualization = () => {
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-2">
           <h2 className="text-l font-bold">Prompt:</h2>
-          <h2 className="text-l">{linkGraphData.metadata.prompt_tokens.join(' ')}</h2>
+          <h2 className="text-l">{displayLinkGraphData.metadata.prompt_tokens.join(' ')}</h2>
         </div>
         <div className="flex items-center space-x-2">
+          {/* Dense Feature检查控件 */}
+          <div className="flex items-center space-x-2 px-3 py-1 bg-gray-100 rounded-md">
+            <label className="text-sm text-gray-700">Dense阈值:</label>
+            <input
+              type="number"
+              value={denseThreshold}
+              onChange={(e) => setDenseThreshold(e.target.value)}
+              placeholder="无限大"
+              className="w-24 px-2 py-1 text-sm border border-gray-300 rounded"
+              title="激活次数阈值，空表示无限大（所有节点保留）"
+            />
+            <button
+              onClick={checkDenseFeatures}
+              disabled={checkingDenseFeatures}
+              className="px-3 py-1 text-sm bg-purple-500 text-white rounded hover:bg-purple-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
+              title="检查哪些节点是dense feature"
+            >
+              {checkingDenseFeatures ? (
+                <>
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-1"></div>
+                  检查中...
+                </>
+              ) : (
+                '判断Dense'
+              )}
+            </button>
+            {denseNodes.size > 0 && (
+              <span className="text-sm text-purple-700 font-medium">
+                {denseNodes.size} 个Dense节点
+              </span>
+            )}
+          </div>
+          
           {/* 颜色-文件名图例（多文件时显示） */}
-          {linkGraphData.metadata.sourceFileNames && linkGraphData.metadata.sourceFileNames.length > 1 && (
+          {displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
             <div className="hidden md:flex items-center space-x-3 mr-4">
-              {linkGraphData.metadata.sourceFileNames.map((name, idx) => (
+              {displayLinkGraphData.metadata.sourceFileNames.map((name, idx) => (
                 <div key={idx} className="flex items-center space-x-1 text-xs">
                   <span
                     className="inline-block rounded-full"
@@ -1403,7 +1566,7 @@ export const CircuitVisualization = () => {
       </div>
 
       {/* Chess Board Display - 单文件 */}
-      {(!linkGraphData.metadata.sourceFileNames || linkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
+      {(!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
         <div className="flex justify-center mb-6">
           <div className="bg-white rounded-lg border shadow-sm p-4 pb-8">
             <h3 className="text-lg font-semibold mb-4 text-center">
@@ -1438,21 +1601,21 @@ export const CircuitVisualization = () => {
               flip_activation={Boolean(fen && fen.split(' ')[1] === 'b')}
               sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
               analysisName={nodeActivationData?.nodeType || 'Circuit Node'}
-              moveColor={(clickedId ? (linkGraphData.nodes.find(n => n.nodeId === clickedId)?.nodeColor) : undefined) as any}
+              moveColor={(clickedId ? (displayLinkGraphData.nodes.find(n => n.nodeId === clickedId)?.nodeColor) : undefined) as any}
             />
           </div>
         </div>
       )}
 
       {/* Chess Board Display - 多文件：为每个源文件渲染一个棋盘，并按来源显示激活 */}
-      {linkGraphData.metadata.sourceFileNames && linkGraphData.metadata.sourceFileNames.length > 1 && (
+      {displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           {multiOriginalJsons.map((entry, idx) => {
             const fileFen = extractFenFromCircuitJson(entry.json);
             if (!fileFen) return null;
             const fileMove = extractOutputMoveFromCircuitJson(entry.json);
             // 判断当前选中节点是否属于该文件
-            const currentNode = clickedId ? linkGraphData.nodes.find(n => n.nodeId === clickedId) : null;
+            const currentNode = clickedId ? displayLinkGraphData.nodes.find(n => n.nodeId === clickedId) : null;
             const belongs = currentNode && (currentNode.sourceIndices?.includes(idx) || currentNode.sourceIndex === idx);
             const perFileActivation = (clickedId && belongs)
               ? getNodeActivationDataFromJson(entry.json, clickedId)
@@ -1509,7 +1672,7 @@ export const CircuitVisualization = () => {
           <div className="flex-1 min-w-0 max-w-full border rounded-lg p-4 bg-white shadow-sm overflow-hidden">
             <div className="w-full h-full overflow-hidden relative">
               <LinkGraphContainer 
-                data={linkGraphData} 
+                data={displayLinkGraphData} 
                 onNodeClick={handleFeatureClick}
                 onNodeHover={handleFeatureHover}
                 onFeatureSelect={handleFeatureSelect}
@@ -1525,7 +1688,7 @@ export const CircuitVisualization = () => {
           {/* Node Connections Component - Right Side */}
           <div className="w-96 flex-shrink-0 border rounded-lg p-4 bg-white shadow-sm overflow-hidden">
             <NodeConnections
-              data={linkGraphData}
+              data={displayLinkGraphData}
               clickedId={clickedId}
               hoveredId={hoveredId}
               pinnedIds={pinnedIds}
@@ -1838,7 +2001,7 @@ export const CircuitVisualization = () => {
         {/* Bottom Row: Feature Card below Link Graph Container */}
         {clickedId && (() => {
           // 获取当前选中节点的信息
-          const currentNode = linkGraphData.nodes.find(node => node.nodeId === clickedId);
+          const currentNode = displayLinkGraphData.nodes.find(node => node.nodeId === clickedId);
           
           if (!currentNode) {
             return null;
@@ -1868,7 +2031,7 @@ export const CircuitVisualization = () => {
             sourceLinksCount: currentNode.sourceLinks?.length || 0,
             hasTargetLinks: !!currentNode.targetLinks,
             targetLinksCount: currentNode.targetLinks?.length || 0,
-            totalLinksInData: linkGraphData.links.length
+            totalLinksInData: displayLinkGraphData.links.length
           });
           
           // 根据节点类型构建正确的dictionary名

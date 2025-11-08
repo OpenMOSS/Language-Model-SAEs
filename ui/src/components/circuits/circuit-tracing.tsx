@@ -69,15 +69,8 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   const [topActivations, setTopActivations] = useState<any[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
 
-  // 优先使用本地缓存中的自定义FEN（当父组件prop未及时更新时）
-  const effectiveGameFen = useMemo(() => {
-    try {
-      const cached = localStorage.getItem('circuit_game_fen');
-      return (cached && cached.length > 0) ? cached : gameFen;
-    } catch {
-      return gameFen;
-    }
-  }, [gameFen]);
+  // 直接使用父组件传入的上一步FEN，不再使用本地缓存覆盖
+  const effectiveGameFen = gameFen;
 
   // 本地缓存：按FEN缓存最近一次输入的UCI移动
   const MOVE_CACHE_KEY = 'circuit_move_by_fen_v1';
@@ -196,7 +189,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   // 修改handleCircuitTrace函数来支持不同的order_mode
   const handleCircuitTrace = useCallback(async (orderMode: 'positive' | 'negative' = 'positive') => {
     // 使用输入的移动、缓存的该FEN移动，或最后一个移动
-    const moveUci = inputMove.trim() || loadCachedMove(effectiveGameFen) || lastMove;
+    const moveUci = inputMove.trim() || loadCachedMove(gameFen) || lastMove;
     
     if (!moveUci) {
       alert('请输入要分析的移动或先走一步棋');
@@ -209,7 +202,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
     
     console.log('🔍 Circuit Trace 参数:', {
-      fen: effectiveGameFen, // move之前的FEN
+      fen: gameFen, // move之前的FEN
       move_uci: moveUci,
       order_mode: orderMode,
       current_fen: currentFen,
@@ -246,7 +239,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         const data = await response.json();
         // 成功后缓存本次移动
         if (moveUci) {
-          saveCachedMove(effectiveGameFen, moveUci);
+          saveCachedMove(gameFen, moveUci);
         }
         
         // 确保 metadata 中包含正确的模型信息
@@ -939,7 +932,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
               <div>
                 <span className="font-medium text-gray-700">分析FEN (移动前):</span>
                 <div className="font-mono text-xs bg-blue-50 p-2 rounded mt-1 break-all border border-blue-200">
-                  {effectiveGameFen}
+                  {gameFen}
                 </div>
               </div>
               <div>

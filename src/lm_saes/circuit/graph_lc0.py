@@ -243,6 +243,8 @@ def compute_graph_scores(graph: Graph, use_lorsa:bool=True) -> tuple[float, floa
     error_end_idx = n_features + 2 * graph.n_pos * layers if use_lorsa else n_features + graph.n_pos * layers
     token_end_idx = error_end_idx + len(graph.input_tokens)
 
+    print(f'{n_features = }, {error_end_idx = }, {token_end_idx = }')
+
     logit_weights = torch.zeros(
         graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device
     )

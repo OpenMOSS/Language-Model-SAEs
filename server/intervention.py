@@ -362,7 +362,7 @@ def get_patching_analyzer(metadata: Optional[Dict[str, Any]] = None) -> Patching
                 # 根据路径类型选择不同的路径格式
                 if 'result_BT4' in lorsa_base_path:
                     # BT4路径格式: BT4_lorsa_L{layer}A
-                    lorsa_path = f"{lorsa_base_path}/L{layer}"
+                    lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
                 else:
                     # 默认T82路径格式
                     lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr8e-05_k_aux4096_coefficient0.0625_dead_threshold1000000"

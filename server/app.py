@@ -11,7 +11,7 @@ import numpy as np
 import plotly.graph_objects as go
 import torch
 from datasets import Dataset
-from fastapi import FastAPI, Response, HTTPException, UploadFile, File
+from fastapi import FastAPI, Response, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -917,10 +917,11 @@ def get_models():
 
 # 导入circuits_service
 try:
-    from circuits_service import run_circuit_trace
+    from circuits_service import run_circuit_trace, check_dense_features
     CIRCUITS_SERVICE_AVAILABLE = True
 except ImportError:
     run_circuit_trace = None
+    check_dense_features = None
     CIRCUITS_SERVICE_AVAILABLE = False
     print("WARNING: circuits_service not found, circuit tracing will not be available")
 
@@ -1080,6 +1081,77 @@ def circuit_trace_status():
         "available": CIRCUITS_SERVICE_AVAILABLE,
         "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE
     }
+
+
+@app.post("/circuit/check_dense_features")
+def check_dense_features_api(request: dict):
+    """
+    检查circuit中哪些节点是dense feature（激活次数超过阈值）
+    
+    Args:
+        request: 包含检查参数的请求体
+            - nodes: 节点列表
+            - threshold: 激活次数阈值（可选，None表示无限大）
+            - sae_series: SAE系列名称（可选，默认: lc0-circuit-tracing）
+            - lorsa_analysis_name: LoRSA分析名称模板（可选）
+            - tc_analysis_name: TC分析名称模板（可选）
+    
+    Returns:
+        dense节点的ID列表
+    """
+    try:
+        # 检查circuits_service是否可用
+        if not CIRCUITS_SERVICE_AVAILABLE or check_dense_features is None:
+            raise HTTPException(status_code=503, detail="Dense feature check service not available")
+        
+        # 提取参数
+        nodes = request.get("nodes", [])
+        if not isinstance(nodes, list):
+            raise HTTPException(status_code=400, detail="nodes must be a list")
+        
+        threshold = request.get("threshold")
+        if threshold is not None:
+            try:
+                threshold = int(threshold)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="threshold must be an integer or null")
+        
+        sae_series = request.get("sae_series", "lc0-circuit-tracing")
+        lorsa_analysis_name = request.get("lorsa_analysis_name")
+        tc_analysis_name = request.get("tc_analysis_name")
+        
+        print(f"🔍 检查dense features: {len(nodes)} 个节点, 阈值={threshold}")
+        print(f"   - LoRSA模板: {lorsa_analysis_name}")
+        print(f"   - TC模板: {tc_analysis_name}")
+        
+        # 设置MongoDB连接
+        mongo_config = MongoDBConfig()
+        mongo_client_instance = MongoClient(mongo_config)
+        
+        # 调用检查函数
+        dense_node_ids = check_dense_features(
+            nodes=nodes,
+            threshold=threshold,
+            mongo_client=mongo_client_instance,
+            sae_series=sae_series,
+            lorsa_analysis_name=lorsa_analysis_name,
+            tc_analysis_name=tc_analysis_name
+        )
+        
+        print(f"✅ 找到 {len(dense_node_ids)} 个dense节点")
+        
+        return {
+            "dense_nodes": dense_node_ids,
+            "total_nodes": len(nodes),
+            "threshold": threshold
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Dense feature check failed: {str(e)}")
 
 
 @app.post("/patching_analysis")
@@ -1448,10 +1520,13 @@ def evaluate_move(request: dict):
 @app.post("/tactic_features/analyze")
 async def analyze_tactic_features_api(
     file: UploadFile = File(...),
-    model_name: str = "lc0/BT4-1024x15x32h",
-    n_random: int = 500,
-    top_k_lorsa: int = 10,
-    top_k_tc: int = 10,
+    model_name: str = Form("lc0/BT4-1024x15x32h"),
+    n_random: int = Form(200),
+    n_fens: int = Form(200),
+    top_k_lorsa: int = Form(10),
+    top_k_tc: int = Form(10),
+    specific_layer: Optional[str] = Form(None),
+    specific_layer_top_k: int = Form(20),
 ):
     """
     分析战术特征：上传FEN文件，与随机FEN比较，找出最相关的特征
@@ -1459,9 +1534,12 @@ async def analyze_tactic_features_api(
     Args:
         file: 上传的txt文件，每行一个FEN
         model_name: 模型名称
-        n_random: 随机FEN数量
+        n_random: 随机FEN数量（兼容旧参数）
+        n_fens: FEN数量（新参数，优先使用）
         top_k_lorsa: 显示top k个LoRSA特征
         top_k_tc: 显示top k个TC特征
+        specific_layer: 指定层号（可选），如果提供则额外返回该层的详细特征
+        specific_layer_top_k: 指定层的top k特征数
     """
     if not TACTIC_FEATURES_AVAILABLE:
         raise HTTPException(status_code=503, detail="Tactic features analysis not available")
@@ -1470,6 +1548,54 @@ async def analyze_tactic_features_api(
         raise HTTPException(status_code=503, detail="HookedTransformer not available")
     
     try:
+        # ========== 调试信息：函数开始 ==========
+        print("=" * 80)
+        print("🚀 开始处理战术特征分析请求")
+        print(f"📥 接收到的原始参数:")
+        print(f"   - model_name: {model_name}")
+        print(f"   - n_random: {n_random}")
+        print(f"   - n_fens: {n_fens}")
+        print(f"   - top_k_lorsa: {top_k_lorsa}")
+        print(f"   - top_k_tc: {top_k_tc}")
+        print(f"   - specific_layer (原始): {specific_layer} (类型: {type(specific_layer)})")
+        print(f"   - specific_layer_top_k: {specific_layer_top_k}")
+        print("=" * 80)
+        
+        # 解析specific_layer参数
+        parsed_specific_layer = None
+        print(f"🔍 开始解析 specific_layer 参数...")
+        print(f"   - specific_layer is None: {specific_layer is None}")
+        if specific_layer is not None:
+            print(f"   - specific_layer 值: '{specific_layer}'")
+            print(f"   - specific_layer.strip() 后: '{specific_layer.strip() if isinstance(specific_layer, str) else specific_layer}'")
+        
+        if specific_layer is not None and isinstance(specific_layer, str) and specific_layer.strip():
+            try:
+                parsed_specific_layer = int(specific_layer.strip())
+                print(f"✅ 成功解析指定层参数: {parsed_specific_layer} (原始值: '{specific_layer}')")
+            except (ValueError, TypeError) as e:
+                print(f"❌ 解析层号参数失败: {e}")
+                print(f"⚠️ 无效的层号参数: '{specific_layer}'，将忽略指定层分析")
+                parsed_specific_layer = None
+        elif specific_layer is None:
+            print(f"ℹ️ 未提供 specific_layer 参数，将不进行指定层分析")
+        else:
+            print(f"⚠️ specific_layer 参数为空字符串或无效，将忽略")
+        
+        # 使用n_fens参数（如果提供），否则使用n_random
+        actual_n_fens = n_fens if n_fens != 200 or n_random == 200 else n_random
+        print(f"📊 实际使用的FEN数量: {actual_n_fens}")
+        
+        print(f"🎯 最终解析结果:")
+        print(f"   - parsed_specific_layer: {parsed_specific_layer}")
+        print(f"   - specific_layer_top_k: {specific_layer_top_k}")
+        print(f"   - actual_n_fens: {actual_n_fens}")
+        if parsed_specific_layer is not None:
+            print(f"✅ 将分析指定层: Layer {parsed_specific_layer}")
+        else:
+            print(f"ℹ️ 不进行指定层分析")
+        print("=" * 80)
+        
         # 读取文件内容
         contents = await file.read()
         text = contents.decode('utf-8')
@@ -1480,6 +1606,13 @@ async def analyze_tactic_features_api(
         
         # 验证FEN格式
         valid_fens, invalid_fens = validate_fens(tactic_fens)
+        
+        # 限制FEN数量：如果文件中的FEN多于设置的数量，取前n条；否则全部使用
+        if len(valid_fens) > actual_n_fens:
+            print(f"📊 文件中有 {len(valid_fens)} 个有效FEN，取前 {actual_n_fens} 个")
+            valid_fens = valid_fens[:actual_n_fens]
+        else:
+            print(f"📊 文件中有 {len(valid_fens)} 个有效FEN，全部使用")
         
         if len(valid_fens) == 0:
             raise HTTPException(
@@ -1532,12 +1665,27 @@ async def analyze_tactic_features_api(
                 )
         
         # 执行分析
+        print("=" * 80)
+        print(f"🔬 开始执行特征分析")
+        print(f"   - 战术FEN数量: {len(valid_fens)}条")
+        print(f"   - 随机FEN数量: {actual_n_fens}条")
+        print(f"   - 模型层数: {num_layers}层 (0-{num_layers-1})")
+        if parsed_specific_layer is not None:
+            print(f"   ✅ 指定层分析已启用:")
+            print(f"      - 层号: Layer {parsed_specific_layer}")
+            print(f"      - Top K: {specific_layer_top_k}")
+            if parsed_specific_layer < 0 or parsed_specific_layer >= num_layers:
+                print(f"      ⚠️ 警告: 层号 {parsed_specific_layer} 超出有效范围!")
+        else:
+            print(f"   ℹ️ 未指定层，将只返回所有层的Top K特征")
+        print("=" * 80)
+        
         result = analyze_tactic_features(
             tactic_fens=valid_fens,
             model=hooked_model,
             lorsas=lorsas,
             transcoders=transcoders,
-            n_random=n_random,
+            n_random=actual_n_fens,
         )
         
         if "error" in result:
@@ -1559,7 +1707,7 @@ async def analyze_tactic_features_api(
                 "kind": kind
             }
         
-        return {
+        response_data = {
             "valid_tactic_fens": result["valid_tactic_fens"],
             "invalid_tactic_fens": result["invalid_tactic_fens"],
             "random_fens": result["random_fens"],
@@ -1568,6 +1716,83 @@ async def analyze_tactic_features_api(
             "top_tc_features": [format_diff(d) for d in tc_diffs],
             "invalid_fens_sample": result.get("invalid_fens_list", [])
         }
+        
+        # 如果指定了层号，返回该层的详细特征
+        print("=" * 80)
+        print(f"🔍 检查是否需要返回指定层特征...")
+        print(f"   - parsed_specific_layer: {parsed_specific_layer}")
+        print(f"   - num_layers: {num_layers}")
+        print(f"   - 条件检查: parsed_specific_layer is not None = {parsed_specific_layer is not None}")
+        if parsed_specific_layer is not None:
+            print(f"   - 条件检查: 0 <= {parsed_specific_layer} < {num_layers} = {0 <= parsed_specific_layer < num_layers}")
+        
+        if parsed_specific_layer is not None and 0 <= parsed_specific_layer < num_layers:
+            print(f"✅ 开始筛选 Layer {parsed_specific_layer} 的特征...")
+            
+            # 打印所有特征的总数（用于调试）
+            total_lorsa_diffs = len(result["lorsa_diffs"])
+            total_tc_diffs = len(result["tc_diffs"])
+            print(f"   - 总LoRSA特征数: {total_lorsa_diffs}")
+            print(f"   - 总TC特征数: {total_tc_diffs}")
+            
+            # 筛选出指定层的特征
+            specific_lorsa = [d for d in result["lorsa_diffs"] if d[0] == parsed_specific_layer]
+            specific_tc = [d for d in result["tc_diffs"] if d[0] == parsed_specific_layer]
+            
+            print(f"📊 Layer {parsed_specific_layer} 特征统计:")
+            print(f"   - LoRSA特征: {len(specific_lorsa)}个")
+            print(f"   - TC特征: {len(specific_tc)}个")
+            
+            if len(specific_lorsa) == 0:
+                print(f"   ⚠️ 警告: Layer {parsed_specific_layer} 没有找到任何 LoRSA 特征!")
+            if len(specific_tc) == 0:
+                print(f"   ⚠️ 警告: Layer {parsed_specific_layer} 没有找到任何 TC 特征!")
+            
+            # 排序并取top k
+            specific_lorsa_sorted = sorted(specific_lorsa, key=lambda x: x[2], reverse=True)[:specific_layer_top_k]
+            specific_tc_sorted = sorted(specific_tc, key=lambda x: x[2], reverse=True)[:specific_layer_top_k]
+            
+            print(f"   - 排序后取Top {specific_layer_top_k}:")
+            print(f"     * LoRSA: {len(specific_lorsa_sorted)}个")
+            print(f"     * TC: {len(specific_tc_sorted)}个")
+            
+            # 打印前3个特征的详细信息（用于调试）
+            if len(specific_lorsa_sorted) > 0:
+                print(f"   - LoRSA Top 3 特征示例:")
+                for i, feat in enumerate(specific_lorsa_sorted[:3]):
+                    print(f"     [{i+1}] Layer={feat[0]}, Feature={feat[1]}, Diff={feat[2]:.6f}")
+            
+            if len(specific_tc_sorted) > 0:
+                print(f"   - TC Top 3 特征示例:")
+                for i, feat in enumerate(specific_tc_sorted[:3]):
+                    print(f"     [{i+1}] Layer={feat[0]}, Feature={feat[1]}, Diff={feat[2]:.6f}")
+            
+            response_data["specific_layer"] = parsed_specific_layer
+            response_data["specific_layer_lorsa"] = [format_diff(d) for d in specific_lorsa_sorted]
+            response_data["specific_layer_tc"] = [format_diff(d) for d in specific_tc_sorted]
+            
+            print(f"✅ 已添加指定层特征到响应数据:")
+            print(f"   - specific_layer: {response_data.get('specific_layer')}")
+            print(f"   - specific_layer_lorsa: {len(response_data.get('specific_layer_lorsa', []))}个")
+            print(f"   - specific_layer_tc: {len(response_data.get('specific_layer_tc', []))}个")
+        elif parsed_specific_layer is not None:
+            print(f"❌ 指定的层号 {parsed_specific_layer} 超出有效范围 (0-{num_layers-1})")
+            print(f"   将忽略指定层分析")
+        else:
+            print(f"ℹ️ 未指定层号，跳过指定层特征筛选")
+        
+        print("=" * 80)
+        print(f"📤 准备返回响应数据:")
+        print(f"   - 基础统计: valid_tactic_fens={response_data.get('valid_tactic_fens')}, tactic_fens={response_data.get('tactic_fens')}")
+        print(f"   - Top LoRSA特征: {len(response_data.get('top_lorsa_features', []))}个")
+        print(f"   - Top TC特征: {len(response_data.get('top_tc_features', []))}个")
+        print(f"   - 指定层: {response_data.get('specific_layer', '未指定')}")
+        if response_data.get('specific_layer') is not None:
+            print(f"   - 指定层LoRSA: {len(response_data.get('specific_layer_lorsa', []))}个")
+            print(f"   - 指定层TC: {len(response_data.get('specific_layer_tc', []))}个")
+        print("=" * 80)
+        
+        return response_data
         
     except HTTPException:
         raise

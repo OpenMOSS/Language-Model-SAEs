@@ -247,3 +247,9 @@ L=5
 echo "===> lorsa layer $L"
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=$((29440+L)) --nproc-per-node=1 exp/analyze_lc0_lorsa_T82.py --layer "$L" \
   > "$LOGDIR/analyse_lorsa_layer_${L}_1031.log" 2>&1
+
+
+L=4
+CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 --master_port=$((29440+L)) \
+  exp/analyze_lc0_tc_BT4.py --layer "$L" \
+  > "$LOGDIR/analyse_tc_layer_${L}.log" 2>&1
