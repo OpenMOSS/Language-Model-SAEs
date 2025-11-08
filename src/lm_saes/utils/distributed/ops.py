@@ -15,6 +15,13 @@ def full_tensor(x: Tensor) -> Tensor:
     return x
 
 
+def to_local(x: Float[Tensor | DTensor, "..."]) -> Float[Tensor, "..."]:
+    """Convert DTensor to local Tensor if needed."""
+    if isinstance(x, DTensor):
+        return x.to_local()
+    return x
+
+
 @overload
 def distributed_topk(
     x: Float[DTensor, "batch n_layers d_sae"],
@@ -154,11 +161,9 @@ def distributed_topk(
         return result
 
 
-def distributed_masked_fill(
-    x: Float[Tensor | DTensor, "..."], mask: Float[Tensor | DTensor, "..."], value: float
-) -> Float[Tensor | DTensor, "..."]:
+def masked_fill(x: Float[Tensor, "..."], mask: Float[Tensor, "..."], value: float) -> Float[Tensor, "..."]:
     """
-    Perform distributed masked fill operation on a DTensor.
+    Perform masked fill operation on a Tensor.
     """
     if isinstance(x, DTensor):
         assert isinstance(mask, DTensor), "mask must be a DTensor"
