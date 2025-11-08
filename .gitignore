@@ -190,10 +190,8 @@ pyrightconfig.json
 /exp
 /analysis-results
 /analysis
-/results
-/result
-/result_BT4
-/result_BT4_copy
+/result*
+/logs*
 /graphs
 /ui_bakup
 .vscode/settings.json
