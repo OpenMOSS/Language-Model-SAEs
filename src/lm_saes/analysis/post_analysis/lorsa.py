@@ -180,8 +180,9 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
         st = 0
         z_pattern_data = z_pattern_data.coalesce()
         for sampling_name, sampling_data in sample_result.items():
-            sampling_data["z_pattern_indices"] = []
-            sampling_data["z_pattern_values"] = []
+            # TODO: Fix type hint errors
+            sampling_data["z_pattern_indices"] = []  # pyright: ignore[reportArgumentType]
+            sampling_data["z_pattern_values"] = []  # pyright: ignore[reportArgumentType]
 
             n_samples, d_sae, n_ctx = sampling_data["feature_acts"].shape
             zp_data_mask = (z_pattern_data.indices()[0] >= st) & (z_pattern_data.indices()[0] < st + n_samples * d_sae)

@@ -492,7 +492,6 @@ class ReplacementModel(HookedTransformer):
         else:
             lorsa_attention_pattern = None
             z_attention_pattern = None
-            
 
             def cache_activations_mlp(acts, hook, layer, zero_bos):
                 transcoder_acts = self.transcoders.encode_single_layer(
@@ -608,8 +607,8 @@ class ReplacementModel(HookedTransformer):
         zero_bos = zero_bos and tokens[0].cpu().item() in special_token_ids  # == self.tokenizer.bos_token_id
 
         # cache activations and MLP in
-        activation_matrix, lorsa_attention_pattern, z_attention_pattern, activation_hooks = self._get_activation_caching_hooks(
-            sparse=sparse, zero_bos=zero_bos
+        activation_matrix, lorsa_attention_pattern, z_attention_pattern, activation_hooks = (
+            self._get_activation_caching_hooks(sparse=sparse, zero_bos=zero_bos)
         )
         if self.use_lorsa:
             attn_out_cache, attn_out_caching_hooks, _ = self.get_caching_hooks(
@@ -684,7 +683,10 @@ class ReplacementModel(HookedTransformer):
         )
 
     def setup_intervention_with_freeze(
-        self, inputs: str | torch.Tensor, constrained_layers: range | None = None, use_lorsa: bool = True,
+        self,
+        inputs: str | torch.Tensor,
+        constrained_layers: range | None = None,
+        use_lorsa: bool = True,
     ) -> tuple[torch.Tensor, list[tuple[str, Callable]]]:
         """Sets up an intervention with either frozen attention + LayerNorm(default) or frozen
         attention, LayerNorm, and MLPs, for constrained layers
@@ -734,7 +736,7 @@ class ReplacementModel(HookedTransformer):
                 f" shape {cached_values.shape} at hook {hook.name}"
             )
             return cached_values
-        
+
         if use_lorsa:
             fwd_hooks = [
                 (hookpoint, freeze_hook)
@@ -743,9 +745,7 @@ class ReplacementModel(HookedTransformer):
             ]
         else:
             fwd_hooks = [
-                (hookpoint, freeze_hook)
-                for hookpoint in freeze_cache.keys()
-                if self.mlp_input_hook not in hookpoint 
+                (hookpoint, freeze_hook) for hookpoint in freeze_cache.keys() if self.mlp_input_hook not in hookpoint
             ]
 
         return torch.stack(original_activations), fwd_hooks
@@ -794,7 +794,9 @@ class ReplacementModel(HookedTransformer):
 
         # We're generating one token at a time
         original_activations, freeze_hooks = self.setup_intervention_with_freeze(
-            inputs, constrained_layers=constrained_layers, use_lorsa=use_lorsa,
+            inputs,
+            constrained_layers=constrained_layers,
+            use_lorsa=use_lorsa,
         )
         n_pos = inputs.size(0)
 

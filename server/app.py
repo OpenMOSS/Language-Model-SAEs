@@ -2,14 +2,14 @@ import io
 import json
 import os
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any, Generator, Optional
 
 import msgpack
 import numpy as np
 import plotly.graph_objects as go
 import torch
 from datasets import Dataset
-from fastapi import Body, FastAPI, Response
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
@@ -163,6 +163,7 @@ def list_dictionaries():
 
 @app.get("/images/{dataset_name}")
 def get_image(dataset_name: str, context_idx: int, image_idx: int, shard_idx: int = 0, n_shards: int = 1):
+    assert transforms is not None, "torchvision not found, image processing will be disabled"
     dataset = get_dataset(dataset_name, shard_idx, n_shards)
     data = dataset[int(context_idx)]
 
@@ -370,7 +371,7 @@ def get_feature(
         feature_acts_values: np.ndarray,
         z_pattern_indices: np.ndarray | None = None,
         z_pattern_values: np.ndarray | None = None,
-    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]]:
+    ) -> Generator[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None], Any, None]:
         """Process sparse feature acts.
 
         Args:
@@ -476,82 +477,82 @@ def get_feature(
     )
 
 
-@app.post("/dictionaries/{name}/cache_features")
-def cache_features(
-    name: str,
-    features: list[dict[str, Any]] = Body(..., embed=True),
-    output_dir: str = Body(...),
-):
-    """Batch-fetch and persist feature payloads for offline reuse.
+# @app.post("/dictionaries/{name}/cache_features")
+# def cache_features(
+#     name: str,
+#     features: list[dict[str, Any]] = Body(..., embed=True),
+#     output_dir: str = Body(...),
+# ):
+#     """Batch-fetch and persist feature payloads for offline reuse.
 
-    Args:
-        name: Dictionary/SAE name.
-        features: List of feature specs currently on screen. Each item should contain
-            - feature_id: int
-            - layer: int
-            - is_lorsa: bool
-            - analysis_name: Optional[str] (overrides auto selection)
-        output_dir: Directory on the server filesystem to write files into.
+#     Args:
+#         name: Dictionary/SAE name.
+#         features: List of feature specs currently on screen. Each item should contain
+#             - feature_id: int
+#             - layer: int
+#             - is_lorsa: bool
+#             - analysis_name: Optional[str] (overrides auto selection)
+#         output_dir: Directory on the server filesystem to write files into.
 
-    Returns:
-        Dict with count and directory path.
-    """
-    os.makedirs(output_dir, exist_ok=True)
+#     Returns:
+#         Dict with count and directory path.
+#     """
+#     os.makedirs(output_dir, exist_ok=True)
 
-    saved = 0
-    for f in features:
-        feature_id = int(f["feature_id"])  # may raise KeyError which FastAPI will surface
-        layer = int(f["layer"])  # required for formatting analysis name
-        is_lorsa = bool(f.get("is_lorsa", False))
-        analysis_name_override = f.get("analysis_name")
+#     saved = 0
+#     for f in features:
+#         feature_id = int(f["feature_id"])  # may raise KeyError which FastAPI will surface
+#         layer = int(f["layer"])  # required for formatting analysis name
+#         is_lorsa = bool(f.get("is_lorsa", False))
+#         analysis_name_override = f.get("analysis_name")
 
-        # Determine analysis name for this feature
-        formatted_analysis_name: str | None = None
-        if analysis_name_override is not None:
-            formatted_analysis_name = analysis_name_override
-        else:
-            try:
-                base_name = (
-                    client.get_lorsa_analysis_name(name, sae_series)
-                    if is_lorsa
-                    else client.get_clt_analysis_name(name, sae_series)
-                )
-            except AttributeError:
-                base_name = None
-            if base_name is None:
-                feat = client.get_random_alive_feature(sae_name=name, sae_series=sae_series)
-                if feat is None:
-                    return Response(content=f"Dictionary {name} not found", status_code=404)
-                available = [a.name for a in feat.analyses]
-                preferred = [a for a in available if ("lorsa" in a) == is_lorsa]
-                base_name = preferred[0] if preferred else available[0]
-            formatted_analysis_name = base_name.replace("{}", str(layer))
+#         # Determine analysis name for this feature
+#         formatted_analysis_name: str | None = None
+#         if analysis_name_override is not None:
+#             formatted_analysis_name = analysis_name_override
+#         else:
+#             try:
+#                 base_name = (
+#                     client.get_lorsa_analysis_name(name, sae_series)
+#                     if is_lorsa
+#                     else client.get_clt_analysis_name(name, sae_series)
+#                 )
+#             except AttributeError:
+#                 base_name = None
+#             if base_name is None:
+#                 feat = client.get_random_alive_feature(sae_name=name, sae_series=sae_series)
+#                 if feat is None:
+#                     return Response(content=f"Dictionary {name} not found", status_code=404)
+#                 available = [a.name for a in feat.analyses]
+#                 preferred = [a for a in available if ("lorsa" in a) == is_lorsa]
+#                 base_name = preferred[0] if preferred else available[0]
+#             formatted_analysis_name = base_name.replace("{}", str(layer))
 
-        # Reuse existing single-feature endpoint logic. Align with frontend usage where
-        # the path 'name' is the formatted analysis name used by GET /dictionaries/{name}/features/{id}.
-        res = get_feature(name=formatted_analysis_name, feature_index=feature_id, feature_analysis_name=None)
-        if isinstance(res, Response) and res.status_code != 200:
-            # Skip but continue
-            continue
+#         # Reuse existing single-feature endpoint logic. Align with frontend usage where
+#         # the path 'name' is the formatted analysis name used by GET /dictionaries/{name}/features/{id}.
+#         res = get_feature(name=formatted_analysis_name, feature_index=feature_id, feature_analysis_name=None)
+#         if isinstance(res, Response) and res.status_code != 200:
+#             # Skip but continue
+#             continue
 
-        payload = res.body if isinstance(res, Response) else res
-        # Write as msgpack for fidelity and also a JSON alongside for convenience
-        base = os.path.join(output_dir, f"layer{layer}__feature{feature_id}__{formatted_analysis_name}.msgpack")
-        with open(base, "wb") as fbin:
-            fbin.write(payload)
-        try:
-            decoded = msgpack.unpackb(payload, raw=False)
-            json_path = base.replace(".msgpack", ".json")
-            # make_serializable handles tensors/np arrays
-            import json as _json
+#         payload = res.body if isinstance(res, Response) else res
+#         # Write as msgpack for fidelity and also a JSON alongside for convenience
+#         base = os.path.join(output_dir, f"layer{layer}__feature{feature_id}__{formatted_analysis_name}.msgpack")
+#         with open(base, "wb") as fbin:
+#             fbin.write(payload)
+#         try:
+#             decoded = msgpack.unpackb(payload, raw=False)
+#             json_path = base.replace(".msgpack", ".json")
+#             # make_serializable handles tensors/np arrays
+#             import json as _json
 
-            with open(json_path, "w") as fj:
-                _json.dump(make_serializable(decoded), fj)
-        except Exception:
-            pass
-        saved += 1
+#             with open(json_path, "w") as fj:
+#                 _json.dump(make_serializable(decoded), fj)
+#         except Exception:
+#             pass
+#         saved += 1
 
-    return {"saved": saved, "output_dir": output_dir}
+#     return {"saved": saved, "output_dir": output_dir}
 
 
 @app.get("/dictionaries/{name}")

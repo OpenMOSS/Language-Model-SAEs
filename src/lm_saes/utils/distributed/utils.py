@@ -61,6 +61,7 @@ def mesh_dim_size(device_mesh: DeviceMesh | None, mesh_dim: str) -> int:
     assert device_mesh.mesh_dim_names is not None, "Device mesh does not have mesh dimension names"
     return device_mesh.get_group(mesh_dim).size() if mesh_dim in device_mesh.mesh_dim_names else 1
 
+
 def mesh_dim_rank(device_mesh: DeviceMesh | None, mesh_dim: str) -> int:
     if device_mesh is None:
         return 0

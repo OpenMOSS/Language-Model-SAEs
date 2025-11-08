@@ -177,7 +177,7 @@ docstring-code-format = false
 docstring-code-line-length = "dynamic"
 
 [tool.pyright]
-ignore = [".venv/", "examples", "TransformerLens", "tests", "exp"]
+ignore = [".venv/", "examples", "TransformerLens", "tests", "exp", "src/lm_saes/circuit"]
 typeCheckingMode = "standard"
 reportRedeclaration = false
 reportPrivateImportUsage = false

@@ -180,9 +180,7 @@ if __name__ == "__main__":
         # Warmup runs (to eliminate startup overhead)
         for _ in range(warmup):
             torch_output = decoder(dense_input)
-            triton_output = decode_with_triton_spmm_kernel(
-                dense_input, decoder.weight, require_precise_feature_acts_grad
-            )
+            triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight)
             assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
             grad_output = torch.randn_like(triton_output)
             triton_output.backward(grad_output)
@@ -210,9 +208,7 @@ if __name__ == "__main__":
 
         start_triton.record()  # type: ignore
         for _ in range(iters):
-            triton_output = decode_with_triton_spmm_kernel(
-                dense_input, decoder.weight, require_precise_feature_acts_grad
-            )
+            triton_output = decode_with_triton_spmm_kernel(dense_input, decoder.weight)
             assert isinstance(triton_output, torch.Tensor), "triton_output is not a torch.Tensor"
             grad_output = torch.randn_like(triton_output)
             triton_output.backward(grad_output)

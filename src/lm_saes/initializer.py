@@ -1,4 +1,4 @@
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, cast
 
 import torch
 from torch import Tensor
@@ -169,7 +169,12 @@ class Initializer:
                 assert isinstance(model.model.blocks[self.cfg.model_layer].attn, Attention | GroupedQueryAttention), (
                     "Attention must be an Attention or GroupedQueryAttention"
                 )
-                sae.init_lorsa_with_mhsa(model.model.blocks[self.cfg.model_layer].attn)
+                sae.init_lorsa_with_mhsa(
+                    cast(
+                        Attention | GroupedQueryAttention,
+                        model.model.blocks[self.cfg.model_layer].attn,
+                    )
+                )
 
             assert activation_stream is not None, "Activation iterator must be provided for initialization search"
             activation_batch = next(iter(activation_stream))  # type: ignore
@@ -187,7 +192,11 @@ class Initializer:
                         "Model layer must be provided for initializing Lorsa decoder weight with active subspace"
                     )
                     sae.init_W_D_with_active_subspace_per_head(
-                        batch, mhsa=model.model.blocks[self.cfg.model_layer].attn
+                        batch,
+                        mhsa=cast(
+                            Attention | GroupedQueryAttention,
+                            model.model.blocks[self.cfg.model_layer].attn,
+                        ),
                     )
                 else:
                     assert self.cfg.d_active_subspace is not None, (

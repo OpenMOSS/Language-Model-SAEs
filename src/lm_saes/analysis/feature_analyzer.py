@@ -3,10 +3,10 @@ from functools import partial
 from typing import Any, Mapping, Optional, cast
 
 import torch
+import torch.distributed.tensor
 from einops import rearrange, repeat
 from torch.distributed.device_mesh import DeviceMesh
-import torch.distributed.tensor
-from torch.distributed.tensor import DTensor, Replicate, Shard
+from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder

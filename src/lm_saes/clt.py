@@ -168,6 +168,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                         Float[torch.Tensor, "batch seq_len n_layer d_sae"],
                     ],
                 ):
+                    assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     return distributed_topk(
                         x,
                         k=self.current_k,
@@ -204,6 +205,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     ],
                 ):
                     x = x * x.gt(0).to(x.dtype)
+                    assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     return distributed_topk(
                         x,
                         k=self.current_k,
@@ -241,8 +243,10 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     ],
                 ):
                     x = x * x.gt(0).to(x.dtype)
+                    x = x.transpose(0, -2)
+                    assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     result = distributed_topk(
-                        x.transpose(0, -2),
+                        x,
                         k=self.current_k * x.size(0),
                         device_mesh=device_mesh,
                         dim=(-2, -1),
@@ -284,6 +288,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                     if x.ndim == 4:
                         original_shape = (x.size(0), x.size(1))
                         x = x.flatten(end_dim=1)
+                    assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     result = distributed_topk(
                         x,
                         k=self.current_k * x.size(0),
@@ -410,6 +415,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             self.b_E.copy_(-hidden_pre.mean(dim=0))
         else:
             _, hidden_pre = self.encode(x, return_hidden_pre=True)
+            assert isinstance(hidden_pre, DTensor), "hidden_pre must be a DTensor when device_mesh is not None"
             b_E_local = -hidden_pre.to_local().mean(dim=0)
             b_E = DTensor.from_local(
                 b_E_local, device_mesh=self.device_mesh, placements=self.dim_maps()["b_E"].placements(self.device_mesh)
@@ -505,15 +511,14 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             hidden_pre = torch.einsum("...ld,lds->...ls", x, self.W_E) + self.b_E
 
         if self.cfg.sparsity_include_decoder_norm:
-            decoder_norms = self.decoder_norm_per_feature()
-            hidden_pre = hidden_pre * decoder_norms
+            hidden_pre = hidden_pre * self.decoder_norm_per_feature()
 
         # Apply activation function (ReLU, TopK, etc.)
         with timer.time("activation_function"):
             feature_acts = self.activation_function(hidden_pre)
 
         if self.cfg.sparsity_include_decoder_norm:
-            feature_acts = feature_acts / decoder_norms
+            feature_acts = feature_acts / self.decoder_norm_per_feature()
 
         if return_hidden_pre:
             return feature_acts, hidden_pre
@@ -600,6 +605,8 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         Returns:
             Reconstructed activations for all layers (..., n_layers, d_model)
         """
+        # TODO: make this cleaner
+
         reconstructed = []
         # For each output layer L
         if (
@@ -611,6 +618,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         elif self.cfg.decode_with_csr:
             if self.current_k / (self.cfg.d_sae * self.cfg.n_layers) < self.cfg.sparsity_threshold_for_csr:
                 decode_single_output_layer = self._decode_single_output_layer_csr
+                assert not isinstance(feature_acts, list), (
+                    "feature_acts must not be a list when decode_with_csr is True"
+                )
                 if isinstance(feature_acts, DTensor):
                     feature_acts = feature_acts.to_local()
                 if feature_acts.layout != torch.sparse_csr:
@@ -624,7 +634,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             decoder_bias = self.get_decoder_bias(layer_to)  # (d_model,)
 
             # we only compute W_D @ feature_acts here, without b_D
-            contribution = decode_single_output_layer(feature_acts, layer_to)
+            contribution = decode_single_output_layer(feature_acts, layer_to)  # type: ignore
 
             # Add bias contribution (single bias vector for this target layer)
             contribution = contribution + decoder_bias
@@ -668,14 +678,12 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         """Decode features for a single output layer using upper triangular pattern."""
         decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
         batch_size = feature_acts[0].size(0)
+
         if self.device_mesh is not None:
+            assert isinstance(decoder_weights, DTensor), (
+                "decoder_weights must be a DTensor when device_mesh is not None"
+            )
             decoder_weights = decoder_weights.to_local()
-        # if isinstance(feature_acts, DTensor):
-        #     feature_acts = feature_acts.to_local()
-        # if feature_acts.layout != torch.sparse_csr:
-        #     feature_acts = [
-        #         fa.to_sparse_csr() for fa in feature_acts.permute(1, 0, 2)
-        #     ]
 
         contribution = torch.zeros(
             batch_size,
@@ -793,7 +801,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     def decoder_norm_per_feature(
         self,
         layer: int | None = None,
-    ) -> Union[Float[torch.Tensor, "n_layers d_sae"], DTensor]:
+    ) -> Float[torch.Tensor, "n_layers d_sae"]:
         """
         Compute the norm of decoder weights for each feature.
         If layer is not None, only compute the norm for the decoder weights from layer to subsequent layers.
