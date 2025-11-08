@@ -323,7 +323,7 @@ class AttributionContext:
         decoder_vecs:
             size ((\sum_{i=0}^{n_layers} \sum_{j=0}^{i} n_active_features_layer_j), d_model)
         """
-        
+
         n_layers, n_pos, _ = activation_matrix.shape
         nnz_layers, nnz_positions, _ = activation_matrix.indices()
 
@@ -630,7 +630,10 @@ def select_encoder_rows_clt(activation_matrix: torch.sparse.Tensor, transcoders:
 
 @torch.no_grad()
 def select_encoder_rows_lorsa(
-    activation_matrix: torch.sparse.Tensor, attention_pattern: torch.Tensor, z_attention_pattern: torch.Tensor, lorsas: LowRankSparseAttention
+    activation_matrix: torch.sparse.Tensor,
+    attention_pattern: torch.Tensor,
+    z_attention_pattern: torch.Tensor,
+    lorsas: LowRankSparseAttention,
 ) -> torch.Tensor:
     """Return encoder rows for **active** features only."""
     print(f"{attention_pattern.shape=} {z_attention_pattern.shape=}")
@@ -639,14 +642,14 @@ def select_encoder_rows_lorsa(
     z_patterns: List[torch.Tensor] = []
     for layer, row in enumerate(activation_matrix):
         qpos, head_idx = row.coalesce().indices()
-        
+
         qk_idx = head_idx // (lorsas[layer].cfg.n_ov_heads // lorsas[layer].cfg.n_qk_heads)
         pattern = attention_pattern[layer, qk_idx, qpos]
         patterns.append(pattern)
-        
+
         z_pattern = z_attention_pattern[layer, head_idx, qpos]
         z_patterns.append(z_pattern)
-        
+
         rows.append(lorsas[layer].W_V[head_idx])
     return torch.cat(rows), torch.cat(patterns), torch.cat(z_patterns)
 
@@ -759,9 +762,15 @@ def _run_attribution(
     logger.info("Phase 0: Precomputing activations and vectors")
     phase_start = time.time()
     input_ids = ensure_tokenized(prompt, model.tokenizer)
-    logits, lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, clt_activation_matrix, error_vecs, token_vecs = (
-        model.setup_attribution(input_ids, sparse=True)
-    )
+    (
+        logits,
+        lorsa_activation_matrix,
+        lorsa_attention_pattern,
+        z_attention_pattern,
+        clt_activation_matrix,
+        error_vecs,
+        token_vecs,
+    ) = model.setup_attribution(input_ids, sparse=True)
     print(f"{lorsa_attention_pattern.shape=} {z_attention_pattern.shape=}")
     if use_lorsa:
         lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas)
@@ -956,7 +965,7 @@ def _run_attribution(
             res = torch.nn.functional.one_hot(clt_feat_pos[idx], num_classes=n_pos)
 
         return res
-    
+
     # def idx_to_activation_values(idx: torch.Tensor) -> torch.Tensor:
     #     is_lorsa = idx < len(lorsa_feat_layer)
     #     if is_lorsa.squeeze().item():
@@ -1036,6 +1045,7 @@ def _run_attribution(
     # Phase 6: attribute attention scores
     # trace attention scores for every visited lorsa feature
     if not skip_qk_tracing:
+
         def idx_to_ov_idx(idx: torch.Tensor) -> torch.Tensor:
             return lorsa_activation_matrix.indices()[2][idx]
 

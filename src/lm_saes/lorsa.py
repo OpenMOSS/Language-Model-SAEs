@@ -455,9 +455,30 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             )
         return z.permute(0, 2, 1, 3).reshape(*v.shape)
 
+    @overload
+    def compute_attn_scores(
+        self, x: Float[torch.Tensor, "batch seq_len d_model"], return_q_k: Literal[False] = False
+    ) -> Float[torch.Tensor, "batch n_qk_heads seq_len seq_len"]: ...
+
+    @overload
+    def compute_attn_scores(
+        self, x: Float[torch.Tensor, "batch seq_len d_model"], return_q_k: Literal[True]
+    ) -> Tuple[
+        Float[torch.Tensor, "batch n_qk_heads seq_len seq_len"],
+        Float[torch.Tensor, "batch seq_len n_qk_heads d_qk_head"],
+        Float[torch.Tensor, "batch seq_len n_qk_heads d_qk_head"],
+    ]: ...
+
     def compute_attn_scores(
         self, x: Float[torch.Tensor, "batch seq_len d_model"], return_q_k: bool = False
-    ) -> Float[torch.Tensor, "batch seq_len n_qk_heads d_qk_head"]:
+    ) -> Union[
+        Float[torch.Tensor, "batch n_qk_heads seq_len seq_len"],
+        Tuple[
+            Float[torch.Tensor, "batch n_qk_heads seq_len seq_len"],
+            Float[torch.Tensor, "batch seq_len n_qk_heads d_qk_head"],
+            Float[torch.Tensor, "batch seq_len n_qk_heads d_qk_head"],
+        ],
+    ]:
         """Compute the attention scores."""
         q, k, v = self._compute_qkv(x)
         q = self.hook_q(q)
@@ -524,6 +545,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         # Compute Q, K, V
         q, k, v = self._compute_qkv(x)
 
+        pattern: Optional[torch.Tensor] = None
+        scores: Optional[torch.Tensor] = None
+
         if not (return_attention_pattern or return_attention_score):
             query = q.permute(0, 2, 1, 3)
             key = k.permute(0, 2, 1, 3)
@@ -556,14 +580,14 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         if self.cfg.sparsity_include_decoder_norm:
             feature_acts = feature_acts / self.decoder_norm()
 
-        return_values = [feature_acts]
+        return_values: list[torch.Tensor] = [feature_acts]
         if return_hidden_pre:
             return_values.append(hidden_pre)
-        if return_attention_pattern:
+        if return_attention_pattern and pattern is not None:
             return_values.append(pattern.permute(1, 0, 2, 3))
-        if return_attention_score:
+        if return_attention_score and scores is not None:
             return_values.append(scores.permute(1, 0, 2, 3))
-        return tuple(return_values) if len(return_values) > 1 else return_values[0]
+        return tuple(return_values) if len(return_values) > 1 else return_values[0]  # type: ignore[return-value]
 
     @override
     def decode(self, feature_acts, **kwargs):
@@ -726,7 +750,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             z = torch.einsum("bhqk,bhk->bhq", pattern, v)
         return z.permute(0, 2, 1)
 
-    def _apply_causal_mask(self, scores):
+    def _apply_causal_mask(
+        self, scores: Float[torch.Tensor, "batch n_qk_heads seq_len seq_len"]
+    ) -> Float[torch.Tensor, "batch n_qk_heads seq_len seq_len"]:
         """Apply causal mask to attention scores."""
         seq_len = scores.size(-2)
         mask = self.mask[None, None, -seq_len:, -seq_len:]  # type: ignore
@@ -927,8 +953,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         return log_info, label
 
     def _configure_gradient_flow(self):
-        def stop_gradient(acts, hook):
-            return acts.detach()
+        def stop_gradient(tensor: torch.Tensor, hook: HookPoint):
+            return tensor.detach()
 
         if self.cfg.use_post_qk_ln:
             self.ln_q.hook_scale.add_hook(stop_gradient, is_permanent=True)
