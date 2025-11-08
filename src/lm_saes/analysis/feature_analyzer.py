@@ -297,10 +297,9 @@ class FeatureAnalyzer:
 
         # Filter out None values and format final per-feature results
         sample_result = {k: v for k, v in sample_result.items() if v is not None}
-        for name in sample_result.keys():
-            subsample = sample_result[name]
-            for k in subsample.keys():
-                subsample[k] = to_local(subsample[k])
+        sample_result = {
+            name: {k: to_local(v) for k, v in subsample.items()} for name, subsample in sample_result.items()
+        }
 
         return self.get_post_analysis_func(sae.cfg.sae_type).process(
             sae=sae,
