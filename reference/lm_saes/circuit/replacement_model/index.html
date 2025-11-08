@@ -1,0 +1,4575 @@
+<!DOCTYPE html><html lang="en" class="no-js"><head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://lm-saes.readthedocs.io/reference/lm_saes/circuit/replacement_model/">
+      
+      
+        <link rel="prev" href="../graph/">
+      
+      
+        <link rel="next" href="../../clt/">
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.22">
+    
+    
+      
+        <title>replacement_model - Language Model SAEs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.84d31ad4.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  <link href="../../../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+            html.glightbox-open { overflow: initial; height: 100%; }
+            .gslide-title { margin-top: 0px; user-select: text; }
+            .gslide-desc { color: #666; user-select: text; }
+            .gslide-image img { background: white; }
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color); }
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color); }
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color); }
+        </style></head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#lm_saes.circuit.replacement_model" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../.." title="Language Model SAEs" class="md-header__button md-logo" aria-label="Language Model SAEs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Language Model SAEs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              replacement_model
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/OpenMOSS/Language-Model-SAEs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../.." title="Language Model SAEs" class="md-nav__button md-logo" aria-label="Language Model SAEs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+
+    </a>
+    Language Model SAEs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/OpenMOSS/Language-Model-SAEs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Key Concepts
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Code Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Code Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    lm_saes
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            lm_saes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../abstract_sae/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    abstract_sae
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_2">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../activation/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    activation
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_2" id="__nav_3_1_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_2">
+            <span class="md-nav__icon md-icon"></span>
+            activation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../activation/factory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    factory
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_2_2">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../activation/processors/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    processors
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_2_2" id="__nav_3_1_2_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_3_1_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            processors
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../activation/processors/activation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    activation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../activation/processors/cached_activation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    cached_activation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../activation/processors/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    core
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../activation/processors/huggingface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    huggingface
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../activation/processors/token/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    token
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../activation/writer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    writer
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../activation_functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    activation_functions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_4">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../analysis/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    analysis
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_4" id="__nav_3_1_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_4">
+            <span class="md-nav__icon md-icon"></span>
+            analysis
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/direct_logit_attributor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    direct_logit_attributor
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/feature_analyzer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    feature_analyzer
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/feature_interpreter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    feature_interpreter
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_4_4">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../analysis/post_analysis/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    post_analysis
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_4_4" id="__nav_3_1_4_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_3_1_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            post_analysis
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/post_analysis/base/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    base
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/post_analysis/clt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    clt
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/post_analysis/crosscoder/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    crosscoder
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/post_analysis/generic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    generic
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/post_analysis/lorsa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    lorsa
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_5">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../backend/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    backend
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_5" id="__nav_3_1_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_5">
+            <span class="md-nav__icon md-icon"></span>
+            backend
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../backend/language_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    language_model
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_6" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    circuit
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_6" id="__nav_3_1_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_1_6">
+            <span class="md-nav__icon md-icon"></span>
+            circuit
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../attribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    attribution
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../autointerp4graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    autointerp4graph
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    graph
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    replacement_model
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    replacement_model
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      replacement_model
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="replacement_model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementAttention" class="md-nav__link">
+    <span class="md-ellipsis">
+      ReplacementAttention
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementMLP" class="md-nav__link">
+    <span class="md-ellipsis">
+      ReplacementMLP
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel" class="md-nav__link">
+    <span class="md-ellipsis">
+      ReplacementModel
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ReplacementModel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.feature_intervention" class="md-nav__link">
+    <span class="md-ellipsis">
+      feature_intervention
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.from_config" class="md-nav__link">
+    <span class="md-ellipsis">
+      from_config
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.from_pretrained" class="md-nav__link">
+    <span class="md-ellipsis">
+      from_pretrained
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.from_pretrained_and_transcoders" class="md-nav__link">
+    <span class="md-ellipsis">
+      from_pretrained_and_transcoders
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.get_activations" class="md-nav__link">
+    <span class="md-ellipsis">
+      get_activations
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.setup_attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      setup_attribution
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.setup_intervention_with_freeze" class="md-nav__link">
+    <span class="md-ellipsis">
+      setup_intervention_with_freeze
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementUnembed" class="md-nav__link">
+    <span class="md-ellipsis">
+      ReplacementUnembed
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../clt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    clt
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    config
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../crosscoder/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    crosscoder
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    database
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../entrypoint/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    entrypoint
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../evaluator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    evaluator
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../initializer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    initializer
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_14">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../kernels/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    kernels
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_14" id="__nav_3_1_14_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_14">
+            <span class="md-nav__icon md-icon"></span>
+            kernels
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../kernels/entrypoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    entrypoints
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../kernels/kernels/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    kernels
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../lorsa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    lorsa
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../molt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    molt
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../optim/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    optim
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../resource_loaders/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    resource_loaders
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_19">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../runners/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    runners
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_19" id="__nav_3_1_19_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_19">
+            <span class="md-nav__icon md-icon"></span>
+            runners
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runners/analyze/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    analyze
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runners/autointerp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    autointerp
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runners/eval/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    eval
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runners/generate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    generate
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runners/topk_to_jumprelu_conversion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    topk_to_jumprelu_conversion
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runners/train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    train
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runners/utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    utils
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sae/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    sae
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../trainer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    trainer
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_22">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../utils/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    utils
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_22" id="__nav_3_1_22_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_22">
+            <span class="md-nav__icon md-icon"></span>
+            utils
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/bytes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    bytes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/discrete/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    discrete
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_22_3">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../utils/distributed/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    distributed
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_22_3" id="__nav_3_1_22_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_3_1_22_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_22_3">
+            <span class="md-nav__icon md-icon"></span>
+            distributed
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/distributed/dimmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    dimmap
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/distributed/ops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    ops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/distributed/utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    utils
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/huggingface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    huggingface
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    logging
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    math
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/misc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    misc
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/tensor_dict/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    tensor_dict
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/timer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    timer
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/topk_to_jumprelu_conversion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    topk_to_jumprelu_conversion
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      replacement_model
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="replacement_model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementAttention" class="md-nav__link">
+    <span class="md-ellipsis">
+      ReplacementAttention
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementMLP" class="md-nav__link">
+    <span class="md-ellipsis">
+      ReplacementMLP
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel" class="md-nav__link">
+    <span class="md-ellipsis">
+      ReplacementModel
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ReplacementModel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.feature_intervention" class="md-nav__link">
+    <span class="md-ellipsis">
+      feature_intervention
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.from_config" class="md-nav__link">
+    <span class="md-ellipsis">
+      from_config
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.from_pretrained" class="md-nav__link">
+    <span class="md-ellipsis">
+      from_pretrained
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.from_pretrained_and_transcoders" class="md-nav__link">
+    <span class="md-ellipsis">
+      from_pretrained_and_transcoders
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.get_activations" class="md-nav__link">
+    <span class="md-ellipsis">
+      get_activations
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.setup_attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      setup_attribution
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementModel.setup_intervention_with_freeze" class="md-nav__link">
+    <span class="md-ellipsis">
+      setup_intervention_with_freeze
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.circuit.replacement_model.ReplacementUnembed" class="md-nav__link">
+    <span class="md-ellipsis">
+      ReplacementUnembed
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+  <h1>replacement_model</h1>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="lm_saes.circuit.replacement_model" class="doc doc-heading">
+            <code>replacement_model</code>
+
+
+</h2>
+
+    <div class="doc doc-contents first">
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.circuit.replacement_model.ReplacementAttention" class="doc doc-heading">
+              <code class="highlight language-python"><span class="n">ReplacementAttention</span><span class="p">(</span><span class="n">old_attn</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">)</span></code>
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="torch.nn.Module">Module</span></code></p>
+
+
+        <p>Wrapper for a TransformerLens Attention layer that adds in extra hooks</p>
+
+
+
+
+
+
+
+
+                  <details class="quote">
+                    <summary>Source code in <code>src/lm_saes/circuit/replacement_model.py</code></summary>
+                    <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">39</span>
+<span class="normal">40</span>
+<span class="normal">41</span>
+<span class="normal">42</span>
+<span class="normal">43</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">old_attn</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">old_attn</span> <span class="o">=</span> <span class="n">old_attn</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">hook_in</span> <span class="o">=</span> <span class="n">HookPoint</span><span class="p">()</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">hook_out</span> <span class="o">=</span> <span class="n">HookPoint</span><span class="p">()</span>
+</code></pre></div></td></tr></tbody></table></div>
+                  </details>
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.circuit.replacement_model.ReplacementMLP" class="doc doc-heading">
+              <code class="highlight language-python"><span class="n">ReplacementMLP</span><span class="p">(</span><span class="n">old_mlp</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">)</span></code>
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="torch.nn.Module">Module</span></code></p>
+
+
+        <p>Wrapper for a TransformerLens MLP layer that adds in extra hooks</p>
+
+
+
+
+
+
+
+
+                  <details class="quote">
+                    <summary>Source code in <code>src/lm_saes/circuit/replacement_model.py</code></summary>
+                    <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">24</span>
+<span class="normal">25</span>
+<span class="normal">26</span>
+<span class="normal">27</span>
+<span class="normal">28</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">old_mlp</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">old_mlp</span> <span class="o">=</span> <span class="n">old_mlp</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">hook_in</span> <span class="o">=</span> <span class="n">HookPoint</span><span class="p">()</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">hook_out</span> <span class="o">=</span> <span class="n">HookPoint</span><span class="p">()</span>
+</code></pre></div></td></tr></tbody></table></div>
+                  </details>
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.circuit.replacement_model.ReplacementModel" class="doc doc-heading">
+            <code>ReplacementModel</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="transformer_lens.HookedTransformer">HookedTransformer</span></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.circuit.replacement_model.ReplacementModel.feature_intervention" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">feature_intervention</span><span class="p">(</span><span class="n">inputs</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">intervention</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Intervention</span><span class="p">],</span> <span class="n">constrained_layers</span><span class="p">:</span> <span class="nb">range</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">apply_activation_function</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">sparse</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span></code>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Given the input, and a dictionary of features to intervene on, performs the
+intervention, and returns the logits and feature activations. If freeze_attention or
+constrained_layers is True, attention patterns will be frozen, along with MLPs and
+LayerNorms. If constrained_layers is set, the effects of intervention will not propagate
+through the constrained layers, and CLTs will write only to those layers. Otherwise, the
+effects of the intervention will propagate through transcoders / LayerNorms</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>input</code>
+            </td>
+            <td>
+                  <code><span title="_type_">_type_</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>the input prompt to intervene on</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>constrained_layers</code>
+            </td>
+            <td>
+                  <code><span title="range">range</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>whether to apply interventions only to a certain
+range. Mostly applicable to CLTs. If the given range includes all model layers,
+we also freeze layernorm denominators, computing direct effects. None means no
+constraints (iterative patching)</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>freeze_attention</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>whether to freeze all attention patterns an layernorms</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>apply_activation_function</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>whether to apply the activation function when
+recording the activations to be returned. This is useful to set to False for
+testing purposes, as attribution predicts the change in pre-activation
+feature values.</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>sparse</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>whether to sparsify the activations in the returned cache. Setting
+this to True will take up less memory, at the expense of slower interventions.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/circuit/replacement_model.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">903</span>
+<span class="normal">904</span>
+<span class="normal">905</span>
+<span class="normal">906</span>
+<span class="normal">907</span>
+<span class="normal">908</span>
+<span class="normal">909</span>
+<span class="normal">910</span>
+<span class="normal">911</span>
+<span class="normal">912</span>
+<span class="normal">913</span>
+<span class="normal">914</span>
+<span class="normal">915</span>
+<span class="normal">916</span>
+<span class="normal">917</span>
+<span class="normal">918</span>
+<span class="normal">919</span>
+<span class="normal">920</span>
+<span class="normal">921</span>
+<span class="normal">922</span>
+<span class="normal">923</span>
+<span class="normal">924</span>
+<span class="normal">925</span>
+<span class="normal">926</span>
+<span class="normal">927</span>
+<span class="normal">928</span>
+<span class="normal">929</span>
+<span class="normal">930</span>
+<span class="normal">931</span>
+<span class="normal">932</span>
+<span class="normal">933</span>
+<span class="normal">934</span>
+<span class="normal">935</span>
+<span class="normal">936</span>
+<span class="normal">937</span>
+<span class="normal">938</span>
+<span class="normal">939</span>
+<span class="normal">940</span>
+<span class="normal">941</span>
+<span class="normal">942</span>
+<span class="normal">943</span>
+<span class="normal">944</span>
+<span class="normal">945</span>
+<span class="normal">946</span>
+<span class="normal">947</span>
+<span class="normal">948</span>
+<span class="normal">949</span>
+<span class="normal">950</span>
+<span class="normal">951</span>
+<span class="normal">952</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">feature_intervention</span><span class="p">(</span>
+    <span class="bp">self</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">intervention</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Intervention</span><span class="p">],</span>
+    <span class="n">constrained_layers</span><span class="p">:</span> <span class="nb">range</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">apply_activation_function</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">sparse</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Given the input, and a dictionary of features to intervene on, performs the</span>
+<span class="sd">    intervention, and returns the logits and feature activations. If freeze_attention or</span>
+<span class="sd">    constrained_layers is True, attention patterns will be frozen, along with MLPs and</span>
+<span class="sd">    LayerNorms. If constrained_layers is set, the effects of intervention will not propagate</span>
+<span class="sd">    through the constrained layers, and CLTs will write only to those layers. Otherwise, the</span>
+<span class="sd">    effects of the intervention will propagate through transcoders / LayerNorms</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        input (_type_): the input prompt to intervene on</span>
+<span class="sd">        interventions (list[tuple[int, Union[int, slice, torch.Tensor]], int,</span>
+<span class="sd">            Union[int, torch.Tensor]]): A list of interventions to perform, formatted as</span>
+<span class="sd">            a list of (layer, position, feature_idx, value)</span>
+<span class="sd">        constrained_layers (range | None): whether to apply interventions only to a certain</span>
+<span class="sd">            range. Mostly applicable to CLTs. If the given range includes all model layers,</span>
+<span class="sd">            we also freeze layernorm denominators, computing direct effects. None means no</span>
+<span class="sd">            constraints (iterative patching)</span>
+<span class="sd">        freeze_attention (bool): whether to freeze all attention patterns an layernorms</span>
+<span class="sd">        apply_activation_function (bool): whether to apply the activation function when</span>
+<span class="sd">            recording the activations to be returned. This is useful to set to False for</span>
+<span class="sd">            testing purposes, as attribution predicts the change in pre-activation</span>
+<span class="sd">            feature values.</span>
+<span class="sd">        sparse (bool): whether to sparsify the activations in the returned cache. Setting</span>
+<span class="sd">            this to True will take up less memory, at the expense of slower interventions.</span>
+<span class="sd">    """</span>
+
+    <span class="n">hooks</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">activation_cache</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_feature_intervention_hooks</span><span class="p">(</span>
+        <span class="n">inputs</span><span class="p">,</span>
+        <span class="n">intervention</span><span class="p">,</span>
+        <span class="n">constrained_layers</span><span class="o">=</span><span class="n">constrained_layers</span><span class="p">,</span>
+        <span class="n">apply_activation_function</span><span class="o">=</span><span class="n">apply_activation_function</span><span class="p">,</span>
+        <span class="n">sparse</span><span class="o">=</span><span class="n">sparse</span><span class="p">,</span>
+        <span class="n">use_lorsa</span><span class="o">=</span><span class="n">use_lorsa</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">hooks</span><span class="p">(</span><span class="n">hooks</span><span class="p">):</span>  <span class="c1"># type: ignore</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="p">(</span><span class="n">inputs</span><span class="p">)</span>
+
+    <span class="n">activation_cache</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">activation_cache</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">logits</span><span class="p">,</span> <span class="n">activation_cache</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.circuit.replacement_model.ReplacementModel.from_config" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">from_config</span><span class="p">(</span><span class="n">config</span><span class="p">:</span> <span class="n">LanguageModelConfig</span><span class="p">,</span> <span class="n">transcoders</span><span class="p">:</span> <span class="n">CrossLayerTranscoder</span><span class="p">,</span> <span class="n">lorsas</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">LowRankSparseAttention</span><span class="p">],</span> <span class="n">mlp_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'mlp.hook_in'</span><span class="p">,</span> <span class="n">mlp_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'mlp.hook_out'</span><span class="p">,</span> <span class="n">attn_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'attn.hook_in'</span><span class="p">,</span> <span class="n">attn_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'attn.hook_out'</span><span class="p">,</span> <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ReplacementModel</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Create a ReplacementModel from a given LanguageModelConfig and dict of transcoders</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>config</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="LanguageModelConfig (lm_saes.config.LanguageModelConfig)" href="../../config/#lm_saes.config.LanguageModelConfig">LanguageModelConfig</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>the config of the HookedTransformer that this
+ReplacmentModel will inherit from</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>transcoders</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="CrossLayerTranscoder(cfg: CLTConfig, device_mesh: Optional[DeviceMesh] = None) (lm_saes.clt.CrossLayerTranscoder)" href="../../clt/#lm_saes.clt.CrossLayerTranscoder">CrossLayerTranscoder</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>CrossLayerTranscoder: A CrossLayerTranscoder</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>lorsas</code>
+            </td>
+            <td>
+                  <code><span title="typing.List">List</span>[<a class="autorefs autorefs-internal" title="LowRankSparseAttention(cfg: LorsaConfig, device_mesh: Optional[DeviceMesh] = None) (lm_saes.lorsa.LowRankSparseAttention)" href="../../lorsa/#lm_saes.lorsa.LowRankSparseAttention">LowRankSparseAttention</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>List[LowRankSparseAttention]: A list of LowRankSparseAttention modules</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>mlp_input_hook</code>
+            </td>
+            <td>
+                  <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The hookpoints of the model that transcoders
+hook into. Defaults to "mlp.hook_in".</p>
+              </div>
+            </td>
+            <td>
+                  <code>'mlp.hook_in'</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>mlp_output_hook</code>
+            </td>
+            <td>
+                  <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The hookpoints of the model that transcoders
+hook out of. Defaults to "mlp.hook_out".</p>
+              </div>
+            </td>
+            <td>
+                  <code>'mlp.hook_out'</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>attn_input_hook</code>
+            </td>
+            <td>
+                  <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The hookpoints of the model that lorsa
+hook into. Defaults to "attn.hook_in".</p>
+              </div>
+            </td>
+            <td>
+                  <code>'attn.hook_in'</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>attn_output_hook</code>
+            </td>
+            <td>
+                  <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The hookpoints of the model that lorsa
+hook out of. Defaults to "attn.hook_out".</p>
+              </div>
+            </td>
+            <td>
+                  <code>'attn.hook_out'</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>**kwargs</code>
+            </td>
+            <td>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Additional keyword arguments to pass to the HookedTransformer constructor.</p>
+              </div>
+            </td>
+            <td>
+                  <code>{}</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+<th>Name</th>          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+<td><code>ReplacementModel</code></td>            <td>
+                  <code><a class="autorefs autorefs-internal" title="ReplacementModel (lm_saes.circuit.replacement_model.ReplacementModel)" href="#lm_saes.circuit.replacement_model.ReplacementModel">ReplacementModel</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The loaded ReplacementModel</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/circuit/replacement_model.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 84</span>
+<span class="normal"> 85</span>
+<span class="normal"> 86</span>
+<span class="normal"> 87</span>
+<span class="normal"> 88</span>
+<span class="normal"> 89</span>
+<span class="normal"> 90</span>
+<span class="normal"> 91</span>
+<span class="normal"> 92</span>
+<span class="normal"> 93</span>
+<span class="normal"> 94</span>
+<span class="normal"> 95</span>
+<span class="normal"> 96</span>
+<span class="normal"> 97</span>
+<span class="normal"> 98</span>
+<span class="normal"> 99</span>
+<span class="normal">100</span>
+<span class="normal">101</span>
+<span class="normal">102</span>
+<span class="normal">103</span>
+<span class="normal">104</span>
+<span class="normal">105</span>
+<span class="normal">106</span>
+<span class="normal">107</span>
+<span class="normal">108</span>
+<span class="normal">109</span>
+<span class="normal">110</span>
+<span class="normal">111</span>
+<span class="normal">112</span>
+<span class="normal">113</span>
+<span class="normal">114</span>
+<span class="normal">115</span>
+<span class="normal">116</span>
+<span class="normal">117</span>
+<span class="normal">118</span>
+<span class="normal">119</span>
+<span class="normal">120</span>
+<span class="normal">121</span>
+<span class="normal">122</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@classmethod</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">from_config</span><span class="p">(</span>
+    <span class="bp">cls</span><span class="p">,</span>
+    <span class="n">config</span><span class="p">:</span> <span class="n">LanguageModelConfig</span><span class="p">,</span>
+    <span class="n">transcoders</span><span class="p">:</span> <span class="n">CrossLayerTranscoder</span><span class="p">,</span>
+    <span class="n">lorsas</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">LowRankSparseAttention</span><span class="p">],</span>
+    <span class="n">mlp_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"mlp.hook_in"</span><span class="p">,</span>
+    <span class="n">mlp_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"mlp.hook_out"</span><span class="p">,</span>
+    <span class="n">attn_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"attn.hook_in"</span><span class="p">,</span>
+    <span class="n">attn_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"attn.hook_out"</span><span class="p">,</span>
+    <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"ReplacementModel"</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Create a ReplacementModel from a given LanguageModelConfig and dict of transcoders</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        config (LanguageModelConfig): the config of the HookedTransformer that this</span>
+<span class="sd">            ReplacmentModel will inherit from</span>
+<span class="sd">        transcoders: CrossLayerTranscoder: A CrossLayerTranscoder</span>
+<span class="sd">        lorsas: List[LowRankSparseAttention]: A list of LowRankSparseAttention modules</span>
+<span class="sd">        mlp_input_hook (List[str], optional): The hookpoints of the model that transcoders</span>
+<span class="sd">            hook into. Defaults to "mlp.hook_in".</span>
+<span class="sd">        mlp_output_hook (List[str], optional): The hookpoints of the model that transcoders</span>
+<span class="sd">            hook out of. Defaults to "mlp.hook_out".</span>
+<span class="sd">        attn_input_hook (List[str], optional): The hookpoints of the model that lorsa</span>
+<span class="sd">            hook into. Defaults to "attn.hook_in".</span>
+<span class="sd">        attn_output_hook (List[str], optional): The hookpoints of the model that lorsa</span>
+<span class="sd">            hook out of. Defaults to "attn.hook_out".</span>
+<span class="sd">        **kwargs: Additional keyword arguments to pass to the HookedTransformer constructor.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        ReplacementModel: The loaded ReplacementModel</span>
+<span class="sd">    """</span>
+
+    <span class="n">model</span> <span class="o">=</span> <span class="n">load_model</span><span class="p">(</span><span class="n">config</span><span class="p">)</span><span class="o">.</span><span class="n">model</span>  <span class="c1"># type: ignore[reportAttributeAccessIssue]</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">_configure_replacement_model</span><span class="p">(</span>
+        <span class="n">transcoders</span><span class="p">,</span> <span class="n">lorsas</span><span class="p">,</span> <span class="n">mlp_input_hook</span><span class="p">,</span> <span class="n">mlp_output_hook</span><span class="p">,</span> <span class="n">attn_input_hook</span><span class="p">,</span> <span class="n">attn_output_hook</span><span class="p">,</span> <span class="n">use_lorsa</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">model</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.circuit.replacement_model.ReplacementModel.from_pretrained" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_cfg</span><span class="p">:</span> <span class="n">LanguageModelConfig</span><span class="p">,</span> <span class="n">transcoders</span><span class="p">:</span> <span class="n">CrossLayerTranscoder</span><span class="p">,</span> <span class="n">lorsas</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">LowRankSparseAttention</span><span class="p">],</span> <span class="n">mlp_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'mlp.hook_in'</span><span class="p">,</span> <span class="n">mlp_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'mlp.hook_out'</span><span class="p">,</span> <span class="n">attn_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'attn.hook_in'</span><span class="p">,</span> <span class="n">attn_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'attn.hook_out'</span><span class="p">,</span> <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ReplacementModel</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Create a ReplacementModel from the name of HookedTransformer and dict of transcoders</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>model_name</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>the name of the pretrained HookedTransformer that this
+ReplacmentModel will inherit from</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>transcoders</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="CrossLayerTranscoder(cfg: CLTConfig, device_mesh: Optional[DeviceMesh] = None) (lm_saes.clt.CrossLayerTranscoder)" href="../../clt/#lm_saes.clt.CrossLayerTranscoder">CrossLayerTranscoder</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>(str): Either a predefined transcoder set name, or a config file
+defining where to load them from</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>device</code>
+            </td>
+            <td>
+                  <code>(<span title="torch.device">device</span>, <span title="Optional">Optional</span>)</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>the device onto which to load the transcoders
+and HookedTransformer.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+<th>Name</th>          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+<td><code>ReplacementModel</code></td>            <td>
+                  <code><a class="autorefs autorefs-internal" title="ReplacementModel (lm_saes.circuit.replacement_model.ReplacementModel)" href="#lm_saes.circuit.replacement_model.ReplacementModel">ReplacementModel</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The loaded ReplacementModel</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/circuit/replacement_model.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">210</span>
+<span class="normal">211</span>
+<span class="normal">212</span>
+<span class="normal">213</span>
+<span class="normal">214</span>
+<span class="normal">215</span>
+<span class="normal">216</span>
+<span class="normal">217</span>
+<span class="normal">218</span>
+<span class="normal">219</span>
+<span class="normal">220</span>
+<span class="normal">221</span>
+<span class="normal">222</span>
+<span class="normal">223</span>
+<span class="normal">224</span>
+<span class="normal">225</span>
+<span class="normal">226</span>
+<span class="normal">227</span>
+<span class="normal">228</span>
+<span class="normal">229</span>
+<span class="normal">230</span>
+<span class="normal">231</span>
+<span class="normal">232</span>
+<span class="normal">233</span>
+<span class="normal">234</span>
+<span class="normal">235</span>
+<span class="normal">236</span>
+<span class="normal">237</span>
+<span class="normal">238</span>
+<span class="normal">239</span>
+<span class="normal">240</span>
+<span class="normal">241</span>
+<span class="normal">242</span>
+<span class="normal">243</span>
+<span class="normal">244</span>
+<span class="normal">245</span>
+<span class="normal">246</span>
+<span class="normal">247</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@classmethod</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">from_pretrained</span><span class="p">(</span>  <span class="c1"># type: ignore[override]</span>
+    <span class="bp">cls</span><span class="p">,</span>
+    <span class="n">model_cfg</span><span class="p">:</span> <span class="n">LanguageModelConfig</span><span class="p">,</span>
+    <span class="n">transcoders</span><span class="p">:</span> <span class="n">CrossLayerTranscoder</span><span class="p">,</span>
+    <span class="n">lorsas</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">LowRankSparseAttention</span><span class="p">],</span>
+    <span class="n">mlp_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"mlp.hook_in"</span><span class="p">,</span>
+    <span class="n">mlp_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"mlp.hook_out"</span><span class="p">,</span>
+    <span class="n">attn_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"attn.hook_in"</span><span class="p">,</span>
+    <span class="n">attn_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"attn.hook_out"</span><span class="p">,</span>
+    <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"ReplacementModel"</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Create a ReplacementModel from the name of HookedTransformer and dict of transcoders</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        model_name (str): the name of the pretrained HookedTransformer that this</span>
+<span class="sd">            ReplacmentModel will inherit from</span>
+<span class="sd">        transcoders: (str): Either a predefined transcoder set name, or a config file</span>
+<span class="sd">            defining where to load them from</span>
+<span class="sd">        device (torch.device, Optional): the device onto which to load the transcoders</span>
+<span class="sd">            and HookedTransformer.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        ReplacementModel: The loaded ReplacementModel</span>
+<span class="sd">    """</span>
+
+    <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">from_pretrained_and_transcoders</span><span class="p">(</span>
+        <span class="n">model_cfg</span><span class="p">,</span>
+        <span class="n">transcoders</span><span class="p">,</span>
+        <span class="n">lorsas</span><span class="p">,</span>
+        <span class="n">mlp_input_hook</span><span class="o">=</span><span class="n">mlp_input_hook</span><span class="p">,</span>
+        <span class="n">mlp_output_hook</span><span class="o">=</span><span class="n">mlp_output_hook</span><span class="p">,</span>
+        <span class="n">attn_input_hook</span><span class="o">=</span><span class="n">attn_input_hook</span><span class="p">,</span>
+        <span class="n">attn_output_hook</span><span class="o">=</span><span class="n">attn_output_hook</span><span class="p">,</span>
+        <span class="n">use_lorsa</span><span class="o">=</span><span class="n">use_lorsa</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+    <span class="p">)</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.circuit.replacement_model.ReplacementModel.from_pretrained_and_transcoders" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">from_pretrained_and_transcoders</span><span class="p">(</span><span class="n">model_cfg</span><span class="p">:</span> <span class="n">LanguageModelConfig</span><span class="p">,</span> <span class="n">transcoders</span><span class="p">:</span> <span class="n">CrossLayerTranscoder</span><span class="p">,</span> <span class="n">lorsas</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">LowRankSparseAttention</span><span class="p">],</span> <span class="n">mlp_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'mlp.hook_in'</span><span class="p">,</span> <span class="n">mlp_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'mlp.hook_out'</span><span class="p">,</span> <span class="n">attn_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'attn.hook_in'</span><span class="p">,</span> <span class="n">attn_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'attn.hook_out'</span><span class="p">,</span> <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ReplacementModel</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Create a ReplacementModel from the name of HookedTransformer and dict of transcoders</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>model_cfg</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="LanguageModelConfig (lm_saes.config.LanguageModelConfig)" href="../../config/#lm_saes.config.LanguageModelConfig">LanguageModelConfig</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>the config of the pretrained HookedTransformer that this
+ReplacmentModel will inherit from</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>transcoders</code>
+            </td>
+            <td>
+                  <code><span title="typing.Union">Union</span>[<span title="Dict">Dict</span>[<span title="int">int</span>, <a class="autorefs autorefs-internal" title="SparseAutoEncoder(cfg: SAEConfig, device_mesh: DeviceMesh | None = None) (lm_saes.sae.SparseAutoEncoder)" href="../../sae/#lm_saes.sae.SparseAutoEncoder">SparseAutoEncoder</a>], <a class="autorefs autorefs-internal" title="CrossLayerTranscoder(cfg: CLTConfig, device_mesh: Optional[DeviceMesh] = None) (lm_saes.clt.CrossLayerTranscoder)" href="../../clt/#lm_saes.clt.CrossLayerTranscoder">CrossLayerTranscoder</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>A dict that maps from layer -&gt; Transcoder or a CrossLayerTranscoder</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>mlp_input_hook</code>
+            </td>
+            <td>
+                  <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The hookpoints of the model that transcoders
+hook into for inputs. Defaults to "mlp.hook_in".</p>
+              </div>
+            </td>
+            <td>
+                  <code>'mlp.hook_in'</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>mlp_output_hook</code>
+            </td>
+            <td>
+                  <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The hookpoints of the model that transcoders
+hook into for outputs. Defaults to "mlp.hook_out".</p>
+              </div>
+            </td>
+            <td>
+                  <code>'mlp.hook_out'</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>attn_input_hook</code>
+            </td>
+            <td>
+                  <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The hookpoints of the model that lorsa
+hook into. Defaults to "attn.hook_in".</p>
+              </div>
+            </td>
+            <td>
+                  <code>'attn.hook_in'</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>attn_output_hook</code>
+            </td>
+            <td>
+                  <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The hookpoints of the model that lorsa
+hook out of. Defaults to "attn.hook_out".</p>
+              </div>
+            </td>
+            <td>
+                  <code>'attn.hook_out'</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+<th>Name</th>          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+<td><code>ReplacementModel</code></td>            <td>
+                  <code><a class="autorefs autorefs-internal" title="ReplacementModel (lm_saes.circuit.replacement_model.ReplacementModel)" href="#lm_saes.circuit.replacement_model.ReplacementModel">ReplacementModel</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The loaded ReplacementModel</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/circuit/replacement_model.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">124</span>
+<span class="normal">125</span>
+<span class="normal">126</span>
+<span class="normal">127</span>
+<span class="normal">128</span>
+<span class="normal">129</span>
+<span class="normal">130</span>
+<span class="normal">131</span>
+<span class="normal">132</span>
+<span class="normal">133</span>
+<span class="normal">134</span>
+<span class="normal">135</span>
+<span class="normal">136</span>
+<span class="normal">137</span>
+<span class="normal">138</span>
+<span class="normal">139</span>
+<span class="normal">140</span>
+<span class="normal">141</span>
+<span class="normal">142</span>
+<span class="normal">143</span>
+<span class="normal">144</span>
+<span class="normal">145</span>
+<span class="normal">146</span>
+<span class="normal">147</span>
+<span class="normal">148</span>
+<span class="normal">149</span>
+<span class="normal">150</span>
+<span class="normal">151</span>
+<span class="normal">152</span>
+<span class="normal">153</span>
+<span class="normal">154</span>
+<span class="normal">155</span>
+<span class="normal">156</span>
+<span class="normal">157</span>
+<span class="normal">158</span>
+<span class="normal">159</span>
+<span class="normal">160</span>
+<span class="normal">161</span>
+<span class="normal">162</span>
+<span class="normal">163</span>
+<span class="normal">164</span>
+<span class="normal">165</span>
+<span class="normal">166</span>
+<span class="normal">167</span>
+<span class="normal">168</span>
+<span class="normal">169</span>
+<span class="normal">170</span>
+<span class="normal">171</span>
+<span class="normal">172</span>
+<span class="normal">173</span>
+<span class="normal">174</span>
+<span class="normal">175</span>
+<span class="normal">176</span>
+<span class="normal">177</span>
+<span class="normal">178</span>
+<span class="normal">179</span>
+<span class="normal">180</span>
+<span class="normal">181</span>
+<span class="normal">182</span>
+<span class="normal">183</span>
+<span class="normal">184</span>
+<span class="normal">185</span>
+<span class="normal">186</span>
+<span class="normal">187</span>
+<span class="normal">188</span>
+<span class="normal">189</span>
+<span class="normal">190</span>
+<span class="normal">191</span>
+<span class="normal">192</span>
+<span class="normal">193</span>
+<span class="normal">194</span>
+<span class="normal">195</span>
+<span class="normal">196</span>
+<span class="normal">197</span>
+<span class="normal">198</span>
+<span class="normal">199</span>
+<span class="normal">200</span>
+<span class="normal">201</span>
+<span class="normal">202</span>
+<span class="normal">203</span>
+<span class="normal">204</span>
+<span class="normal">205</span>
+<span class="normal">206</span>
+<span class="normal">207</span>
+<span class="normal">208</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@classmethod</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">from_pretrained_and_transcoders</span><span class="p">(</span>
+    <span class="bp">cls</span><span class="p">,</span>
+    <span class="n">model_cfg</span><span class="p">:</span> <span class="n">LanguageModelConfig</span><span class="p">,</span>
+    <span class="n">transcoders</span><span class="p">:</span> <span class="n">CrossLayerTranscoder</span><span class="p">,</span>
+    <span class="n">lorsas</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">LowRankSparseAttention</span><span class="p">],</span>
+    <span class="n">mlp_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"mlp.hook_in"</span><span class="p">,</span>
+    <span class="n">mlp_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"mlp.hook_out"</span><span class="p">,</span>
+    <span class="n">attn_input_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"attn.hook_in"</span><span class="p">,</span>
+    <span class="n">attn_output_hook</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"attn.hook_out"</span><span class="p">,</span>
+    <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"ReplacementModel"</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Create a ReplacementModel from the name of HookedTransformer and dict of transcoders</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        model_cfg (LanguageModelConfig): the config of the pretrained HookedTransformer that this</span>
+<span class="sd">            ReplacmentModel will inherit from</span>
+<span class="sd">        transcoders (Union[Dict[int, SparseAutoEncoder], CrossLayerTranscoder]): A dict that maps from layer -&gt; Transcoder or a CrossLayerTranscoder</span>
+<span class="sd">        mlp_input_hook (List[str], optional): The hookpoints of the model that transcoders</span>
+<span class="sd">            hook into for inputs. Defaults to "mlp.hook_in".</span>
+<span class="sd">        mlp_output_hook (List[str], optional): The hookpoints of the model that transcoders</span>
+<span class="sd">            hook into for outputs. Defaults to "mlp.hook_out".</span>
+<span class="sd">        attn_input_hook (List[str], optional): The hookpoints of the model that lorsa</span>
+<span class="sd">            hook into. Defaults to "attn.hook_in".</span>
+<span class="sd">        attn_output_hook (List[str], optional): The hookpoints of the model that lorsa</span>
+<span class="sd">            hook out of. Defaults to "attn.hook_out".</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        ReplacementModel: The loaded ReplacementModel</span>
+<span class="sd">    """</span>
+    <span class="n">hf_model</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+            <span class="p">(</span>
+                <span class="n">model_cfg</span><span class="o">.</span><span class="n">model_name</span>
+                <span class="k">if</span> <span class="n">model_cfg</span><span class="o">.</span><span class="n">model_from_pretrained_path</span> <span class="ow">is</span> <span class="kc">None</span>
+                <span class="k">else</span> <span class="n">model_cfg</span><span class="o">.</span><span class="n">model_from_pretrained_path</span>
+            <span class="p">),</span>
+            <span class="n">cache_dir</span><span class="o">=</span><span class="n">model_cfg</span><span class="o">.</span><span class="n">cache_dir</span><span class="p">,</span>
+            <span class="n">local_files_only</span><span class="o">=</span><span class="n">model_cfg</span><span class="o">.</span><span class="n">local_files_only</span><span class="p">,</span>
+            <span class="n">torch_dtype</span><span class="o">=</span><span class="n">model_cfg</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
+            <span class="n">trust_remote_code</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">model_cfg</span><span class="o">.</span><span class="n">load_ckpt</span>
+        <span class="k">else</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="n">hf_tokenizer</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+            <span class="p">(</span>
+                <span class="n">model_cfg</span><span class="o">.</span><span class="n">model_name</span>
+                <span class="k">if</span> <span class="n">model_cfg</span><span class="o">.</span><span class="n">model_from_pretrained_path</span> <span class="ow">is</span> <span class="kc">None</span>
+                <span class="k">else</span> <span class="n">model_cfg</span><span class="o">.</span><span class="n">model_from_pretrained_path</span>
+            <span class="p">),</span>
+            <span class="n">trust_remote_code</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">use_fast</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">add_bos_token</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">local_files_only</span><span class="o">=</span><span class="n">model_cfg</span><span class="o">.</span><span class="n">local_files_only</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">model_cfg</span><span class="o">.</span><span class="n">load_ckpt</span>
+        <span class="k">else</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+        <span class="n">model_cfg</span><span class="o">.</span><span class="n">model_name</span><span class="p">,</span>
+        <span class="n">use_flash_attn</span><span class="o">=</span><span class="n">model_cfg</span><span class="o">.</span><span class="n">use_flash_attn</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">model_cfg</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">cache_dir</span><span class="o">=</span><span class="n">model_cfg</span><span class="o">.</span><span class="n">cache_dir</span><span class="p">,</span>
+        <span class="n">hf_model</span><span class="o">=</span><span class="n">hf_model</span><span class="p">,</span>
+        <span class="n">hf_config</span><span class="o">=</span><span class="n">hf_model</span><span class="o">.</span><span class="n">config</span> <span class="k">if</span> <span class="n">hf_model</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">tokenizer</span><span class="o">=</span><span class="n">hf_tokenizer</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">model_cfg</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>  <span class="c1"># type: ignore ; issue with transformer_lens</span>
+        <span class="n">fold_ln</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">center_writing_weights</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">center_unembed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">model</span><span class="o">.</span><span class="n">_configure_replacement_model</span><span class="p">(</span>
+        <span class="n">transcoders</span><span class="p">,</span>
+        <span class="n">lorsas</span><span class="p">,</span>
+        <span class="n">mlp_input_hook</span><span class="p">,</span>
+        <span class="n">mlp_output_hook</span><span class="p">,</span>
+        <span class="n">attn_input_hook</span><span class="p">,</span>
+        <span class="n">attn_output_hook</span><span class="p">,</span>
+        <span class="n">use_lorsa</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">model</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.circuit.replacement_model.ReplacementModel.get_activations" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">get_activations</span><span class="p">(</span><span class="n">inputs</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span> <span class="n">sparse</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">zero_bos</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">apply_activation_function</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span></code>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Get the transcoder activations for a given prompt</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>inputs</code>
+            </td>
+            <td>
+                  <code><span title="typing.Union">Union</span>[<span title="str">str</span>, <span title="torch.Tensor">Tensor</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The inputs you want to get activations over</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>sparse</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether to return a sparse tensor of activations.
+Useful if d_transcoder is large. Defaults to False.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>zero_bos</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether to zero out activations / errors at the 0th
+position (<bos>). Defaults to False.</bos></p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="typing.Tuple">Tuple</span>[<span title="torch.Tensor">Tensor</span>, <span title="torch.Tensor">Tensor</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Tuple[torch.Tensor, torch.Tensor]: the model logits on the inputs and the
+associated activation cache</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/circuit/replacement_model.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">528</span>
+<span class="normal">529</span>
+<span class="normal">530</span>
+<span class="normal">531</span>
+<span class="normal">532</span>
+<span class="normal">533</span>
+<span class="normal">534</span>
+<span class="normal">535</span>
+<span class="normal">536</span>
+<span class="normal">537</span>
+<span class="normal">538</span>
+<span class="normal">539</span>
+<span class="normal">540</span>
+<span class="normal">541</span>
+<span class="normal">542</span>
+<span class="normal">543</span>
+<span class="normal">544</span>
+<span class="normal">545</span>
+<span class="normal">546</span>
+<span class="normal">547</span>
+<span class="normal">548</span>
+<span class="normal">549</span>
+<span class="normal">550</span>
+<span class="normal">551</span>
+<span class="normal">552</span>
+<span class="normal">553</span>
+<span class="normal">554</span>
+<span class="normal">555</span>
+<span class="normal">556</span>
+<span class="normal">557</span>
+<span class="normal">558</span>
+<span class="normal">559</span>
+<span class="normal">560</span>
+<span class="normal">561</span>
+<span class="normal">562</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_activations</span><span class="p">(</span>
+    <span class="bp">self</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span>
+    <span class="n">sparse</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">zero_bos</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">apply_activation_function</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Get the transcoder activations for a given prompt</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        inputs (Union[str, torch.Tensor]): The inputs you want to get activations over</span>
+<span class="sd">        sparse (bool, optional): Whether to return a sparse tensor of activations.</span>
+<span class="sd">            Useful if d_transcoder is large. Defaults to False.</span>
+<span class="sd">        zero_bos (bool, optional): Whether to zero out activations / errors at the 0th</span>
+<span class="sd">            position (&lt;BOS&gt;). Defaults to False.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Tuple[torch.Tensor, torch.Tensor]: the model logits on the inputs and the</span>
+<span class="sd">            associated activation cache</span>
+<span class="sd">    """</span>
+
+    <span class="n">activation_cache</span><span class="p">,</span> <span class="n">lorsa_attention_pattern</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">activation_hooks</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_activation_caching_hooks</span><span class="p">(</span>
+        <span class="n">sparse</span><span class="o">=</span><span class="n">sparse</span><span class="p">,</span>
+        <span class="n">zero_bos</span><span class="o">=</span><span class="n">zero_bos</span><span class="p">,</span>
+        <span class="n">apply_activation_function</span><span class="o">=</span><span class="n">apply_activation_function</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">inference_mode</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">hooks</span><span class="p">(</span><span class="n">activation_hooks</span><span class="p">):</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="p">(</span><span class="n">inputs</span><span class="p">)</span>
+    <span class="n">activation_cache</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">activation_cache</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">use_lorsa</span><span class="p">:</span>
+        <span class="n">lorsa_attention_pattern</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">lorsa_attention_pattern</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">sparse</span><span class="p">:</span>
+        <span class="n">activation_cache</span> <span class="o">=</span> <span class="n">activation_cache</span><span class="o">.</span><span class="n">coalesce</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">logits</span><span class="p">,</span> <span class="n">activation_cache</span><span class="p">,</span> <span class="n">lorsa_attention_pattern</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.circuit.replacement_model.ReplacementModel.setup_attribution" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">setup_attribution</span><span class="p">(</span><span class="n">inputs</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span> <span class="n">sparse</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">zero_bos</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span></code>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Precomputes the transcoder / lorsa activations and error vectors, saving them and the
+token embeddings.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>inputs</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>the inputs to attribute - hard coded to be a single string (no
+batching) for now</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>sparse</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>whether to return activations as a sparse tensor or not</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>zero_bos</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>whether to zero out the activations and error vectors at the
+bos position</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/circuit/replacement_model.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">573</span>
+<span class="normal">574</span>
+<span class="normal">575</span>
+<span class="normal">576</span>
+<span class="normal">577</span>
+<span class="normal">578</span>
+<span class="normal">579</span>
+<span class="normal">580</span>
+<span class="normal">581</span>
+<span class="normal">582</span>
+<span class="normal">583</span>
+<span class="normal">584</span>
+<span class="normal">585</span>
+<span class="normal">586</span>
+<span class="normal">587</span>
+<span class="normal">588</span>
+<span class="normal">589</span>
+<span class="normal">590</span>
+<span class="normal">591</span>
+<span class="normal">592</span>
+<span class="normal">593</span>
+<span class="normal">594</span>
+<span class="normal">595</span>
+<span class="normal">596</span>
+<span class="normal">597</span>
+<span class="normal">598</span>
+<span class="normal">599</span>
+<span class="normal">600</span>
+<span class="normal">601</span>
+<span class="normal">602</span>
+<span class="normal">603</span>
+<span class="normal">604</span>
+<span class="normal">605</span>
+<span class="normal">606</span>
+<span class="normal">607</span>
+<span class="normal">608</span>
+<span class="normal">609</span>
+<span class="normal">610</span>
+<span class="normal">611</span>
+<span class="normal">612</span>
+<span class="normal">613</span>
+<span class="normal">614</span>
+<span class="normal">615</span>
+<span class="normal">616</span>
+<span class="normal">617</span>
+<span class="normal">618</span>
+<span class="normal">619</span>
+<span class="normal">620</span>
+<span class="normal">621</span>
+<span class="normal">622</span>
+<span class="normal">623</span>
+<span class="normal">624</span>
+<span class="normal">625</span>
+<span class="normal">626</span>
+<span class="normal">627</span>
+<span class="normal">628</span>
+<span class="normal">629</span>
+<span class="normal">630</span>
+<span class="normal">631</span>
+<span class="normal">632</span>
+<span class="normal">633</span>
+<span class="normal">634</span>
+<span class="normal">635</span>
+<span class="normal">636</span>
+<span class="normal">637</span>
+<span class="normal">638</span>
+<span class="normal">639</span>
+<span class="normal">640</span>
+<span class="normal">641</span>
+<span class="normal">642</span>
+<span class="normal">643</span>
+<span class="normal">644</span>
+<span class="normal">645</span>
+<span class="normal">646</span>
+<span class="normal">647</span>
+<span class="normal">648</span>
+<span class="normal">649</span>
+<span class="normal">650</span>
+<span class="normal">651</span>
+<span class="normal">652</span>
+<span class="normal">653</span>
+<span class="normal">654</span>
+<span class="normal">655</span>
+<span class="normal">656</span>
+<span class="normal">657</span>
+<span class="normal">658</span>
+<span class="normal">659</span>
+<span class="normal">660</span>
+<span class="normal">661</span>
+<span class="normal">662</span>
+<span class="normal">663</span>
+<span class="normal">664</span>
+<span class="normal">665</span>
+<span class="normal">666</span>
+<span class="normal">667</span>
+<span class="normal">668</span>
+<span class="normal">669</span>
+<span class="normal">670</span>
+<span class="normal">671</span>
+<span class="normal">672</span>
+<span class="normal">673</span>
+<span class="normal">674</span>
+<span class="normal">675</span>
+<span class="normal">676</span>
+<span class="normal">677</span>
+<span class="normal">678</span>
+<span class="normal">679</span>
+<span class="normal">680</span>
+<span class="normal">681</span>
+<span class="normal">682</span>
+<span class="normal">683</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">setup_attribution</span><span class="p">(</span>
+    <span class="bp">self</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span>
+    <span class="n">sparse</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">zero_bos</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Precomputes the transcoder / lorsa activations and error vectors, saving them and the</span>
+<span class="sd">    token embeddings.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        inputs (str): the inputs to attribute - hard coded to be a single string (no</span>
+<span class="sd">            batching) for now</span>
+<span class="sd">        sparse (bool): whether to return activations as a sparse tensor or not</span>
+<span class="sd">        zero_bos (bool): whether to zero out the activations and error vectors at the</span>
+<span class="sd">            bos position</span>
+<span class="sd">    """</span>
+
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+        <span class="n">tokens</span> <span class="o">=</span> <span class="n">inputs</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">tokens</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">"Tokens must be a 1D tensor"</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="nb">str</span><span class="p">),</span> <span class="s2">"Inputs must be a string"</span>
+        <span class="n">tokenized</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">"pt"</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">tokens</span> <span class="o">=</span> <span class="n">tokenized</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="n">special_tokens</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">special_token</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">special_tokens_map</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">special_token</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+            <span class="n">special_tokens</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">special_token</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">special_tokens</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">special_token</span><span class="p">)</span>
+
+    <span class="n">special_token_ids</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">convert_tokens_to_ids</span><span class="p">(</span><span class="n">special_tokens</span><span class="p">)</span>
+    <span class="n">zero_bos</span> <span class="o">=</span> <span class="n">zero_bos</span> <span class="ow">and</span> <span class="n">tokens</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="ow">in</span> <span class="n">special_token_ids</span>  <span class="c1"># == self.tokenizer.bos_token_id</span>
+
+    <span class="c1"># cache activations and MLP in</span>
+    <span class="n">activation_matrix</span><span class="p">,</span> <span class="n">lorsa_attention_pattern</span><span class="p">,</span> <span class="n">z_attention_pattern</span><span class="p">,</span> <span class="n">activation_hooks</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_get_activation_caching_hooks</span><span class="p">(</span><span class="n">sparse</span><span class="o">=</span><span class="n">sparse</span><span class="p">,</span> <span class="n">zero_bos</span><span class="o">=</span><span class="n">zero_bos</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_lorsa</span><span class="p">:</span>
+        <span class="n">attn_out_cache</span><span class="p">,</span> <span class="n">attn_out_caching_hooks</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_caching_hooks</span><span class="p">(</span>
+            <span class="k">lambda</span> <span class="n">name</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn_output_hook</span> <span class="ow">in</span> <span class="n">name</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">attn_out_cache</span><span class="p">,</span> <span class="n">attn_out_caching_hooks</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
+
+    <span class="n">mlp_out_cache</span><span class="p">,</span> <span class="n">mlp_out_caching_hooks</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_caching_hooks</span><span class="p">(</span><span class="k">lambda</span> <span class="n">name</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp_output_hook</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_lorsa</span><span class="p">:</span>
+        <span class="n">error_vectors</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+            <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_layers</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">d_model</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">error_vectors</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+            <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_layers</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">d_model</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="c1"># note: activation_hooks must come before error_hooks</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_lorsa</span><span class="p">:</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_with_hooks</span><span class="p">(</span>
+            <span class="n">tokens</span><span class="p">,</span> <span class="n">fwd_hooks</span><span class="o">=</span><span class="p">(</span><span class="n">activation_hooks</span> <span class="o">+</span> <span class="n">attn_out_caching_hooks</span> <span class="o">+</span> <span class="n">mlp_out_caching_hooks</span><span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_with_hooks</span><span class="p">(</span><span class="n">tokens</span><span class="p">,</span> <span class="n">fwd_hooks</span><span class="o">=</span><span class="p">(</span><span class="n">activation_hooks</span> <span class="o">+</span> <span class="n">mlp_out_caching_hooks</span><span class="p">))</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_lorsa</span><span class="p">:</span>
+        <span class="n">lorsa_activation_matrix</span> <span class="o">=</span> <span class="n">activation_matrix</span><span class="p">[:</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_layers</span><span class="p">]</span>
+        <span class="n">clt_activation_matrix</span> <span class="o">=</span> <span class="n">activation_matrix</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_layers</span> <span class="p">:]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">lorsa_activation_matrix</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">clt_activation_matrix</span> <span class="o">=</span> <span class="n">activation_matrix</span>
+
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_lorsa</span><span class="p">:</span>
+        <span class="n">lorsa_reconstruction</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+            <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">lorsas</span><span class="p">[</span><span class="n">layer</span><span class="p">]</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">lorsa_activation_matrix</span><span class="p">[</span><span class="n">layer</span><span class="p">])</span> <span class="k">for</span> <span class="n">layer</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_layers</span><span class="p">)]</span>
+        <span class="p">)</span>
+    <span class="n">clt_reconstruction</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transcoders</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">clt_activation_matrix</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_lorsa</span><span class="p">:</span>
+        <span class="n">error_vectors</span><span class="p">[:</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_layers</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">attn_out_cache</span><span class="o">.</span><span class="n">values</span><span class="p">()),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span> <span class="o">-</span> <span class="n">lorsa_reconstruction</span>
+        <span class="n">error_vectors</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_layers</span> <span class="p">:]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">mlp_out_cache</span><span class="o">.</span><span class="n">values</span><span class="p">()),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span> <span class="o">-</span> <span class="n">clt_reconstruction</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">error_vectors</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">mlp_out_cache</span><span class="o">.</span><span class="n">values</span><span class="p">()),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span> <span class="o">-</span> <span class="n">clt_reconstruction</span>
+
+    <span class="k">if</span> <span class="n">zero_bos</span><span class="p">:</span>
+        <span class="n">error_vectors</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_lorsa</span><span class="p">:</span>
+        <span class="n">lorsa_activation_matrix</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">lorsa_activation_matrix</span><span class="p">)</span>
+        <span class="n">lorsa_attention_pattern</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">lorsa_attention_pattern</span><span class="p">)</span>
+        <span class="n">z_attention_pattern</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">z_attention_pattern</span><span class="p">)</span>
+    <span class="n">clt_activation_matrix</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">clt_activation_matrix</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">sparse</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_lorsa</span><span class="p">:</span>
+            <span class="n">lorsa_activation_matrix</span> <span class="o">=</span> <span class="n">lorsa_activation_matrix</span><span class="o">.</span><span class="n">coalesce</span><span class="p">()</span>
+        <span class="n">clt_activation_matrix</span> <span class="o">=</span> <span class="n">clt_activation_matrix</span><span class="o">.</span><span class="n">coalesce</span><span class="p">()</span>
+
+    <span class="n">token_vectors</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">W_E</span><span class="p">[</span><span class="n">tokens</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>  <span class="c1"># (n_pos, d_model)</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">logits</span><span class="p">,</span>
+        <span class="n">lorsa_activation_matrix</span><span class="p">,</span>
+        <span class="n">lorsa_attention_pattern</span><span class="p">,</span>
+        <span class="n">z_attention_pattern</span><span class="p">,</span>
+        <span class="n">clt_activation_matrix</span><span class="p">,</span>
+        <span class="n">error_vectors</span><span class="p">,</span>
+        <span class="n">token_vectors</span><span class="p">,</span>
+    <span class="p">)</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.circuit.replacement_model.ReplacementModel.setup_intervention_with_freeze" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">setup_intervention_with_freeze</span><span class="p">(</span><span class="n">inputs</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">constrained_layers</span><span class="p">:</span> <span class="nb">range</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Callable</span><span class="p">]]]</span></code>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Sets up an intervention with either frozen attention + LayerNorm(default) or frozen
+attention, LayerNorm, and MLPs, for constrained layers</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>inputs</code>
+            </td>
+            <td>
+                  <code><span title="typing.Union">Union</span>[<span title="str">str</span>, <span title="torch.Tensor">Tensor</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The inputs to intervene on</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>constrained_layers</code>
+            </td>
+            <td>
+                  <code><span title="range">range</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>whether to apply interventions only to a certain
+range. Mostly applicable to CLTs. If the given range includes all model layers,
+we also freeze layernorm denominators, computing direct effects. None means no
+constraints (iterative patching)</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="tuple">tuple</span>[<span title="torch.Tensor">Tensor</span>, <span title="list">list</span>[<span title="tuple">tuple</span>[<span title="str">str</span>, <span title="typing.Callable">Callable</span>]]]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>list[tuple[str, Callable]]: The freeze hooks needed to run the desired intervention.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/circuit/replacement_model.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">685</span>
+<span class="normal">686</span>
+<span class="normal">687</span>
+<span class="normal">688</span>
+<span class="normal">689</span>
+<span class="normal">690</span>
+<span class="normal">691</span>
+<span class="normal">692</span>
+<span class="normal">693</span>
+<span class="normal">694</span>
+<span class="normal">695</span>
+<span class="normal">696</span>
+<span class="normal">697</span>
+<span class="normal">698</span>
+<span class="normal">699</span>
+<span class="normal">700</span>
+<span class="normal">701</span>
+<span class="normal">702</span>
+<span class="normal">703</span>
+<span class="normal">704</span>
+<span class="normal">705</span>
+<span class="normal">706</span>
+<span class="normal">707</span>
+<span class="normal">708</span>
+<span class="normal">709</span>
+<span class="normal">710</span>
+<span class="normal">711</span>
+<span class="normal">712</span>
+<span class="normal">713</span>
+<span class="normal">714</span>
+<span class="normal">715</span>
+<span class="normal">716</span>
+<span class="normal">717</span>
+<span class="normal">718</span>
+<span class="normal">719</span>
+<span class="normal">720</span>
+<span class="normal">721</span>
+<span class="normal">722</span>
+<span class="normal">723</span>
+<span class="normal">724</span>
+<span class="normal">725</span>
+<span class="normal">726</span>
+<span class="normal">727</span>
+<span class="normal">728</span>
+<span class="normal">729</span>
+<span class="normal">730</span>
+<span class="normal">731</span>
+<span class="normal">732</span>
+<span class="normal">733</span>
+<span class="normal">734</span>
+<span class="normal">735</span>
+<span class="normal">736</span>
+<span class="normal">737</span>
+<span class="normal">738</span>
+<span class="normal">739</span>
+<span class="normal">740</span>
+<span class="normal">741</span>
+<span class="normal">742</span>
+<span class="normal">743</span>
+<span class="normal">744</span>
+<span class="normal">745</span>
+<span class="normal">746</span>
+<span class="normal">747</span>
+<span class="normal">748</span>
+<span class="normal">749</span>
+<span class="normal">750</span>
+<span class="normal">751</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">setup_intervention_with_freeze</span><span class="p">(</span>
+    <span class="bp">self</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">constrained_layers</span><span class="p">:</span> <span class="nb">range</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">use_lorsa</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Callable</span><span class="p">]]]:</span>
+<span class="w">    </span><span class="sd">"""Sets up an intervention with either frozen attention + LayerNorm(default) or frozen</span>
+<span class="sd">    attention, LayerNorm, and MLPs, for constrained layers</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        inputs (Union[str, torch.Tensor]): The inputs to intervene on</span>
+<span class="sd">        constrained_layers (range | None): whether to apply interventions only to a certain</span>
+<span class="sd">            range. Mostly applicable to CLTs. If the given range includes all model layers,</span>
+<span class="sd">            we also freeze layernorm denominators, computing direct effects. None means no</span>
+<span class="sd">            constraints (iterative patching)</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        list[tuple[str, Callable]]: The freeze hooks needed to run the desired intervention.</span>
+<span class="sd">    """</span>
+
+    <span class="n">hookpoints_to_freeze</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"hook_pattern"</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">constrained_layers</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">set</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_layers</span><span class="p">))</span><span class="o">.</span><span class="n">issubset</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">constrained_layers</span><span class="p">)):</span>
+            <span class="n">hookpoints_to_freeze</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"hook_scale"</span><span class="p">)</span>
+        <span class="n">hookpoints_to_freeze</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mlp_input_hook</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">use_lorsa</span><span class="p">:</span>
+            <span class="n">hookpoints_to_freeze</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">attn_input_hook</span><span class="p">)</span>
+
+    <span class="c1"># only freeze outputs in constrained range</span>
+    <span class="n">selected_hook_points</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">hook_point</span><span class="p">,</span> <span class="n">hook_obj</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">hook_dict</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">hookpoint_to_freeze</span> <span class="ow">in</span> <span class="n">hook_point</span> <span class="k">for</span> <span class="n">hookpoint_to_freeze</span> <span class="ow">in</span> <span class="n">hookpoints_to_freeze</span><span class="p">):</span>
+            <span class="c1"># don't freeze feature outputs if the layer is not in the constrained range</span>
+            <span class="k">if</span> <span class="p">(</span>
+                <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mlp_input_hook</span> <span class="ow">in</span> <span class="n">hook_point</span> <span class="ow">or</span> <span class="p">(</span><span class="n">use_lorsa</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn_input_hook</span> <span class="ow">in</span> <span class="n">hook_point</span><span class="p">))</span>
+                <span class="ow">and</span> <span class="n">constrained_layers</span>
+                <span class="ow">and</span> <span class="n">hook_obj</span><span class="o">.</span><span class="n">layer</span><span class="p">()</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">constrained_layers</span>
+            <span class="p">):</span>
+                <span class="k">continue</span>
+            <span class="n">selected_hook_points</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">hook_point</span><span class="p">)</span>
+
+    <span class="n">freeze_cache</span><span class="p">,</span> <span class="n">cache_hooks</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_caching_hooks</span><span class="p">(</span><span class="n">names_filter</span><span class="o">=</span><span class="n">selected_hook_points</span><span class="p">)</span>
+
+    <span class="n">original_activations</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">activation_caching_hooks</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_activation_caching_hooks</span><span class="p">()</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">run_with_hooks</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">fwd_hooks</span><span class="o">=</span><span class="n">cache_hooks</span> <span class="o">+</span> <span class="n">activation_caching_hooks</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">freeze_hook</span><span class="p">(</span><span class="n">activations</span><span class="p">,</span> <span class="n">hook</span><span class="p">):</span>
+        <span class="n">cached_values</span> <span class="o">=</span> <span class="n">freeze_cache</span><span class="p">[</span><span class="n">hook</span><span class="o">.</span><span class="n">name</span><span class="p">]</span>
+
+        <span class="k">assert</span> <span class="n">activations</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="n">cached_values</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"Activations shape </span><span class="si">{</span><span class="n">activations</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2"> does not match cached values"</span>
+            <span class="sa">f</span><span class="s2">" shape </span><span class="si">{</span><span class="n">cached_values</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2"> at hook </span><span class="si">{</span><span class="n">hook</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">cached_values</span>
+
+    <span class="k">if</span> <span class="n">use_lorsa</span><span class="p">:</span>
+        <span class="n">fwd_hooks</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="p">(</span><span class="n">hookpoint</span><span class="p">,</span> <span class="n">freeze_hook</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">hookpoint</span> <span class="ow">in</span> <span class="n">freeze_cache</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp_input_hook</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">hookpoint</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">attn_input_hook</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">hookpoint</span>
+        <span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">fwd_hooks</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="p">(</span><span class="n">hookpoint</span><span class="p">,</span> <span class="n">freeze_hook</span><span class="p">)</span> <span class="k">for</span> <span class="n">hookpoint</span> <span class="ow">in</span> <span class="n">freeze_cache</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp_input_hook</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">hookpoint</span>
+        <span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">original_activations</span><span class="p">),</span> <span class="n">fwd_hooks</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.circuit.replacement_model.ReplacementUnembed" class="doc doc-heading">
+              <code class="highlight language-python"><span class="n">ReplacementUnembed</span><span class="p">(</span><span class="n">old_unembed</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">)</span></code>
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="torch.nn.Module">Module</span></code></p>
+
+
+        <p>Wrapper for a TransformerLens Unembed layer that adds in extra hooks</p>
+
+
+
+
+
+
+
+
+                  <details class="quote">
+                    <summary>Source code in <code>src/lm_saes/circuit/replacement_model.py</code></summary>
+                    <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">55</span>
+<span class="normal">56</span>
+<span class="normal">57</span>
+<span class="normal">58</span>
+<span class="normal">59</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">old_unembed</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">old_unembed</span> <span class="o">=</span> <span class="n">old_unembed</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">hook_pre</span> <span class="o">=</span> <span class="n">HookPoint</span><span class="p">()</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">hook_post</span> <span class="o">=</span> <span class="n">HookPoint</span><span class="p">()</span>
+</code></pre></div></td></tr></tbody></table></div>
+                  </details>
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../../../..", "features": [], "search": "../../../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+    
+  
+<script id="init-glightbox">const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});
+document$.subscribe(()=>{ lightbox.reload(); });
+</script></body></html>

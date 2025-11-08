@@ -1,0 +1,6699 @@
+<!DOCTYPE html><html lang="en" class="no-js"><head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://lm-saes.readthedocs.io/reference/lm_saes/config/">
+      
+      
+        <link rel="prev" href="../clt/">
+      
+      
+        <link rel="next" href="../crosscoder/">
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.22">
+    
+    
+      
+        <title>config - Language Model SAEs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.84d31ad4.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  <link href="../../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+            html.glightbox-open { overflow: initial; height: 100%; }
+            .gslide-title { margin-top: 0px; user-select: text; }
+            .gslide-desc { color: #666; user-select: text; }
+            .gslide-image img { background: white; }
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color); }
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color); }
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color); }
+        </style></head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#lm_saes.config" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Language Model SAEs" class="md-header__button md-logo" aria-label="Language Model SAEs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Language Model SAEs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              config
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/OpenMOSS/Language-Model-SAEs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Language Model SAEs" class="md-nav__button md-logo" aria-label="Language Model SAEs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+
+    </a>
+    Language Model SAEs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/OpenMOSS/Language-Model-SAEs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Key Concepts
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Code Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Code Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    lm_saes
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            lm_saes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../abstract_sae/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    abstract_sae
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_2">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../activation/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    activation
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_2" id="__nav_3_1_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_2">
+            <span class="md-nav__icon md-icon"></span>
+            activation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../activation/factory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    factory
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_2_2">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../activation/processors/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    processors
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_2_2" id="__nav_3_1_2_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_3_1_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            processors
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../activation/processors/activation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    activation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../activation/processors/cached_activation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    cached_activation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../activation/processors/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    core
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../activation/processors/huggingface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    huggingface
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../activation/processors/token/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    token
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../activation/writer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    writer
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../activation_functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    activation_functions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_4">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../analysis/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    analysis
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_4" id="__nav_3_1_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_4">
+            <span class="md-nav__icon md-icon"></span>
+            analysis
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/direct_logit_attributor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    direct_logit_attributor
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/feature_analyzer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    feature_analyzer
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/feature_interpreter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    feature_interpreter
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_4_4">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../analysis/post_analysis/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    post_analysis
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_4_4" id="__nav_3_1_4_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_3_1_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            post_analysis
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/post_analysis/base/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    base
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/post_analysis/clt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    clt
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/post_analysis/crosscoder/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    crosscoder
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/post_analysis/generic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    generic
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/post_analysis/lorsa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    lorsa
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_5">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../backend/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    backend
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_5" id="__nav_3_1_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_5">
+            <span class="md-nav__icon md-icon"></span>
+            backend
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../backend/language_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    language_model
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_6">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../circuit/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    circuit
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_6" id="__nav_3_1_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_6">
+            <span class="md-nav__icon md-icon"></span>
+            circuit
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../circuit/attribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    attribution
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../circuit/autointerp4graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    autointerp4graph
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../circuit/graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    graph
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../circuit/replacement_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    replacement_model
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../clt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    clt
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    config
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    config
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#lm_saes.config" class="md-nav__link">
+    <span class="md-ellipsis">
+      config
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="config">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationFactoryActivationsSource
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationFactoryActivationsSource">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource.device" class="md-nav__link">
+    <span class="md-ellipsis">
+      device
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource.dtype" class="md-nav__link">
+    <span class="md-ellipsis">
+      dtype
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource.num_workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      num_workers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource.path" class="md-nav__link">
+    <span class="md-ellipsis">
+      path
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource.prefetch" class="md-nav__link">
+    <span class="md-ellipsis">
+      prefetch
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationFactoryConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationFactoryConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.batch_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      batch_size
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.buffer_shuffle" class="md-nav__link">
+    <span class="md-ellipsis">
+      buffer_shuffle
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.buffer_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      buffer_size
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.context_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      context_size
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.hook_points" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_points
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.ignore_token_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      ignore_token_ids
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.model_batch_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      model_batch_size
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.num_workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      num_workers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.override_dtype" class="md-nav__link">
+    <span class="md-ellipsis">
+      override_dtype
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      sources
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.target" class="md-nav__link">
+    <span class="md-ellipsis">
+      target
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryDatasetSource" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationFactoryDatasetSource
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationFactoryDatasetSource">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryDatasetSource.is_dataset_tokenized" class="md-nav__link">
+    <span class="md-ellipsis">
+      is_dataset_tokenized
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryDatasetSource.prepend_bos" class="md-nav__link">
+    <span class="md-ellipsis">
+      prepend_bos
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactorySource" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationFactorySource
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationFactorySource">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactorySource.sample_weights" class="md-nav__link">
+    <span class="md-ellipsis">
+      sample_weights
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactorySource.type" class="md-nav__link">
+    <span class="md-ellipsis">
+      type
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryTarget" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationFactoryTarget
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationFactoryTarget">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryTarget.ACTIVATIONS_1D" class="md-nav__link">
+    <span class="md-ellipsis">
+      ACTIVATIONS_1D
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryTarget.ACTIVATIONS_2D" class="md-nav__link">
+    <span class="md-ellipsis">
+      ACTIVATIONS_2D
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryTarget.TOKENS" class="md-nav__link">
+    <span class="md-ellipsis">
+      TOKENS
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationWriterConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationWriterConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig.cache_dir" class="md-nav__link">
+    <span class="md-ellipsis">
+      cache_dir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig.hook_points" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_points
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig.n_samples_per_chunk" class="md-nav__link">
+    <span class="md-ellipsis">
+      n_samples_per_chunk
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig.num_workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      num_workers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig.total_generating_tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      total_generating_tokens
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.BaseSAEConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      BaseSAEConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BaseSAEConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.BaseSAEConfig.from_pretrained" class="md-nav__link">
+    <span class="md-ellipsis">
+      from_pretrained
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.BufferShuffleConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      BufferShuffleConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BufferShuffleConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.BufferShuffleConfig.generator_device" class="md-nav__link">
+    <span class="md-ellipsis">
+      generator_device
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.BufferShuffleConfig.perm_seed" class="md-nav__link">
+    <span class="md-ellipsis">
+      perm_seed
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      CLTConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CLTConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.associated_hook_points" class="md-nav__link">
+    <span class="md-ellipsis">
+      associated_hook_points
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.decode_with_csr" class="md-nav__link">
+    <span class="md-ellipsis">
+      decode_with_csr
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.hook_points_in" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_points_in
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.hook_points_out" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_points_out
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.n_decoders" class="md-nav__link">
+    <span class="md-ellipsis">
+      n_decoders
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.n_layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      n_layers
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.DirectLogitAttributorConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      DirectLogitAttributorConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="DirectLogitAttributorConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.DirectLogitAttributorConfig.clt_layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      clt_layer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.DirectLogitAttributorConfig.top_k" class="md-nav__link">
+    <span class="md-ellipsis">
+      top_k
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.EvalConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      EvalConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="EvalConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.EvalConfig.fold_activation_scale" class="md-nav__link">
+    <span class="md-ellipsis">
+      fold_activation_scale
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.FeatureAnalyzerConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      FeatureAnalyzerConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FeatureAnalyzerConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.FeatureAnalyzerConfig.clt_layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      clt_layer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.FeatureAnalyzerConfig.ignore_token_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      ignore_token_ids
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.FeatureAnalyzerConfig.subsamples" class="md-nav__link">
+    <span class="md-ellipsis">
+      subsamples
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.FeatureAnalyzerConfig.total_analyzing_tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      total_analyzing_tokens
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      LanguageModelConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LanguageModelConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      backend
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.bos_token_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      bos_token_id
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.cache_dir" class="md-nav__link">
+    <span class="md-ellipsis">
+      cache_dir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.d_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      d_model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.eos_token_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      eos_token_id
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.local_files_only" class="md-nav__link">
+    <span class="md-ellipsis">
+      local_files_only
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.max_length" class="md-nav__link">
+    <span class="md-ellipsis">
+      max_length
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.model_from_pretrained_path" class="md-nav__link">
+    <span class="md-ellipsis">
+      model_from_pretrained_path
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.model_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      model_name
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.pad_token_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      pad_token_id
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.prepend_bos" class="md-nav__link">
+    <span class="md-ellipsis">
+      prepend_bos
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.tokenizer_only" class="md-nav__link">
+    <span class="md-ellipsis">
+      tokenizer_only
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.use_flash_attn" class="md-nav__link">
+    <span class="md-ellipsis">
+      use_flash_attn
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.from_pretrained_sae" class="md-nav__link">
+    <span class="md-ellipsis">
+      from_pretrained_sae
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LorsaConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      LorsaConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LorsaConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LorsaConfig.associated_hook_points" class="md-nav__link">
+    <span class="md-ellipsis">
+      associated_hook_points
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      MOLTConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MOLTConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.available_ranks" class="md-nav__link">
+    <span class="md-ellipsis">
+      available_ranks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.d_sae" class="md-nav__link">
+    <span class="md-ellipsis">
+      d_sae
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.hook_point_in" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_point_in
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.hook_point_out" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_point_out
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.model_parallel_size_training" class="md-nav__link">
+    <span class="md-ellipsis">
+      model_parallel_size_training
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.num_rank_types" class="md-nav__link">
+    <span class="md-ellipsis">
+      num_rank_types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.rank_distribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      rank_distribution
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.generate_rank_assignments" class="md-nav__link">
+    <span class="md-ellipsis">
+      generate_rank_assignments
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.get_local_rank_assignments" class="md-nav__link">
+    <span class="md-ellipsis">
+      get_local_rank_assignments
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crosscoder/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    crosscoder
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    database
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entrypoint/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    entrypoint
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evaluator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    evaluator
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../initializer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    initializer
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_14">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../kernels/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    kernels
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_14" id="__nav_3_1_14_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_14">
+            <span class="md-nav__icon md-icon"></span>
+            kernels
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kernels/entrypoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    entrypoints
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kernels/kernels/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    kernels
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lorsa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    lorsa
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../molt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    molt
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../optim/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    optim
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../resource_loaders/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    resource_loaders
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_19">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../runners/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    runners
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_19" id="__nav_3_1_19_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_19">
+            <span class="md-nav__icon md-icon"></span>
+            runners
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runners/analyze/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    analyze
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runners/autointerp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    autointerp
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runners/eval/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    eval
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runners/generate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    generate
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runners/topk_to_jumprelu_conversion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    topk_to_jumprelu_conversion
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runners/train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    train
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runners/utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    utils
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sae/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    sae
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trainer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    trainer
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_22">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../utils/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    utils
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_22" id="__nav_3_1_22_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_1_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_22">
+            <span class="md-nav__icon md-icon"></span>
+            utils
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/bytes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    bytes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/discrete/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    discrete
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1_22_3">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../utils/distributed/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    distributed
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_1_22_3" id="__nav_3_1_22_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_3_1_22_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1_22_3">
+            <span class="md-nav__icon md-icon"></span>
+            distributed
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/distributed/dimmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    dimmap
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/distributed/ops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    ops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/distributed/utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    utils
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/huggingface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    huggingface
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    logging
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    math
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/misc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    misc
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/tensor_dict/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    tensor_dict
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/timer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    timer
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/topk_to_jumprelu_conversion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    topk_to_jumprelu_conversion
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#lm_saes.config" class="md-nav__link">
+    <span class="md-ellipsis">
+      config
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="config">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationFactoryActivationsSource
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationFactoryActivationsSource">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource.device" class="md-nav__link">
+    <span class="md-ellipsis">
+      device
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource.dtype" class="md-nav__link">
+    <span class="md-ellipsis">
+      dtype
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource.num_workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      num_workers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource.path" class="md-nav__link">
+    <span class="md-ellipsis">
+      path
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryActivationsSource.prefetch" class="md-nav__link">
+    <span class="md-ellipsis">
+      prefetch
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationFactoryConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationFactoryConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.batch_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      batch_size
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.buffer_shuffle" class="md-nav__link">
+    <span class="md-ellipsis">
+      buffer_shuffle
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.buffer_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      buffer_size
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.context_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      context_size
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.hook_points" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_points
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.ignore_token_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      ignore_token_ids
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.model_batch_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      model_batch_size
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.num_workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      num_workers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.override_dtype" class="md-nav__link">
+    <span class="md-ellipsis">
+      override_dtype
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      sources
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryConfig.target" class="md-nav__link">
+    <span class="md-ellipsis">
+      target
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryDatasetSource" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationFactoryDatasetSource
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationFactoryDatasetSource">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryDatasetSource.is_dataset_tokenized" class="md-nav__link">
+    <span class="md-ellipsis">
+      is_dataset_tokenized
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryDatasetSource.prepend_bos" class="md-nav__link">
+    <span class="md-ellipsis">
+      prepend_bos
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactorySource" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationFactorySource
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationFactorySource">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactorySource.sample_weights" class="md-nav__link">
+    <span class="md-ellipsis">
+      sample_weights
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactorySource.type" class="md-nav__link">
+    <span class="md-ellipsis">
+      type
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryTarget" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationFactoryTarget
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationFactoryTarget">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryTarget.ACTIVATIONS_1D" class="md-nav__link">
+    <span class="md-ellipsis">
+      ACTIVATIONS_1D
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryTarget.ACTIVATIONS_2D" class="md-nav__link">
+    <span class="md-ellipsis">
+      ACTIVATIONS_2D
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationFactoryTarget.TOKENS" class="md-nav__link">
+    <span class="md-ellipsis">
+      TOKENS
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      ActivationWriterConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ActivationWriterConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig.cache_dir" class="md-nav__link">
+    <span class="md-ellipsis">
+      cache_dir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig.hook_points" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_points
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig.n_samples_per_chunk" class="md-nav__link">
+    <span class="md-ellipsis">
+      n_samples_per_chunk
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig.num_workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      num_workers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.ActivationWriterConfig.total_generating_tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      total_generating_tokens
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.BaseSAEConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      BaseSAEConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BaseSAEConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.BaseSAEConfig.from_pretrained" class="md-nav__link">
+    <span class="md-ellipsis">
+      from_pretrained
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.BufferShuffleConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      BufferShuffleConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BufferShuffleConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.BufferShuffleConfig.generator_device" class="md-nav__link">
+    <span class="md-ellipsis">
+      generator_device
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.BufferShuffleConfig.perm_seed" class="md-nav__link">
+    <span class="md-ellipsis">
+      perm_seed
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      CLTConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CLTConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.associated_hook_points" class="md-nav__link">
+    <span class="md-ellipsis">
+      associated_hook_points
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.decode_with_csr" class="md-nav__link">
+    <span class="md-ellipsis">
+      decode_with_csr
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.hook_points_in" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_points_in
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.hook_points_out" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_points_out
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.n_decoders" class="md-nav__link">
+    <span class="md-ellipsis">
+      n_decoders
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.CLTConfig.n_layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      n_layers
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.DirectLogitAttributorConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      DirectLogitAttributorConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="DirectLogitAttributorConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.DirectLogitAttributorConfig.clt_layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      clt_layer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.DirectLogitAttributorConfig.top_k" class="md-nav__link">
+    <span class="md-ellipsis">
+      top_k
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.EvalConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      EvalConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="EvalConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.EvalConfig.fold_activation_scale" class="md-nav__link">
+    <span class="md-ellipsis">
+      fold_activation_scale
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.FeatureAnalyzerConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      FeatureAnalyzerConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FeatureAnalyzerConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.FeatureAnalyzerConfig.clt_layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      clt_layer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.FeatureAnalyzerConfig.ignore_token_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      ignore_token_ids
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.FeatureAnalyzerConfig.subsamples" class="md-nav__link">
+    <span class="md-ellipsis">
+      subsamples
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.FeatureAnalyzerConfig.total_analyzing_tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      total_analyzing_tokens
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      LanguageModelConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LanguageModelConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      backend
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.bos_token_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      bos_token_id
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.cache_dir" class="md-nav__link">
+    <span class="md-ellipsis">
+      cache_dir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.d_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      d_model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.eos_token_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      eos_token_id
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.local_files_only" class="md-nav__link">
+    <span class="md-ellipsis">
+      local_files_only
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.max_length" class="md-nav__link">
+    <span class="md-ellipsis">
+      max_length
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.model_from_pretrained_path" class="md-nav__link">
+    <span class="md-ellipsis">
+      model_from_pretrained_path
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.model_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      model_name
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.pad_token_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      pad_token_id
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.prepend_bos" class="md-nav__link">
+    <span class="md-ellipsis">
+      prepend_bos
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.tokenizer_only" class="md-nav__link">
+    <span class="md-ellipsis">
+      tokenizer_only
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.use_flash_attn" class="md-nav__link">
+    <span class="md-ellipsis">
+      use_flash_attn
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LanguageModelConfig.from_pretrained_sae" class="md-nav__link">
+    <span class="md-ellipsis">
+      from_pretrained_sae
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LorsaConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      LorsaConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LorsaConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.LorsaConfig.associated_hook_points" class="md-nav__link">
+    <span class="md-ellipsis">
+      associated_hook_points
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      MOLTConfig
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MOLTConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.available_ranks" class="md-nav__link">
+    <span class="md-ellipsis">
+      available_ranks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.d_sae" class="md-nav__link">
+    <span class="md-ellipsis">
+      d_sae
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.hook_point_in" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_point_in
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.hook_point_out" class="md-nav__link">
+    <span class="md-ellipsis">
+      hook_point_out
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.model_parallel_size_training" class="md-nav__link">
+    <span class="md-ellipsis">
+      model_parallel_size_training
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.num_rank_types" class="md-nav__link">
+    <span class="md-ellipsis">
+      num_rank_types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.rank_distribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      rank_distribution
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.generate_rank_assignments" class="md-nav__link">
+    <span class="md-ellipsis">
+      generate_rank_assignments
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lm_saes.config.MOLTConfig.get_local_rank_assignments" class="md-nav__link">
+    <span class="md-ellipsis">
+      get_local_rank_assignments
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+  <h1>config</h1>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="lm_saes.config" class="doc doc-heading">
+            <code>config</code>
+
+
+</h2>
+
+    <div class="doc doc-contents first">
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.ActivationFactoryActivationsSource" class="doc doc-heading">
+            <code>ActivationFactoryActivationsSource</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="ActivationFactorySource (lm_saes.config.ActivationFactorySource)" href="#lm_saes.config.ActivationFactorySource">ActivationFactorySource</a></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryActivationsSource.device" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'cpu'</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The device to load the activations on.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryActivationsSource.dtype" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">dtype</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Annotated</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">BeforeValidator</span><span class="p">(</span><span class="k">lambda</span> <span class="n">v</span><span class="p">:</span> <span class="n">convert_str_to_torch_dtype</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">v</span><span class="p">),</span> <span class="n">PlainSerializer</span><span class="p">(</span><span class="n">convert_torch_dtype_to_str</span><span class="p">),</span> <span class="n">WithJsonSchema</span><span class="p">({</span><span class="nb">type</span><span class="p">:</span> <span class="n">string</span><span class="p">},</span> <span class="n">mode</span><span class="o">=</span><span class="n">serialization</span><span class="p">)]]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>We might want to convert presaved bf16 activations to fp32</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryActivationsSource.num_workers" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">num_workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The number of workers to use for loading the activations.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryActivationsSource.path" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">]</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The path to the cached activations.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryActivationsSource.prefetch" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">prefetch</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">8</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The number of chunks to prefetch.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.ActivationFactoryConfig" class="doc doc-heading">
+            <code>ActivationFactoryConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="lm_saes.config.BaseConfig">BaseConfig</span></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.batch_size" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="p">(</span><span class="k">lambda</span> <span class="n">validated_model</span><span class="p">:</span> <span class="mi">64</span> <span class="k">if</span> <span class="n">validated_model</span><span class="p">[</span><span class="s1">'target'</span><span class="p">]</span> <span class="o">==</span> <span class="n">ActivationFactoryTarget</span><span class="o">.</span><span class="n">ACTIVATIONS_1D</span> <span class="k">else</span> <span class="kc">None</span><span class="p">))</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The batch size to use for outputting <code>activations-1d</code>.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.buffer_shuffle" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">buffer_shuffle</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">BufferShuffleConfig</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>" Manual seed and device of generator for generating randomperm in buffer.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.buffer_size" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">buffer_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="p">(</span><span class="k">lambda</span> <span class="n">validated_model</span><span class="p">:</span> <span class="mi">500000</span> <span class="k">if</span> <span class="n">validated_model</span><span class="p">[</span><span class="s1">'target'</span><span class="p">]</span> <span class="o">==</span> <span class="n">ActivationFactoryTarget</span><span class="o">.</span><span class="n">ACTIVATIONS_1D</span> <span class="k">else</span> <span class="kc">None</span><span class="p">))</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Buffer size for online shuffling. If <code>None</code>, no shuffling will be performed.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.context_size" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">context_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The context size to use for generating activations. All tokens will be padded or truncated to this size. If <code>None</code>, will not pad or truncate tokens. This may lead to some error when re-batching activations of different context sizes.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.hook_points" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">hook_points</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The hook points to capture activations from.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.ignore_token_ids" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">ignore_token_ids</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Tokens to ignore in the activations.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.model_batch_size" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">model_batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The batch size to use for generating activations.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.num_workers" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">num_workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The number of workers to use for loading the dataset.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.override_dtype" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">override_dtype</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Annotated</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">BeforeValidator</span><span class="p">(</span><span class="k">lambda</span> <span class="n">v</span><span class="p">:</span> <span class="n">convert_str_to_torch_dtype</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">v</span><span class="p">),</span> <span class="n">PlainSerializer</span><span class="p">(</span><span class="n">convert_torch_dtype_to_str</span><span class="p">),</span> <span class="n">WithJsonSchema</span><span class="p">({</span><span class="nb">type</span><span class="p">:</span> <span class="n">string</span><span class="p">},</span> <span class="n">mode</span><span class="o">=</span><span class="n">serialization</span><span class="p">)]]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The dtype to use for outputting activations. If <code>None</code>, will not override the dtype.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.sources" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">sources</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ActivationFactoryDatasetSource</span> <span class="o">|</span> <span class="n">ActivationFactoryActivationsSource</span><span class="p">]</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>List of sources to use for activations. Can be a dataset or a path to activations.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryConfig.target" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">target</span><span class="p">:</span> <span class="n">ActivationFactoryTarget</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The target to produce.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.ActivationFactoryDatasetSource" class="doc doc-heading">
+            <code>ActivationFactoryDatasetSource</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="ActivationFactorySource (lm_saes.config.ActivationFactorySource)" href="#lm_saes.config.ActivationFactorySource">ActivationFactorySource</a></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryDatasetSource.is_dataset_tokenized" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">is_dataset_tokenized</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Whether the dataset is tokenized. Non-tokenized datasets should have records with fields <code>text</code>, <code>images</code>, etc. Tokenized datasets should have records with fields <code>tokens</code>, which could contain either padded or non-padded tokens.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryDatasetSource.prepend_bos" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">prepend_bos</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Whether to prepend the BOS token to each record when tokenizing.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.ActivationFactorySource" class="doc doc-heading">
+            <code>ActivationFactorySource</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactorySource.sample_weights" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">sample_weights</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The sample weights to use for the source. Will be used to randomly pull tokens from the source when multiple sources are present.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactorySource.type" class="doc doc-heading">
+            <code class="highlight language-python"><span class="nb">type</span><span class="p">:</span> <span class="nb">str</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The type of the source. Used to determine the source of activations in deserialization.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.ActivationFactoryTarget" class="doc doc-heading">
+            <code>ActivationFactoryTarget</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="enum.Enum">Enum</span></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryTarget.ACTIVATIONS_1D" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">ACTIVATIONS_1D</span> <span class="o">=</span> <span class="s1">'activations-1d'</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Output activations in <code>(n_filtered_tokens, d_model)</code> shape. Tokens are filtered in this stage.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryTarget.ACTIVATIONS_2D" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">ACTIVATIONS_2D</span> <span class="o">=</span> <span class="s1">'activations-2d'</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Output activations in <code>(batch_size, seq_len, d_model)</code> shape. Tokens are padded and truncated to the same length.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationFactoryTarget.TOKENS" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">TOKENS</span> <span class="o">=</span> <span class="s1">'tokens'</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Output non-padded and non-truncated tokens.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.ActivationWriterConfig" class="doc doc-heading">
+            <code>ActivationWriterConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="lm_saes.config.BaseConfig">BaseConfig</span></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationWriterConfig.cache_dir" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">cache_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s1">'activations'</span><span class="p">)</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The directory to save the activations.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationWriterConfig.hook_points" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">hook_points</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The hook points to capture activations from.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationWriterConfig.n_samples_per_chunk" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">n_samples_per_chunk</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The number of samples to write to disk per chunk. If <code>None</code>, will not further batch the activations.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationWriterConfig.num_workers" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">num_workers</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The number of workers to use for writing the activations. If <code>None</code>, will not use multi-threaded writing.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.ActivationWriterConfig.total_generating_tokens" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">total_generating_tokens</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The total number of tokens to generate. If <code>None</code>, will write all activations to disk.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.BaseSAEConfig" class="doc doc-heading">
+            <code>BaseSAEConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="lm_saes.config.BaseModelConfig">BaseModelConfig</span></code>, <code><span title="abc.ABC">ABC</span></code></p>
+
+
+        <p>Base class for SAE configs.
+Initializer will initialize SAE based on config type.
+So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.</p>
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.config.BaseSAEConfig.from_pretrained" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">from_pretrained</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">strict_loading</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Load the SAEConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/hyperparams.json.</pretrained_name_or_path></p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>sae_path</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The path to the pretrained SAE.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>**kwargs</code>
+            </td>
+            <td>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Additional keyword arguments to pass to the SAEConfig constructor.</p>
+              </div>
+            </td>
+            <td>
+                  <code>{}</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/config.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 87</span>
+<span class="normal"> 88</span>
+<span class="normal"> 89</span>
+<span class="normal"> 90</span>
+<span class="normal"> 91</span>
+<span class="normal"> 92</span>
+<span class="normal"> 93</span>
+<span class="normal"> 94</span>
+<span class="normal"> 95</span>
+<span class="normal"> 96</span>
+<span class="normal"> 97</span>
+<span class="normal"> 98</span>
+<span class="normal"> 99</span>
+<span class="normal">100</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@classmethod</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">from_pretrained</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">pretrained_name_or_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">strict_loading</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Load the SAEConfig from a pretrained SAE name or path. Config is read from &lt;pretrained_name_or_path&gt;/hyperparams.json.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        sae_path (str): The path to the pretrained SAE.</span>
+<span class="sd">        **kwargs: Additional keyword arguments to pass to the SAEConfig constructor.</span>
+<span class="sd">    """</span>
+    <span class="n">path</span> <span class="o">=</span> <span class="n">parse_pretrained_name_or_path</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">)</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">"config.json"</span><span class="p">),</span> <span class="s2">"r"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">sae_config</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="n">sae_config</span><span class="p">[</span><span class="s2">"sae_pretrained_name_or_path"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pretrained_name_or_path</span>
+    <span class="n">sae_config</span><span class="p">[</span><span class="s2">"strict_loading"</span><span class="p">]</span> <span class="o">=</span> <span class="n">strict_loading</span>
+    <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">model_validate</span><span class="p">({</span><span class="o">**</span><span class="n">sae_config</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">})</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.BufferShuffleConfig" class="doc doc-heading">
+            <code>BufferShuffleConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="lm_saes.config.BaseConfig">BaseConfig</span></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.BufferShuffleConfig.generator_device" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">generator_device</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The device to be assigned for the torch.Generator. If 'None', generator will be initialized on cpu as pytorch default.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.BufferShuffleConfig.perm_seed" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">perm_seed</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">42</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Perm seed for aligned permutation for generating activations. If <code>None</code>, will not use manual seed for Generator.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.CLTConfig" class="doc doc-heading">
+            <code>CLTConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="BaseSAEConfig (lm_saes.config.BaseSAEConfig)" href="#lm_saes.config.BaseSAEConfig">BaseSAEConfig</a></code></p>
+
+
+        <p>Configuration for Cross Layer Transcoder (CLT).</p>
+<p>A CLT consists of L encoders and L(L+1)/2 decoders where each encoder at layer L
+reads from the residual stream at that layer and can decode to layers L through L-1.</p>
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.CLTConfig.associated_hook_points" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">associated_hook_points</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>All hook points used by the CLT.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.CLTConfig.decode_with_csr" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">decode_with_csr</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Whether to decode with CSR matrices. If <code>True</code>, will use CSR matrices for decoding. If <code>False</code>, will use dense matrices for decoding.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.CLTConfig.hook_points_in" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">hook_points_in</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>List of hook points to capture input activations from, one for each layer.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.CLTConfig.hook_points_out" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">hook_points_out</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>List of hook points to capture output activations from, one for each layer.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.CLTConfig.n_decoders" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">n_decoders</span><span class="p">:</span> <span class="nb">int</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Number of decoders in the CLT.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.CLTConfig.n_layers" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">n_layers</span><span class="p">:</span> <span class="nb">int</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Number of layers in the CLT.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.DirectLogitAttributorConfig" class="doc doc-heading">
+            <code>DirectLogitAttributorConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="lm_saes.config.BaseConfig">BaseConfig</span></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.DirectLogitAttributorConfig.clt_layer" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">clt_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Layer to analyze for CLT. Provided iff analyzing CLT.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.DirectLogitAttributorConfig.top_k" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The number of top tokens to attribute to.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.EvalConfig" class="doc doc-heading">
+            <code>EvalConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="lm_saes.config.BaseConfig">BaseConfig</span></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.EvalConfig.fold_activation_scale" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">fold_activation_scale</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Whether to fold the activation scale into the SAE model</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.FeatureAnalyzerConfig" class="doc doc-heading">
+            <code>FeatureAnalyzerConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="lm_saes.config.BaseConfig">BaseConfig</span></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.FeatureAnalyzerConfig.clt_layer" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">clt_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Layer to analyze for CLT. Provided iff analyzing CLT.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.FeatureAnalyzerConfig.ignore_token_ids" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">ignore_token_ids</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Tokens to ignore in the activations.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.FeatureAnalyzerConfig.subsamples" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">subsamples</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="p">{</span><span class="s1">'top_activations'</span><span class="p">:</span> <span class="p">{</span><span class="s1">'proportion'</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">,</span> <span class="s1">'n_samples'</span><span class="p">:</span> <span class="mi">10</span><span class="p">},</span> <span class="s1">'non_activating'</span><span class="p">:</span> <span class="p">{</span><span class="s1">'proportion'</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span> <span class="s1">'n_samples'</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s1">'max_length'</span><span class="p">:</span> <span class="mi">50</span><span class="p">}}))</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Dictionary mapping subsample names to their parameters:
+- <code>proportion</code>: Proportion of max activation to consider
+- <code>n_samples</code>: Number of samples to keep
+- <code>max_length</code>: Maximum length of the sample</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.FeatureAnalyzerConfig.total_analyzing_tokens" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">total_analyzing_tokens</span><span class="p">:</span> <span class="nb">int</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Total number of tokens to analyze</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.LanguageModelConfig" class="doc doc-heading">
+            <code>LanguageModelConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="lm_saes.config.BaseModelConfig">BaseModelConfig</span></code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.backend" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">backend</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'huggingface'</span><span class="p">,</span> <span class="s1">'transformer_lens'</span><span class="p">,</span> <span class="s1">'auto'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'auto'</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The backend to use for the language model.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.bos_token_id" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">bos_token_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The ID of the BOS token. If <code>None</code>, will use the default BOS token.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.cache_dir" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">cache_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The directory of the HuggingFace cache. Should have the same effect as <code>HF_HOME</code>.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.d_model" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">768</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The dimension of the model.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.eos_token_id" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">eos_token_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The ID of the EOS token. If <code>None</code>, will use the default EOS token.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.local_files_only" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">local_files_only</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Whether to only load the model from the local files. Should have the same effect as <code>HF_HUB_OFFLINE=1</code>.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.max_length" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">max_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2048</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The maximum length of the input.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.model_from_pretrained_path" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">model_from_pretrained_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The path to the pretrained model. If <code>None</code>, will use the model from HuggingFace.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.model_name" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'gpt2'</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The name of the model to use.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.pad_token_id" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pad_token_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>The ID of the padding token. If <code>None</code>, will use the default padding token.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.prepend_bos" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">prepend_bos</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Whether to prepend the BOS token to the input.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.tokenizer_only" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">tokenizer_only</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Whether to only load the tokenizer.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.use_flash_attn" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">use_flash_attn</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Whether to use Flash Attention.</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.config.LanguageModelConfig.from_pretrained_sae" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">from_pretrained_sae</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-staticmethod"><code>staticmethod</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Load the LanguageModelConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/lm_config.json.</pretrained_name_or_path></p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>sae_path</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The path to the pretrained SAE.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>**kwargs</code>
+            </td>
+            <td>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Additional keyword arguments to pass to the LanguageModelConfig constructor.</p>
+              </div>
+            </td>
+            <td>
+                  <code>{}</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/config.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">709</span>
+<span class="normal">710</span>
+<span class="normal">711</span>
+<span class="normal">712</span>
+<span class="normal">713</span>
+<span class="normal">714</span>
+<span class="normal">715</span>
+<span class="normal">716</span>
+<span class="normal">717</span>
+<span class="normal">718</span>
+<span class="normal">719</span>
+<span class="normal">720</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@staticmethod</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">from_pretrained_sae</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Load the LanguageModelConfig from a pretrained SAE name or path. Config is read from &lt;pretrained_name_or_path&gt;/lm_config.json.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        sae_path (str): The path to the pretrained SAE.</span>
+<span class="sd">        **kwargs: Additional keyword arguments to pass to the LanguageModelConfig constructor.</span>
+<span class="sd">    """</span>
+    <span class="n">path</span> <span class="o">=</span> <span class="n">parse_pretrained_name_or_path</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">)</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">"lm_config.json"</span><span class="p">),</span> <span class="s2">"r"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">lm_config</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">LanguageModelConfig</span><span class="o">.</span><span class="n">model_validate</span><span class="p">(</span><span class="n">lm_config</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.LorsaConfig" class="doc doc-heading">
+            <code>LorsaConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="BaseSAEConfig (lm_saes.config.BaseSAEConfig)" href="#lm_saes.config.BaseSAEConfig">BaseSAEConfig</a></code></p>
+
+
+        <p>Configuration for Low Rank Sparse Attention.</p>
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.LorsaConfig.associated_hook_points" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">associated_hook_points</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>All hook points used by Lorsa.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="lm_saes.config.MOLTConfig" class="doc doc-heading">
+            <code>MOLTConfig</code>
+
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="BaseSAEConfig (lm_saes.config.BaseSAEConfig)" href="#lm_saes.config.BaseSAEConfig">BaseSAEConfig</a></code></p>
+
+
+        <p>Configuration for Mixture of Linear Transforms (MOLT).</p>
+<p>MOLT is a more efficient alternative to transcoders that sparsely replaces
+MLP computation in transformers. It converts dense MLP layers into sparse,
+interpretable linear transforms.</p>
+
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.MOLTConfig.available_ranks" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">available_ranks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Get sorted list of available ranks.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.MOLTConfig.d_sae" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">d_sae</span><span class="p">:</span> <span class="nb">int</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Calculate d_sae based on rank assignments with padding for distributed training.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.MOLTConfig.hook_point_in" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">hook_point_in</span><span class="p">:</span> <span class="nb">str</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Hook point to capture input activations from.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.MOLTConfig.hook_point_out" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">hook_point_out</span><span class="p">:</span> <span class="nb">str</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Hook point to output activations to.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.MOLTConfig.model_parallel_size_training" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">model_parallel_size_training</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Number of model parallel devices for distributed training. Distinct from model_parallel_size_running which is the number of model parallel devices in both training and inference.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.MOLTConfig.num_rank_types" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">num_rank_types</span><span class="p">:</span> <span class="nb">int</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Number of different rank types.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="lm_saes.config.MOLTConfig.rank_distribution" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">rank_distribution</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="p">{</span><span class="mi">4</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">8</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">16</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">32</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">64</span><span class="p">:</span> <span class="mi">16</span><span class="p">}))</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Dictionary mapping rank values to their integer ratios. 
+Keys are rank values, values are integer ratios that will be automatically normalized to proportions.
+Example: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16} means ratio 1:2:4:8:16 which means a proportion of 1/32, 2/32, 4/32, 8/32, 16/32, 
+which will be normalized to proportions automatically.</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.config.MOLTConfig.generate_rank_assignments" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">generate_rank_assignments</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span></code>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Generate rank assignment for each of the d_sae linear transforms.</p>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<span title="int">int</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>List of rank assignments for each transform.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<span title="int">int</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>For example: [1, 1, 1, 1, 2, 2, 4].</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<span title="int">int</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>For distributed case, this method ensures that each rank type is divisible by model_parallel_size_training.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/config.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">259</span>
+<span class="normal">260</span>
+<span class="normal">261</span>
+<span class="normal">262</span>
+<span class="normal">263</span>
+<span class="normal">264</span>
+<span class="normal">265</span>
+<span class="normal">266</span>
+<span class="normal">267</span>
+<span class="normal">268</span>
+<span class="normal">269</span>
+<span class="normal">270</span>
+<span class="normal">271</span>
+<span class="normal">272</span>
+<span class="normal">273</span>
+<span class="normal">274</span>
+<span class="normal">275</span>
+<span class="normal">276</span>
+<span class="normal">277</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">generate_rank_assignments</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Generate rank assignment for each of the d_sae linear transforms.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        List of rank assignments for each transform.</span>
+<span class="sd">        For example: [1, 1, 1, 1, 2, 2, 4].</span>
+<span class="sd">        For distributed case, this method ensures that each rank type is divisible by model_parallel_size_training.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Validate rank distribution</span>
+    <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">rank_distribution</span><span class="p">,</span> <span class="s2">"rank_distribution cannot be empty"</span>
+
+    <span class="c1"># Calculate base d_sae</span>
+    <span class="n">base_d_sae</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">d_model</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">expansion_factor</span>
+
+    <span class="c1"># For distributed training, use special logic to ensure consistency</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_parallel_size_training</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate_distributed_rank_assignments</span><span class="p">(</span><span class="n">base_d_sae</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate_rank_assignments_single_gpu</span><span class="p">(</span><span class="n">base_d_sae</span><span class="p">)</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="lm_saes.config.MOLTConfig.get_local_rank_assignments" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">get_local_rank_assignments</span><span class="p">(</span><span class="n">local_rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">model_parallel_size_running</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span></code>
+
+</h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Get rank assignments for a specific local device in distributed running (both training and inference).</p>
+<p>Each device gets all rank groups, with each group evenly divided across devices.
+This ensures consistent encoder/decoder sharding without feature_acts redistribution.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>local_rank</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The local rank of this process</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>model_parallel_size_running</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of model parallel devices in running (training and inference)</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<span title="int">int</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>List of rank assignments for this local device</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<span title="int">int</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>For example:</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<span title="int">int</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>global_rank_assignments = [1, 1, 2, 2], model_parallel_size_running = 2 -&gt; local_rank_assignments = [1, 2]</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/lm_saes/config.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">369</span>
+<span class="normal">370</span>
+<span class="normal">371</span>
+<span class="normal">372</span>
+<span class="normal">373</span>
+<span class="normal">374</span>
+<span class="normal">375</span>
+<span class="normal">376</span>
+<span class="normal">377</span>
+<span class="normal">378</span>
+<span class="normal">379</span>
+<span class="normal">380</span>
+<span class="normal">381</span>
+<span class="normal">382</span>
+<span class="normal">383</span>
+<span class="normal">384</span>
+<span class="normal">385</span>
+<span class="normal">386</span>
+<span class="normal">387</span>
+<span class="normal">388</span>
+<span class="normal">389</span>
+<span class="normal">390</span>
+<span class="normal">391</span>
+<span class="normal">392</span>
+<span class="normal">393</span>
+<span class="normal">394</span>
+<span class="normal">395</span>
+<span class="normal">396</span>
+<span class="normal">397</span>
+<span class="normal">398</span>
+<span class="normal">399</span>
+<span class="normal">400</span>
+<span class="normal">401</span>
+<span class="normal">402</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_local_rank_assignments</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">local_rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">model_parallel_size_running</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Get rank assignments for a specific local device in distributed running (both training and inference).</span>
+
+<span class="sd">    Each device gets all rank groups, with each group evenly divided across devices.</span>
+<span class="sd">    This ensures consistent encoder/decoder sharding without feature_acts redistribution.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        local_rank: The local rank of this process</span>
+<span class="sd">        model_parallel_size_running: Number of model parallel devices in running (training and inference)</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        List of rank assignments for this local device</span>
+<span class="sd">        For example:</span>
+<span class="sd">        global_rank_assignments = [1, 1, 2, 2], model_parallel_size_running = 2 -&gt; local_rank_assignments = [1, 2]</span>
+<span class="sd">    """</span>
+    <span class="n">global_rank_counts</span> <span class="o">=</span> <span class="p">{</span><span class="n">rank</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">generate_rank_assignments</span><span class="p">()</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="n">rank</span><span class="p">)</span> <span class="k">for</span> <span class="n">rank</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">available_ranks</span><span class="p">}</span>
+
+    <span class="c1"># Each device gets count/model_parallel_size_running transforms of each rank type</span>
+    <span class="n">local_assignments</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">rank</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rank_distribution</span><span class="o">.</span><span class="n">keys</span><span class="p">()):</span>
+        <span class="n">global_count</span> <span class="o">=</span> <span class="n">global_rank_counts</span><span class="p">[</span><span class="n">rank</span><span class="p">]</span>
+
+        <span class="c1"># Verify even division (should be guaranteed by _generate_distributed_rank_assignments)</span>
+        <span class="k">assert</span> <span class="n">global_count</span> <span class="o">%</span> <span class="n">model_parallel_size_running</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"Rank </span><span class="si">{</span><span class="n">rank</span><span class="si">}</span><span class="s2"> global count </span><span class="si">{</span><span class="n">global_count</span><span class="si">}</span><span class="s2"> not divisible by "</span>
+            <span class="sa">f</span><span class="s2">"model_parallel_size_running </span><span class="si">{</span><span class="n">model_parallel_size_running</span><span class="si">}</span><span class="s2">"</span>
+        <span class="p">)</span>
+
+        <span class="n">local_count</span> <span class="o">=</span> <span class="n">global_count</span> <span class="o">//</span> <span class="n">model_parallel_size_running</span>
+
+        <span class="c1"># Add local_count transforms of this rank type</span>
+        <span class="n">local_assignments</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="n">rank</span><span class="p">]</span> <span class="o">*</span> <span class="n">local_count</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">local_assignments</span>
+</code></pre></div></td></tr></tbody></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+    
+  
+<script id="init-glightbox">const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});
+document$.subscribe(()=>{ lightbox.reload(); });
+</script></body></html>
