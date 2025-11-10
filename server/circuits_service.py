@@ -141,15 +141,28 @@ def run_attribution(
     sae_series: str,
     act_times_max: Optional[int] = None,
     encoder_demean: bool = False,
-    save_activation_info: bool = False
+    save_activation_info: bool = False,
+    negative_move_uci: Optional[str] = None  # 新增negative_move_uci参数
 ) -> Dict[str, Any]:
     """运行attribution分析"""
     logger = logging.getLogger(__name__)
     
     # 设置棋盘
     lboard = LeelaBoard.from_fen(fen, history_synthesis=True)
-    move_idx = lboard.uci2idx(move_uci)
     is_castle = False  # 可以根据需要调整
+    
+    # 处理move_idx：根据order_mode和negative_move_uci决定
+    if order_mode == 'move_pair':
+        # move_pair模式：需要positive和negative move
+        if not negative_move_uci:
+            raise ValueError("negative_move_uci is required for move_pair mode")
+        positive_move_idx = lboard.uci2idx(move_uci)
+        negative_move_idx = lboard.uci2idx(negative_move_uci)
+        move_idx = (positive_move_idx, negative_move_idx)
+        logger.info(f"Move pair mode: positive_move_idx={positive_move_idx}, negative_move_idx={negative_move_idx}")
+    else:
+        # positive或negative模式：只有一个move
+        move_idx = lboard.uci2idx(move_uci)
     
     # 设置梯度
     torch.set_grad_enabled(True)
@@ -375,6 +388,7 @@ def create_graph_json_data(
 def run_circuit_trace(
     prompt: str,
     move_uci: str,
+    negative_move_uci: Optional[str] = None,  # 新增negative_move_uci参数
     model_name: str = "lc0/T82-768x15x24h",
     device: str = "cuda",
     tc_base_path: str = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/tc",
@@ -446,7 +460,8 @@ def run_circuit_trace(
             sae_series=sae_series,
             act_times_max=act_times_max,
             encoder_demean=encoder_demean,
-            save_activation_info=True  # 强制设置为True以获取激活信息
+            save_activation_info=True,  # 强制设置为True以获取激活信息
+            negative_move_uci=negative_move_uci  # 传递negative_move_uci
         )
         
         # 创建Graph

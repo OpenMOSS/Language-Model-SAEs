@@ -243,13 +243,31 @@ cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/c
 . .venv/bin/activate   
 LOGDIR="$(pwd)/logs_analyze/T82"
 mkdir -p "$LOGDIR"
-L=5
+L=2
 echo "===> lorsa layer $L"
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port=$((29440+L)) --nproc-per-node=1 exp/analyze_lc0_lorsa_T82.py --layer "$L" \
+CUDA_VISIBLE_DEVICES=2 torchrun --master_port=$((29440+L)) --nproc-per-node=1 exp/analyze_lc0_lorsa_T82.py --layer "$L" \
   > "$LOGDIR/analyse_lorsa_layer_${L}_1031.log" 2>&1
 
 
-L=4
-CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 --master_port=$((29440+L)) \
-  exp/analyze_lc0_tc_BT4.py --layer "$L" \
-  > "$LOGDIR/analyse_tc_layer_${L}.log" 2>&1
+
+
+cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
+. .venv/bin/activate   
+LOGDIR="$(pwd)/logs_analyze/T82"
+mkdir -p "$LOGDIR"
+L=8
+echo "===> lorsa layer $L"
+CUDA_VISIBLE_DEVICES=3 torchrun --master_port=$((29440+L)) --nproc-per-node=1 exp/analyze_lc0_lorsa_T82.py --layer "$L" \
+  > "$LOGDIR/analyse_lorsa_layer_${L}_1031.log" 2>&1
+
+
+
+
+cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
+. .venv/bin/activate   
+LOGDIR="$(pwd)/logs_analyze/T82"
+mkdir -p "$LOGDIR"
+L=13
+echo "===> lorsa layer $L"
+CUDA_VISIBLE_DEVICES=4 torchrun --master_port=$((29440+L)) --nproc-per-node=1 exp/analyze_lc0_lorsa_T82.py --layer "$L" \
+  > "$LOGDIR/analyse_lorsa_layer_${L}_1031.log" 2>&1

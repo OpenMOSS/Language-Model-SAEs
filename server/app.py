@@ -1002,8 +1002,7 @@ def circuit_trace(request: dict):
             raise HTTPException(status_code=400, detail="FEN string is required")
         
         move_uci = request.get("move_uci")
-        if not move_uci:
-            raise HTTPException(status_code=400, detail="move_uci is required")
+        negative_move_uci = request.get("negative_move_uci", None)  # 新增negative_move_uci参数
         
         side = request.get("side", "k")
         max_feature_nodes = request.get("max_feature_nodes", 1024)
@@ -1021,6 +1020,7 @@ def circuit_trace(request: dict):
         print(f"🔍 Circuit Trace 请求参数:")
         print(f"   - FEN: {fen}")
         print(f"   - Move UCI: {move_uci}")
+        print(f"   - Negative Move UCI: {negative_move_uci}")
         print(f"   - Model Name: {model_name}")
         print(f"   - Side: {side}")
         print(f"   - Order Mode: {order_mode}")
@@ -1030,9 +1030,23 @@ def circuit_trace(request: dict):
         if side not in ["q", "k", "both"]:
             raise HTTPException(status_code=400, detail="side must be 'q', 'k', or 'both'")
         
-        # 验证 order_mode 参数
-        if order_mode not in ["positive", "negative"]:
-            raise HTTPException(status_code=400, detail="order_mode must be 'positive' or 'negative'")
+        # 验证 order_mode 参数和处理both模式
+        if order_mode == "both":
+            # Both模式：需要positive move和negative move
+            if not move_uci:
+                raise HTTPException(status_code=400, detail="move_uci (positive move) is required for 'both' mode")
+            if not negative_move_uci:
+                raise HTTPException(status_code=400, detail="negative_move_uci is required for 'both' mode")
+            # Both模式强制side为both
+            side = "both"
+            # 将order_mode转换为move_pair，以便后端处理
+            order_mode = "move_pair"
+        elif order_mode not in ["positive", "negative"]:
+            raise HTTPException(status_code=400, detail="order_mode must be 'positive', 'negative', or 'both'")
+        
+        # 验证move_uci
+        if not move_uci:
+            raise HTTPException(status_code=400, detail="move_uci is required")
         
         # 获取已缓存的HookedTransformer模型
         hooked_model = get_hooked_model(model_name)
@@ -1050,6 +1064,7 @@ def circuit_trace(request: dict):
         graph_data = run_circuit_trace(
             prompt=fen,
             move_uci=move_uci,
+            negative_move_uci=negative_move_uci,  # 传递negative_move_uci
             model_name=model_name,  # 添加模型名称参数
             tc_base_path=tc_base_path,  # 传递正确的TC路径
             lorsa_base_path=lorsa_base_path,  # 传递正确的LORSA路径

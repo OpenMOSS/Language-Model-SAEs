@@ -1100,7 +1100,7 @@ export const CircuitVisualization = () => {
                   if (isValidBoard && totalSquares === 64) {
                     // 处理稀疏激活数据 - 正确映射到64格棋盘
                     let activationsArray: number[] | undefined = undefined;
-                    let activationStrength = 0;
+                    let maxActivation = 0; // 使用最大激活值而不是总和
                     
                     if (sample.featureActsIndices && sample.featureActsValues && 
                         Array.isArray(sample.featureActsIndices) && Array.isArray(sample.featureActsValues)) {
@@ -1108,7 +1108,7 @@ export const CircuitVisualization = () => {
                       // 创建64格的激活数组
                       activationsArray = new Array(64).fill(0);
                       
-                      // 将稀疏激活值映射到正确的棋盘位置
+                      // 将稀疏激活值映射到正确的棋盘位置，并找到最大激活值
                       for (let i = 0; i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length); i++) {
                         const index = sample.featureActsIndices[i];
                         const value = sample.featureActsValues[i];
@@ -1116,7 +1116,10 @@ export const CircuitVisualization = () => {
                         // 确保索引在有效范围内
                         if (index >= 0 && index < 64) {
                           activationsArray[index] = value;
-                          activationStrength += Math.abs(value);
+                          // 使用最大激活值（与feature页面逻辑一致）
+                          if (Math.abs(value) > Math.abs(maxActivation)) {
+                            maxActivation = value;
+                          }
                         }
                       }
                       
@@ -1124,13 +1127,13 @@ export const CircuitVisualization = () => {
                         indicesLength: sample.featureActsIndices.length,
                         valuesLength: sample.featureActsValues.length,
                         nonZeroCount: activationsArray.filter(v => v !== 0).length,
-                        activationStrength
+                        maxActivation
                       });
                     }
                     
                     chessSamples.push({
                       fen: trimmed,
-                      activationStrength,
+                      activationStrength: maxActivation, // 使用最大激活值作为排序依据
                       activations: activationsArray,
                       zPatternIndices: sample.zPatternIndices,
                       zPatternValues: sample.zPatternValues,
@@ -1147,9 +1150,9 @@ export const CircuitVisualization = () => {
         }
       }
       
-      // 按激活强度排序并取前8个
+      // 按最大激活值排序并取前8个（与feature页面逻辑一致）
       const topSamples = chessSamples
-        .sort((a, b) => b.activationStrength - a.activationStrength)
+        .sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength))
         .slice(0, 8);
       
       console.log('✅ 获取到 Top Activation 数据:', {
@@ -1732,7 +1735,7 @@ export const CircuitVisualization = () => {
                         Top #{index + 1}
                       </div>
                       <div className="text-xs text-gray-500">
-                        激活强度: {sample.activationStrength.toFixed(3)}
+                        最大激活值: {sample.activationStrength.toFixed(3)}
                       </div>
                     </div>
                     <ChessBoard

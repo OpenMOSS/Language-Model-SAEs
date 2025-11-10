@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -56,7 +56,8 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   });
 
   // 移动输入状态
-  const [inputMove, setInputMove] = useState<string>('');
+  const [positiveMove, setPositiveMove] = useState<string>('');
+  const [negativeMove, setNegativeMove] = useState<string>('');
   const [moveError, setMoveError] = useState<string>('');
 
   // Side选择状态
@@ -74,6 +75,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
 
   // 本地缓存：按FEN缓存最近一次输入的UCI移动
   const MOVE_CACHE_KEY = 'circuit_move_by_fen_v1';
+  const POSITIVE_MOVE_CACHE_KEY = 'circuit_positive_move_by_fen_v1';
+  const NEGATIVE_MOVE_CACHE_KEY = 'circuit_negative_move_by_fen_v1';
+  
   const loadCachedMove = useCallback((fen: string): string => {
     try {
       const raw = localStorage.getItem(MOVE_CACHE_KEY);
@@ -84,12 +88,57 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       return '';
     }
   }, []);
+  
+  const loadCachedPositiveMove = useCallback((fen: string): string => {
+    try {
+      const raw = localStorage.getItem(POSITIVE_MOVE_CACHE_KEY);
+      if (!raw) return '';
+      const obj = JSON.parse(raw) as Record<string, string>;
+      return obj[fen] || '';
+    } catch {
+      return '';
+    }
+  }, []);
+  
+  const loadCachedNegativeMove = useCallback((fen: string): string => {
+    try {
+      const raw = localStorage.getItem(NEGATIVE_MOVE_CACHE_KEY);
+      if (!raw) return '';
+      const obj = JSON.parse(raw) as Record<string, string>;
+      return obj[fen] || '';
+    } catch {
+      return '';
+    }
+  }, []);
+  
   const saveCachedMove = useCallback((fen: string, move: string) => {
     try {
       const raw = localStorage.getItem(MOVE_CACHE_KEY);
       const obj = raw ? (JSON.parse(raw) as Record<string, string>) : {};
       obj[fen] = move;
       localStorage.setItem(MOVE_CACHE_KEY, JSON.stringify(obj));
+    } catch {
+      /* no-op */
+    }
+  }, []);
+  
+  const saveCachedPositiveMove = useCallback((fen: string, move: string) => {
+    try {
+      const raw = localStorage.getItem(POSITIVE_MOVE_CACHE_KEY);
+      const obj = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+      obj[fen] = move;
+      localStorage.setItem(POSITIVE_MOVE_CACHE_KEY, JSON.stringify(obj));
+    } catch {
+      /* no-op */
+    }
+  }, []);
+  
+  const saveCachedNegativeMove = useCallback((fen: string, move: string) => {
+    try {
+      const raw = localStorage.getItem(NEGATIVE_MOVE_CACHE_KEY);
+      const obj = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+      obj[fen] = move;
+      localStorage.setItem(NEGATIVE_MOVE_CACHE_KEY, JSON.stringify(obj));
     } catch {
       /* no-op */
     }
@@ -186,29 +235,72 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
   }, []);
 
-  // 修改handleCircuitTrace函数来支持不同的order_mode
-  const handleCircuitTrace = useCallback(async (orderMode: 'positive' | 'negative' = 'positive') => {
-    // 使用输入的移动、缓存的该FEN移动，或最后一个移动
-    const moveUci = inputMove.trim() || loadCachedMove(gameFen) || lastMove;
+  // 修改handleCircuitTrace函数来支持不同的order_mode和both trace
+  const handleCircuitTrace = useCallback(async (orderMode: 'positive' | 'negative' | 'both' = 'positive') => {
+    let moveUci: string | null = null;
+    const lastMoveStr: string | null = lastMove ? lastMove : null;
     
-    if (!moveUci) {
-      alert('请输入要分析的移动或先走一步棋');
-      return;
+    if (orderMode === 'both') {
+      // Both Trace: 需要positive move和negative move
+      const posMove = positiveMove.trim() || loadCachedPositiveMove(gameFen);
+      const negMove = negativeMove.trim() || loadCachedNegativeMove(gameFen);
+      
+      if (!posMove) {
+        alert('Both Trace需要输入Positive Move');
+        return;
+      }
+      if (!negMove) {
+        alert('Both Trace需要输入Negative Move');
+        return;
+      }
+      
+      // 验证两个移动格式
+      if (!validateMove(posMove, gameFen)) {
+        setMoveError('Positive Move格式不正确');
+        return;
+      }
+      if (!validateMove(negMove, gameFen)) {
+        setMoveError('Negative Move格式不正确');
+        return;
+      }
+      
+      // Both trace使用positive move作为主要move，negative move通过order_mode传递
+      moveUci = posMove;
+      
+      console.log('🔍 Both Circuit Trace 参数:', {
+        fen: gameFen,
+        positive_move: posMove,
+        negative_move: negMove,
+        side: 'both',
+        order_mode: 'both',
+        trace_model: traceModel
+      });
+    } else {
+      // Positive/Negative Trace: 使用对应的move
+      if (orderMode === 'positive') {
+        moveUci = positiveMove.trim() || loadCachedPositiveMove(gameFen) || loadCachedMove(gameFen) || lastMoveStr;
+      } else {
+        moveUci = negativeMove.trim() || loadCachedNegativeMove(gameFen) || loadCachedMove(gameFen) || lastMoveStr;
+      }
+      
+      if (!moveUci) {
+        alert(`请输入${orderMode === 'positive' ? 'Positive' : 'Negative'} Move或先走一步棋`);
+        return;
+      }
+      
+      // 验证移动格式
+      if (!validateMove(moveUci, gameFen)) {
+        return;
+      }
+      
+      console.log('🔍 Circuit Trace 参数:', {
+        fen: gameFen,
+        move_uci: moveUci,
+        order_mode: orderMode,
+        side: traceSide,
+        trace_model: traceModel
+      });
     }
-    
-    // 验证移动格式
-    if (!validateMove(moveUci, gameFen)) {
-      return;
-    }
-    
-    console.log('🔍 Circuit Trace 参数:', {
-      fen: gameFen, // move之前的FEN
-      move_uci: moveUci,
-      order_mode: orderMode,
-      current_fen: currentFen,
-      game_history: gameHistory,
-      trace_model: traceModel
-    });
     
     onCircuitTraceStart?.();
     
@@ -216,30 +308,50 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       // 根据选择的模型构建正确的模型名称
       const modelName = traceModel === 'BT4' ? 'lc0/BT4-1024x15x32h' : 'lc0/T82-768x15x24h';
       
+      // 构建请求体
+      const requestBody: any = { 
+        fen: effectiveGameFen,
+        move_uci: moveUci,
+        side: orderMode === 'both' ? 'both' : traceSide,
+        order_mode: orderMode,
+        max_feature_nodes: circuitParams.max_feature_nodes,
+        node_threshold: circuitParams.node_threshold,
+        edge_threshold: circuitParams.edge_threshold,
+        max_act_times: circuitParams.max_act_times,
+        save_activation_info: true,
+        model_name: modelName
+      };
+      
+      // Both trace需要传递negative move
+      if (orderMode === 'both') {
+        const negMove = negativeMove.trim() || loadCachedNegativeMove(gameFen);
+        if (negMove) {
+          requestBody.negative_move_uci = negMove;
+        }
+      }
+      
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
-          fen: effectiveGameFen, // 使用move之前的FEN
-          move_uci: moveUci,
-          side: traceSide,
-          order_mode: orderMode,
-          max_feature_nodes: circuitParams.max_feature_nodes,
-          node_threshold: circuitParams.node_threshold,
-          edge_threshold: circuitParams.edge_threshold,
-          max_act_times: circuitParams.max_act_times,
-          save_activation_info: true,
-          model_name: modelName // 添加模型名称
-        }),
+        body: JSON.stringify(requestBody),
       });
       
       if (response.ok) {
         const data = await response.json();
-        // 成功后缓存本次移动
-        if (moveUci) {
-          saveCachedMove(gameFen, moveUci);
+        // 成功后缓存移动
+        if (orderMode === 'both' || orderMode === 'positive') {
+          const posMove = positiveMove.trim() || loadCachedPositiveMove(gameFen);
+          if (posMove) {
+            saveCachedPositiveMove(gameFen, posMove);
+          }
+        }
+        if (orderMode === 'both' || orderMode === 'negative') {
+          const negMove = negativeMove.trim() || loadCachedNegativeMove(gameFen);
+          if (negMove) {
+            saveCachedNegativeMove(gameFen, negMove);
+          }
         }
         
         // 确保 metadata 中包含正确的模型信息
@@ -267,7 +379,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     } finally {
       onCircuitTraceEnd?.();
     }
-  }, [gameFen, currentFen, lastMove, gameHistory, inputMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide, traceModel, loadCachedMove, saveCachedMove]);
+  }, [gameFen, currentFen, lastMove, gameHistory, positiveMove, negativeMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide, traceModel, loadCachedMove, saveCachedMove, loadCachedPositiveMove, loadCachedNegativeMove, saveCachedPositiveMove, saveCachedNegativeMove]);
 
   // 新增：保存原始graph JSON（与后端create_graph_files一致的数据结构）
   const handleSaveGraphJson = useCallback(() => {
@@ -446,7 +558,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   if (isValidBoard && totalSquares === 64) {
                     // 处理稀疏激活数据 - 正确映射到64格棋盘
                     let activationsArray: number[] | undefined = undefined;
-                    let activationStrength = 0;
+                    let maxActivation = 0; // 使用最大激活值而不是总和
                     
                     if (sample.featureActsIndices && sample.featureActsValues && 
                         Array.isArray(sample.featureActsIndices) && Array.isArray(sample.featureActsValues)) {
@@ -454,7 +566,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                       // 创建64格的激活数组
                       activationsArray = new Array(64).fill(0);
                       
-                      // 将稀疏激活值映射到正确的棋盘位置
+                      // 将稀疏激活值映射到正确的棋盘位置，并找到最大激活值
                       for (let i = 0; i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length); i++) {
                         const index = sample.featureActsIndices[i];
                         const value = sample.featureActsValues[i];
@@ -462,7 +574,10 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                         // 确保索引在有效范围内
                         if (index >= 0 && index < 64) {
                           activationsArray[index] = value;
-                          activationStrength += Math.abs(value);
+                          // 使用最大激活值（与feature页面逻辑一致）
+                          if (Math.abs(value) > Math.abs(maxActivation)) {
+                            maxActivation = value;
+                          }
                         }
                       }
                       
@@ -470,13 +585,13 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                         indicesLength: sample.featureActsIndices.length,
                         valuesLength: sample.featureActsValues.length,
                         nonZeroCount: activationsArray.filter(v => v !== 0).length,
-                        activationStrength
+                        maxActivation
                       });
                     }
                     
                     chessSamples.push({
                       fen: trimmed,
-                      activationStrength,
+                      activationStrength: maxActivation, // 使用最大激活值作为排序依据
                       activations: activationsArray,
                       zPatternIndices: sample.zPatternIndices,
                       zPatternValues: sample.zPatternValues,
@@ -493,9 +608,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         }
       }
       
-      // 按激活强度排序并取前8个
+      // 按最大激活值排序并取前8个（与feature页面逻辑一致）
       const topSamples = chessSamples
-        .sort((a, b) => b.activationStrength - a.activationStrength)
+        .sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength))
         .slice(0, 8);
       
       console.log('✅ 获取到 Top Activation 数据:', {
@@ -792,16 +907,17 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
   }, [circuitTraceResult, traceSide]);
 
-  // 当lastMove变化时，更新inputMove
+  // 当lastMove变化时，更新positiveMove（如果为空）
   useEffect(() => {
-    if (lastMove && !inputMove) {
-      setInputMove(lastMove);
+    if (lastMove && !positiveMove) {
+      setPositiveMove(lastMove);
     }
-  }, [lastMove, inputMove]);
+  }, [lastMove, positiveMove]);
 
   // 当有效分析FEN变化时：清空待分析移动，避免自动带入旧移动/缓存
   useEffect(() => {
-    setInputMove('');
+    setPositiveMove('');
+    setNegativeMove('');
     setMoveError('');
   }, [effectiveGameFen]);
 
@@ -851,6 +967,22 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   'Negative Trace'
                 )}
               </Button>
+              <Button
+                onClick={() => handleCircuitTrace('both')}
+                disabled={isTracing}
+                variant={isTracing ? 'destructive' : 'outline'}
+                size="sm"
+                className="bg-purple-500 hover:bg-purple-600 text-white"
+              >
+                {isTracing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Tracing中...
+                  </>
+                ) : (
+                  'Both Trace'
+                )}
+              </Button>
             </div>
           </CardTitle>
         </CardHeader>
@@ -895,33 +1027,65 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
               </div>
             </div>
             
-            {/* 移动输入框 */}
+            {/* Positive Move输入框 */}
             <div className="space-y-2">
-              <Label htmlFor="move-input" className="text-sm font-medium text-gray-700">
-                分析的移动 (UCI格式，如：e2e4)
+              <Label htmlFor="positive-move-input" className="text-sm font-medium text-gray-700">
+                Positive Move (UCI格式，如：e2e4)
               </Label>
               <div className="flex gap-2">
                 <Input
-                  id="move-input"
+                  id="positive-move-input"
                   type="text"
-                  placeholder="输入UCI移动或使用最后一步移动"
-                  value={inputMove}
+                  placeholder="输入要促进的UCI移动"
+                  value={positiveMove}
                   onChange={(e) => {
-                    setInputMove(e.target.value);
+                    setPositiveMove(e.target.value);
                     setMoveError('');
-                    // 写入缓存（按当前分析fen）
-                  saveCachedMove(effectiveGameFen, e.target.value);
+                    saveCachedPositiveMove(effectiveGameFen, e.target.value);
                   }}
-                  className={`font-mono ${moveError ? 'border-red-500' : ''}`}
+                  className={`font-mono ${moveError && moveError.includes('Positive') ? 'border-red-500' : ''}`}
                 />
                 <Button
-                  onClick={() => setInputMove(lastMove || '')}
+                  onClick={() => {
+                    const move = lastMove || '';
+                    setPositiveMove(move);
+                    if (move) {
+                      saveCachedPositiveMove(effectiveGameFen, move);
+                    }
+                  }}
                   variant="outline"
                   size="sm"
                   disabled={!lastMove}
                 >
                   使用最后移动
                 </Button>
+              </div>
+              <div className="text-xs text-gray-500">
+                用于Positive Trace和Both Trace（促进此移动）
+              </div>
+            </div>
+            
+            {/* Negative Move输入框 */}
+            <div className="space-y-2">
+              <Label htmlFor="negative-move-input" className="text-sm font-medium text-gray-700">
+                Negative Move (UCI格式，如：e2e4)
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="negative-move-input"
+                  type="text"
+                  placeholder="输入要抑制的UCI移动"
+                  value={negativeMove}
+                  onChange={(e) => {
+                    setNegativeMove(e.target.value);
+                    setMoveError('');
+                    saveCachedNegativeMove(effectiveGameFen, e.target.value);
+                  }}
+                  className={`font-mono ${moveError && moveError.includes('Negative') ? 'border-red-500' : ''}`}
+                />
+              </div>
+              <div className="text-xs text-gray-500">
+                用于Negative Trace和Both Trace（抑制此移动）
               </div>
               {moveError && (
                 <p className="text-sm text-red-600">{moveError}</p>
@@ -945,9 +1109,24 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
             
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
+                <span className="font-medium text-gray-700">Positive Move:</span>
+                <div className="font-mono text-xs bg-green-50 p-2 rounded mt-1 border border-green-200">
+                  {positiveMove || lastMove || '暂无移动'}
+                </div>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700">Negative Move:</span>
+                <div className="font-mono text-xs bg-red-50 p-2 rounded mt-1 border border-red-200">
+                  {negativeMove || '暂无移动'}
+                </div>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
                 <span className="font-medium text-gray-700">将要分析的移动:</span>
                 <div className="font-mono text-xs bg-yellow-50 p-2 rounded mt-1 border border-yellow-200">
-                  {inputMove || lastMove || '暂无移动'}
+                  {positiveMove || negativeMove || lastMove || '暂无移动'}
                 </div>
               </div>
               <div>
@@ -989,10 +1168,11 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
               </div>
             </div>
             
-            {!inputMove && !lastMove && (
+            {!positiveMove && !negativeMove && !lastMove && (
               <div className="text-center py-4 text-gray-500 bg-yellow-50 rounded-lg border border-yellow-200">
-                <p>请输入要分析的移动（UCI格式）或先走一步棋</p>
+                <p>请输入Positive Move或Negative Move（UCI格式）或先走一步棋</p>
                 <p className="text-sm mt-1">例如：e2e4, Nf3, O-O (王车易位用e1g1), O-O-O (后翼易位用e1c1)</p>
+                <p className="text-sm mt-1 text-purple-600">Both Trace需要同时输入Positive Move和Negative Move</p>
               </div>
             )}
           </div>
@@ -1344,7 +1524,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                         Top #{index + 1}
                       </div>
                       <div className="text-xs text-gray-500">
-                        激活强度: {sample.activationStrength.toFixed(3)}
+                        最大激活值: {sample.activationStrength.toFixed(3)}
                       </div>
                     </div>
                     <ChessBoard
