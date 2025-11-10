@@ -47,6 +47,7 @@ interface LayerAnalysis {
     score: number | null;
     prob?: number | null;
   } | null;
+  logit_entropy?: number | null;
 }
 
 interface LogitLensResult {
@@ -307,6 +308,11 @@ export const LogitLensVisualization: React.FC = () => {
                     <CardTitle>Layer {selectedLayer} - Top 10合法移动</CardTitle>
                   </CardHeader>
                   <CardContent>
+                    {typeof currentLayerData.logit_entropy === 'number' && (
+                      <div className="mb-3 text-sm">
+                        <Badge variant="outline">当前层 Logit 熵: {currentLayerData.logit_entropy.toFixed(4)}</Badge>
+                      </div>
+                    )}
                     {analysisResult?.final_top_move_uci && (
                       <div className="mb-3 text-sm">
                         <Badge variant="outline">最终层Top移动: {analysisResult.final_top_move_uci}</Badge>
@@ -389,6 +395,7 @@ export const LogitLensVisualization: React.FC = () => {
                       <TableHeader>
                         <TableRow>
                           <TableHead className="w-24">层级</TableHead>
+                          <TableHead>Logit 熵</TableHead>
                           <TableHead>Top 1</TableHead>
                           <TableHead>Top 2</TableHead>
                           <TableHead>Top 3</TableHead>
@@ -405,6 +412,11 @@ export const LogitLensVisualization: React.FC = () => {
                             <TableRow key={i} className={i === selectedLayer ? 'bg-blue-50' : ''}>
                               <TableCell className="text-sm">
                                 <strong>{`Layer ${i}`}</strong>
+                              </TableCell>
+                              <TableCell>
+                                {typeof layerData?.logit_entropy === 'number'
+                                  ? layerData.logit_entropy.toFixed(4)
+                                  : 'N/A'}
                               </TableCell>
                               {[0, 1, 2].map((rank) => {
                                 const move = top3[rank];

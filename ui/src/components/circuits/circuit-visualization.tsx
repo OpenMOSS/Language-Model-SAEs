@@ -56,6 +56,8 @@ export const CircuitVisualization = () => {
   const [denseNodes, setDenseNodes] = useState<Set<string>>(new Set()); // Dense节点集合
   const [denseThreshold, setDenseThreshold] = useState<string>(''); // Dense阈值（空字符串表示无限大）
   const [checkingDenseFeatures, setCheckingDenseFeatures] = useState(false); // 是否正在检查dense features
+  const [syncingToBackend, setSyncingToBackend] = useState(false); // 是否正在同步到后端
+  const [syncingFromBackend, setSyncingFromBackend] = useState(false); // 是否正在从后端同步
 
   // 多图支持：存放多份原始 JSON 及其文件名
   const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
@@ -1245,6 +1247,183 @@ export const CircuitVisualization = () => {
     }
   }, [clickedId, fetchTopActivations, fetchTokenPredictions]);
 
+  // 同步clerps到后端interpretations
+  const syncClerpsToBackend = useCallback(async () => {
+    if (!originalCircuitJson || !originalCircuitJson.nodes) {
+      alert('⚠️ 没有可用的节点数据');
+      return;
+    }
+    
+    setSyncingToBackend(true);
+    try {
+      // 从metadata中提取analysis_name
+      const metadata = (linkGraphData?.metadata || originalCircuitJson?.metadata) as any;
+      const lorsaAnalysisName = metadata?.lorsa_analysis_name;
+      const tcAnalysisName = metadata?.tc_analysis_name || metadata?.clt_analysis_name;
+      
+      // 准备节点数据
+      const nodes = originalCircuitJson.nodes.map((node: any) => {
+        const parts = node.node_id.split('_');
+        const rawLayer = parseInt(parts[0]) || 0;
+        const featureIdx = parseInt(parts[1]) || 0;
+        const layerForActivation = Math.floor(rawLayer / 2);
+        
+        return {
+          node_id: node.node_id,
+          clerp: node.clerp || '',
+          feature: featureIdx,
+          layer: layerForActivation,
+          feature_type: node.feature_type || ''
+        };
+      });
+      
+      console.log('📤 开始同步clerps到后端:', {
+        totalNodes: nodes.length,
+        nodesWithClerp: nodes.filter((n: any) => n.clerp).length,
+        lorsaAnalysisName,
+        tcAnalysisName
+      });
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/circuit/sync_clerps_to_interpretations`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            nodes: nodes,
+            lorsa_analysis_name: lorsaAnalysisName,
+            tc_analysis_name: tcAnalysisName
+          })
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      
+      const result = await response.json();
+      
+      console.log('✅ 同步完成:', result);
+      
+      alert(
+        `✅ Clerp同步到后端完成！\n\n` +
+        `📊 统计:\n` +
+        `- 总节点数: ${result.total_nodes}\n` +
+        `- 成功同步: ${result.synced}\n` +
+        `- 跳过(无clerp): ${result.skipped}\n` +
+        `- 失败: ${result.errors}`
+      );
+      
+    } catch (error) {
+      console.error('❌ 同步失败:', error);
+      alert(`❌ 同步失败: ${error}`);
+    } finally {
+      setSyncingToBackend(false);
+    }
+  }, [originalCircuitJson, linkGraphData]);
+
+  // 从后端interpretations同步到clerps
+  const syncClerpsFromBackend = useCallback(async () => {
+    if (!originalCircuitJson || !originalCircuitJson.nodes) {
+      alert('⚠️ 没有可用的节点数据');
+      return;
+    }
+    
+    setSyncingFromBackend(true);
+    try {
+      // 从metadata中提取analysis_name
+      const metadata = (linkGraphData?.metadata || originalCircuitJson?.metadata) as any;
+      const lorsaAnalysisName = metadata?.lorsa_analysis_name;
+      const tcAnalysisName = metadata?.tc_analysis_name || metadata?.clt_analysis_name;
+      
+      // 准备节点数据
+      const nodes = originalCircuitJson.nodes.map((node: any) => {
+        const parts = node.node_id.split('_');
+        const rawLayer = parseInt(parts[0]) || 0;
+        const featureIdx = parseInt(parts[1]) || 0;
+        const layerForActivation = Math.floor(rawLayer / 2);
+        
+        return {
+          node_id: node.node_id,
+          feature: featureIdx,
+          layer: layerForActivation,
+          feature_type: node.feature_type || ''
+        };
+      });
+      
+      console.log('📥 开始从后端同步interpretations到clerps:', {
+        totalNodes: nodes.length,
+        lorsaAnalysisName,
+        tcAnalysisName
+      });
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/circuit/sync_interpretations_to_clerps`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            nodes: nodes,
+            lorsa_analysis_name: lorsaAnalysisName,
+            tc_analysis_name: tcAnalysisName
+          })
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      
+      const result = await response.json();
+      
+      console.log('✅ 同步完成:', result);
+      
+      // 更新原始JSON数据
+      const updatedCircuitJson = JSON.parse(JSON.stringify(originalCircuitJson));
+      
+      // 根据返回的updated_nodes更新clerp
+      const updatedNodesMap = new Map(
+        result.updated_nodes.map((n: any) => [n.node_id, n.clerp])
+      );
+      
+      let updatedCount = 0;
+      updatedCircuitJson.nodes.forEach((node: any) => {
+        if (updatedNodesMap.has(node.node_id)) {
+          const newClerp = updatedNodesMap.get(node.node_id);
+          if (newClerp) {
+            node.clerp = newClerp;
+            updatedCount++;
+          }
+        }
+      });
+      
+      // 更新状态
+      setOriginalCircuitJson(updatedCircuitJson);
+      setUpdateCounter(prev => prev + 1);
+      setHasUnsavedChanges(true);
+      
+      alert(
+        `✅ 从后端同步Interpretation完成！\n\n` +
+        `📊 统计:\n` +
+        `- 总节点数: ${result.total_nodes}\n` +
+        `- 找到interpretation: ${result.found}\n` +
+        `- 未找到: ${result.not_found}\n` +
+        `- 实际更新: ${updatedCount}\n\n` +
+        `💡 建议: 点击"导出"按钮保存更新后的文件`
+      );
+      
+    } catch (error) {
+      console.error('❌ 同步失败:', error);
+      alert(`❌ 同步失败: ${error}`);
+    } finally {
+      setSyncingFromBackend(false);
+    }
+  }, [originalCircuitJson, linkGraphData, setOriginalCircuitJson, setUpdateCounter, setHasUnsavedChanges]);
+
   // 检查dense features的函数
   const checkDenseFeatures = useCallback(async () => {
     if (!linkGraphData || !linkGraphData.nodes) {
@@ -1479,6 +1658,50 @@ export const CircuitVisualization = () => {
           <h2 className="text-l">{displayLinkGraphData.metadata.prompt_tokens.join(' ')}</h2>
         </div>
         <div className="flex items-center space-x-2">
+          {/* Clerp同步控件 */}
+          <div className="flex items-center space-x-2 px-3 py-1 bg-blue-50 rounded-md border border-blue-200">
+            <button
+              onClick={syncClerpsToBackend}
+              disabled={syncingToBackend || !originalCircuitJson}
+              className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
+              title="将JSON中所有节点的clerp同步到后端MongoDB的interpretation"
+            >
+              {syncingToBackend ? (
+                <>
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-1"></div>
+                  上传中...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  上传Clerp
+                </>
+              )}
+            </button>
+            <button
+              onClick={syncClerpsFromBackend}
+              disabled={syncingFromBackend || !originalCircuitJson}
+              className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
+              title="从后端MongoDB读取interpretation并同步到JSON节点的clerp"
+            >
+              {syncingFromBackend ? (
+                <>
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-1"></div>
+                  下载中...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                  </svg>
+                  下载Clerp
+                </>
+              )}
+            </button>
+          </div>
+          
           {/* Dense Feature检查控件 */}
           <div className="flex items-center space-x-2 px-3 py-1 bg-gray-100 rounded-md">
             <label className="text-sm text-gray-700">Dense阈值:</label>

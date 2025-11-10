@@ -228,6 +228,15 @@ class IntegratedPolicyLens:
             else:
                 probs = []
 
+            # 计算当前层在合法移动集合上的logit熵（概率越集中熵越小）
+            def _entropy(p_list):
+                import math
+                eps = 1e-12
+                if not p_list:
+                    return None
+                return float(-sum(p * math.log(max(p, eps)) for p in p_list))
+            logit_entropy = _entropy(probs)
+
             # Compute target rank if requested
             target_info = None
             if target_move is not None:
@@ -301,7 +310,8 @@ class IntegratedPolicyLens:
                 'top_legal_moves': current_top_legal_moves,
                 'move_rankings': move_rankings,
                 'target': target_info,
-                'final_top_move': final_top_info
+                'final_top_move': final_top_info,
+                'logit_entropy': logit_entropy,
             }
         
         return {

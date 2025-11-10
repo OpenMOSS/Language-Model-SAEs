@@ -739,6 +739,348 @@ def list_bookmarks(sae_name: Optional[str] = None, sae_series: Optional[str] = N
     }
 
 
+@app.post("/circuit/sync_clerps_to_interpretations")
+def sync_clerps_to_interpretations(request: dict):
+
+    try:
+        nodes = request.get("nodes", [])
+        lorsa_analysis_name = request.get("lorsa_analysis_name")
+        tc_analysis_name = request.get("tc_analysis_name")
+        
+        if not isinstance(nodes, list):
+            raise HTTPException(status_code=400, detail="nodes must be a list")
+        
+        print(f"🔄 开始同步clerps到interpretations:")
+        print(f"   - 节点数量: {len(nodes)}")
+        print(f"   - LoRSA模板: {lorsa_analysis_name}")
+        print(f"   - TC模板: {tc_analysis_name}")
+        
+        synced_count = 0
+        skipped_count = 0
+        error_count = 0
+        results = []
+        
+        for node in nodes:
+            node_id = node.get('node_id')
+            clerp = node.get('clerp')
+            feature_idx = node.get('feature')
+            layer = node.get('layer')
+            feature_type = node.get('feature_type', '').lower()
+            
+            # 跳过没有clerp或clerp为空的节点
+            if not clerp or not isinstance(clerp, str) or clerp.strip() == '':
+                skipped_count += 1
+                continue
+            
+            # 构建SAE名称
+            sae_name = None
+            if 'lorsa' in feature_type:
+                if lorsa_analysis_name:
+                    sae_name = lorsa_analysis_name.replace("{}", str(layer))
+                else:
+                    sae_name = f"lc0-lorsa-L{layer}"
+            elif 'transcoder' in feature_type or 'cross layer transcoder' in feature_type:
+                if tc_analysis_name:
+                    sae_name = tc_analysis_name.replace("{}", str(layer))
+                else:
+                    sae_name = f"lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam"
+            
+            if not sae_name or feature_idx is None:
+                skipped_count += 1
+                continue
+            
+            try:
+                # 解码clerp（如果是URL编码的）
+                import urllib.parse
+                decoded_clerp = urllib.parse.unquote(clerp)
+                
+                # 创建interpretation字典
+                interpretation_dict = {
+                    "text": decoded_clerp,
+                    "method": "circuit_clerp",
+                    "validation": []
+                }
+                
+                # 保存到MongoDB
+                client.update_feature(
+                    sae_name=sae_name,
+                    sae_series=sae_series,
+                    feature_index=feature_idx,
+                    update_data={"interpretation": interpretation_dict}
+                )
+                
+                synced_count += 1
+                results.append({
+                    "node_id": node_id,
+                    "sae_name": sae_name,
+                    "feature_index": feature_idx,
+                    "status": "synced"
+                })
+                
+                print(f"✅ 已同步节点 {node_id}: {sae_name}[{feature_idx}]")
+                
+            except Exception as e:
+                error_count += 1
+                results.append({
+                    "node_id": node_id,
+                    "sae_name": sae_name,
+                    "feature_index": feature_idx,
+                    "status": "error",
+                    "error": str(e)
+                })
+                print(f"❌ 同步节点 {node_id} 失败: {e}")
+        
+        summary = {
+            "total_nodes": len(nodes),
+            "synced": synced_count,
+            "skipped": skipped_count,
+            "errors": error_count,
+            "results": results[:50]  # 只返回前50个详细结果
+        }
+        
+        print(f"✅ 同步完成: {synced_count} 成功, {skipped_count} 跳过, {error_count} 失败")
+        
+        return summary
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
+
+
+@app.post("/circuit/sync_interpretations_to_clerps")
+def sync_interpretations_to_clerps(request: dict):
+    try:
+        nodes = request.get("nodes", [])
+        lorsa_analysis_name = request.get("lorsa_analysis_name")
+        tc_analysis_name = request.get("tc_analysis_name")
+        
+        if not isinstance(nodes, list):
+            raise HTTPException(status_code=400, detail="nodes must be a list")
+        
+        print(f"🔄 开始从interpretations同步到clerps:")
+        print(f"   - 节点数量: {len(nodes)}")
+        print(f"   - LoRSA模板: {lorsa_analysis_name}")
+        print(f"   - TC模板: {tc_analysis_name}")
+        
+        updated_nodes = []
+        found_count = 0
+        not_found_count = 0
+        
+        for node in nodes:
+            node_id = node.get('node_id')
+            feature_idx = node.get('feature')
+            layer = node.get('layer')
+            feature_type = node.get('feature_type', '').lower()
+            
+            # 构建SAE名称
+            sae_name = None
+            if 'lorsa' in feature_type:
+                if lorsa_analysis_name:
+                    sae_name = lorsa_analysis_name.replace("{}", str(layer))
+                else:
+                    sae_name = f"lc0-lorsa-L{layer}"
+            elif 'transcoder' in feature_type or 'cross layer transcoder' in feature_type:
+                if tc_analysis_name:
+                    sae_name = tc_analysis_name.replace("{}", str(layer))
+                else:
+                    sae_name = f"lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam"
+            
+            updated_node = {**node}  # 复制原节点数据
+            
+            if sae_name and feature_idx is not None:
+                try:
+                    # 从MongoDB读取feature
+                    feature = client.get_feature(
+                        sae_name=sae_name,
+                        sae_series=sae_series,
+                        index=feature_idx
+                    )
+                    
+                    if feature and feature.interpretation:
+                        interp = feature.interpretation
+                        if isinstance(interp, dict):
+                            clerp_text = interp.get("text", "")
+                        else:
+                            clerp_text = getattr(interp, "text", "")
+                        
+                        if clerp_text:
+                            updated_node["clerp"] = clerp_text
+                            found_count += 1
+                            print(f"✅ 找到节点 {node_id} 的interpretation: {sae_name}[{feature_idx}]")
+                        else:
+                            not_found_count += 1
+                    else:
+                        not_found_count += 1
+                        
+                except Exception as e:
+                    print(f"⚠️ 读取节点 {node_id} 的interpretation失败: {e}")
+                    not_found_count += 1
+            else:
+                not_found_count += 1
+            
+            updated_nodes.append(updated_node)
+        
+        summary = {
+            "total_nodes": len(nodes),
+            "found": found_count,
+            "not_found": not_found_count,
+            "updated_nodes": updated_nodes
+        }
+        
+        print(f"✅ 同步完成: {found_count} 找到, {not_found_count} 未找到")
+        
+        return summary
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
+
+
+@app.post("/dictionaries/{name}/features/{feature_index}/interpret")
+def interpret_feature(
+    name: str,
+    feature_index: int,
+    type: str,
+    custom_interpretation: Optional[str] = None
+):
+    """
+    处理特征解释：自动生成、自定义保存或验证
+    
+    Args:
+        name: SAE名称
+        feature_index: 特征索引
+        type: 解释类型 (auto/custom/validate)
+        custom_interpretation: 自定义解释文本（type=custom时需要）
+    
+    Returns:
+        Interpretation对象（字典格式）
+    """
+    try:
+        # 获取特征
+        feature = client.get_feature(
+            sae_name=name,
+            sae_series=sae_series,
+            index=feature_index
+        )
+        
+        if feature is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Feature {feature_index} not found in SAE {name}"
+            )
+        
+        if type == "custom":
+            # 保存自定义解释
+            if not custom_interpretation:
+                raise HTTPException(
+                    status_code=400,
+                    detail="custom_interpretation is required for type=custom"
+                )
+            
+            # FastAPI应该已经自动解码了URL编码的参数
+            # 如果仍有问题，可以使用 urllib.parse.unquote 解码
+            import urllib.parse
+            decoded_interpretation = urllib.parse.unquote(custom_interpretation)
+            
+            print(f"📝 收到解释文本:")
+            print(f"   - 原始: {custom_interpretation}")
+            print(f"   - 解码: {decoded_interpretation}")
+            
+            # 创建解释字典（只包含必需字段，其他字段不返回以符合前端schema的optional定义）
+            interpretation_dict = {
+                "text": decoded_interpretation,
+                "method": "custom",
+                "validation": []
+            }
+            
+            # 保存到数据库
+            try:
+                client.update_feature(
+                    sae_name=name,
+                    sae_series=sae_series,
+                    feature_index=feature_index,
+                    update_data={"interpretation": interpretation_dict}
+                )
+            except Exception as update_error:
+                print(f"Failed to update feature interpretation: {update_error}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to save interpretation: {str(update_error)}"
+                )
+            
+            return interpretation_dict
+        
+        elif type == "auto":
+            raise HTTPException(
+                status_code=501,
+                detail="Automatic interpretation is not yet implemented. Please use custom interpretation."
+            )
+        
+        elif type == "validate":
+            if not feature.interpretation:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No interpretation available to validate"
+                )
+            
+            interp = feature.interpretation
+            print(f"📖 读取解释文本: {interp.get('text', '') if isinstance(interp, dict) else getattr(interp, 'text', '')}")
+            
+            if isinstance(interp, dict):
+                result = {
+                    "text": interp.get("text", ""),
+                    "method": interp.get("method", "unknown"),
+                    "validation": interp.get("validation", [])
+                }
+                if interp.get("passed") is not None:
+                    result["passed"] = interp.get("passed")
+                if interp.get("complexity") is not None:
+                    result["complexity"] = interp.get("complexity")
+                if interp.get("consistency") is not None:
+                    result["consistency"] = interp.get("consistency")
+                return result
+            else:
+                # 如果是对象，尝试访问属性
+                result = {
+                    "text": getattr(interp, "text", ""),
+                    "method": getattr(interp, "method", "unknown"),
+                    "validation": getattr(interp, "validation", [])
+                }
+                # 只有当值不是None时才添加可选字段
+                passed = getattr(interp, "passed", None)
+                if passed is not None:
+                    result["passed"] = passed
+                complexity = getattr(interp, "complexity", None)
+                if complexity is not None:
+                    result["complexity"] = complexity
+                consistency = getattr(interp, "consistency", None)
+                if consistency is not None:
+                    result["consistency"] = consistency
+                return result
+        
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid type: {type}. Must be 'auto', 'custom', or 'validate'"
+            )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process interpretation: {str(e)}"
+        )
+
+
 @app.put("/dictionaries/{name}/features/{feature_index}/bookmark")
 def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = None, notes: Optional[str] = None):
     """Update a bookmark with new tags or notes.
