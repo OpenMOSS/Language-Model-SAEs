@@ -4,6 +4,8 @@ import copy
 from typing import List, Tuple, Optional, Dict, Any
 import chess
 from lm_saes.circuit.leela_board import LeelaBoard
+from pathlib import Path
+from safetensors.torch import load_file
 
 
 class IntegratedPolicyLens:
@@ -321,4 +323,292 @@ class IntegratedPolicyLens:
             'target_move': target_move,
             'num_layers': self.num_layers,
             'final_top_move_uci': final_top_move_uci
+        }
+    
+    def load_mean_activation(self, hook_point: str, base_dir: str = None) -> Tuple[torch.Tensor, Optional[int]]:
+        """
+        加载指定hook点的平均激活值
+        
+        Args:
+            hook_point: hook点名称，如 "blocks.0.hook_attn_out"
+            base_dir: 平均值文件的基础目录（可选）
+            
+        Returns:
+            (mean_activation, n_tokens): 平均激活值和token数量
+        """
+        model_name = self.model.cfg.model_name
+        
+        if base_dir is None:
+            if 'BT4' in model_name:
+                model_prefix = 'BT4'
+            elif 'T82' in model_name:
+                model_prefix = 'T82'
+            else:
+                raise ValueError(f"未知的模型名称: {model_name}")
+            
+            # 根据hook点类型确定子目录
+            if 'attn_out' in hook_point:
+                subdir = 'attn_out_mean'
+            elif 'mlp_out' in hook_point:
+                subdir = 'mlp_out_mean'
+            else:
+                raise ValueError(f"未知的hook点类型: {hook_point}")
+            
+            base_dir = f"/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/activations/{model_prefix}/{subdir}"
+
+        safe_name = hook_point.replace(".", "_")
+        file_path = Path(base_dir) / f"{safe_name}_mean.safetensors"
+        
+        if not file_path.exists():
+            raise FileNotFoundError(f"平均值文件不存在: {file_path}")
+
+        data = load_file(str(file_path))
+        mean_activation = data["mean"]
+        n_tokens = data["n_tokens"].item() if "n_tokens" in data else None
+        
+        return mean_activation, n_tokens
+    
+    def analyze_mean_ablation(
+        self, 
+        fen: str, 
+        hook_types: List[str] = None,
+        target_move: Optional[str] = None,
+        topk_vocab: int = 2000
+    ) -> Dict[str, Any]:
+        """
+        对每一层进行Mean Ablation分析
+        
+        Args:
+            fen: FEN字符串
+            hook_types: 要分析的hook类型列表，如 ['attn_out', 'mlp_out']，默认两者都分析
+            target_move: 目标移动（UCI格式，可选）
+            topk_vocab: 考虑多少个顶部logits来搜索合法移动
+            
+        Returns:
+            分析结果字典
+        """
+        if hook_types is None:
+            hook_types = ['attn_out', 'mlp_out']
+        
+        print(f"Analyzing Mean Ablation for FEN: {fen}, target_move: {target_move}")
+        
+        try:
+            board = chess.Board(fen)
+            if board.is_game_over():
+                print("Warning: Game is over for this position")
+        except ValueError as e:
+            print(f"Invalid FEN: {e}")
+            return {"error": f"Invalid FEN: {str(e)}"}
+        
+        # 获取原始输出
+        with torch.no_grad():
+            original_output, original_cache = self.model.run_with_cache(fen, prepend_bos=False)
+        
+        # 获取原始的top移动
+        lboard = LeelaBoard.from_fen(fen, history_synthesis=True)
+        chess_board = chess.Board(fen)
+        legal_uci_set = set(move.uci() for move in chess_board.legal_moves)
+        
+        # 计算原始输出的top移动
+        # original_output是一个list，output[0]是logits tensor，shape为[batch, vocab_size]
+        original_logits = original_output[0]  # shape: [1, 1858]
+        if original_logits.dim() == 2:
+            original_logits_last = original_logits[0, :]  # shape: [1858]
+        elif original_logits.dim() == 1:
+            original_logits_last = original_logits
+        else:
+            raise RuntimeError(f"Unexpected original logits shape: {original_logits.shape}")
+        
+        original_vals, original_idxs = torch.sort(original_logits_last, descending=True)
+        original_vals = original_vals.detach().cpu().numpy()
+        original_idxs = original_idxs.detach().cpu().numpy()
+        original_top_legal_moves = []
+        
+        for idx_val, idx in zip(original_vals, original_idxs):
+            uci = lboard.idx2uci(int(idx))
+            if uci in legal_uci_set:
+                original_top_legal_moves.append({
+                    'idx': int(idx),
+                    'uci': uci,
+                    'score': float(idx_val)
+                })
+            if len(original_top_legal_moves) >= 10:
+                break
+        
+        original_top_move_uci = original_top_legal_moves[0]['uci'] if len(original_top_legal_moves) > 0 else None
+        
+        # 对每一层每个hook类型进行ablation
+        ablation_results = {}
+        
+        for hook_type in hook_types:
+            for layer in range(self.num_layers):
+                hook_point = f"blocks.{layer}.hook_{hook_type}"
+                print(f"Analyzing {hook_point}...")
+                
+                try:
+                    # 加载平均激活值
+                    mean_activation, n_tokens = self.load_mean_activation(hook_point)
+                    mean_activation = mean_activation.to(self.model.cfg.device)
+                    
+                    # 获取原始激活的shape来扩展mean
+                    if hook_point in original_cache:
+                        original_activation = original_cache[hook_point]
+                        batch_size, seq_len = original_activation.shape[:2]
+                        mean_expanded = mean_activation.unsqueeze(0).unsqueeze(0).expand(batch_size, seq_len, -1)
+                        mean_expanded = mean_expanded.to(original_activation.device)
+                    else:
+                        print(f"Warning: {hook_point} not in cache, skipping")
+                        continue
+                    
+                    # 定义hook函数
+                    def mean_ablation_hook(activation, hook):
+                        return mean_expanded.to(activation.device)
+                    
+                    # 运行ablation
+                    with self.model.hooks(fwd_hooks=[(hook_point, mean_ablation_hook)]):
+                        with torch.no_grad():
+                            ablated_output, _ = self.model.run_with_cache(fen, prepend_bos=False)
+                    
+                    # 获取ablated输出的logits
+                    # ablated_output是一个list，output[0]是logits tensor
+                    ablated_logits = ablated_output[0]  # shape: [1, 1858]
+                    if ablated_logits.dim() == 2:
+                        ablated_logits_last = ablated_logits[0, :]  # shape: [1858]
+                    elif ablated_logits.dim() == 1:
+                        ablated_logits_last = ablated_logits
+                    else:
+                        raise RuntimeError(f"Unexpected ablated logits shape: {ablated_logits.shape}")
+                    
+                    # 计算logit差异
+                    logit_diff = original_logits_last - ablated_logits_last
+                    
+                    # 获取ablated后的top移动
+                    topk = min(topk_vocab, ablated_logits_last.numel())
+                    vals, idxs = torch.topk(ablated_logits_last, k=topk)
+                    vals_np = vals.detach().cpu().numpy()
+                    idxs_np = idxs.detach().cpu().numpy()
+                    
+                    ablated_top_legal_moves = []
+                    for score_val, idx_val in zip(vals_np, idxs_np):
+                        uci = lboard.idx2uci(int(idx_val))
+                        if uci in legal_uci_set:
+                            ablated_top_legal_moves.append({
+                                'idx': int(idx_val),
+                                'uci': uci,
+                                'score': float(score_val)
+                            })
+                        if len(ablated_top_legal_moves) >= 10:
+                            break
+                    
+                    # 构建完整的合法移动分数列表
+                    ablated_logits_cpu = ablated_logits_last.detach().cpu()
+                    V = ablated_logits_cpu.numel()
+                    idx_to_uci = [lboard.idx2uci(i) for i in range(V)]
+                    
+                    legal_scores = []
+                    for idx_val, uci in enumerate(idx_to_uci):
+                        if uci in legal_uci_set:
+                            score_val = float(ablated_logits_cpu[idx_val].item())
+                            legal_scores.append((uci, score_val, idx_val))
+                    
+                    legal_scores.sort(key=lambda x: x[1], reverse=True)
+                    
+                    # 计算softmax概率
+                    if len(legal_scores) > 0:
+                        import math
+                        max_logit = max(s for _, s, _ in legal_scores)
+                        exp_vals = [math.exp(s - max_logit) for _, s, _ in legal_scores]
+                        sum_exp = sum(exp_vals)
+                        probs = [ev / sum_exp for ev in exp_vals]
+                    else:
+                        probs = []
+                    
+                    # 计算熵
+                    def _entropy(p_list):
+                        import math
+                        eps = 1e-12
+                        if not p_list:
+                            return None
+                        return float(-sum(p * math.log(max(p, eps)) for p in p_list))
+                    
+                    logit_entropy = _entropy(probs)
+                    
+                    # 目标移动信息
+                    target_info = None
+                    if target_move is not None and target_move in legal_uci_set:
+                        rank = None
+                        t_score = None
+                        t_prob = None
+                        for i, (uci, score_val, idx_val) in enumerate(legal_scores):
+                            if uci == target_move:
+                                rank = i + 1
+                                t_score = score_val
+                                t_prob = probs[i] if i < len(probs) else None
+                                break
+                        target_info = {
+                            'uci': target_move,
+                            'rank': rank,
+                            'score': t_score,
+                            'prob': t_prob
+                        }
+                    
+                    # 原始top移动在ablated后的排名
+                    original_top_info = None
+                    if original_top_move_uci is not None:
+                        o_rank = None
+                        o_score = None
+                        o_prob = None
+                        for i, (uci, score_val, idx_val) in enumerate(legal_scores):
+                            if uci == original_top_move_uci:
+                                o_rank = i + 1
+                                o_score = score_val
+                                o_prob = probs[i] if i < len(probs) else None
+                                break
+                        original_top_info = {
+                            'uci': original_top_move_uci,
+                            'rank': o_rank,
+                            'score': o_score,
+                            'prob': o_prob
+                        }
+                    
+                    # 统计信息
+                    logit_diff_stats = {
+                        'mean': float(logit_diff.mean().item()),
+                        'std': float(logit_diff.std().item()),
+                        'max': float(logit_diff.max().item()),
+                        'min': float(logit_diff.min().item()),
+                        'l2_norm': float(torch.norm(logit_diff).item())
+                    }
+                    
+                    ablation_results[hook_point] = {
+                        'hook_point': hook_point,
+                        'layer': layer,
+                        'hook_type': hook_type,
+                        'top_legal_moves': ablated_top_legal_moves,
+                        'logit_diff_stats': logit_diff_stats,
+                        'target': target_info,
+                        'original_top_move': original_top_info,
+                        'logit_entropy': logit_entropy,
+                        'n_tokens_in_mean': n_tokens
+                    }
+                    
+                except Exception as e:
+                    print(f"Error analyzing {hook_point}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    ablation_results[hook_point] = {
+                        'hook_point': hook_point,
+                        'layer': layer,
+                        'hook_type': hook_type,
+                        'error': str(e)
+                    }
+        
+        return {
+            'fen': fen,
+            'original_top_legal_moves': original_top_legal_moves,
+            'original_top_move_uci': original_top_move_uci,
+            'ablation_results': ablation_results,
+            'target_move': target_move,
+            'num_layers': self.num_layers,
+            'hook_types': hook_types
         }

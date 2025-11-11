@@ -83,7 +83,7 @@ done
 
 cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
 . .venv/bin/activate
-export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1
+export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=5 PYTHONUNBUFFERED=1
 
 LOGDIR="$(pwd)/logs"
 mkdir -p "$LOGDIR"
@@ -97,15 +97,48 @@ done
 
 cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
 . .venv/bin/activate
+export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=6 PYTHONUNBUFFERED=1
+
+LOGDIR="$(pwd)/logs/T82"
+mkdir -p "$LOGDIR"
+
+echo "===> layer 5"
+torchrun --nproc-per-node=1 --master-port=29450\
+  exp/train_tc_T82.py --lr 2e-3 --layer 5 --k 30 --exp_factor 16 \
+  > "$LOGDIR/layer_5.log" 2>&1
+
+
+cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
+. .venv/bin/activate
+export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=7 PYTHONUNBUFFERED=1
+
+LOGDIR="$(pwd)/logs/T82"
+mkdir -p "$LOGDIR"
+
+echo "===> layer 6"
+torchrun --nproc-per-node=1 --master-port=29460\
+  exp/train_tc_T82.py --lr 2e-3 --layer 6 --k 30 --exp_factor 16 \
+  > "$LOGDIR/layer_6.log" 2>&1
+
+
+
+cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
+. .venv/bin/activate
 export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1
 
 LOGDIR="$(pwd)/logs/T82"
 mkdir -p "$LOGDIR"
 
-echo "===> layer 14"
-torchrun --nproc-per-node=1 --master-port=29450\
-  exp/train_tc.py --lr 2e-3 --layer 14 --k 30 --exp_factor 16 \
-  > "$LOGDIR/layer_14.log" 2>&1
+echo "===> layer 7"
+torchrun --nproc-per-node=1 --master-port=29470\
+  exp/train_tc_T82.py --lr 2e-3 --layer 7 --k 30 --exp_factor 16 \
+  > "$LOGDIR/layer_7.log" 2>&1
+
+
+export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1
+torchrun --nproc-per-node=1 --master-port=29470\
+  exp/train_tc_T82.py --lr 2e-3 --layer 7 --k 30 --exp_factor 16
+
 
 
 # BT4

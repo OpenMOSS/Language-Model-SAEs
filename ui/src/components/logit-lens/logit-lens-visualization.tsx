@@ -6,7 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Play, Layers } from 'lucide-react';
+import { Loader2, Play, Layers, Eraser } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -60,6 +61,41 @@ interface LogitLensResult {
   final_top_move_uci?: string | null;
 }
 
+interface AblationData {
+  hook_point: string;
+  layer: number;
+  hook_type: string;
+  top_legal_moves: LayerMoveData[];
+  logit_diff_stats: {
+    mean: number;
+    std: number;
+    max: number;
+    min: number;
+    l2_norm: number;
+  };
+  target: TargetInfo | null;
+  original_top_move: {
+    uci: string;
+    rank: number | null;
+    score: number | null;
+    prob: number | null;
+  } | null;
+  logit_entropy: number | null;
+  n_tokens_in_mean: number | null;
+  error?: string;
+}
+
+interface MeanAblationResult {
+  fen: string;
+  original_top_legal_moves: LayerMoveData[];
+  original_top_move_uci: string | null;
+  ablation_results: Record<string, AblationData>;
+  target_move: string | null;
+  num_layers: number;
+  hook_types: string[];
+  model_used: string;
+}
+
 export const LogitLensVisualization: React.FC = () => {
   const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
   const [targetMove, setTargetMove] = useState('');
@@ -71,6 +107,12 @@ export const LogitLensVisualization: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<LogitLensResult | null>(null);
   const [selectedLayer, setSelectedLayer] = useState<number>(0);
+  
+  // Mean Ablation 相关状态
+  const [isLoadingAblation, setIsLoadingAblation] = useState(false);
+  const [ablationResult, setAblationResult] = useState<MeanAblationResult | null>(null);
+  const [selectedHookType, setSelectedHookType] = useState<string>('attn_out');
+  const [activeTab, setActiveTab] = useState<string>('logit-lens');
 
   // 获取可用模型列表
   const fetchAvailableModels = useCallback(async () => {
@@ -120,6 +162,41 @@ export const LogitLensVisualization: React.FC = () => {
       alert('运行分析失败，请检查后端服务');
     } finally {
       setIsLoading(false);
+    }
+  }, [fen, selectedModel, targetMove]);
+
+  // 运行Mean Ablation分析
+  const runMeanAblation = useCallback(async () => {
+    setIsLoadingAblation(true);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/logit_lens/mean_ablation`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fen,
+          model_name: selectedModel,
+          hook_types: ['attn_out', 'mlp_out'],
+          target_move: targetMove || null,
+          topk_vocab: 2000,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setAblationResult(data);
+        setActiveTab('mean-ablation');
+      } else {
+        const errorText = await response.text();
+        console.error('Mean Ablation分析失败:', errorText);
+        alert(`Mean Ablation分析失败: ${errorText}`);
+      }
+    } catch (error) {
+      console.error('运行Mean Ablation分析失败:', error);
+      alert('运行Mean Ablation分析失败，请检查后端服务');
+    } finally {
+      setIsLoadingAblation(false);
     }
   }, [fen, selectedModel, targetMove]);
 
@@ -221,23 +298,43 @@ export const LogitLensVisualization: React.FC = () => {
                   输入UCI格式的移动来追踪其在各层的排名
                 </div>
               </div>
-              <Button
-                onClick={runAnalysis}
-                disabled={isLoading || !fen.trim()}
-                className="w-full"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    分析中...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 mr-2" />
-                    运行分析
-                  </>
-                )}
-              </Button>
+              <div className="space-y-2">
+                <Button
+                  onClick={runAnalysis}
+                  disabled={isLoading || !fen.trim()}
+                  className="w-full"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      分析中...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2" />
+                      运行Logit Lens分析
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={runMeanAblation}
+                  disabled={isLoadingAblation || !fen.trim()}
+                  className="w-full"
+                  variant="outline"
+                >
+                  {isLoadingAblation ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Mean Ablation分析中...
+                    </>
+                  ) : (
+                    <>
+                      <Eraser className="w-4 h-4 mr-2" />
+                      运行Mean Ablation分析
+                    </>
+                  )}
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
@@ -260,7 +357,20 @@ export const LogitLensVisualization: React.FC = () => {
 
         {/* 右侧：分析结果 */}
         <div className="lg:col-span-2 space-y-4">
-          {analysisResult ? (
+          {(analysisResult || ablationResult) ? (
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="logit-lens" disabled={!analysisResult}>
+                  Logit Lens
+                </TabsTrigger>
+                <TabsTrigger value="mean-ablation" disabled={!ablationResult}>
+                  Mean Ablation
+                </TabsTrigger>
+              </TabsList>
+              
+              {/* Logit Lens标签内容 */}
+              <TabsContent value="logit-lens" className="space-y-4">
+              {analysisResult && (
             <>
               {/* 层选择器 */}
               <Card>
@@ -504,12 +614,199 @@ export const LogitLensVisualization: React.FC = () => {
                 </Card>
               )}
             </>
+          )}
+              </TabsContent>
+              
+              {/* Mean Ablation标签内容 */}
+              <TabsContent value="mean-ablation" className="space-y-4">
+              {ablationResult && (
+                <>
+                  {/* Hook类型选择器 */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center justify-between">
+                        <span>Mean Ablation分析</span>
+                        <Badge variant="outline">
+                          使用模型: {ablationResult.model_used.split('/')[1]}
+                        </Badge>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div>
+                        <label className="text-sm font-medium">选择Hook类型</label>
+                        <Select value={selectedHookType} onValueChange={setSelectedHookType}>
+                          <SelectTrigger className="mt-1">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="attn_out">Attention Out</SelectItem>
+                            <SelectItem value="mlp_out">MLP Out</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="text-sm">
+                        <Badge variant="outline">原始Top移动: {ablationResult.original_top_move_uci || 'N/A'}</Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* 每层Mean Ablation结果汇总 */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>各层Mean Ablation影响 ({selectedHookType})</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>层级</TableHead>
+                              <TableHead>L2 Norm</TableHead>
+                              <TableHead>熵</TableHead>
+                              <TableHead>Top 3移动</TableHead>
+                              {ablationResult.target_move && (
+                                <TableHead>目标移动排名</TableHead>
+                              )}
+                              {ablationResult.original_top_move_uci && (
+                                <TableHead>原Top移动排名</TableHead>
+                              )}
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {Array.from({ length: ablationResult.num_layers }, (_, i) => {
+                              const hookPoint = `blocks.${i}.hook_${selectedHookType}`;
+                              const data = ablationResult.ablation_results[hookPoint];
+                              
+                              if (!data || data.error) {
+                                return (
+                                  <TableRow key={i}>
+                                    <TableCell className="font-medium">Layer {i}</TableCell>
+                                    <TableCell colSpan={5} className="text-red-500">
+                                      错误: {data?.error || '数据不可用'}
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              }
+
+                              const top3 = data.top_legal_moves.slice(0, 3);
+                              
+                              return (
+                                <TableRow key={i}>
+                                  <TableCell className="font-medium">Layer {i}</TableCell>
+                                  <TableCell>
+                                    <Badge variant={data.logit_diff_stats.l2_norm > 10 ? 'destructive' : 'secondary'}>
+                                      {data.logit_diff_stats.l2_norm.toFixed(2)}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell>
+                                    {data.logit_entropy !== null && data.logit_entropy !== undefined
+                                      ? data.logit_entropy.toFixed(4)
+                                      : 'N/A'}
+                                  </TableCell>
+                                  <TableCell>
+                                    <div className="space-y-1">
+                                      {top3.map((move, idx) => {
+                                        const isTarget = ablationResult.target_move === move.uci;
+                                        return (
+                                          <div key={idx} className={`text-xs ${isTarget ? 'font-bold text-yellow-700' : ''}`}>
+                                            {idx + 1}. {move.uci} ({move.score.toFixed(3)})
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </TableCell>
+                                  {ablationResult.target_move && (
+                                    <TableCell>
+                                      {data.target ? (
+                                        <Badge variant={data.target.rank && data.target.rank <= 3 ? 'default' : 'secondary'}>
+                                          #{data.target.rank || 'N/A'}
+                                        </Badge>
+                                      ) : 'N/A'}
+                                    </TableCell>
+                                  )}
+                                  {ablationResult.original_top_move_uci && (
+                                    <TableCell>
+                                      {data.original_top_move ? (
+                                        <Badge variant={data.original_top_move.rank && data.original_top_move.rank <= 3 ? 'default' : 'secondary'}>
+                                          #{data.original_top_move.rank || 'N/A'}
+                                        </Badge>
+                                      ) : 'N/A'}
+                                    </TableCell>
+                                  )}
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* 目标移动追踪 - Mean Ablation版本 */}
+                  {ablationResult.target_move && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>目标移动追踪 (Mean Ablation): {ablationResult.target_move}</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>层级</TableHead>
+                              <TableHead>Hook类型</TableHead>
+                              <TableHead>Ablation后排名</TableHead>
+                              <TableHead>Ablation后分数</TableHead>
+                              <TableHead>Logit差异(L2)</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {ablationResult.hook_types.flatMap((hookType) =>
+                              Array.from({ length: ablationResult.num_layers }, (_, i) => {
+                                const hookPoint = `blocks.${i}.hook_${hookType}`;
+                                const data = ablationResult.ablation_results[hookPoint];
+                                
+                                if (!data || data.error) return null;
+                                
+                                return (
+                                  <TableRow key={`${i}-${hookType}`}>
+                                    <TableCell className="font-medium">Layer {i}</TableCell>
+                                    <TableCell>{hookType}</TableCell>
+                                    <TableCell>
+                                      {data.target && data.target.rank ? (
+                                        <Badge variant={data.target.rank <= 3 ? 'default' : 'secondary'}>
+                                          #{data.target.rank}
+                                        </Badge>
+                                      ) : 'N/A'}
+                                    </TableCell>
+                                    <TableCell>
+                                      {data.target && data.target.score !== null && data.target.score !== undefined
+                                        ? data.target.score.toFixed(4)
+                                        : 'N/A'}
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge variant="outline">
+                                        {data.logit_diff_stats.l2_norm.toFixed(2)}
+                                      </Badge>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              }).filter(Boolean)
+                            )}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
+              )}
+              </TabsContent>
+            </Tabs>
           ) : (
             <Card>
               <CardContent className="py-12">
                 <div className="text-center text-gray-500">
                   <Layers className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>输入FEN并点击"运行分析"开始Logit Lens分析</p>
+                  <p>输入FEN并点击"运行分析"开始Logit Lens或Mean Ablation分析</p>
                 </div>
               </CardContent>
             </Card>

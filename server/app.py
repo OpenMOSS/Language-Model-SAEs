@@ -1849,6 +1849,74 @@ def logit_lens_status():
     }
 
 
+@app.post("/logit_lens/mean_ablation")
+def logit_lens_mean_ablation(request: dict):
+    """
+    运行Mean Ablation分析
+    
+    Args:
+        request: 包含分析参数的请求体
+            - fen: FEN字符串 (必需)
+            - model_name: 模型名称 (可选，默认: lc0/T82-768x15x24h)
+            - hook_types: hook类型列表 (可选，默认: ['attn_out', 'mlp_out'])
+            - target_move: 目标移动UCI (可选)
+            - topk_vocab: 考虑的顶部词汇数量 (可选，默认: 2000)
+    
+    Returns:
+        Mean Ablation分析结果 (JSON格式)
+    """
+    try:
+        # 检查Logit Lens服务是否可用
+        if not LOGIT_LENS_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Logit Lens service not available")
+        
+        # 提取参数
+        fen = request.get("fen")
+        if not fen:
+            raise HTTPException(status_code=400, detail="FEN string is required")
+        
+        model_name = request.get("model_name", "lc0/T82-768x15x24h")
+        hook_types = request.get("hook_types", ['attn_out', 'mlp_out'])
+        target_move = request.get("target_move")
+        topk_vocab = request.get("topk_vocab", 2000)
+        
+        print(f"🔍 运行Mean Ablation分析: FEN={fen[:50]}..., model={model_name}, hooks={hook_types}, target={target_move}")
+        
+        # 获取或创建Logit Lens实例
+        global _logit_lens_instances
+        if model_name not in _logit_lens_instances:
+            # 获取模型
+            hooked_model = get_hooked_model(model_name)
+            # 创建Logit Lens实例
+            _logit_lens_instances[model_name] = IntegratedPolicyLens(hooked_model)
+        
+        lens = _logit_lens_instances[model_name]
+        
+        # 运行Mean Ablation分析
+        result = lens.analyze_mean_ablation(
+            fen=fen,
+            hook_types=hook_types,
+            target_move=target_move,
+            topk_vocab=topk_vocab
+        )
+        
+        if 'error' in result:
+            raise HTTPException(status_code=400, detail=result['error'])
+        
+        print(f"✅ Mean Ablation分析完成，分析了 {result['num_layers']} 层，{len(result['hook_types'])} 种hook类型")
+        
+        return {
+            **result,
+            "model_used": model_name
+        }
+        
+    except Exception as e:
+        print(f"❌ Mean Ablation分析失败: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Mean Ablation analysis failed: {str(e)}")
+
+
 # 新增：走法评测接口（基于Stockfish）
 @app.post("/evaluate_move")
 def evaluate_move(request: dict):

@@ -118,15 +118,7 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
     logger.info("Processing activations for evaluation")
     activations = activation_factory.process()
     evaluator = Evaluator(settings.eval)
-    # print(f'{sae.W_O = }')
-    # print(f'{sae.W_V = }')
-    # print(f'{sae.b_D = }')
-    # print(f'{sae.b_V = }')
-    # print(f'{sae.W_Q = }')
-    # print(f'{sae.W_K = }')
-    # print(f'{sae.b_Q = }')
-    # print(f'{sae.b_K = }')
-    # print(f'{sae.smolgen.compress.weight.data = }')
+
     evaluator.evaluate(sae, activations, wandb_logger)
     logger.info("Evaluation completed")
 
