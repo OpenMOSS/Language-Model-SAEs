@@ -30,14 +30,18 @@ This should automatically run the above `ruff` formatter and linter checks befor
 - Use `import x` for importing packages and modules.
 - Use `from x import y` where `x` is the package prefix and `y` is the module name with no prefix.
 - Use `from x import y as z` in any of the following circumstances:
-  - Two modules named `y` are to be imported.
-  - `y` conflicts with a top-level name defined in the current module.
-  - `y` conflicts with a common parameter name that is part of the public API (e.g., `features`).
-  - `y` is an inconveniently long name.
-  - `y` is too generic in the context of your code (e.g., `from storage.file_system import options as fs_options`).
+    - Two modules named `y` are to be imported.
+    - `y` conflicts with a top-level name defined in the current module.
+    - `y` conflicts with a common parameter name that is part of the public API (e.g., `features`).
+    - `y` is an inconveniently long name.
+    - `y` is too generic in the context of your code (e.g., `from storage.file_system import options as fs_options`).
 - Use `import y as z` only when z is a standard abbreviation (e.g., `import numpy as np`).
 - Always use complete absolute path to import first-party modules.
 - For any functions or classes intended to be exposed to users, add them to `__all__` in `__init__.py`.
+
+### Exceptions
+
+WIP
 
 ### Mutable States
 
@@ -53,13 +57,13 @@ While a purely functional style (which avoids mutable states entirely) is prefer
 
 - Use **list/dictionary/set comprehension** to create container types without resorting to procedural loops, `map`, `filter`, etc. The comprehension approach removes temporary mutable states and keeps codes concise.
 
-  !!! success "List Comprehension"
+    !!! success "List Comprehension"
 
         ```python
         arr = [x + 1 for x in range(5)]
         ```
 
-  !!! failure "Loops"
+    !!! failure "Loops"
 
         ```python
         arr = [] # Create an empty container
@@ -67,7 +71,7 @@ While a purely functional style (which avoids mutable states entirely) is prefer
             arr.append(x + 1) # Modify the container
         ```
 
-  !!! failure "Explicit Map"
+    !!! failure "Explicit Map"
 
         ```python
         arr = list(map(lambda x: x + 1, range(5)))
@@ -75,13 +79,13 @@ While a purely functional style (which avoids mutable states entirely) is prefer
 
 - The principle of avoiding "empty first, then fill" applies to other cases as well:
 
-  !!! success "Stack Tensors"
+    !!! success "Stack Tensors"
 
         ```python
         full = torch.stack([part_a, part_b])
         ```
 
-  !!! failure "Fill Empty Tensor"
+    !!! failure "Fill Empty Tensor"
 
         ```python
         full = torch.zeros(2, 5, 5)
@@ -89,7 +93,7 @@ While a purely functional style (which avoids mutable states entirely) is prefer
         full[1] = part_b
         ```
 
-  !!! success "Concatenate Strings"
+    !!! success "Concatenate Strings"
 
         ```python
         message = f"Error: {error_type} at line {line_num}"
@@ -98,7 +102,7 @@ While a purely functional style (which avoids mutable states entirely) is prefer
         message = " ".join(parts)
         ```
 
-  !!! failure "Accumulate Strings"
+    !!! failure "Accumulate Strings"
 
         ```python
         message = "Error: "
@@ -107,7 +111,7 @@ While a purely functional style (which avoids mutable states entirely) is prefer
         message += str(line_num)
         ```
 
-  !!! success "Build Dictionary"
+    !!! success "Build Dictionary"
 
         ```python
         config = {
@@ -117,7 +121,7 @@ While a purely functional style (which avoids mutable states entirely) is prefer
         }
         ```
 
-  !!! failure "Incrementally Fill Dictionary"
+    !!! failure "Incrementally Fill Dictionary"
 
         ```python
         config = {}
@@ -133,7 +137,7 @@ While a purely functional style (which avoids mutable states entirely) is prefer
 
 - Avoid in-place modifications: create new containers instead of modifying old.
 
-  !!! success "Create New List on Modification"
+    !!! success "Create New List on Modification"
 
         ```python
         arr = list(range(5))
@@ -142,14 +146,14 @@ While a purely functional style (which avoids mutable states entirely) is prefer
         arr = arr + [5]
         ```
 
-  !!! failure "Modify Old List"
+    !!! failure "Modify Old List"
 
         ```python
         arr = list(range(5))
         arr.append(5)
         ```
 
-  !!! success "Create New Dictionary on Modification"
+    !!! success "Create New Dictionary on Modification"
 
         ```python
         config = {
@@ -169,7 +173,7 @@ While a purely functional style (which avoids mutable states entirely) is prefer
         }
         ```
 
-  !!! failure "Modify Old Dictionary"
+    !!! failure "Modify Old Dictionary"
 
         ```python
         config = {
@@ -181,7 +185,7 @@ While a purely functional style (which avoids mutable states entirely) is prefer
 
 - When mutable state is inevitable, limit its scope and preserve the purity of the outer function. Ensure that only a minimal portion of the code has access to the mutable state.
 
-  !!! success "Localized Mutable State"
+    !!! success "Localized Mutable State"
 
         ```python
         def compute_statistics(data: list[float]) -> dict[str, float]:
@@ -199,7 +203,7 @@ While a purely functional style (which avoids mutable states entirely) is prefer
             return stats  # Return new object, no external mutation
         ```
 
-  !!! failure "Leaked Mutable State"
+    !!! failure "Leaked Mutable State"
 
         ```python
         # Global mutable state
@@ -220,20 +224,115 @@ While a purely functional style (which avoids mutable states entirely) is prefer
 
 ### Tensor Computation
 
+PyTorch provides a wide range of tensor operations. However, most can be decomposed into basic operators. As a library for interpretability, we encourage using [einops](https://github.com/arogozhnikov/einops) for better readability, since it explicitly specifies input shapes, output shapes, and semantic dimensions instead of numeric indices.
+
+- Use `einops.einsum` to perform tensor products, including batch matrix multiplication and more complex operations. Use full names for dimensions, e.g., `batch` instead of `b`. Matrix multiplication can be written as `x @ y` for simplicity.
+
+- Use `einops.rearrange` to perform reshape, transpose, permute, squeeze, and unsqueeze operations while explicitly showing how dimensions change.
+
+    !!! success "Rearrange"
+        ```python
+        a = torch.randn(2, 3, 4)
+        b = einops.rearrange(
+            a, "batch n_context d_model -> (batch n_context) d_model"
+        )
+        c = einops.rearrange(b, "batch d_model -> d_model batch")
+        ```
+    
+    !!! failure "Other Operators"
+        ```python
+        a = torch.randn(2, 3, 4)
+        b = a.reshape(6, 4)
+        c = b.t()
+        ```
+
+- Use `einops.reduce` to perform reductions over specific dimensions. Only use `.mean()` or `.sum()` for overall reductions that produce a scalar output.
+
+    !!! success "Reduce"
+        ```python
+        a = torch.randn(2, 3, 4)
+        b = einops.reduce(a, "batch n_context d_model -> d_model", "sum")
+        ```
+
+    !!! failure "Direct Reduction"
+        ```python
+        a = torch.randn(2, 3, 4)
+        b = a.sum(dim=[0, 1])  # Unclear what dimensions 0 and 1 represent
+        ```
+
+- Use `einops.repeat` to broadcast or tile tensors along specific dimensions instead of manual reshaping and expanding.
+
+    !!! success "Repeat"
+        ```python
+        a = torch.randn(3, 4)
+        b = einops.repeat(a, "n_context d_model -> batch n_context d_model", batch=2)
+        ```
+
+    !!! failure "Manual Broadcasting"
+        ```python
+        a = torch.randn(3, 4)
+        b = a.unsqueeze(0).expand(2, -1, -1)  # Unclear dimension semantics
+        ```
+
+- Avoid using complicated operators and modules from `torch.nn` and `torch.nn.functional`, unless there're significant performance gaps.
+
+### Distributed Programming
+
+The distributed support in Language-Model-SAEs relies on [DeviceMesh](https://docs.pytorch.org/tutorials/recipes/distributed_device_mesh.html) and [DTensor](https://docs.pytorch.org/docs/stable/distributed.tensor.html). The design of `DeviceMesh` and `DTensor` is heavily inspired by [JAX](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html). `DeviceMesh` allows users to easily manage multi-dimensional parallelism by creating a "mesh" that controls all devices and specifies how different parallelism strategies are distributed across them. Built on `DeviceMesh`, `DTensor` provides a global view of how tensors are distributed across devices, following the SPMD (Single Program, Multiple Data) programming model. With `DTensor`, users can (ideally) work as if they have infinite logical device memory to accommodate large tensors and perform operations on them. `DTensor` automatically splits the data and computation across physical devices based on the `DeviceMesh` it operates on and the sharding strategy it uses.
+
+Below list some rules to better leverage `DTensor` for distributed programming in Language-Model-SAEs:
+
+- Avoid hardcoding `DTensor` placements. Use [DimMap](https://github.com/OpenMOSS/Language-Model-SAEs/blob/main/src/lm_saes/utils/distributed/dimmap.py) (which is designed to be similar to [PartitionSpec](https://docs.jax.dev/en/latest/jax.sharding.html#jax.sharding.PartitionSpec) in JAX) to dynamically generate placements based on current `DeviceMesh`. This allows absence of some specific dimensions in `DeviceMesh`.
+
+    !!! success "DimMap-generated Placements"
+
+        ```python
+        device_mesh = init_device_mesh(
+            device_type="cuda",
+            mesh_shape=(2, 4),
+            mesh_dim_names=("data", "model"),
+        )
+        v = torch.randn(2, 4)
+        v = DTensor.from_local(
+            v,
+            device_mesh=device_mesh,
+            placements=DimMap({"data": 0}).placements(device_mesh), # Generate placements from DimMap
+        )
+        ```
+
+    !!! failure "Hardcoded Placements"
+
+        ```python
+        device_mesh = init_device_mesh(
+            device_type="cuda",
+            mesh_shape=(2, 4),
+            mesh_dim_names=("data", "model"),
+        )
+        v = torch.randn(2, 4)
+        v = DTensor.from_local(
+            v,
+            device_mesh=device_mesh,
+            placements=(Shard(0), Replicate()),
+        )
+        ```
+
+- Avoid set
+        
+
 ### Type Annotation
 
-All codes should be annotated with [type hints](https://docs.python.org/3/library/typing.html). Language-Model-SAEs relys on [basedpyright](https://github.com/DetachHead/basedpyright) to perform static type checking. Below lists some extra rules:
+All codes should be annotated with [type hints](https://docs.python.org/3/library/typing.html). Language-Model-SAEs relys on [basedpyright](https://github.com/DetachHead/basedpyright) to perform static type checking. Below list some extra rules:
 
 - Type hints of generic types should follow [PEP 585](https://peps.python.org/pep-0585/). Use built-in types `list`, `dict`, `set`, etc. rather than types from the `typing` module.
 
-  !!! success "Built-in Types in Type Hints"
+    !!! success "Built-in Types in Type Hints"
 
         ```python
         def find(haystack: dict[str, list[int]]) -> int:
             ...
         ```
 
-  !!! failure "Types from `typing` module"
+    !!! failure "Types from `typing` module"
 
         ```python
         def find(haystack: typing.Dict[str, typing.List[int]]) -> int:
@@ -242,14 +341,14 @@ All codes should be annotated with [type hints](https://docs.python.org/3/librar
 
 - Type hints of union types should follow [PEP 604](https://peps.python.org/pep-0604/) syntax. Use `X | Y` rather than `Union[X, Y]`, and `X | None` rather than `Optional[X]`.
 
-  !!! success "PEP 604 Syntax"
+    !!! success "PEP 604 Syntax"
 
         ```python
         def f(param: int | None) -> float | str:
             ...
         ```
 
-  !!! failure "Old Syntax"
+    !!! failure "Old Syntax"
 
         ```python
         def f(param: Optional[int]) -> Union[float, str]:
@@ -258,14 +357,14 @@ All codes should be annotated with [type hints](https://docs.python.org/3/librar
 
 - Tensors with known shapes should be annotated with `jaxtyping`.
 
-  !!! success "Tensors with Shapes Annotated"
+    !!! success "Tensors with Shapes Annotated"
 
         ```python
         def encode(x: Float[torch.Tensor, "batch n_context d_model"]) -> Float[torch.Tensor, "batch n_context d_sae"]:
             ...
         ```
 
-  !!! failure "Bare Tensor"
+    !!! failure "Bare Tensor"
 
         ```python
         def encode(x: torch.Tensor) -> torch.Tensor:
