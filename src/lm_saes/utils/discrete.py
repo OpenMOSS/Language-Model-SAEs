@@ -34,7 +34,7 @@ class DiscreteMapper:
                 broadcast_list.append(value)
                 counter += 1
             broadcast_list.append(update_hash)
-        torch.distributed.broadcast_object_list(broadcast_list, src=0, group=group)
+        torch.distributed.broadcast_object_list(broadcast_list, group=group, group_src=0)
         self.value_to_int |= broadcast_list[-1]
         self.int_to_value.extend(broadcast_list[:-1])
         self.counter += len(broadcast_list[:-1])
