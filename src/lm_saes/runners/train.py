@@ -1046,13 +1046,13 @@ def sweep_sae(settings: SweepSAESettings) -> None:
         if device_mesh.get_local_rank("sweep") == 0:
             assert activations_stream is not None, "Activations stream must be provided on rank 0 of sweep dimension"
             for activations in activations_stream:
-                dist.broadcast_object_list([activations], group=device_mesh.get_group("sweep"), src=0)
+                dist.broadcast_object_list([activations], group=device_mesh.get_group("sweep"), group_src=0)
                 yield activations
-            dist.broadcast_object_list([None], group=device_mesh.get_group("sweep"), src=0)
+            dist.broadcast_object_list([None], group=device_mesh.get_group("sweep"), group_src=0)
         else:
             while True:
                 objs = [None]
-                dist.broadcast_object_list(objs, group=device_mesh.get_group("sweep"), src=0)
+                dist.broadcast_object_list(objs, group=device_mesh.get_group("sweep"), group_src=0)
                 if objs[0] is None:
                     break
                 activations = {
