@@ -67,9 +67,9 @@ if __name__ == "__main__":
     exp_result_path = Path(args.result_path).expanduser()
     exp_result_path.mkdir(parents=True, exist_ok=True)
 
-    if os.environ.get("WORLD_SIZE", 1) != args.dp * args.tp:
+    if int(os.environ.get("WORLD_SIZE", 1)) != args.dp * args.tp:
         raise ValueError(
-            f"WORLD_SIZE ({os.environ.get('WORLD_SIZE', 1)}) must be equal to dp * tp ({args.dp * args.tp})"
+            f"WORLD_SIZE ({int(os.environ.get('WORLD_SIZE', 1))}) must be equal to dp * tp ({args.dp * args.tp})"
         )
 
     settings = TrainSAESettings(
