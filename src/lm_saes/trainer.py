@@ -373,8 +373,8 @@ class Trainer:
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Sparsity Metrics")
             if self.wandb_logger is not None:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
-            log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
-            log_info["n_frac_active_tokens"] = torch.zeros_like(log_info["n_frac_active_tokens"])
+            log_info["act_freq_scores"].zero_()
+            log_info["n_frac_active_tokens"].zero_()
 
         # Log training metrics periodically
         if (self.cur_step + 1) % self.cfg.log_frequency == 0:
