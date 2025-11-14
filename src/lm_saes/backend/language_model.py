@@ -670,13 +670,10 @@ class LeelaChessModel(TransformerLensLanguageModel):
         self.device = (
             torch.device(f"cuda:{torch.cuda.current_device()}") if cfg.device == "cuda" else torch.device(cfg.device)
         )
-        
-        # 如果用户指定了自定义的 checkpoint 路径，设置环境变量
+
         if cfg.model_from_pretrained_path:
             os.environ["LEELA_PYTORCH_PATH"] = cfg.model_from_pretrained_path
         
-        # 使用 TransformerLens 的标准加载方式
-        print("Loading searchless_chess model using TransformerLens...")
         self.model = HookedTransformer.from_pretrained_no_processing(
             self.cfg.model_name,
             dtype=torch.float32,

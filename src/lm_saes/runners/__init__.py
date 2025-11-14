@@ -6,6 +6,7 @@ from .analyze import (
     analyze_crosscoder,
     analyze_sae,
 )
+from .analyze_entropy import AnalyzeEntropySettings, analyze_entropy
 from .autointerp import AutoInterpSettings, auto_interp
 from .eval import (
     EvaluateCrossCoderSettings,
@@ -43,6 +44,8 @@ __all__ = [
     "sweep_sae",
     "AnalyzeSAESettings",
     "analyze_sae",
+    "AnalyzeEntropySettings",
+    "analyze_entropy",
     "AnalyzeCrossCoderSettings",
     "analyze_crosscoder",
     "AutoInterpSettings",

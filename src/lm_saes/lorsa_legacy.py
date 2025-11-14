@@ -51,12 +51,10 @@ class SmolGenLorsa(nn.Module):
         self.dense1 = nn.Linear(compressed_size, 256)
         self.ln1 = nn.LayerNorm(256)
         self.dense2 = nn.Linear(256, n_qk_heads * 256)  # Output size for n_qk_heads
-        # print(f"{self.dense2.weight.shape = }")
         self.ln2 = nn.LayerNorm(n_qk_heads * 256)
         
         # Generate attention weights for each head
         self.smol_weight_gen = nn.Linear(256, n_ctx * n_ctx, bias=False)
-        # print(f'{self.smol_weight_gen.weight.shape = }')
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -263,69 +261,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     
     @torch.no_grad()
     def init_lorsa_with_mhsa(self, encoder_layer):
-        assert self.cfg.n_qk_heads % encoder_layer.n_heads == 0
-        input_norm_factor = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_in]
-        output_norm_factor = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_out]
-        
-        qk_exp_factor = self.cfg.n_qk_heads // encoder_layer.n_heads
-        
-        orig_n_heads = encoder_layer.n_heads
-        orig_d_head = encoder_layer.d_model // encoder_layer.n_heads
-        orig_d_model = encoder_layer.d_model
-        orig_W_Q = encoder_layer.mha.q_proj.weight.view(orig_n_heads, orig_d_head, orig_d_model).permute(0, 2, 1)
-        orig_b_Q = encoder_layer.mha.q_proj.bias.view(orig_n_heads, orig_d_head)
-        orig_W_K = encoder_layer.mha.k_proj.weight.view(orig_n_heads, orig_d_head, orig_d_model).permute(0, 2, 1)
-        orig_b_K = encoder_layer.mha.k_proj.bias.view(orig_n_heads, orig_d_head)
-        
-        self.W_Q.copy_(
-            torch.repeat_interleave(orig_W_Q, qk_exp_factor, dim=0).to(self.cfg.dtype) / input_norm_factor
-        )
-        self.b_Q.copy_(
-            torch.repeat_interleave(orig_b_Q, qk_exp_factor, dim=0).to(self.cfg.dtype)
-        )
-        self.W_K.copy_(
-            torch.repeat_interleave(orig_W_K, qk_exp_factor, dim=0).to(self.cfg.dtype) / input_norm_factor
-        )
-        self.b_K.copy_(
-            torch.repeat_interleave(orig_b_K, qk_exp_factor, dim=0).to(self.cfg.dtype)
-        )
-        
-        if self.cfg.use_smolgen:
-            self.smolgen.compress.weight.copy_(encoder_layer.mha.smolgen.compress.weight / input_norm_factor)
-            self.smolgen.dense1.weight.copy_(encoder_layer.mha.smolgen.dense1.weight)
-            self.smolgen.dense1.bias.copy_(encoder_layer.mha.smolgen.dense1.bias)
-            self.smolgen.ln1.weight.copy_(encoder_layer.mha.smolgen.ln1.weight)
-            self.smolgen.ln1.bias.copy_(encoder_layer.mha.smolgen.ln1.bias)
-            self.smolgen.dense2.weight.copy_(encoder_layer.mha.smolgen.dense2.weight.repeat_interleave(qk_exp_factor, dim=0))
-            self.smolgen.dense2.bias.copy_(encoder_layer.mha.smolgen.dense2.bias.repeat_interleave(qk_exp_factor, dim=0))
-            self.smolgen.ln2.weight.copy_(encoder_layer.mha.smolgen.ln2.weight.repeat_interleave(qk_exp_factor, dim=0))
-            self.smolgen.ln2.bias.copy_(encoder_layer.mha.smolgen.ln2.bias.repeat_interleave(qk_exp_factor, dim=0))
-            # print(f'{encoder_layer.mha.smolgen.smol_weight_gen.weight.shape = }')
-            # print(f'{self.smolgen.smol_weight_gen.weight.shape =  }')
-            # self.smolgen.smol_weight_gen.weight.copy_(encoder_layer.mha.smolgen.smol_weight_gen.weight.repeat_interleave(qk_exp_factor, dim=0))
-            self.smolgen.smol_weight_gen.weight.copy_(encoder_layer.mha.smolgen.smol_weight_gen.weight)
-        
-        # orig_W_V = encoder_layer.mha.v_proj.weight
-        # orig_b_V = encoder_layer.mha.v_proj.bias
-        # orig_W_O = encoder_layer.mha.out_proj.weight.T
-        # orig_b_O = encoder_layer.mha.out_proj.bias
-        
-        # self.W_V.copy_(
-        #     orig_W_V.to(self.cfg.dtype) / input_norm_factor
-        # )
-        # self.b_V.copy_(
-        #     orig_b_V.to(self.cfg.dtype)
-        # )
-        # self.W_O.copy_(
-        #     orig_W_O.to(self.cfg.dtype) * output_norm_factor
-        # )
-        # self.b_D.copy_(
-        #     orig_b_O.to(self.cfg.dtype) * output_norm_factor
-        # )
-        
-    
-    @torch.no_grad()
-    def init_lorsa_with_mhsa_legacy(self, encoder_layer):
         """Initialize Lorsa with Original Multi Head Sparse Attention for LeelaChess"""
         assert self.cfg.n_qk_heads % encoder_layer.n_heads == 0
         input_norm_factor = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_in]
@@ -452,55 +387,11 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             print(f"[ov init pre-scale] b_D first10: {_first10_param(o_bias)}")
             self.b_D.data = o_bias / output_norm_factor
 
-    @torch.no_grad()
-    def init_W_D_with_active_subspace_per_head(self, activation_batch: dict[str, torch.Tensor], encoder_layer):
-        """
-        Initialize W_D with the active subspace for each head.
-        """
-        orig_n_heads = encoder_layer.n_heads
-        orig_d_model = encoder_layer.d_model
-        orig_d_head = orig_d_model // orig_n_heads
-        n_ov_per_orig_head = self.cfg.n_ov_heads // orig_n_heads
-        W_V = encoder_layer.mha.v_proj.weight.view(orig_n_heads, orig_d_head, orig_d_model).permute(0, 2, 1)
-        W_O = encoder_layer.mha.out_proj.weight.T.view(orig_n_heads, orig_d_head, orig_d_model)
-        
-        x, _ = self.prepare_input(activation_batch)
-        captured_z = None
-        def capture_hook(z, hook):
-            nonlocal captured_z
-            captured_z = z.clone().detach()
-            return z
-        handle = encoder_layer.mha.hook_z.add_hook(capture_hook)
-        _ = encoder_layer.forward(x)
-        output_per_head = torch.einsum('b n s h, n h d -> b s n d', captured_z, W_O)
-        
-        for orig_head_index in range(orig_n_heads):
-            output = output_per_head[:, :, orig_head_index, :]
-            output_flattened = output.flatten(0, 1)
-            demeaned_output = output_flattened - output_flattened.mean(dim=0)
-            U, S, V = torch.svd(demeaned_output.T.to(torch.float32))
-            proj_weight = U[:, : self.cfg.d_qk_head]
-            self.W_O[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head] = (
-                self.W_O[
-                    orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head,
-                    : self.cfg.d_qk_head,
-                ]
-                @ proj_weight.T
-            )
-            self.W_V[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head] = (
-                self.W_O[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head]
-                @ (W_V[orig_head_index] @ W_O[orig_head_index]).T
-            )
-        self.W_V.copy_(self.W_V / self.W_V.norm(dim=1, keepdim=True))
-        self.W_O.copy_(self.W_O / self.W_O.norm(dim=1, keepdim=True))
-        
-        # _, hidden_pre = self.encode(x, return_hidden_pre=True)
-        # hidden_pre = hidden_pre.flatten(0, 1)
-        # self.b_V.copy_(-hidden_pre.mean(dim=0))
-        
+
+
     @torch.no_grad()
     @torch.autocast(device_type='cuda', dtype=torch.bfloat16)
-    def init_W_D_with_active_subspace_per_head_legacy(self, activation_batch: dict[str, torch.Tensor], encoder_layer):
+    def init_W_D_with_active_subspace_per_head(self, activation_batch: dict[str, torch.Tensor], encoder_layer):
         """
         Initialize W_D with the active subspace for each head.
         """

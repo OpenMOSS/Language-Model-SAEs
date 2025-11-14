@@ -351,23 +351,36 @@ export const FeaturesPage = () => {
             actualSampleGroups = [{ samples: feature.samples }];
           }
           
-          // 查找所有可能包含FEN的sample
-          const chessBoards: JSX.Element[] = [];
-              let totalSamples = 0;
-              let samplesWithText = 0;
-              let samplesWithActivations = 0;
-              let validFENFound = 0;
-          let boardIndex = 0;
+          // 收集所有包含FEN的样本及其信息
+          interface ChessSample {
+            fen: string;
+            sample: any;
+            groupIndex: number;
+            sampleIndex: number;
+            lineIndex: number;
+            activationsArray?: number[];
+            zPatternIndices?: number[][];
+            zPatternValues?: number[];
+            maxActivation: number;
+            analysisName: string;
+            contextId?: number;
+            activeColor: string;
+          }
+          
+          const chessSamples: ChessSample[] = [];
+          let totalSamples = 0;
+          let samplesWithText = 0;
+          let samplesWithActivations = 0;
           let debugInfo: string[] = [];
           
-          // 遍历所有样本组
+          // 遍历所有样本组，收集包含FEN的样本
           for (const [groupIndex, group] of actualSampleGroups.entries()) {
             console.log(`🔍 检查样本组 ${groupIndex}:`, {
               analysisName: group.analysisName,
               samplesCount: group.samples?.length || 0
             });
             
-                totalSamples += group.samples.length;
+            totalSamples += group.samples.length;
                 
             for (const [sampleIndex, sample] of (group.samples || []).entries()) {
               if (sample.text) samplesWithText++;
@@ -394,31 +407,31 @@ export const FeaturesPage = () => {
                 });
               }
                   
-                  if (sample.text) {
-                    const lines = sample.text.split('\n');
-                    
-                    for (const [lineIndex, line] of lines.entries()) {
-                      const trimmed = line.trim();
-                      
+              if (sample.text) {
+                const lines = sample.text.split('\n');
+                
+                for (const [lineIndex, line] of lines.entries()) {
+                  const trimmed = line.trim();
+                  
                   // 检查是否包含FEN格式 - 更宽松的检测
                   // 只要包含8个斜杠分隔的部分，且每部分都是有效的棋子或数字组合
                   if (trimmed.includes('/')) {
-                      const parts = trimmed.split(/\s+/);
+                    const parts = trimmed.split(/\s+/);
+                    
+                    if (parts.length >= 6) {
+                      const [boardPart, activeColor, castling, enPassant, halfmove, fullmove] = parts;
+                      const boardRows = boardPart.split('/');
                       
-                      if (parts.length >= 6) {
-                        const [boardPart, activeColor, castling, enPassant, halfmove, fullmove] = parts;
-                        const boardRows = boardPart.split('/');
-                        
-                        if (boardRows.length === 8) {
+                      if (boardRows.length === 8) {
                         let isValidBoard = true;
                         let totalSquares = 0;
                         
-                          // 检查每一行是否符合FEN格式
-                          for (const row of boardRows) {
-                            if (!/^[rnbqkpRNBQKP1-8]+$/.test(row)) {
+                        // 检查每一行是否符合FEN格式
+                        for (const row of boardRows) {
+                          if (!/^[rnbqkpRNBQKP1-8]+$/.test(row)) {
                             isValidBoard = false;
-                              break;
-                            }
+                            break;
+                          }
                           
                           // 计算每行的格子数
                           let rowSquares = 0;
@@ -438,8 +451,10 @@ export const FeaturesPage = () => {
                           console.log(`棋盘行:`, boardRows);
                           console.log(`总格子数:`, totalSquares);
                           
-                          // 构建激活值数组
+                          // 构建激活值数组并计算最大激活值
                           let activationsArray: number[] | undefined = undefined;
+                          let maxActivation = 0;
+                          
                           if ((sample as any).featureActsIndices && (sample as any).featureActsValues) {
                             activationsArray = new Array(64).fill(0);
                             const indices = (sample as any).featureActsIndices;
@@ -447,12 +462,17 @@ export const FeaturesPage = () => {
                             
                             for (let i = 0; i < Math.min(indices.length, values.length); i++) {
                               const index = indices[i];
+                              const value = values[i];
                               if (index >= 0 && index < 64) {
-                                activationsArray[index] = values[i];
+                                activationsArray[index] = value;
+                                // 计算最大激活值（绝对值）
+                                if (Math.abs(value) > Math.abs(maxActivation)) {
+                                  maxActivation = value;
+                                }
                               }
                             }
                             
-                            console.log(`🎯 构建激活值数组: ${activationsArray.filter(v => v !== 0).length} 个非零值`);
+                            console.log(`🎯 构建激活值数组: ${activationsArray.filter(v => v !== 0).length} 个非零值, 最大激活值: ${maxActivation}`);
                           }
 
                           // 构建Z Pattern数组并打印调试信息
@@ -490,61 +510,80 @@ export const FeaturesPage = () => {
                             }
                           }
 
-                          // 使用 ChessBoard 组件
-                          chessBoards.push(
-                            <ChessBoard
-                              key={`chess-${groupIndex}-${sampleIndex}-${lineIndex}`}
-                              fen={trimmed}
-                              activations={activationsArray}
-                              zPatternIndices={zPatternIndices}
-                              zPatternValues={zPatternValues}
-                              sampleIndex={sampleIndex}
-                              analysisName={group.analysisName || ''}
-                              contextId={(sample as any).context_idx}
-                              autoFlipWhenBlack={true}
-                              flip_activation={Boolean(activeColor === 'b')}
-                              showSelfPlay={true}
-                            />
-                          );
+                          // 收集样本信息
+                          chessSamples.push({
+                            fen: trimmed,
+                            sample,
+                            groupIndex,
+                            sampleIndex,
+                            lineIndex,
+                            activationsArray,
+                            zPatternIndices,
+                            zPatternValues,
+                            maxActivation,
+                            analysisName: group.analysisName || '',
+                            contextId: (sample as any).context_idx,
+                            activeColor
+                          });
                           
-                          validFENFound++;
-                          console.log(`🎯 生成棋盘 ${validFENFound}: ${trimmed.substring(0, 50)}...`);
                           break; // 找到一个有效FEN就跳出行循环
-                          } else {
-                          debugInfo.push(`FEN验证失败: ${trimmed.substring(0, 30)}...`);
-                          }
                         } else {
-                        debugInfo.push(`行数错误: ${boardRows.length}行`);
+                          debugInfo.push(`FEN验证失败: ${trimmed.substring(0, 30)}...`);
                         }
                       } else {
-                      debugInfo.push(`部分不足: ${parts.length}个`);
+                        debugInfo.push(`行数错误: ${boardRows.length}行`);
                       }
+                    } else {
+                      debugInfo.push(`部分不足: ${parts.length}个`);
                     }
-                }
                   }
                 }
               }
+            }
+          }
           
-          console.log('🎯 分析完成: 找到 ' + validFENFound + ' 个FEN，生成 ' + chessBoards.length + ' 个棋盘');
-              
-              if (chessBoards.length > 0) {
+          // 按照最大激活值从大到小排序
+          chessSamples.sort((a, b) => Math.abs(b.maxActivation) - Math.abs(a.maxActivation));
+          
+          console.log('🎯 分析完成: 找到 ' + chessSamples.length + ' 个FEN样本');
+          console.log('🎯 排序后的最大激活值:', chessSamples.slice(0, 10).map(s => s.maxActivation.toFixed(3)));
+          
+          // 生成棋盘组件
+          const chessBoards: JSX.Element[] = chessSamples.map((chessSample, index) => (
+            <ChessBoard
+              key={`chess-${chessSample.groupIndex}-${chessSample.sampleIndex}-${chessSample.lineIndex}-${index}`}
+              fen={chessSample.fen}
+              activations={chessSample.activationsArray}
+              zPatternIndices={chessSample.zPatternIndices}
+              zPatternValues={chessSample.zPatternValues}
+              sampleIndex={chessSample.sampleIndex}
+              analysisName={chessSample.analysisName}
+              contextId={chessSample.contextId}
+              autoFlipWhenBlack={true}
+              flip_activation={Boolean(chessSample.activeColor === 'b')}
+              showSelfPlay={true}
+            />
+          ));
+          
+          const validFENFound = chessSamples.length;
+          
+          if (chessBoards.length > 0) {
             console.log(`🎯 生成了 ${chessBoards.length} 个棋盘`);
-                
-                return (
+            
+            return (
               <div className="w-full max-w-6xl mx-auto mb-8">
                 <div className="text-center mb-6">
                   <h3 className="text-xl font-bold mb-2">Feature #{feature.featureIndex} 棋盘可视化</h3>
                   <div className="text-sm text-gray-600">
-                    找到 {validFENFound} 个包含FEN的样本
-                      </div>
-                    </div>
-                    
-                    
+                    找到 {validFENFound} 个包含FEN的样本（按最大激活值排序）
+                  </div>
+                </div>
+                
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {chessBoards}
-                                    </div>
-                                  </div>
-                                );
+                </div>
+              </div>
+            );
           } else {
             // 如果没有找到棋盘，显示调试信息
             return (
@@ -553,24 +592,24 @@ export const FeaturesPage = () => {
                   <h3 className="text-lg font-bold text-yellow-800 mb-4">⚠️ 未找到棋盘可视化</h3>
                   <div className="text-sm text-yellow-700 mb-4">
                     <strong>Feature #{feature.featureIndex}</strong> (激活次数: {feature.actTimes})
-                            </div>
-                            
+                  </div>
+                  
                   <div className="text-xs text-yellow-600 mb-4">
                     <strong>数据统计:</strong><br/>
                     • 总样本数: {totalSamples}<br/>
                     • 找到的FEN: {validFENFound}
-                            </div>
-                            
+                  </div>
+                  
                   <div className="text-xs text-yellow-500 mt-4">
                     💡 可能的原因：<br/>
                     1. 样本中没有包含FEN格式的文本<br/>
                     2. 样本数据结构与预期不符
-                            </div>
-                    </div>
                   </div>
-                );
-              }
-            })()}
+                </div>
+              </div>
+            );
+          }
+        })()}
             
         {!featureLoading && currentFeature && (
             <div className="flex gap-12 w-full">

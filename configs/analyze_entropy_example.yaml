@@ -1,0 +1,64 @@
+# Example configuration for feature activation entropy analysis
+# This config analyzes how SAE features distribute across different piece types
+
+sae_name: "example_sae"
+sae_series: "test_series"
+
+# SAE configuration
+sae:
+  sae_type: "sae"  # or "clt", "lorsa"
+  d_sae: 32768
+  d_model: 1024
+  dtype: "bfloat16"
+  device: "cuda"
+  checkpoint_path: "/path/to/sae/checkpoint.pt"
+
+# Model configuration
+model_name: "leela_chess_model"  # Name registered in MongoDB
+model:
+  model_type: "leela_chess"
+  model_path: "/path/to/model"
+  device: "cuda"
+
+# Dataset configuration
+datasets:
+  train:
+    dataset_type: "leela_chess"
+    data_path: "/path/to/dataset"
+    split: "train"
+    # Make sure the dataset provides FEN strings in metadata
+    # The metadata should include "fen" field for each sample
+
+# Activation factory configuration
+activation_factory:
+  source: "dataset"  # or "model", "file"
+  hook_points: ["blocks.10.hook_resid_post"]
+  batch_size: 32
+  context_size: 64
+  shuffle: true
+
+# Analyzer configuration
+analyzer:
+  total_analyzing_tokens: 1000000  # Number of tokens to analyze
+  enable_sampling: false  # Not needed for entropy analysis
+  subsamples: {}  # Empty for entropy analysis
+  ignore_token_ids: [0, 1]  # Pad tokens to ignore
+  # For CLT models:
+  # clt_layer: 10
+
+# MongoDB configuration
+mongo:
+  host: "localhost"
+  port: 27017
+  database: "chess_sae_analysis"
+  username: null
+  password: null
+
+# Device configuration
+device_type: "cuda"
+model_parallel_size: 1  # Set > 1 for distributed processing
+amp_dtype: "bfloat16"
+
+# Optional: save detailed results to JSON file
+output_file: "/path/to/output/entropy_results.json"
+
