@@ -46,8 +46,8 @@ class FeatureAnalysis(BaseModel):
     act_times: int
     max_feature_acts: float
     decoder_norms: Optional[list[float]] = None
-    decoder_similarity_matrix: Optional[list[list[float]]] = None
-    decoder_inner_product_matrix: Optional[list[list[float]]] = None
+    decoder_similarity_matrices: Optional[list[list[float]]] = None
+    decoder_inner_product_matrices: Optional[list[list[float]]] = None
     n_analyzed_tokens: Optional[int] = None
     act_times_modalities: Optional[dict[str, float]] = None
     max_feature_acts_modalities: Optional[dict[str, float]] = None

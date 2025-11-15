@@ -233,6 +233,7 @@ class FeatureAnalyzer:
 
             # Get feature activations from SAE
             x, encoder_kwargs, _ = sae.prepare_input(batch)
+            tokens = batch["tokens"]
             feature_acts: torch.Tensor = sae.encode(x, **encoder_kwargs)
             if isinstance(feature_acts, DTensor):
                 assert device_mesh is not None, "Device mesh is required for DTensor feature activations"
@@ -246,16 +247,18 @@ class FeatureAnalyzer:
                     )
                     # TODO: Remove this once redistributing across device meshes is supported
                 feature_acts = feature_acts.redistribute(placements=DimMap({"model": -1}).placements(device_mesh))
+                if not isinstance(tokens, DTensor):
+                    tokens = DTensor.from_local(tokens, device_mesh, placements=DimMap({}).placements(device_mesh))
             if isinstance(sae, CrossCoder):
-                feature_acts = feature_acts.max(dim=-2).values
+                feature_acts = feature_acts.amax(dim=-2)
             if isinstance(sae, LowRankSparseAttention) and sae.cfg.skip_bos:
                 feature_acts[:, 0, :] = 0
-            assert feature_acts.shape == (batch["tokens"].shape[0], batch["tokens"].shape[1], sae.cfg.d_sae), (
-                f"feature_acts.shape: {feature_acts.shape}, expected: {(batch['tokens'].shape[0], batch['tokens'].shape[1], d_sae_local)}"
+            assert feature_acts.shape == (tokens.shape[0], tokens.shape[1], sae.cfg.d_sae), (
+                f"feature_acts.shape: {feature_acts.shape}, expected: {(tokens.shape[0], tokens.shape[1], sae.cfg.d_sae)}"
             )
 
             # Compute ignore token masks
-            ignore_token_masks = self.compute_ignore_token_masks(batch["tokens"], self.cfg.ignore_token_ids)
+            ignore_token_masks = self.compute_ignore_token_masks(tokens, self.cfg.ignore_token_ids)
             feature_acts *= rearrange(ignore_token_masks, "batch_size n_ctx -> batch_size n_ctx 1")
 
             # Update activation statistics
@@ -286,7 +289,7 @@ class FeatureAnalyzer:
             )
 
             # Update progress
-            n_tokens_current = batch["tokens"].numel()
+            n_tokens_current = tokens.numel()
             n_tokens += n_tokens_current
             n_analyzed_tokens += cast(int, ignore_token_masks.int().sum().item())
             pbar.update(n_tokens_current)
