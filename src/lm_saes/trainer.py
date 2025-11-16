@@ -406,6 +406,8 @@ class Trainer:
             explained_variance_legacy = 1 - per_token_l2_loss / total_variance
             l2_loss_mean = per_token_l2_loss.mean(dim=0)
             total_variance_mean = total_variance.mean(dim=0)
+            if torch.isinf(total_variance_mean):
+                logger.warning("total_variance_mean is inf; check dtype or scaling.")
             explained_variance = 1 - l2_loss_mean / total_variance_mean
 
             # Add model-specific training metrics (may modify l0 shape)
@@ -525,7 +527,8 @@ class Trainer:
                     )
 
                     if not self.cfg.skip_metrics_calculation:
-                        self._log(sae, log_info, batch)
+                        with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
+                            self._log(sae, log_info, batch)
 
                     with timer.time("refresh_batch"):
                         del batch
