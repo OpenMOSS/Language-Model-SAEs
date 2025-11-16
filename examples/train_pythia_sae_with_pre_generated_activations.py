@@ -70,7 +70,7 @@ if __name__ == "__main__":
         ),
         wandb=WandbConfig(
             wandb_project="lm-saes",
-            exp_name="pythia-160m-sae-d",
+            exp_name="pythia-160m-sae",
         ),
         activation_factory=ActivationFactoryConfig(
             sources=[
@@ -86,7 +86,7 @@ if __name__ == "__main__":
             batch_size=4096,
             buffer_size=None,
         ),
-        sae_name="pythia-160m-sae-d",
+        sae_name="pythia-160m-sae",
         sae_series="pythia-sae",
         data_parallel_size=args.dp,
         model_parallel_size=args.tp,
