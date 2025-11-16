@@ -35,7 +35,6 @@ if __name__ == "__main__":
         initializer=InitializerConfig(
             grid_search_init_norm=True,
             init_log_jumprelu_threshold_value=math.log(0.1),
-            init_encoder_with_decoder_transpose_factor=1.0,
         ),
         trainer=TrainerConfig(
             lr=5e-5,
