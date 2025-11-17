@@ -320,9 +320,8 @@ class ReplacementModel(HookedTransformer):
         zero_bos: bool = False,
         sparse: bool = False,
         apply_activation_function: bool = True,
-    ) -> Tuple[List, List, List[Tuple[str, Callable]]]:  # 修正返回类型
-        """获取激活缓存hooks - 处理MLP和注意力"""
-        print("go into get_activation_caching hooks")
+    ) -> Tuple[List, List, List[Tuple[str, Callable]]]:
+
         activation_matrix = [None] * self.cfg.n_layers * 2
         lorsa_attention_pattern = [None] * self.cfg.n_layers
         
@@ -355,7 +354,7 @@ class ReplacementModel(HookedTransformer):
             )
             for layer in range(self.cfg.n_layers)
         ]
-
+        print("init activation_hooks")
         def cache_activations_mlp(acts, hook, layer, zero_bos):
             # 使用individual SAE而不是CrossLayerTranscoder
             transcoder_acts = self.transcoders[str(layer)].encode(

@@ -342,13 +342,13 @@ def get_patching_analyzer(metadata: Optional[Dict[str, Any]] = None) -> Patching
             transcoders = {}
             for layer in range(15):
                 # 根据路径类型选择不同的路径格式
-                if 'result_BT4' in tc_base_path:
-                    # BT4路径格式: _L{layer}M
-                    tc_path = f"{tc_base_path}/L{layer}"
-                else:
-                    # 默认T82路径格式
-                    tc_path = f"{tc_base_path}/lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam"
-                
+                # if 'result_BT4' in tc_base_path:
+                #     # BT4路径格式: _L{layer}M
+                #     tc_path = f"{tc_base_path}/L{layer}"
+                # else:
+                #     # 默认T82路径格式
+                #     tc_path = f"{tc_base_path}/lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam"
+                tc_path = f"{tc_base_path}/L{layer}"
                 print(f"📁 加载TC L{layer}: {tc_path}")
                 transcoders[layer] = SparseAutoEncoder.from_pretrained(
                     tc_path,
@@ -360,13 +360,13 @@ def get_patching_analyzer(metadata: Optional[Dict[str, Any]] = None) -> Patching
             lorsas = []
             for layer in range(15):
                 # 根据路径类型选择不同的路径格式
-                if 'result_BT4' in lorsa_base_path:
-                    # BT4路径格式: BT4_lorsa_L{layer}A
-                    lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
-                else:
-                    # 默认T82路径格式
-                    lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr8e-05_k_aux4096_coefficient0.0625_dead_threshold1000000"
-                
+                # if 'result_BT4' in lorsa_base_path:
+                #     # BT4路径格式: BT4_lorsa_L{layer}A
+                #     lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
+                # else:
+                #     # 默认T82路径格式
+                #     lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr8e-05_k_aux4096_coefficient0.0625_dead_threshold1000000"
+                lorsa_path = f"{lorsa_base_path}/L{layer}"
                 print(f"📁 加载LORSA L{layer}: {lorsa_path}")
                 lorsas.append(LowRankSparseAttention.from_pretrained(
                     lorsa_path, 

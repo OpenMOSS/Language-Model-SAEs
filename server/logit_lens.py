@@ -314,7 +314,206 @@ class IntegratedPolicyLens:
                 'target': target_info,
                 'final_top_move': final_top_info,
                 'logit_entropy': logit_entropy,
+                'legal_scores': legal_scores,  # 保存完整分数列表用于KL散度计算
+                'probs': probs,  # 保存概率分布用于KL散度计算
             }
+        
+        # 计算层间KL散度和JSD（用于检测相变）
+        def _kl_divergence(p_probs, q_probs, p_legal_scores, q_legal_scores):
+            """
+            计算KL散度 KL(P||Q)
+            
+            Args:
+                p_probs: P分布的概率列表（与p_legal_scores对应）
+                q_probs: Q分布的概率列表（与q_legal_scores对应）
+                p_legal_scores: P分布的(uci, score, idx)列表
+                q_legal_scores: Q分布的(uci, score, idx)列表
+            
+            Returns:
+                KL散度值
+            """
+            import math
+            eps = 1e-12
+            
+            # 构建uci到概率的映射
+            p_dict = {uci: prob for (uci, _, _), prob in zip(p_legal_scores, p_probs)}
+            q_dict = {uci: prob for (uci, _, _), prob in zip(q_legal_scores, q_probs)}
+            
+            # 获取所有合法移动的并集
+            all_moves = set(p_dict.keys()) | set(q_dict.keys())
+            
+            if not all_moves:
+                return None
+            
+            kl_sum = 0.0
+            for uci in all_moves:
+                p_val = p_dict.get(uci, eps)  # 如果移动不在P中，使用很小的值
+                q_val = q_dict.get(uci, eps)  # 如果移动不在Q中，使用很小的值
+                
+                # 避免log(0)和除以0
+                if p_val > eps and q_val > eps:
+                    kl_sum += p_val * math.log(p_val / q_val)
+            
+            return float(kl_sum)
+        
+        def _js_divergence(p_probs, q_probs, p_legal_scores, q_legal_scores):
+            """
+            计算Jensen-Shannon散度 JSD(P||Q)
+            
+            JSD(P||Q) = 0.5 * KL(P||M) + 0.5 * KL(Q||M)
+            其中 M = 0.5 * (P + Q)
+            
+            JSD是一个真正的度量（满足对称性、非负性、三角不等式），范围在[0, 1]之间（如果使用log2）或[0, ln(2)]之间（如果使用自然对数）
+            
+            Args:
+                p_probs: P分布的概率列表（与p_legal_scores对应）
+                q_probs: Q分布的概率列表（与q_legal_scores对应）
+                p_legal_scores: P分布的(uci, score, idx)列表
+                q_legal_scores: Q分布的(uci, score, idx)列表
+            
+            Returns:
+                JSD值
+            """
+            import math
+            eps = 1e-12
+            
+            # 构建uci到概率的映射
+            p_dict = {uci: prob for (uci, _, _), prob in zip(p_legal_scores, p_probs)}
+            q_dict = {uci: prob for (uci, _, _), prob in zip(q_legal_scores, q_probs)}
+            
+            # 获取所有合法移动的并集
+            all_moves = set(p_dict.keys()) | set(q_dict.keys())
+            
+            if not all_moves:
+                return None
+            
+            # 计算平均分布 M = 0.5 * (P + Q)
+            m_dict = {}
+            for uci in all_moves:
+                p_val = p_dict.get(uci, eps)
+                q_val = q_dict.get(uci, eps)
+                m_dict[uci] = 0.5 * (p_val + q_val)
+            
+            # 计算 JSD = 0.5 * KL(P||M) + 0.5 * KL(Q||M)
+            kl_pm = 0.0
+            kl_qm = 0.0
+            
+            for uci in all_moves:
+                p_val = p_dict.get(uci, eps)
+                q_val = q_dict.get(uci, eps)
+                m_val = m_dict[uci]
+                
+                # 计算 KL(P||M)
+                if p_val > eps and m_val > eps:
+                    kl_pm += p_val * math.log(p_val / m_val)
+                
+                # 计算 KL(Q||M)
+                if q_val > eps and m_val > eps:
+                    kl_qm += q_val * math.log(q_val / m_val)
+            
+            jsd = 0.5 * kl_pm + 0.5 * kl_qm
+            return float(jsd)
+        
+        # 计算相邻层之间的KL散度
+        layer_kl_divergences = []
+        for layer in range(1, self.num_layers):
+            prev_layer_data = layer_analysis.get(f'layer_{layer-1}')
+            curr_layer_data = layer_analysis.get(f'layer_{layer}')
+            
+            if prev_layer_data and curr_layer_data:
+                prev_probs = prev_layer_data.get('probs', [])
+                curr_probs = curr_layer_data.get('probs', [])
+                prev_legal_scores = prev_layer_data.get('legal_scores', [])
+                curr_legal_scores = curr_layer_data.get('legal_scores', [])
+                
+                if prev_probs and curr_probs:
+                    kl_forward = _kl_divergence(
+                        curr_probs, prev_probs,
+                        curr_legal_scores, prev_legal_scores
+                    )  # KL(当前层||前一层的分布)
+                    kl_backward = _kl_divergence(
+                        prev_probs, curr_probs,
+                        prev_legal_scores, curr_legal_scores
+                    )  # KL(前一层的分布||当前层)
+                    
+                    # 计算真正的Jensen-Shannon散度（JSD）
+                    # JSD是一个真正的度量，满足对称性、非负性和三角不等式
+                    jsd = _js_divergence(
+                        prev_probs, curr_probs,
+                        prev_legal_scores, curr_legal_scores
+                    )
+                    
+                    layer_kl_divergences.append({
+                        'from_layer': layer - 1,
+                        'to_layer': layer,
+                        'kl_forward': kl_forward,  # KL(当前||前一层)
+                        'kl_backward': kl_backward,  # KL(前一层||当前)
+                        'jsd': jsd,  # Jensen-Shannon散度（真正的度量）
+                    })
+                else:
+                    layer_kl_divergences.append({
+                        'from_layer': layer - 1,
+                        'to_layer': layer,
+                        'kl_forward': None,
+                        'kl_backward': None,
+                        'jsd': None,
+                    })
+            else:
+                layer_kl_divergences.append({
+                    'from_layer': layer - 1,
+                    'to_layer': layer,
+                    'kl_forward': None,
+                    'kl_backward': None,
+                    'jsd': None,
+                })
+        
+        # 计算每层相对于最终层的KL散度
+        final_layer_data = layer_analysis.get(f'layer_{self.num_layers-1}')
+        layer_to_final_kl = []
+        if final_layer_data:
+            final_probs = final_layer_data.get('probs', [])
+            final_legal_scores = final_layer_data.get('legal_scores', [])
+            
+            for layer in range(self.num_layers):
+                layer_data = layer_analysis.get(f'layer_{layer}')
+                if layer_data:
+                    layer_probs = layer_data.get('probs', [])
+                    layer_legal_scores = layer_data.get('legal_scores', [])
+                    
+                    if layer_probs and final_probs:
+                        kl_to_final = _kl_divergence(
+                            final_probs, layer_probs,
+                            final_legal_scores, layer_legal_scores
+                        )  # KL(最终层||当前层)
+                        kl_from_final = _kl_divergence(
+                            layer_probs, final_probs,
+                            layer_legal_scores, final_legal_scores
+                        )  # KL(当前层||最终层)
+                        jsd = _js_divergence(
+                            layer_probs, final_probs,
+                            layer_legal_scores, final_legal_scores
+                        )  # JSD(当前层||最终层)
+                        
+                        layer_to_final_kl.append({
+                            'layer': layer,
+                            'kl_to_final': kl_to_final,
+                            'kl_from_final': kl_from_final,
+                            'jsd': jsd,  # Jensen-Shannon散度
+                        })
+                    else:
+                        layer_to_final_kl.append({
+                            'layer': layer,
+                            'kl_to_final': None,
+                            'kl_from_final': None,
+                            'jsd': None,
+                        })
+                else:
+                    layer_to_final_kl.append({
+                        'layer': layer,
+                        'kl_to_final': None,
+                        'kl_from_final': None,
+                        'jsd': None,
+                    })
         
         return {
             'fen': fen,
@@ -322,7 +521,9 @@ class IntegratedPolicyLens:
             'layer_analysis': layer_analysis,
             'target_move': target_move,
             'num_layers': self.num_layers,
-            'final_top_move_uci': final_top_move_uci
+            'final_top_move_uci': final_top_move_uci,
+            'layer_kl_divergences': layer_kl_divergences,  # 相邻层之间的KL散度
+            'layer_to_final_kl': layer_to_final_kl,  # 每层相对于最终层的KL散度
         }
     
     def load_mean_activation(self, hook_point: str, base_dir: str = None) -> Tuple[torch.Tensor, Optional[int]]:

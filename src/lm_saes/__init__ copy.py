@@ -1,5 +1,7 @@
 from .activation import ActivationFactory, ActivationWriter
+from .activation_functions import JumpReLU
 from .analysis import FeatureAnalyzer
+from .clt import CrossLayerTranscoder
 from .lorsa import LowRankSparseAttention
 from .config import (
     ActivationFactoryActivationsSource,
@@ -8,6 +10,7 @@ from .config import (
     ActivationFactoryTarget,
     ActivationWriterConfig,
     BufferShuffleConfig,
+    CLTConfig,
     CrossCoderConfig,
     DatasetConfig,
     FeatureAnalyzerConfig,
@@ -22,26 +25,32 @@ from .config import (
 )
 from .crosscoder import CrossCoder
 from .database import MongoClient
-
+from .evaluator import EvalConfig, Evaluator
 from .resource_loaders import load_dataset, load_model
 from .runners import (
     AnalyzeCrossCoderSettings,
     AnalyzeSAESettings,
     AutoInterpSettings,
+    EvaluateCrossCoderSettings,
+    EvaluateSAESettings,
     GenerateActivationsSettings,
+    TrainLorsaSettings,
+    train_lorsa,
     SweepingItem,
     SweepSAESettings,
+    TrainCLTSettings,
     TrainCrossCoderSettings,
     TrainSAESettings,
-    TrainLorsaSettings,
     analyze_crosscoder,
     analyze_sae,
     auto_interp,
+    evaluate_crosscoder,
+    evaluate_sae,
     generate_activations,
     sweep_sae,
+    train_clt,
     train_crosscoder,
     train_sae,
-    train_lorsa,
 )
 from .sae import SparseAutoEncoder
 from .circuit import ReplacementModel, attribute
@@ -49,9 +58,12 @@ from .circuit import ReplacementModel, attribute
 __all__ = [
     "ActivationFactory",
     "ActivationWriter",
+    "CLTConfig",
+    "CrossLayerTranscoder",
     "CrossCoderConfig",
     "CrossCoder",
     "SparseAutoEncoder",
+    "JumpReLU",
     "LanguageModelConfig",
     "DatasetConfig",
     "ActivationFactoryActivationsSource",
@@ -63,6 +75,12 @@ __all__ = [
     "load_dataset",
     "load_model",
     "FeatureAnalyzer",
+    "EvaluateCrossCoderSettings",
+    "evaluate_crosscoder",
+    "EvaluateSAESettings",
+    "Evaluator",
+    "EvalConfig",
+    "evaluate_sae",
     "GenerateActivationsSettings",
     "generate_activations",
     "InitializerConfig",
@@ -71,13 +89,13 @@ __all__ = [
     "WandbConfig",
     "train_sae",
     "TrainSAESettings",
+    "TrainCLTSettings",
+    "train_clt",
     "AnalyzeSAESettings",
     "analyze_sae",
     "FeatureAnalyzerConfig",
     "MongoDBConfig",
     "MongoClient",
-    "MixCoderConfig",
-    "MixCoder",
     "AnalyzeCrossCoderSettings",
     "analyze_crosscoder",
     "AutoInterpSettings",

@@ -1,3 +1,5 @@
+import functools
+import operator
 import os
 import warnings
 from typing import Any, Iterable, Optional, cast
@@ -100,11 +102,17 @@ def convert_torch_dtype_to_str(dtype: torch.dtype) -> str:
         raise ValueError(f"Unsupported data type: {dtype}. Supported data types: {list(dtype_str_map.values())}.")
 
 
-def gather_tensors_from_specific_rank(tensor, dst=0):
-    world_size = dist.get_world_size()
-    gathered_tensors = [torch.zeros_like(tensor) for _ in range(world_size)] if dist.get_rank() == dst else None
-    dist.gather(tensor, gather_list=gathered_tensors, dst=dst)
-    return gathered_tensors if dist.get_rank() == dst else None
+def all_gather_tensor(tensor, group: Optional[torch.distributed.ProcessGroup] = None):
+    world_size = dist.get_world_size(group=group)
+    tensor_meta = {"shape": tensor.shape, "dtype": tensor.dtype}
+    meta_list: list[dict[str, Any] | None] = [None for _ in range(world_size)]
+    dist.all_gather_object(meta_list, tensor_meta, group=group)
+    gathered_tensors = [
+        torch.empty(rank_meta["shape"], dtype=rank_meta["dtype"], device=tensor.device)
+        for rank_meta in cast(list[dict[str, Any]], meta_list)
+    ]
+    dist.all_gather(gathered_tensors, tensor, group=group)
+    return gathered_tensors
 
 
 def get_tensor_from_specific_rank(tensor, src=0):
@@ -112,7 +120,7 @@ def get_tensor_from_specific_rank(tensor, src=0):
     return tensor
 
 
-def all_reduce_tensor(tensor, aggregate="none"):
+def all_reduce_tensor(tensor, aggregate: str, group: Optional[torch.distributed.ProcessGroup] = None):
     _OP_MAP = {
         "sum": dist.ReduceOp.SUM,
         "mean": dist.ReduceOp.SUM,  # Use SUM for mean, but will need to divide by world size
@@ -120,12 +128,13 @@ def all_reduce_tensor(tensor, aggregate="none"):
         "max": dist.ReduceOp.MAX,
         "product": dist.ReduceOp.PRODUCT,
     }
+    assert aggregate in _OP_MAP, f"Unsupported aggregate: {aggregate}. Supported aggregates: {list(_OP_MAP.keys())}."
 
     # gathered_tensors = [torch.zeros_like(tensor) for _ in range(world_size)]
     tensor = all_reduce(tensor, op=_OP_MAP[aggregate])
     assert tensor is not None, "All reduce failed"
     if aggregate == "mean":
-        tensor = tensor / dist.get_world_size()
+        tensor = tensor / dist.get_world_size(group=group)
     return tensor
 
 
@@ -163,6 +172,7 @@ def calculate_activation_norm(
             break
         for key in hook_points:
             if key not in activation_norm:
+                print(f"batch[{key}] = {batch[key]}")
                 activation_norm[key] = batch[key].norm(p=2, dim=1)
             else:
                 activation_norm[key] = torch.cat((activation_norm[key], batch[key].norm(p=2, dim=1)), dim=0)
@@ -217,7 +227,7 @@ def all_gather_dict(
 ) -> list[dict[str, Any]]:
     """
     All-gather a dictionary across all ranks. For each key, if the value is a tensor, use torch.distributed.all_gather
-    (with CUDA tensors by default); otherwise, use all_gather_object. Returns a list of dicts, one per rank.
+    (supporting uneven sized tensors); otherwise, use all_gather_object. Returns a list of dicts, one per rank.
 
     Args:
         data: Dictionary to all-gather. Tensor values should be on the correct device.
@@ -230,17 +240,21 @@ def all_gather_dict(
     keys = list(data.keys())
     gathered_dicts: list[dict[str, Any]] = [dict() for _ in range(world_size)]
 
-    # Get local GPU device
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    expected_device = torch.device(f"cuda:{local_rank}")
-
     # Gather each key separately
     for k in keys:
         v = data[k]
         if isinstance(v, torch.Tensor):
-            v = v.to(expected_device)
-            # Prepare list for gathered tensors
-            output = [torch.empty_like(v) for _ in range(world_size)]
+            # First, gather tensor metadata (shape, dtype) from all ranks
+            tensor_meta = {"shape": v.shape, "dtype": v.dtype}
+            meta_list: list[dict[str, Any] | None] = [None for _ in range(world_size)]
+            dist.all_gather_object(meta_list, tensor_meta, group=group)
+
+            # Create output tensors with correct shapes for each rank
+            output = [
+                torch.empty(rank_meta["shape"], dtype=rank_meta["dtype"], device=v.device)
+                for rank_meta in cast(list[dict[str, Any]], meta_list)
+            ]
+            # Now perform all_gather with correctly sized tensors
             dist.all_gather(output, v, group=group)
             for i, t in enumerate(output):
                 gathered_dicts[i][k] = t
@@ -251,3 +265,28 @@ def all_gather_dict(
             for i, obj in enumerate(object_list):
                 gathered_dicts[i][k] = obj
     return gathered_dicts
+
+
+def get_mesh_dim_size(device_mesh: DeviceMesh | None, mesh_dim: str) -> int:
+    if device_mesh is None:
+        return 1
+    assert device_mesh is not None
+    assert device_mesh.mesh_dim_names is not None, "Device mesh does not have mesh dimension names"
+    return device_mesh.get_group(mesh_dim).size() if mesh_dim in device_mesh.mesh_dim_names else 1
+
+
+def get_mesh_rank(device_mesh: DeviceMesh | None) -> int:
+    """Get the rank of the current process in the device mesh. Computed through the coordinate of the device mesh.
+
+    Args:
+        device_mesh: Device mesh to get the rank from.
+
+    Returns:
+        Rank of the current process in the device mesh.
+    """
+    if device_mesh is None:
+        return 0
+    coord = device_mesh.get_coordinate()
+    shape = device_mesh.shape
+    assert coord is not None, "Device mesh does not have coordinate"
+    return sum(coord[i] * functools.reduce(operator.mul, shape[i + 1 :], 1) for i in range(len(coord)))

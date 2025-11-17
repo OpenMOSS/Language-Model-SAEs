@@ -1,4 +1,6 @@
 win or go home 2k5/4Q3/3P4/8/6p1/4p3/q1pbK3/1R6 b - - 0 32
 sacrifice queen r5k1/5ppp/1n3q2/3Q4/8/8/8/4R1K1 w - - 0 1
+after sacrifice queen n5k1/5ppp/5q2/8/8/8/8/4R1K1 w - - 0 2
 fork 8/2R2ppp/4p3/p6k/6R1/4P2P/3q1PP1/6K1 b - - 2 33
+after fork 8/2R2ppp/4p3/p6k/6R1/4P2P/5PPK/3q4 b - - 4 34
 Sicilian Opening rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2

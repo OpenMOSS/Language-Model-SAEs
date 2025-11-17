@@ -12,6 +12,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PlainSerializer,
+    root_validator,
     WithJsonSchema,
 )
 
@@ -58,11 +59,12 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     act_fn: Literal["relu", "jumprelu", "topk", "batchtopk"] = "relu"
     norm_activation: str = "dataset-wise"
     sparsity_include_decoder_norm: bool = True
+    force_unit_decoder_norm: bool = False
     top_k: int = 50
     sae_pretrained_name_or_path: Optional[str] = None
     strict_loading: bool = True
     use_triton_kernel: bool = False
-    sparsity_threshold_for_triton_spmm_kernel: float = 0.996
+    sparsity_threshold_for_triton_spmm_kernel: float = 0.99
     circuit_tracing_mode: bool = False
     
     # anthropic jumprelu
@@ -119,10 +121,29 @@ class SAEConfig(BaseSAEConfig):
     hook_point_in: str
     hook_point_out: str
     use_glu_encoder: bool = False
+    d_feature: Optional[int] = None
+    init_with_svd: bool = True
+    proj_data: bool = False
+    fold_data_proj_into_sae_step: float = 2.0  # >1.0 means not fold
     use_auxk: bool = False
     dead_threshold: int = 100_000  # Threshold for marking latents as dead (10 million tokens)
     k_aux: int = 512  # Number of dead latents to use for AuxK loss
     aux_coefficient: float = 1.0 / 32  # Weight coefficient for AuxK loss (alpha)
+
+    @root_validator(pre=True)
+    def validate_proj_data_and_svd(cls, values: dict[str, any]) -> dict[str, any]:
+        """Validate projection data and SVD settings, and set d_feature to d_model if d_feature is None."""
+        d_feature = values.get("d_feature")
+        d_model = values.get("d_model")
+        proj_data = values.get("proj_data", False)
+        init_with_svd = values.get("init_with_svd", True)
+
+        # Set d_feature to d_model if d_feature is None
+        if d_feature is None:
+            values["d_feature"] = d_model
+            d_feature = d_model
+
+        return values
 
     @property
     def associated_hook_points(self) -> list[str]:
@@ -241,12 +262,14 @@ class CrossCoderConfig(BaseSAEConfig):
 
 class InitializerConfig(BaseConfig):
     bias_init_method: Literal["all_zero", "geometric_median"] = "all_zero"
+    init_decoder_norm: float | None = None
     decoder_uniform_bound: float = 1.0
+    init_encoder_norm: float | None = None
     encoder_uniform_bound: float = 1.0
     init_encoder_with_decoder_transpose: bool = True
     init_encoder_with_decoder_transpose_factor: float = 1.0
     init_log_jumprelu_threshold_value: float | None = None
-    # init_search: bool = False
+    init_search: bool = False
     # state: Literal["training", "inference"] = "training"
     grid_search_init_norm: bool = False
     initialize_W_D_with_active_subspace: bool = False
@@ -256,6 +279,7 @@ class InitializerConfig(BaseConfig):
     initialize_lorsa_smolgen_from_encoder: bool = False
     initialize_W_D_with_mhsa: bool = False
     initialize_lorsa_attn_scale_from_encoder: bool = False
+    state: Literal["training", "inference"] = "training"
 
 
 class TrainerConfig(BaseConfig):
@@ -285,9 +309,15 @@ class TrainerConfig(BaseConfig):
     gradient_accumulation_steps: int = 1
     
     lr: float | dict[str, float] = 0.0004
+    lr_fold: float | None = None
     betas: Tuple[float, float] = (0.9, 0.999)
-    optimizer_class: Literal["adam", "sparseadam"] = "adam"
-    optimizer_foreach: bool = True
+    optimizer_type: Literal["adam", "lazyadam"] = "adam"
+    update_param_on_zero_grad: bool = False
+    update_exp_avg_on_zero_grad: bool = False
+    update_exp_avg_sq_on_zero_grad: bool = False
+    betas: Tuple[float, float] = (0.9, 0.999)
+    momentum: float = 0.9
+    weight_decay: float = 0.0
     lr_scheduler_name: Literal[
         "constant",
         "constantwithwarmup",

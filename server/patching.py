@@ -228,7 +228,7 @@ def get_patching_analyzer() -> PatchingAnalyzer:
                 transcoders[layer] = SparseAutoEncoder.from_pretrained(
                     (f'/inspire/hdd/global_user/hezhengfu-240208120186/'
                      f'rlin_projects/rlin_projects/chess-SAEs/result/tc/'
-                     f'lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam'),
+                     f'L{layer}'),
                     dtype=torch.float32,
                     device='cuda',
                 )
@@ -239,8 +239,7 @@ def get_patching_analyzer() -> PatchingAnalyzer:
                 lorsas.append(LowRankSparseAttention.from_pretrained(
                     (f'/inspire/hdd/global_user/hezhengfu-240208120186/'
                      f'rlin_projects/rlin_projects/chess-SAEs/result/lorsa/'
-                     f'lc0_L{layer}_bidirectional_lr8e-05_k_aux4096_'
-                     f'coefficient0.0625_dead_threshold1000000'), 
+                     f'L{layer}'), 
                     device='cuda'
                 ))
             

@@ -1,7 +1,6 @@
 import math
 from typing import Any, Literal, Union, overload
 
-import einops
 import torch
 import torch.distributed.tensor
 from jaxtyping import Float
@@ -27,26 +26,19 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         self.cfg = cfg
 
         if device_mesh is None:
-            self.W_E = nn.Parameter(torch.empty(cfg.d_feature, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+            self.W_E = nn.Parameter(torch.empty(cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
             self.b_E = nn.Parameter(torch.empty(cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
-            self.W_D = nn.Parameter(torch.empty(cfg.d_sae, cfg.d_feature, device=cfg.device, dtype=cfg.dtype))
+            self.W_D = nn.Parameter(torch.empty(cfg.d_sae, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
             if cfg.use_decoder_bias:
-                self.b_D = nn.Parameter(torch.empty(cfg.d_feature, device=cfg.device, dtype=cfg.dtype))
+                self.b_D = nn.Parameter(torch.empty(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
 
             if cfg.use_glu_encoder:
-                self.W_E_glu = nn.Parameter(torch.empty(cfg.d_feature, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+                self.W_E_glu = nn.Parameter(torch.empty(cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
                 self.b_E_glu = nn.Parameter(torch.empty(cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
-            
-            if self.cfg.proj_data:
-                self.register_buffer('proj_weight', torch.empty(cfg.d_model, cfg.d_feature, device=cfg.device, dtype=cfg.dtype))
-                self.register_buffer('proj_bias', torch.empty(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
-                if cfg.init_with_svd:
-                    self.register_buffer('relative_sigular_value', torch.empty(cfg.d_model, dtype=cfg.dtype))
-                self.register_buffer('variance_factor', torch.tensor(1.0, device=cfg.device, dtype=cfg.dtype))
         else:
             self.W_E = nn.Parameter(
                 torch.distributed.tensor.empty(
-                    cfg.d_feature,
+                    cfg.d_model,
                     cfg.d_sae,
                     dtype=cfg.dtype,
                     device_mesh=device_mesh,
@@ -64,7 +56,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             self.W_D = nn.Parameter(
                 torch.distributed.tensor.empty(
                     cfg.d_sae,
-                    cfg.d_feature,
+                    cfg.d_model,
                     dtype=cfg.dtype,
                     device_mesh=device_mesh,
                     placements=self.dim_maps()["W_D"].placements(device_mesh),
@@ -73,7 +65,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             if cfg.use_decoder_bias:
                 self.b_D = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        cfg.d_feature,
+                        cfg.d_model,
                         dtype=cfg.dtype,
                         device_mesh=device_mesh,
                         placements=self.dim_maps()["b_D"].placements(device_mesh),
@@ -82,7 +74,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             if cfg.use_glu_encoder:
                 self.W_E_glu = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        cfg.d_feature,
+                        cfg.d_model,
                         cfg.d_sae,
                         dtype=cfg.dtype,
                         device_mesh=device_mesh,
@@ -97,29 +89,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
                         placements=self.dim_maps()["b_E_glu"].placements(device_mesh),
                     )
                 )
-            
-            if self.cfg.proj_data:
-                self.register_buffer('proj_weight', torch.distributed.tensor.empty(
-                    cfg.d_model,
-                    cfg.d_feature,
-                    dtype=cfg.dtype,
-                    device_mesh=device_mesh,
-                    placements=self.dim_maps()["proj_weight"].placements(device_mesh),
-                ))
-                self.register_buffer('proj_bias', torch.distributed.tensor.empty(
-                    cfg.d_model,
-                    dtype=cfg.dtype,
-                    device_mesh=device_mesh,
-                    placements=self.dim_maps()["proj_bias"].placements(device_mesh),
-                ))
-                if cfg.init_with_svd:
-                    self.register_buffer('relative_sigular_value', torch.distributed.tensor.empty(
-                        cfg.d_model,
-                        dtype=cfg.dtype,
-                        device_mesh=device_mesh,
-                        placements=self.dim_maps()["relative_sigular_value"].placements(device_mesh),
-                    ))
-                self.register_buffer('variance_factor', torch.tensor(1.0, device=cfg.device, dtype=cfg.dtype))
 
         self.hook_hidden_pre = HookPoint()
         self.hook_feature_acts = HookPoint()
@@ -195,20 +164,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def set_encoder_to_fixed_norm(self, value: float):
         self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
-    @override
-    @torch.no_grad()
-    def full_state_dict(self):  # should be overridden by subclasses
-        state_dict = super().full_state_dict()
-
-        # If force_unit_decoder_norm is True, we need to normalize the decoder weight before saving
-        # We use a deepcopy to avoid modifying the original weight to avoid affecting the training progress
-        if self.cfg.force_unit_decoder_norm:
-            state_dict["W_D"] = self.W_D.data.clone()  # deepcopy
-            decoder_norm = torch.norm(state_dict["W_D"], p=2, dim=0, keepdim=True)
-            state_dict["W_D"] = state_dict["W_D"] / decoder_norm
-
-        return state_dict
-
     def dim_maps(self) -> dict[str, DimMap]:
         """Return a dictionary mapping parameter names to dimension maps.
 
@@ -221,11 +176,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             "W_D": DimMap({"model": 0}),
             "b_E": DimMap({"model": 0}),
         }
-        if self.cfg.proj_data:
-            sae_maps["proj_weight"] = DimMap({})
-            sae_maps["proj_bias"] = DimMap({})
-            if self.cfg.init_with_svd:
-                sae_maps["relative_sigular_value"] = DimMap({})
         if self.cfg.use_decoder_bias:
             sae_maps["b_D"] = DimMap({})
         if self.cfg.use_glu_encoder:
@@ -295,6 +245,62 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         self.W_D.mul_(input_norm_factor / output_norm_factor)
         self.cfg.norm_activation = "inference"
 
+    # @torch.no_grad()
+    # def standardize_parameters_of_dataset_norm(
+    #     self, dataset_average_activation_norm: dict[str, float] | None = None
+    # ):
+    #     assert self.cfg.norm_activation == "dataset-wise"
+    #     assert self.dataset_average_activation_norm is not None or dataset_average_activation_norm is not None
+    #     if dataset_average_activation_norm is not None:
+    #         self.set_dataset_average_activation_norm(dataset_average_activation_norm)
+    #     assert self.dataset_average_activation_norm is not None
+
+    #     # 1) 计算标量（Python float）
+    #     input_norm_factor: float = (
+    #         math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_in]
+    #     )
+    #     output_norm_factor: float = (
+    #         math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_out]
+    #     )
+
+    #     # 2) 选择目标 dtype 和 device —— 强制使用 torch.float32
+    #     target_dtype = torch.float32
+
+    #     # 尽量取一个已存在参数的 device（优先 b_E，再 fallback 到 model parameters，再 fallback cpu）
+    #     device = None
+    #     if hasattr(self, "b_E") and getattr(self.b_E, "device", None) is not None:
+    #         device = self.b_E.device
+    #     else:
+    #         try:
+    #             # next(self.parameters()) 在没有参数时会抛异常
+    #             device = next(self.parameters()).device
+    #         except StopIteration:
+    #             device = torch.device("cpu")
+
+    #     # 3) 把标量转成 tensor（float32）
+    #     input_norm_factor_t = torch.tensor(input_norm_factor, dtype=target_dtype, device=device)
+    #     output_norm_factor_t = torch.tensor(output_norm_factor, dtype=target_dtype, device=device)
+
+    #     # debug 打印（现在不会报错）
+    #     print(f'{self.cfg.hook_point_in = }')
+    #     print(f'{self.cfg.hook_point_out = }')
+    #     print(f'{self.dataset_average_activation_norm[self.cfg.hook_point_in] = }')
+    #     print(f'{self.dataset_average_activation_norm[self.cfg.hook_point_out] = }')
+    #     print(f'{input_norm_factor_t = }')
+    #     print(f'{output_norm_factor_t = }')  # tensor 会打印 dtype & device
+
+    #     # 4) 用 tensor 做原地修改（广播会生效）
+    #     # 注意：如果 self.b_E / self.b_D / self.W_D 是 DTensor，需要做 DTensor 专用处理（见下方说明）。
+    #     # 一般场景（nn.Parameter / torch.Tensor）下如下写法是安全的：
+    #     self.b_E.div_(input_norm_factor_t)
+    #     if self.cfg.use_decoder_bias:
+    #         assert self.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
+    #         self.b_D.div_(output_norm_factor_t)
+    #     self.W_D.mul_(input_norm_factor_t / output_norm_factor_t)
+
+    #     # 最后切换模式标志
+    #     self.cfg.norm_activation = "inference"
+
     @overload
     def encode(
         self,
@@ -360,11 +366,8 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             If return_hidden_pre is True:
                 Tuple of (feature_acts, hidden_pre) where both have shape (batch, d_sae) or (batch, seq_len, d_sae)
         """
-        # Optionally subtract decoder bias before encoding
-        # if self.cfg.use_decoder_bias and self.cfg.apply_decoder_bias_to_pre_encoder:
-        #     x = x - self.b_D
-
         # Pass through encoder
+        # x = x.to(torch.float64)
         hidden_pre = x @ self.W_E + self.b_E
 
         # Apply GLU if configured
@@ -384,47 +387,29 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         # since it computes a scaling of the input tensor, which is, suppose the common activation function
         # is $f(x)$, then here it computes $f(x) / x$. For simple ReLU case, it computes a mask of 1s and 0s.
         activation_mask = self.activation_function(sparsity_scores)
+        
+
+        nonzero_indices = (activation_mask != 0).nonzero(as_tuple=False)
+
+        # 只取前 10 个
+        first10_idx = nonzero_indices[:10]
+
+        # 对应的值
+        first10_vals = activation_mask[first10_idx[:, 0], *first10_idx[:, 1:].T]
+
+        # 打印结果
+        # for idx, val in zip(first10_idx, first10_vals):
+        #     print('activation_mask')
+        #     print(f"Index: {tuple(idx.tolist())}, Value: {val.item()}")    
+    
+        # end of debugging
+        
         feature_acts = self.hook_feature_acts(hidden_pre * activation_mask)
 
         if return_hidden_pre:
             return feature_acts, hidden_pre
         return feature_acts
 
-    # def decode(
-    #     self,
-    #     feature_acts: Union[
-    #         Float[torch.Tensor, "batch d_sae"],
-    #         Float[torch.Tensor, "batch seq_len d_sae"],
-    #     ],
-    #     **kwargs,
-    # ) -> Union[
-    #     Float[torch.Tensor, "batch d_model"],
-    #     Float[torch.Tensor, "batch seq_len d_model"],
-    # ]:  # may be overridden by subclasses
-    #     max_l0_in_batch = feature_acts.gt(0).to(feature_acts).sum(dim=-1).max()
-    #     sparsity_threshold = self.cfg.d_sae * (1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel)
-    #     if (
-    #         self.cfg.use_triton_kernel and 0 < max_l0_in_batch < sparsity_threshold
-    #     ):  # triton kernel cannot handle empty feature_acts
-    #         from .kernels import decode_with_triton_spmm_kernel
-
-    #         require_precise_feature_acts_grad = "topk" not in self.cfg.act_fn
-    #         reconstructed = decode_with_triton_spmm_kernel(
-    #             feature_acts, self.W_D.T.contiguous(), require_precise_feature_acts_grad
-    #         )  # TODO: remove the transpose
-    #     else:
-    #         reconstructed = feature_acts @ self.W_D
-    #     reconstructed = self.hook_reconstructed(reconstructed)
-
-    #     if isinstance(reconstructed, DTensor):
-    #         reconstructed = DimMap({}).redistribute(reconstructed)
-
-    #     # Add decoder bias if configured (after redistribute for distributed training)
-    #     if self.cfg.use_decoder_bias:
-    #         reconstructed = reconstructed + self.b_D
-
-    #     return reconstructed
-    
     def decode(
         self,
         feature_acts: Union[
@@ -436,16 +421,17 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:  # may be overridden by subclasses
-        # 计算 max_l0_in_batch，兼容密集张量、稀疏张量和 DTensor
-        # 对于 DTensor 和密集张量，使用原始逻辑（支持分布式）
-        # 对于稀疏张量，使用 values() 方法避免 SparseCUDA 不支持 gt 的问题
-        if feature_acts.is_sparse:
-            # 稀疏张量：使用 values() 方法（避免 SparseCUDA 的 gt 问题）
-            max_l0_in_batch = feature_acts.values().gt(0).sum().max()
-        else:
-            # 密集张量或 DTensor：使用原始逻辑（保持分布式性能）
-            max_l0_in_batch = feature_acts.gt(0).to(feature_acts).sum(dim=-1).max()
+        # print(f"Indices: {feature_acts.indices().shape}") # [2,2240]
+        # print(f"Values: {feature_acts.values().shape}") # [2240]
+        # max_l0_in_batch = feature_acts.gt(0).to(feature_acts).sum(dim=-1).max()
         
+        # 检查feature_acts是否为稀疏张量，如果不是则转换为稀疏张量
+        if not feature_acts.is_sparse:
+            feature_acts = feature_acts.to_sparse()
+        
+        non_zero_values = feature_acts.values()
+        
+        max_l0_in_batch = non_zero_values.gt(0).sum().max()
         sparsity_threshold = self.cfg.d_sae * (1 - self.cfg.sparsity_threshold_for_triton_spmm_kernel)
         if (
             self.cfg.use_triton_kernel and 0 < max_l0_in_batch < sparsity_threshold
@@ -453,31 +439,20 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             from .kernels import decode_with_triton_spmm_kernel
 
             require_precise_feature_acts_grad = "topk" not in self.cfg.act_fn
-            # triton kernel 需要密集张量
-            if feature_acts.is_sparse:
-                feature_acts_dense = feature_acts.to_dense()
-            else:
-                feature_acts_dense = feature_acts
             reconstructed = decode_with_triton_spmm_kernel(
-                feature_acts_dense, self.W_D.T.contiguous(), require_precise_feature_acts_grad
+                feature_acts, self.W_D.T.contiguous(), require_precise_feature_acts_grad
             )  # TODO: remove the transpose
         else:
-            # 标准矩阵乘法
-            if feature_acts.is_sparse:
-                # 稀疏张量需要转为密集
-                reconstructed = feature_acts.to_dense() @ self.W_D
-            else:
-                # 密集张量或 DTensor：直接乘（保持分布式）
-                reconstructed = feature_acts @ self.W_D
-        
+            # reconstructed = feature_acts @ self.W_D
+            reconstructed = torch.matmul(feature_acts.to_dense(), self.W_D)
+
+        assert reconstructed is not None, "Reconstructed cannot be None"
+        if self.cfg.use_decoder_bias:
+            reconstructed = reconstructed + self.b_D
         reconstructed = self.hook_reconstructed(reconstructed)
 
         if isinstance(reconstructed, DTensor):
-            reconstructed = DimMap({}).redistribute(reconstructed)
-
-        # Add decoder bias if configured (after redistribute for distributed training)
-        if self.cfg.use_decoder_bias:
-            reconstructed = reconstructed + self.b_D
+            reconstructed = DimMap({"data": 0}).redistribute(reconstructed)
 
         return reconstructed
 
@@ -497,9 +472,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         return reconstructed
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, fold_activation_scale: bool = True, **kwargs):
         cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        return cls.from_config(cfg)
+        return cls.from_config(cfg, fold_activation_scale=fold_activation_scale)
 
     @torch.no_grad()
     def _init_encoder_with_decoder_transpose(
@@ -517,10 +492,10 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def init_parameters(self, **kwargs):
         super().init_parameters(**kwargs)
 
-        W_E = torch.empty(self.cfg.d_feature, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(
+        W_E = torch.empty(self.cfg.d_model, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(
             -kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"]
         )
-        W_D = torch.empty(self.cfg.d_sae, self.cfg.d_feature, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(
+        W_D = torch.empty(self.cfg.d_sae, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(
             -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"]
         )
         b_E = torch.zeros(self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype)
@@ -535,7 +510,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         self.b_E.copy_(b_E)
 
         if self.cfg.use_decoder_bias:
-            b_D = torch.zeros(self.cfg.d_feature, device=self.cfg.device, dtype=self.cfg.dtype)
+            b_D = torch.zeros(self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype)
 
             if self.device_mesh is not None:
                 b_D = self.dim_maps()["b_D"].distribute(b_D, self.device_mesh)
@@ -544,7 +519,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
         if self.cfg.use_glu_encoder:
             W_E_glu = torch.empty(
-                self.cfg.d_feature, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype
+                self.cfg.d_model, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype
             ).uniform_(-kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"])
             if self.device_mesh is not None:
                 W_E_glu = self.dim_maps()["W_E_glu"].distribute(W_E_glu, self.device_mesh)
@@ -552,147 +527,14 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @override
     def prepare_input(self, batch: dict[str, torch.Tensor], **kwargs) -> tuple[torch.Tensor, dict[str, Any]]:
-        if self.device_mesh is not None:
-            x = DimMap({}).distribute(batch[self.cfg.hook_point_in], self.device_mesh)
-        else:
-            x = batch[self.cfg.hook_point_in]
-            
-        with torch.no_grad():
-            if self.cfg.proj_data:
-                x = (x - self.proj_bias) @ self.proj_weight
-                
+        x = batch[self.cfg.hook_point_in]
         return x, {}
 
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
-        if self.device_mesh is not None:
-            label = DimMap({}).distribute(batch[self.cfg.hook_point_out], self.device_mesh)
-        else:
-            label = batch[self.cfg.hook_point_out]
-        
-        with torch.no_grad():
-            if self.cfg.proj_data:
-                label = (label - self.proj_bias) @ self.proj_weight
-        
+        label = batch[self.cfg.hook_point_out]
         return label
-
-    def get_parameters(self) -> list[dict[str, Any]]:
-        return [
-            # all parameters but decoder weight, use filter to avoid modifying the decoder weight
-            {
-                "params": [param for name, param in self.named_parameters() if name != "W_D"],
-                "name": "exclude_decoder_weight",
-            },
-            {
-                "params": [self.W_D],
-                "name": "decoder_weight",
-            },
-        ]
-
-    @torch.no_grad()
-    def fold_data_proj_into_sae(self):
-        """
-        Fold the projection parameters into the encoder and decoder weights.
-        This makes the model equivalent but operates in d_model dimension instead of d_feature.
-        After folding, proj_data is set to False.
-        """
-        if not self.cfg.proj_data:
-            return  # Already folded or not using projection
-        
-        # Get the projection parameters
-        proj_weight = self.proj_weight # [d_model, d_feature]
-        proj_bias = self.proj_bias  # [d_model]
-        
-        # Fold projection into encoder
-        # Original: (x - proj_bias) @ proj_weight @ W_E + b_E
-        # New: x @ (proj_weight @ W_E) + (-proj_bias @ proj_weight @ W_E + b_E)
-        if self.device_mesh is not None:
-            new_W_E = proj_weight.to_local() @ self.W_E.to_local()
-            new_b_E = -proj_bias.to_local() @ proj_weight.to_local() @ self.W_E.to_local() + self.b_E.to_local()
-            
-            if self.cfg.use_glu_encoder:
-                new_W_E_glu = proj_weight.to_local() @ self.W_E_glu.to_local()
-                new_b_E_glu = -proj_bias.to_local() @ proj_weight.to_local() @ self.W_E_glu.to_local() + self.b_E_glu.to_local()
-            
-        else:
-            new_W_E = proj_weight @ self.W_E  # [d_model, d_sae]
-            new_b_E = -proj_bias @ proj_weight @ self.W_E + self.b_E  # [d_sae]
-            
-            if self.cfg.use_glu_encoder:
-                new_W_E_glu = proj_weight @ self.W_E_glu  # [d_model, d_sae]
-                new_b_E_glu = -proj_bias @ proj_weight @ self.W_E_glu + self.b_E_glu  # [d_sae]
-            
-        # Fold projection into decoder
-        # Original: features @ W_D, then add proj_bias and multiply by inverse projection
-        # We need to map back to d_model space: features @ W_D @ proj_weight.T + proj_bias
-        if self.device_mesh is not None:
-            new_W_D = self.W_D.to_local() @ proj_weight.to_local().T  # [d_sae, d_model]
-            
-            if self.cfg.use_decoder_bias:
-                new_b_D = self.b_D.to_local() @ proj_weight.to_local().T + proj_bias.to_local()  # [d_model]
-            
-        else:
-            new_W_D = self.W_D @ proj_weight.T  # [d_sae, d_model]
-            
-            if self.cfg.use_decoder_bias:
-                new_b_D = self.b_D @ proj_weight.T + proj_bias  # [d_model]
-        # Update the parameters
-        if self.device_mesh is not None:
-            # For distributed tensors, we need to redistribute properly
-            new_W_E = DTensor.from_local(
-                new_W_E,
-                device_mesh=self.device_mesh,
-                placements=self.dim_maps()["W_E"].placements(self.device_mesh),
-            )
-            new_b_E = DTensor.from_local(
-                new_b_E,
-                device_mesh=self.device_mesh,
-                placements=self.dim_maps()["b_E"].placements(self.device_mesh),
-            )
-            new_W_D = DTensor.from_local(
-                new_W_D,
-                device_mesh=self.device_mesh,
-                placements=self.dim_maps()["W_D"].placements(self.device_mesh),
-            )
-            
-            if self.cfg.use_glu_encoder:
-                new_W_E_glu = DTensor.from_local(
-                    new_W_E_glu,
-                    device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["W_E_glu"].placements(self.device_mesh),
-                )
-                new_b_E_glu = DTensor.from_local(
-                    new_b_E_glu,
-                    device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["b_E_glu"].placements(self.device_mesh),
-                )
-            
-            if self.cfg.use_decoder_bias:
-                new_b_D = DTensor.from_local(
-                    new_b_D,
-                    device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["b_D"].placements(self.device_mesh),
-                )
-        # Replace parameters with new shapes (d_model instead of d_feature)
-        self.W_E = nn.Parameter(new_W_E)
-        self.b_E = nn.Parameter(new_b_E)
-        self.W_D = nn.Parameter(new_W_D)
-        
-        if self.cfg.use_glu_encoder:
-            self.W_E_glu = nn.Parameter(new_W_E_glu)
-            self.b_E_glu = nn.Parameter(new_b_E_glu)
-        
-        if self.cfg.use_decoder_bias:
-            self.b_D = nn.Parameter(new_b_D)
-        
-        # Update config to reflect the change
-        self.cfg.d_feature = self.cfg.d_model
-        self.cfg.proj_data = False
-        del self.proj_weight
-        del self.proj_bias
-        del self.relative_sigular_value
-        del self.variance_factor
-
+    
     @torch.no_grad()
     def update_dead_latents(self, feature_acts: torch.Tensor):
         """Update the dead latents tracking based on current feature activations.
@@ -725,7 +567,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         
         # Mark as dead if tokens since last activation exceeds threshold
         self.is_dead = self.tokens_since_last_activation >= self.cfg.dead_threshold
-
+    
     @override
     def compute_loss(
         self,
@@ -763,6 +605,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, **kwargs)
 
+        # newly added
         # Update dead latents tracking
         self.update_dead_latents(feature_acts)
 
@@ -806,6 +649,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
             # Add AuxK auxiliary loss if enabled
             if self.cfg.use_auxk and self.cfg.act_fn == "topk":
+                # print("======== use auxk loss ========")
                 with timer.time("auxk_loss_calculation"):
                     # Get reconstruction error
                     e = label - reconstructed  # (batch, d_model) or (batch, seq_len, d_model)

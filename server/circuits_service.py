@@ -70,13 +70,13 @@ def load_model_and_transcoders(
     transcoders = {}
     for layer in range(n_layers):
         # 根据模型名称选择不同的路径格式
-        if 'BT4' in model_name:
-            # BT4路径格式: L{layer}
-            tc_path = f"{tc_base_path}/L{layer}"
-        else:
-            # 默认T82路径格式
-            tc_path = f"{tc_base_path}/lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam"
-        
+        # if 'BT4' in model_name:
+        #     # BT4路径格式: L{layer}
+        #     tc_path = f"{tc_base_path}/L{layer}"
+        # else:
+        #     # 默认T82路径格式
+        #     tc_path = f"{tc_base_path}/lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam"
+        tc_path = f"{tc_base_path}/L{layer}"
         logger.info(f"📁 加载TC L{layer}: {tc_path}")
         transcoders[layer] = SparseAutoEncoder.from_pretrained(
             tc_path,
@@ -88,13 +88,13 @@ def load_model_and_transcoders(
     lorsas = []
     for layer in range(n_layers):
         # 根据模型名称选择不同的路径格式
-        if 'BT4' in model_name:
-            # BT4路径格式: L{layer}
-            lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
-        else:
-            # 默认T82路径格式
-            lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr8e-05_k_aux4096_coefficient0.0625_dead_threshold1000000"
-        
+        # if 'BT4' in model_name:
+        #     # BT4路径格式: L{layer}
+        #     lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
+        # else:
+        #     # 默认T82路径格式
+        #     lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr8e-05_k_aux4096_coefficient0.0625_dead_threshold1000000"
+        lorsa_path = f"{lorsa_base_path}/L{layer}"
         logger.info(f"📁 加载LORSA L{layer}: {lorsa_path}")
         lorsas.append(LowRankSparseAttention.from_pretrained(
             lorsa_path,

@@ -2077,7 +2077,8 @@ async def analyze_tactic_features_api(
                 )
             
             # 加载LoRSA
-            lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
+            # lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
+            lorsa_path = f"{lorsa_base_path}/L{layer}"
             if os.path.exists(lorsa_path):
                 lorsas.append(LowRankSparseAttention.from_pretrained(
                     lorsa_path,

@@ -51,6 +51,21 @@ interface LayerAnalysis {
   logit_entropy?: number | null;
 }
 
+interface KLDivergence {
+  from_layer: number;
+  to_layer: number;
+  kl_forward: number | null;
+  kl_backward: number | null;
+  jsd: number | null;  // Jensen-Shannon Divergence (真正的度量)
+}
+
+interface LayerToFinalKL {
+  layer: number;
+  kl_to_final: number | null;
+  kl_from_final: number | null;
+  jsd: number | null;  // Jensen-Shannon Divergence
+}
+
 interface LogitLensResult {
   fen: string;
   final_layer_predictions: LayerMoveData[];
@@ -59,6 +74,8 @@ interface LogitLensResult {
   num_layers: number;
   model_used: string;
   final_top_move_uci?: string | null;
+  layer_kl_divergences?: KLDivergence[];
+  layer_to_final_kl?: LayerToFinalKL[];
 }
 
 interface AblationData {
@@ -419,20 +436,13 @@ export const LogitLensVisualization: React.FC = () => {
                   </CardHeader>
                   <CardContent>
                     {typeof currentLayerData.logit_entropy === 'number' && (
-                      <div className="mb-3 text-sm">
-                        <Badge variant="outline">当前层 Logit 熵: {currentLayerData.logit_entropy.toFixed(4)}</Badge>
-                      </div>
-                    )}
-                    {analysisResult?.final_top_move_uci && (
-                      <div className="mb-3 text-sm">
-                        <Badge variant="outline">最终层Top移动: {analysisResult.final_top_move_uci}</Badge>
-                        {currentLayerData.final_top_move && (
-                          <span className="ml-3">
-                            在本层 - 排名: <strong>#{currentLayerData.final_top_move.rank ?? 'N/A'}</strong>,
-                            分数: <strong>{currentLayerData.final_top_move.score !== null && currentLayerData.final_top_move.score !== undefined ? currentLayerData.final_top_move.score.toFixed(4) : 'N/A'}</strong>,
-                            概率: <strong>{currentLayerData.final_top_move.prob !== null && currentLayerData.final_top_move.prob !== undefined ? (currentLayerData.final_top_move.prob * 100).toFixed(2) + '%' : 'N/A'}</strong>
-                          </span>
-                        )}
+                      <div className="mb-3 text-sm space-x-2">
+                        <Badge 
+                          variant={currentLayerData.logit_entropy < 2.0 ? "default" : currentLayerData.logit_entropy < 3.5 ? "secondary" : "outline"}
+                          className={currentLayerData.logit_entropy < 2.0 ? "bg-green-600" : currentLayerData.logit_entropy < 3.5 ? "bg-yellow-600" : ""}
+                        >
+                          Logit 熵: {currentLayerData.logit_entropy.toFixed(4)}
+                        </Badge>
                       </div>
                     )}
                     <Table>
@@ -505,7 +515,7 @@ export const LogitLensVisualization: React.FC = () => {
                       <TableHeader>
                         <TableRow>
                           <TableHead className="w-24">层级</TableHead>
-                          <TableHead>Logit 熵</TableHead>
+                          <TableHead>Logit 熵<br/></TableHead>
                           <TableHead>Top 1</TableHead>
                           <TableHead>Top 2</TableHead>
                           <TableHead>Top 3</TableHead>
@@ -518,15 +528,21 @@ export const LogitLensVisualization: React.FC = () => {
                           const top3 = layerData?.top_legal_moves.slice(0, 3) || [];
                           const layerScores = layerData?.top_legal_moves.map(m => m.score) || [];
                           const layerProbs = layerScores.length > 0 ? softmax(layerScores): [];
+                          const entropy = layerData?.logit_entropy;
                           return (
                             <TableRow key={i} className={i === selectedLayer ? 'bg-blue-50' : ''}>
                               <TableCell className="text-sm">
                                 <strong>{`Layer ${i}`}</strong>
                               </TableCell>
                               <TableCell>
-                                {typeof layerData?.logit_entropy === 'number'
-                                  ? layerData.logit_entropy.toFixed(4)
-                                  : 'N/A'}
+                                {typeof entropy === 'number' ? (
+                                  <Badge 
+                                    variant={entropy < 2.0 ? "default" : entropy < 3.5 ? "secondary" : "outline"}
+                                    className={entropy < 2.0 ? "bg-green-600 text-white" : entropy < 3.5 ? "bg-yellow-600 text-white" : ""}
+                                  >
+                                    {entropy.toFixed(4)}
+                                  </Badge>
+                                ) : 'N/A'}
                               </TableCell>
                               {[0, 1, 2].map((rank) => {
                                 const move = top3[rank];
@@ -567,6 +583,122 @@ export const LogitLensVisualization: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* JSD分析 - 检测相变 */}
+              {analysisResult.layer_kl_divergences && analysisResult.layer_kl_divergences.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>层间KL和JSD</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {/* 相邻层之间的KL散度和JSD */}
+                    <div>
+                      <h4 className="text-sm font-semibold mb-2">相邻层之间的分布差异</h4>
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>从层</TableHead>
+                              <TableHead>到层</TableHead>
+                              <TableHead>JSD<br/></TableHead>
+                              <TableHead>KL(当前→前一层)</TableHead>
+                              <TableHead>KL(前一层→当前)</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {analysisResult.layer_kl_divergences.map((kl, idx) => {
+                              const jsd = kl.jsd;
+                              // 计算所有JSD的平均值和标准差，用于判断突变
+                              const allJSDs = analysisResult.layer_kl_divergences!
+                                .map(k => k.jsd)
+                                .filter((k): k is number => k !== null);
+                              const meanJSD = allJSDs.length > 0 
+                                ? allJSDs.reduce((a, b) => a + b, 0) / allJSDs.length 
+                                : 0;
+                              const stdJSD = allJSDs.length > 0
+                                ? Math.sqrt(allJSDs.reduce((sum, k) => sum + Math.pow(k - meanJSD, 2), 0) / allJSDs.length)
+                                : 0;
+                              const isPhaseTransition = jsd !== null && jsd > meanJSD + 1.5 * stdJSD;
+                              
+                              return (
+                                <TableRow 
+                                  key={idx}
+                                  className={isPhaseTransition ? 'bg-red-50 border-red-300' : ''}
+                                >
+                                  <TableCell className="font-medium">Layer {kl.from_layer}</TableCell>
+                                  <TableCell className="font-medium">Layer {kl.to_layer}</TableCell>
+                                  <TableCell>
+                                    {jsd !== null ? (
+                                      <Badge 
+                                        variant={isPhaseTransition ? "destructive" : jsd > meanJSD ? "secondary" : "outline"}
+                                        className={isPhaseTransition ? "bg-red-600 text-white" : ""}
+                                      >
+                                        {jsd.toFixed(4)}
+                                        {isPhaseTransition && <span className="ml-1">⚠️ 相变</span>}
+                                      </Badge>
+                                    ) : 'N/A'}
+                                  </TableCell>
+                                  <TableCell>
+                                    {kl.kl_forward !== null ? kl.kl_forward.toFixed(4) : 'N/A'}
+                                  </TableCell>
+                                  <TableCell>
+                                    {kl.kl_backward !== null ? kl.kl_backward.toFixed(4) : 'N/A'}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+
+                    {/* 每层相对于最终层的KL散度和JSD */}
+                    {analysisResult.layer_to_final_kl && analysisResult.layer_to_final_kl.length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-semibold mb-2">每层相对于最终层的分布差异</h4>
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>层级</TableHead>
+                                <TableHead>JSD<br/><span className="text-xs font-normal text-gray-500">(距离最终层)</span></TableHead>
+                                <TableHead>KL(最终→当前)</TableHead>
+                                <TableHead>KL(当前→最终)</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {analysisResult.layer_to_final_kl.map((kl) => {
+                                const jsd = kl.jsd;
+                                return (
+                                  <TableRow 
+                                    key={kl.layer}
+                                    className={kl.layer === selectedLayer ? 'bg-blue-50' : ''}
+                                  >
+                                    <TableCell className="font-medium">Layer {kl.layer}</TableCell>
+                                    <TableCell>
+                                      {jsd !== null ? (
+                                        <Badge variant="outline">
+                                          {jsd.toFixed(4)}
+                                        </Badge>
+                                      ) : 'N/A'}
+                                    </TableCell>
+                                    <TableCell>
+                                      {kl.kl_to_final !== null ? kl.kl_to_final.toFixed(4) : 'N/A'}
+                                    </TableCell>
+                                    <TableCell>
+                                      {kl.kl_from_final !== null ? kl.kl_from_final.toFixed(4) : 'N/A'}
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
               
               {/* 目标移动追踪 */}
               {analysisResult.target_move && (
@@ -661,8 +793,8 @@ export const LogitLensVisualization: React.FC = () => {
                           <TableHeader>
                             <TableRow>
                               <TableHead>层级</TableHead>
-                              <TableHead>L2 Norm</TableHead>
-                              <TableHead>熵</TableHead>
+                              <TableHead>L2 Norm<br/><span className="text-xs font-normal text-gray-500">(影响程度)</span></TableHead>
+                              <TableHead>熵<br/><span className="text-xs font-normal text-gray-500">(越小越集中)</span></TableHead>
                               <TableHead>Top 3移动</TableHead>
                               {ablationResult.target_move && (
                                 <TableHead>目标移动排名</TableHead>
@@ -689,6 +821,7 @@ export const LogitLensVisualization: React.FC = () => {
                               }
 
                               const top3 = data.top_legal_moves.slice(0, 3);
+                              const entropy = data.logit_entropy;
                               
                               return (
                                 <TableRow key={i}>
@@ -699,9 +832,14 @@ export const LogitLensVisualization: React.FC = () => {
                                     </Badge>
                                   </TableCell>
                                   <TableCell>
-                                    {data.logit_entropy !== null && data.logit_entropy !== undefined
-                                      ? data.logit_entropy.toFixed(4)
-                                      : 'N/A'}
+                                    {typeof entropy === 'number' ? (
+                                      <Badge 
+                                        variant={entropy < 2.0 ? "default" : entropy < 3.5 ? "secondary" : "outline"}
+                                        className={entropy < 2.0 ? "bg-green-600 text-white" : entropy < 3.5 ? "bg-yellow-600 text-white" : ""}
+                                      >
+                                        {entropy.toFixed(4)}
+                                      </Badge>
+                                    ) : 'N/A'}
                                   </TableCell>
                                   <TableCell>
                                     <div className="space-y-1">
