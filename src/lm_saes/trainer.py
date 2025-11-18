@@ -59,9 +59,9 @@ class Trainer:
         sae.cfg.save_hyperparameters(checkpoint_dir)
         # Save model state
         if sae.device_mesh is None:
-            sae.save_checkpoint(Path(checkpoint_dir) / "sae_weights.safetensors")
+            sae.save_checkpoint(checkpoint_dir / "sae_weights.safetensors")
         else:
-            sae.save_checkpoint(Path(checkpoint_dir) / "sae_weights.dcp")
+            sae.save_checkpoint(checkpoint_dir / "sae_weights.dcp")
 
         if is_primary_rank(sae.device_mesh):
             # Prepare trainer state
@@ -363,12 +363,10 @@ class Trainer:
 
         log_info["act_freq_scores"] += act_freq_scores
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
-
         # Log sparsity metrics periodically
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
             wandb_log_dict = sae.compute_sparsity_metrics(feature_sparsity)
-
             if is_primary_rank(sae.device_mesh):
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Sparsity Metrics")
             if self.wandb_logger is not None:

@@ -46,7 +46,7 @@ class GenerateActivationsSettings(BaseSettings):
     hook_points: list[str]
     """List of model hook points to capture activations from"""
 
-    output_dir: Path
+    output_dir: str
     """Directory to save activation files"""
 
     target: ActivationFactoryTarget = ActivationFactoryTarget.ACTIVATIONS_2D
