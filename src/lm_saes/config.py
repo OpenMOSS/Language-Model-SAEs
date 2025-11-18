@@ -60,7 +60,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     norm_activation: str = "dataset-wise"
     sparsity_include_decoder_norm: bool = True
     top_k: int = 50
-    sae_pretrained_name_or_path: Optional[str] = None
+    sae_pretrained_name_or_path: str | None = None
     strict_loading: bool = True
     use_triton_kernel: bool = False
     sparsity_threshold_for_triton_spmm_kernel: float = 0.996
@@ -99,7 +99,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
         sae_config["strict_loading"] = strict_loading
         return cls.model_validate({**sae_config, **kwargs})
 
-    def save_hyperparameters(self, sae_path: Path | str, remove_loading_info: bool = True):
+    def save_hyperparameters(self, sae_path: str | Path, remove_loading_info: bool = True):
         assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
         d = self.model_dump()
         if remove_loading_info:
@@ -152,7 +152,7 @@ class LorsaConfig(BaseSAEConfig):
     skip_bos: bool = False
 
     # Attention settings
-    attn_scale: Optional[float] = None
+    attn_scale: float | None = None
     use_post_qk_ln: bool = False
     normalization_type: Literal["LN", "RMS"] | None = None
     eps: float = 1e-6
@@ -507,13 +507,13 @@ class TrainerConfig(BaseConfig):
     n_checkpoints: int = 10
     check_point_save_mode: Literal["log", "linear"] = "log"
 
-    from_pretrained_path: Optional[str] = None
-    exp_result_path: Path = Path("results")
+    from_pretrained_path: str | None = None
+    exp_result_path: str = "results"
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
-        self.exp_result_path.mkdir(parents=True, exist_ok=True)
-        self.exp_result_path.joinpath("checkpoints").mkdir(parents=True, exist_ok=True)
+        Path(self.exp_result_path).mkdir(parents=True, exist_ok=True)
+        Path(self.exp_result_path, "checkpoints").mkdir(parents=True, exist_ok=True)
         assert self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
 
         if self.from_pretrained_path is not None:
@@ -552,7 +552,7 @@ class GraphEvalConfig(BaseConfig):
 
 class DatasetConfig(BaseConfig):
     dataset_name_or_path: str = "openwebtext"
-    cache_dir: Optional[str] = None
+    cache_dir: str | None = None
     is_dataset_on_disk: bool = False
 
 
@@ -576,7 +576,7 @@ class ActivationFactoryActivationsSource(ActivationFactorySource):
     model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
 
     type: str = "activations"
-    path: str | dict[str, Path]
+    path: str | dict[str, str]
     """ The path to the cached activations. """
     device: str = "cpu"
     """ The device to load the activations on. """
@@ -596,7 +596,7 @@ class ActivationFactoryActivationsSource(ActivationFactorySource):
     """ We might want to convert presaved bf16 activations to fp32"""
     num_workers: int = 4
     """ The number of workers to use for loading the activations. """
-    prefetch: Optional[int] = 8
+    prefetch: int | None = 8
     """ The number of chunks to prefetch."""
 
 
@@ -626,7 +626,7 @@ class ActivationFactoryTarget(Enum):
 class BufferShuffleConfig(BaseConfig):
     perm_seed: int = 42
     """ Perm seed for aligned permutation for generating activations. If `None`, will not use manual seed for Generator. """
-    generator_device: Optional[str] = None
+    generator_device: str | None = None
     """ The device to be assigned for the torch.Generator. If 'None', generator will be initialized on cpu as pytorch default. """
 
 
@@ -641,11 +641,11 @@ class ActivationFactoryConfig(BaseConfig):
     """ The hook points to capture activations from. """
     num_workers: int = 4
     """ The number of workers to use for loading the dataset. """
-    context_size: Optional[int] = None
+    context_size: int | None = None
     """ The context size to use for generating activations. All tokens will be padded or truncated to this size. If `None`, will not pad or truncate tokens. This may lead to some error when re-batching activations of different context sizes."""
     model_batch_size: int = 1
     """ The batch size to use for generating activations. """
-    batch_size: Optional[int] = Field(
+    batch_size: int | None = Field(
         default_factory=lambda validated_model: 64
         if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
         else None
@@ -665,26 +665,26 @@ class ActivationFactoryConfig(BaseConfig):
         ]
     ] = None
     """ The dtype to use for outputting activations. If `None`, will not override the dtype. """
-    buffer_size: Optional[int] = Field(
+    buffer_size: int | None = Field(
         default_factory=lambda validated_model: 500_000
         if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
         else None
     )
     """ Buffer size for online shuffling. If `None`, no shuffling will be performed. """
-    buffer_shuffle: Optional[BufferShuffleConfig] = None
+    buffer_shuffle: BufferShuffleConfig | None = None
     """" Manual seed and device of generator for generating randomperm in buffer. """
-    ignore_token_ids: Optional[list[int]] = None
+    ignore_token_ids: list[int] | None = None
     """ Tokens to ignore in the activations. """
 
 
 class LanguageModelConfig(BaseModelConfig):
     model_name: str = "gpt2"
     """ The name of the model to use. """
-    model_from_pretrained_path: Optional[str] = None
+    model_from_pretrained_path: str | None = None
     """ The path to the pretrained model. If `None`, will use the model from HuggingFace. """
     use_flash_attn: bool = False
     """ Whether to use Flash Attention. """
-    cache_dir: Optional[str] = None
+    cache_dir: str | None = None
     """ The directory of the HuggingFace cache. Should have the same effect as `HF_HOME`. """
     d_model: int = 768
     """ The dimension of the model. """
@@ -699,11 +699,11 @@ class LanguageModelConfig(BaseModelConfig):
     """ Whether to only load the tokenizer. """
     prepend_bos: bool = True
     """ Whether to prepend the BOS token to the input. """
-    bos_token_id: Optional[int] = None
+    bos_token_id: int | None = None
     """ The ID of the BOS token. If `None`, will use the default BOS token. """
-    eos_token_id: Optional[int] = None
+    eos_token_id: int | None = None
     """ The ID of the EOS token. If `None`, will use the default EOS token. """
-    pad_token_id: Optional[int] = None
+    pad_token_id: int | None = None
     """ The ID of the padding token. If `None`, will use the default padding token. """
 
     @staticmethod
@@ -737,14 +737,14 @@ class LLaDAConfig(LanguageModelConfig):
 class ActivationWriterConfig(BaseConfig):
     hook_points: list[str]
     """ The hook points to capture activations from. """
-    total_generating_tokens: Optional[int] = None
+    total_generating_tokens: int | None = None
     """ The total number of tokens to generate. If `None`, will write all activations to disk. """
-    n_samples_per_chunk: Optional[int] = None
+    n_samples_per_chunk: int | None = None
     """ The number of samples to write to disk per chunk. If `None`, will not further batch the activations. """
-    cache_dir: str | Path = Path("activations")
+    cache_dir: str = "activations"
     """ The directory to save the activations. """
     format: Literal["pt", "safetensors"] = "safetensors"
-    num_workers: Optional[int] = None
+    num_workers: int | None = None
     """ The number of workers to use for writing the activations. If `None`, will not use multi-threaded writing. """
 
 
@@ -753,7 +753,7 @@ class FeatureAnalyzerConfig(BaseConfig):
     total_analyzing_tokens: int
     """ Total number of tokens to analyze """
 
-    ignore_token_ids: Optional[list[int]] = None
+    ignore_token_ids: list[int] | None = None
     """ Tokens to ignore in the activations. """
 
     subsamples: dict[str, dict[str, int | float]] = Field(
@@ -786,8 +786,8 @@ class DirectLogitAttributorConfig(BaseConfig):
 
 class WandbConfig(BaseConfig):
     wandb_project: str = "gpt2-sae-training"
-    exp_name: Optional[str] = None
-    wandb_entity: Optional[str] = None
+    exp_name: str | None = None
+    wandb_entity: str | None = None
 
 
 class MongoDBConfig(BaseConfig):

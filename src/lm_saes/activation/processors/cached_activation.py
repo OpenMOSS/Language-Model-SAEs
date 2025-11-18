@@ -37,11 +37,13 @@ class DistributedSampler(Sampler[Any]):
 
         dp_size = mesh_dim_size(self.device_mesh, "data")
         tp_size = mesh_dim_size(self.device_mesh, "model")
+        sweep_size = mesh_dim_size(self.device_mesh, "sweep")
+        non_dp_size = tp_size * sweep_size
 
         # Min chunk unit is decided by how many iterations are required to collect exact all hook points of some chunks in tensor parallel.
-        min_chunk_unit = dp_size * tp_size // math.gcd(n_hook_points, tp_size)
+        min_chunk_unit = dp_size * non_dp_size // math.gcd(n_hook_points, non_dp_size)
         n_samples_total = n_chunks // min_chunk_unit * min_chunk_unit * n_hook_points
-        n_samples_local = n_samples_total // dp_size // tp_size
+        n_samples_local = n_samples_total // dp_size // non_dp_size
         return n_samples_local
 
     def __iter__(self) -> Iterator[Any]:
@@ -50,18 +52,24 @@ class DistributedSampler(Sampler[Any]):
 
         dp_size = mesh_dim_size(self.device_mesh, "data")
         tp_size = mesh_dim_size(self.device_mesh, "model")
+        sweep_size = mesh_dim_size(self.device_mesh, "sweep")
 
-        min_chunk_unit = dp_size * tp_size // math.gcd(n_hook_points, tp_size)
+        non_dp_size = tp_size * sweep_size
+        min_chunk_unit = dp_size * non_dp_size // math.gcd(n_hook_points, non_dp_size)
         n_chunks_effective = n_chunks // min_chunk_unit * min_chunk_unit
+
         # First assign chunks based on data groups to ensure each data group own self-contained chunks.
         chunks = list(self.chunk_to_index.keys())[
             mesh_dim_rank(self.device_mesh, "data") : n_chunks_effective : dp_size
         ]
 
-        # In the local dp group: concat all chunks and assign chunks to model groups.
-        indices = list(itertools.chain.from_iterable([list(self.chunk_to_index[k].values()) for k in chunks]))[
-            mesh_dim_rank(self.device_mesh, "model") :: tp_size
-        ]
+        # In the local dp group: concat all chunks and flatten all hook point indices
+        all_indices = list(itertools.chain.from_iterable([list(self.chunk_to_index[k].values()) for k in chunks]))
+        model_rank = mesh_dim_rank(self.device_mesh, "model")
+        sweep_rank = mesh_dim_rank(self.device_mesh, "sweep")
+        combined_rank = model_rank * sweep_size + sweep_rank
+
+        indices = all_indices[combined_rank::non_dp_size]
 
         assert len(indices) == self.n_samples, f"len(indices) {len(indices)} != self.n_samples {self.n_samples}"
 
@@ -295,7 +303,14 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             data = move_dict_of_tensor_to_device(data, device=self.device)
             if self.device_mesh is not None:
                 gathered = all_gather_dict(data, group=self.device_mesh.get_group("model"))
-                yield from gathered
+                if mesh_dim_size(self.device_mesh, "sweep") > 1:
+                    yield from (
+                        sweep_item
+                        for item in gathered
+                        for sweep_item in all_gather_dict(item, group=self.device_mesh.get_group("sweep"))
+                    )
+                else:
+                    yield from gathered
             else:
                 yield data
 
