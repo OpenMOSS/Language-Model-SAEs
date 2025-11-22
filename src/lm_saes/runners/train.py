@@ -1,10 +1,9 @@
 """Module for sweeping SAE experiments."""
 
 import os
-from typing import Any, Iterable, Optional, cast
+from typing import Optional
 
 import torch
-import torch.distributed as dist
 import wandb
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
