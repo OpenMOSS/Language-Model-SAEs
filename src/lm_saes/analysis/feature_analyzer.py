@@ -99,7 +99,7 @@ class FeatureAnalyzer:
                 and (elt_cur.max(dim=0).values > sample_result_cur["elt"][-1]).any()
             ):
                 sample_result_cur = concat_dict_of_tensor(
-                    sample_result_cur,
+                    cast(dict[str, torch.Tensor], sample_result_cur),
                     batch_data,
                 )
             else:  # Skip if all activations are below the threshold
@@ -219,11 +219,12 @@ class FeatureAnalyzer:
             max_feature_acts = torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
         mapper = KeyedDiscreteMapper()
 
+        # TODO: Make a wrapper for CLT
         if isinstance(sae, CrossLayerTranscoder):
-            sae.encode = partial(sae.encode_single_layer, layer=self.cfg.clt_layer)
-            sae.prepare_input = partial(sae.prepare_input_single_layer, layer=self.cfg.clt_layer)
-            sae.decoder_norm_per_feature = partial(sae.decoder_norm_per_feature, layer=self.cfg.clt_layer)
-            sae.keep_only_decoders_for_layer_from(self.cfg.clt_layer)
+            sae.encode = partial(sae.encode_single_layer, layer=self.cfg.clt_layer)  # type: ignore
+            sae.prepare_input = partial(sae.prepare_input_single_layer, layer=self.cfg.clt_layer)  # type: ignore
+            sae.decoder_norm_per_feature = partial(sae.decoder_norm_per_feature, layer=self.cfg.clt_layer)  # type: ignore
+            sae.keep_only_decoders_for_layer_from(self.cfg.clt_layer)  # type: ignore
             torch.cuda.empty_cache()
 
         # Process activation batches
