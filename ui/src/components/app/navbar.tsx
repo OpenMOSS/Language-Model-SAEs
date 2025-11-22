@@ -55,6 +55,42 @@ export const AppNavbar = () => {
           >
             Circuits
           </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/3D-visualization" && "text-foreground"
+            )}
+            to="/3D-visualization"
+          >
+            3D Visualization
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/play-game" && "text-foreground"
+            )}
+            to="/play-game"
+          >
+            Play Game
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/logit-lens" && "text-foreground"
+            )}
+            to="/logit-lens"
+          >
+            Logit Lens
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/tactic-features" && "text-foreground"
+            )}
+            to="/tactic-features"
+          >
+            Tactic Features
+          </Link>
         </div>
       </div>
     </nav>

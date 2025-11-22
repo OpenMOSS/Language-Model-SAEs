@@ -42,35 +42,22 @@ export const fetchFeature = async (
 
 export const getDictionaryName = (metadata: any, layer: number, isLorsa: boolean): string => {
   if (isLorsa) {
-    return metadata.lorsa_analysis_name.replace("{}", layer.toString());
+    // 支持lorsa_analysis_name字段
+    const analysisName = metadata.lorsa_analysis_name;
+    if (analysisName && analysisName.includes('BT4')) {
+      // BT4格式: BT4_lorsa_L{layer}A
+      return `BT4_lorsa_L${layer}A`;
+    } else {
+      return analysisName ? analysisName.replace("{}", layer.toString()) : `lc0-lorsa-L${layer}`;
+    }
   } else {
-    return metadata.clt_analysis_name.replace("{}", layer.toString());
+    // 支持新的字段名tc_analysis_name，向后兼容clt_analysis_name
+    const analysisName = metadata.tc_analysis_name || metadata.clt_analysis_name;
+    if (analysisName && analysisName.includes('BT4')) {
+      // BT4格式: BT4_tc_L{layer}M
+      return `BT4_tc_L${layer}M`;
+    } else {
+      return analysisName ? analysisName.replace("{}", layer.toString()) : `lc0_L${layer}M_16x_k30_lr2e-03_auxk_sparseadam`;
+    }
   }
 }; 
-
-export interface CacheFeatureSpec {
-  feature_id: number;
-  layer: number;
-  is_lorsa: boolean;
-  analysis_name?: string;
-}
-
-export const cacheFeatures = async (
-  dictionaryName: string,
-  features: CacheFeatureSpec[],
-  outputDir: string,
-): Promise<{ saved: number; output_dir: string }> => {
-  const response = await fetch(
-    `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${encodeURIComponent(dictionaryName)}/cache_features`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ features, output_dir: outputDir }),
-    }
-  );
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Failed to cache features: ${response.status} ${response.statusText} - ${text}`);
-  }
-  return response.json();
-};

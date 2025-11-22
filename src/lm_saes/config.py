@@ -61,7 +61,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     sparsity_include_decoder_norm: bool = True
     top_k: int = 50
     sae_pretrained_name_or_path: Optional[str] = None
-    strict_loading: bool = True
+    strict_loading: bool = True # TODO Set to true
     use_triton_kernel: bool = False
     sparsity_threshold_for_triton_spmm_kernel: float = 0.996
     sparsity_threshold_for_csr: float = 0.05
@@ -121,6 +121,12 @@ class SAEConfig(BaseSAEConfig):
     hook_point_out: str
     use_glu_encoder: bool = False
 
+    use_auxk: bool = False
+    dead_threshold: int = 100_000  # Threshold for marking latents as dead (10 million tokens)
+    k_aux: int = 512  # Number of dead latents to use for AuxK loss
+    aux_coefficient: float = 1.0 / 32  # Weight coefficient for AuxK loss (alpha)
+
+
     @property
     def associated_hook_points(self) -> list[str]:
         return [self.hook_point_in, self.hook_point_out]
@@ -137,7 +143,7 @@ class LorsaConfig(BaseSAEConfig):
     # Attention dimensions
     n_qk_heads: int
     d_qk_head: int
-    positional_embedding_type: Literal["rotary", "none"] = "rotary"
+    positional_embedding_type: Literal["rotary", "none"] = "none"
     rotary_dim: int
     rotary_base: int = 10000
     rotary_adjacent_pairs: bool = True
@@ -146,7 +152,7 @@ class LorsaConfig(BaseSAEConfig):
     NTK_by_parts_factor: float = 1.0
     NTK_by_parts_low_freq_factor: float = 1.0
     NTK_by_parts_high_freq_factor: float = 1.0
-    old_context_len: int = 2048
+    old_context_len: int = 64
 
     n_ctx: int
     skip_bos: bool = False
@@ -156,6 +162,18 @@ class LorsaConfig(BaseSAEConfig):
     use_post_qk_ln: bool = False
     normalization_type: Literal["LN", "RMS"] | None = None
     eps: float = 1e-6
+    
+    # SmolGen settings
+    attn_scale: Optional[float] = None
+    use_smolgen: bool = False
+    # Learnable attention scale
+    use_learnable_attn_scale: bool = False
+
+    # Auxk Loss
+    use_auxk: bool = False
+    dead_threshold: int = 100_000
+    k_aux: int = 512  # Number of dead latents to use for AuxK loss
+    aux_coefficient: float = 1.0 / 32  # Weight coefficient for AuxK loss (alpha)
 
     @property
     def n_ov_heads(self) -> int:
@@ -450,6 +468,9 @@ class InitializerConfig(BaseConfig):
     initialize_lorsa_with_mhsa: bool | None = None
     model_layer: int | None = None
     init_encoder_bias_with_mean_hidden_pre: bool = False
+    initialize_lorsa_smolgen_from_encoder: bool = False
+    initialize_W_D_with_mhsa: bool = False
+    initialize_lorsa_attn_scale_from_encoder: bool = False
 
 
 class TrainerConfig(BaseConfig):

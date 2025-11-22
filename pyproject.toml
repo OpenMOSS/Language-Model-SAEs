@@ -1,17 +1,20 @@
 [project]
-name = "lm-saes"
-version = "2.0.0b2"
+name = "chess-saes-N"
+version = "0.1.0"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
-    "transformer-lens",
     "datasets>=3.0.2",
-    "transformers>=4.57.1",
+    "transformers>=4.46.0",
     "einops>=0.8.0",
     "fastapi>=0.115.4",
     "matplotlib>=3.9.2",
     "numpy<2.0.0",
     "pandas>=2.2.3",
     "pymongo>=4.10.1",
+    "tensorboardX>=2.6.2.2",
+    # "torch>=2.5.0",
+    # "torchvision>=0.20.1",
+    "transformer-lens",
     "uvicorn>=0.32.0",
     "wandb>=0.18.5",
     "msgpack>=1.1.0",
@@ -26,9 +29,13 @@ dependencies = [
     "pyyaml>=6.0.2",
     "tomlkit>=0.13.2",
     "pydantic-settings>=2.7.1",
+    "qwen-vl-utils>=0.0.10",
     "typing-extensions>=4.13.2",
     "more-itertools>=10.7.0",
     "json-repair>=0.44.1",
+    "chess>=1.11.2",
+    "onnx>=1.19.1",
+    "onnx2torch>=1.5.15",
 ]
 requires-python = "==3.11.*"
 readme = "README.md"
@@ -63,10 +70,6 @@ text = "MIT"
 [project.scripts]
 lm-saes = "lm_saes.entrypoint:entrypoint"
 
-[build-system]
-requires = ["uv_build>=0.9.6,<0.10.0"]
-build-backend = "uv_build"
-
 [dependency-groups]
 dev = [
     "transformer-lens",
@@ -90,21 +93,13 @@ dev = [
     "tabulate>=0.9.0",
     "gradio>=5.34.0",
 ]
-docs = [
-    "mkdocs-gen-files>=0.5.0",
-    "mkdocs-glightbox>=0.5.2",
-    "mkdocs-literate-nav>=0.6.2",
-    "mkdocs-material>=9.6.22",
-    "mkdocs-section-index>=0.3.10",
-    "mkdocstrings[python]>=0.30.1",
-]
 flash-attn = [
     "flash-attn>=2.7.4.post1; (sys_platform == 'win32' or sys_platform == 'linux')",
 ]
 
 [project.optional-dependencies]
 # NPU variant of PyTorch (for Huawei Ascend hardware)
-default = ["torch==2.8.0", "torchvision>=0.22.1"]
+default = ["torch==2.7.1", "torchvision>=0.22.1"]
 
 npu = [
     "torch==2.6.0",
@@ -156,7 +151,7 @@ exclude = [
 ]
 line-length = 120
 indent-width = 4
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I"]
@@ -164,9 +159,6 @@ ignore = ["E741", "F722"]
 fixable = ["ALL"]
 unfixable = []
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
-
-[tool.ruff.lint.isort]
-known-third-party = ["wandb"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -177,7 +169,7 @@ docstring-code-format = false
 docstring-code-line-length = "dynamic"
 
 [tool.pyright]
-ignore = [".venv/", "examples", "TransformerLens", "tests", "exp", "src/lm_saes/circuit"]
+ignore = [".venv/", "examples", "TransformerLens", "tests", "exp"]
 typeCheckingMode = "standard"
 reportRedeclaration = false
 reportPrivateImportUsage = false
@@ -191,7 +183,6 @@ conflicts = [[{ extra = "default" }, { extra = "npu" }], [{ extra = "triton" }, 
 name = "flash-attn"
 version = "2.7.4.post1"
 requires-dist = ["torch", "einops"]
-
 [tool.uv.sources.transformer-lens]
 path = "./TransformerLens"
 editable = true

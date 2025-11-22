@@ -16,11 +16,7 @@ class Graph:
     selected_features: torch.Tensor
     logit_probabilities: torch.Tensor
     cfg: HookedTransformerConfig
-    sae_series: Optional[Union[str, List[str]]]
-    slug: str
-    use_lorsa: bool
-    lorsa_pattern: torch.Tensor
-    z_pattern: torch.Tensor
+    scan: Optional[Union[str, List[str]]]
 
     def __init__(
         self,
@@ -35,11 +31,7 @@ class Graph:
         selected_features: torch.Tensor,
         adjacency_matrix: torch.Tensor,
         cfg: HookedTransformerConfig,
-        slug: str = "untitled",
-        sae_series: Optional[Union[str, List[str]]] = None,
-        use_lorsa: bool = True,
-        lorsa_pattern: torch.Tensor = None,
-        z_pattern: torch.Tensor = None,
+        scan: Optional[Union[str, List[str]]] = None,
     ):
         """
         A graph object containing the adjacency matrix describing the direct effect of each
@@ -57,9 +49,10 @@ class Graph:
             clt_active_features (torch.Tensor): Indices (layer, pos, feature_idx) of non-zero CLT features.
             clt_activation_values (torch.Tensor): Activation values for CLT features.
             selected_features (torch.Tensor): Indices of selected features (for pruning, etc).
-            adjacency_matrix (torch.Tensor): The adjacency matrix.
+            adjacency_matrix (torch.Tensor): The adjacency matrix. Organized as
+                [lorsa_active_features, clt_active_features, error_nodes, embed_nodes, logit_nodes].
             cfg (HookedTransformerConfig): The cfg of the model.
-            sae_series (Optional[Union[str,List[str]]], optional): The identifier of the transcoders used in the graph.
+            scan (Optional[Union[str,List[str]]], optional): The identifier of the transcoders used in the graph.
         """
         self.input_string = input_string
         self.adjacency_matrix = adjacency_matrix
@@ -72,28 +65,22 @@ class Graph:
         self.logit_tokens = logit_tokens
         self.logit_probabilities = logit_probabilities
         self.input_tokens = input_tokens
-        self.use_lorsa = use_lorsa
-        self.lorsa_pattern = lorsa_pattern
-        self.z_pattern = z_pattern
-        if sae_series is None:
-            print("Graph loaded without sae_series to identify it. Uploading will not be possible.")
-        self.sae_series = sae_series
+        if scan is None:
+            print("Graph loaded without scan to identify it. Uploading will not be possible.")
+        self.scan = scan
         self.selected_features = selected_features
-        self.slug = slug
 
     def to(self, device):
         """Send all relevant tensors to the device (cpu, cuda, etc.)"""
         self.adjacency_matrix = self.adjacency_matrix.to(device)
-        self.lorsa_active_features = self.lorsa_active_features.to(device) if self.use_lorsa else None
-        self.lorsa_activation_values = self.lorsa_activation_values.to(device) if self.use_lorsa else None
+        self.lorsa_active_features = self.lorsa_active_features.to(device)
+        self.lorsa_activation_values = self.lorsa_activation_values.to(device)
         self.clt_active_features = self.clt_active_features.to(device)
         self.clt_activation_values = self.clt_activation_values.to(device)
         self.logit_tokens = self.logit_tokens.to(device)
         self.logit_probabilities = self.logit_probabilities.to(device)
         self.selected_features = self.selected_features.to(device)
         self.input_tokens = self.input_tokens.to(device)
-        self.lorsa_pattern = self.lorsa_pattern.to(device)
-        self.z_pattern = self.z_pattern.to(device)
 
     def to_pt(self, path: str):
         """Saves the graph at the given path"""
@@ -109,10 +96,7 @@ class Graph:
             "logit_probabilities": self.logit_probabilities,
             "input_tokens": self.input_tokens,
             "selected_features": self.selected_features,
-            "sae_series": self.sae_series,
-            "slug": self.slug,
-            "lorsa_pattern": self.lorsa_pattern,
-            "z_pattern": self.z_pattern,
+            "scan": self.scan,
         }
         torch.save(d, path)
 
@@ -128,7 +112,7 @@ def normalize_matrix(matrix: torch.Tensor) -> torch.Tensor:
     return normalized / normalized.sum(dim=1, keepdim=True).clamp(min=1e-10)
 
 
-def compute_influence(A: torch.Tensor, logit_weights: torch.Tensor, max_iter: int = 10000):
+def compute_influence(A: torch.Tensor, logit_weights: torch.Tensor, max_iter: int = 1000):
     # Normally we calculate total influence B using A + A^2 + ... or (I - A)^-1 - I,
     # and do logit_weights @ B
     # But it's faster / more efficient to compute logit_weights @ A + logit_weights @ A^2
@@ -139,7 +123,9 @@ def compute_influence(A: torch.Tensor, logit_weights: torch.Tensor, max_iter: in
     iterations = 0
     while current_influence.any():
         if iterations >= max_iter:
-            raise RuntimeError(f"Influence computation failed to converge after {iterations} iterations")
+            raise RuntimeError(
+                f"Influence computation failed to converge after {iterations} iterations"
+            )
         current_influence = current_influence @ A
         influence += current_influence
         iterations += 1
@@ -174,7 +160,9 @@ class PruneResult(NamedTuple):
     cumulative_scores: torch.Tensor  # Tensor of cumulative influence scores for each node
 
 
-def prune_graph(graph: Graph, node_threshold: float = 0.8, edge_threshold: float = 0.98) -> PruneResult:
+def prune_graph(
+    graph: Graph, node_threshold: float = 0.8, edge_threshold: float = 0.98
+) -> PruneResult:
     """Prunes a graph by removing nodes and edges with low influence on the output logits.
 
     Args:
@@ -199,7 +187,9 @@ def prune_graph(graph: Graph, node_threshold: float = 0.8, edge_threshold: float
     n_logits = len(graph.logit_tokens)
     n_features = len(graph.selected_features)
 
-    logit_weights = torch.zeros(graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device)
+    logit_weights = torch.zeros(
+        graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device
+    )
     logit_weights[-n_logits:] = graph.logit_probabilities
 
     # Calculate node influence and apply threshold
@@ -216,7 +206,9 @@ def prune_graph(graph: Graph, node_threshold: float = 0.8, edge_threshold: float
 
     # Calculate edge influence and apply threshold
     edge_scores = compute_edge_influence(pruned_matrix, logit_weights)
+
     edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
+
     old_node_mask = node_mask.clone()
     # Ensure feature and error nodes have outgoing edges
     node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)

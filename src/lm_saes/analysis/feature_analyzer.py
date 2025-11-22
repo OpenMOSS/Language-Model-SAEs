@@ -88,7 +88,15 @@ class FeatureAnalyzer:
                     feature_acts,
                     "batch_size context_size d_sae -> batch_size d_sae context_size",
                 ),
-                **discrete_meta,
+                # **discrete_meta,
+                **{
+                    k: repeat(
+                        v,
+                        "batch_size -> batch_size d_sae",
+                        d_sae=feature_acts.size(-1),
+                    )
+                    for k, v in discrete_meta.items()
+                },
             }
 
             # Initialize or update sample collection
@@ -104,7 +112,9 @@ class FeatureAnalyzer:
                 )
             else:  # Skip if all activations are below the threshold
                 continue
-
+            
+            # print(f'{sample_result_cur = }')
+            
             # Sort and keep top N samples
             sample_result_cur = sort_dict_of_tensor(
                 sample_result_cur, sort_dim=0, sort_key="elt", descending=True, device_mesh=device_mesh

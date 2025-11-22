@@ -539,6 +539,7 @@ class Trainer:
 
                     with timer.time("clip_grad_norm"):
                         # exclude the grad of the jumprelu threshold
+                        # print(f'{self.cfg.clip_grad_norm = }')
                         assert sae.device_mesh is None or self.cfg.clip_grad_norm <= 0, (
                             "clip_grad_norm must be 0 for distributed training"
                         )

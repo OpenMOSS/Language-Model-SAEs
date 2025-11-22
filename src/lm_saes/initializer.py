@@ -156,25 +156,32 @@ class Initializer:
                 assert sae.cfg.norm_activation == "dataset-wise", (
                     "Norm activation must be dataset-wise for Lorsa if use initialize_lorsa_with_mhsa"
                 )
-                assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
-                    "Only support TransformerLens backend for initializing Lorsa with Original Multi Head Sparse Attention"
-                )
-                assert self.cfg.model_layer is not None, (
-                    "Model layer must be provided for initializing Lorsa with Original Multi Head Sparse Attention"
-                )
-                assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
-                assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), (
-                    "Block must be a TransformerBlock"
-                )
-                assert isinstance(model.model.blocks[self.cfg.model_layer].attn, Attention | GroupedQueryAttention), (
-                    "Attention must be an Attention or GroupedQueryAttention"
-                )
-                sae.init_lorsa_with_mhsa(
-                    cast(
-                        Attention | GroupedQueryAttention,
-                        model.model.blocks[self.cfg.model_layer].attn,
-                    )
-                )
+                sae.init_lorsa_with_mhsa(model.model.blocks[self.cfg.model_layer])
+                # assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
+                #     "Only support TransformerLens backend for initializing Lorsa with Original Multi Head Sparse Attention"
+                # )
+                # assert self.cfg.model_layer is not None, (
+                #     "Model layer must be provided for initializing Lorsa with Original Multi Head Sparse Attention"
+                # )
+                # assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
+                # assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), (
+                #     "Block must be a TransformerBlock"
+                # )
+                # assert isinstance(model.model.blocks[self.cfg.model_layer].attn, Attention | GroupedQueryAttention), (
+                    # "Attention must be an Attention or GroupedQueryAttention"
+                # )
+                # sae.init_lorsa_with_mhsa(
+                #     cast(
+                #         Attention | GroupedQueryAttention,
+                #         model.model.blocks[self.cfg.model_layer].attnand model is not None,
+                
+                #     and model is not None)
+                
+                # and model is not None)
+                
+            if isinstance(sae, LowRankSparseAttention) and cfg.use_smolgen and self.cfg.initialize_lorsa_smolgen_from_encoder and model is not None:
+                print(f"====== init_smolgen_from_encoder ======")
+                sae.init_smolgen_from_encoder(model.model.blocks[self.cfg.model_layer])
 
             assert activation_stream is not None, "Activation iterator must be provided for initialization search"
             activation_batch = next(iter(activation_stream))  # type: ignore
@@ -188,21 +195,34 @@ class Initializer:
                     assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
                         "Only support TransformerLens backend for initializing Lorsa decoder weight with active subspace"
                     )
-                    assert self.cfg.model_layer is not None, (
-                        "Model layer must be provided for initializing Lorsa decoder weight with active subspace"
-                    )
+                    # assert self.cfg.model_layer is not None, (
+                    #     "Model layer must be provided for initializing Lorsa decoder weight with active subspace"
+                    # )
+                    print(f"====== init_W_D_with_active_subspace_per_head ======")
                     sae.init_W_D_with_active_subspace_per_head(
-                        batch,
-                        mhsa=cast(
-                            Attention | GroupedQueryAttention,
-                            model.model.blocks[self.cfg.model_layer].attn,
-                        ),
+                        activation_batch,
+                        encoder_layer=model.model.blocks[self.cfg.model_layer],
                     )
+                    # sae.init_W_D_with_active_subspace_per_head(
+                    #     batch,
+                    #     mhsa=cast(
+                    #         Attention | GroupedQueryAttention,
+                    #         model.model.blocks[self.cfg.model_layer].attn,
+                    #     ),
+                    # )
                 else:
                     assert self.cfg.d_active_subspace is not None, (
                         "d_active_subspace must be provided for initializing other SAEs with active subspace"
                     )
                     sae.init_W_D_with_active_subspace(batch, self.cfg.d_active_subspace)
+
+            if self.cfg.initialize_lorsa_attn_scale_from_encoder:
+                print(f"====== init_attn_scale_from_encoder ======")
+                sae.init_attn_scale_from_encoder(encoder_layer=model.model.blocks[self.cfg.model_layer],)
+            if self.cfg.initialize_W_D_with_mhsa:
+                print(f"====== init_lorsa_W_D_with_mhsa ======")
+                sae.init_lorsa_W_D_with_mhsa(encoder_layer=model.model.blocks[self.cfg.model_layer],)
+
 
             sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
 

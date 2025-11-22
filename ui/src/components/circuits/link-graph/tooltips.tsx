@@ -30,6 +30,7 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
   useEffect(() => {
     if (visState.hoveredId && !timeoutRef.current) {
       timeoutRef.current = setTimeout(() => {
+        console.log('🔄 Tooltips: Fallback timeout clearing tooltip');
         // This will trigger a re-render and clear the tooltip
         timeoutRef.current = null;
       }, 10000); // 10 second fallback
@@ -54,12 +55,14 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
 
     // If no hovered ID, don't show any tooltip
     if (!visState.hoveredId) {
+      console.log('🔄 Tooltips: No hovered ID, clearing tooltips');
       return;
     }
 
     const hoveredNode = positionedNodes.find((d: any) => d.nodeId === visState.hoveredId);
     
     if (hoveredNode) {
+      console.log('🔄 Tooltips: Creating tooltip for node:', visState.hoveredId);
       const tooltip = svg.append("g")
         .attr("class", "clerp-tooltip");
       
@@ -73,7 +76,17 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
         // Fallback: show basic node info
         tooltipText = `Feature: ${hoveredNode.featureId} (Layer ${hoveredNode.layerIdx})`;
       }
-      
+
+      // 追加来源文件信息（如果有）
+      if (hoveredNode.sourceFiles && hoveredNode.sourceFiles.length) {
+        const nodeType = (hoveredNode.feature_type || '').toLowerCase();
+        // 对于 logit 和 embedding 节点，不显示来源文件信息
+        if (nodeType !== 'logit' && nodeType !== 'embedding') {
+          const files = hoveredNode.sourceFiles.join(', ');
+          tooltipText = `${tooltipText} | Source: ${files}`;
+        }
+      }
+ 
       // Calculate tooltip dimensions based on text content
       const textWidth = tooltipText.length * 6; // Approximate character width
       const tooltipWidth = Math.max(120, textWidth + 20); // Minimum 120px, or text width + padding

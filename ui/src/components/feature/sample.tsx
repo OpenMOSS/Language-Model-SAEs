@@ -8,6 +8,14 @@ import { Switch } from "../ui/switch";
 import { Input } from "../ui/input";
 import { getZPatternForToken, findHighestActivatingToken } from "@/utils/token";
 
+// Helper function to get max activation value for a sample (same logic as findHighestActivatingToken)
+const getMaxActivation = (featureActsValues: number[]): number => {
+  if (featureActsValues.length === 0) {
+    return 0;
+  }
+  return Math.max(...featureActsValues);
+};
+
 // Helper function to get activation value for a given index from COO format
 const getActivationValue = (indices: number[], values: number[], targetIndex: number): number => {
   const indexPosition = indices.indexOf(targetIndex);
@@ -24,16 +32,31 @@ export const FeatureSampleGroup = ({
   const [page, setPage] = useState<number>(1);
   const [visibleRange, setVisibleRange] = useState<number>(50);
   
-  const maxPage = useMemo(() => Math.ceil(sampleGroup.samples.length / 10), [sampleGroup.samples.length]);
+  // 计算每个样本的最大激活值并排序
+  // 使用与 findHighestActivatingToken 相同的逻辑：找到原始值的最大值
+  const sortedSamples = useMemo(() => {
+    return [...sampleGroup.samples].sort((a, b) => {
+      // 计算样本 a 的最大激活值（使用与显示的 Max 值相同的逻辑）
+      const maxActA = getMaxActivation(a.featureActsValues);
+      // 计算样本 b 的最大激活值（使用与显示的 Max 值相同的逻辑）
+      const maxActB = getMaxActivation(b.featureActsValues);
+      // 按从大到小排序（使用绝对值比较，确保最大的激活值排在前面）
+      return Math.abs(maxActB) - Math.abs(maxActA);
+    });
+  }, [sampleGroup.samples]);
+  
+  const maxPage = useMemo(() => Math.ceil(sortedSamples.length / 10), [sortedSamples.length]);
   
   const currentSamples = useMemo(() => 
-    sampleGroup.samples.slice((page - 1) * 10, page * 10),
-    [sampleGroup.samples, page]
+    sortedSamples.slice((page - 1) * 10, page * 10),
+    [sortedSamples, page]
   );
 
   const maxActivation = useMemo(() => 
-    sampleGroup.samples.length > 0 ? Math.max(...sampleGroup.samples[0].featureActsValues.flat()) : 0,
-    [sampleGroup.samples]
+    sortedSamples.length > 0 
+      ? Math.max(...sortedSamples[0].featureActsValues.map(v => Math.abs(v)))
+      : 0,
+    [sortedSamples]
   );
 
   // Handle input change

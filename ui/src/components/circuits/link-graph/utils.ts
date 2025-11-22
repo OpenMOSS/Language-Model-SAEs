@@ -1,4 +1,4 @@
-import { LinkGraphData, Node, Link, VisState } from "./types";
+import { LinkGraphData, Node, Link } from "./types";
 // @ts-ignore
 import d3 from "../static_js/d3";
 
@@ -52,6 +52,7 @@ export interface CircuitJsonData {
     prompt: string;
     lorsa_analysis_name?: string;
     clt_analysis_name?: string;
+    tc_analysis_name?: string;
   };
   qParams: {
     linkType: string;
@@ -150,6 +151,7 @@ export function transformCircuitData(jsonData: CircuitJsonData): LinkGraphData {
       prompt_tokens: jsonData.metadata.prompt_tokens,
       lorsa_analysis_name: jsonData.metadata.lorsa_analysis_name,
       clt_analysis_name: jsonData.metadata.clt_analysis_name,
+      tc_analysis_name: jsonData.metadata.tc_analysis_name,
     },
   };
 }

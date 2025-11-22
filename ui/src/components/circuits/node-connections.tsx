@@ -50,81 +50,135 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     }
     
     // Input features: nodes that have links TO the clicked node
-    // These are nodes where the clicked node is the TARGET of their links
     const inputNodes = data.nodes.filter(node => 
-      node.nodeId !== clickedNode.nodeId && // Exclude the clicked node itself
-      node.sourceLinks && // Ensure node has sourceLinks property
+      node.nodeId !== clickedNode.nodeId &&
+      node.sourceLinks &&
       node.sourceLinks.some(link => link.target === clickedNode.nodeId)
     );
     
     // Output features: nodes that the clicked node has links TO
-    // These are nodes where the clicked node is the SOURCE of links to them
     const outputNodes = data.nodes.filter(node => 
-      node.nodeId !== clickedNode.nodeId && // Exclude the clicked node itself
-      clickedNode.sourceLinks && // Ensure clicked node has sourceLinks property
+      node.nodeId !== clickedNode.nodeId &&
+      clickedNode.sourceLinks &&
       clickedNode.sourceLinks.some(link => link.target === node.nodeId)
     );
 
+    // 辅助：构建“节点-链接-来源文件”条目
+    type PerFileEntry = { node: Node; fileIndex: number; weight: number; pctInput: number };
+    const toPerFileEntries = (nodes: Node[], dir: 'input' | 'output'): PerFileEntry[] => {
+      const entries: PerFileEntry[] = [];
+      for (const n of nodes) {
+        const link = dir === 'input'
+          ? n.sourceLinks?.find(l => l.target === clickedNode.nodeId)
+          : clickedNode.sourceLinks?.find(l => l.target === n.nodeId);
+        if (!link) continue;
+        // 优先使用每文件值；若不存在则回退到总体值
+        if (link.sources && link.weightsBySource && link.pctBySource) {
+          for (const fi of link.sources) {
+            const w = link.weightsBySource[fi];
+            const p = link.pctBySource[fi];
+            if (w === undefined || p === undefined) continue;
+            entries.push({ node: n, fileIndex: fi, weight: w, pctInput: p });
+          }
+        } else if (link.weight !== undefined) {
+          entries.push({ node: n, fileIndex: (n.sourceIndex ?? 0), weight: link.weight, pctInput: link.pctInput || 0 });
+        }
+      }
+      return entries;
+    };
+
+    const inputEntries = toPerFileEntries(inputNodes, 'input');
+    const outputEntries = toPerFileEntries(outputNodes, 'output');
+
+    const buildSections = (entries: PerFileEntry[]) => ['Positive', 'Negative'].map(title => {
+      // 先筛选正负
+      const filtered = entries.filter(e => (title === 'Positive' ? e.weight > 0 : e.weight < 0));
+
+      // 合并相同位置的 error 节点（同 nodeId 只保留一个，取绝对值更大的权重）
+      const mergedErrorByNodeId = new Map<string, PerFileEntry>();
+      for (const e of filtered) {
+        const isError = typeof e.node.feature_type === 'string' && e.node.feature_type.toLowerCase().includes('error');
+        if (!isError) continue;
+        const key = e.node.nodeId; // nodeId 唯一标识同层同位置同feature
+        const prev = mergedErrorByNodeId.get(key);
+        if (!prev || Math.abs(e.weight) > Math.abs(prev.weight)) {
+          // 仅保留一个代表条目（移除文件索引以强调合并）
+          mergedErrorByNodeId.set(key, { node: e.node, fileIndex: -1, weight: e.weight, pctInput: e.pctInput });
+        }
+      }
+
+      // 非 error 的条目保持原条目
+      const nonError = filtered.filter(e => {
+        const isError = typeof e.node.feature_type === 'string' && e.node.feature_type.toLowerCase().includes('error');
+        return !isError;
+      });
+
+      // 重新组成列表：非 error + 合并后的 error
+      const normalized: PerFileEntry[] = [
+        ...nonError,
+        ...Array.from(mergedErrorByNodeId.values()),
+      ];
+
+      // 自定义排序：同层同位置，shared 优先；其次各文件按文件索引升序；再按绝对权重降序；error 放最后
+      normalized.sort((a, b) => {
+        const aLayer = a.node.layerIdx;
+        const bLayer = b.node.layerIdx;
+        const aCtx = a.node.ctx_idx;
+        const bCtx = b.node.ctx_idx;
+        const samePos = aLayer === bLayer && aCtx === bCtx;
+        if (samePos) {
+          const aIsError = typeof a.node.feature_type === 'string' && a.node.feature_type.toLowerCase().includes('error');
+          const bIsError = typeof b.node.feature_type === 'string' && b.node.feature_type.toLowerCase().includes('error');
+          if (aIsError !== bIsError) return aIsError ? 1 : -1; // error 最后
+
+          const aShared = (a.node.sourceIndices && a.node.sourceIndices.length > 1) ? 1 : 0;
+          const bShared = (b.node.sourceIndices && b.node.sourceIndices.length > 1) ? 1 : 0;
+          if (aShared !== bShared) return bShared - aShared; // 共有优先
+
+          // 都是 per-file 的情况：按文件顺序
+          if (aShared === 0 && bShared === 0 && !aIsError && !bIsError) {
+            const aFile = a.fileIndex;
+            const bFile = b.fileIndex;
+            if (aFile !== bFile) return aFile - bFile; // 文件索引升序
+          }
+
+          // 次序相同则按绝对权重降序
+          return Math.abs(b.weight) - Math.abs(a.weight);
+        }
+        // 不同位置，按绝对权重降序
+        return Math.abs(b.weight) - Math.abs(a.weight);
+      });
+
+      // 映射到渲染节点（保留 per-file 的文件索引；合并后的 error fileIndex 为 -1，不影响灰点）
+      const sectionNodes = normalized.map(e => ({
+        ...e.node,
+        // @ts-ignore
+        __fileIndex: e.fileIndex >= 0 ? e.fileIndex : undefined,
+        // @ts-ignore
+        __weight: e.weight,
+        // @ts-ignore
+        __pct: e.pctInput,
+      }) as Node);
+
+      return { title, nodes: sectionNodes };
+    });
+
     return [
-      {
-        id: 'input',
-        title: 'Input Features',
-        sections: ['Positive', 'Negative'].map(title => {
-          const nodes = inputNodes.filter(node => {
-            // Find the link from this node TO the clicked node
-            const link = node.sourceLinks?.find(link => link.target === clickedNode.nodeId);
-            if (!link || link.weight === undefined) return false;
-            return title === 'Positive' ? link.weight > 0 : link.weight < 0;
-          });
-          
-          // Sort by absolute weight (descending)
-          nodes.sort((a, b) => {
-            const linkA = a.sourceLinks?.find(link => link.target === clickedNode.nodeId);
-            const linkB = b.sourceLinks?.find(link => link.target === clickedNode.nodeId);
-            const weightA = Math.abs(linkA?.weight || 0);
-            const weightB = Math.abs(linkB?.weight || 0);
-            return weightB - weightA;
-          });
-          
-          return { title, nodes };
-        }),
-      },
-      {
-        id: 'output',
-        title: 'Output Features',
-        sections: ['Positive', 'Negative'].map(title => {
-          const nodes = outputNodes.filter(node => {
-            // Find the link from the clicked node TO this node
-            const link = clickedNode.sourceLinks?.find(link => link.target === node.nodeId);
-            if (!link || link.weight === undefined) return false;
-            return title === 'Positive' ? link.weight > 0 : link.weight < 0;
-          });
-          
-          // Sort by absolute weight (descending)
-          nodes.sort((a, b) => {
-            const linkA = clickedNode.sourceLinks?.find(link => link.target === a.nodeId);
-            const linkB = clickedNode.sourceLinks?.find(link => link.target === b.nodeId);
-            const weightA = Math.abs(linkA?.weight || 0);
-            const weightB = Math.abs(linkB?.weight || 0);
-            return weightB - weightA;
-          });
-          
-          return { title, nodes };
-        }),
-      },
+      { id: 'input', title: 'Input Features', sections: buildSections(inputEntries) },
+      { id: 'output', title: 'Output Features', sections: buildSections(outputEntries) },
     ];
   }, [data.nodes, clickedNode?.nodeId, clickedNode?.sourceLinks, clickedNode?.targetLinks]);
 
   // Memoize the formatFeatureId function to avoid recreating it on every render
-  const formatFeatureId = useMemo(() => (node: Node, verbose: boolean = true): string => {
+  const formatFeatureId = useMemo(() => (node: Node): string => {
     if (node.feature_type === 'cross layer transcoder') {
       const layerIdx = Math.floor(node.layerIdx / 2) - 1;
       const featureId = node.id.split('_')[1];
-      return verbose ? `M${layerIdx}#${featureId}@${node.ctx_idx}` : `M${layerIdx}`;
+      return `M${layerIdx}#${featureId}@${node.ctx_idx}`;
     } else if (node.feature_type === 'lorsa') {
       const layerIdx = Math.floor(node.layerIdx / 2);
       const featureId = node.id.split('_')[1];
-      return verbose ? `A${layerIdx}#${featureId}@${node.ctx_idx}` : `A${layerIdx}`;
+      return `A${layerIdx}#${featureId}@${node.ctx_idx}`;
     } else if (node.feature_type === 'embedding') {
       return `Emb@${node.ctx_idx}`;
     } else if (node.feature_type === 'mlp reconstruction error') {
@@ -185,23 +239,41 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
   const renderFeatureRow = useMemo(() => (node: Node, type: 'input' | 'output') => {
     if (!clickedNode) return null;
     
-    // Find the link in the correct direction
-    const link = type === 'input' 
-      ? node.sourceLinks?.find(link => link.target === clickedNode.nodeId)  // Link FROM this node TO clicked node
-      : clickedNode.sourceLinks?.find(link => link.target === node.nodeId); // Link FROM clicked node TO this node
-    
-    if (!link || link.weight === undefined) return null;
+    // 从节点的临时字段读取该行对应文件与权重
+    const anyNode = node as any;
+    const rowFileIndex: number | undefined = anyNode.__fileIndex;
+    const rowWeight: number | undefined = anyNode.__weight;
+    const rowPct: number | undefined = anyNode.__pct;
 
-    const weight = link.weight;
+    // 找到链接（用于回退）
+    const link = type === 'input' 
+      ? node.sourceLinks?.find(link => link.target === clickedNode.nodeId)
+      : clickedNode.sourceLinks?.find(link => link.target === node.nodeId);
+
+    if (!rowWeight && (!link || link.weight === undefined)) return null;
+
+    const weight = rowWeight !== undefined ? rowWeight : (link!.weight as number);
+    const pctInput = rowPct !== undefined ? rowPct : (link!.pctInput || 0);
     const isPinned = pinnedIds.includes(node.nodeId);
     const isHidden = hiddenIds.includes(node.featureId);
     const isHovered = node.nodeId === hoveredId;
     const isClicked = node.nodeId === clickedId;
 
+    // 文件颜色与名称（优先使用该行绑定的文件索引）
+    const chosenIndex = (rowFileIndex !== undefined) ? rowFileIndex : (node.sourceIndex ?? (node.sourceIndices?.[0] ?? 0));
+    const sourceFileNames = data.metadata.sourceFileNames || [];
+    const colorByIndex = (i: number) => {
+      const palette = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // 与可视化一致
+      return palette[i % palette.length];
+    };
+    const sourceTitle = sourceFileNames[chosenIndex] || `#${(chosenIndex ?? 0) + 1}`;
+    const isErrorNode = typeof node.feature_type === 'string' && node.feature_type.toLowerCase().includes('error');
+    const dotColor = isErrorNode ? '#95a5a6' : colorByIndex(chosenIndex || 0);
+
     return (
       <div
-        key={node.nodeId}
-        className={`feature-row py-0.5 px-1 border rounded cursor-pointer transition-colors ${
+        key={`${node.nodeId}-${chosenIndex}`}
+        className={`feature-row p-1 border rounded cursor-pointer transition-colors ${
           isPinned ? 'bg-yellow-100 border-yellow-300' : 'bg-gray-50 border-gray-200'
         } ${isHidden ? 'opacity-50' : ''} ${isHovered ? 'ring-2 ring-blue-300' : ''} ${
           isClicked ? 'ring-2 ring-blue-500' : ''
@@ -212,25 +284,34 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
         }}
         onMouseEnter={() => onFeatureHover(node.nodeId)}
         onMouseLeave={() => onFeatureHover(null)}
+        title={`Source: ${sourceTitle}`}
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <span className="text-xs font-mono text-gray-600">
-              {formatFeatureId(node, false)}
+            <span
+              className="inline-block rounded-full"
+              style={{ width: 8, height: 8, backgroundColor: dotColor }}
+              title={sourceTitle}
+            />
+            <span className="text-sm font-mono text-gray-600">
+              {formatFeatureId(node)}
             </span>
-            <span className="text-xs font-medium">
+            <span className="text-sm font-medium">
               {node.localClerp || node.remoteClerp || ''}
             </span>
           </div>
           <div className="text-right">
-            <div className="text-xs font-mono">
+            <div className="text-sm font-mono">
               {weight > 0 ? '+' : ''}{weight.toFixed(3)}
+            </div>
+            <div className="text-xs text-gray-500">
+              {pctInput.toFixed(1)}%
             </div>
           </div>
         </div>
       </div>
     );
-  }, [clickedNode, pinnedIds, hiddenIds, hoveredId, clickedId, onFeatureClick, formatFeatureId]);
+  }, [clickedNode, pinnedIds, hiddenIds, hoveredId, clickedId, onFeatureClick, formatFeatureId, data.metadata.sourceFileNames]);
 
   // Memoize the header styling to avoid recalculating classes on every render
   const headerClassName = useMemo(() => 
@@ -268,27 +349,27 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
       </div>
 
       {/* Connections */}
-      <div className="connections flex-1 flex overflow-hidden gap-5">
+      <div className="connections flex-1 flex gap-5 min-h-0">
         {connectionTypes.map(type => (
           <div
             key={type.id}
-            className={`features flex-1 ${type.id === 'output' ? 'output' : 'input'}`}
+            className={`features flex-1 flex flex-col min-h-0 ${type.id === 'output' ? 'output' : 'input'}`}
           >
-            <div className="section-title text-lg font-semibold mb-2 text-gray-800">
+            <div className="section-title text-lg font-semibold mb-2 text-gray-800 flex-shrink-0">
               {type.title}
             </div>
             
-            <div className="effects space-y-1 overflow-y-auto h-full">
+            <div className="effects space-y-2 flex-1 overflow-y-auto pr-2">
               {type.sections.map(section => (
                 <div key={section.title} className="section">
-                  <h4 className={`text-xs font-medium mb-0.5 px-2 py-0.5 rounded ${
-                      section.title === 'Positive' 
-                        ? 'bg-green-100 text-green-800' 
-                        : 'bg-red-800'
-                    }`}>
+                  <h4 className={`text-sm font-medium mb-1 px-2 py-1 rounded ${
+                    section.title === 'Positive' 
+                      ? 'bg-green-100 text-green-800' 
+                      : 'bg-red-100 text-red-800'
+                  }`}>
                     {section.title}
                   </h4>
-                  <div className="space-y-0.5">
+                  <div className="space-y-1">
                     {section.nodes.map(node => renderFeatureRow(node, type.id))}
                   </div>
                 </div>

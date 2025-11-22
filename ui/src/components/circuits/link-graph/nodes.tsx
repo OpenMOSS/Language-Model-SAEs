@@ -94,9 +94,11 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       })
       .style("cursor", "pointer")
       .on("mouseenter", function(event: any, d: any) {
+        console.log('🖱️ D3 merged node mouseenter triggered for node:', d.nodeId);
         handleMouseEnter(d.nodeId);
       })
       .on("mouseleave", function(event: any, d: any) {
+        console.log('🖱️ D3 merged node mouseleave triggered for node:', d.nodeId);
         handleMouseLeave();
       })
       .on("click", function(event: any, d: any) {
