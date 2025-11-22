@@ -327,7 +327,7 @@ def generate_activating_examples(
             # Create TokenizedExample using the trace information
             sample = TokenizedSample.construct(
                 text=data["text"],
-                activations=feature_acts[left_end:right_end],
+                activations=feature_acts[left_end:right_end].tolist(),
                 origins=origins[left_end:right_end],
                 max_activation=analysis.max_feature_acts,
             )
@@ -411,7 +411,7 @@ def generate_non_activating_examples(
             # Create TokenizedExample using the trace information
             sample = TokenizedSample.construct(
                 text=data["text"],
-                activations=feature_acts[:max_length],
+                activations=feature_acts[:max_length].tolist(),
                 origins=origins[:max_length],
                 max_activation=analysis.max_feature_acts,
             )
@@ -566,7 +566,7 @@ Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nM
             logit_activating_tokens = next_activating_tokens
 
         user_prompt: str = f"""
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n{next_activating_tokens}\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\n{max_activating_tokens}\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n{logit_activating_tokens}\n<\TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\n{plain_activating_tokens}\n<\TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n{next_activating_tokens}\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\n{max_activating_tokens}\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n{logit_activating_tokens}\n<\\TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\n{plain_activating_tokens}\n<\\TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
 """
         return system_prompt, user_prompt
 
@@ -688,11 +688,9 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
                 ],
             )
 
-            # assert response.choices[0].message.content is not None, (
-            #     f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
-            # )
-            # explanation = json_repair.loads(response.choices[0].message.content)
-            def extract_explanation(s: str):
+            def extract_explanation(s: str | None):
+                if s is None:
+                    return None
                 keyword = "Explanation: "
                 start_index = s.find(keyword)
                 if start_index == -1:

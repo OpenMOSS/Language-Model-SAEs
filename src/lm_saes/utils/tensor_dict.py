@@ -1,6 +1,9 @@
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar, cast, overload
 
 import torch
+from einops import repeat
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 
 T = TypeVar("T")
 
@@ -10,6 +13,7 @@ def sort_dict_of_tensor(
     sort_key: str,
     sort_dim: int = 0,
     descending: bool = True,
+    device_mesh: DeviceMesh | None = None,
 ):
     """
     Sort a dictionary of tensors by the values of a tensor.
@@ -23,12 +27,30 @@ def sort_dict_of_tensor(
     Returns:
         A dictionary of tensors sorted by the values of the specified tensor
     """
-    sorted_idx = tensor_dict[sort_key].argsort(dim=sort_dim, descending=descending)
-    for k, v in tensor_dict.items():
-        tmp_sorted_idx = sorted_idx
-        while v.ndim > tmp_sorted_idx.ndim:
-            tmp_sorted_idx = tmp_sorted_idx.unsqueeze(-1)
-        tensor_dict[k] = v.gather(sort_dim, tmp_sorted_idx.expand_as(v))
+    if device_mesh is not None:
+        assert isinstance(tensor_dict[sort_key], DTensor), (
+            "All tensors to sort must be DTensor when device_mesh is provided"
+        )
+        sorted_idx_local = cast(DTensor, tensor_dict[sort_key]).to_local().argsort(dim=sort_dim, descending=descending)
+        for k, v in tensor_dict.items():
+            assert isinstance(v, DTensor), "All tensors to sort must be DTensor when device_mesh is provided"
+            v_local = v.to_local()
+            tensor_dict[k] = DTensor.from_local(
+                local_tensor=v_local.gather(
+                    sort_dim,
+                    repeat(
+                        sorted_idx_local, f"... -> ... {' '.join(['1'] * (v_local.ndim - sorted_idx_local.ndim))}"
+                    ).expand_as(v_local),
+                ),
+                device_mesh=device_mesh,
+                placements=v.placements,
+            )
+    else:
+        sorted_idx = tensor_dict[sort_key].argsort(dim=sort_dim, descending=descending)
+        for k, v in tensor_dict.items():
+            tensor_dict[k] = v.gather(
+                sort_dim, repeat(sorted_idx, f"... -> ... {' '.join(['1'] * (v.ndim - sorted_idx.ndim))}").expand_as(v)
+            )
     return tensor_dict
 
 

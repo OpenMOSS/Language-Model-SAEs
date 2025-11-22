@@ -21,7 +21,7 @@ from lm_saes.config import (
     WandbConfig,
 )
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.evaluator import Evaluator, GrahEval
+from lm_saes.evaluator import Evaluator, GraphEval
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.distributed import mesh_rank
@@ -44,7 +44,7 @@ class EvalGraphSettings(BaseSettings):
     """The path of evaluation json file."""
 
     eval: GraphEvalConfig
-    """Configuration for the GrahEval"""
+    """Configuration for the GraphEval"""
 
     device: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
@@ -169,16 +169,18 @@ def eval_graph(settings: EvalGraphSettings) -> None:
 
     logger.info("Loading replacement model")
     replacement_model = ReplacementModel.from_pretrained(
-        settings.model_cfg, transcoders, lorsas, use_lorsa=settings.use_lorsa
+        settings.model_cfg,
+        transcoders,
+        lorsas,  # pyright: ignore[reportArgumentType]
+        use_lorsa=settings.use_lorsa,
     )
 
-    grapheval = GrahEval(settings.eval)
+    grapheval = GraphEval(settings.eval)
 
     grapheval.eval(
         replacement_model,
         settings.dataset_path,
         use_lorsa=settings.use_lorsa,
-        show=settings.show,
     )
 
 

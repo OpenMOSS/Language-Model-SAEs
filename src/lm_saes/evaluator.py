@@ -333,7 +333,7 @@ def compute_graph_scores(graph: Graph, use_lorsa: bool = True) -> tuple[float, f
     return replacement_score.item(), completeness_score.item()
 
 
-class GrahEval:
+class GraphEval:
     def __init__(self, cfg: GraphEvalConfig):
         self.cfg = cfg
         self.replacement_scores = []
@@ -345,7 +345,6 @@ class GrahEval:
         replacement_model: ReplacementModel,
         dataset_path: str,
         use_lorsa: bool = True,
-        show: bool = False,
         add_bos: bool = True,
     ):
         timer.reset()
@@ -359,6 +358,8 @@ class GrahEval:
             # Add <BOS> if there doesn't have
             if add_bos and data["prompt"][0] != "<":
                 prompt = "<|endoftext|> " + data["prompt"]
+            else:
+                prompt = data["prompt"]
 
             replacement_model._configure_gradient_flow()
             replacement_model._deduplicate_attention_buffers()
@@ -378,8 +379,3 @@ class GrahEval:
 
             self.replacement_scores.append(replacement_score)
             self.completeness_scores.append(completeness_score)
-
-            if show:
-                print("prompt:", prompt)
-                print(f"complete: {completeness_score}")
-                print(f"replace: {replacement_score}")

@@ -29,7 +29,7 @@ from transformer_lens.hook_points import HookedRootModule
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.config import BaseSAEConfig
 from lm_saes.database import MongoClient
-from lm_saes.utils.distributed import DimMap, distributed_topk
+from lm_saes.utils.distributed import DimMap, distributed_topk, mesh_dim_size
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.math import topk
@@ -550,7 +550,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 result = (
                     distributed_topk(
                         x,
-                        k=self.current_k * x.size(0),
+                        k=self.current_k * x.size(0) // mesh_dim_size(x.device_mesh, "data"),
                         device_mesh=x.device_mesh,
                         dim=(-2, -1),
                         mesh_dim_name="model",

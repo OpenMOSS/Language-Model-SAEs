@@ -8,6 +8,7 @@ from torch.distributed.tensor import DTensor
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation_functions import JumpReLU
+from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.utils.distributed import distributed_topk
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.math import topk
@@ -28,6 +29,7 @@ def topk_to_jumprelu_conversion(
         activations_stream: The activations stream to convert
         device_mesh: The device mesh to use
     """
+    assert isinstance(sae, CrossLayerTranscoder), "Current implementation only supports CLT models"
     assert "topk" in sae.cfg.act_fn, "CLT model must use topk activation function"
 
     activation_stream = iter(activations_stream)
@@ -75,13 +77,13 @@ def topk_to_jumprelu_conversion(
             "Also converting sparsity_include_decoder_norm to False so we do not need decoders to get encode results."
         )
     else:
-        sae.activation_function.log_jumprelu_threshold.data.fill_(math.log(threshold.item()))
+        sae.activation_function.log_jumprelu_threshold.data.fill_(math.log(threshold))
 
     converted_rec = sae(x)
 
-    print(f"{origin_rec=}")
-    print(f"{converted_rec=}")
-    print(f"{origin_rec - converted_rec=}")
+    logger.info(
+        f"Mean difference between original and converted reconstruction: {(origin_rec - converted_rec).mean().item()}"
+    )
 
     validation_batch = next(activation_stream)
     validation_batch = sae.normalize_activations(validation_batch)

@@ -1,10 +1,9 @@
 """Module for sweeping SAE experiments."""
 
 import os
-from typing import Any, Iterable, Optional, cast
+from typing import Optional
 
 import torch
-import torch.distributed as dist
 import wandb
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -994,83 +993,84 @@ def sweep_sae(settings: SweepSAESettings) -> None:
 
     mongo_client = MongoClient(settings.mongo) if settings.mongo is not None else None
 
-    if device_mesh.get_local_rank("sweep") == 0:
-        logger.info("Loading configurations on rank 0")
-        # Load configurations
-        model_cfg = load_config(
-            config=settings.model,
-            name=settings.model_name,
-            mongo_client=mongo_client,
-            config_type="model",
-            required=False,
-        )
+    logger.info("Loading configurations on rank 0")
+    # Load configurations
+    model_cfg = load_config(
+        config=settings.model,
+        name=settings.model_name,
+        mongo_client=mongo_client,
+        config_type="model",
+        required=False,
+    )
 
-        dataset_cfgs = (
-            {
-                dataset_name: load_config(
-                    config=dataset_cfg,
-                    name=dataset_name,
-                    mongo_client=mongo_client,
-                    config_type="dataset",
-                )
-                for dataset_name, dataset_cfg in settings.datasets.items()
-            }
-            if settings.datasets is not None
-            else None
-        )
+    dataset_cfgs = (
+        {
+            dataset_name: load_config(
+                config=dataset_cfg,
+                name=dataset_name,
+                mongo_client=mongo_client,
+                config_type="dataset",
+            )
+            for dataset_name, dataset_cfg in settings.datasets.items()
+        }
+        if settings.datasets is not None
+        else None
+    )
 
-        # Load model and datasets
-        logger.info("Loading model and datasets on rank 0")
-        model = load_model(model_cfg) if model_cfg is not None else None
-        datasets = (
-            {
-                dataset_name: load_dataset(dataset_cfg, device_mesh=device_mesh)
-                for dataset_name, dataset_cfg in dataset_cfgs.items()
-            }
-            if dataset_cfgs is not None
-            else None
-        )
+    # Load model and datasets
+    model = load_model(model_cfg) if model_cfg is not None else None
+    datasets = (
+        {
+            dataset_name: load_dataset(dataset_cfg, device_mesh=device_mesh)
+            for dataset_name, dataset_cfg in dataset_cfgs.items()
+        }
+        if dataset_cfgs is not None
+        else None
+    )
 
-        activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
+    activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
-        logger.info("Processing activations stream on rank 0")
-        activations_stream = activation_factory.process(
-            model=model,
-            model_name=settings.model_name,
-            datasets=datasets,
-        )
-    else:
-        activations_stream = None
+    logger.info("Processing activations stream")
+    activations_stream = activation_factory.process(
+        model=model,
+        model_name=settings.model_name,
+        datasets=datasets,
+    )
 
-    def broadcast_activations_stream(activations_stream: Optional[Iterable[dict[str, torch.Tensor]]]):
-        if device_mesh.get_local_rank("sweep") == 0:
-            assert activations_stream is not None, "Activations stream must be provided on rank 0 of sweep dimension"
-            for activations in activations_stream:
-                dist.broadcast_object_list([activations], group=device_mesh.get_group("sweep"), src=0)
-                yield activations
-            dist.broadcast_object_list([None], group=device_mesh.get_group("sweep"), src=0)
-        else:
-            while True:
-                objs = [None]
-                dist.broadcast_object_list(objs, group=device_mesh.get_group("sweep"), src=0)
-                if objs[0] is None:
-                    break
-                activations = {
-                    k: v.to(torch.device("cuda", int(os.environ["LOCAL_RANK"]))) if isinstance(v, torch.Tensor) else v
-                    for k, v in cast(dict[str, Any], objs[0]).items()  # noqa: F821
-                }
-                yield activations
-
-    activations_stream = broadcast_activations_stream(activations_stream)
+    sae_device_mesh = device_mesh["data", "model"]
+    logger.info(f"Created 2D sub-mesh for SAE: {sae_device_mesh}")
 
     item = settings.items[device_mesh.get_local_rank("sweep")]
     logger.info(f"Processing sweep item: {item.sae_name}/{item.sae_series}")
 
+    def convert_activations_to_2d_mesh(stream_3d, mesh_2d):
+        from torch.distributed.tensor import DTensor
+
+        for batch in stream_3d:
+            converted_batch = {}
+            for key, value in batch.items():
+                if isinstance(value, torch.Tensor):
+                    assert isinstance(value, DTensor), "value must be a DTensor"
+                    local_tensor = value.to_local()
+                    from lm_saes.utils.distributed import DimMap
+
+                    converted_value = DTensor.from_local(
+                        local_tensor,
+                        device_mesh=mesh_2d,
+                        placements=DimMap({"data": 0}).placements(mesh_2d),
+                    )
+                    converted_batch[key] = converted_value
+                else:
+                    converted_batch[key] = value
+            yield converted_batch
+
+    activations_stream = convert_activations_to_2d_mesh(activations_stream, sae_device_mesh)
+
     initializer = Initializer(item.initializer)
 
-    logger.info("Initializing SAE for sweep item")
+    logger.info("Initializing SAE on 2D sub-mesh")
     sae = initializer.initialize_sae_from_config(
-        item.sae, activation_stream=activations_stream, device_mesh=device_mesh
+        item.sae, activation_stream=activations_stream, device_mesh=sae_device_mesh
     )
 
     wandb_logger = (
@@ -1085,10 +1085,6 @@ def sweep_sae(settings: SweepSAESettings) -> None:
         if item.wandb is not None and is_primary_rank(device_mesh)
         else None
     )
-    if wandb_logger is not None:
-        logger.info("WandB logger initialized for sweep item")
-        wandb_logger.watch(sae, log="all")
-
     # TODO: implement eval_fn
     eval_fn = (lambda x: None) if settings.eval else None
 

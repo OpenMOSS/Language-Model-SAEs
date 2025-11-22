@@ -59,9 +59,9 @@ class Trainer:
         sae.cfg.save_hyperparameters(checkpoint_dir)
         # Save model state
         if sae.device_mesh is None:
-            sae.save_checkpoint(Path(checkpoint_dir) / "sae_weights.safetensors")
+            sae.save_checkpoint(checkpoint_dir / "sae_weights.safetensors")
         else:
-            sae.save_checkpoint(Path(checkpoint_dir) / "sae_weights.dcp")
+            sae.save_checkpoint(checkpoint_dir / "sae_weights.dcp")
 
         if is_primary_rank(sae.device_mesh):
             # Prepare trainer state
@@ -363,18 +363,16 @@ class Trainer:
 
         log_info["act_freq_scores"] += act_freq_scores
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
-
         # Log sparsity metrics periodically
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
             feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
             wandb_log_dict = sae.compute_sparsity_metrics(feature_sparsity)
-
             if is_primary_rank(sae.device_mesh):
                 log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Sparsity Metrics")
             if self.wandb_logger is not None:
                 self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
-            log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
-            log_info["n_frac_active_tokens"] = torch.zeros_like(log_info["n_frac_active_tokens"])
+            log_info["act_freq_scores"].zero_()
+            log_info["n_frac_active_tokens"].zero_()
 
         # Log training metrics periodically
         if (self.cur_step + 1) % self.cfg.log_frequency == 0:
@@ -406,6 +404,8 @@ class Trainer:
             explained_variance_legacy = 1 - per_token_l2_loss / total_variance
             l2_loss_mean = per_token_l2_loss.mean(dim=0)
             total_variance_mean = total_variance.mean(dim=0)
+            if torch.any(torch.isinf(total_variance_mean)):
+                logger.warning("Some of total_variance_mean is inf. Check dtype or scaling.")
             explained_variance = 1 - l2_loss_mean / total_variance_mean
 
             # Add model-specific training metrics (may modify l0 shape)
@@ -525,7 +525,8 @@ class Trainer:
                     )
 
                     if not self.cfg.skip_metrics_calculation:
-                        self._log(sae, log_info, batch)
+                        with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
+                            self._log(sae, log_info, batch)
 
                     with timer.time("refresh_batch"):
                         del batch

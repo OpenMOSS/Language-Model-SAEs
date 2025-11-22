@@ -175,7 +175,7 @@ class SparseAdam(Optimizer):
         super().__init__(params, defaults)
 
     @torch.no_grad()
-    def step(self, closure=None):
+    def step(self, closure=None):  # pyright: ignore[reportIncompatibleMethodOverride]
         """Performs a single optimization step."""
         loss = None
         if closure is not None:
