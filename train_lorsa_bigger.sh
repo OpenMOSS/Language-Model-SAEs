@@ -1,20 +1,30 @@
-WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node=1 --master-port=29440 exp/train_tc_BT4.py --lr 2e-3 --layer 14 --k 30 --exp_factor 16
-
 
 WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-  torchrun --nnodes=1 --nproc_per_node=8 --master-port=29430 exp/train_tc_BT4.py --lr 1e-3 --layer 14 --k 128 --exp_factor 128
+  torchrun --nnodes=1 --nproc_per_node=8 --master-port=$((29440+L)) \
+    exp/train_lorsa_BT4.py \
+      --lr 2e-4 \
+      --layer 10 \
+      --tp 8 \
+      --dp 1 \
+      --k 128 \
+      --exp_factor 16 \
+      --use_smolgen \
+      --init_search \
+      --initialize_lorsa_with_mhsa \
+      --initialize_W_D_with_active_subspace \
+      --initialize_lorsa_attn_scale_from_encoder \
+      --k_aux 2048 \
+      --dead_threshold 100000
 
-
-WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-  torchrun --nnodes=1 --nproc_per_node=8 --master-port=29450 exp/train_tc_BT4.py --lr 1e-4 --layer 14 --k 128 --exp_factor 128
 
 # sweep lr
 cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
 . .venv/bin/activate
 export WANDB_MODE=offline WANDB_CONSOLE=off CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PYTHONUNBUFFERED=1
 
-LOGDIR="$(pwd)/logs/BT4_tc/k_128_exp_128"
+LOGDIR="$(pwd)/logs/BT4_lorsa/k_128_exp_128"
 mkdir -p "$LOGDIR"
+echo "===> layer $L"
 
 for LR in 1e-4 2e-4; do
   echo "===> lr $LR"

@@ -63,8 +63,8 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   // Side选择状态
   const [traceSide, setTraceSide] = useState<'q' | 'k' | 'both'>('k');
   
-  // 模型选择状态
-  const [traceModel, setTraceModel] = useState<'T82' | 'BT4'>('T82');
+  // 固定使用BT4模型
+  const traceModel = 'BT4';
 
   // Top Activation 相关状态
   const [topActivations, setTopActivations] = useState<any[]>([]);
@@ -298,15 +298,15 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         move_uci: moveUci,
         order_mode: orderMode,
         side: traceSide,
-        trace_model: traceModel
+        trace_model: 'BT4'  // 固定使用BT4模型
       });
     }
     
     onCircuitTraceStart?.();
     
     try {
-      // 根据选择的模型构建正确的模型名称
-      const modelName = traceModel === 'BT4' ? 'lc0/BT4-1024x15x32h' : 'lc0/T82-768x15x24h';
+      // 固定使用BT4模型
+      const modelName = 'lc0/BT4-1024x15x32h';
       
       // 构建请求体
       const requestBody: any = { 
@@ -318,8 +318,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         node_threshold: circuitParams.node_threshold,
         edge_threshold: circuitParams.edge_threshold,
         max_act_times: circuitParams.max_act_times,
-        save_activation_info: true,
-        model_name: modelName
+        save_activation_info: true
       };
       
       // Both trace需要传递negative move
@@ -354,17 +353,11 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           }
         }
         
-        // 确保 metadata 中包含正确的模型信息
+        // 确保 metadata 中包含正确的模型信息（固定使用BT4模型）
         if (data.metadata) {
-          if (traceModel === 'BT4') {
-            data.metadata.lorsa_analysis_name = 'lc0/BT4-1024x15x32h';
-            data.metadata.tc_analysis_name = 'lc0/BT4-1024x15x32h';
-            console.log('🔍 设置 BT4 模型 metadata:', data.metadata);
-          } else {
-            data.metadata.lorsa_analysis_name = 'lc0-lorsa-L{}';
-            data.metadata.tc_analysis_name = 'lc0_L{}M_16x_k30_lr2e-03_auxk_sparseadam';
-            console.log('🔍 设置 T82 模型 metadata:', data.metadata);
-          }
+          data.metadata.lorsa_analysis_name = 'BT4_lorsa_L{}A';
+          data.metadata.tc_analysis_name = 'BT4_tc_L{}M';
+          console.log('🔍 设置 BT4 模型 metadata:', data.metadata);
         }
         
         handleCircuitTraceResult(data);
@@ -379,7 +372,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     } finally {
       onCircuitTraceEnd?.();
     }
-  }, [gameFen, currentFen, lastMove, gameHistory, positiveMove, negativeMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide, traceModel, loadCachedMove, saveCachedMove, loadCachedPositiveMove, loadCachedNegativeMove, saveCachedPositiveMove, saveCachedNegativeMove]);
+  }, [gameFen, currentFen, lastMove, gameHistory, positiveMove, negativeMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide, loadCachedMove, saveCachedMove, loadCachedPositiveMove, loadCachedNegativeMove, saveCachedPositiveMove, saveCachedNegativeMove]);
 
   // 新增：保存原始graph JSON（与后端create_graph_files一致的数据结构）
   const handleSaveGraphJson = useCallback(() => {
@@ -1005,25 +998,6 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
               </Select>
               <div className="text-xs text-gray-500">
                 选择要分析的注意力机制侧
-              </div>
-            </div>
-            
-            {/* 模型选择框 */}
-            <div className="space-y-2">
-              <Label htmlFor="model-select" className="text-sm font-medium text-gray-700">
-                Trace 模型选择
-              </Label>
-              <Select value={traceModel} onValueChange={(v: 'T82' | 'BT4') => setTraceModel(v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="T82">T82-768x15x24h</SelectItem>
-                  <SelectItem value="BT4">BT4-1024x15x32h</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="text-xs text-gray-500">
-                选择用于 circuit trace 的模型，影响节点分析的数据源
               </div>
             </div>
             

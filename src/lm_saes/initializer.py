@@ -7,6 +7,8 @@ from wandb.sdk.wandb_run import Run
 import scipy.stats
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.config import BaseSAEConfig, InitializerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.sae import SparseAutoEncoder
@@ -57,19 +59,44 @@ class Initializer:
         """
         batch = sae.normalize_activations(activation_batch)
 
-        if self.cfg.init_decoder_norm is None:
-            def grid_search_best_init_norm(search_range: List[float]) -> float:
-                losses: Dict[float, float] = {}
+        # if self.cfg.init_decoder_norm is None:
+        #     def grid_search_best_init_norm(search_range: List[float]) -> float:
+        #         losses: Dict[float, float] = {}
 
-                for norm in search_range:
-                    sae.set_decoder_to_fixed_norm(norm, force_exact=True)
-                    if self.cfg.init_encoder_with_decoder_transpose and self.cfg.init_encoder_norm is None:
-                        sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
-                    mse = sae.compute_loss(batch)[1][0]["l_rec"].mean().item()
-                    losses[norm] = mse
-                best_norm = min(losses, key=losses.get)  # type: ignore
-                return best_norm
+        #         for norm in search_range:
+        #             sae.set_decoder_to_fixed_norm(norm, force_exact=True)
+        #             if self.cfg.init_encoder_with_decoder_transpose and self.cfg.init_encoder_norm is None:
+        #                 sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
+        #             mse = sae.compute_loss(batch)[1][0]["l_rec"].mean().item()
+        #             losses[norm] = mse
+        #         best_norm = min(losses, key=losses.get)  # type: ignore
+        #         return best_norm
 
+        #     best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
+        #     best_norm_fine_grained = grid_search_best_init_norm(
+        #         torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
+        #     )
+
+        #     logger.info(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")
+        #     if wandb_logger is not None:
+        #         wandb_logger.log({"best_norm_fine_grained": best_norm_fine_grained})
+
+        #     sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
+        
+        @torch.autocast(device_type=sae.cfg.device, dtype=sae.cfg.dtype)
+        def grid_search_best_init_norm(search_range: List[float]) -> float:
+            losses: Dict[float, float] = {}
+
+            for norm in search_range:
+                sae.set_decoder_to_fixed_norm(norm, force_exact=True)
+                if self.cfg.init_encoder_with_decoder_transpose:
+                    sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
+                mse = sae.compute_loss(batch)[1][0]["l_rec"].mean().item()  # type: ignore
+                losses[norm] = mse
+            best_norm = min(losses, key=losses.get)  # type: ignore
+            return best_norm
+
+        if self.cfg.grid_search_init_norm:
             best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
             best_norm_fine_grained = grid_search_best_init_norm(
                 torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
@@ -81,10 +108,11 @@ class Initializer:
 
             sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
+
         if self.cfg.bias_init_method == "geometric_median":
-            assert isinstance(sae, SparseAutoEncoder), (
-                "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
-            )
+            # assert isinstance(sae, SparseAutoEncoder), (
+            #     "SparseAutoEncoder is the only supported SAE type for encoder bias initialization"
+            # )
             assert sae.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
             # sae.b_D.copy_(
             #     sae.compute_norm_factor(batch[sae.cfg.hook_point_out], hook_point=sae.cfg.hook_point_out)
@@ -120,6 +148,110 @@ class Initializer:
         sae.cfg.jump_relu_threshold = threshold.item()
         return sae
 
+    # def initialize_sae_from_config(
+    #     self,
+    #     cfg: BaseSAEConfig,
+    #     activation_stream: Iterable[dict[str, Tensor]] | None = None,
+    #     activation_norm: dict[str, float] | None = None,
+    #     device_mesh: DeviceMesh | None = None,
+    #     wandb_logger: Run | None = None,
+    #     fold_activation_scale: bool = False,
+    #     model: LanguageModel | None = None
+    # ):
+    #     """
+    #     Initialize the SAE from the SAE config.
+    #     Args:
+    #         cfg (SAEConfig): The SAE config.
+    #         activation_iter (Iterable[dict[str, Tensor]] | None): The activation iterator.
+    #         activation_norm (dict[str, float] | None): The activation normalization. Used for dataset-wise normalization when self.cfg.norm_activation is "dataset-wise".
+    #         device_mesh (DeviceMesh | None): The device mesh.
+    #     """
+    #     try:
+    #         sae_cls = {
+    #             "sae": SparseAutoEncoder,
+    #             "crosscoder": CrossCoder,
+    #             "clt": CrossLayerTranscoder,
+    #             "lorsa": LowRankSparseAttention,
+    #         }[cfg.sae_type]
+    #     except KeyError:
+    #         raise ValueError(f"SAE type {cfg.sae_type} not supported.")
+
+    #     sae: AbstractSparseAutoEncoder = sae_cls.from_config(
+    #         cfg,
+    #         device_mesh=device_mesh,
+    #         fold_activation_scale=fold_activation_scale,
+    #     )
+        
+    #     if cfg.sae_pretrained_name_or_path is None:
+    #         sae = self.initialize_parameters(sae)
+    #         if sae.cfg.norm_activation == "dataset-wise":
+    #             if activation_norm is None:
+    #                 assert activation_stream is not None, (
+    #                     "Activation iterator must be provided for dataset-wise normalization"
+    #                 )
+ 
+    #                 activation_norm = calculate_activation_norm(
+    #                     activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
+    #                 )
+    #                 print('train from scratch...... set_dataset_average_activation norm')
+    #                 print(f'{activation_norm = }')
+    #             sae.set_dataset_average_activation_norm(activation_norm)
+    #             print('successfully set dataset_average_activation_norm!')
+    #             # sae.standardize_parameters_of_dataset_norm(activation_norm)
+    #         # if self.cfg.init_search:
+    #         #     assert activation_stream is not None, "Activation iterator must be provided for initialization search"
+    #         #     activation_batch = next(iter(activation_stream))  # type: ignore
+    #         #     sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
+    #         if cfg.sae_type == 'lorsa' and self.cfg.initialize_lorsa_with_mhsa and sae.cfg.norm_activation == 'dataset-wise':
+    #             sae.init_lorsa_with_mhsa(model.model.blocks[self.cfg.model_layer])
+ 
+    #         # Initialize LORSA SmolGen from encoder if configured
+    #         if (
+    #             cfg.sae_type == 'lorsa'
+    #             and cfg.use_smolgen
+    #             and self.cfg.initialize_lorsa_smolgen_from_encoder
+    #             and model is not None
+    #         ):
+    #             print(
+    #                 f"====== init_smolgen_from_encoder ======"
+    #             )
+    #             sae.init_smolgen_from_encoder(
+    #                 model.model.blocks[self.cfg.model_layer]
+    #             )
+ 
+    #         assert activation_stream is not None, "Activation iterator must be provided for initialization search"
+    #         activation_batch = next(iter(activation_stream))  # type: ignore
+    #         sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
+ 
+    #         if self.cfg.initialize_W_D_with_active_subspace:
+    #             activation_batch = sae.normalize_activations(activation_batch)
+    #             if cfg.sae_type == 'lorsa' and self.cfg.initialize_lorsa_with_mhsa and sae.cfg.norm_activation == 'dataset-wise':
+    #                 print(
+    #                     f"====== init_W_D_with_active_subspace_per_head ======"
+    #                 )
+    #                 sae.init_W_D_with_active_subspace_per_head(
+    #                     activation_batch,
+    #                     encoder_layer=model.model.blocks[self.cfg.model_layer],
+    #                 )
+    #             else:
+    #                 sae.init_W_D_with_active_subspace(activation_batch, self.cfg.d_active_subspace)
+    #         if self.cfg.initialize_lorsa_attn_scale_from_encoder:
+    #             print(
+    #                 f"====== init_attn_scale_from_encoder ======"
+    #             )
+    #             sae.init_attn_scale_from_encoder(
+    #                 encoder_layer=model.model.blocks[self.cfg.model_layer],
+    #             )
+    #         if self.cfg.initialize_W_D_with_mhsa:
+    #             print(
+    #                 f"====== init_lorsa_W_D_with_mhsa ======"
+    #             )
+    #             sae.init_lorsa_W_D_with_mhsa(
+    #                 encoder_layer=model.model.blocks[self.cfg.model_layer],
+    #             )
+    #     return sae
+
+
     def initialize_sae_from_config(
         self,
         cfg: BaseSAEConfig,
@@ -141,14 +273,16 @@ class Initializer:
             sae: AbstractSparseAutoEncoder = SparseAutoEncoder.from_config(cfg, device_mesh=device_mesh)
         elif cfg.sae_type == "crosscoder":
             sae: AbstractSparseAutoEncoder = CrossCoder.from_config(cfg, device_mesh=device_mesh)
+        elif cfg.sae_type == "lorsa":
+            sae: AbstractSparseAutoEncoder = LowRankSparseAttention.from_config(cfg, device_mesh=device_mesh)
         else:
             raise ValueError(f"SAE type {cfg.sae_type} not supported.")
         if self.cfg.state == "training":
-            if cfg.sae_type == "sae" and cfg.proj_data:
-                assert activation_stream is not None, (
-                    "Activation iterator must be provided for proj_data initialization"
-                )
-                self.initialize_proj_data(sae, activation_stream, device_mesh)
+            # if cfg.sae_type == "sae" and cfg.proj_data:
+            #     assert activation_stream is not None, (
+            #         "Activation iterator must be provided for proj_data initialization"
+            #     )
+            #     self.initialize_proj_data(sae, activation_stream, device_mesh)
                 
             if cfg.sae_pretrained_name_or_path is None:
                 sae = self.initialize_parameters(sae)
@@ -161,8 +295,12 @@ class Initializer:
                     activation_norm = calculate_activation_norm(
                         activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
                     )
+                    print(f'{activation_norm = }')
                 sae.set_dataset_average_activation_norm(activation_norm)
-
+                
+            if cfg.sae_type == 'lorsa' and self.cfg.initialize_lorsa_with_mhsa and sae.cfg.norm_activation == 'dataset-wise':
+                sae.init_lorsa_with_mhsa(model.model.blocks[self.cfg.model_layer])
+ 
             # Initialize LORSA SmolGen from encoder if configured
             if (
                 cfg.sae_type == 'lorsa'
@@ -181,6 +319,7 @@ class Initializer:
                 assert activation_stream is not None, "Activation iterator must be provided for initialization search"
                 activation_batch = next(iter(activation_stream))  # type: ignore
                 sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
+                print("init_search open")
             if self.cfg.initialize_W_D_with_active_subspace:
                 activation_batch = sae.normalize_activations(activation_batch)
                 if cfg.sae_type == 'lorsa' and self.cfg.initialize_lorsa_with_mhsa and sae.cfg.norm_activation == 'dataset-wise':

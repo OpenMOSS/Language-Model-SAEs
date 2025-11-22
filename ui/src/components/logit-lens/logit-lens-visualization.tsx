@@ -116,11 +116,8 @@ interface MeanAblationResult {
 export const LogitLensVisualization: React.FC = () => {
   const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
   const [targetMove, setTargetMove] = useState('');
-  const [selectedModel, setSelectedModel] = useState('lc0/T82-768x15x24h');
-  const [availableModels, setAvailableModels] = useState([
-    { name: 'lc0/T82-768x15x24h', display_name: 'T82-768x15x24h' },
-    { name: 'lc0/BT4-1024x15x32h', display_name: 'BT4-1024x15x32h' },
-  ]);
+  // 固定使用BT4模型
+  const selectedModel = 'lc0/BT4-1024x15x32h';
   const [isLoading, setIsLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<LogitLensResult | null>(null);
   const [selectedLayer, setSelectedLayer] = useState<number>(0);
@@ -131,24 +128,7 @@ export const LogitLensVisualization: React.FC = () => {
   const [selectedHookType, setSelectedHookType] = useState<string>('attn_out');
   const [activeTab, setActiveTab] = useState<string>('logit-lens');
 
-  // 获取可用模型列表
-  const fetchAvailableModels = useCallback(async () => {
-    try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/models`);
-      if (response.ok) {
-        const data = await response.json();
-        setAvailableModels(data.models);
-      }
-    } catch (error) {
-      console.error('获取模型列表失败:', error);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchAvailableModels();
-  }, [fetchAvailableModels]);
-
-  // 运行Logit Lens分析
+  // 运行Logit Lens分析（固定使用BT4模型）
   const runAnalysis = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -159,7 +139,6 @@ export const LogitLensVisualization: React.FC = () => {
         },
         body: JSON.stringify({
           fen,
-          model_name: selectedModel,
           target_move: targetMove || null,
           topk_vocab: 2000,
         }),
@@ -180,9 +159,9 @@ export const LogitLensVisualization: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [fen, selectedModel, targetMove]);
+  }, [fen, targetMove]);
 
-  // 运行Mean Ablation分析
+  // 运行Mean Ablation分析（固定使用BT4模型）
   const runMeanAblation = useCallback(async () => {
     setIsLoadingAblation(true);
     try {
@@ -193,7 +172,6 @@ export const LogitLensVisualization: React.FC = () => {
         },
         body: JSON.stringify({
           fen,
-          model_name: selectedModel,
           hook_types: ['attn_out', 'mlp_out'],
           target_move: targetMove || null,
           topk_vocab: 2000,
@@ -215,7 +193,7 @@ export const LogitLensVisualization: React.FC = () => {
     } finally {
       setIsLoadingAblation(false);
     }
-  }, [fen, selectedModel, targetMove]);
+  }, [fen, targetMove]);
 
   // 获取当前选中层的分析数据
   const getLayerData = useCallback((layer: number): LayerAnalysis | null => {
@@ -263,29 +241,6 @@ export const LogitLensVisualization: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左侧：输入和控制 */}
         <div className="space-y-4">
-          {/* 模型选择 */}
-          <Card>
-            <CardHeader>
-              <CardTitle>模型选择</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">选择模型</label>
-                <Select value={selectedModel} onValueChange={setSelectedModel}>
-                  <SelectTrigger className="mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableModels.map((model) => (
-                      <SelectItem key={model.name} value={model.name}>
-                        {model.display_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardContent>
-          </Card>
 
           {/* FEN输入 */}
           <Card>

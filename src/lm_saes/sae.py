@@ -37,12 +37,12 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
                 self.W_E_glu = nn.Parameter(torch.empty(cfg.d_feature, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
                 self.b_E_glu = nn.Parameter(torch.empty(cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
             
-            if self.cfg.proj_data:
-                self.register_buffer('proj_weight', torch.empty(cfg.d_model, cfg.d_feature, device=cfg.device, dtype=cfg.dtype))
-                self.register_buffer('proj_bias', torch.empty(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
-                if cfg.init_with_svd:
-                    self.register_buffer('relative_sigular_value', torch.empty(cfg.d_model, dtype=cfg.dtype))
-                self.register_buffer('variance_factor', torch.tensor(1.0, device=cfg.device, dtype=cfg.dtype))
+            # if self.cfg.proj_data:
+            #     self.register_buffer('proj_weight', torch.empty(cfg.d_model, cfg.d_feature, device=cfg.device, dtype=cfg.dtype))
+            #     self.register_buffer('proj_bias', torch.empty(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
+            #     if cfg.init_with_svd:
+            #         self.register_buffer('relative_sigular_value', torch.empty(cfg.d_model, dtype=cfg.dtype))
+            #     self.register_buffer('variance_factor', torch.tensor(1.0, device=cfg.device, dtype=cfg.dtype))
         else:
             self.W_E = nn.Parameter(
                 torch.distributed.tensor.empty(
@@ -98,28 +98,28 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
                     )
                 )
             
-            if self.cfg.proj_data:
-                self.register_buffer('proj_weight', torch.distributed.tensor.empty(
-                    cfg.d_model,
-                    cfg.d_feature,
-                    dtype=cfg.dtype,
-                    device_mesh=device_mesh,
-                    placements=self.dim_maps()["proj_weight"].placements(device_mesh),
-                ))
-                self.register_buffer('proj_bias', torch.distributed.tensor.empty(
-                    cfg.d_model,
-                    dtype=cfg.dtype,
-                    device_mesh=device_mesh,
-                    placements=self.dim_maps()["proj_bias"].placements(device_mesh),
-                ))
-                if cfg.init_with_svd:
-                    self.register_buffer('relative_sigular_value', torch.distributed.tensor.empty(
-                        cfg.d_model,
-                        dtype=cfg.dtype,
-                        device_mesh=device_mesh,
-                        placements=self.dim_maps()["relative_sigular_value"].placements(device_mesh),
-                    ))
-                self.register_buffer('variance_factor', torch.tensor(1.0, device=cfg.device, dtype=cfg.dtype))
+            # if self.cfg.proj_data:
+            #     self.register_buffer('proj_weight', torch.distributed.tensor.empty(
+            #         cfg.d_model,
+            #         cfg.d_feature,
+            #         dtype=cfg.dtype,
+            #         device_mesh=device_mesh,
+            #         placements=self.dim_maps()["proj_weight"].placements(device_mesh),
+            #     ))
+            #     self.register_buffer('proj_bias', torch.distributed.tensor.empty(
+            #         cfg.d_model,
+            #         dtype=cfg.dtype,
+            #         device_mesh=device_mesh,
+            #         placements=self.dim_maps()["proj_bias"].placements(device_mesh),
+            #     ))
+            #     if cfg.init_with_svd:
+            #         self.register_buffer('relative_sigular_value', torch.distributed.tensor.empty(
+            #             cfg.d_model,
+            #             dtype=cfg.dtype,
+            #             device_mesh=device_mesh,
+            #             placements=self.dim_maps()["relative_sigular_value"].placements(device_mesh),
+            #         ))
+            #     self.register_buffer('variance_factor', torch.tensor(1.0, device=cfg.device, dtype=cfg.dtype))
 
         self.hook_hidden_pre = HookPoint()
         self.hook_feature_acts = HookPoint()
@@ -221,11 +221,11 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             "W_D": DimMap({"model": 0}),
             "b_E": DimMap({"model": 0}),
         }
-        if self.cfg.proj_data:
-            sae_maps["proj_weight"] = DimMap({})
-            sae_maps["proj_bias"] = DimMap({})
-            if self.cfg.init_with_svd:
-                sae_maps["relative_sigular_value"] = DimMap({})
+        # if self.cfg.proj_data:
+        #     sae_maps["proj_weight"] = DimMap({})
+        #     sae_maps["proj_bias"] = DimMap({})
+        #     if self.cfg.init_with_svd:
+        #         sae_maps["relative_sigular_value"] = DimMap({})
         if self.cfg.use_decoder_bias:
             sae_maps["b_D"] = DimMap({})
         if self.cfg.use_glu_encoder:
@@ -281,12 +281,12 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_out]
         )
         
-        # print(f'{self.cfg.hook_point_in = }')
-        # print(f'{self.cfg.hook_point_out = }')
-        # print(f'{self.dataset_average_activation_norm[self.cfg.hook_point_in] = }')
-        # print(f'{self.dataset_average_activation_norm[self.cfg.hook_point_out] = }')
-        # print(f'{input_norm_factor = }')
-        # print(f'{output_norm_factor = }')
+        print(f'{self.cfg.hook_point_in = }')
+        print(f'{self.cfg.hook_point_out = }')
+        print(f'{self.dataset_average_activation_norm[self.cfg.hook_point_in] = }')
+        print(f'{self.dataset_average_activation_norm[self.cfg.hook_point_out] = }')
+        print(f'{input_norm_factor = }')
+        print(f'{output_norm_factor = }')
         
         self.b_E.div_(input_norm_factor)
         if self.cfg.use_decoder_bias:
@@ -497,9 +497,12 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         return reconstructed
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+    # def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+    #     cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
+    #     return cls.from_config(cfg)
+    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, fold_activation_scale: bool = True, **kwargs):
         cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        return cls.from_config(cfg)
+        return cls.from_config(cfg, fold_activation_scale=fold_activation_scale)
 
     @torch.no_grad()
     def _init_encoder_with_decoder_transpose(
@@ -557,9 +560,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         else:
             x = batch[self.cfg.hook_point_in]
             
-        with torch.no_grad():
-            if self.cfg.proj_data:
-                x = (x - self.proj_bias) @ self.proj_weight
+        # with torch.no_grad():
+        #     if self.cfg.proj_data:
+        #         x = (x - self.proj_bias) @ self.proj_weight
                 
         return x, {}
 
@@ -570,9 +573,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         else:
             label = batch[self.cfg.hook_point_out]
         
-        with torch.no_grad():
-            if self.cfg.proj_data:
-                label = (label - self.proj_bias) @ self.proj_weight
+        # with torch.no_grad():
+        #     if self.cfg.proj_data:
+        #         label = (label - self.proj_bias) @ self.proj_weight
         
         return label
 
@@ -589,109 +592,109 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             },
         ]
 
-    @torch.no_grad()
-    def fold_data_proj_into_sae(self):
-        """
-        Fold the projection parameters into the encoder and decoder weights.
-        This makes the model equivalent but operates in d_model dimension instead of d_feature.
-        After folding, proj_data is set to False.
-        """
-        if not self.cfg.proj_data:
-            return  # Already folded or not using projection
+    # @torch.no_grad()
+    # def fold_data_proj_into_sae(self):
+    #     """
+    #     Fold the projection parameters into the encoder and decoder weights.
+    #     This makes the model equivalent but operates in d_model dimension instead of d_feature.
+    #     After folding, proj_data is set to False.
+    #     """
+    #     if not self.cfg.proj_data:
+    #         return  # Already folded or not using projection
         
-        # Get the projection parameters
-        proj_weight = self.proj_weight # [d_model, d_feature]
-        proj_bias = self.proj_bias  # [d_model]
+    #     # Get the projection parameters
+    #     proj_weight = self.proj_weight # [d_model, d_feature]
+    #     proj_bias = self.proj_bias  # [d_model]
         
-        # Fold projection into encoder
-        # Original: (x - proj_bias) @ proj_weight @ W_E + b_E
-        # New: x @ (proj_weight @ W_E) + (-proj_bias @ proj_weight @ W_E + b_E)
-        if self.device_mesh is not None:
-            new_W_E = proj_weight.to_local() @ self.W_E.to_local()
-            new_b_E = -proj_bias.to_local() @ proj_weight.to_local() @ self.W_E.to_local() + self.b_E.to_local()
+    #     # Fold projection into encoder
+    #     # Original: (x - proj_bias) @ proj_weight @ W_E + b_E
+    #     # New: x @ (proj_weight @ W_E) + (-proj_bias @ proj_weight @ W_E + b_E)
+    #     if self.device_mesh is not None:
+    #         new_W_E = proj_weight.to_local() @ self.W_E.to_local()
+    #         new_b_E = -proj_bias.to_local() @ proj_weight.to_local() @ self.W_E.to_local() + self.b_E.to_local()
             
-            if self.cfg.use_glu_encoder:
-                new_W_E_glu = proj_weight.to_local() @ self.W_E_glu.to_local()
-                new_b_E_glu = -proj_bias.to_local() @ proj_weight.to_local() @ self.W_E_glu.to_local() + self.b_E_glu.to_local()
+    #         if self.cfg.use_glu_encoder:
+    #             new_W_E_glu = proj_weight.to_local() @ self.W_E_glu.to_local()
+    #             new_b_E_glu = -proj_bias.to_local() @ proj_weight.to_local() @ self.W_E_glu.to_local() + self.b_E_glu.to_local()
             
-        else:
-            new_W_E = proj_weight @ self.W_E  # [d_model, d_sae]
-            new_b_E = -proj_bias @ proj_weight @ self.W_E + self.b_E  # [d_sae]
+    #     else:
+    #         new_W_E = proj_weight @ self.W_E  # [d_model, d_sae]
+    #         new_b_E = -proj_bias @ proj_weight @ self.W_E + self.b_E  # [d_sae]
             
-            if self.cfg.use_glu_encoder:
-                new_W_E_glu = proj_weight @ self.W_E_glu  # [d_model, d_sae]
-                new_b_E_glu = -proj_bias @ proj_weight @ self.W_E_glu + self.b_E_glu  # [d_sae]
+    #         if self.cfg.use_glu_encoder:
+    #             new_W_E_glu = proj_weight @ self.W_E_glu  # [d_model, d_sae]
+    #             new_b_E_glu = -proj_bias @ proj_weight @ self.W_E_glu + self.b_E_glu  # [d_sae]
             
-        # Fold projection into decoder
-        # Original: features @ W_D, then add proj_bias and multiply by inverse projection
-        # We need to map back to d_model space: features @ W_D @ proj_weight.T + proj_bias
-        if self.device_mesh is not None:
-            new_W_D = self.W_D.to_local() @ proj_weight.to_local().T  # [d_sae, d_model]
+    #     # Fold projection into decoder
+    #     # Original: features @ W_D, then add proj_bias and multiply by inverse projection
+    #     # We need to map back to d_model space: features @ W_D @ proj_weight.T + proj_bias
+    #     if self.device_mesh is not None:
+    #         new_W_D = self.W_D.to_local() @ proj_weight.to_local().T  # [d_sae, d_model]
             
-            if self.cfg.use_decoder_bias:
-                new_b_D = self.b_D.to_local() @ proj_weight.to_local().T + proj_bias.to_local()  # [d_model]
+    #         if self.cfg.use_decoder_bias:
+    #             new_b_D = self.b_D.to_local() @ proj_weight.to_local().T + proj_bias.to_local()  # [d_model]
             
-        else:
-            new_W_D = self.W_D @ proj_weight.T  # [d_sae, d_model]
+    #     else:
+    #         new_W_D = self.W_D @ proj_weight.T  # [d_sae, d_model]
             
-            if self.cfg.use_decoder_bias:
-                new_b_D = self.b_D @ proj_weight.T + proj_bias  # [d_model]
-        # Update the parameters
-        if self.device_mesh is not None:
-            # For distributed tensors, we need to redistribute properly
-            new_W_E = DTensor.from_local(
-                new_W_E,
-                device_mesh=self.device_mesh,
-                placements=self.dim_maps()["W_E"].placements(self.device_mesh),
-            )
-            new_b_E = DTensor.from_local(
-                new_b_E,
-                device_mesh=self.device_mesh,
-                placements=self.dim_maps()["b_E"].placements(self.device_mesh),
-            )
-            new_W_D = DTensor.from_local(
-                new_W_D,
-                device_mesh=self.device_mesh,
-                placements=self.dim_maps()["W_D"].placements(self.device_mesh),
-            )
+    #         if self.cfg.use_decoder_bias:
+    #             new_b_D = self.b_D @ proj_weight.T + proj_bias  # [d_model]
+    #     # Update the parameters
+    #     if self.device_mesh is not None:
+    #         # For distributed tensors, we need to redistribute properly
+    #         new_W_E = DTensor.from_local(
+    #             new_W_E,
+    #             device_mesh=self.device_mesh,
+    #             placements=self.dim_maps()["W_E"].placements(self.device_mesh),
+    #         )
+    #         new_b_E = DTensor.from_local(
+    #             new_b_E,
+    #             device_mesh=self.device_mesh,
+    #             placements=self.dim_maps()["b_E"].placements(self.device_mesh),
+    #         )
+    #         new_W_D = DTensor.from_local(
+    #             new_W_D,
+    #             device_mesh=self.device_mesh,
+    #             placements=self.dim_maps()["W_D"].placements(self.device_mesh),
+    #         )
             
-            if self.cfg.use_glu_encoder:
-                new_W_E_glu = DTensor.from_local(
-                    new_W_E_glu,
-                    device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["W_E_glu"].placements(self.device_mesh),
-                )
-                new_b_E_glu = DTensor.from_local(
-                    new_b_E_glu,
-                    device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["b_E_glu"].placements(self.device_mesh),
-                )
+    #         if self.cfg.use_glu_encoder:
+    #             new_W_E_glu = DTensor.from_local(
+    #                 new_W_E_glu,
+    #                 device_mesh=self.device_mesh,
+    #                 placements=self.dim_maps()["W_E_glu"].placements(self.device_mesh),
+    #             )
+    #             new_b_E_glu = DTensor.from_local(
+    #                 new_b_E_glu,
+    #                 device_mesh=self.device_mesh,
+    #                 placements=self.dim_maps()["b_E_glu"].placements(self.device_mesh),
+    #             )
             
-            if self.cfg.use_decoder_bias:
-                new_b_D = DTensor.from_local(
-                    new_b_D,
-                    device_mesh=self.device_mesh,
-                    placements=self.dim_maps()["b_D"].placements(self.device_mesh),
-                )
-        # Replace parameters with new shapes (d_model instead of d_feature)
-        self.W_E = nn.Parameter(new_W_E)
-        self.b_E = nn.Parameter(new_b_E)
-        self.W_D = nn.Parameter(new_W_D)
+    #         if self.cfg.use_decoder_bias:
+    #             new_b_D = DTensor.from_local(
+    #                 new_b_D,
+    #                 device_mesh=self.device_mesh,
+    #                 placements=self.dim_maps()["b_D"].placements(self.device_mesh),
+    #             )
+    #     # Replace parameters with new shapes (d_model instead of d_feature)
+    #     self.W_E = nn.Parameter(new_W_E)
+    #     self.b_E = nn.Parameter(new_b_E)
+    #     self.W_D = nn.Parameter(new_W_D)
         
-        if self.cfg.use_glu_encoder:
-            self.W_E_glu = nn.Parameter(new_W_E_glu)
-            self.b_E_glu = nn.Parameter(new_b_E_glu)
+    #     if self.cfg.use_glu_encoder:
+    #         self.W_E_glu = nn.Parameter(new_W_E_glu)
+    #         self.b_E_glu = nn.Parameter(new_b_E_glu)
         
-        if self.cfg.use_decoder_bias:
-            self.b_D = nn.Parameter(new_b_D)
+    #     if self.cfg.use_decoder_bias:
+    #         self.b_D = nn.Parameter(new_b_D)
         
-        # Update config to reflect the change
-        self.cfg.d_feature = self.cfg.d_model
-        self.cfg.proj_data = False
-        del self.proj_weight
-        del self.proj_bias
-        del self.relative_sigular_value
-        del self.variance_factor
+    #     # Update config to reflect the change
+    #     self.cfg.d_feature = self.cfg.d_model
+    #     self.cfg.proj_data = False
+    #     del self.proj_weight
+    #     del self.proj_bias
+    #     del self.relative_sigular_value
+    #     del self.variance_factor
 
     @torch.no_grad()
     def update_dead_latents(self, feature_acts: torch.Tensor):

@@ -1273,6 +1273,163 @@ def compute_logit_gradients_wrt_qk(
     *,
     max_n_logits: int = 10,
     desired_logit_prob: float = 0.95,
+    demean: bool = False,
+    move_idx: int = None,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """        
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            * top_idx - 选中的logit索引，形状为(k,)
+            * top_p - 对应的概率值，形状为(k,)
+            * q_gradient_matrix - q的梯度矩阵，形状为(k, seq_len, d_model)
+            * k_gradient_matrix - k的梯度矩阵，形状为(k, seq_len, d_model)
+            * move_positions - 对应的move位置，形状为(k, 2)
+            * residual_gradient_matrix - residual_input的梯度矩阵，形状为(k, seq_len, d_model)
+    """
+    
+    if model is None or residual_input is None:
+        raise ValueError("Both model and residual_input must be provided")
+    
+    if not hasattr(model, 'policy_head'):
+        raise ValueError("Model must have policy_head attribute")
+    
+    lboard = LeelaBoard.from_fen(fen)
+    
+    if logits.numel() == 0:
+        raise ValueError("Input logits tensor is empty")
+    
+    # 确保logits是1D张量
+    if logits.dim() > 1:
+        logits = logits.flatten()
+    
+    # 选择要处理的logit索引
+    if move_idx is not None:
+        if move_idx < 0 or move_idx >= logits.size(0):
+            raise ValueError(f"move_idx {move_idx} 超出logits范围 [0, {logits.size(0)-1}]")
+        
+        top_idx = torch.tensor([move_idx], device=logits.device)
+        probs = torch.softmax(logits, dim=-1)
+        top_p = probs[move_idx].unsqueeze(0)
+    else:
+        # 原有的top logits选择逻辑
+        actual_max_logits = min(max_n_logits, logits.size(0))
+        
+        probs = torch.softmax(logits, dim=-1)
+        top_p, top_idx = torch.topk(probs, actual_max_logits)
+        cutoff = int(torch.searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
+        top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
+    
+    # 计算选出的logits对应的move位置
+    move_positions = []
+    for idx in top_idx:
+        try:
+            uci_move = lboard.idx2uci(idx.item())
+            positions = lboard.uci_to_positions(uci_move)
+            move_positions.append(positions)
+        except Exception as e:
+            logger.warning(f"无法获取索引 {idx.item()} 对应的move位置: {e}")
+            move_positions.append(torch.tensor([0, 0]))
+    
+    move_positions_tensor = torch.stack(move_positions)
+    
+    # 准备计算梯度
+    device = residual_input.device
+    n_selected = len(top_idx)
+    
+    # 统一管理q和k的activations、hooks和梯度矩阵
+    activations_dict = {'q': None, 'k': None}
+    hook_handles = {'q': None, 'k': None}
+    hook_points = {
+        'q': model.policy_head.hook_q,
+        'k': model.policy_head.hook_k
+    }
+    
+    # 通用的hook捕获函数
+    def create_capture_hook(key):
+        def capture_hook(acts, hook):
+            activations_dict[key] = acts
+            activations_dict[key].retain_grad()
+            return activations_dict[key]
+        return capture_hook
+    
+    try:
+        # 注册hooks
+        for key in ['q', 'k']:
+            hook_handles[key] = hook_points[key].add_hook(create_capture_hook(key))
+        
+        # 将residual_input设置为叶子节点
+        residual_input = residual_input.detach().clone().requires_grad_(True)
+        
+        # 进行前向传播以捕获q和k activations
+        policy_logits = model.policy_head(residual_input)
+        
+        # 确保q和k activations被正确捕获
+        for key in ['q', 'k']:
+            if activations_dict[key] is None:
+                raise ValueError(f"Failed to capture {key} activations through hook")
+        
+        # 获取序列长度和模型维度
+        batch_size, seq_len, d_model = activations_dict['q'].shape
+        
+        # 初始化梯度矩阵
+        gradient_matrices = {
+            'q': torch.zeros(n_selected, seq_len, d_model, device=device),
+            'k': torch.zeros(n_selected, seq_len, d_model, device=device)
+        }
+        residual_gradient_matrix = torch.zeros(n_selected, seq_len, d_model, device=device)
+        
+        # 计算每个选中logit的梯度
+        for i, logit_idx in enumerate(top_idx):
+            # 清零所有梯度
+            for key in ['q', 'k']:
+                if activations_dict[key].grad is not None:
+                    activations_dict[key].grad.zero_()
+            if residual_input.grad is not None:
+                residual_input.grad.zero_()
+            
+            # 对选定的policy logit求梯度
+            policy_logits[0, logit_idx].backward(retain_graph=True)
+            
+            # 收集所有activations的梯度
+            for key in ['q', 'k']:
+                if activations_dict[key].grad is not None:
+                    grad = activations_dict[key].grad[0, :, :].clone()  # shape: (seq_len, d_model)
+                    gradient_matrices[key][i, :, :] = grad
+            
+            # 收集residual_input的梯度
+            if residual_input.grad is not None:
+                grad = residual_input.grad[0, :, :].clone()  # shape: (seq_len, d_model)
+                residual_gradient_matrix[i, :, :] = grad
+        
+    finally:
+        # 移除所有hooks
+        for key in ['q', 'k']:
+            if hook_handles[key] is not None:
+                hook_handles[key].remove()
+    
+    # 去均值化处理
+    if demean:
+        result_matrices = {}
+        for key in ['q', 'k']:
+            mean_gradient = gradient_matrices[key].mean(dim=0, keepdim=True)
+            result_matrices[key] = gradient_matrices[key] - mean_gradient
+        residual_mean_gradient = residual_gradient_matrix.mean(dim=0, keepdim=True)
+        residual_result_matrix = residual_gradient_matrix - residual_mean_gradient
+    else:
+        result_matrices = gradient_matrices
+        residual_result_matrix = residual_gradient_matrix
+    
+    return top_idx, top_p, result_matrices['q'].detach(), result_matrices['k'].detach(), move_positions_tensor, residual_result_matrix.detach()
+
+
+def compute_logit_gradients_wrt_qk_legacy(
+    fen: str,
+    logits: torch.Tensor,
+    model=None,
+    residual_input=None,
+    *,
+    max_n_logits: int = 10,
+    desired_logit_prob: float = 0.95,
     demean: bool = True,
     move_idx: int = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -2941,7 +3098,7 @@ def run_feature_attribution(
     if logger:
         logger.info(f"Phase: Computing feature attributions")
 
-    # 注意：计算图已在外部重建，这里不需要再次清空
+    # 计算图已在外部重建，这里不需要再次清空
     # print("清空 ctx 中的计算状态…")
     # model.zero_grad(set_to_none=True)
     # if hasattr(ctx, 'clear'):

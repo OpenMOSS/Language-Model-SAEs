@@ -20,67 +20,6 @@ from lm_saes.config import LanguageModelConfig, LLaDAConfig
 from lm_saes.utils.misc import pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
 
-
-# def fen_to_longfen(fen: str, move: str) -> str:
-#     '''
-#     input: fen,move
-#     output: longfen(wrnbqkbnrpppppppp................................PPPPPPPPRNBQKBNRKQkq..0..1..e2e40)
-#     '''
-#     parts = fen.split()
-#     board_fen = parts[0]  # 棋盘部分
-#     active_color = parts[1]  # 当前走棋方 (w/b)
-#     castling = parts[2]  # 王车易位权利
-#     en_passant = parts[3]  # 过路兵目标格
-#     halfmove = parts[4]  # 半回合计数
-#     fullmove = parts[5]  # 全回合计数
-    
-#     # 转换棋盘部分 (8x8 = 64个字符)
-#     longfen_board = ""
-#     for char in board_fen:
-#         if char == '/':
-#             continue  # 跳过行分隔符
-#         elif char.isdigit():
-#             # 数字表示连续的空格数
-#             longfen_board += '.' * int(char)
-#         else:
-#             # 棋子字符直接添加
-#             longfen_board += char
-    
-#     # 确保棋盘部分正好64个字符
-#     assert len(longfen_board) == 64, f"棋盘应该有64个字符，实际有{len(longfen_board)}个"
-    
-#     # 处理王车易位权利 (4个字符位置：KQkq)
-#     castling_longfen = ""
-#     for right in ['K', 'Q', 'k', 'q']:
-#         if right in castling:
-#             castling_longfen += right
-#         else:
-#             castling_longfen += '.'
-    
-#     # 处理过路兵 (2个字符)
-#     if en_passant == '-':
-#         en_passant_longfen = ".."
-#     else:
-#         en_passant_longfen = en_passant
-    
-#     # 处理半回合和全回合计数 (各1个字符)
-#     halfmove_padded = halfmove.ljust(3, '.')  # 左对齐，右侧填充.
-#     fullmove_padded = fullmove.ljust(3, '.')  # 左对齐，右侧填充.
-    
-#     # 组装longfen字符串
-#     longfen = (
-#         active_color +  # 当前走棋方 (1字符)
-#         longfen_board +  # 棋盘 (64字符)
-#         castling_longfen +  # 王车易位 (4字符)
-#         en_passant_longfen +  # 过路兵 (2字符)
-#         halfmove_padded +  # 半回合 (3字符)
-#         fullmove_padded +  # 全回合 (3字符)
-#         move +  # 走法
-#         "0"  # 结束标记
-#     )
-    
-#     return longfen
-
 def fen_to_longfen_behavioral_cloning(fen: str) -> str:
     '''
     input: fen

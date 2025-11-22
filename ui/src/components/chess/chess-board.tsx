@@ -361,8 +361,24 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   // 根据显示行索引获取棋盘行号（1-8）
   const getDisplayRowNumber = (displayRowIndex: number) => {
-    // 不管是否翻转，显示行0始终对应最上面一行，应该显示最大的行号
-    return 8 - displayRowIndex;
+    if (flip) {
+      // 翻转时：显示行0对应第1行，显示行7对应第8行
+      return displayRowIndex + 1;
+    } else {
+      // 正常时：显示行0对应第8行，显示行7对应第1行
+      return 8 - displayRowIndex;
+    }
+  };
+
+  // 根据显示列索引获取棋盘列字母（a-h）
+  const getDisplayColLetter = (colIndex: number) => {
+    if (flip) {
+      // 翻转时：列0对应h，列7对应a
+      return String.fromCharCode(104 - colIndex); // 104 = 'h'
+    } else {
+      // 正常时：列0对应a，列7对应h
+      return String.fromCharCode(97 + colIndex); // 97 = 'a'
+    }
   };
 
   // 统一的 从索引到标准坐标的命名（不依赖行棋方）
@@ -471,7 +487,11 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
           {displayBoard.map((row, displayRowIndex) =>
             row.map((_, colIndex) => {
               const piece = row[colIndex];
-              const isLight = (displayRowIndex + colIndex) % 2 === 0;
+              // 计算格子颜色：当翻转时，需要反转格子颜色
+              // 在标准棋盘上，a1是黑格（dark），h1是白格（light）
+              // 翻转后，所有黑格应该变成白格，所有白格应该变成黑格
+              const normalIsLight = (displayRowIndex + colIndex) % 2 === 0;
+              const isLight = flip ? !normalIsLight : normalIsLight;
               const squareIndex = getActualSquareIndex(displayRowIndex, colIndex);
               const activationIndex = getActivationIndex(displayRowIndex, colIndex);
               const activation = activations?.[activationIndex] || 0;
@@ -547,7 +567,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     setHoveredSquare(null);
                   }}
                   onClick={() => handleSquareClick(activationIndex)}
-                  title={`${String.fromCharCode(97 + colIndex)}${getDisplayRowNumber(displayRowIndex)}${
+                  title={`${getDisplayColLetter(colIndex)}${getDisplayRowNumber(displayRowIndex)}${
                     activation !== 0 ? ` (${activation.toFixed(3)})` : ''
                   }${
                     isZPatternTarget ? ` [目标: ${targetStrength.toFixed(3)}]` : ''
@@ -596,16 +616,18 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                   {/* 坐标标记 */}
                   {showCoordinates && (
                     <>
-                      {colIndex === 0 && (
-                        <div className="absolute left-1 top-1 text-xs font-bold opacity-60">
+                      {/* 行号：显示在左侧（colIndex === 0）或右侧（翻转时） */}
+                      {(!flip && colIndex === 0) || (flip && colIndex === 7) ? (
+                        <div className={`absolute ${flip ? 'right-1' : 'left-1'} top-1 text-xs font-bold opacity-60`}>
                           {getDisplayRowNumber(displayRowIndex)}
                         </div>
-                      )}
-                      {displayRowIndex === 7 && (
-                        <div className="absolute bottom-1 right-1 text-xs font-bold opacity-60">
-                          {String.fromCharCode(97 + colIndex)}
+                      ) : null}
+                      {/* 列字母：显示在底部（displayRowIndex === 7）或顶部（翻转时） */}
+                      {(!flip && displayRowIndex === 7) || (flip && displayRowIndex === 0) ? (
+                        <div className={`absolute ${flip ? 'top-1' : 'bottom-1'} ${flip ? 'left-1' : 'right-1'} text-xs font-bold opacity-60`}>
+                          {getDisplayColLetter(colIndex)}
                         </div>
-                      )}
+                      ) : null}
                     </>
                   )}
                 </div>

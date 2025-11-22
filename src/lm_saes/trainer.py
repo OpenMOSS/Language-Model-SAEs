@@ -112,7 +112,7 @@ class Trainer:
             optimizer=optimizer,
             warm_up_steps=self.lr_warm_up_steps,
             cool_down_steps=self.lr_cool_down_steps,
-            training_steps=(self.total_training_steps * sae.cfg.fold_data_proj_into_sae_step) if sae.cfg.proj_data else self.total_training_steps,
+            training_steps=self.total_training_steps,
             lr_end_ratio=self.cfg.lr_end_ratio,
         )
         self.optimizer = optimizer
@@ -142,7 +142,7 @@ class Trainer:
                 optimizer=new_optimizer,
                 warm_up_steps=self.lr_warm_up_steps,
                 cool_down_steps=self.lr_cool_down_steps,
-                training_steps=self.total_training_steps * (1 - sae.cfg.fold_data_proj_into_sae_step),
+                training_steps=self.total_training_steps,
                 lr_end_ratio=self.cfg.lr_end_ratio,
             )
         elif self.cfg.optimizer_type == "sgd":
@@ -157,7 +157,7 @@ class Trainer:
                 optimizer=new_optimizer,
                 warm_up_steps=self.lr_warm_up_steps,
                 cool_down_steps=self.lr_cool_down_steps,
-                training_steps=self.total_training_steps * (1 - sae.cfg.fold_data_proj_into_sae_step),
+                training_steps=self.total_training_steps,
                 lr_end_ratio=self.cfg.lr_end_ratio,
             )
         elif self.cfg.optimizer_type == "lazyadam":
@@ -216,6 +216,185 @@ class Trainer:
         loss_dict = {"loss": loss, "batch_size": batch_size(batch)} | loss_data | aux_data
         return loss_dict
 
+    # @torch.no_grad()
+    # @timer.time("log")
+    # def _log(self, sae: AbstractSparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
+    #     # TODO: add full distributed support
+    #     assert self.optimizer is not None, "Optimizer must be initialized"
+    #     label = sae.prepare_label(batch)
+    #     act_freq_scores = (log_info["feature_acts"] > 0).float().sum(0)
+    #     if sae.cfg.sae_type == "crosscoder":
+    #         if not isinstance(act_freq_scores, DTensor):
+    #             act_freq_scores = act_freq_scores.amax(dim=0)
+    #         else:
+    #             # Operator aten.amax.default does not have a sharding strategy registered.
+    #             act_freq_scores = act_freq_scores.full_tensor().amax(dim=0)
+    #     elif sae.cfg.sae_type == "lorsa":
+    #         act_freq_scores = act_freq_scores.mean(0)
+    #     if isinstance(act_freq_scores, DTensor):
+    #         act_freq_scores = act_freq_scores.full_tensor()
+        
+    #     log_info["act_freq_scores"] += act_freq_scores
+    #     log_info["n_frac_active_tokens"] += log_info["batch_size"]
+    #     if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
+    #         feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
+    #         if sae.cfg.sae_type == "clt":
+    #             above_1e_1 = (feature_sparsity > 1e-1).sum(-1)
+    #             above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
+    #             below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
+    #             below_1e_6 = (feature_sparsity < 1e-6).sum(-1)
+    #             wandb_log_dict = {}
+                
+    #             for l in range(sae.cfg.n_layers):
+    #                 wandb_log_dict[f"sparsity/above_1e-1_layer{l}"] = above_1e_1[l].item()
+    #                 wandb_log_dict[f"sparsity/above_1e-2_layer{l}"] = above_1e_2[l].item()
+
+    #             for l in range(sae.cfg.n_layers):
+    #                 wandb_log_dict[f"sparsity/below_1e-5_layer{l}"] = below_1e_5[l].item()
+    #                 wandb_log_dict[f"sparsity/below_1e-6_layer{l}"] = below_1e_6[l].item()
+
+    #             wandb_log_dict["sparsity/above_1e-1"] = above_1e_1.sum().item()
+    #             wandb_log_dict["sparsity/above_1e-2"] = above_1e_2.sum().item()
+    #             wandb_log_dict["sparsity/below_1e-5"] = below_1e_5.sum().item()
+    #             wandb_log_dict["sparsity/below_1e-6"] = below_1e_6.sum().item()
+            
+    #         else:
+    #             wandb_log_dict = {
+    #                 "sparsity/above_1e-1": (feature_sparsity > 1e-1).sum(-1).item(),
+    #                 "sparsity/above_1e-2": (feature_sparsity > 1e-2).sum(-1).item(),
+    #                 "sparsity/below_1e-5": (feature_sparsity < 1e-5).sum(-1).item(),
+    #                 "sparsity/below_1e-6": (feature_sparsity < 1e-6).sum(-1).item(),
+    #             }
+    #         if is_primary_rank(sae.device_mesh):
+    #             log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Sparsity Metrics")
+    #         if self.wandb_logger is not None:
+    #             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
+    #         log_info["act_freq_scores"] = torch.zeros_like(log_info["act_freq_scores"])
+    #         log_info["n_frac_active_tokens"] = torch.zeros_like(log_info["n_frac_active_tokens"])
+
+    #     if (self.cur_step + 1) % self.cfg.log_frequency == 0:
+    #         feature_acts = log_info["feature_acts"]
+    #         act_feature_counts = feature_acts.gt(0).float().sum()
+    #         mean_feature_act = feature_acts.sum() / act_feature_counts
+    #         if isinstance(mean_feature_act, DTensor):
+    #             mean_feature_act = mean_feature_act.full_tensor()
+
+    #         l0 = (feature_acts > 0).float().sum(-1)  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
+    #         if isinstance(l0, DTensor):
+    #             l0 = l0.full_tensor()
+
+    #         l_rec = log_info["l_rec"]
+    #         if isinstance(l_rec, DTensor):
+    #             l_rec = l_rec.full_tensor()
+                
+    #         if log_info.get("l_s", None) is not None:
+    #             l_s = log_info["l_s"]
+    #             if isinstance(l_s, DTensor):
+    #                 l_s = l_s.full_tensor()
+
+    #         if log_info.get("l_aux", None) is not None:
+    #             l_aux = log_info["l_aux"]
+    #             if isinstance(l_aux, DTensor):
+    #                 l_aux = l_aux.full_tensor()
+
+    #         if sae.cfg.sae_type == "lorsa":
+    #             label = label.flatten(0, 1)
+    #             log_info["reconstructed"] = log_info["reconstructed"].flatten(0, 1)
+    #         per_token_l2_loss = (
+    #             (log_info["reconstructed"] - label).pow(2).sum(dim=-1)
+    #         )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
+    #         total_variance = (
+    #             (label - label.mean(dim=0)).pow(2).sum(dim=-1)
+    #         )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
+    #         l2_norm_error = per_token_l2_loss.sqrt().mean()
+    #         l2_norm_error_ratio = l2_norm_error / label.norm(p=2, dim=-1).mean()
+    #         explained_variance = (
+    #             1 - per_token_l2_loss / total_variance
+    #         )  # [batch_size] for normal sae, [batch_size, n_heads] for crosscoder
+    #         if isinstance(explained_variance, DTensor):
+    #             explained_variance = explained_variance.full_tensor()
+    #         if sae.cfg.sae_type == "clt":
+    #             per_layer_ev = explained_variance.mean(0)
+    #             clt_per_layer_ev_dict = {
+    #                 f"metrics/explained_variance_L{l}": per_layer_ev[l].item() for l in range(per_layer_ev.size(0))
+    #             }
+    #             clt_per_layer_l0_dict = {
+    #                 f"metrics/l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))
+    #             }
+    #             l0 = l0.sum(-1) # [batch_size]
+    #             ####
+    #             # per_decoder_norm = sae.decoder_norm_per_decoder()
+    #             # if isinstance(per_decoder_norm, DTensor):
+    #             #     per_decoder_norm = per_decoder_norm.full_tensor()  ## TODO: check if this is correct
+    #             # clt_per_decoder_norm_dict = {
+    #             #     f"metrics/decoder_norm_per_decoder_{i}": per_decoder_norm[i].item() for i in range(per_decoder_norm.shape[0])
+    #             # }
+    #         else:
+    #             clt_per_layer_ev_dict = {}
+    #             clt_per_layer_l0_dict = {}
+    #             # clt_per_decoder_norm_dict = {} 
+
+    #         if isinstance(l2_norm_error, DTensor):
+    #             l2_norm_error = l2_norm_error.full_tensor()
+    #         if isinstance(l2_norm_error_ratio, DTensor):
+    #             l2_norm_error_ratio = l2_norm_error_ratio.full_tensor()
+
+    #         # grad_norm = log_info["grad_norm"]
+    #         # if isinstance(grad_norm, DTensor):
+    #         #     grad_norm = grad_norm.full_tensor()
+            
+            
+    #         wandb_log_dict = {
+    #             # losses
+    #             "losses/mse_loss": l_rec.mean().item(),
+    #             **({"losses/sparsity_loss": l_s.mean().item()} if log_info.get("l_s", None) is not None else {}),
+    #             **({"losses/aux_loss": l_aux.mean().item()} if log_info.get("l_aux", None) is not None else {}),
+    #             "losses/overall_loss": log_info["loss"].item(),
+    #             # variance explained
+    #             **clt_per_layer_ev_dict,
+    #             "metrics/explained_variance": explained_variance.mean().item(),
+    #             # sparsity
+    #             "metrics/l0": l0.mean().item(),
+    #             **clt_per_layer_l0_dict,
+    #             # **clt_per_decoder_norm_dict,
+    #             "metrics/mean_feature_act": mean_feature_act.item(),
+    #             "metrics/l2_norm_error": l2_norm_error.item(),
+    #             "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
+    #             # norm
+    #             # "metrics/gradients_norm": grad_norm.item(),
+    #             "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
+    #             "details/n_training_tokens": self.cur_tokens,
+    #             "details/l1_coefficient": log_info["l1_coefficient"],
+    #         }
+
+    #         # Add timer information
+    #         timer_data = {f"time/{name}": time_value for name, time_value in timer.get_all_timers().items()}
+    #         timer_avg_data = {f"time_avg/{name}": avg_time for name, avg_time in timer.get_all_average_times().items()}
+    #         wandb_log_dict.update(timer_data)
+    #         wandb_log_dict.update(timer_avg_data)
+    #         wandb_log_dict.update(sae.log_statistics())
+
+    #         if isinstance(sae, CrossCoder):
+    #             assert explained_variance.ndim == 2 and explained_variance.shape[1] == len(sae.cfg.hook_points)
+    #             for i, k in enumerate(sae.cfg.hook_points):
+    #                 wandb_log_dict.update(
+    #                     {
+    #                         f"crosscoder_metrics/{k}/explained_variance": explained_variance[:, i].mean().item(),
+    #                         f"crosscoder_metrics/{k}/explained_variance_std": explained_variance[:, i].std().item(),
+    #                         f"crosscoder_metrics/{k}/l0": l0[:, i].mean().item(),
+    #                         f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
+    #                     }
+    #                 )
+
+    #         if is_primary_rank(sae.device_mesh):
+    #             log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Training Metrics")
+
+    #         if timer.enabled:
+    #             logger.info(f"\nTimer Summary:\n{timer.summary()}\n")
+
+    #         if self.wandb_logger is not None:
+    #             self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
+
     @torch.no_grad()
     @timer.time("log")
     def _log(self, sae: AbstractSparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
@@ -229,11 +408,14 @@ class Trainer:
             else:
                 # Operator aten.amax.default does not have a sharding strategy registered.
                 act_freq_scores = act_freq_scores.full_tensor().amax(dim=0)
+        elif sae.cfg.sae_type == "lorsa":
+            act_freq_scores = act_freq_scores.mean(0)
         if isinstance(act_freq_scores, DTensor):
             act_freq_scores = act_freq_scores.full_tensor()
 
-        log_info["n_forward_passes_since_fired"] += 1
-        log_info["n_forward_passes_since_fired"][act_freq_scores > 0] = 0
+        # print(f'{act_freq_scores.shape = }')
+        # log_info["n_forward_passes_since_fired"] += 1
+        # log_info["n_forward_passes_since_fired"][act_freq_scores > 0] = 0
         log_info["act_freq_scores"] += act_freq_scores
         log_info["n_frac_active_tokens"] += log_info["batch_size"]
         if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
@@ -289,8 +471,8 @@ class Trainer:
             explained_variance = (
                 1 - per_token_l2_loss.mean() / total_variance.mean()
             )
-            if sae.cfg.proj_data:
-                explained_variance = explained_variance * sae.variance_factor
+            # if sae.cfg.proj_data:
+            #     explained_variance = explained_variance * sae.variance_factor
             if isinstance(explained_variance, DTensor):
                 explained_variance = explained_variance.full_tensor()
             if isinstance(l2_norm_error, DTensor):
@@ -298,9 +480,9 @@ class Trainer:
             if isinstance(l2_norm_error_ratio, DTensor):
                 l2_norm_error_ratio = l2_norm_error_ratio.full_tensor()
 
-            grad_norm = log_info["grad_norm"]
-            if isinstance(grad_norm, DTensor):
-                grad_norm = grad_norm.full_tensor()
+            # grad_norm = log_info["grad_norm"]
+            # if isinstance(grad_norm, DTensor):
+            #     grad_norm = grad_norm.full_tensor()
             
             wandb_log_dict = {
                 # losses
@@ -317,9 +499,9 @@ class Trainer:
                 "metrics/l2_norm_error": l2_norm_error.item(),
                 "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
                 # norm
-                "metrics/gradients_norm": grad_norm.item(),
+                # "metrics/gradients_norm": grad_norm.item(),
                 # sparsity
-                "sparsity/mean_passes_since_fired": log_info["n_forward_passes_since_fired"].mean().item(),
+                # "sparsity/mean_passes_since_fired": log_info["n_forward_passes_since_fired"].mean().item(),
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
             }
@@ -371,77 +553,177 @@ class Trainer:
             sae.save_checkpoint(path)
             self.checkpoint_thresholds.pop(0)
 
+    # def fit(
+    #     self,
+    #     sae: AbstractSparseAutoEncoder,
+    #     activation_stream: Iterable[dict[str, Tensor]],
+    #     eval_fn: Callable[[AbstractSparseAutoEncoder], None] | None = None,
+    #     wandb_logger: Run | None = None,
+    # ):
+    #     # Reset timer at the start of training
+    #     timer.reset()
+
+    #     self._initialize_trainer(sae, activation_stream, wandb_logger)
+    #     self._initialize_optimizer(sae)
+    #     self._save_checkpoint(sae)
+    #     assert self.optimizer is not None
+    #     assert self.scheduler is not None
+    #     log_info = {
+    #         "act_freq_scores": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
+    #         "n_forward_passes_since_fired": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
+    #         "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
+    #     }
+    #     proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
+    #     for batch in activation_stream:
+    #         with timer.time("training_iteration"):
+    #             # if sae.cfg.proj_data and self.cur_step / self.total_training_steps >= sae.cfg.fold_data_proj_into_sae_step:
+    #             #     sae.fold_data_proj_into_sae()
+                    
+    #             #     self._reinitialize_optimizer_after_param_change(sae)
+    #             #     logger.info(f"Fold up proj into decoder at step {self.cur_step}")
+
+    #             proc_bar.update(1)
+
+    #             batch = sae.normalize_activations(batch)
+
+    #             sae.train()
+
+    #             self.optimizer.zero_grad()
+    #             # with torch.autocast('cuda', dtype=torch.bfloat16):
+    #             with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
+    #                 loss_dict = self._training_step(sae, batch)
+    #             # if self.cfg.update_decoder_lr_with_l0:
+    #             #     l0 = (loss_dict["feature_acts"] > 0).float().sum(-1).mean().item()
+    #             #     self._update_decoder_learning_rate(l0)
+
+    #             with timer.time("backward"):
+    #                 loss_dict["loss"].backward()
+
+    #             with timer.time("clip_grad_norm"):
+    #                 loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
+    #                     sae.parameters(),
+    #                     max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
+    #                 )
+
+    #             with timer.time("optimizer_step"):
+    #                 self.optimizer.step()
+
+    #             if sae.cfg.force_unit_decoder_norm:
+    #                 sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
+
+    #             log_info.update(loss_dict)
+    #             proc_bar.set_description(f"loss: {log_info['loss'].item()}")
+
+    #             self._log(sae, log_info, batch)
+
+    #             if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
+    #                 with timer.time("evaluation"):
+    #                     eval_fn(sae)
+
+    #             self._save_checkpoint(sae)
+    #             with timer.time("scheduler_step"):
+    #                 self.scheduler.step()
+
+    #             self.cur_step += 1
+    #             self.cur_tokens += batch_size(batch)
+    #             if self.cur_tokens >= self.cfg.total_training_tokens:
+    #                 break
+
+
     def fit(
         self,
         sae: AbstractSparseAutoEncoder,
         activation_stream: Iterable[dict[str, Tensor]],
         eval_fn: Callable[[AbstractSparseAutoEncoder], None] | None = None,
-        wandb_logger: Run | None = None,
-    ):
+        wandb_logger: Run | None = None,    
+    ) -> bool | None:
         # Reset timer at the start of training
         timer.reset()
 
-        self._initialize_trainer(sae, activation_stream, wandb_logger)
-        self._initialize_optimizer(sae)
-        self._save_checkpoint(sae)
-        assert self.optimizer is not None
-        assert self.scheduler is not None
+        if self.cfg.from_pretrained_path is None:
+            logger.info("Initializing trainer and optimizer")
+            self._initialize_trainer(sae, activation_stream, wandb_logger)
+            self._initialize_optimizer(sae)
+            assert self.optimizer is not None
+            assert self.scheduler is not None
+
+        # maybe_local_d_sae = sae.cfg.d_sae if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
+        # if sae.cfg.sae_type == "clt":
+        #     act_freq_scores_shape = (
+        #         sae.cfg.n_layers,  # type: ignore
+        #         maybe_local_d_sae,
+        #     )
+        # else:
+        #     act_freq_scores_shape = (maybe_local_d_sae,)  # type: ignore
         log_info = {
             "act_freq_scores": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
-            "n_forward_passes_since_fired": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
+            # "n_forward_passes_since_fired": torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=sae.cfg.dtype),
             "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
         }
+        # log_info = {
+        #     "act_freq_scores": torch.zeros(act_freq_scores_shape, device=sae.cfg.device, dtype=sae.cfg.dtype),
+        #     "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
+        # }
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
-        for batch in activation_stream:
-            with timer.time("training_iteration"):
-                if sae.cfg.proj_data and self.cur_step / self.total_training_steps >= sae.cfg.fold_data_proj_into_sae_step:
-                    sae.fold_data_proj_into_sae()
+        proc_bar.update(self.cur_step)
+
+        try:
+            activation_stream = iter(activation_stream)
+            batch = next(activation_stream)
+            
+            while True:
+                with timer.time("training_iteration"):
+                    proc_bar.update(1)
+
+                    batch = sae.normalize_activations(batch)
+                    # print(f"{batch = }") # 都是归一化过的activation
+                    sae.train()
+
+                    with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
+                        loss_dict = self._training_step(sae, batch)
                     
-                    self._reinitialize_optimizer_after_param_change(sae)
-                    logger.info(f"Fold up proj into decoder at step {self.cur_step}")
+                    log_info.update(loss_dict)
+                    proc_bar.set_description(f"loss: {log_info['loss'].item()}, learning rate: {self.optimizer.param_groups[0]['lr']}")
+                    
+                    if timer.enabled:
+                        logger.info(f"\nTimer Summary:\n{timer.summary()}\n")
 
-                proc_bar.update(1)
+                    if not self.cfg.skip_metrics_calculation:
+                        self._log(sae, log_info, batch)
 
-                batch = sae.normalize_activations(batch)
+                    with timer.time("refresh_batch"):
+                        del batch
+                        batch = next(activation_stream)
 
-                sae.train()
+                    with timer.time("backward"):
+                        loss_dict["loss"].backward()
 
-                self.optimizer.zero_grad()
-                with torch.autocast('cuda', dtype=torch.bfloat16):
-                    loss_dict = self._training_step(sae, batch)
-                # if self.cfg.update_decoder_lr_with_l0:
-                #     l0 = (loss_dict["feature_acts"] > 0).float().sum(-1).mean().item()
-                #     self._update_decoder_learning_rate(l0)
+                    with timer.time("clip_grad_norm"):
+                        # exclude the grad of the jumprelu threshold
+                        loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
+                            [param for name, param in sae.named_parameters() if param.grad is not None and 'log_jumprelu_threshold' not in name],
+                            max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
+                        )
 
-                with timer.time("backward"):
-                    loss_dict["loss"].backward()
+                    with timer.time("optimizer_step"):
+                        self.optimizer.step()
+                        self.optimizer.zero_grad()
 
-                with timer.time("clip_grad_norm"):
-                    loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
-                        sae.parameters(),
-                        max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
-                    )
+                    if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
+                        with timer.time("evaluation"):
+                            eval_fn(sae)
 
-                with timer.time("optimizer_step"):
-                    self.optimizer.step()
+                    self._save_checkpoint(sae)
+                    with timer.time("scheduler_step"):
+                        self.scheduler.step()
 
-                if sae.cfg.force_unit_decoder_norm:
-                    sae.set_decoder_to_fixed_norm(value=1.0, force_exact=True)
-
-                log_info.update(loss_dict)
-                proc_bar.set_description(f"loss: {log_info['loss'].item()}")
-
-                self._log(sae, log_info, batch)
-
-                if eval_fn is not None and (self.cur_step + 1) % self.cfg.eval_frequency == 0:
-                    with timer.time("evaluation"):
-                        eval_fn(sae)
-
-                self._save_checkpoint(sae)
-                with timer.time("scheduler_step"):
-                    self.scheduler.step()
-
-                self.cur_step += 1
-                self.cur_tokens += batch_size(batch)
-                if self.cur_tokens >= self.cfg.total_training_tokens:
-                    break
+                    self.cur_step += 1
+                    self.cur_tokens += batch_size(batch)
+                    if self.cur_tokens >= self.cfg.total_training_tokens:
+                        break
+        except StopIteration as e:
+            logger.info(f"the current stream has ended")
+            return True
+        except Exception as e:
+            logger.error(f"Training failed: {e}")
+            raise e

@@ -63,17 +63,20 @@ class Evaluator:
                 log_metric(loss_key, item(log_info.pop(loss_key)))
 
         # 2. Get activations and compute reconstructions
+        # print('before_process')
+        # print(f"{torch.norm(activation_dict['blocks.10.resid_mid_after_ln'], dim = -1)=}") # 是处理过的
+        # print(f"{torch.norm(activation_dict['blocks.10.hook_mlp_out'], dim = -1)=}") # 是处理过的
         batch = sae.normalize_activations(activation_dict)
-        print(f'{batch = }')
-        print(f"{torch.norm(batch['blocks.14.resid_mid_after_ln'], dim = -1)=}") # 是处理过的
-        print(f"{torch.norm(batch['blocks.14.hook_mlp_out'], dim = -1)=}") # 是处理过的
+        # print('after_process')
+        # print(f"{torch.norm(batch['blocks.10.resid_mid_after_ln'], dim = -1)=}") # 是处理过的
+        # print(f"{torch.norm(batch['blocks.10.hook_mlp_out'], dim = -1)=}") # 是处理过的
         x, encode_kwargs = sae.prepare_input(batch)
         label = sae.prepare_label(batch)
         feature_acts = sae.encode(x, **encode_kwargs)
         reconstructed = sae.decode(feature_acts)
+        print(f'{torch.norm(label,dim=-1) = }')
+        print(f'{torch.norm(reconstructed, dim = -1) = }')
         
-        # print(f'{sae.W_K = }')
-
         # 3. Compute sparsity metrics
         l0 = (feature_acts > 0).float().sum(-1).mean()
         log_metric("l0", item(l0))

@@ -168,12 +168,13 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   const [manualMove, setManualMove] = useState('');
   const [moveError, setMoveError] = useState('');
   
-  // 新增：模型选择状态
-  const [selectedModel, setSelectedModel] = useState('lc0/T82-768x15x24h');
-  const [availableModels, setAvailableModels] = useState([
-    { name: 'lc0/T82-768x15x24h', display_name: 'T82-768x15x24h' },
-    { name: 'lc0/BT4-1024x15x32h', display_name: 'BT4-1024x15x32h' },
-  ]);
+  // 固定使用BT4模型
+  const selectedModel = 'lc0/BT4-1024x15x32h';
+  
+  // 加载日志窗口状态
+  const [showLoadingLogs, setShowLoadingLogs] = useState(false);
+  const [loadingLogs, setLoadingLogs] = useState<Array<{timestamp: number; message: string}>>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
 
   // 新增：用于强制更新组件（由于 Chess 实例是可变的）
   const [, setDummy] = useState(0);
@@ -426,7 +427,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     }
   }, [customFen, autoPlayInterval]);
 
-  // 获取Stockfish分析
+  // 获取Stockfish分析（固定使用BT4模型）
   const getStockfishAnalysis = useCallback(async (fen: string) => {
     try {
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/board`, {
@@ -434,7 +435,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ fen, model_name: selectedModel }),
+        body: JSON.stringify({ fen }),
       });
 
       if (response.ok) {
@@ -459,22 +460,9 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       console.error('获取模型分析失败:', error);
     }
     return null;
-  }, [selectedModel]);
-
-  // 获取可用模型列表
-  const fetchAvailableModels = useCallback(async () => {
-    try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/models`);
-      if (response.ok) {
-        const data = await response.json();
-        setAvailableModels(data.models);
-      }
-    } catch (error) {
-      console.error('获取模型列表失败:', error);
-    }
   }, []);
 
-  // 获取模型建议的移动
+  // 获取模型建议的移动（固定使用BT4模型）
   const getModelMove = useCallback(async (fen: string) => {
     try {
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/play_game`, {
@@ -482,7 +470,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ fen, model_name: selectedModel }),
+        body: JSON.stringify({ fen }),
       });
 
       if (response.ok) {
@@ -497,7 +485,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       console.error('获取模型移动失败:', error);
     }
     return null;
-  }, [selectedModel]);
+  }, []);
 
   // 将UCI字符串转换为chess.js可接受的move对象
   const toChessJsMove = useCallback((move: string) => {
@@ -861,12 +849,108 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   }, []);
 
 
-  // 组件加载时获取可用模型列表
-  useEffect(() => {
-    fetchAvailableModels();
-  }, [fetchAvailableModels]);
+  // 获取加载日志
+  const fetchLoadingLogs = useCallback(async () => {
+    try {
+      // 固定使用BT4模型
+      const model_name = 'lc0/BT4-1024x15x32h';
+      const url = `${import.meta.env.VITE_BACKEND_URL}/circuit/loading_logs?model_name=${encodeURIComponent(model_name)}`;
+      console.log('📥 获取加载日志:', url);
+      
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('📥 收到日志数据:', { count: data.total_count, logs: data.logs });
+        setLoadingLogs(data.logs || []);
+        // 自动滚动到底部
+        setTimeout(() => {
+          const logContainer = document.getElementById('loading-logs-container');
+          if (logContainer) {
+            logContainer.scrollTop = logContainer.scrollHeight;
+          }
+        }, 100);
+        return data.logs || [];
+      } else {
+        const errorText = await response.text();
+        console.error('获取加载日志失败:', response.status, errorText);
+      }
+    } catch (error) {
+      console.error('获取加载日志出错:', error);
+    }
+    return [];
+  }, []);
 
-  // 不自动触发模型走棋，用户需点击“让模型走棋”按钮
+  // 预加载transcoders和lorsas，以便后续circuit trace能够快速使用
+  const preloadCircuitModels = useCallback(async () => {
+    try {
+      // 固定使用BT4模型
+      const model_name = 'lc0/BT4-1024x15x32h';
+      console.log('🔍 开始预加载transcoders和lorsas:', model_name);
+      
+      // 重置日志并显示日志窗口
+      setLoadingLogs([]);
+      setShowLoadingLogs(true);
+      setIsLoadingModels(true);
+      
+      // 先获取一次日志，确保日志列表已初始化
+      await fetchLoadingLogs();
+      
+      // 开始轮询日志（在API调用之前开始，因为加载是同步的）
+      const logPollInterval = setInterval(async () => {
+        await fetchLoadingLogs();
+      }, 500); // 每500ms轮询一次
+      
+      // 发送预加载请求（加载是同步进行的，所以API会阻塞直到加载完成）
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/preload_models`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ model_name }),
+      });
+
+      // API响应后，继续轮询一段时间，确保获取所有日志
+      // 因为加载可能在API响应之前或之后完成
+      setTimeout(async () => {
+        await fetchLoadingLogs();
+      }, 1000);
+      
+      // 再等待一段时间后停止轮询
+      setTimeout(() => {
+        clearInterval(logPollInterval);
+        fetchLoadingLogs(); // 最后获取一次日志
+        setIsLoadingModels(false);
+      }, 2000);
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === 'already_loaded') {
+          console.log('✅ Transcoders和LoRSAs已经预加载:', data);
+          clearInterval(logPollInterval);
+          setIsLoadingModels(false);
+        } else {
+          console.log('✅ 预加载完成:', data);
+        }
+      } else {
+        const errorText = await response.text();
+        console.warn('⚠️ 预加载transcoders和lorsas失败:', errorText);
+        clearInterval(logPollInterval);
+        setIsLoadingModels(false);
+        // 预加载失败不影响正常使用，只打印警告
+      }
+    } catch (error) {
+      setIsLoadingModels(false);
+      console.warn('⚠️ 预加载transcoders和lorsas出错:', error);
+      // 预加载失败不影响正常使用，只打印警告
+    }
+  }, [fetchLoadingLogs]);
+
+  // 组件加载时预加载transcoders和lorsas
+  useEffect(() => {
+    preloadCircuitModels();
+  }, [preloadCircuitModels]);
+
+  // 不自动触发模型走棋，用户需点击"让模型走棋"按钮
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -877,6 +961,19 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             <span>黑方回合自动翻转</span>
             <Switch checked={autoFlipWhenBlack} onCheckedChange={setAutoFlipWhenBlack} />
           </div>
+          {/* 加载日志按钮 */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setShowLoadingLogs(!showLoadingLogs);
+              if (!showLoadingLogs) {
+                fetchLoadingLogs();
+              }
+            }}
+          >
+            加载日志 {showLoadingLogs ? '（隐藏）' : '（显示）'}
+          </Button>
         <div className="flex gap-2">
           <Button
             onClick={() => startNewGame()}
@@ -987,38 +1084,58 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   </div>
                 </div>
               </div>
+              
+              {/* 加载日志框 - 固定在移动历史下方 */}
+              {showLoadingLogs && (
+                <div className="mt-4 border rounded-lg overflow-hidden">
+                  <div className="bg-gray-800 text-white px-4 py-2 flex items-center justify-between">
+                    <h3 className="font-semibold">模型加载日志</h3>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={fetchLoadingLogs}
+                        className="text-white hover:bg-gray-700"
+                      >
+                        刷新
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowLoadingLogs(false)}
+                        className="text-white hover:bg-gray-700"
+                      >
+                        隐藏
+                      </Button>
+                    </div>
+                  </div>
+                  <div 
+                    id="loading-logs-container"
+                    className="bg-gray-900 text-green-400 p-4 font-mono text-sm max-h-64 overflow-y-auto"
+                  >
+                    <div className="space-y-1">
+                      {loadingLogs.length === 0 ? (
+                        <div className="text-gray-500">暂无日志...</div>
+                      ) : (
+                        loadingLogs.map((log, index) => (
+                          <div key={index} className="whitespace-pre-wrap">
+                            {log.message}
+                          </div>
+                        ))
+                      )}
+                      {isLoadingModels && (
+                        <div className="text-yellow-400 animate-pulse">加载中...</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
 
         {/* 控制面板 */}
         <div className="space-y-4">
-          {/* 模型选择 */}
-          <Card>
-            <CardHeader>
-              <CardTitle>模型选择</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">选择模型</label>
-                <Select value={selectedModel} onValueChange={setSelectedModel}>
-                  <SelectTrigger className="mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableModels.map((model) => (
-                      <SelectItem key={model.name} value={model.name}>
-                        {model.display_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="text-xs text-gray-500 mt-1">
-                  当前选择: {availableModels.find(m => m.name === selectedModel)?.display_name || selectedModel}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
 
           {/* 模式与人类方选择 */}
           <Card>
@@ -1566,6 +1683,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
     </div>
   );
 };

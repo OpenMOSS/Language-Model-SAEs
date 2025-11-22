@@ -1,3 +1,5 @@
+import functools
+import operator
 import os
 import warnings
 from typing import Any, Iterable, Optional, cast
@@ -152,12 +154,22 @@ def calculate_activation_norm(
 ) -> dict[str, float]:
     activation_norm = {}
     stream_iter = iter(activation_stream)
+    
     if device_mesh is not None and "head" in cast(tuple[str, ...], device_mesh.mesh_dim_names):
         hook_points = hook_points[DimMap({"head": 0}).local_slices((len(hook_points),), device_mesh)[0]]
     assert len(hook_points) > 0, "No hook points provided"
     while batch_num > 0:
         try:
             batch = next(stream_iter)
+            def print_shape_or_len(name, obj):
+                if torch.is_tensor(obj):
+                    print(name, obj.shape)
+                elif isinstance(obj, list):
+                    print(name, f"list(len={len(obj)})")
+                else:
+                    print(name, type(obj))
+            for name, v in batch.items():
+                print_shape_or_len(name, v)
         except StopIteration:
             warnings.warn(f"Activation stream ended prematurely. {batch_num} batches not processed.")
             break
@@ -251,3 +263,29 @@ def all_gather_dict(
             for i, obj in enumerate(object_list):
                 gathered_dicts[i][k] = obj
     return gathered_dicts
+
+
+def get_mesh_dim_size(device_mesh: DeviceMesh | None, mesh_dim: str) -> int:
+    if device_mesh is None:
+        print("device_mesh is None")
+        return 1
+    assert device_mesh is not None
+    assert device_mesh.mesh_dim_names is not None, "Device mesh does not have mesh dimension names"
+    return device_mesh.get_group(mesh_dim).size() if mesh_dim in device_mesh.mesh_dim_names else 1
+
+
+def get_mesh_rank(device_mesh: DeviceMesh | None) -> int:
+    """Get the rank of the current process in the device mesh. Computed through the coordinate of the device mesh.
+
+    Args:
+        device_mesh: Device mesh to get the rank from.
+
+    Returns:
+        Rank of the current process in the device mesh.
+    """
+    if device_mesh is None:
+        return 0
+    coord = device_mesh.get_coordinate()
+    shape = device_mesh.shape
+    assert coord is not None, "Device mesh does not have coordinate"
+    return sum(coord[i] * functools.reduce(operator.mul, shape[i + 1 :], 1) for i in range(len(coord)))

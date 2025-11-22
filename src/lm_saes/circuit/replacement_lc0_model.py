@@ -474,6 +474,8 @@ class ReplacementModel(HookedTransformer):
             for layer in range(self.cfg.n_layers)
         ])
 
+        print(f'{tc_activation_matrix[0].shape = }')
+        print(f'{lorsa_reconstruction.shape = }')
         transcoder_reconstruction = torch.stack([
             self.transcoders[str(layer)].decode(tc_activation_matrix[layer])
             for layer in range(self.cfg.n_layers)

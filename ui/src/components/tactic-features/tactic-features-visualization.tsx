@@ -38,11 +38,8 @@ interface AnalysisResult {
 }
 
 export const TacticFeaturesVisualization: React.FC = () => {
-  const [selectedModel, setSelectedModel] = useState('lc0/BT4-1024x15x32h');
-  const [availableModels, setAvailableModels] = useState([
-    { name: 'lc0/T82-768x15x24h', display_name: 'T82-768x15x24h' },
-    { name: 'lc0/BT4-1024x15x32h', display_name: 'BT4-1024x15x32h' },
-  ]);
+  // 固定使用BT4模型
+  const selectedModel = 'lc0/BT4-1024x15x32h';
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -53,41 +50,14 @@ export const TacticFeaturesVisualization: React.FC = () => {
   const [specificLayer, setSpecificLayer] = useState<string>('');
   const [specificLayerTopK, setSpecificLayerTopK] = useState<number>(20);
 
-  // 获取可用模型列表
-  const fetchAvailableModels = useCallback(async () => {
-    try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/models`);
-      if (response.ok) {
-        const data = await response.json();
-        setAvailableModels(data.models);
-      }
-    } catch (error) {
-      console.error('获取模型列表失败:', error);
+  // 构建dictionary名称（固定使用BT4模型）
+  const buildDictionaryName = useCallback((layer: number, kind: string): string => {
+    if (kind === 'LoRSA') {
+      return `BT4_lorsa_L${layer}A`;
+    } else { // TC
+      return `BT4_tc_L${layer}M`;
     }
   }, []);
-
-  React.useEffect(() => {
-    fetchAvailableModels();
-  }, [fetchAvailableModels]);
-
-  // 构建dictionary名称（参考circuit-visualization.tsx）
-  const buildDictionaryName = useCallback((layer: number, kind: string): string => {
-    const isBT4 = selectedModel.includes('BT4');
-    
-    if (kind === 'LoRSA') {
-      if (isBT4) {
-        return `BT4_lorsa_L${layer}A`;
-      } else {
-        return `lc0-lorsa-L${layer}`;
-      }
-    } else { // TC
-      if (isBT4) {
-        return `BT4_tc_L${layer}M`;
-      } else {
-        return `lc0_L${layer}M_16x_k30_lr2e-03_auxk_sparseadam`;
-      }
-    }
-  }, [selectedModel]);
 
   // 处理文件选择
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -117,7 +87,7 @@ export const TacticFeaturesVisualization: React.FC = () => {
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
-      formData.append('model_name', selectedModel);
+      // 不传递model_name，后端会固定使用BT4模型
       formData.append('n_random', nFens.toString());
       formData.append('n_fens', nFens.toString());
       formData.append('top_k_lorsa', topKLorsa.toString());
@@ -129,8 +99,7 @@ export const TacticFeaturesVisualization: React.FC = () => {
         formData.append('specific_layer_top_k', specificLayerTopK.toString());
       }
       
-      console.log('🔍 发送分析请求:', {
-        model_name: selectedModel,
+      console.log('🔍 发送分析请求（固定使用BT4模型）:', {
         n_fens: nFens,
         top_k_lorsa: topKLorsa,
         top_k_tc: topKTC,
@@ -164,7 +133,7 @@ export const TacticFeaturesVisualization: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedFile, selectedModel, nFens, topKLorsa, topKTC, specificLayer, specificLayerTopK]);
+  }, [selectedFile, nFens, topKLorsa, topKTC, specificLayer, specificLayerTopK]);
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -178,29 +147,6 @@ export const TacticFeaturesVisualization: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左侧：配置 */}
         <div className="space-y-4">
-          {/* 模型选择 */}
-          <Card>
-            <CardHeader>
-              <CardTitle>模型选择</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">选择模型</label>
-                <Select value={selectedModel} onValueChange={setSelectedModel}>
-                  <SelectTrigger className="mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableModels.map((model) => (
-                      <SelectItem key={model.name} value={model.name}>
-                        {model.display_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardContent>
-          </Card>
 
           {/* 文件上传 */}
           <Card>

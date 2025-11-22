@@ -124,7 +124,7 @@ class SAEConfig(BaseSAEConfig):
     d_feature: Optional[int] = None
     init_with_svd: bool = True
     proj_data: bool = False
-    fold_data_proj_into_sae_step: float = 2.0  # >1.0 means not fold
+    # fold_data_proj_into_sae_step: float = 2.0  # >1.0 means not fold
     use_auxk: bool = False
     dead_threshold: int = 100_000  # Threshold for marking latents as dead (10 million tokens)
     k_aux: int = 512  # Number of dead latents to use for AuxK loss

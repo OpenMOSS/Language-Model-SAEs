@@ -7,6 +7,12 @@ from .analyze import (
     analyze_sae,
 )
 from .autointerp import AutoInterpSettings, auto_interp
+from .eval import (
+    EvaluateCrossCoderSettings,
+    EvaluateSAESettings,
+    evaluate_crosscoder,
+    evaluate_sae,
+)
 from .generate import GenerateActivationsSettings, generate_activations
 from .train import (
     SweepingItem,
@@ -42,6 +48,10 @@ __all__ = [
     "AutoInterpSettings",
     "auto_interp",
     "load_config",
+    "EvaluateCrossCoderSettings",
+    "evaluate_crosscoder",
+    "EvaluateSAESettings",
+    "evaluate_sae",
     "TrainLorsaSettings",
     "train_lorsa",
 ]
