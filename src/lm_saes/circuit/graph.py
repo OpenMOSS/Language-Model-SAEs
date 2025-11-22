@@ -112,7 +112,7 @@ class Graph:
             "sae_series": self.sae_series,
             "slug": self.slug,
             "lorsa_pattern": self.lorsa_pattern,
-            "z_pattern": self.z_pattern
+            "z_pattern": self.z_pattern,
         }
         torch.save(d, path)
 

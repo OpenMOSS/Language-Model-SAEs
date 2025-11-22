@@ -29,7 +29,9 @@ def to_tokens(tokenizer, text, max_length, device="cpu", prepend_bos=True):
     )["input_ids"].to(device)
     has_bos_prepended = torch.all(tokens[:, 0] == tokenizer.bos_token_id)
     if prepend_bos and not has_bos_prepended:
-        tokens = torch.cat([torch.tensor([tokenizer.bos_token_id]).unsqueeze(0).to(device), tokens], dim=1)
+        tokens = torch.cat(
+            [torch.tensor([tokenizer.bos_token_id]).expand(tokens.shape[0]).unsqueeze(-1).to(device), tokens], dim=1
+        )
     elif not prepend_bos and has_bos_prepended:
         tokens = tokens[:, 1:]
     return tokens

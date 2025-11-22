@@ -54,12 +54,75 @@ def all_gather_dict(
     return gathered_dicts
 
 
+def all_gather_list(
+    data: list[Any],
+    group: Optional[torch.distributed.ProcessGroup] = None,
+    flatten: bool = True,
+) -> list[Any] | list[list[Any]]:
+    """
+    All-gather a list across all ranks in a process group.
+
+    Args:
+        data: List to all-gather from the current rank.
+        group: Optional process group for communication. If None, uses the default group.
+        flatten: If True, returns a single flattened list containing all items from all ranks.
+                 If False, returns a list of lists, one per rank.
+
+    Returns:
+        If flatten=True: A single list containing all items from all ranks, concatenated in rank order.
+        If flatten=False: A list of lists, where each element is the list from the corresponding rank.
+        If distributed is not initialized or world size is 1, returns the input data unchanged.
+    """
+    if not dist.is_initialized() or dist.get_world_size(group=group) == 1:
+        return data
+
+    world_size = dist.get_world_size(group=group)
+
+    # Gather all lists using all_gather_object
+    gathered_lists = [None for _ in range(world_size)]
+    dist.all_gather_object(gathered_lists, data, group=group)
+    gathered_lists = cast(list[list[Any]], gathered_lists)
+    if flatten:
+        # Flatten the list of lists into a single list
+        return [item for rank_list in gathered_lists for item in rank_list]
+    return gathered_lists
+
+
+def broadcast_object(
+    object: Any | None,
+    group_src: int = 0,
+    group: Optional[torch.distributed.ProcessGroup] = None,
+) -> Any:
+    """
+    Broadcast an object across all ranks in a process group.
+
+    Args:
+        object: Object to broadcast from the source rank. Can be any picklable object.
+        group_src: Source rank for the broadcast operation (global rank ID within the group).
+        group: Optional process group for communication. If None, uses the default group.
+
+    Returns:
+        The broadcasted object. All ranks will receive the object from the source rank.
+    """
+    object_list = [object]
+    dist.broadcast_object_list(object_list, group_src=group_src, group=group)
+    return object_list[0]
+
+
 def mesh_dim_size(device_mesh: DeviceMesh | None, mesh_dim: str) -> int:
     if device_mesh is None:
         return 1
     assert device_mesh is not None
     assert device_mesh.mesh_dim_names is not None, "Device mesh does not have mesh dimension names"
     return device_mesh.get_group(mesh_dim).size() if mesh_dim in device_mesh.mesh_dim_names else 1
+
+
+def mesh_dim_rank(device_mesh: DeviceMesh | None, mesh_dim: str) -> int:
+    if device_mesh is None:
+        return 0
+    assert device_mesh is not None
+    assert device_mesh.mesh_dim_names is not None, "Device mesh does not have mesh dimension names"
+    return device_mesh.get_group(mesh_dim).rank() if mesh_dim in device_mesh.mesh_dim_names else 0
 
 
 def mesh_rank(device_mesh: DeviceMesh | None) -> int:

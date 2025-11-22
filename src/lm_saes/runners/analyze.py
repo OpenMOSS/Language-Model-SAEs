@@ -1,10 +1,13 @@
 """Module for analyzing SAE models."""
 
-from typing import Optional
+import pickle
+import shutil
+from pathlib import Path
+from typing import Any, Optional
 
 import torch
 from pydantic_settings import BaseSettings
-from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor
@@ -31,9 +34,75 @@ from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.utils.distributed.utils import broadcast_object
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 
 logger = get_distributed_logger("runners.analyze")
+
+
+def save_analysis_to_file(
+    output_dir: Path,
+    analysis_name: str,
+    sae_name: str,
+    sae_series: str,
+    analysis: list[dict[str, Any]],
+    start_idx: int,
+    device_mesh: DeviceMesh | None = None,
+) -> Path:
+    """Save analysis results to file.
+
+    Args:
+        output_dir: Output directory for analysis results.
+        analysis_name: Name of the analysis.
+        sae_name: Name of the SAE model.
+        sae_series: Series of the SAE model.
+        analysis: List of analysis results (should be already gathered if in distributed mode).
+        start_idx: Starting index for feature indexing.
+        device_mesh: Optional device mesh for distributed execution. If provided, results will be
+            sharded across ranks and then merged by rank 0.
+
+    Returns:
+        Path to the saved pickle file.
+    """
+    analysis_dir = output_dir / sae_series / sae_name
+    for idx, analysis_item in enumerate(analysis):
+        analysis_item["feature_idx"] = idx + start_idx
+
+    if device_mesh is None:
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        pickle_path = analysis_dir / f"{analysis_name}_analysis_{len(analysis)}_features.pkl"
+
+        with open(pickle_path, "wb") as f:
+            pickle.dump(analysis, f)
+        return pickle_path
+    else:
+        shards_dir = analysis_dir / f"{analysis_name}_shards"
+        shards_dir.mkdir(parents=True, exist_ok=True)
+        shard_pickle_path = shards_dir / f"{start_idx}_{start_idx + len(analysis) - 1}.pkl"
+        with open(shard_pickle_path, "wb") as f:
+            pickle.dump(analysis, f)
+
+        torch.distributed.barrier(group=device_mesh.get_group("model"))
+
+        merged_pickle_path = None
+        if device_mesh.get_local_rank("model") == 0:
+            # get all file in the shards directory
+            pickle_paths = [p for p in shards_dir.glob("*.pkl")]
+            # merge the pickles
+            merged_analysis = []
+            for pickle_path in pickle_paths:
+                with open(pickle_path, "rb") as f:
+                    merged_analysis.extend(pickle.load(f))
+            # save the merged analysis
+            merged_analysis.sort(key=lambda x: x["feature_idx"])
+            merged_pickle_path = analysis_dir / f"{analysis_name}_analysis_{len(merged_analysis)}_features.pkl"
+            with open(merged_pickle_path, "wb") as f:
+                pickle.dump(merged_analysis, f)
+            # remove the shards directory
+            shutil.rmtree(shards_dir)
+
+        merged_pickle_path = broadcast_object(merged_pickle_path, group_src=0, group=device_mesh.get_group("model"))
+        return merged_pickle_path
 
 
 class AnalyzeSAESettings(BaseSettings):
@@ -65,14 +134,17 @@ class AnalyzeSAESettings(BaseSettings):
 
     amp_dtype: torch.dtype = torch.bfloat16
 
-    mongo: MongoDBConfig
+    feature_analysis_name: str = "default"
+    """Name of the feature analysis."""
+
+    mongo: MongoDBConfig | None = None
     """Configuration for the MongoDB database."""
+
+    output_dir: Optional[Path] = None
+    """Directory to save analysis results. Only used if MongoDB client is not provided."""
 
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
-
-    data_parallel_size: int = 1
-    """Size of data parallel mesh"""
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
@@ -91,17 +163,22 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     device_mesh = (
         init_device_mesh(
             device_type=settings.device_type,
-            mesh_shape=(settings.model_parallel_size, settings.data_parallel_size),
-            mesh_dim_names=("model", "data"),
+            mesh_shape=(settings.model_parallel_size,),
+            mesh_dim_names=("model",),
         )
-        if settings.model_parallel_size > 1 or settings.data_parallel_size > 1
+        if settings.model_parallel_size > 1
         else None
     )
 
     logger.info(f"Device mesh initialized: {device_mesh}")
 
-    mongo_client = MongoClient(settings.mongo)
-    logger.info("MongoDB client initialized")
+    mongo_client = None
+    if settings.mongo is not None:
+        mongo_client = MongoClient(settings.mongo)
+        logger.info("MongoDB client initialized")
+    else:
+        assert settings.output_dir is not None, "Output directory must be provided if MongoDB client is not provided"
+        logger.info(f"Analysis results will be saved to {settings.output_dir}")
 
     # Load configurations
     model_cfg = load_config(
@@ -136,7 +213,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
         else None
     )
 
-    activation_factory = ActivationFactory(settings.activation_factory)
+    activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
     logger.info(f"Loading {settings.sae.sae_type} model")
     sae_cls = {
@@ -166,16 +243,31 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
             },
         )
 
-    logger.info("Analysis completed, saving results to MongoDB")
+    logger.info("Analysis completed, saving results")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
-    if device_mesh is None or settings.data_parallel_size == 1 or device_mesh.get_local_rank("data") == 0:
+    if mongo_client is not None:
+        logger.info("Saving results to MongoDB")
         mongo_client.add_feature_analysis(
-            name="default",
+            name=settings.feature_analysis_name,
             sae_name=settings.sae_name,
             sae_series=settings.sae_series,
             analysis=result,
             start_idx=start_idx,
         )
+        logger.info("Results saved to MongoDB")
+    else:
+        assert settings.output_dir is not None, "Output directory must be set when MongoDB is not used"
+        logger.info(f"Saving results to output directory: {settings.output_dir}")
+        pickle_path = save_analysis_to_file(
+            output_dir=settings.output_dir,
+            analysis_name=settings.feature_analysis_name,
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            analysis=result,
+            start_idx=start_idx,
+            device_mesh=device_mesh,
+        )
+        logger.info(f"Results saved to: {pickle_path}")
 
     logger.info(f"{settings.sae.sae_type} analysis completed successfully")
 
@@ -204,8 +296,11 @@ class AnalyzeCrossCoderSettings(BaseSettings):
     feature_analysis_name: str = "default"
     """Name of the feature analysis."""
 
-    mongo: MongoDBConfig
+    mongo: MongoDBConfig | None = None
     """Configuration for the MongoDB database."""
+
+    output_dir: Optional[Path] = None
+    """Directory to save analysis results. Only used if MongoDB client is not provided."""
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
@@ -243,8 +338,13 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
 
     logger.info("Device meshes initialized for CrossCoder analysis")
 
-    mongo_client = MongoClient(settings.mongo)
-    logger.info("MongoDB client initialized")
+    mongo_client = None
+    if settings.mongo is not None:
+        mongo_client = MongoClient(settings.mongo)
+        logger.info("MongoDB client initialized")
+    else:
+        assert settings.output_dir is not None, "Output directory must be provided if MongoDB client is not provided"
+        logger.info(f"Analysis results will be saved to: {settings.output_dir}")
 
     logger.info("Setting up activation factory for CrossCoder head")
     activation_factory = ActivationFactory(settings.activation_factories[crosscoder_device_mesh.get_local_rank("head")])
@@ -266,13 +366,27 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
 
     logger.info("CrossCoder analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
-    mongo_client.add_feature_analysis(
-        name=settings.feature_analysis_name,
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        analysis=result,
-        start_idx=start_idx,
-    )
+    if mongo_client is not None:
+        mongo_client.add_feature_analysis(
+            name=settings.feature_analysis_name,
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            analysis=result,
+            start_idx=start_idx,
+        )
+    else:
+        assert settings.output_dir is not None, "Output directory must be set when MongoDB is not used"
+        logger.info(f"Saving results to output directory: {settings.output_dir}")
+        pickle_path = save_analysis_to_file(
+            output_dir=settings.output_dir,
+            analysis_name=settings.feature_analysis_name,
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            analysis=result,
+            start_idx=start_idx,
+            device_mesh=device_mesh,
+        )
+        logger.info(f"Results saved to: {pickle_path}")
 
     logger.info("CrossCoder analysis completed successfully")
 
@@ -301,8 +415,11 @@ class DirectLogitAttributeSettings(BaseSettings):
     direct_logit_attributor: DirectLogitAttributorConfig
     """Configuration for the direct logit attributor."""
 
-    mongo: MongoDBConfig
+    mongo: MongoDBConfig | None = None
     """Configuration for the MongoDB database."""
+
+    analysis_file: Path | None = None
+    """The analysis results file to be updated. Only used if MongoDB client is not provided."""
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
@@ -337,8 +454,16 @@ def direct_logit_attribute(settings: DirectLogitAttributeSettings) -> None:
     #     else None
     # )
 
-    mongo_client = MongoClient(settings.mongo)
-    logger.info("MongoDB client initialized")
+    mongo_client = None
+    if settings.mongo is not None:
+        mongo_client = MongoClient(settings.mongo)
+        logger.info("MongoDB client initialized")
+    else:
+        assert settings.analysis_file is not None, (
+            "Analysis directory must be provided if MongoDB client is not provided"
+        )
+        # the analysis directory should contain the analysis results to be updated
+        logger.info(f"Analysis results to be updated: {settings.analysis_file}")
 
     logger.info("Loading SAE model")
     if isinstance(settings.sae, CrossCoderConfig):
@@ -373,11 +498,37 @@ def direct_logit_attribute(settings: DirectLogitAttributeSettings) -> None:
     results = direct_logit_attributor.direct_logit_attribute(sae, model, settings.layer_idx)
 
     # if is_master():
-    logger.info("Direct logit attribution completed, saving results to MongoDB")
-    mongo_client.update_features(
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        update_data=[{"logits": result} for result in results],
-        start_idx=0,
-    )
+    if mongo_client is not None:
+        logger.info("Direct logit attribution completed, saving results to MongoDB")
+        mongo_client.update_features(
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            update_data=[{"logits": result} for result in results],
+            start_idx=0,
+        )
+    else:
+        assert settings.analysis_file is not None, "analysis_file must be set when MongoDB is not used"
+        logger.info(f"Loading analysis results from: {settings.analysis_file}")
+
+        # Load existing analysis results
+        with open(settings.analysis_file, "rb") as f:
+            analysis_data = pickle.load(f)
+
+        # Update each feature with logits
+        assert len(analysis_data) == len(results), (
+            f"Number of features in analysis file ({len(analysis_data)}) does not match "
+            f"number of results from direct logit attribution ({len(results)})"
+        )
+
+        for i, result in enumerate(results):
+            assert analysis_data[i]["feature_idx"] == i, "Feature index mismatch"
+            analysis_data[i]["logits"] = result
+
+        # Save updated analysis back to file
+        logger.info(f"Saving updated analysis results to: {settings.analysis_file}")
+        with open(settings.analysis_file, "wb") as f:
+            pickle.dump(analysis_data, f)
+
+        logger.info(f"Updated {len(results)} features with logit attributions")
+
     logger.info("Direct logit attribution completed successfully")
