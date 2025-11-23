@@ -49,9 +49,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   // Circuit Trace 参数状态
   const [showParamsDialog, setShowParamsDialog] = useState(false);
   const [circuitParams, setCircuitParams] = useState({
-    max_feature_nodes: 1024,
-    node_threshold: 0.9,
-    edge_threshold: 0.69,
+    max_feature_nodes: 4096,
+    node_threshold: 0.73,
+    edge_threshold: 0.57,
     max_act_times: null as number | null,
   });
 
@@ -1647,9 +1647,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
               onClick={() => {
                 // 重置为默认值
                 setCircuitParams({
-                  max_feature_nodes: 1024,
-                  node_threshold: 0.9,
-                  edge_threshold: 0.69,
+                  max_feature_nodes: 4096,
+                  node_threshold: 0.73,
+                  edge_threshold: 0.57,
                   max_act_times: null,
                 });
               }}
