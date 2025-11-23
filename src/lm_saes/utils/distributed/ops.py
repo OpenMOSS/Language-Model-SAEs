@@ -175,3 +175,20 @@ def masked_fill(x: Float[Tensor, "..."], mask: Float[Tensor, "..."], value: floa
         assert isinstance(mask, Tensor), "mask must be a Tensor"
         x[mask] = value
         return x
+
+
+def slice_fill(
+    x: Float[Tensor, "..."],
+    slice_tuple: Union[int, slice, Tuple[Union[int, slice, None], ...]],
+    value: Union[float, int, Tensor],
+) -> Float[Tensor, "..."]:
+    """
+    Fill a slice of a Tensor or DTensor with a value.
+    """
+    if isinstance(x, DTensor):
+        x_local = x.to_local()
+        x_local[slice_tuple] = value
+        return DTensor.from_local(x_local, device_mesh=x.device_mesh, placements=x.placements)
+    else:
+        x[slice_tuple] = value
+        return x
