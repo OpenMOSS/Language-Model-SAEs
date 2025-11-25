@@ -26,9 +26,36 @@ from lm_saes.activation_functions import JumpReLU
 from lm_saes.config import CLTConfig
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("clt")
+
+
+class CrossLayerTranscoderSpecs(TensorSpecs):
+    """Tensor specs for CrossLayerTranscoder."""
+
+    @staticmethod
+    def feature_acts(tensor: torch.Tensor) -> tuple[str, ...]:
+        if tensor.ndim == 3:
+            return ("batch", "layers", "sae")
+        elif tensor.ndim == 4:
+            return ("batch", "context", "layers", "sae")
+        else:
+            raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
+    @staticmethod
+    def reconstructed(tensor: torch.Tensor) -> tuple[str, ...]:
+        if tensor.ndim == 3:
+            return ("layers", "batch", "model")
+        elif tensor.ndim == 4:
+            return ("layers", "batch", "context", "model")
+        else:
+            raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
+    @staticmethod
+    def label(tensor: torch.Tensor) -> tuple[str, ...]:
+        return CrossLayerTranscoderSpecs.reconstructed(tensor)
 
 
 class CrossLayerTranscoder(AbstractSparseAutoEncoder):
@@ -41,6 +68,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     We store all parameters in the same object and shard
     them across GPUs for efficient distributed training.
     """
+
+    tensor_specs: type[TensorSpecs] = CrossLayerTranscoderSpecs
+    """Tensor specs for CrossLayerTranscoder with layer dimension."""
 
     def __init__(self, cfg: CLTConfig, device_mesh: Optional[DeviceMesh] = None):
         """Initialize the Cross Layer Transcoder.

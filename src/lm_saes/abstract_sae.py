@@ -34,6 +34,7 @@ from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.math import topk
 from lm_saes.utils.misc import is_primary_rank
+from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("abstract_sae")
@@ -45,6 +46,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     This class defines the public interface for all sparse autoencoder implementations.
     Concrete implementations should inherit from this class and implement the required methods.
     """
+
+    tensor_specs: type[TensorSpecs] = TensorSpecs
+    """Tensor specs class for inferring dimension names from tensors. Override in subclasses for custom specs."""
 
     def __init__(self, cfg: BaseSAEConfig, device_mesh: Optional[DeviceMesh] = None):
         super(AbstractSparseAutoEncoder, self).__init__()

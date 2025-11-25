@@ -17,7 +17,34 @@ from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.distributed.ops import full_tensor
 from lm_saes.utils.distributed.utils import replace_placements
 from lm_saes.utils.misc import get_slice_length
+from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
+
+
+class CrossCoderSpecs(TensorSpecs):
+    """Tensor specs for CrossCoder with n_heads dimension."""
+
+    @staticmethod
+    def feature_acts(tensor: torch.Tensor) -> tuple[str, ...]:
+        if tensor.ndim == 3:
+            return ("batch", "heads", "sae")
+        elif tensor.ndim == 4:
+            return ("batch", "context", "heads", "sae")
+        else:
+            raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
+    @staticmethod
+    def reconstructed(tensor: torch.Tensor) -> tuple[str, ...]:
+        if tensor.ndim == 3:
+            return ("batch", "heads", "model")
+        elif tensor.ndim == 4:
+            return ("batch", "context", "heads", "model")
+        else:
+            raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
+    @staticmethod
+    def label(tensor: torch.Tensor) -> tuple[str, ...]:
+        return CrossCoderSpecs.reconstructed(tensor)
 
 
 class CrossCoder(AbstractSparseAutoEncoder):
@@ -27,6 +54,9 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     Can also act as a transcoder model, which learns to compress the input activation tensor into a feature activation tensor, and then reconstruct a label activation tensor from the feature activation tensor.
     """
+
+    tensor_specs: type[TensorSpecs] = CrossCoderSpecs
+    """Tensor specs for CrossCoder with n_heads dimension."""
 
     def __init__(self, cfg: CrossCoderConfig, device_mesh: Optional[DeviceMesh] = None):
         super(CrossCoder, self).__init__(cfg, device_mesh)

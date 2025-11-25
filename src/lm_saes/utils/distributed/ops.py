@@ -15,11 +15,16 @@ def full_tensor(x: Tensor) -> Tensor:
     return x
 
 
-def to_local(x: Float[Tensor | DTensor, "..."]) -> Float[Tensor, "..."]:
+def to_local(x: Tensor) -> Tensor:
     """Convert DTensor to local Tensor if needed."""
     if isinstance(x, DTensor):
         return x.to_local()
     return x
+
+
+def item(x: Tensor) -> float:
+    """Extract item from a Tensor. A dedicated function is necessary because DTensor.item() silently returns the local value."""
+    return full_tensor(x).item()
 
 
 @overload
