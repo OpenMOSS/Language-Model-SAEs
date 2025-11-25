@@ -139,7 +139,15 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 torch.save({"sae": state_dict, "version": version("lm-saes")}, ckpt_path)
         elif Path(ckpt_path).suffix == ".dcp":
             fs_writer = FileSystemWriter(ckpt_path)
-            dcp.save(state_dict, storage_writer=fs_writer)
+            assert self.device_mesh is not None, "device_mesh must be provided when saving to DCP checkpoint"
+            dcp.save(
+                state_dict,
+                storage_writer=fs_writer,
+                # process_group=get_process_group(self.device_mesh),
+                # TODO: Fix checkpoint saving during sweeps. Currently fails due to a bug in dcp.save
+                # See: https://github.com/pytorch/pytorch/issues/152310
+                # Attempted fix was unsuccessful - waiting for upstream resolution
+            )
         else:
             raise ValueError(
                 f"Invalid checkpoint path {ckpt_path}. Currently only supports .safetensors and .pt formats."
