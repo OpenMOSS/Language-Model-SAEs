@@ -60,7 +60,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         self.device_mesh: DeviceMesh | None = device_mesh
 
         self.activation_function: Callable[[torch.Tensor], torch.Tensor] = self.activation_function_factory(device_mesh)
-        self.circuit_tracing_mode: bool = cfg.circuit_tracing_mode
 
     @torch.no_grad()
     def set_dataset_average_activation_norm(self, dataset_average_activation_norm: dict[str, float]):

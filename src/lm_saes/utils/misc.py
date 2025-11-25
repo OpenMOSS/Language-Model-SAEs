@@ -1,12 +1,11 @@
 import os
 import warnings
-from typing import Any, Iterable, Optional, Union, cast
+from typing import Iterable, Union, cast
 
 import torch
 import torch.distributed as dist
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.nn.functional import all_reduce
 
 from lm_saes.utils.distributed import DimMap
 
@@ -99,42 +98,6 @@ def convert_torch_dtype_to_str(dtype: torch.dtype) -> str:
         return dtype_str_map[dtype]
     else:
         raise ValueError(f"Unsupported data type: {dtype}. Supported data types: {list(dtype_str_map.values())}.")
-
-
-def all_gather_tensor(tensor, group: Optional[torch.distributed.ProcessGroup] = None):
-    world_size = dist.get_world_size(group=group)
-    tensor_meta = {"shape": tensor.shape, "dtype": tensor.dtype}
-    meta_list: list[dict[str, Any] | None] = [None for _ in range(world_size)]
-    dist.all_gather_object(meta_list, tensor_meta, group=group)
-    gathered_tensors = [
-        torch.empty(rank_meta["shape"], dtype=rank_meta["dtype"], device=tensor.device)
-        for rank_meta in cast(list[dict[str, Any]], meta_list)
-    ]
-    dist.all_gather(gathered_tensors, tensor, group=group)
-    return gathered_tensors
-
-
-def get_tensor_from_specific_rank(tensor, src=0):
-    dist.broadcast(tensor, src=src)
-    return tensor
-
-
-def all_reduce_tensor(tensor, aggregate: str, group: Optional[torch.distributed.ProcessGroup] = None):
-    _OP_MAP = {
-        "sum": dist.ReduceOp.SUM,
-        "mean": dist.ReduceOp.SUM,  # Use SUM for mean, but will need to divide by world size
-        "min": dist.ReduceOp.MIN,
-        "max": dist.ReduceOp.MAX,
-        "product": dist.ReduceOp.PRODUCT,
-    }
-    assert aggregate in _OP_MAP, f"Unsupported aggregate: {aggregate}. Supported aggregates: {list(_OP_MAP.keys())}."
-
-    # gathered_tensors = [torch.zeros_like(tensor) for _ in range(world_size)]
-    tensor = all_reduce(tensor, op=_OP_MAP[aggregate])
-    assert tensor is not None, "All reduce failed"
-    if aggregate == "mean":
-        tensor = tensor / dist.get_world_size(group=group)
-    return tensor
 
 
 def assert_tensor_consistency(tensor):
