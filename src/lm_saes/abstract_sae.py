@@ -1,8 +1,16 @@
 import math
 import os
 from abc import ABC, abstractmethod
-from importlib.metadata import version
 from pathlib import Path
+
+# 安全地获取包版本
+def _get_package_version(package_name: str, default: str = "unknown") -> str:
+    """安全地获取包版本，如果失败则返回默认值"""
+    try:
+        from importlib.metadata import version
+        return version(package_name)
+    except Exception:
+        return default
 from typing import (
     Any,
     Callable,
@@ -129,14 +137,17 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         }
         """
         state_dict = self.full_state_dict()
+        # 安全地获取版本号（仅在保存 .safetensors 或 .pt 时需要）
+        sae_version = _get_package_version("lm-saes", default="unknown")
+        
         if Path(ckpt_path).suffix == ".safetensors":
             state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
             if self.device_mesh is None or is_primary_rank(self.device_mesh):
-                safe.save_file(state_dict, ckpt_path, {"version": version("lm-saes")})
+                safe.save_file(state_dict, ckpt_path, {"version": sae_version})
         elif Path(ckpt_path).suffix == ".pt":
             state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
             if self.device_mesh is None or is_primary_rank(self.device_mesh):
-                torch.save({"sae": state_dict, "version": version("lm-saes")}, ckpt_path)
+                torch.save({"sae": state_dict, "version": sae_version}, ckpt_path)
         elif Path(ckpt_path).suffix == ".dcp":
             fs_writer = FileSystemWriter(ckpt_path)
             dcp.save(state_dict, storage_writer=fs_writer)

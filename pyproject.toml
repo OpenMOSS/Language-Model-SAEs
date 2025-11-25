@@ -36,6 +36,7 @@ dependencies = [
     "chess>=1.11.2",
     "onnx>=1.19.1",
     "onnx2torch>=1.5.15",
+    "python-magic>=0.4.27",
 ]
 requires-python = "==3.11.*"
 readme = "README.md"

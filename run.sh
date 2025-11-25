@@ -1,14 +1,16 @@
-uv pip install chess
-uv pip install onnx 
-uv pip install onnx2torch
-uv pip install onnxruntime
-uv pip install chex
-uv pip install grain
-uv pip install dm-haiku
-uv pip install optax
-uv pip install orbax
-uv pip install apache_beam
-uv pip install -U "jax[cuda12]"   
+uv add chess
+uv add onnx 
+uv add onnx2torch
+uv add onnxruntime
+uv add chex
+uv add grain
+uv add dm-haiku
+uv add optax
+uv add orbax
+uv add apache_beam
+uv add -U "jax[cuda12]"   
+
+uv pip install -e .
 
 cd /inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs
 . .venv/bin/activate
@@ -62,12 +64,13 @@ CUDA_VISIBLE_DEVICES=0 torchrun --master_port=30010 --nproc-per-node=1 exp/eval_
 
 
 # 起mongodb
-$HOME/start-mongodb.sh 
+db.fs.chunks.findOne({}, { data: 1 })
+
 export MONGO_URI=$(cat $HOME/mongoip)
 
 # 查看最新的mongourl
 
-mongosh mongodb://10.246.85.243:27017/mechinterp    
+mongosh mongodb://10.244.94.234:27017/mechinterp    
 # db.datasets.find()
 # db.saes.find()
 # db.models.find({"name":"searchless-chess-9M-behavioral-cloning"})
@@ -380,55 +383,55 @@ db.features.find({"sae_name":"lc0-lorsa-L5"})
 
 db.features.find({"sae_name":"BT4_lorsa_L2A"})
 
-db.analyses.find({"sae_series":"lc0-circuit-tracing"})
+db.analyses.find({"sae_series":"BT4-exp128"})
 
 
 db.analyses.deleteMany({
   sae_name: "lc0_L5M_16x_k30_lr2e-03_auxk_sparseadam",
-  sae_series: "lc0-circuit-tracing"
+  sae_series: "BT4-exp128"
 })
 db.features.deleteMany({
   sae_name: "lc0_L5M_16x_k30_lr2e-03_auxk_sparseadam",
-  sae_series: "lc0-circuit-tracing"
+  sae_series: "BT4-exp128"
 })
 db.analyses.deleteMany({
   sae_name: "lc0_L6M_16x_k30_lr2e-03_auxk_sparseadam",
-  sae_series: "lc0-circuit-tracing"
+  sae_series: "BT4-exp128"
 })
 db.features.deleteMany({
   sae_name: "lc0_L6M_16x_k30_lr2e-03_auxk_sparseadam",
-  sae_series: "lc0-circuit-tracing"
+  sae_series: "BT4-exp128"
 })
 db.analyses.deleteMany({
   sae_name: "lc0_L7M_16x_k30_lr2e-03_auxk_sparseadam",
-  sae_series: "lc0-circuit-tracing"
+  sae_series: "BT4-exp128"
 })
 db.features.deleteMany({
   sae_name: "lc0_L7M_16x_k30_lr2e-03_auxk_sparseadam",
-  sae_series: "lc0-circuit-tracing"
+  sae_series: "BT4-exp128"
 })
 
 db.analyses.deleteMany({
   sae_name: "lc0-lorsa-L7",
-  sae_series: "lc0-circuit-tracing"
+  sae_series: "BT4-exp128"
 })
 db.features.deleteMany({
   sae_name: "lc0-lorsa-L7",
-  sae_series: "lc0-circuit-tracing"
+  sae_series: "BT4-exp128"
 })
 
 db.analyses.deleteMany({
   sae_name: {
     $in: Array.from({length: 15}, (_, i) => `lc0-lorsa-L${i}`)
   },
-  sae_series: "lc0-circuit-tracing"
+  sae_series: "BT4-exp128"
 });
 
 db.features.deleteMany({
   sae_name: {
     $in: Array.from({length: 15}, (_, i) => `lc0-lorsa-L${i}`)
   },
-  sae_series: "lc0-circuit-tracing"
+  sae_series: "BT4-exp128"
 });
 
 
@@ -446,4 +449,4 @@ db.features.deleteMany({
   sae_series: "BT4-exp128"
 });
 
-db.analyses.find({"sae_series": "lc0-circuit-tracing"})
+db.analyses.find({"sae_series": "BT4-exp128"})

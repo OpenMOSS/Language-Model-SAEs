@@ -781,7 +781,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         encoder_layer.mha.hook_z.add_hook(capture_hook)
         _ = encoder_layer.forward(x)
-        print(f'{captured_z.shape = }')
+        # print(f'{captured_z.shape = }')
         # W_O.shape = torch.Size([32, 32, 1024])
         # captured_z.shape = torch.Size([256, 32, 64, 32])
         

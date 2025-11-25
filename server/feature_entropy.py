@@ -14,7 +14,7 @@ from lm_saes.database import MongoClient
 class FeatureEntropyCalculator:
     """计算特征熵的工具类"""
     
-    def __init__(self, mongo_client: MongoClient, sae_series: str = "lc0-circuit-tracing"):
+    def __init__(self, mongo_client: MongoClient, sae_series: str = "BT4-exp128"):
         self.mongo_client = mongo_client
         self.sae_series = sae_series
         self._dataset_cache: Dict[str, Any] = {}

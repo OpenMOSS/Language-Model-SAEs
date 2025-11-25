@@ -142,10 +142,8 @@ def get_sae(name: str) -> SparseAutoEncoder:
     return sae
 
 
-# 添加全局模型缓存
+# 添加全局模型缓存（先初始化本地缓存，circuits_service导入后会更新）
 _hooked_models = {}
-
-# 添加全局transcoder和lorsa缓存
 _transcoders_cache: Dict[str, Dict[int, SparseAutoEncoder]] = {}
 _lorsas_cache: Dict[str, Any] = {}  # List[LowRankSparseAttention]，使用Any避免导入问题
 _replacement_models_cache: Dict[str, Any] = {}  # ReplacementModel缓存
@@ -163,27 +161,49 @@ _loading_status: Dict[str, dict] = {}  # model_name -> {"is_loading": bool, "pro
 import threading
 
 def get_hooked_model(model_name: str = 'lc0/BT4-1024x15x32h'):
-    """获取或加载HookedTransformer模型 - 仅支持BT4"""
+    """获取或加载HookedTransformer模型 - 仅支持BT4（带全局缓存）"""
     global _hooked_models
     
     # 强制使用BT4模型
     model_name = 'lc0/BT4-1024x15x32h'
     
+    # 先检查circuits_service的缓存
+    if CIRCUITS_SERVICE_AVAILABLE and get_cached_models is not None:
+        cached_hooked_model, _, _, _ = get_cached_models(model_name)
+        if cached_hooked_model is not None:
+            print(f"✅ 使用缓存的HookedTransformer模型: {model_name}")
+            return cached_hooked_model
+    
+    # 检查本地缓存
     if model_name not in _hooked_models:
         if not HOOKED_TRANSFORMER_AVAILABLE:
             raise ValueError("HookedTransformer不可用，请安装transformer_lens")
         
         print(f"🔍 正在加载HookedTransformer模型: {model_name}")
-        _hooked_models[model_name] = HookedTransformer.from_pretrained_no_processing(
+        model = HookedTransformer.from_pretrained_no_processing(
             model_name,
             dtype=torch.float32,
         ).eval()
+        _hooked_models[model_name] = model
+        
+        # 如果circuits_service可用，也更新共享缓存
+        if CIRCUITS_SERVICE_AVAILABLE and set_cached_models is not None:
+            # 需要transcoders和lorsas才能调用set_cached_models，这里只缓存模型
+            _global_hooked_models[model_name] = model
+        
         print(f"✅ HookedTransformer模型 {model_name} 加载成功")
     
     return _hooked_models[model_name]
 
 def get_cached_transcoders_and_lorsas(model_name: str) -> Tuple[Optional[Dict[int, SparseAutoEncoder]], Optional[List[LowRankSparseAttention]]]:
-    """获取缓存的transcoders和lorsas"""
+    """获取缓存的transcoders和lorsas（优先使用circuits_service的共享缓存）"""
+    # 先检查circuits_service的缓存
+    if CIRCUITS_SERVICE_AVAILABLE and get_cached_models is not None:
+        _, cached_transcoders, cached_lorsas, _ = get_cached_models(model_name)
+        if cached_transcoders is not None and cached_lorsas is not None:
+            return cached_transcoders, cached_lorsas
+    
+    # 检查本地缓存
     global _transcoders_cache, _lorsas_cache
     return _transcoders_cache.get(model_name), _lorsas_cache.get(model_name)
 
@@ -1286,16 +1306,37 @@ def get_models():
 
 # 导入circuits_service
 try:
-    from circuits_service import run_circuit_trace, check_dense_features, load_model_and_transcoders
+    from circuits_service import (
+        run_circuit_trace, 
+        check_dense_features, 
+        load_model_and_transcoders,
+        get_cached_models,
+        set_cached_models,
+        _global_hooked_models,
+        _global_transcoders_cache,
+        _global_lorsas_cache,
+        _global_replacement_models_cache
+    )
     from lm_saes.circuit.replacement_lc0_model import ReplacementModel
     CIRCUITS_SERVICE_AVAILABLE = True
-except ImportError:
+    # 如果circuits_service可用，将本地缓存指向共享缓存
+    _hooked_models = _global_hooked_models
+    _transcoders_cache = _global_transcoders_cache
+    _lorsas_cache = _global_lorsas_cache
+    _replacement_models_cache = _global_replacement_models_cache
+except ImportError as e:
     run_circuit_trace = None
     check_dense_features = None
     load_model_and_transcoders = None
+    get_cached_models = None
+    set_cached_models = None
+    _global_hooked_models = {}
+    _global_transcoders_cache = {}
+    _global_lorsas_cache = {}
+    _global_replacement_models_cache = {}
     ReplacementModel = None
     CIRCUITS_SERVICE_AVAILABLE = False
-    print("WARNING: circuits_service not found, circuit tracing will not be available")
+    print(f"WARNING: circuits_service not found, circuit tracing will not be available: {e}")
 
 # 导入patching服务
 try:
@@ -1432,11 +1473,15 @@ def preload_circuit_models(request: dict):
                 print(f"📝 加载完成后的日志数量: {len(loading_logs)}")
                 print(f"📝 全局字典中的日志数量: {len(_loading_logs.get(model_name, []))}")
                 
-                # 缓存transcoders和lorsas
+                # 缓存transcoders和lorsas（同时更新共享缓存和本地缓存）
                 global _transcoders_cache, _lorsas_cache, _replacement_models_cache
                 _transcoders_cache[model_name] = transcoders
                 _lorsas_cache[model_name] = lorsas
                 _replacement_models_cache[model_name] = replacement_model
+                
+                # 如果circuits_service可用，也更新共享缓存
+                if CIRCUITS_SERVICE_AVAILABLE and set_cached_models is not None:
+                    set_cached_models(model_name, hooked_model, transcoders, lorsas, replacement_model)
                 
                 print(f"✅ 预加载完成: {model_name}")
                 print(f"   - Transcoders: {len(transcoders)} 层")
@@ -1517,8 +1562,6 @@ def get_loading_logs(model_name: str = "lc0/BT4-1024x15x32h"):
         logs = _loading_logs.get(model_name, [])
     
     # 调试信息
-    print(f"📤 返回加载日志: model_name={model_name}, decoded={decoded_model_name}, logs_count={len(logs)}")
-    print(f"📤 可用的键: {list(_loading_logs.keys())}")
     
     return {
         "model_name": decoded_model_name,
@@ -1538,9 +1581,9 @@ def circuit_trace(request: dict):
             - fen: FEN字符串 (必需)
             - move_uci: 要分析的UCI移动 (必需)
             - side: 分析侧 (q/k/both, 默认: "k")
-            - max_feature_nodes: 最大特征节点数 (默认: 1024)
-            - node_threshold: 节点阈值 (默认: 0.9)
-            - edge_threshold: 边阈值 (默认: 0.69)
+            - max_feature_nodes: 最大特征节点数 (默认: 4096)
+            - node_threshold: 节点阈值 (默认: 0.73)
+            - edge_threshold: 边阈值 (默认: 0.57)
             - max_n_logits: 最大logit数量 (默认: 1)
             - desired_logit_prob: 期望logit概率 (默认: 0.95)
             - batch_size: 批处理大小 (默认: 1)
@@ -1565,9 +1608,9 @@ def circuit_trace(request: dict):
         negative_move_uci = request.get("negative_move_uci", None)  # 新增negative_move_uci参数
         
         side = request.get("side", "k")
-        max_feature_nodes = request.get("max_feature_nodes", 1024)
-        node_threshold = request.get("node_threshold", 0.9)
-        edge_threshold = request.get("edge_threshold", 0.69)
+        max_feature_nodes = request.get("max_feature_nodes", 4096)
+        node_threshold = request.get("node_threshold", 0.73)
+        edge_threshold = request.get("edge_threshold", 0.57)
         max_n_logits = request.get("max_n_logits", 1)
         desired_logit_prob = request.get("desired_logit_prob", 0.95)
         batch_size = request.get("batch_size", 1)
@@ -1746,7 +1789,7 @@ def check_dense_features_api(request: dict):
         request: 包含检查参数的请求体
             - nodes: 节点列表
             - threshold: 激活次数阈值（可选，None表示无限大）
-            - sae_series: SAE系列名称（可选，默认: lc0-circuit-tracing）
+            - sae_series: SAE系列名称（可选，默认: BT4-exp128）
             - lorsa_analysis_name: LoRSA分析名称模板（可选）
             - tc_analysis_name: TC分析名称模板（可选）
     
@@ -1770,7 +1813,7 @@ def check_dense_features_api(request: dict):
             except (ValueError, TypeError):
                 raise HTTPException(status_code=400, detail="threshold must be an integer or null")
         
-        sae_series = request.get("sae_series", "lc0-circuit-tracing")
+        sae_series = request.get("sae_series", "BT4-exp128")
         lorsa_analysis_name = request.get("lorsa_analysis_name")
         tc_analysis_name = request.get("tc_analysis_name")
         
@@ -2344,49 +2387,73 @@ async def analyze_tactic_features_api(
                 detail=f"没有有效的FEN字符串。无效FEN示例: {invalid_fens[:5]}"
             )
         
-        # 加载模型
+        # 加载模型（使用缓存）
         hooked_model = get_hooked_model(model_name)
         
-        # 加载LoRSA和Transcoders
+        # 检查缓存的transcoders和lorsas
+        cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name)
+        
         num_layers = 15
-        base_path = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N"
-        if 'BT4' in model_name:
-            tc_base_path = f"{base_path}/result_BT4/tc"
-            lorsa_base_path = f"{base_path}/result_BT4/lorsa"
+        if cached_transcoders is not None and cached_lorsas is not None:
+            if len(cached_transcoders) == num_layers and len(cached_lorsas) == num_layers:
+                print(f"✅ 使用缓存的transcoders和lorsas: {model_name}")
+                transcoders = cached_transcoders
+                lorsas = cached_lorsas
+            else:
+                # 缓存不完整，需要加载
+                print(f"⚠️ 缓存不完整，重新加载: {model_name}")
+                transcoders = None
+                lorsas = None
         else:
-            raise ValueError("Unsupported Model!")
+            transcoders = None
+            lorsas = None
         
-        transcoders = {}
-        lorsas = []
-        
-        for layer in range(num_layers):
-            # 加载Transcoder
-            tc_path = f"{tc_base_path}/L{layer}"
-            if os.path.exists(tc_path):
-                transcoders[layer] = SparseAutoEncoder.from_pretrained(
-                    tc_path,
-                    dtype=torch.float32,
-                    device=device,
-                )
+        # 如果缓存不可用，则加载
+        if transcoders is None or lorsas is None:
+            base_path = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N"
+            if 'BT4' in model_name:
+                tc_base_path = f"{base_path}/result_BT4/tc"
+                lorsa_base_path = f"{base_path}/result_BT4/lorsa"
             else:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Transcoder not found at {tc_path}"
-                )
+                raise ValueError("Unsupported Model!")
             
-            # 加载LoRSA
-            # lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
-            lorsa_path = f"{lorsa_base_path}/L{layer}"
-            if os.path.exists(lorsa_path):
-                lorsas.append(LowRankSparseAttention.from_pretrained(
-                    lorsa_path,
-                    device=device,
-                ))
-            else:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"LoRSA not found at {lorsa_path}"
-                )
+            transcoders = {}
+            lorsas = []
+            
+            for layer in range(num_layers):
+                # 加载Transcoder
+                tc_path = f"{tc_base_path}/L{layer}"
+                if os.path.exists(tc_path):
+                    transcoders[layer] = SparseAutoEncoder.from_pretrained(
+                        tc_path,
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Transcoder not found at {tc_path}"
+                    )
+                
+                # 加载LoRSA
+                lorsa_path = f"{lorsa_base_path}/L{layer}"
+                if os.path.exists(lorsa_path):
+                    lorsas.append(LowRankSparseAttention.from_pretrained(
+                        lorsa_path,
+                        device=device,
+                    ))
+                else:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"LoRSA not found at {lorsa_path}"
+                    )
+            
+            # 缓存加载的transcoders和lorsas
+            if CIRCUITS_SERVICE_AVAILABLE and set_cached_models is not None:
+                # 需要创建replacement_model才能缓存，这里先缓存transcoders和lorsas
+                _global_transcoders_cache[model_name] = transcoders
+                _global_lorsas_cache[model_name] = lorsas
+                _global_hooked_models[model_name] = hooked_model
         
         # 执行分析
         print("=" * 80)

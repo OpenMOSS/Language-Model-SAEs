@@ -1452,9 +1452,11 @@ export const CircuitVisualization = () => {
       });
       
       // 从metadata中提取模型名称并转换为analysis_name
-      const metadata = linkGraphData.metadata || {};
+      const metadata = (linkGraphData.metadata || {}) as any;
       const lorsaModelName = metadata.lorsa_analysis_name;
       const tcModelName = metadata.tc_analysis_name || metadata.clt_analysis_name;
+      // 从metadata中读取sae_series，如果没有则使用默认值
+      const saeSeries = (metadata as any).sae_series || 'BT4-exp128';
       
       // 根据模型名称构建analysis_name模板
       let lorsaAnalysisName = undefined;
@@ -1479,6 +1481,7 @@ export const CircuitVisualization = () => {
       console.log('🔍 开始检查dense features:', {
         totalNodes: nodes.length,
         threshold: threshold,
+        saeSeries: saeSeries,
         lorsaModelName: lorsaModelName,
         tcModelName: tcModelName,
         lorsaAnalysisName: lorsaAnalysisName,
@@ -1496,7 +1499,7 @@ export const CircuitVisualization = () => {
           body: JSON.stringify({
             nodes: nodes,
             threshold: threshold,
-            sae_series: 'lc0-circuit-tracing',
+            sae_series: saeSeries,
             lorsa_analysis_name: lorsaAnalysisName,
             tc_analysis_name: tcAnalysisName
           })

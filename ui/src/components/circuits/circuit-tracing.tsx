@@ -49,9 +49,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   // Circuit Trace 参数状态
   const [showParamsDialog, setShowParamsDialog] = useState(false);
   const [circuitParams, setCircuitParams] = useState({
-    max_feature_nodes: 1024,
-    node_threshold: 0.9,
-    edge_threshold: 0.69,
+    max_feature_nodes: 4096,
+    node_threshold: 0.73,
+    edge_threshold: 0.57,
     max_act_times: null as number | null,
   });
 
@@ -1550,7 +1550,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   className="font-mono"
                 />
                 <p className="text-xs text-gray-500">
-                  控制circuit trace中考虑的最大特征节点数量。默认值: 1024
+                  控制circuit trace中考虑的最大特征节点数量。默认值: 4096
                 </p>
               </div>
               
@@ -1567,7 +1567,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   className="font-mono"
                 />
                 <p className="text-xs text-gray-500">
-                  节点重要性阈值，用于过滤不重要的节点。默认值: 0.9
+                  节点重要性阈值，用于过滤不重要的节点。默认值: 0.73
                 </p>
               </div>
               
@@ -1584,7 +1584,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   className="font-mono"
                 />
                 <p className="text-xs text-gray-500">
-                  边重要性阈值，用于过滤不重要的连接。默认值: 0.69
+                  边重要性阈值，用于过滤不重要的连接。默认值: 0.57
                 </p>
               </div>
               
@@ -1647,9 +1647,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
               onClick={() => {
                 // 重置为默认值
                 setCircuitParams({
-                  max_feature_nodes: 1024,
-                  node_threshold: 0.9,
-                  edge_threshold: 0.69,
+                  max_feature_nodes: 4096,
+                  node_threshold: 0.73,
+                  edge_threshold: 0.57,
                   max_act_times: null,
                 });
               }}

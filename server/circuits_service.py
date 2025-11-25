@@ -44,6 +44,41 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
     return logging.getLogger(__name__)
 
 
+# 全局缓存（与app.py共享）
+_global_hooked_models: Dict[str, HookedTransformer] = {}
+_global_transcoders_cache: Dict[str, Dict[int, SparseAutoEncoder]] = {}
+_global_lorsas_cache: Dict[str, List[LowRankSparseAttention]] = {}
+_global_replacement_models_cache: Dict[str, ReplacementModel] = {}
+
+
+def get_cached_models(model_name: str) -> Tuple[Optional[HookedTransformer], Optional[Dict[int, SparseAutoEncoder]], Optional[List[LowRankSparseAttention]], Optional[ReplacementModel]]:
+    """获取缓存的模型、transcoders和lorsas"""
+    global _global_hooked_models, _global_transcoders_cache, _global_lorsas_cache, _global_replacement_models_cache
+    
+    hooked_model = _global_hooked_models.get(model_name)
+    transcoders = _global_transcoders_cache.get(model_name)
+    lorsas = _global_lorsas_cache.get(model_name)
+    replacement_model = _global_replacement_models_cache.get(model_name)
+    
+    return hooked_model, transcoders, lorsas, replacement_model
+
+
+def set_cached_models(
+    model_name: str,
+    hooked_model: HookedTransformer,
+    transcoders: Dict[int, SparseAutoEncoder],
+    lorsas: List[LowRankSparseAttention],
+    replacement_model: ReplacementModel
+):
+    """设置缓存的模型、transcoders和lorsas"""
+    global _global_hooked_models, _global_transcoders_cache, _global_lorsas_cache, _global_replacement_models_cache
+    
+    _global_hooked_models[model_name] = hooked_model
+    _global_transcoders_cache[model_name] = transcoders
+    _global_lorsas_cache[model_name] = lorsas
+    _global_replacement_models_cache[model_name] = replacement_model
+
+
 def load_model_and_transcoders(
     model_name: str,
     device: str,
@@ -53,7 +88,7 @@ def load_model_and_transcoders(
     hooked_model: Optional[HookedTransformer] = None,  # 新增参数
     loading_logs: Optional[list] = None  # 新增参数：用于收集加载日志
 ) -> Tuple[ReplacementModel, Dict[int, SparseAutoEncoder], List[LowRankSparseAttention]]:
-    """加载模型和transcoders"""
+    """加载模型和transcoders（带全局缓存）"""
     logger = logging.getLogger(__name__)
     
     # 辅助函数：添加日志（同时打印到控制台和收集到日志列表）
@@ -66,16 +101,35 @@ def load_model_and_transcoders(
                 "message": message
             })
     
-    # 使用传入的模型或加载新模型
+    # 先检查全局缓存
+    cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(model_name)
+    
+    # 检查缓存是否完整（有transcoders和lorsas，且层数正确）
+    if cached_transcoders is not None and cached_lorsas is not None:
+        if len(cached_transcoders) == n_layers and len(cached_lorsas) == n_layers:
+            if cached_replacement_model is not None:
+                add_log(f"✅ 使用缓存的模型、transcoders和lorsas: {model_name}")
+                logger.info(f"✅ 从缓存加载: {model_name} (transcoders={len(cached_transcoders)}层, lorsas={len(cached_lorsas)}层)")
+                return cached_replacement_model, cached_transcoders, cached_lorsas
+    
+    # 如果缓存不完整或不存在，则加载
+    add_log(f"🔍 开始加载模型和transcoders: {model_name}")
+    
+    # 使用传入的模型或从缓存获取或加载新模型
     if hooked_model is not None:
         logger.info("使用传入的HookedTransformer模型")
         model = hooked_model
+    elif cached_hooked_model is not None:
+        logger.info("使用缓存的HookedTransformer模型")
+        model = cached_hooked_model
     else:
         logger.info("加载新的HookedTransformer模型")
         model = HookedTransformer.from_pretrained_no_processing(
             model_name,
             dtype=torch.float32,
         ).eval()
+        # 缓存模型
+        _global_hooked_models[model_name] = model
     
     # 加载transcoders
     add_log(f"🔍 开始加载Transcoders，共{n_layers}层...")
@@ -130,6 +184,10 @@ def load_model_and_transcoders(
     replacement_model = ReplacementModel.from_pretrained_model(
         model, transcoders, lorsas
     )
+    
+    # 缓存所有加载的模型
+    set_cached_models(model_name, model, transcoders, lorsas, replacement_model)
+    add_log(f"✅ 模型、transcoders和lorsas已缓存: {model_name}")
     
     return replacement_model, transcoders, lorsas
 
@@ -422,17 +480,17 @@ def run_circuit_trace(
     side: str = "both",
     max_n_logits: int = 1,
     desired_logit_prob: float = 0.95,
-    max_feature_nodes: int = 1024,
+    max_feature_nodes: int = 4096,
     batch_size: int = 1,
     order_mode: str = "positive",
-    mongo_uri: str = "mongodb://10.246.85.243:27017",
+    mongo_uri: str = "mongodb://10.244.94.234:27017",
     mongo_db: str = "mechinterp",
-    sae_series: str = "lc0-circuit-tracing",
+    sae_series: str = "BT4-exp128",
     act_times_max: Optional[int] = None,
     encoder_demean: bool = False,
     save_activation_info: bool = False,
-    node_threshold: float = 0.9,
-    edge_threshold: float = 0.69,
+    node_threshold: float = 0.73,
+    edge_threshold: float = 0.57,
     log_level: str = "INFO",
     hooked_model: Optional[HookedTransformer] = None,  # 新增参数
     cached_transcoders: Optional[Dict[int, SparseAutoEncoder]] = None,  # 新增：缓存的transcoders
@@ -593,11 +651,11 @@ def main():
                        help="排序模式")
     
     # MongoDB参数
-    parser.add_argument("--mongo_uri", type=str, default="mongodb://10.246.85.243:27017",
+    parser.add_argument("--mongo_uri", type=str, default="mongodb://10.244.94.234:27017",
                        help="MongoDB URI")
     parser.add_argument("--mongo_db", type=str, default="mechinterp",
                        help="MongoDB数据库名")
-    parser.add_argument("--sae_series", type=str, default="lc0-circuit-tracing",
+    parser.add_argument("--sae_series", type=str, default="BT4",
                        help="SAE系列名")
     parser.add_argument("--act_times_max", type=lambda x: int(x) if x.lower() != "none" else None, default=None, help="最大激活次数 (可选)")
     
@@ -609,9 +667,9 @@ def main():
     parser.add_argument("--log_level", type=str, default="INFO",
                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                        help="日志级别")
-    parser.add_argument("--node_threshold", type=float, default=0.9,
+    parser.add_argument("--node_threshold", type=float, default=0.73,
                        help="节点阈值")
-    parser.add_argument("--edge_threshold", type=float, default=0.69,
+    parser.add_argument("--edge_threshold", type=float, default=0.57,
                        help="边阈值")
     
     args = parser.parse_args()
@@ -685,7 +743,7 @@ def check_dense_features(
     nodes: List[Dict[str, Any]],
     threshold: Optional[int],
     mongo_client: Optional[MongoClient],
-    sae_series: str = "lc0-circuit-tracing",
+    sae_series: str = "BT4-exp128",
     lorsa_analysis_name: Optional[str] = None,
     tc_analysis_name: Optional[str] = None
 ) -> List[str]:
@@ -761,11 +819,12 @@ def check_dense_features(
             )
             
             if feature_data is None:
-                logger.warning(f"❌ 节点 {node_id}: 在MongoDB中未找到特征数据 (sae={sae_name}, idx={feature_idx})")
+                logger.warning(f"❌ 节点 {node_id}: 在MongoDB中未找到特征数据 (sae={sae_name}, sae_series={sae_series}, idx={feature_idx})")
                 not_dense_nodes.append({
                     'node_id': node_id,
                     'reason': 'MongoDB中未找到',
                     'sae_name': sae_name,
+                    'sae_series': sae_series,
                     'feature_idx': feature_idx
                 })
                 continue

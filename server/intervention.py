@@ -302,29 +302,47 @@ def get_patching_analyzer(metadata: Optional[Dict[str, Any]] = None) -> Patching
         print(f"📁 LORSA路径: {BT4_LORSA_BASE_PATH}")
         print(f"🔍 使用模型: {BT4_MODEL_NAME}")
         
-        model = HookedTransformer.from_pretrained_no_processing(
-            BT4_MODEL_NAME,
-            dtype=torch.float32,
-        ).eval()
-        
-        transcoders = {}
-        for layer in range(15):
-            tc_path = f"{BT4_TC_BASE_PATH}/L{layer}"
-            print(f"📁 加载TC L{layer}: {tc_path}")
-            transcoders[layer] = SparseAutoEncoder.from_pretrained(
-                tc_path,
+        # 尝试从circuits_service获取缓存的模型
+        try:
+            from circuits_service import get_cached_models
+            cached_hooked_model, cached_transcoders, cached_lorsas, _ = get_cached_models(BT4_MODEL_NAME)
+            
+            if cached_hooked_model is not None and cached_transcoders is not None and cached_lorsas is not None:
+                if len(cached_transcoders) == 15 and len(cached_lorsas) == 15:
+                    print("✅ 使用缓存的模型、transcoders和lorsas")
+                    model = cached_hooked_model
+                    transcoders = cached_transcoders
+                    lorsas = cached_lorsas
+                else:
+                    raise ValueError("缓存不完整")
+            else:
+                raise ValueError("缓存不存在")
+        except (ImportError, ValueError) as e:
+            print(f"⚠️ 无法使用缓存，重新加载: {e}")
+            
+            model = HookedTransformer.from_pretrained_no_processing(
+                BT4_MODEL_NAME,
                 dtype=torch.float32,
-                device='cuda',
-            )
-        
-        lorsas = []
-        for layer in range(15):
-            lorsa_path = f"{BT4_LORSA_BASE_PATH}/L{layer}"
-            print(f"📁 加载LORSA L{layer}: {lorsa_path}")
-            lorsas.append(LowRankSparseAttention.from_pretrained(
-                lorsa_path, 
-                device='cuda'
-            ))
+            ).eval()
+            
+            transcoders = {}
+            for layer in range(15):
+                tc_path = f"{BT4_TC_BASE_PATH}/L{layer}"
+                print(f"📁 加载TC L{layer}: {tc_path}")
+                transcoders[layer] = SparseAutoEncoder.from_pretrained(
+                    tc_path,
+                    dtype=torch.float32,
+                    device='cuda',
+                )
+            
+            lorsas = []
+            for layer in range(15):
+                lorsa_path = f"{BT4_LORSA_BASE_PATH}/L{layer}"
+                print(f"📁 加载LORSA L{layer}: {lorsa_path}")
+                lorsas.append(LowRankSparseAttention.from_pretrained(
+                    lorsa_path, 
+                    device='cuda'
+                ))
         
         _patching_analyzer = PatchingAnalyzer(model, transcoders, lorsas)
         print("✅ BT4 Patching分析器初始化成功")
