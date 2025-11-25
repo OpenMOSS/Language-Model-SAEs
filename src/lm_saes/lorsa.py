@@ -939,33 +939,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             label = label[:, 1:]
         return label
 
-    @override
-    @torch.no_grad()
-    def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
-        """Compute activation frequency scores for LoRSA (mean over batch)."""
-        return (feature_acts > 0).float().sum(0).mean(0)
-
-    @override
-    @torch.no_grad()
-    def prepare_logging_data(
-        self,
-        log_info: dict[str, torch.Tensor],
-        label: torch.Tensor,
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-        """Prepare logging data by flattening dimensions for LoRSA."""
-        log_info = log_info.copy()
-        log_info["reconstructed"] = log_info["reconstructed"].flatten(0, 1)
-        label = label.flatten(0, 1)
-        return log_info, label
-
-    def _configure_gradient_flow(self):
-        def stop_gradient(tensor: torch.Tensor, hook: HookPoint):
-            return tensor.detach()
-
-        if self.cfg.use_post_qk_ln:
-            self.ln_q.hook_scale.add_hook(stop_gradient, is_permanent=True)
-            self.ln_k.hook_scale.add_hook(stop_gradient, is_permanent=True)
-
 
 class RMSNormPerHead(nn.Module):
     def __init__(self, cfg: LorsaConfig, n_heads: Optional[int] = None, device_mesh: DeviceMesh | None = None):

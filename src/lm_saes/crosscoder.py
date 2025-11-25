@@ -590,18 +590,6 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     @override
     @torch.no_grad()
-    def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
-        """Compute activation frequency scores for CrossCoder (max over heads)."""
-        act_freq_scores = (feature_acts > 0).float().sum(0)
-        if isinstance(act_freq_scores, DTensor):
-            # Operator aten.amax.default does not have a sharding strategy registered.
-            act_freq_scores = act_freq_scores.full_tensor().amax(dim=0)
-        else:
-            act_freq_scores = act_freq_scores.amax(dim=0)
-        return act_freq_scores
-
-    @override
-    @torch.no_grad()
     def compute_training_metrics(
         self,
         feature_acts: torch.Tensor,

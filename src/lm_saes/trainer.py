@@ -509,10 +509,7 @@ class Trainer:
                 "details/lp_coefficient": lp_coefficient,
             }
 
-            # Add model-specific metrics
             wandb_log_dict.update(model_metrics)
-
-            # Add timer information
             wandb_log_dict.update(sae.log_statistics())
 
             if is_primary_rank(sae.device_mesh):
