@@ -182,6 +182,20 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   // 新增：Circuit Trace状态
   const [isTracing, setIsTracing] = useState(false);
 
+  // 新增：MCTS 搜索设置
+  const [useSearch, setUseSearch] = useState(false);
+  const [searchParams, setSearchParams] = useState({
+    max_playouts: 100,
+    target_minibatch_size: 8,
+    cpuct: 1.0,
+    max_depth: 10,
+  });
+  const [lastSearchInfo, setLastSearchInfo] = useState<{
+    total_playouts: number;
+    max_depth_reached: number;
+    max_depth_limit: number;
+  } | null>(null);
+
   // 移除：不在初始化或任何自动时机触发模型走棋，改为仅按按钮触发
 
   // 根据模式与当前局面导出当前是否人类/模型回合
@@ -462,19 +476,43 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     return null;
   }, []);
 
-  // 获取模型建议的移动（固定使用BT4模型）
+  // 获取模型建议的移动（固定使用BT4模型，支持可选搜索）
   const getModelMove = useCallback(async (fen: string) => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/play_game`, {
+      // 根据是否启用搜索选择不同的 API 端点
+      const endpoint = useSearch 
+        ? `${import.meta.env.VITE_BACKEND_URL}/play_game_with_search`
+        : `${import.meta.env.VITE_BACKEND_URL}/play_game`;
+      
+      const requestBody = useSearch 
+        ? { fen, ...searchParams }
+        : { fen };
+      
+      console.log(`🎯 请求模型移动: ${useSearch ? 'MCTS搜索' : '直接推理'}, playouts=${searchParams.max_playouts}`);
+      
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ fen }),
+        body: JSON.stringify(requestBody),
       });
 
       if (response.ok) {
         const data = await response.json();
+        
+        // 如果使用了搜索，保存搜索信息
+        if (useSearch && data.search_info) {
+          setLastSearchInfo({
+            total_playouts: data.search_info.total_playouts,
+            max_depth_reached: data.search_info.max_depth_reached,
+            max_depth_limit: data.search_info.max_depth_limit,
+          });
+          console.log(`✅ MCTS搜索完成: playouts=${data.search_info.total_playouts}, depth=${data.search_info.max_depth_reached}`);
+        } else {
+          setLastSearchInfo(null);
+        }
+        
         return data.move;
       } else {
         console.error('API调用失败:', response.status, response.statusText);
@@ -485,7 +523,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       console.error('获取模型移动失败:', error);
     }
     return null;
-  }, []);
+  }, [useSearch, searchParams]);
 
   // 将UCI字符串转换为chess.js可接受的move对象
   const toChessJsMove = useCallback((move: string) => {
@@ -1173,6 +1211,93 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   </div>
                 )}
               </div>
+            </CardContent>
+          </Card>
+
+          {/* MCTS 搜索设置 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>搜索设置</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium">启用 MCTS 搜索</label>
+                <Switch checked={useSearch} onCheckedChange={setUseSearch} />
+              </div>
+              
+              {useSearch && (
+                <div className="space-y-3 pt-2 border-t">
+                  <div>
+                    <label className="text-sm font-medium">最大模拟次数</label>
+                    <Input
+                      type="number"
+                      value={searchParams.max_playouts}
+                      onChange={(e) => setSearchParams(prev => ({
+                        ...prev,
+                        max_playouts: parseInt(e.target.value) || 100,
+                      }))}
+                      min={10}
+                      max={10000}
+                      className="mt-1"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="text-sm font-medium">最大搜索深度</label>
+                    <Input
+                      type="number"
+                      value={searchParams.max_depth}
+                      onChange={(e) => setSearchParams(prev => ({
+                        ...prev,
+                        max_depth: parseInt(e.target.value) || 10,
+                      }))}
+                      min={1}
+                      max={50}
+                      className="mt-1"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="text-sm font-medium">UCT 探索系数 (cpuct)</label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      value={searchParams.cpuct}
+                      onChange={(e) => setSearchParams(prev => ({
+                        ...prev,
+                        cpuct: parseFloat(e.target.value) || 1.0,
+                      }))}
+                      min={0.1}
+                      max={10}
+                      className="mt-1"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="text-sm font-medium">批处理大小</label>
+                    <Input
+                      type="number"
+                      value={searchParams.target_minibatch_size}
+                      onChange={(e) => setSearchParams(prev => ({
+                        ...prev,
+                        target_minibatch_size: parseInt(e.target.value) || 8,
+                      }))}
+                      min={1}
+                      max={64}
+                      className="mt-1"
+                    />
+                  </div>
+                  
+                  {/* 显示上次搜索信息 */}
+                  {lastSearchInfo && (
+                    <div className="bg-gray-50 p-2 rounded text-xs space-y-1">
+                      <div><strong>上次搜索:</strong></div>
+                      <div>总模拟次数: {lastSearchInfo.total_playouts}</div>
+                      <div>达到深度: {lastSearchInfo.max_depth_reached}</div>
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 
