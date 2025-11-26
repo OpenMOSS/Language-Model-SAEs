@@ -26,9 +26,36 @@ from lm_saes.activation_functions import JumpReLU
 from lm_saes.config import CLTConfig
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("clt")
+
+
+class CrossLayerTranscoderSpecs(TensorSpecs):
+    """Tensor specs for CrossLayerTranscoder."""
+
+    @staticmethod
+    def feature_acts(tensor: torch.Tensor) -> tuple[str, ...]:
+        if tensor.ndim == 3:
+            return ("batch", "layers", "sae")
+        elif tensor.ndim == 4:
+            return ("batch", "context", "layers", "sae")
+        else:
+            raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
+    @staticmethod
+    def reconstructed(tensor: torch.Tensor) -> tuple[str, ...]:
+        if tensor.ndim == 3:
+            return ("layers", "batch", "model")
+        elif tensor.ndim == 4:
+            return ("layers", "batch", "context", "model")
+        else:
+            raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
+    @staticmethod
+    def label(tensor: torch.Tensor) -> tuple[str, ...]:
+        return CrossLayerTranscoderSpecs.reconstructed(tensor)
 
 
 class CrossLayerTranscoder(AbstractSparseAutoEncoder):
@@ -41,6 +68,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     We store all parameters in the same object and shard
     them across GPUs for efficient distributed training.
     """
+
+    specs: type[TensorSpecs] = CrossLayerTranscoderSpecs
+    """Tensor specs for CrossLayerTranscoder with layer dimension."""
 
     def __init__(self, cfg: CLTConfig, device_mesh: Optional[DeviceMesh] = None):
         """Initialize the Cross Layer Transcoder.
@@ -945,44 +975,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
     @override
     @torch.no_grad()
-    def prepare_logging_data(
-        self,
-        log_info: dict[str, torch.Tensor],
-        label: torch.Tensor,
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-        """Prepare logging data by permuting dimensions for CLT."""
-        log_info = log_info.copy()
-        log_info["reconstructed"] = log_info["reconstructed"].permute(1, 0, 2)
-        label = label.permute(1, 0, 2)
-        return log_info, label
-
-    @override
-    @torch.no_grad()
-    def compute_sparsity_metrics(self, feature_sparsity: torch.Tensor) -> dict[str, float]:
-        """Compute per-layer sparsity metrics for CLT."""
-        above_1e_1 = (feature_sparsity > 1e-1).sum(-1)
-        above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
-        below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
-        below_1e_6 = (feature_sparsity < 1e-6).sum(-1)
-        below_1e_7 = (feature_sparsity < 1e-7).sum(-1)
-        wandb_log_dict = {}
-
-        for l in range(self.cfg.n_layers):
-            wandb_log_dict[f"sparsity/above_1e-1_layer{l}"] = above_1e_1[l].item()
-            wandb_log_dict[f"sparsity/above_1e-2_layer{l}"] = above_1e_2[l].item()
-            wandb_log_dict[f"sparsity/below_1e-5_layer{l}"] = below_1e_5[l].item()
-            wandb_log_dict[f"sparsity/below_1e-6_layer{l}"] = below_1e_6[l].item()
-            wandb_log_dict[f"sparsity/below_1e-7_layer{l}"] = below_1e_7[l].item()
-
-        wandb_log_dict["sparsity/above_1e-1"] = above_1e_1.sum().item()
-        wandb_log_dict["sparsity/above_1e-2"] = above_1e_2.sum().item()
-        wandb_log_dict["sparsity/below_1e-5"] = below_1e_5.sum().item()
-        wandb_log_dict["sparsity/below_1e-6"] = below_1e_6.sum().item()
-        wandb_log_dict["sparsity/below_1e-7"] = below_1e_7.sum().item()
-        return wandb_log_dict
-
-    @override
-    @torch.no_grad()
     def compute_training_metrics(
         self,
         feature_acts: torch.Tensor,
@@ -1000,12 +992,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         }
         clt_per_layer_l0_dict = {f"metrics/l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))}
         return {**clt_per_layer_ev_dict, **clt_per_layer_l0_dict}
-
-    @override
-    @torch.no_grad()
-    def aggregate_l0(self, l0: torch.Tensor) -> torch.Tensor:
-        """Sum l0 over layers for overall metric."""
-        return l0.sum(-1)  # [batch_size, n_layers] -> [batch_size]
 
     @overload
     def compute_loss(

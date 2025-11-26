@@ -65,7 +65,6 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     use_triton_kernel: bool = False
     sparsity_threshold_for_triton_spmm_kernel: float = 0.996
     sparsity_threshold_for_csr: float = 0.05
-    circuit_tracing_mode: bool = False
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
     promote_act_fn_dtype: Annotated[

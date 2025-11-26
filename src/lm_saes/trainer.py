@@ -1,8 +1,10 @@
+import functools
 import math
 import os
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+import einops
 import torch
 import torch.distributed.checkpoint as dcp
 import torch.optim.lr_scheduler as lr_scheduler
@@ -15,7 +17,7 @@ from wandb.sdk.wandb_run import Run
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
 from lm_saes.optim import SparseAdam, get_scheduler
-from lm_saes.utils.distributed.ops import full_tensor
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import batch_size
@@ -354,56 +356,115 @@ class Trainer:
         assert self.optimizer is not None, "Optimizer must be initialized"
         label = sae.prepare_label(batch)
 
-        # Prepare logging data (model-specific transformations)
-        log_info, label = sae.prepare_logging_data(log_info.copy(), label)
+        feature_acts: Tensor = log_info["feature_acts"]
+        reconstructed: Tensor = log_info["reconstructed"]
+        loss: Tensor = log_info["loss"]
+        l_rec: Tensor = log_info["l_rec"]
+        l_s: Tensor | None = log_info.get("l_s")
+        l_p: Tensor | None = log_info.get("l_p")
+        l1_coefficient: float = log_info["l1_coefficient"]
+        lp_coefficient: float = log_info["lp_coefficient"]
+        batch_size: int = log_info["batch_size"]
+
+        def h(names: tuple[str, ...]) -> str:
+            return " ".join(names)
+
+        def reduce(
+            tensor: Tensor, specs: tuple[str, ...], reduction_map: dict[str, str]
+        ) -> tuple[Tensor, tuple[str, ...]]:
+            """Reduce the tensor by the mapping of dimension names to reduction functions."""
+
+            assert tensor.ndim == len(specs), (
+                f"Tensor has {tensor.ndim} dimensions, but specs have {len(specs)} dimensions"
+            )
+
+            def _reduce(
+                tensor: Tensor, specs: tuple[str, ...], dim: str, reduction: str
+            ) -> tuple[Tensor, tuple[str, ...]]:
+                target_specs = tuple(filter(lambda x: x != dim, specs))
+                if specs == target_specs:
+                    return tensor, target_specs
+                return einops.reduce(tensor, f"{h(specs)} -> {h(target_specs)}", reduction), target_specs
+
+            return functools.reduce(lambda acc, item: _reduce(*acc, *item), reduction_map.items(), (tensor, specs))
 
         # Compute activation frequency scores
-        act_freq_scores = sae.compute_activation_frequency_scores(log_info["feature_acts"])
-        act_freq_scores = full_tensor(act_freq_scores)
+        act_freq_scores, specs = reduce(
+            (feature_acts > 0).float(), sae.specs.feature_acts(feature_acts), {"batch": "sum", "context": "mean"}
+        )
 
-        log_info["act_freq_scores"] += act_freq_scores
-        log_info["n_frac_active_tokens"] += log_info["batch_size"]
+        if "act_freq_scores" in log_info and "n_frac_active_tokens" in log_info:
+            log_info["act_freq_scores"] += act_freq_scores
+            log_info["n_frac_active_tokens"] += batch_size
+        else:
+            log_info["act_freq_scores"] = act_freq_scores
+            log_info["n_frac_active_tokens"] = batch_size
+
         # Log sparsity metrics periodically
-        if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
-            feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
-            wandb_log_dict = sae.compute_sparsity_metrics(feature_sparsity)
-            if is_primary_rank(sae.device_mesh):
-                log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Sparsity Metrics")
-            if self.wandb_logger is not None:
-                self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
-            log_info["act_freq_scores"].zero_()
-            log_info["n_frac_active_tokens"].zero_()
-
-        # Log training metrics periodically
         if (self.cur_step + 1) % self.cfg.log_frequency == 0:
-            feature_acts = log_info["feature_acts"]
-            reconstructed = log_info["reconstructed"]
+            feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
+            wandb_log_dict = {
+                "sparsity/above_1e-1": item((feature_sparsity > 1e-1).sum()),
+                "sparsity/above_1e-2": item((feature_sparsity > 1e-2).sum()),
+                "sparsity/below_1e-5": item((feature_sparsity < 1e-5).sum()),
+                "sparsity/below_1e-6": item((feature_sparsity < 1e-6).sum()),
+                "sparsity/below_1e-7": item((feature_sparsity < 1e-7).sum()),
+            }
 
-            # Convert DTensors to regular tensors for computation
-            feature_acts = full_tensor(feature_acts)
-            reconstructed = full_tensor(reconstructed)
-            label = full_tensor(label)
+            if "layers" in specs:
+                for l in range(feature_sparsity.size(specs.index("layers"))):
+                    wandb_log_dict[f"sparsity/above_1e-1_layer{l}"] = item(
+                        (feature_sparsity > 1e-1).select(specs.index("layers"), l).sum()
+                    )
+                    wandb_log_dict[f"sparsity/above_1e-2_layer{l}"] = item(
+                        (feature_sparsity > 1e-2).select(specs.index("layers"), l).sum()
+                    )
+                    wandb_log_dict[f"sparsity/below_1e-5_layer{l}"] = item(
+                        (feature_sparsity < 1e-5).select(specs.index("layers"), l).sum()
+                    )
+                    wandb_log_dict[f"sparsity/below_1e-6_layer{l}"] = item(
+                        (feature_sparsity < 1e-6).select(specs.index("layers"), l).sum()
+                    )
+                    wandb_log_dict[f"sparsity/below_1e-7_layer{l}"] = item(
+                        (feature_sparsity < 1e-7).select(specs.index("layers"), l).sum()
+                    )
+
+            del log_info["act_freq_scores"]
+            del log_info["n_frac_active_tokens"]
 
             # Compute common metrics
             act_feature_counts = feature_acts.gt(0).float().sum()
             mean_feature_act = feature_acts.sum() / act_feature_counts
-            mean_feature_act = full_tensor(mean_feature_act)
 
-            l0 = (feature_acts > 0).float().sum(-1)
-            l0 = full_tensor(l0)
-
-            l_rec = full_tensor(log_info["l_rec"])
-            l_s = full_tensor(log_info.get("l_s", None)) if log_info.get("l_s", None) is not None else None  # pyright: ignore[reportArgumentType]
-            l_p = full_tensor(log_info.get("l_p", None)) if log_info.get("l_p", None) is not None else None  # pyright: ignore[reportArgumentType]
+            l0, l0_specs = reduce(
+                (feature_acts > 0).float(),
+                sae.specs.feature_acts(feature_acts),
+                {"batch": "mean", "context": "mean", "sae": "sum"},
+            )
 
             # Compute reconstruction metrics
+            # The following computations assume the model dimension is the last dimension,
+            # without further assumptions about the tensor specs.
+            label_mean = reduce(
+                label,
+                sae.specs.label(label),
+                {"batch": "mean", "context": "mean"},
+            )[0]
             per_token_l2_loss = (reconstructed - label).pow(2).sum(dim=-1)
-            total_variance = (label - label.mean(dim=0)).pow(2).sum(dim=-1)
+            total_variance = (label - label_mean).pow(2).sum(dim=-1)
             l2_norm_error = per_token_l2_loss.sqrt().mean()
             l2_norm_error_ratio = l2_norm_error / label.norm(p=2, dim=-1).mean()
             explained_variance_legacy = 1 - per_token_l2_loss / total_variance
-            l2_loss_mean = per_token_l2_loss.mean(dim=0)
-            total_variance_mean = total_variance.mean(dim=0)
+            l2_loss_mean = reduce(
+                per_token_l2_loss,
+                sae.specs.label(label)[:-1],
+                {"batch": "mean", "context": "mean"},
+            )[0]
+            total_variance_mean = reduce(
+                total_variance,
+                sae.specs.label(label)[:-1],
+                {"batch": "mean", "context": "mean"},
+            )[0]
             if torch.any(torch.isinf(total_variance_mean)):
                 logger.warning("Some of total_variance_mean is inf. Check dtype or scaling.")
             explained_variance = 1 - l2_loss_mean / total_variance_mean
@@ -419,35 +480,36 @@ class Trainer:
                 explained_variance_legacy=explained_variance_legacy,
             )
 
-            # Aggregate l0 for overall metric if needed (e.g., CLT sums over layers)
-            l0_for_overall = sae.aggregate_l0(l0)
+            l0 = reduce(
+                l0,
+                l0_specs,
+                {"layers": "sum"},
+            )[0]
 
             # Build base metrics dictionary
             wandb_log_dict = {
+                **wandb_log_dict,
                 # losses
-                "losses/mse_loss": l_rec.mean().item(),
-                **({"losses/sparsity_loss": l_s.mean().item()} if l_s is not None else {}),
-                **({"losses/lp_loss": l_p.mean().item()} if l_p is not None else {}),
-                "losses/overall_loss": full_tensor(log_info["loss"]).item(),
+                "losses/mse_loss": item(l_rec.mean()),
+                **({"losses/sparsity_loss": item(l_s.mean())} if l_s is not None else {}),
+                **({"losses/lp_loss": item(l_p.mean())} if l_p is not None else {}),
+                "losses/overall_loss": item(loss),
                 # variance explained
-                "metrics/explained_variance": explained_variance.mean().item(),
-                "metrics/explained_variance_legacy": explained_variance_legacy.mean().item(),
+                "metrics/explained_variance": item(explained_variance.mean()),
+                "metrics/explained_variance_legacy": item(explained_variance_legacy.mean()),
                 # sparsity
-                "metrics/l0": l0_for_overall.mean().item(),
-                "metrics/mean_feature_act": mean_feature_act.item(),
-                "metrics/l2_norm_error": l2_norm_error.item(),
-                "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
+                "metrics/l0": item(l0.mean()),
+                "metrics/mean_feature_act": item(mean_feature_act),
+                "metrics/l2_norm_error": item(l2_norm_error),
+                "metrics/l2_norm_error_ratio": item(l2_norm_error_ratio),
                 # details
                 "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                 "details/n_training_tokens": self.cur_tokens,
-                "details/l1_coefficient": log_info["l1_coefficient"],
-                "details/lp_coefficient": log_info["lp_coefficient"],
+                "details/l1_coefficient": l1_coefficient,
+                "details/lp_coefficient": lp_coefficient,
             }
 
-            # Add model-specific metrics
             wandb_log_dict.update(model_metrics)
-
-            # Add timer information
             wandb_log_dict.update(sae.log_statistics())
 
             if is_primary_rank(sae.device_mesh):
@@ -490,18 +552,7 @@ class Trainer:
             "Optimizer and scheduler should be already initialized"
         )
 
-        maybe_local_d_sae = sae.cfg.d_sae  # if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
-        if sae.cfg.sae_type == "clt":
-            act_freq_scores_shape = (
-                sae.cfg.n_layers,  # type: ignore
-                maybe_local_d_sae,
-            )
-        else:
-            act_freq_scores_shape = (maybe_local_d_sae,)  # type: ignore
-        log_info = {
-            "act_freq_scores": torch.zeros(act_freq_scores_shape, device=sae.cfg.device, dtype=sae.cfg.dtype),
-            "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
-        }
+        log_info = {}
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
         proc_bar.update(self.cur_step)
 
@@ -521,7 +572,7 @@ class Trainer:
 
                     log_info.update(loss_dict)
                     proc_bar.set_description(
-                        f"loss: {log_info['loss'].item():.2f}, learning rate: {self.optimizer.param_groups[0]['lr']:.2e}"
+                        f"loss: {item(log_info['loss']):.2f}, learning rate: {self.optimizer.param_groups[0]['lr']:.2e}"
                     )
 
                     if not self.cfg.skip_metrics_calculation:
