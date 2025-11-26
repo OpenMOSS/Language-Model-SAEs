@@ -69,7 +69,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     them across GPUs for efficient distributed training.
     """
 
-    tensor_specs: type[TensorSpecs] = CrossLayerTranscoderSpecs
+    specs: type[TensorSpecs] = CrossLayerTranscoderSpecs
     """Tensor specs for CrossLayerTranscoder with layer dimension."""
 
     def __init__(self, cfg: CLTConfig, device_mesh: Optional[DeviceMesh] = None):

@@ -47,7 +47,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     Concrete implementations should inherit from this class and implement the required methods.
     """
 
-    tensor_specs: type[TensorSpecs] = TensorSpecs
+    specs: type[TensorSpecs] = TensorSpecs
     """Tensor specs class for inferring dimension names from tensors. Override in subclasses for custom specs."""
 
     def __init__(self, cfg: BaseSAEConfig, device_mesh: Optional[DeviceMesh] = None):

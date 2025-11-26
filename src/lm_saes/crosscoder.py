@@ -55,7 +55,7 @@ class CrossCoder(AbstractSparseAutoEncoder):
     Can also act as a transcoder model, which learns to compress the input activation tensor into a feature activation tensor, and then reconstruct a label activation tensor from the feature activation tensor.
     """
 
-    tensor_specs: type[TensorSpecs] = CrossCoderSpecs
+    specs: type[TensorSpecs] = CrossCoderSpecs
     """Tensor specs for CrossCoder with n_heads dimension."""
 
     def __init__(self, cfg: CrossCoderConfig, device_mesh: Optional[DeviceMesh] = None):

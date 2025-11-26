@@ -390,7 +390,7 @@ class Trainer:
 
         # Compute activation frequency scores
         act_freq_scores, specs = reduce(
-            (feature_acts > 0).float(), sae.tensor_specs.feature_acts(feature_acts), {"batch": "sum", "context": "mean"}
+            (feature_acts > 0).float(), sae.specs.feature_acts(feature_acts), {"batch": "sum", "context": "mean"}
         )
 
         if "act_freq_scores" in log_info and "n_frac_active_tokens" in log_info:
@@ -438,7 +438,7 @@ class Trainer:
 
             l0, l0_specs = reduce(
                 (feature_acts > 0).float(),
-                sae.tensor_specs.feature_acts(feature_acts),
+                sae.specs.feature_acts(feature_acts),
                 {"batch": "mean", "context": "mean", "sae": "sum"},
             )
 
@@ -447,7 +447,7 @@ class Trainer:
             # without further assumptions about the tensor specs.
             label_mean = reduce(
                 label,
-                sae.tensor_specs.label(label),
+                sae.specs.label(label),
                 {"batch": "mean", "context": "mean"},
             )[0]
             per_token_l2_loss = (reconstructed - label).pow(2).sum(dim=-1)
@@ -457,12 +457,12 @@ class Trainer:
             explained_variance_legacy = 1 - per_token_l2_loss / total_variance
             l2_loss_mean = reduce(
                 per_token_l2_loss,
-                sae.tensor_specs.label(label)[:-1],
+                sae.specs.label(label)[:-1],
                 {"batch": "mean", "context": "mean"},
             )[0]
             total_variance_mean = reduce(
                 total_variance,
-                sae.tensor_specs.label(label)[:-1],
+                sae.specs.label(label)[:-1],
                 {"batch": "mean", "context": "mean"},
             )[0]
             if torch.any(torch.isinf(total_variance_mean)):
