@@ -1,4 +1,3 @@
-import math
 import os
 
 import torch
@@ -27,27 +26,25 @@ if __name__ == "__main__":
             hook_point_out="blocks.6.hook_resid_post",
             d_model=768,
             expansion_factor=8,
-            act_fn="jumprelu",
-            jumprelu_threshold_window=4.0,
+            act_fn="topk",
+            top_k=50,
             dtype=torch.float32,
             device="cuda",
         ),
         initializer=InitializerConfig(
             grid_search_init_norm=True,
-            init_log_jumprelu_threshold_value=math.log(0.1),
         ),
         trainer=TrainerConfig(
-            lr=5e-5,
-            l1_coefficient=0.3,
+            lr=1e-4,
+            initial_k=50,
+            k_warmup_steps=0.1,
+            k_schedule_type="linear",
             total_training_tokens=800_000_000,
-            log_frequency=2000,
+            log_frequency=1000,
             eval_frequency=1000000,
             n_checkpoints=0,
-            sparsity_loss_type="tanh-quad",
-            use_batch_norm_mse=False,
             check_point_save_mode="linear",
             exp_result_path="results",
-            jumprelu_lr_factor=0.1,
         ),
         model=LanguageModelConfig(
             model_name="EleutherAI/pythia-160m",
