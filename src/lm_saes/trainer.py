@@ -360,8 +360,8 @@ class Trainer:
         reconstructed: Tensor = log_info["reconstructed"]
         loss: Tensor = log_info["loss"]
         l_rec: Tensor = log_info["l_rec"]
-        l_s: Tensor | None = log_info["l_s"] if log_info["l_s"] is not None else None
-        l_p: Tensor | None = log_info["l_p"] if log_info["l_p"] is not None else None
+        l_s: Tensor | None = log_info.get("l_s")
+        l_p: Tensor | None = log_info.get("l_p")
         l1_coefficient: float = log_info["l1_coefficient"]
         lp_coefficient: float = log_info["lp_coefficient"]
         batch_size: int = log_info["batch_size"]
