@@ -11,6 +11,7 @@ import { DictionaryPage } from "./routes/dictionaries/page";
 import { ModelsPage } from "./routes/models/page";
 import BookmarksPage from "./routes/bookmarks/page";
 import { CircuitsPage } from "./routes/circuits/page";
+import { SearchCircuitsPage } from "./routes/search-circuits/page";
 import ThreeDVisualPage from "./routes/3D-visualization/page";
 import { PlayGamePage } from "./routes/play-game/page";
 import { PlotGraphPage } from "./routes/plot-graph/page";
@@ -49,6 +50,10 @@ const router = createBrowserRouter([
   {
     path: "/play-game",
     element: <PlayGamePage />,
+  },
+  {
+    path: "/search-circuits",
+    element: <SearchCircuitsPage />,
   },
   {
     path: "/plot-graph",

@@ -58,6 +58,15 @@ export const AppNavbar = () => {
           <Link
             className={cn(
               "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/search-circuits" && "text-foreground"
+            )}
+            to="/search-circuits"
+          >
+            Search Circuits
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
               location.pathname === "/3D-visualization" && "text-foreground"
             )}
             to="/3D-visualization"

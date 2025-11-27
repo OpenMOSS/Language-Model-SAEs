@@ -193,6 +193,8 @@ pyrightconfig.json
 /result*
 /logs*
 /graphs
+/cases
+/circuits
 /ui_bakup
 .vscode/settings.json
 

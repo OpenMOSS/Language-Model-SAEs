@@ -1550,7 +1550,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   className="font-mono"
                 />
                 <p className="text-xs text-gray-500">
-                  控制circuit trace中考虑的最大特征节点数量。默认值: 1024
+                  控制circuit trace中考虑的最大特征节点数量。默认值: 4096
                 </p>
               </div>
               
@@ -1567,7 +1567,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   className="font-mono"
                 />
                 <p className="text-xs text-gray-500">
-                  节点重要性阈值，用于过滤不重要的节点。默认值: 0.9
+                  节点重要性阈值，用于过滤不重要的节点。默认值: 0.73
                 </p>
               </div>
               
@@ -1584,7 +1584,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   className="font-mono"
                 />
                 <p className="text-xs text-gray-500">
-                  边重要性阈值，用于过滤不重要的连接。默认值: 0.69
+                  边重要性阈值，用于过滤不重要的连接。默认值: 0.57
                 </p>
               </div>
               

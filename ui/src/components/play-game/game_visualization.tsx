@@ -69,6 +69,19 @@ interface StockfishAnalysis {
   };
 }
 
+interface ModelMoveResponse {
+  move: string;
+  model_used?: string;
+  search_used?: boolean;
+  search_info?: {
+    total_playouts: number;
+    max_depth_reached: number;
+    max_depth_limit: number;
+  };
+  trace_file_path?: string;
+  trace_filename?: string;
+}
+
 interface GameVisualizationProps {
   onCircuitTrace?: (data: any) => void;
   onCircuitTraceStart?: () => void;
@@ -195,6 +208,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     max_depth_reached: number;
     max_depth_limit: number;
   } | null>(null);
+  const [saveMctsTrace, setSaveMctsTrace] = useState(false);
 
   // 移除：不在初始化或任何自动时机触发模型走棋，改为仅按按钮触发
 
@@ -477,7 +491,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   }, []);
 
   // 获取模型建议的移动（固定使用BT4模型，支持可选搜索）
-  const getModelMove = useCallback(async (fen: string) => {
+  const getModelMove = useCallback(async (fen: string): Promise<ModelMoveResponse | null> => {
     try {
       // 根据是否启用搜索选择不同的 API 端点
       const endpoint = useSearch 
@@ -485,7 +499,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         : `${import.meta.env.VITE_BACKEND_URL}/play_game`;
       
       const requestBody = useSearch 
-        ? { fen, ...searchParams }
+        ? { fen, ...searchParams, save_trace: saveMctsTrace }
         : { fen };
       
       console.log(`🎯 请求模型移动: ${useSearch ? 'MCTS搜索' : '直接推理'}, playouts=${searchParams.max_playouts}`);
@@ -513,7 +527,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
           setLastSearchInfo(null);
         }
         
-        return data.move;
+        return data as ModelMoveResponse;
       } else {
         console.error('API调用失败:', response.status, response.statusText);
         const errorText = await response.text();
@@ -523,7 +537,30 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       console.error('获取模型移动失败:', error);
     }
     return null;
-  }, [useSearch, searchParams]);
+  }, [useSearch, searchParams, saveMctsTrace]);
+
+  const downloadTraceFile = useCallback(async (filename: string) => {
+    try {
+      const url = `${import.meta.env.VITE_BACKEND_URL}/search_trace/files/${encodeURIComponent(filename)}`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('下载MCTS搜索文件失败:', errorText);
+        return;
+      }
+      const blob = await response.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error('下载MCTS搜索文件失败:', error);
+    }
+  }, []);
 
   // 将UCI字符串转换为chess.js可接受的move对象
   const toChessJsMove = useCallback((move: string) => {
@@ -628,13 +665,17 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     if (isModelTurn && !isLoading && !isTracing) {
       setIsLoading(true);
       try {
-        const modelMove = await getModelMove(game.fen());
+        const moveResponse = await getModelMove(game.fen());
+        const modelMove = moveResponse?.move;
         if (!modelMove) {
           console.warn('模型未返回走法或返回为空');
           alert('模型未返回走法，请检查后端或当前局面');
           return;
         }
         if (modelMove && makeMove(modelMove)) {
+          if (useSearch && saveMctsTrace && moveResponse?.trace_filename) {
+            await downloadTraceFile(moveResponse.trace_filename);
+          }
           // 获取新局面的分析
           if (gameMode === 'analysis') {
             setTimeout(() => {
@@ -648,7 +689,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         setIsLoading(false);
       }
     }
-  }, [isModelTurn, isLoading, isTracing, getModelMove, game, makeMove, gameMode, getStockfishAnalysis]);
+  }, [isModelTurn, isLoading, isTracing, getModelMove, game, makeMove, gameMode, getStockfishAnalysis, useSearch, saveMctsTrace, downloadTraceFile]);
 
   // 自动对局：
   // - human-human: 自动无意义，保持现状（只控制随机玩家步原逻辑保留）
@@ -1227,6 +1268,13 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
               
               {useSearch && (
                 <div className="space-y-3 pt-2 border-t">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium">保存MCTS搜索JSON</label>
+                    <Switch checked={saveMctsTrace} onCheckedChange={setSaveMctsTrace} />
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    启用后，每次搜索完成并落子时会自动下载对应FEN的搜索trace（默认文件名包含当前FEN）。
+                  </p>
                   <div>
                     <label className="text-sm font-medium">最大模拟次数</label>
                     <Input
