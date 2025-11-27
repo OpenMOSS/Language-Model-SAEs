@@ -8,6 +8,7 @@ from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
 
 from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed.ops import item
 
 from .logging import get_distributed_logger
 
@@ -147,7 +148,7 @@ def calculate_activation_norm(
                 activation_norm[key] = torch.cat((activation_norm[key], batch[key].norm(p=2, dim=-1)), dim=0)
         batch_num -= 1
     for key in activation_norm:
-        activation_norm[key] = activation_norm[key].mean().item()
+        activation_norm[key] = item(activation_norm[key].mean())
     if device_mesh is not None and "head" in cast(tuple[str, ...], device_mesh.mesh_dim_names):
         object_list = [None] * device_mesh.get_group("head").size()
         dist.all_gather_object(object_list, activation_norm, group=device_mesh.get_group("head"))

@@ -34,6 +34,7 @@ from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.discrete import KeyedDiscreteMapper
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import is_primary_rank
 
@@ -176,7 +177,7 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
                     size=z_pattern_data.size(),
                 )
 
-                pbar.update(n_unfiltered_interested_pairs.item())
+                pbar.update(item(n_unfiltered_interested_pairs))
 
             if visited == interested_pairs.shape[0]:
                 break

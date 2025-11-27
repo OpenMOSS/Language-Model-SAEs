@@ -25,6 +25,7 @@ from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.config import CLTConfig
 from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
@@ -988,9 +989,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         """Compute per-layer training metrics for CLT."""
         per_layer_ev = explained_variance_legacy.mean(0)
         clt_per_layer_ev_dict = {
-            f"metrics/explained_variance_L{l}": per_layer_ev[l].item() for l in range(per_layer_ev.size(0))
+            f"metrics/explained_variance_L{l}": item(per_layer_ev[l].mean()) for l in range(per_layer_ev.size(0))
         }
-        clt_per_layer_l0_dict = {f"metrics/l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))}
+        clt_per_layer_l0_dict = {f"metrics/l0_layer{l}": item(l0[:, l].mean()) for l in range(l0.size(1))}
         return {**clt_per_layer_ev_dict, **clt_per_layer_l0_dict}
 
     @overload

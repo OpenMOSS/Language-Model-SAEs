@@ -18,6 +18,7 @@ from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap, masked_fill, slice_fill, to_local
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
@@ -111,7 +112,7 @@ class FeatureAnalyzer:
             )
             sample_result_cur = {
                 k: v[
-                    : min(self.cfg.subsamples[name]["n_samples"], (sample_result_cur["elt"] != -torch.inf).sum().item())
+                    : min(self.cfg.subsamples[name]["n_samples"], item((sample_result_cur["elt"] != -torch.inf).sum()))
                 ]
                 for k, v in sample_result_cur.items()
             }
@@ -296,7 +297,7 @@ class FeatureAnalyzer:
             # Update progress
             n_tokens_current = tokens.numel()
             n_tokens += n_tokens_current
-            n_analyzed_tokens += cast(int, ignore_token_masks.int().sum().item())
+            n_analyzed_tokens += cast(int, item(ignore_token_masks.int().sum()))
             pbar.update(n_tokens_current)
             if n_tokens >= self.cfg.total_analyzing_tokens:
                 break

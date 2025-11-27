@@ -11,7 +11,7 @@ from typing_extensions import override
 
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import MOLTConfig
-from .utils.distributed import DimMap
+from .utils.distributed import DimMap, item
 from .utils.logging import get_distributed_logger
 from .utils.timer import timer
 
@@ -704,7 +704,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
                     # Count active transforms (l0) for this rank group
                     rank_l0 = (rank_features > 0).float().sum(-1)
-                    rank_l0_mean = rank_l0.mean().item()
+                    rank_l0_mean = item(rank_l0.mean())
 
                     # Record metrics
                     metrics[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean

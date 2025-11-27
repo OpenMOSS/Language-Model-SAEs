@@ -29,7 +29,7 @@ from transformer_lens.hook_points import HookedRootModule
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.config import BaseSAEConfig
 from lm_saes.database import MongoClient
-from lm_saes.utils.distributed import DimMap, distributed_topk, mesh_dim_size
+from lm_saes.utils.distributed import DimMap, distributed_topk, item, mesh_dim_size
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.math import topk
@@ -486,16 +486,16 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     @torch.no_grad()
     def log_statistics(self):
         log_dict = {
-            "metrics/encoder_norm": self.encoder_norm().mean().item(),
-            "metrics/decoder_norm": self.decoder_norm().mean().item(),
+            "metrics/encoder_norm": item(self.encoder_norm().mean()),
+            "metrics/decoder_norm": item(self.decoder_norm().mean()),
         }
         if self.cfg.use_decoder_bias:
-            log_dict["metrics/decoder_bias_norm"] = self.decoder_bias_norm().mean().item()
+            log_dict["metrics/decoder_bias_norm"] = item(self.decoder_bias_norm().mean())
         if "topk" in self.cfg.act_fn:
             log_dict["sparsity/k"] = self.current_k
         if isinstance(self.activation_function, JumpReLU):
-            log_dict["metrics/mean_jumprelu_threshold"] = (
-                self.activation_function.log_jumprelu_threshold.exp().mean().item()
+            log_dict["metrics/mean_jumprelu_threshold"] = item(
+                self.activation_function.log_jumprelu_threshold.exp().mean()
             )
         return log_dict
 
