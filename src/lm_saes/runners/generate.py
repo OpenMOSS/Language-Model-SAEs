@@ -95,7 +95,7 @@ class GenerateActivationsSettings(BaseSettings):
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
-    override_dtype: torch.dtype | None
+    override_dtype: torch.dtype | None = None
     """Dtype to override the activations to. If `None`, will not override the dtype."""
 
     def model_post_init(self, __context: dict) -> None:
