@@ -1,10 +1,15 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { ChessBoard } from "@/components/chess/chess-board";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Zap, ChevronDown, ChevronRight, Maximize2, Download, Trash2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Progress } from "@/components/ui/progress";
+import { Zap, ChevronDown, ChevronRight, Maximize2, Download, Trash2, Play, Square, Settings, Loader2, AlertCircle } from "lucide-react";
 import { EdgeCircuitTracePanel, EdgeCircuitTraceResult } from "./edge-circuit-trace-panel";
-import { ModelLoadingStatus } from "@/components/shared/model-loading-status";
+import { ModelLoadingStatus, useModelLoadingStatus } from "@/components/shared/model-loading-status";
 
 // 搜索追踪数据类型定义
 interface SearchNode {
@@ -89,7 +94,23 @@ export const SearchCircuitsVisualization = () => {
   const [showEdgeTraceDialog, setShowEdgeTraceDialog] = useState(false);
   const [expandedEdgeTraces, setExpandedEdgeTraces] = useState<Set<string>>(new Set());
   
-  // 模型加载状态由 ModelLoadingStatus 组件处理，这里不需要额外的 hook 调用
+  // 批量 Trace 相关状态
+  const [showBatchTraceDialog, setShowBatchTraceDialog] = useState(false);
+  const [isBatchTracing, setIsBatchTracing] = useState(false);
+  const [batchTraceProgress, setBatchTraceProgress] = useState({ current: 0, total: 0, currentEdge: '' });
+  const [batchTraceParams, setBatchTraceParams] = useState({
+    max_feature_nodes: 4096,
+    node_threshold: 0.73,
+    edge_threshold: 0.57,
+    max_act_times: null as number | null,
+    side: 'both' as 'q' | 'k' | 'both',
+    orderMode: 'positive' as 'positive' | 'negative',
+    skipExisting: true,  // 跳过已有结果的边
+  });
+  const batchTraceAbortRef = useRef(false);
+  
+  // 模型加载状态
+  const { isLoading: isModelLoading, isLoaded: isModelLoaded } = useModelLoadingStatus();
 
   // 生成边的唯一键
   const getEdgeKey = useCallback((edge: SearchEdge) => {
@@ -351,6 +372,126 @@ export const SearchCircuitsVisualization = () => {
       setEdgeTraceResults(new Map());
       setExpandedEdgeTraces(new Set());
     }
+  }, []);
+
+  // 获取所有唯一的边
+  const getAllUniqueEdges = useCallback((): SearchEdge[] => {
+    if (!searchData) return [];
+    
+    const edgeMap = new Map<string, SearchEdge>();
+    searchData.edges.forEach(edge => {
+      const key = `${edge.parent}__${edge.child}__${edge.move}`;
+      edgeMap.set(key, edge);
+    });
+    
+    return Array.from(edgeMap.values());
+  }, [searchData]);
+
+  // 批量 Trace 所有边
+  const startBatchTrace = useCallback(async () => {
+    if (!searchData || !isModelLoaded) return;
+    
+    const allEdges = getAllUniqueEdges();
+    const edgesToTrace = batchTraceParams.skipExisting 
+      ? allEdges.filter(edge => !edgeTraceResults.has(getEdgeKey(edge)))
+      : allEdges;
+    
+    if (edgesToTrace.length === 0) {
+      alert('没有需要 Trace 的边（所有边都已有结果）');
+      return;
+    }
+    
+    setIsBatchTracing(true);
+    setBatchTraceProgress({ current: 0, total: edgesToTrace.length, currentEdge: '' });
+    batchTraceAbortRef.current = false;
+    setShowBatchTraceDialog(false);
+    
+    for (let i = 0; i < edgesToTrace.length; i++) {
+      // 检查是否被中止
+      if (batchTraceAbortRef.current) {
+        console.log('🛑 批量 Trace 被用户中止');
+        break;
+      }
+      
+      const edge = edgesToTrace[i];
+      const edgeKey = getEdgeKey(edge);
+      
+      setBatchTraceProgress({
+        current: i + 1,
+        total: edgesToTrace.length,
+        currentEdge: `${edge.move} (${edge.parent.split(' ')[0].slice(0, 15)}...)`
+      });
+      
+      try {
+        console.log(`🔍 批量 Trace [${i + 1}/${edgesToTrace.length}]: ${edge.move}`);
+        
+        const requestBody = {
+          fen: edge.parent,
+          move_uci: edge.move,
+          side: batchTraceParams.side,
+          order_mode: batchTraceParams.orderMode,
+          max_feature_nodes: batchTraceParams.max_feature_nodes,
+          node_threshold: batchTraceParams.node_threshold,
+          edge_threshold: batchTraceParams.edge_threshold,
+          max_act_times: batchTraceParams.max_act_times,
+          save_activation_info: true,
+        };
+        
+        const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          
+          const result: EdgeCircuitTraceResult = {
+            edgeKey,
+            parentFen: edge.parent,
+            childFen: edge.child,
+            move: edge.move,
+            traceResult: data,
+            visualizationData: null,  // 批量模式不预处理可视化数据
+            timestamp: Date.now(),
+            params: {
+              max_feature_nodes: batchTraceParams.max_feature_nodes,
+              node_threshold: batchTraceParams.node_threshold,
+              edge_threshold: batchTraceParams.edge_threshold,
+              max_act_times: batchTraceParams.max_act_times,
+            },
+            orderMode: batchTraceParams.orderMode,
+            side: batchTraceParams.side,
+          };
+          
+          setEdgeTraceResults(prev => {
+            const next = new Map(prev);
+            next.set(edgeKey, result);
+            return next;
+          });
+          
+          console.log(`✅ 批量 Trace 完成 [${i + 1}/${edgesToTrace.length}]: ${edge.move}`);
+        } else {
+          const errorText = await response.text();
+          console.error(`❌ 批量 Trace 失败 [${i + 1}/${edgesToTrace.length}]: ${edge.move}`, errorText);
+        }
+      } catch (error) {
+        console.error(`❌ 批量 Trace 出错 [${i + 1}/${edgesToTrace.length}]: ${edge.move}`, error);
+      }
+      
+      // 短暂延迟，避免请求过快
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    setIsBatchTracing(false);
+    setBatchTraceProgress({ current: 0, total: 0, currentEdge: '' });
+  }, [searchData, isModelLoaded, batchTraceParams, edgeTraceResults, getAllUniqueEdges, getEdgeKey]);
+
+  // 中止批量 Trace
+  const abortBatchTrace = useCallback(() => {
+    batchTraceAbortRef.current = true;
   }, []);
 
   // 渲染树节点
@@ -674,6 +815,28 @@ export const SearchCircuitsVisualization = () => {
           )}
         </div>
         <div className="flex items-center space-x-2">
+          {/* 批量 Trace 按钮 */}
+          {isBatchTracing ? (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={abortBatchTrace}
+            >
+              <Square className="w-4 h-4 mr-1" />
+              停止批量 Trace
+            </Button>
+          ) : (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setShowBatchTraceDialog(true)}
+              disabled={!isModelLoaded || isModelLoading}
+              title={!isModelLoaded ? '请先加载模型' : '批量 Trace 所有边'}
+            >
+              <Play className="w-4 h-4 mr-1" />
+              批量 Trace 全部边
+            </Button>
+          )}
           {/* 模型加载状态按钮 */}
           <ModelLoadingStatus 
             showButton={true} 
@@ -994,6 +1157,203 @@ export const SearchCircuitsVisualization = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* 批量 Trace 配置对话框 */}
+      <Dialog open={showBatchTraceDialog} onOpenChange={setShowBatchTraceDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center space-x-2">
+              <Settings className="w-5 h-5" />
+              <span>批量 Circuit Trace 配置</span>
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {/* 统计信息 */}
+            <Card>
+              <CardContent className="pt-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-gray-500">总边数:</span>
+                    <span className="ml-2 font-mono">{getAllUniqueEdges().length}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">已 Trace:</span>
+                    <span className="ml-2 font-mono">{edgeTraceResults.size}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">待 Trace:</span>
+                    <span className="ml-2 font-mono text-blue-600">
+                      {batchTraceParams.skipExisting 
+                        ? getAllUniqueEdges().filter(e => !edgeTraceResults.has(getEdgeKey(e))).length
+                        : getAllUniqueEdges().length}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 参数设置 */}
+            <div className="space-y-3">
+              <div className="flex items-center space-x-4">
+                <div className="flex-1">
+                  <Label htmlFor="batch-side">分析侧</Label>
+                  <Select 
+                    value={batchTraceParams.side} 
+                    onValueChange={(v) => setBatchTraceParams(p => ({ ...p, side: v as 'q' | 'k' | 'both' }))}
+                  >
+                    <SelectTrigger id="batch-side">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="both">Both (Q+K)</SelectItem>
+                      <SelectItem value="q">Q Side</SelectItem>
+                      <SelectItem value="k">K Side</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex-1">
+                  <Label htmlFor="batch-order">排序模式</Label>
+                  <Select 
+                    value={batchTraceParams.orderMode} 
+                    onValueChange={(v) => setBatchTraceParams(p => ({ ...p, orderMode: v as 'positive' | 'negative' }))}
+                  >
+                    <SelectTrigger id="batch-order">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="positive">Positive</SelectItem>
+                      <SelectItem value="negative">Negative</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="batch-max-nodes">最大特征节点数</Label>
+                  <Input
+                    id="batch-max-nodes"
+                    type="number"
+                    value={batchTraceParams.max_feature_nodes}
+                    onChange={(e) => setBatchTraceParams(p => ({ ...p, max_feature_nodes: parseInt(e.target.value) || 4096 }))}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="batch-max-act">最大激活次数</Label>
+                  <Input
+                    id="batch-max-act"
+                    type="number"
+                    placeholder="无限制"
+                    value={batchTraceParams.max_act_times || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setBatchTraceParams(p => ({ 
+                        ...p, 
+                        max_act_times: val ? parseInt(val) : null 
+                      }));
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="batch-node-threshold">节点阈值</Label>
+                  <Input
+                    id="batch-node-threshold"
+                    type="number"
+                    step="0.01"
+                    value={batchTraceParams.node_threshold}
+                    onChange={(e) => setBatchTraceParams(p => ({ ...p, node_threshold: parseFloat(e.target.value) || 0.73 }))}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="batch-edge-threshold">边阈值</Label>
+                  <Input
+                    id="batch-edge-threshold"
+                    type="number"
+                    step="0.01"
+                    value={batchTraceParams.edge_threshold}
+                    onChange={(e) => setBatchTraceParams(p => ({ ...p, edge_threshold: parseFloat(e.target.value) || 0.57 }))}
+                  />
+                </div>
+              </div>
+
+              {/* 跳过已有结果选项 */}
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="batch-skip-existing"
+                  checked={batchTraceParams.skipExisting}
+                  onChange={(e) => setBatchTraceParams(p => ({ ...p, skipExisting: e.target.checked }))}
+                  className="rounded border-gray-300"
+                />
+                <Label htmlFor="batch-skip-existing" className="text-sm">
+                  跳过已有 Trace 结果的边
+                </Label>
+              </div>
+            </div>
+
+            {/* 警告信息 */}
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-yellow-700 text-sm flex items-start">
+              <AlertCircle className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-medium">注意事项</p>
+                <ul className="mt-1 list-disc list-inside text-xs space-y-1">
+                  <li>批量 Trace 会依次处理每条边，耗时较长</li>
+                  <li>每条边大约需要 10-60 秒（取决于参数设置）</li>
+                  <li>处理过程中可以随时点击"停止"按钮中止</li>
+                  <li>已完成的结果会被保留</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBatchTraceDialog(false)}>
+              取消
+            </Button>
+            <Button onClick={startBatchTrace} disabled={!isModelLoaded}>
+              <Play className="w-4 h-4 mr-1" />
+              开始批量 Trace
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 批量 Trace 进度条（固定在底部） */}
+      {isBatchTracing && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-4 z-50">
+          <div className="max-w-4xl mx-auto">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center space-x-3">
+                <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                <span className="font-medium">批量 Circuit Trace 进行中...</span>
+              </div>
+              <div className="flex items-center space-x-4">
+                <span className="text-sm text-gray-600">
+                  {batchTraceProgress.current} / {batchTraceProgress.total}
+                </span>
+                <Button variant="destructive" size="sm" onClick={abortBatchTrace}>
+                  <Square className="w-4 h-4 mr-1" />
+                  停止
+                </Button>
+              </div>
+            </div>
+            <Progress 
+              value={(batchTraceProgress.current / batchTraceProgress.total) * 100} 
+              className="h-3"
+            />
+            <div className="mt-2 flex items-center justify-between text-sm text-gray-500">
+              <span>当前: {batchTraceProgress.currentEdge}</span>
+              <span>
+                预计剩余: ~{Math.ceil((batchTraceProgress.total - batchTraceProgress.current) * 30 / 60)} 分钟
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
