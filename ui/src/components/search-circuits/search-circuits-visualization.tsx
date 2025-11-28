@@ -108,6 +108,7 @@ export const SearchCircuitsVisualization = () => {
     skipExisting: true,  // 跳过已有结果的边
   });
   const batchTraceAbortRef = useRef(false);
+  const batchTraceControllerRef = useRef<AbortController | null>(null);
   
   // 模型加载状态
   const { isLoading: isModelLoading, isLoaded: isModelLoaded } = useModelLoadingStatus();
@@ -425,6 +426,10 @@ export const SearchCircuitsVisualization = () => {
       try {
         console.log(`🔍 批量 Trace [${i + 1}/${edgesToTrace.length}]: ${edge.move}`);
         
+        // 为当前请求创建 AbortController，便于用户中止
+        const controller = new AbortController();
+        batchTraceControllerRef.current = controller;
+
         const requestBody = {
           fen: edge.parent,
           move_uci: edge.move,
@@ -443,6 +448,7 @@ export const SearchCircuitsVisualization = () => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(requestBody),
+          signal: controller.signal,
         });
         
         if (response.ok) {
@@ -478,6 +484,10 @@ export const SearchCircuitsVisualization = () => {
           console.error(`❌ 批量 Trace 失败 [${i + 1}/${edgesToTrace.length}]: ${edge.move}`, errorText);
         }
       } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          console.warn(`⏹️ 当前 Trace 已被中止: ${edge.move}`);
+          break;
+        }
         console.error(`❌ 批量 Trace 出错 [${i + 1}/${edgesToTrace.length}]: ${edge.move}`, error);
       }
       
@@ -487,11 +497,16 @@ export const SearchCircuitsVisualization = () => {
     
     setIsBatchTracing(false);
     setBatchTraceProgress({ current: 0, total: 0, currentEdge: '' });
+    batchTraceControllerRef.current = null;
   }, [searchData, isModelLoaded, batchTraceParams, edgeTraceResults, getAllUniqueEdges, getEdgeKey]);
 
   // 中止批量 Trace
   const abortBatchTrace = useCallback(() => {
     batchTraceAbortRef.current = true;
+    if (batchTraceControllerRef.current) {
+      batchTraceControllerRef.current.abort();
+    }
+    setIsBatchTracing(false);
   }, []);
 
   // 渲染树节点

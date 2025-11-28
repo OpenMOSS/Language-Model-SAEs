@@ -200,7 +200,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   const [searchParams, setSearchParams] = useState({
     max_playouts: 100,
     target_minibatch_size: 8,
-    cpuct: 1.0,
+    cpuct: 3.0,
     max_depth: 10,
   });
   const [lastSearchInfo, setLastSearchInfo] = useState<{
@@ -1313,7 +1313,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                       value={searchParams.cpuct}
                       onChange={(e) => setSearchParams(prev => ({
                         ...prev,
-                        cpuct: parseFloat(e.target.value) || 1.0,
+                        cpuct: parseFloat(e.target.value) || 3.0,
                       }))}
                       min={0.1}
                       max={10}
