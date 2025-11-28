@@ -978,13 +978,10 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     @torch.no_grad()
     def compute_training_metrics(
         self,
-        feature_acts: torch.Tensor,
-        reconstructed: torch.Tensor,
-        label: torch.Tensor,
-        l_rec: torch.Tensor,
+        *,
         l0: torch.Tensor,
-        explained_variance: torch.Tensor,
         explained_variance_legacy: torch.Tensor,
+        **kwargs,
     ) -> dict[str, float]:
         """Compute per-layer training metrics for CLT."""
         per_layer_ev = explained_variance_legacy.mean(0)
@@ -1006,10 +1003,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         l1_coefficient: float = 1.0,
         return_aux_data: Literal[True] = True,
         **kwargs,
-    ) -> tuple[
-        Float[torch.Tensor, " batch"],
-        tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
-    ]: ...
+    ) -> dict[str, Any]: ...
 
     @overload
     def compute_loss(
@@ -1048,10 +1042,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, " batch"],
-        tuple[
-            Float[torch.Tensor, " batch"],
-            tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
-        ],
+        dict[str, Any],
     ]:
         """Compute the loss for the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
@@ -1106,11 +1097,15 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 loss_dict["l_s"] = None
 
         if return_aux_data:
-            aux_data = {
+            return {
+                "loss": loss,
+                **loss_dict,
+                "label": label,
+                "mask": batch.get("mask"),
+                "n_tokens": batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum())),
                 "feature_acts": feature_acts,
                 "reconstructed": reconstructed,
             }
-            return loss, (loss_dict, aux_data)
         return loss
 
     @override

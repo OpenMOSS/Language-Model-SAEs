@@ -83,7 +83,7 @@ class Initializer:
                 sae.set_decoder_to_fixed_norm(norm, force_exact=True)
                 if self.cfg.init_encoder_with_decoder_transpose:
                     sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
-                mse = item(sae.compute_loss(batch)[1][0]["l_rec"].mean())  # type: ignore
+                mse = item(sae.compute_loss(batch)["l_rec"].mean())  # type: ignore
                 losses[norm] = mse
             best_norm = min(losses, key=losses.get)  # type: ignore
             return best_norm

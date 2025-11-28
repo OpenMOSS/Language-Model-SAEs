@@ -592,13 +592,12 @@ class CrossCoder(AbstractSparseAutoEncoder):
     @torch.no_grad()
     def compute_training_metrics(
         self,
+        *,
         feature_acts: torch.Tensor,
-        reconstructed: torch.Tensor,
-        label: torch.Tensor,
         l_rec: torch.Tensor,
         l0: torch.Tensor,
         explained_variance: torch.Tensor,
-        explained_variance_legacy: torch.Tensor,
+        **kwargs,
     ) -> dict[str, float]:
         """Compute per-head training metrics for CrossCoder."""
         assert explained_variance.ndim == 1 and len(explained_variance) == len(self.cfg.hook_points)

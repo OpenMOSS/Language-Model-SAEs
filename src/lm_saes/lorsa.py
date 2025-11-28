@@ -22,6 +22,8 @@ from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
+from lm_saes.utils.distributed.ops import item
+
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import LorsaConfig
 from .utils.distributed import DimMap, mesh_dim_size
@@ -787,10 +789,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         l1_coefficient: float = 1.0,
         return_aux_data: Literal[True] = True,
         **kwargs,
-    ) -> tuple[
-        Float[torch.Tensor, " batch"],
-        tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
-    ]: ...
+    ) -> dict[str, Any]: ...
 
     @overload
     def compute_loss(
@@ -827,10 +826,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, " batch"],
-        tuple[
-            Float[torch.Tensor, " batch"],
-            tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
-        ],
+        dict[str, Any],
     ]:
         """Compute the loss for the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
@@ -881,12 +877,16 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         loss_dict["l_p"] = None
 
         if return_aux_data:
-            aux_data = {
+            return {
+                "loss": loss,
+                **loss_dict,
+                "label": label,
+                "mask": batch.get("mask"),
+                "n_tokens": batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum())),
                 "feature_acts": feature_acts,
                 "reconstructed": reconstructed,
                 "hidden_pre": hidden_pre,
             }
-            return loss, (loss_dict, aux_data)
         return loss
 
     @classmethod

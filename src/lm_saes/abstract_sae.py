@@ -600,10 +600,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         lp_coefficient: float = 0.0,
         return_aux_data: Literal[True] = True,
         **kwargs,
-    ) -> tuple[
-        Float[torch.Tensor, " batch"],
-        tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
-    ]: ...
+    ) -> dict[str, Any]: ...
 
     @overload
     def compute_loss(
@@ -643,10 +640,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, " batch"],
-        tuple[
-            Float[torch.Tensor, " batch"],
-            tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
-        ],
+        dict[str, Any],
     ]:
         """Compute the loss for the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
@@ -728,12 +722,18 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 loss_dict["l_p"] = None
 
         if return_aux_data:
-            aux_data = {
+            return {
+                "loss": loss,
+                **loss_dict,
+                "label": label,
+                "mask": batch.get("mask"),
+                "n_tokens": batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum())),
                 "feature_acts": feature_acts,
                 "reconstructed": reconstructed,
                 "hidden_pre": hidden_pre,
+                "l1_coefficient": l1_coefficient,
+                "lp_coefficient": lp_coefficient,
             }
-            return loss, (loss_dict, aux_data)
         return loss
 
     @abstractmethod
@@ -758,24 +758,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     @torch.no_grad()
     def compute_training_metrics(
         self,
-        feature_acts: torch.Tensor,
-        reconstructed: torch.Tensor,
-        label: torch.Tensor,
-        l_rec: torch.Tensor,
-        l0: torch.Tensor,
-        explained_variance: torch.Tensor,
-        explained_variance_legacy: torch.Tensor,
+        **kwargs,
     ) -> dict[str, float]:
-        """Compute model-specific training metrics.
-
-        Args:
-            feature_acts: Feature activations tensor
-            reconstructed: Reconstructed input tensor
-            label: Label tensor
-            l_rec: Reconstruction loss tensor
-            l0: L0 sparsity tensor
-            explained_variance: Explained variance tensor
-            explained_variance_legacy: Legacy explained variance tensor
+        """Compute model-specific training metrics. Logging context is passed as kwargs.
 
         Returns:
             Dictionary of metric names to values. Should include model-specific metrics
