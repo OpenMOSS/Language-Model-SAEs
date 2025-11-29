@@ -331,21 +331,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
         return reconstructed
 
-    def forward(
-        self,
-        x: Union[
-            Float[torch.Tensor, "batch d_model"],
-            Float[torch.Tensor, "batch seq_len d_model"],
-        ],
-        **kwargs,
-    ) -> Union[
-        Float[torch.Tensor, "batch d_model"],
-        Float[torch.Tensor, "batch seq_len d_model"],
-    ]:
-        feature_acts = self.encode(x, **kwargs)
-        reconstructed = self.decode(feature_acts, **kwargs)
-        return reconstructed
-
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
         cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)

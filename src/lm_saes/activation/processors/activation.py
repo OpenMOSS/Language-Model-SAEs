@@ -1,4 +1,3 @@
-import warnings
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, cast
 
@@ -234,17 +233,13 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
         data: Iterable[dict[str, Any]],
         *,
         ignore_token_ids: Optional[list[int]] = None,
-        model: Optional[LanguageModel] = None,
         **kwargs,
     ) -> Iterable[dict[str, Any]]:
         """Process activations by filtering out specified token types.
 
         Args:
             data (Iterable[dict[str, Any]]): Input data containing activations and tokens to process
-            ignore_token_ids (Optional[list[int]], optional): List of token IDs to filter out. If None and model
-                is provided, uses model's special tokens (EOS, PAD, BOS). Defaults to None.
-            model (Optional[HookedTransformer], optional): Model to get default special tokens from. Only used
-                if ignore_token_ids is None. Defaults to None.
+            ignore_token_ids (Optional[list[int]], optional): List of token IDs to filter out. If None, filter out masked tokens.
             **kwargs: Additional keyword arguments. Not used by this processor.
 
         Yields:
@@ -253,28 +248,14 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
                 - Original tokens as "tokens"
                 - Original info field if present in input
         """
-        if ignore_token_ids is None and model is None:
-            warnings.warn(
-                "ignore_token_ids are not provided. No tokens (including pad tokens) will be filtered out. If this is intentional, set ignore_token_ids explicitly to an empty list to avoid this warning.",
-                UserWarning,
-                stacklevel=2,
-            )
-        if ignore_token_ids is None and model is not None:
-            ignore_token_ids_optional = [
-                model.eos_token_id,
-                model.pad_token_id,
-                model.bos_token_id,
-            ]
-            ignore_token_ids = [token_id for token_id in ignore_token_ids_optional if token_id is not None]
-        if ignore_token_ids is None:
-            ignore_token_ids = []
         for d in data:
             assert "tokens" in d and isinstance(d["tokens"], torch.Tensor)
             tokens = d["tokens"]
-            mask = torch.ones_like(tokens, dtype=torch.bool)
 
-            for token_id in ignore_token_ids:
-                mask &= tokens != token_id
+            if ignore_token_ids is not None:
+                mask = torch.isin(tokens, torch.tensor(ignore_token_ids), invert=True)
+            else:
+                mask = d["mask"].bool()
 
             if isinstance(mask, DTensor):
                 # Check if mask is all true

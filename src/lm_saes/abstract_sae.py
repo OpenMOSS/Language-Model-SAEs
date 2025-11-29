@@ -256,13 +256,15 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Decode feature activations to reconstructed input."""
         raise NotImplementedError("Subclasses must implement this method")
 
+    @timer.time("forward")
     def forward(
         self,
         x: Union[
             Float[torch.Tensor, "batch d_model"],
             Float[torch.Tensor, "batch seq_len d_model"],
         ],
-        **kwargs,
+        encoder_kwargs: dict[str, Any] = {},
+        decoder_kwargs: dict[str, Any] = {},
     ) -> Union[
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
@@ -270,8 +272,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Forward pass through the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
         """
-        feature_acts = self.encode(x, **kwargs)
-        reconstructed = self.decode(feature_acts, **kwargs)
+        feature_acts = self.encode(x, **encoder_kwargs)
+        reconstructed = self.decode(feature_acts, **decoder_kwargs)
         return reconstructed
 
     def compute_norm_factor(self, x: torch.Tensor, hook_point: str) -> torch.Tensor:

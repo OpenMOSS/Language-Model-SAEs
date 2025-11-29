@@ -6,8 +6,11 @@ import einops
 import torch
 from torch import Tensor
 from torch.types import Number
+from transformer_lens import HookedTransformer
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
 
@@ -318,3 +321,80 @@ class ModelSpecificMetric(Metric):
 
     def compute(self) -> dict[str, Number]:
         return {k: v.compute() for k, v in self.metrics.items()}
+
+
+class DownstreamMetric(Metric):
+    def __init__(self, sae: SparseAutoEncoder | LowRankSparseAttention, model: HookedTransformer):
+        self.sae = sae
+        self.model = model
+        self.downstream_loss_original: Record[Tensor] = Record()
+        self.downstream_loss_reconstructed: Record[Tensor] = Record()
+        self.downstream_loss_ablated: Record[Tensor] = Record()
+        self.downstream_loss_ratio: Record[Tensor] = Record()
+
+    def update(self, ctx: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        tokens = ctx["tokens"]
+        mask = ctx["mask"]
+
+        assert tokens.ndim == 2, "Tokens must be a 2D tensor"
+        specs = ("batch", "context")
+
+        loss, cache = cast(
+            tuple[torch.Tensor, dict[str, torch.Tensor]],
+            self.model.run_with_cache(
+                tokens,
+                return_type="loss",
+                loss_per_token=True,
+                names_filter=[self.sae.cfg.hook_point_in, self.sae.cfg.hook_point_out],
+                return_cache_object=False,
+            ),
+        )
+
+        batch = {"tokens": tokens, "mask": mask, **cache}
+
+        batch, scale_factors = self.sae.normalize_activations(batch, return_scale_factor=True)
+
+        x, encoder_kwargs, decoder_kwargs = self.sae.prepare_input(batch)
+        reconstructed = self.sae.forward(x, encoder_kwargs=encoder_kwargs, decoder_kwargs=decoder_kwargs)
+
+        reconstructed_batch = batch | {self.sae.cfg.hook_point_out: reconstructed}
+        reconstructed_batch = self.sae.denormalize_activations(reconstructed_batch, scale_factors=scale_factors)
+
+        def replace_hook_reconstructed(activations: torch.Tensor, hook_point: str) -> torch.Tensor:
+            return torch.where(mask, reconstructed_batch[self.sae.cfg.hook_point_out], activations)
+
+        reconstructed_loss: torch.Tensor = self.model.run_with_hooks(
+            tokens,
+            return_type="loss",
+            fwd_hooks=[(self.sae.cfg.hook_point_out, replace_hook_reconstructed)],
+            loss_per_token=True,
+        )
+
+        def replace_hook_ablated(activations: torch.Tensor, hook_point: str) -> torch.Tensor:
+            return torch.where(mask, torch.zeros_like(activations), activations)
+
+        ablated_loss: torch.Tensor = self.model.run_with_hooks(
+            tokens,
+            return_type="loss",
+            fwd_hooks=[(self.sae.cfg.hook_point_out, replace_hook_ablated)],
+            loss_per_token=True,
+        )
+
+        loss = apply_token_mask(loss, specs, mask, "mean")[0]
+        reconstructed_loss = apply_token_mask(reconstructed_loss, specs, mask, "mean")[0]
+        ablated_loss = apply_token_mask(ablated_loss, specs, mask, "mean")[0]
+
+        self.downstream_loss_original.update(loss)
+        self.downstream_loss_reconstructed.update(reconstructed_loss)
+        self.downstream_loss_ablated.update(ablated_loss)
+        self.downstream_loss_ratio.update((ablated_loss - loss) / (ablated_loss - reconstructed_loss))
+
+        return {}
+
+    def compute(self) -> dict[str, Number]:
+        return {
+            "metrics/downstream_loss_original": item(self.downstream_loss_original.compute()),
+            "metrics/downstream_loss_reconstructed": item(self.downstream_loss_reconstructed.compute()),
+            "metrics/downstream_loss_ablated": item(self.downstream_loss_ablated.compute()),
+            "metrics/downstream_loss_ratio": item(self.downstream_loss_ratio.compute()),
+        }

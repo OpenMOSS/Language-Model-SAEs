@@ -522,12 +522,7 @@ class TrainerConfig(BaseConfig):
 
 
 class EvalConfig(BaseConfig):
-    feature_sampling_window: int = 1000
     total_eval_tokens: int = 1000000
-    use_cached_activations: bool = False
-    device: str = "cpu"
-    fold_activation_scale: bool = True
-    """Whether to fold the activation scale into the SAE model"""
 
 
 class GraphEvalConfig(BaseConfig):
