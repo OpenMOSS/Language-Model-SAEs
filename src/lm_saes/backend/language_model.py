@@ -268,9 +268,11 @@ class TransformerLensLanguageModel(LanguageModel):
             _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
 
         mask = torch.isin(
-            tokens, torch.tensor([self.pad_token_id, self.eos_token_id, self.bos_token_id]), invert=True
+            tokens,
+            torch.tensor([self.pad_token_id, self.eos_token_id, self.bos_token_id]).to(tokens.device),
+            invert=True,
         ).int()
-        attention_mask = torch.isin(tokens, torch.tensor([self.pad_token_id]), invert=True).int()
+        attention_mask = torch.isin(tokens, torch.tensor([self.pad_token_id]).to(tokens.device), invert=True).int()
 
         return {hook_point: activations[hook_point] for hook_point in hook_points} | {
             "tokens": tokens,

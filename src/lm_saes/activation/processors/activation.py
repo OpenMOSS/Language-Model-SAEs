@@ -253,7 +253,7 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
             tokens = d["tokens"]
 
             if ignore_token_ids is not None:
-                mask = torch.isin(tokens, torch.tensor(ignore_token_ids), invert=True)
+                mask = torch.isin(tokens, torch.tensor(ignore_token_ids).to(tokens.device), invert=True)
             else:
                 mask = d["mask"].bool()
 
