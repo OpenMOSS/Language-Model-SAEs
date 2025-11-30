@@ -1,3 +1,4 @@
+import json
 import math
 import os
 from pathlib import Path
@@ -88,11 +89,12 @@ class Trainer:
                 "checkpoint_thresholds": self.checkpoint_thresholds,
                 "cfg": self.cfg,
             }
-
             # Save trainer state
             trainer_path = checkpoint_dir / "trainer.pt"
             torch.save(trainer_state, trainer_path)
-
+            if self.wandb_logger is not None:
+                with open(checkpoint_dir / "wandb_run_id.json", "w") as f:
+                    json.dump({"wandb_run_id": self.wandb_logger.id}, f)
         # Save optimizer state - handle distributed tensors
         if self.optimizer is not None:
             if sae.device_mesh is None:
@@ -479,14 +481,13 @@ class Trainer:
                         with timer.time("evaluation"):
                             eval_fn(sae)
 
-                    self._maybe_save_sae_checkpoint(sae)
                     with timer.time("scheduler_step"):
                         self.scheduler.step()
-
                     self.cur_step += 1
                     self.cur_tokens += (
                         batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum()))
                     )
+                    self._maybe_save_sae_checkpoint(sae)
                     if self.cur_tokens >= self.cfg.total_training_tokens:
                         break
         except StopIteration:

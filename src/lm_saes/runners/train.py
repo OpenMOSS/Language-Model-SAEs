@@ -168,14 +168,23 @@ def train_sae(settings: TrainSAESettings) -> None:
             entity=settings.wandb.wandb_entity,
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
+            resume=settings.wandb.wandb_resume,
+            id=settings.wandb.wandb_run_id,
         )
         if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
-
     sae = initializer.initialize_sae_from_config(
         settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger
     )
+    if settings.trainer.from_pretrained_path is not None:
+        trainer = Trainer.from_checkpoint(
+            sae,
+            settings.trainer.from_pretrained_path,
+        )
+        trainer.wandb_logger = wandb_logger
+    else:
+        trainer = Trainer(settings.trainer)
 
     logger.info(f"SAE initialized: {type(sae).__name__}")
 
@@ -186,17 +195,24 @@ def train_sae(settings: TrainSAESettings) -> None:
     eval_fn = (lambda x: None) if settings.eval else None
 
     logger.info("Starting training")
-    trainer = Trainer(settings.trainer)
-    sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
-    trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
 
-    logger.info("Training completed, saving model")
-    sae.save_pretrained(
-        save_path=settings.trainer.exp_result_path,
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        mongo_client=mongo_client,
+    sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
+    end_of_stream = trainer.fit(
+        sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger
     )
+    logger.info("Training completed, saving model")
+    if end_of_stream:
+        trainer.save_checkpoint(
+            sae=sae,
+            checkpoint_path=settings.trainer.exp_result_path,
+        )
+    else:
+        sae.save_pretrained(
+            save_path=settings.trainer.exp_result_path,
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            mongo_client=mongo_client,
+        )
 
     if wandb_logger is not None:
         wandb_logger.finish()

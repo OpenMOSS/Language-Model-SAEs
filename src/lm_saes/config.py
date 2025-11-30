@@ -782,6 +782,8 @@ class WandbConfig(BaseConfig):
     wandb_project: str = "gpt2-sae-training"
     exp_name: str | None = None
     wandb_entity: str | None = None
+    wandb_run_id: str | None = None
+    wandb_resume: Literal["allow", "must", "never", "auto"] = "never"
 
 
 class MongoDBConfig(BaseConfig):
