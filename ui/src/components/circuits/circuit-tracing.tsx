@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -240,6 +240,18 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     let moveUci: string | null = null;
     const lastMoveStr: string | null = lastMove ? lastMove : null;
     
+    // 调试日志：记录所有状态值
+    console.log('🔍 [DEBUG] handleCircuitTrace 调用:', {
+      orderMode,
+      positiveMove: positiveMove,
+      negativeMove: negativeMove,
+      lastMove: lastMove,
+      gameFen: gameFen,
+      cachedPositive: loadCachedPositiveMove(gameFen),
+      cachedNegative: loadCachedNegativeMove(gameFen),
+      cachedMove: loadCachedMove(gameFen),
+    });
+    
     if (orderMode === 'both') {
       // Both Trace: 需要positive move和negative move
       const posMove = positiveMove.trim() || loadCachedPositiveMove(gameFen);
@@ -278,9 +290,36 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     } else {
       // Positive/Negative Trace: 使用对应的move
       if (orderMode === 'positive') {
-        moveUci = positiveMove.trim() || loadCachedPositiveMove(gameFen) || loadCachedMove(gameFen) || lastMoveStr;
+        const trimmedPositive = positiveMove.trim();
+        const cachedPos = loadCachedPositiveMove(gameFen);
+        const cached = loadCachedMove(gameFen);
+        
+        // 优先使用用户输入的移动，只有在用户没有输入时才使用缓存或lastMove
+        moveUci = trimmedPositive || cachedPos || cached || lastMoveStr;
+        
+        // 调试日志：记录选择过程
+        console.log('🔍 [DEBUG] Positive Trace 移动选择:', {
+          '用户输入 (positiveMove.trim())': trimmedPositive || '(空)',
+          '缓存 Positive Move': cachedPos || '(无)',
+          '缓存 Move': cached || '(无)',
+          '最后移动 (lastMove)': lastMoveStr || '(无)',
+          '最终选择': moveUci,
+        });
       } else {
-        moveUci = negativeMove.trim() || loadCachedNegativeMove(gameFen) || loadCachedMove(gameFen) || lastMoveStr;
+        const trimmedNegative = negativeMove.trim();
+        const cachedNeg = loadCachedNegativeMove(gameFen);
+        const cached = loadCachedMove(gameFen);
+        
+        moveUci = trimmedNegative || cachedNeg || cached || lastMoveStr;
+        
+        // 调试日志：记录选择过程
+        console.log('🔍 [DEBUG] Negative Trace 移动选择:', {
+          '用户输入 (negativeMove.trim())': trimmedNegative || '(空)',
+          '缓存 Negative Move': cachedNeg || '(无)',
+          '缓存 Move': cached || '(无)',
+          '最后移动 (lastMove)': lastMoveStr || '(无)',
+          '最终选择': moveUci,
+        });
       }
       
       if (!moveUci) {
@@ -328,6 +367,14 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           requestBody.negative_move_uci = negMove;
         }
       }
+      
+      // 调试日志：记录实际发送的请求体
+      console.log('🔍 [DEBUG] 发送 Circuit Trace 请求:', {
+        requestBody,
+        '实际使用的 move_uci': requestBody.move_uci,
+        '用户输入的 positiveMove': positiveMove,
+        '用户输入的 negativeMove': negativeMove,
+      });
       
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace`, {
         method: 'POST',
@@ -907,12 +954,21 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
   }, [lastMove, positiveMove]);
 
-  // 当有效分析FEN变化时：清空待分析移动，避免自动带入旧移动/缓存
+  // 当有效分析FEN变化时：只在用户没有输入时才清空待分析移动，避免覆盖用户输入
+  const prevEffectiveGameFenRef = useRef<string>(effectiveGameFen);
   useEffect(() => {
-    setPositiveMove('');
-    setNegativeMove('');
-    setMoveError('');
-  }, [effectiveGameFen]);
+    // 只在 FEN 真正变化时才处理
+    if (prevEffectiveGameFenRef.current !== effectiveGameFen) {
+      // 如果用户已经输入了移动，不清空（保留用户输入）
+      // 只有在用户没有输入时才清空，避免自动带入旧移动/缓存
+      if (!positiveMove.trim() && !negativeMove.trim()) {
+        setPositiveMove('');
+        setNegativeMove('');
+        setMoveError('');
+      }
+      prevEffectiveGameFenRef.current = effectiveGameFen;
+    }
+  }, [effectiveGameFen, positiveMove, negativeMove]);
 
   return (
     <div className="space-y-6">

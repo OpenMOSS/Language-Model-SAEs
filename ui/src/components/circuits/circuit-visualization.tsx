@@ -58,6 +58,13 @@ export const CircuitVisualization = () => {
   const [checkingDenseFeatures, setCheckingDenseFeatures] = useState(false); // 是否正在检查dense features
   const [syncingToBackend, setSyncingToBackend] = useState(false); // 是否正在同步到后端
   const [syncingFromBackend, setSyncingFromBackend] = useState(false); // 是否正在从后端同步
+  
+  // Graph Feature Diffing 相关状态
+  const [perturbedFen, setPerturbedFen] = useState<string>(''); // Perturbed FEN输入
+  const [isComparingFens, setIsComparingFens] = useState(false); // 是否正在比较
+  const [inactiveNodes, setInactiveNodes] = useState<Set<string>>(new Set()); // 未激活节点集合
+  const [diffingLogs, setDiffingLogs] = useState<Array<{timestamp: number; message: string}>>([]); // 比较日志
+  const [showDiffingLogs, setShowDiffingLogs] = useState(false); // 是否显示日志
 
   // 多图支持：存放多份原始 JSON 及其文件名
   const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
@@ -287,6 +294,11 @@ export const CircuitVisualization = () => {
       setHasUnsavedChanges(false); // 清除未保存的更改
       setSaveHistory([]); // 清除保存历史
       setMultiOriginalJsons([{ json: jsonData, fileName: file.name }]);
+      // 清空Graph Feature Diffing相关状态
+      setPerturbedFen('');
+      setInactiveNodes(new Set());
+      setDiffingLogs([]);
+      setShowDiffingLogs(false);
     } catch (err) {
       console.error('Failed to load circuit data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load circuit data');
@@ -344,6 +356,11 @@ export const CircuitVisualization = () => {
       setHasUnsavedChanges(false);
       setSaveHistory([]);
       setMultiOriginalJsons(list.map((f, i) => ({ json: jsons[i], fileName: f.name })));
+      // 清空Graph Feature Diffing相关状态
+      setPerturbedFen('');
+      setInactiveNodes(new Set());
+      setDiffingLogs([]);
+      setShowDiffingLogs(false);
     } catch (err) {
       console.error('Failed to load circuit data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load circuit data');
@@ -1549,10 +1566,155 @@ export const CircuitVisualization = () => {
     };
   }, [denseNodes]);
 
-  // 获取应用了dense颜色的图数据
+  // 应用inactive节点颜色覆盖（金色）
+  const applyInactiveNodeColors = useCallback((data: any) => {
+    if (!data || !data.nodes || inactiveNodes.size === 0) {
+      return data;
+    }
+    
+    return {
+      ...data,
+      nodes: data.nodes.map((node: any) => {
+        if (inactiveNodes.has(node.nodeId)) {
+          return {
+            ...node,
+            nodeColor: '#FFD700',  // 金色
+            isInactive: true  // 标记为inactive节点
+          };
+        }
+        return node;
+      })
+    };
+  }, [inactiveNodes]);
+
+  // 获取应用了dense和inactive颜色的图数据
   const displayLinkGraphData = React.useMemo(() => {
-    return applyDenseNodeColors(linkGraphData);
-  }, [linkGraphData, applyDenseNodeColors]);
+    let data = linkGraphData;
+    data = applyDenseNodeColors(data);
+    data = applyInactiveNodeColors(data);
+    return data;
+  }, [linkGraphData, applyDenseNodeColors, applyInactiveNodeColors]);
+
+  // 验证FEN格式
+  const validateFen = useCallback((fen: string): boolean => {
+    if (!fen || !fen.trim()) return false;
+    try {
+      // 使用chess.js验证FEN（如果可用）
+      // 否则使用简单的正则验证
+      const fenPattern = /^[rnbqkpRNBQKP1-8\/]+\s+[wb]\s+[KQkqA-Za-z-]+\s+[a-h][36-]?\s*\d*\s*\d*$/;
+      return fenPattern.test(fen.trim());
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // 比较FEN激活差异
+  const compareFenActivations = useCallback(async () => {
+    if (!originalCircuitJson || !perturbedFen.trim()) {
+      alert('请先上传graph文件并输入perturbed FEN');
+      return;
+    }
+
+    // 验证FEN
+    if (!validateFen(perturbedFen)) {
+      alert('无效的FEN格式，请检查输入');
+      return;
+    }
+
+    // 获取原始FEN
+    const originalFen = extractFenFromPrompt();
+    if (!originalFen) {
+      alert('无法从graph文件中提取原始FEN');
+      return;
+    }
+
+    setIsComparingFens(true);
+    setDiffingLogs([]);
+    setShowDiffingLogs(true);
+
+    const addLog = (message: string) => {
+      const logEntry = {
+        timestamp: Date.now(),
+        message: `[${new Date().toLocaleTimeString()}] ${message}`
+      };
+      setDiffingLogs(prev => [...prev, logEntry]);
+      console.log(logEntry.message);
+    };
+
+    try {
+      addLog('开始比较FEN激活差异...');
+      addLog(`原始FEN: ${originalFen}`);
+      addLog(`扰动FEN: ${perturbedFen}`);
+
+      // 从metadata中提取模型名称
+      const metadata = (linkGraphData?.metadata || originalCircuitJson?.metadata) as any;
+      const modelName = metadata?.model_name || 'lc0/BT4-1024x15x32h';
+
+      addLog(`使用模型: ${modelName}`);
+
+      // 调用后端API
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/circuit/compare_fen_activations`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            graph_json: originalCircuitJson,
+            original_fen: originalFen,
+            perturbed_fen: perturbedFen.trim(),
+            model_name: modelName,
+            activation_threshold: 0.0
+          })
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json();
+      
+      addLog(`✅ 比较完成:`);
+      addLog(`   - 总节点数: ${result.total_nodes}`);
+      addLog(`   - 未激活节点数: ${result.inactive_nodes_count}`);
+
+      // 更新inactive nodes集合
+      const inactiveNodeIds = new Set<string>(
+        result.inactive_nodes.map((node: any) => String(node.node_id))
+      );
+      setInactiveNodes(inactiveNodeIds);
+
+      // 显示统计信息
+      if (result.statistics) {
+        addLog(`按层统计:`);
+        Object.entries(result.statistics.by_layer).forEach(([layer, count]) => {
+          addLog(`   Layer ${layer}: ${count} 个节点`);
+        });
+        addLog(`按类型统计:`);
+        Object.entries(result.statistics.by_type).forEach(([type, count]) => {
+          addLog(`   ${type}: ${count} 个节点`);
+        });
+      }
+
+      alert(
+        `✅ FEN激活差异比较完成！\n\n` +
+        `📊 统计:\n` +
+        `- 总节点数: ${result.total_nodes}\n` +
+        `- 未激活节点数: ${result.inactive_nodes_count}\n\n` +
+        `💡 未激活的节点已在图中标记为金色`
+      );
+
+    } catch (error) {
+      console.error('❌ 比较失败:', error);
+      addLog(`❌ 比较失败: ${error}`);
+      alert(`比较失败: ${error}`);
+    } finally {
+      setIsComparingFens(false);
+    }
+  }, [originalCircuitJson, perturbedFen, linkGraphData, validateFen, extractFenFromPrompt]);
 
   if (error) {
     return (
@@ -1658,9 +1820,53 @@ export const CircuitVisualization = () => {
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-2">
           <h2 className="text-l font-bold">Prompt:</h2>
-          <h2 className="text-l">{displayLinkGraphData.metadata.prompt_tokens.join(' ')}</h2>
+          <h2 className="text-l">{displayLinkGraphData?.metadata?.prompt_tokens?.join(' ') || ''}</h2>
         </div>
         <div className="flex items-center space-x-2">
+          {/* Graph Feature Diffing 控件 - 只在单图时显示 */}
+          {displayLinkGraphData && (!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && (
+            <div className="flex items-center space-x-2 px-3 py-1 bg-yellow-50 rounded-md border border-yellow-200">
+              <div className="flex items-center space-x-2">
+                <label className="text-sm text-gray-700">Perturb FEN:</label>
+                <input
+                  type="text"
+                  value={perturbedFen}
+                  onChange={(e) => setPerturbedFen(e.target.value)}
+                  placeholder="输入扰动后的FEN..."
+                  className="w-64 px-2 py-1 text-sm border border-gray-300 rounded"
+                  disabled={isComparingFens}
+                  title="输入扰动后的FEN字符串，用于比较激活差异"
+                />
+                <button
+                  onClick={compareFenActivations}
+                  disabled={isComparingFens || !perturbedFen.trim() || !originalCircuitJson}
+                  className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
+                  title="比较原始FEN和扰动FEN的激活差异"
+                >
+                  {isComparingFens ? (
+                    <>
+                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-1"></div>
+                      比较中...
+                    </>
+                  ) : (
+                    '比较激活差异'
+                  )}
+                </button>
+                {inactiveNodes.size > 0 && (
+                  <span className="text-sm text-yellow-700 font-medium">
+                    {inactiveNodes.size} 个未激活节点
+                  </span>
+                )}
+                <button
+                  onClick={() => setShowDiffingLogs(!showDiffingLogs)}
+                  className="px-2 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+                  title="显示/隐藏比较日志"
+                >
+                  {showDiffingLogs ? '隐藏日志' : '显示日志'}
+                </button>
+              </div>
+            </div>
+          )}
           {/* Clerp同步控件 */}
           <div className="flex items-center space-x-2 px-3 py-1 bg-blue-50 rounded-md border border-blue-200">
             <button
@@ -1739,7 +1945,7 @@ export const CircuitVisualization = () => {
           </div>
           
           {/* 颜色-文件名图例（多文件时显示） */}
-          {displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
+          {displayLinkGraphData && displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
             <div className="hidden md:flex items-center space-x-3 mr-4">
               {displayLinkGraphData.metadata.sourceFileNames.map((name, idx) => (
                 <div key={idx} className="flex items-center space-x-1 text-xs">
@@ -1795,7 +2001,7 @@ export const CircuitVisualization = () => {
       </div>
 
       {/* Chess Board Display - 单文件 */}
-      {(!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
+      {displayLinkGraphData && (!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
         <div className="flex justify-center mb-6">
           <div className="bg-white rounded-lg border shadow-sm p-4 pb-8">
             <h3 className="text-lg font-semibold mb-4 text-center">
@@ -1836,8 +2042,50 @@ export const CircuitVisualization = () => {
         </div>
       )}
 
+      {/* Graph Feature Diffing 日志显示 - 只在单图时显示 */}
+      {displayLinkGraphData && (!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && showDiffingLogs && (
+        <div className="w-full border rounded-lg overflow-hidden mb-6">
+          <div className="bg-yellow-800 text-white px-4 py-2 flex items-center justify-between">
+            <h3 className="font-semibold">FEN激活差异比较日志</h3>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDiffingLogs([])}
+                className="px-2 py-1 text-sm bg-yellow-700 hover:bg-yellow-600 text-white rounded transition-colors"
+              >
+                清空日志
+              </button>
+              <button
+                onClick={() => setShowDiffingLogs(false)}
+                className="px-2 py-1 text-sm bg-yellow-700 hover:bg-yellow-600 text-white rounded transition-colors"
+              >
+                隐藏
+              </button>
+            </div>
+          </div>
+          <div 
+            id="diffing-logs-container"
+            className="bg-gray-900 text-green-400 p-4 font-mono text-sm max-h-64 overflow-y-auto"
+          >
+            <div className="space-y-1">
+              {diffingLogs.length === 0 ? (
+                <div className="text-gray-500">暂无日志...</div>
+              ) : (
+                diffingLogs.map((log, index) => (
+                  <div key={index} className="whitespace-pre-wrap">
+                    {log.message}
+                  </div>
+                ))
+              )}
+              {isComparingFens && (
+                <div className="text-yellow-400 animate-pulse">比较中...</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Chess Board Display - 多文件：为每个源文件渲染一个棋盘，并按来源显示激活 */}
-      {displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
+      {displayLinkGraphData && displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           {multiOriginalJsons.map((entry, idx) => {
             const fileFen = extractFenFromCircuitJson(entry.json);
@@ -1900,32 +2148,36 @@ export const CircuitVisualization = () => {
           {/* Link Graph Component - Left Side */}
           <div className="flex-1 min-w-0 max-w-full border rounded-lg p-4 bg-white shadow-sm overflow-hidden">
             <div className="w-full h-full overflow-hidden relative">
-              <LinkGraphContainer 
-                data={displayLinkGraphData} 
-                onNodeClick={handleFeatureClick}
-                onNodeHover={handleFeatureHover}
-                onFeatureSelect={handleFeatureSelect}
-                onConnectedFeaturesSelect={handleConnectedFeaturesSelect}
-                onConnectedFeaturesLoading={handleConnectedFeaturesLoading}
-                clickedId={clickedId}
-                hoveredId={hoveredId}
-                pinnedIds={pinnedIds}
-              />
+              {displayLinkGraphData && (
+                <LinkGraphContainer 
+                  data={displayLinkGraphData} 
+                  onNodeClick={handleFeatureClick}
+                  onNodeHover={handleFeatureHover}
+                  onFeatureSelect={handleFeatureSelect}
+                  onConnectedFeaturesSelect={handleConnectedFeaturesSelect}
+                  onConnectedFeaturesLoading={handleConnectedFeaturesLoading}
+                  clickedId={clickedId}
+                  hoveredId={hoveredId}
+                  pinnedIds={pinnedIds}
+                />
+              )}
             </div>
           </div>
 
           {/* Node Connections Component - Right Side */}
           <div className="w-96 flex-shrink-0 border rounded-lg p-4 bg-white shadow-sm overflow-hidden">
-            <NodeConnections
-              data={displayLinkGraphData}
-              clickedId={clickedId}
-              hoveredId={hoveredId}
-              pinnedIds={pinnedIds}
-              hiddenIds={hiddenIds}
-              onFeatureClick={handleFeatureClick}
-              onFeatureSelect={handleFeatureSelect}
-              onFeatureHover={handleFeatureHover}
-            />
+            {displayLinkGraphData && (
+              <NodeConnections
+                data={displayLinkGraphData}
+                clickedId={clickedId}
+                hoveredId={hoveredId}
+                pinnedIds={pinnedIds}
+                hiddenIds={hiddenIds}
+                onFeatureClick={handleFeatureClick}
+                onFeatureSelect={handleFeatureSelect}
+                onFeatureHover={handleFeatureHover}
+              />
+            )}
           </div>
         </div>
 
@@ -2228,7 +2480,7 @@ export const CircuitVisualization = () => {
         )}
 
         {/* Bottom Row: Feature Card below Link Graph Container */}
-        {clickedId && (() => {
+        {clickedId && displayLinkGraphData && (() => {
           // 获取当前选中节点的信息
           const currentNode = displayLinkGraphData.nodes.find(node => node.nodeId === clickedId);
           
@@ -2266,7 +2518,7 @@ export const CircuitVisualization = () => {
           // 根据节点类型构建正确的dictionary名
           let dictionary: string;
           if (isLorsa) {
-            const lorsaAnalysisName = linkGraphData?.metadata?.lorsa_analysis_name;
+            const lorsaAnalysisName = displayLinkGraphData?.metadata?.lorsa_analysis_name;
             if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string' && lorsaAnalysisName.includes('BT4')) {
               // BT4格式: BT4_lorsa_L{layer}A
               dictionary = `BT4_lorsa_L${layerIdx}A`;
@@ -2274,7 +2526,7 @@ export const CircuitVisualization = () => {
               dictionary = lorsaAnalysisName ? lorsaAnalysisName.replace("{}", layerIdx.toString()) : `lc0-lorsa-L${layerIdx}`;
             }
           } else {
-            const tcAnalysisName = (linkGraphData?.metadata as any)?.tc_analysis_name || linkGraphData?.metadata?.clt_analysis_name;
+            const tcAnalysisName = (displayLinkGraphData?.metadata as any)?.tc_analysis_name || displayLinkGraphData?.metadata?.clt_analysis_name;
             console.log('🔍 Selected Feature Details Transcoders 调试信息:', {
               tcAnalysisName,
               tcAnalysisNameType: typeof tcAnalysisName,
