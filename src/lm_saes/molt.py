@@ -715,24 +715,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         return metrics
 
     @override
-    @timer.time("forward")
-    def forward(
-        self,
-        x: Union[
-            Float[torch.Tensor, "batch d_model"],
-            Float[torch.Tensor, "batch seq_len d_model"],
-        ],
-        **kwargs,
-    ) -> Union[
-        Float[torch.Tensor, "batch d_model"],
-        Float[torch.Tensor, "batch seq_len d_model"],
-    ]:
-        feature_acts = self.encode(x, **kwargs)
-        # Pass original x to decode through kwargs for MOLT computation
-        reconstructed = self.decode(feature_acts, original_x=x, **kwargs)
-        return reconstructed
-
-    @override
     def load_distributed_state_dict(
         self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
     ) -> None:

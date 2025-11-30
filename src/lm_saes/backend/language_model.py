@@ -266,7 +266,17 @@ class TransformerLensLanguageModel(LanguageModel):
         with timer.time("run_with_cache_until"):
             # _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points, use_flash_attn=False)
             _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
-        return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
+
+        mask = torch.isin(
+            tokens, torch.tensor([self.pad_token_id, self.eos_token_id, self.bos_token_id]), invert=True
+        ).int()
+        attention_mask = torch.isin(tokens, torch.tensor([self.pad_token_id]), invert=True).int()
+
+        return {hook_point: activations[hook_point] for hook_point in hook_points} | {
+            "tokens": tokens,
+            "mask": mask,
+            "attention_mask": attention_mask,
+        }
 
 
 class HuggingFaceLanguageModel(LanguageModel):
