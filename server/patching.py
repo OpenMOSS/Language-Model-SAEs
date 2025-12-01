@@ -206,7 +206,7 @@ class PatchingAnalyzer:
 _patching_analyzer = None
 
 def get_patching_analyzer() -> PatchingAnalyzer:
-    """获取或创建patching分析器实例"""
+    """获取或创建patching分析器实例（使用全局缓存）"""
     global _patching_analyzer
     
     if _patching_analyzer is None:
@@ -216,32 +216,52 @@ def get_patching_analyzer() -> PatchingAnalyzer:
             
             print("🔍 正在初始化Patching分析器...")
             
-            # 加载模型
-            model = HookedTransformer.from_pretrained_no_processing(
-                'lc0/T82-768x15x24h',
-                dtype=torch.float32,
-            ).eval()
+            model_name = 'lc0/BT4-1024x15x32h'
             
-            # 加载transcoders
-            transcoders = {}
-            for layer in range(15):
-                transcoders[layer] = SparseAutoEncoder.from_pretrained(
-                    (f'/inspire/hdd/global_user/hezhengfu-240208120186/'
-                     f'rlin_projects/rlin_projects/chess-SAEs/result/tc/'
-                     f'L{layer}'),
+            # 尝试从circuits_service获取缓存的模型
+            try:
+                from circuits_service import get_cached_models
+                cached_hooked_model, cached_transcoders, cached_lorsas, _ = get_cached_models(model_name)
+                
+                if cached_hooked_model is not None and cached_transcoders is not None and cached_lorsas is not None:
+                    if len(cached_transcoders) == 15 and len(cached_lorsas) == 15:
+                        print("✅ 使用缓存的模型、transcoders和lorsas")
+                        model = cached_hooked_model
+                        transcoders = cached_transcoders
+                        lorsas = cached_lorsas
+                    else:
+                        raise ValueError("缓存不完整")
+                else:
+                    raise ValueError("缓存不存在")
+            except (ImportError, ValueError) as e:
+                print(f"⚠️ 无法使用缓存，重新加载: {e}")
+                
+                # 加载模型 - 强制使用BT4
+                model = HookedTransformer.from_pretrained_no_processing(
+                    model_name,
                     dtype=torch.float32,
-                    device='cuda',
-                )
-            
-            # 加载lorsas
-            lorsas = []
-            for layer in range(15):
-                lorsas.append(LowRankSparseAttention.from_pretrained(
-                    (f'/inspire/hdd/global_user/hezhengfu-240208120186/'
-                     f'rlin_projects/rlin_projects/chess-SAEs/result/lorsa/'
-                     f'L{layer}'), 
-                    device='cuda'
-                ))
+                ).eval()
+                
+                # 加载transcoders
+                transcoders = {}
+                for layer in range(15):
+                    transcoders[layer] = SparseAutoEncoder.from_pretrained(
+                        (f'/inspire/hdd/global_user/hezhengfu-240208120186/'
+                         f'rlin_projects/rlin_projects/chess-SAEs-N/result_BT4/tc/'
+                         f'L{layer}'),
+                        dtype=torch.float32,
+                        device='cuda',
+                    )
+                
+                # 加载lorsas
+                lorsas = []
+                for layer in range(15):
+                    lorsas.append(LowRankSparseAttention.from_pretrained(
+                        (f'/inspire/hdd/global_user/hezhengfu-240208120186/'
+                         f'rlin_projects/rlin_projects/chess-SAEs-N/result_BT4/lorsa/'
+                         f'L{layer}'), 
+                        device='cuda'
+                    ))
             
             _patching_analyzer = PatchingAnalyzer(model, transcoders, lorsas)
             print("✅ Patching分析器初始化成功")

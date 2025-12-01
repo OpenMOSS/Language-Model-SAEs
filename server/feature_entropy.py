@@ -14,14 +14,14 @@ from lm_saes.database import MongoClient
 class FeatureEntropyCalculator:
     """计算特征熵的工具类"""
     
-    def __init__(self, mongo_client: MongoClient, sae_series: str = "lc0-circuit-tracing"):
+    def __init__(self, mongo_client: MongoClient, sae_series: str = "BT4-exp128"):
         self.mongo_client = mongo_client
         self.sae_series = sae_series
         self._dataset_cache: Dict[str, Any] = {}
     
     def get_tc_sae_name(self, layer: int) -> str:
         """Get TC SAE name for a given layer."""
-        return f"lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam"
+        return f"BT4_tc_L{layer}M"
     
     def get_dataset_by_name(self, dataset_name: str):
         """Get dataset by name with caching."""

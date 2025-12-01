@@ -16,6 +16,13 @@ import torch
 import chess
 from transformer_lens import HookedTransformer
 
+# 全局 BT4 常量（模型与 SAE 路径）
+# 兼容直接运行 server 目录和作为 package 导入两种方式
+try:
+    from .constants import BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH
+except ImportError:
+    from constants import BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH
+
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.append(str(project_root))
@@ -44,69 +51,220 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
     return logging.getLogger(__name__)
 
 
+# 全局缓存（与app.py共享）
+_global_hooked_models: Dict[str, HookedTransformer] = {}
+_global_transcoders_cache: Dict[str, Dict[int, SparseAutoEncoder]] = {}
+_global_lorsas_cache: Dict[str, List[LowRankSparseAttention]] = {}
+_global_replacement_models_cache: Dict[str, ReplacementModel] = {}
+
+# 加载锁，防止并发加载导致重复加载
+import threading
+_loading_lock = threading.Lock()
+_is_loading: Dict[str, bool] = {}  # model_name -> is_loading
+
+
+def get_cached_models(model_name: str) -> Tuple[Optional[HookedTransformer], Optional[Dict[int, SparseAutoEncoder]], Optional[List[LowRankSparseAttention]], Optional[ReplacementModel]]:
+    """获取缓存的模型、transcoders和lorsas"""
+    global _global_hooked_models, _global_transcoders_cache, _global_lorsas_cache, _global_replacement_models_cache
+    
+    hooked_model = _global_hooked_models.get(model_name)
+    transcoders = _global_transcoders_cache.get(model_name)
+    lorsas = _global_lorsas_cache.get(model_name)
+    replacement_model = _global_replacement_models_cache.get(model_name)
+    
+    return hooked_model, transcoders, lorsas, replacement_model
+
+
+def set_cached_models(
+    model_name: str,
+    hooked_model: HookedTransformer,
+    transcoders: Dict[int, SparseAutoEncoder],
+    lorsas: List[LowRankSparseAttention],
+    replacement_model: ReplacementModel
+):
+    """设置缓存的模型、transcoders和lorsas"""
+    global _global_hooked_models, _global_transcoders_cache, _global_lorsas_cache, _global_replacement_models_cache
+    
+    _global_hooked_models[model_name] = hooked_model
+    _global_transcoders_cache[model_name] = transcoders
+    _global_lorsas_cache[model_name] = lorsas
+    _global_replacement_models_cache[model_name] = replacement_model
+
+
 def load_model_and_transcoders(
     model_name: str,
     device: str,
     tc_base_path: str,
     lorsa_base_path: str,
     n_layers: int = 15,
-    hooked_model: Optional[HookedTransformer] = None  # 新增参数
+    hooked_model: Optional[HookedTransformer] = None,  # 新增参数
+    loading_logs: Optional[list] = None  # 新增参数：用于收集加载日志
 ) -> Tuple[ReplacementModel, Dict[int, SparseAutoEncoder], List[LowRankSparseAttention]]:
-    """加载模型和transcoders"""
+    """加载模型和transcoders（带全局缓存和加载锁，防止重复加载）"""
+    global _global_hooked_models, _global_transcoders_cache, _global_lorsas_cache, _global_replacement_models_cache
+    global _loading_lock, _is_loading
+    
     logger = logging.getLogger(__name__)
     
-    # 使用传入的模型或加载新模型
-    if hooked_model is not None:
-        logger.info("使用传入的HookedTransformer模型")
-        model = hooked_model
-    else:
-        logger.info("加载新的HookedTransformer模型")
-        model = HookedTransformer.from_pretrained_no_processing(
-            model_name,
-            dtype=torch.float32,
-        ).eval()
+    # 辅助函数：添加日志（同时打印到控制台和收集到日志列表）
+    def add_log(message: str):
+        print(message)
+        logger.info(message)
+        if loading_logs is not None:
+            loading_logs.append({
+                "timestamp": time.time(),
+                "message": message
+            })
     
-    # 加载transcoders
-    transcoders = {}
-    for layer in range(n_layers):
-        # 根据模型名称选择不同的路径格式
-        # if 'BT4' in model_name:
-        #     # BT4路径格式: L{layer}
-        #     tc_path = f"{tc_base_path}/L{layer}"
-        # else:
-        #     # 默认T82路径格式
-        #     tc_path = f"{tc_base_path}/lc0_L{layer}M_16x_k30_lr2e-03_auxk_sparseadam"
-        tc_path = f"{tc_base_path}/L{layer}"
-        logger.info(f"📁 加载TC L{layer}: {tc_path}")
-        transcoders[layer] = SparseAutoEncoder.from_pretrained(
-            tc_path,
-            dtype=torch.float32,
-            device=device,
+    # 先检查全局缓存（无锁快速检查）
+    cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(model_name)
+    
+    # 检查缓存是否完整（有transcoders和lorsas，且层数正确）
+    if cached_transcoders is not None and cached_lorsas is not None:
+        if len(cached_transcoders) == n_layers and len(cached_lorsas) == n_layers:
+            if cached_replacement_model is not None:
+                add_log(f"✅ 使用缓存的模型、transcoders和lorsas: {model_name}")
+                logger.info(f"✅ 从缓存加载: {model_name} (transcoders={len(cached_transcoders)}层, lorsas={len(cached_lorsas)}层)")
+                return cached_replacement_model, cached_transcoders, cached_lorsas
+    
+    # 获取加载锁，防止并发加载
+    with _loading_lock:
+        # 再次检查缓存（双重检查锁定模式）
+        cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(model_name)
+        if cached_transcoders is not None and cached_lorsas is not None:
+            if len(cached_transcoders) == n_layers and len(cached_lorsas) == n_layers:
+                if cached_replacement_model is not None:
+                    add_log(f"✅ 使用缓存的模型、transcoders和lorsas（双重检查）: {model_name}")
+                    return cached_replacement_model, cached_transcoders, cached_lorsas
+        
+        # 检查是否正在加载
+        if _is_loading.get(model_name, False):
+            add_log(f"⏳ 模型 {model_name} 正在被其他线程加载，等待...")
+            # 释放锁并等待
+    
+    # 如果正在加载，等待加载完成
+    wait_count = 0
+    max_wait = 600  # 最多等待600秒
+    while _is_loading.get(model_name, False) and wait_count < max_wait:
+        time.sleep(1)
+        wait_count += 1
+        if wait_count % 10 == 0:
+            add_log(f"⏳ 等待模型加载中... ({wait_count}秒)")
+    
+    # 再次检查缓存
+    cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(model_name)
+    if cached_transcoders is not None and cached_lorsas is not None:
+        if len(cached_transcoders) == n_layers and len(cached_lorsas) == n_layers:
+            if cached_replacement_model is not None:
+                add_log(f"✅ 使用缓存的模型、transcoders和lorsas（等待后）: {model_name}")
+                return cached_replacement_model, cached_transcoders, cached_lorsas
+    
+    # 获取加载锁并标记为正在加载
+    with _loading_lock:
+        # 最终检查
+        cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(model_name)
+        if cached_transcoders is not None and cached_lorsas is not None:
+            if len(cached_transcoders) == n_layers and len(cached_lorsas) == n_layers:
+                if cached_replacement_model is not None:
+                    add_log(f"✅ 使用缓存的模型、transcoders和lorsas（最终检查）: {model_name}")
+                    return cached_replacement_model, cached_transcoders, cached_lorsas
+        
+        # 标记为正在加载
+        _is_loading[model_name] = True
+        add_log(f"🔒 获取加载锁，开始加载模型: {model_name}")
+    
+    try:
+        # 如果缓存不完整或不存在，则加载
+        add_log(f"🔍 开始加载模型和transcoders: {model_name}")
+        
+        # 使用传入的模型或从缓存获取或加载新模型
+        if hooked_model is not None:
+            add_log("使用传入的HookedTransformer模型")
+            model = hooked_model
+        elif cached_hooked_model is not None:
+            add_log("使用缓存的HookedTransformer模型")
+            model = cached_hooked_model
+        else:
+            add_log("加载新的HookedTransformer模型...")
+            model = HookedTransformer.from_pretrained_no_processing(
+                model_name,
+                dtype=torch.float32,
+            ).eval()
+            # 缓存模型
+            _global_hooked_models[model_name] = model
+            add_log("✅ HookedTransformer模型加载完成")
+        
+        # 初始化或获取已有的transcoders缓存
+        if model_name not in _global_transcoders_cache:
+            _global_transcoders_cache[model_name] = {}
+        transcoders = _global_transcoders_cache[model_name]
+        
+        # 加载transcoders（逐层检查，避免重复加载）
+        add_log(f"🔍 开始加载Transcoders，共{n_layers}层...")
+        for layer in range(n_layers):
+            # 检查该层是否已经加载
+            if layer in transcoders:
+                add_log(f"  [TC Layer {layer}/{n_layers-1}] ✅ 已缓存，跳过加载")
+                continue
+            
+            tc_path = f"{tc_base_path}/L{layer}"
+            add_log(f"  [TC Layer {layer}/{n_layers-1}] 开始加载: {tc_path}")
+            logger.info(f"📁 加载TC L{layer}: {tc_path}")
+            start_time = time.time()
+            transcoders[layer] = SparseAutoEncoder.from_pretrained(
+                tc_path,
+                dtype=torch.float32,
+                device=device,
+            )
+            load_time = time.time() - start_time
+            add_log(f"  [TC Layer {layer}/{n_layers-1}] ✅ 加载完成，耗时: {load_time:.2f}秒")
+        
+        add_log(f"✅ 所有Transcoders加载完成，共{len(transcoders)}层")
+        
+        # 初始化或获取已有的lorsas缓存
+        if model_name not in _global_lorsas_cache:
+            _global_lorsas_cache[model_name] = []
+        lorsas = _global_lorsas_cache[model_name]
+        
+        # 加载LORSA（逐层检查，避免重复加载）
+        add_log(f"🔍 开始加载LoRSAs，共{n_layers}层...")
+        for layer in range(n_layers):
+            # 检查该层是否已经加载
+            if layer < len(lorsas):
+                add_log(f"  [LoRSA Layer {layer}/{n_layers-1}] ✅ 已缓存，跳过加载")
+                continue
+            
+            lorsa_path = f"{lorsa_base_path}/L{layer}"
+            add_log(f"  [LoRSA Layer {layer}/{n_layers-1}] 开始加载: {lorsa_path}")
+            logger.info(f"📁 加载LORSA L{layer}: {lorsa_path}")
+            start_time = time.time()
+            lorsas.append(LowRankSparseAttention.from_pretrained(
+                lorsa_path,
+                device=device
+            ))
+            load_time = time.time() - start_time
+            add_log(f"  [LoRSA Layer {layer}/{n_layers-1}] ✅ 加载完成，耗时: {load_time:.2f}秒")
+        
+        add_log(f"✅ 所有LoRSAs加载完成，共{len(lorsas)}层")
+        
+        # 创建替换模型
+        add_log("🔍 创建ReplacementModel...")
+        replacement_model = ReplacementModel.from_pretrained_model(
+            model, transcoders, lorsas
         )
+        add_log("✅ ReplacementModel创建完成")
+        
+        # 缓存所有加载的模型
+        set_cached_models(model_name, model, transcoders, lorsas, replacement_model)
+        add_log(f"✅ 模型、transcoders和lorsas已缓存: {model_name}")
+        
+        return replacement_model, transcoders, lorsas
     
-    # 加载LORSA
-    lorsas = []
-    for layer in range(n_layers):
-        # 根据模型名称选择不同的路径格式
-        # if 'BT4' in model_name:
-        #     # BT4路径格式: L{layer}
-        #     lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr0.0002_k_aux4096_coefficient0.125_dead_threshold1000000"
-        # else:
-        #     # 默认T82路径格式
-        #     lorsa_path = f"{lorsa_base_path}/lc0_L{layer}_bidirectional_lr8e-05_k_aux4096_coefficient0.0625_dead_threshold1000000"
-        lorsa_path = f"{lorsa_base_path}/L{layer}"
-        logger.info(f"📁 加载LORSA L{layer}: {lorsa_path}")
-        lorsas.append(LowRankSparseAttention.from_pretrained(
-            lorsa_path,
-            device=device
-        ))
-    
-    # 创建替换模型
-    replacement_model = ReplacementModel.from_pretrained_model(
-        model, transcoders, lorsas
-    )
-    
-    return replacement_model, transcoders, lorsas
+    finally:
+        # 释放加载锁
+        with _loading_lock:
+            _is_loading[model_name] = False
+            add_log(f"🔓 释放加载锁: {model_name}")
 
 
 def setup_mongodb(mongo_uri: str, mongo_db: str) -> Optional[MongoClient]:
@@ -389,27 +547,30 @@ def run_circuit_trace(
     prompt: str,
     move_uci: str,
     negative_move_uci: Optional[str] = None,  # 新增negative_move_uci参数
-    model_name: str = "lc0/T82-768x15x24h",
+    model_name: str = "lc0/BT4-1024x15x32h",
     device: str = "cuda",
-    tc_base_path: str = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/tc",
-    lorsa_base_path: str = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/lorsa",
+    tc_base_path: str = BT4_TC_BASE_PATH,
+    lorsa_base_path: str = BT4_LORSA_BASE_PATH,
     n_layers: int = 15,
     side: str = "both",
     max_n_logits: int = 1,
     desired_logit_prob: float = 0.95,
-    max_feature_nodes: int = 1024,
+    max_feature_nodes: int = 4096,
     batch_size: int = 1,
     order_mode: str = "positive",
-    mongo_uri: str = "mongodb://10.246.85.243:27017",
+    mongo_uri: str = "mongodb://10.245.40.143:27017",
     mongo_db: str = "mechinterp",
-    sae_series: str = "lc0-circuit-tracing",
+    sae_series: str = "BT4-exp128",
     act_times_max: Optional[int] = None,
     encoder_demean: bool = False,
     save_activation_info: bool = False,
-    node_threshold: float = 0.9,
-    edge_threshold: float = 0.69,
+    node_threshold: float = 0.73,
+    edge_threshold: float = 0.57,
     log_level: str = "INFO",
-    hooked_model: Optional[HookedTransformer] = None  # 新增参数
+    hooked_model: Optional[HookedTransformer] = None,  # 新增参数
+    cached_transcoders: Optional[Dict[int, SparseAutoEncoder]] = None,  # 新增：缓存的transcoders
+    cached_lorsas: Optional[List[LowRankSparseAttention]] = None,  # 新增：缓存的lorsas
+    cached_replacement_model: Optional[ReplacementModel] = None  # 新增：缓存的replacement_model
 ) -> Dict[str, Any]:
     """运行circuit trace并返回graph数据"""
     logger = setup_logging(log_level)
@@ -427,16 +588,22 @@ def run_circuit_trace(
             logger.error(f"❌ 移动 {move_uci} 在fen {prompt} 下不合法！")
             raise Exception(f"不合法的UCI移动: {move_uci} 不在fen {prompt}的合法走法中。\n合法走法列表: {legal_uci_moves}")
 
-        # 加载模型
-        print("加载模型和transcoders...")
-        print(f'{lorsa_base_path = }')
-        print(f'{tc_base_path = }')
-        
-        logger.info("加载模型和transcoders...")
-        model, transcoders, lorsas = load_model_and_transcoders(
-            model_name, device, tc_base_path, 
-            lorsa_base_path, n_layers, hooked_model  # 传递hooked_model
-        )
+        # 加载模型（如果已有缓存则使用缓存）
+        if cached_replacement_model is not None and cached_transcoders is not None and cached_lorsas is not None:
+            logger.info("使用缓存的模型、transcoders和lorsas...")
+            model = cached_replacement_model
+            transcoders = cached_transcoders
+            lorsas = cached_lorsas
+        else:
+            print("加载模型和transcoders...")
+            print(f'{lorsa_base_path = }')
+            print(f'{tc_base_path = }')
+            
+            logger.info("加载模型和transcoders...")
+            model, transcoders, lorsas = load_model_and_transcoders(
+                model_name, device, tc_base_path, 
+                lorsa_base_path, n_layers, hooked_model  # 传递hooked_model
+            )
         
         # 设置MongoDB
         mongo_client = setup_mongodb(mongo_uri, mongo_db)
@@ -520,7 +687,7 @@ def main():
     parser = argparse.ArgumentParser(description="Fast tracing test for chess SAE attribution")
     
     # 模型参数
-    parser.add_argument("--model_name", type=str, default="lc0/T82-768x15x24h",
+    parser.add_argument("--model_name", type=str, default="lc0/BT4-1024x15x32h",
                        help="模型名称")
     parser.add_argument("--device", type=str, default="cuda",
                        help="设备 (cuda/cpu)")
@@ -529,13 +696,13 @@ def main():
     
     # 路径参数
     parser.add_argument("--tc_base_path", type=str, 
-                       default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/tc",
+                       default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N/result_BT4/tc/k_128_e_128",
                        help="TC模型基础路径")
     parser.add_argument("--lorsa_base_path", type=str,
-                       default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/result/lorsa",
+                       default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N/result_BT4/lorsa/k_128_e_128",
                        help="LORSA模型基础路径")
     parser.add_argument("--output_path", type=str,
-                       default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/graphs/fast_tracing",
+                       default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N/graphs/fast_tracing",
                        help="输出路径")
     
     # 分析参数
@@ -558,11 +725,11 @@ def main():
                        help="排序模式")
     
     # MongoDB参数
-    parser.add_argument("--mongo_uri", type=str, default="mongodb://10.246.85.243:27017",
+    parser.add_argument("--mongo_uri", type=str, default="mongodb://10.245.40.143:27017",
                        help="MongoDB URI")
     parser.add_argument("--mongo_db", type=str, default="mechinterp",
                        help="MongoDB数据库名")
-    parser.add_argument("--sae_series", type=str, default="lc0-circuit-tracing",
+    parser.add_argument("--sae_series", type=str, default="BT4",
                        help="SAE系列名")
     parser.add_argument("--act_times_max", type=lambda x: int(x) if x.lower() != "none" else None, default=None, help="最大激活次数 (可选)")
     
@@ -574,9 +741,9 @@ def main():
     parser.add_argument("--log_level", type=str, default="INFO",
                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                        help="日志级别")
-    parser.add_argument("--node_threshold", type=float, default=0.9,
+    parser.add_argument("--node_threshold", type=float, default=0.73,
                        help="节点阈值")
-    parser.add_argument("--edge_threshold", type=float, default=0.69,
+    parser.add_argument("--edge_threshold", type=float, default=0.57,
                        help="边阈值")
     
     args = parser.parse_args()
@@ -650,7 +817,7 @@ def check_dense_features(
     nodes: List[Dict[str, Any]],
     threshold: Optional[int],
     mongo_client: Optional[MongoClient],
-    sae_series: str = "lc0-circuit-tracing",
+    sae_series: str = "BT4-exp128",
     lorsa_analysis_name: Optional[str] = None,
     tc_analysis_name: Optional[str] = None
 ) -> List[str]:
@@ -726,11 +893,12 @@ def check_dense_features(
             )
             
             if feature_data is None:
-                logger.warning(f"❌ 节点 {node_id}: 在MongoDB中未找到特征数据 (sae={sae_name}, idx={feature_idx})")
+                logger.warning(f"❌ 节点 {node_id}: 在MongoDB中未找到特征数据 (sae={sae_name}, sae_series={sae_series}, idx={feature_idx})")
                 not_dense_nodes.append({
                     'node_id': node_id,
                     'reason': 'MongoDB中未找到',
                     'sae_name': sae_name,
+                    'sae_series': sae_series,
                     'feature_idx': feature_idx
                 })
                 continue

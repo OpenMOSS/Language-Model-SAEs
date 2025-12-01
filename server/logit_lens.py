@@ -540,12 +540,9 @@ class IntegratedPolicyLens:
         model_name = self.model.cfg.model_name
         
         if base_dir is None:
-            if 'BT4' in model_name:
-                model_prefix = 'BT4'
-            elif 'T82' in model_name:
-                model_prefix = 'T82'
-            else:
-                raise ValueError(f"未知的模型名称: {model_name}")
+            if 'BT4' not in model_name:
+                raise ValueError(f"仅支持BT4模型，收到: {model_name}")
+            model_prefix = 'BT4'
             
             # 根据hook点类型确定子目录
             if 'attn_out' in hook_point:
@@ -555,7 +552,7 @@ class IntegratedPolicyLens:
             else:
                 raise ValueError(f"未知的hook点类型: {hook_point}")
             
-            base_dir = f"/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/activations/{model_prefix}/{subdir}"
+            base_dir = f"/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N/activations/{model_prefix}/{subdir}"
 
         safe_name = hook_point.replace(".", "_")
         file_path = Path(base_dir) / f"{safe_name}_mean.safetensors"

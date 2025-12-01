@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Loader2, RotateCcw, Play, Square, Move, Undo2, Download } from 'lucide-react';
+import { SaeComboLoader } from '@/components/common/SaeComboLoader';
+import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 
 interface GameState {
   fen: string;
@@ -202,6 +204,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     target_minibatch_size: 8,
     cpuct: 3.0,
     max_depth: 10,
+    // 低Q值探索增强参数（用于发现弃后连杀等隐藏走法）
+    low_q_exploration_enabled: false,
+    low_q_threshold: 0.3,
+    low_q_exploration_bonus: 0.1,
+    low_q_visit_threshold: 5,
   });
   const [lastSearchInfo, setLastSearchInfo] = useState<{
     total_playouts: number;
@@ -499,7 +506,12 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         : `${import.meta.env.VITE_BACKEND_URL}/play_game`;
       
       const requestBody = useSearch 
-        ? { fen, ...searchParams, save_trace: saveMctsTrace }
+        ? { 
+            fen, 
+            ...searchParams, 
+            save_trace: saveMctsTrace,
+            trace_max_edges: saveMctsTrace ? 0 : 1000  // 0 表示保存完整搜索树，不限制边数
+          }
         : { fen };
       
       console.log(`🎯 请求模型移动: ${useSearch ? 'MCTS搜索' : '直接推理'}, playouts=${searchParams.max_playouts}`);
@@ -1033,6 +1045,9 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+      <SaeComboLoader />
+
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">与模型对局</h1>
         <div className="flex items-center gap-4">
@@ -1040,19 +1055,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             <span>黑方回合自动翻转</span>
             <Switch checked={autoFlipWhenBlack} onCheckedChange={setAutoFlipWhenBlack} />
           </div>
-          {/* 加载日志按钮 */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setShowLoadingLogs(!showLoadingLogs);
-              if (!showLoadingLogs) {
-                fetchLoadingLogs();
-              }
-            }}
-          >
-            加载日志 {showLoadingLogs ? '（隐藏）' : '（显示）'}
-          </Button>
         <div className="flex gap-2">
           <Button
             onClick={() => startNewGame()}
@@ -1188,23 +1190,15 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                       </Button>
                     </div>
                   </div>
-                  <div 
+                  <div
                     id="loading-logs-container"
                     className="bg-gray-900 text-green-400 p-4 font-mono text-sm max-h-64 overflow-y-auto"
                   >
                     <div className="space-y-1">
-                      {loadingLogs.length === 0 ? (
-                        <div className="text-gray-500">暂无日志...</div>
-                      ) : (
-                        loadingLogs.map((log, index) => (
-                          <div key={index} className="whitespace-pre-wrap">
-                            {log.message}
-                          </div>
-                        ))
-                      )}
-                      {isLoadingModels && (
-                        <div className="text-yellow-400 animate-pulse">加载中...</div>
-                      )}
+                      {/* 旧的加载日志展示逻辑已被顶部的 SAE 组合加载面板取代，这里仅保留提示文案 */}
+                      <div className="text-gray-500">
+                        日志已迁移到页面顶部的「BT4 SAE 组合选择」面板中，请在那里查看 LoRSA / Transcoder 加载进度。
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1334,6 +1328,88 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                       max={64}
                       className="mt-1"
                     />
+                  </div>
+                  
+                  {/* 低Q值探索增强参数 */}
+                  <div className="border-t pt-3 mt-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <input
+                        type="checkbox"
+                        id="low_q_exploration_enabled"
+                        checked={searchParams.low_q_exploration_enabled}
+                        onChange={(e) => setSearchParams(prev => ({
+                          ...prev,
+                          low_q_exploration_enabled: e.target.checked,
+                        }))}
+                        className="w-4 h-4"
+                      />
+                      <label htmlFor="low_q_exploration_enabled" className="text-sm font-medium">
+                        启用低Q值探索增强（用于发现弃后连杀等隐藏走法）
+                      </label>
+                    </div>
+                    
+                    {searchParams.low_q_exploration_enabled && (
+                      <div className="space-y-3 ml-6 mt-3 bg-blue-50 p-3 rounded">
+                        <p className="text-xs text-gray-600 mb-2">
+                          对Q值低于阈值且访问次数较少的走法给予额外探索奖励，有助于发现模型先验评估不高但实际可能是好走法的情况（如弃后连杀）。
+                        </p>
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-xs font-medium text-gray-700">Q值阈值</label>
+                            <Input
+                              type="number"
+                              step="0.1"
+                              value={searchParams.low_q_threshold}
+                              onChange={(e) => setSearchParams(prev => ({
+                                ...prev,
+                                low_q_threshold: parseFloat(e.target.value) || 0.3,
+                              }))}
+                              min={-1}
+                              max={1}
+                              className="mt-1 text-xs"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              低于此Q值的走法会被增强探索（默认0.3，可为负数）
+                            </p>
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-gray-700">探索奖励</label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={searchParams.low_q_exploration_bonus}
+                              onChange={(e) => setSearchParams(prev => ({
+                                ...prev,
+                                low_q_exploration_bonus: parseFloat(e.target.value) || 0.1,
+                              }))}
+                              min={0}
+                              max={1}
+                              className="mt-1 text-xs"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              奖励的基础值，越大则对低Q值走法的探索越积极（默认0.1）
+                            </p>
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-gray-700">访问次数阈值</label>
+                            <Input
+                              type="number"
+                              value={searchParams.low_q_visit_threshold}
+                              onChange={(e) => setSearchParams(prev => ({
+                                ...prev,
+                                low_q_visit_threshold: parseInt(e.target.value) || 5,
+                              }))}
+                              min={1}
+                              max={50}
+                              className="mt-1 text-xs"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              访问次数低于此值的走法才会获得奖励（默认5）
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   
                   {/* 显示上次搜索信息 */}

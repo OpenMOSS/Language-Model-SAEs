@@ -9,6 +9,7 @@ import { Feature } from "@/types/feature";
 import { FeatureCard } from "@/components/feature/feature-card";
 import { ChessBoard } from "@/components/chess/chess-board";
 import React from "react"; // Added missing import for React
+import { SaeComboLoader } from "@/components/common/SaeComboLoader";
 
 // 定义节点激活数据的类型
 interface NodeActivationData {
@@ -1595,29 +1596,10 @@ export const CircuitVisualization = () => {
     return data;
   }, [linkGraphData, applyDenseNodeColors, applyInactiveNodeColors]);
 
-  // 验证FEN格式
-  const validateFen = useCallback((fen: string): boolean => {
-    if (!fen || !fen.trim()) return false;
-    try {
-      // 使用chess.js验证FEN（如果可用）
-      // 否则使用简单的正则验证
-      const fenPattern = /^[rnbqkpRNBQKP1-8\/]+\s+[wb]\s+[KQkqA-Za-z-]+\s+[a-h][36-]?\s*\d*\s*\d*$/;
-      return fenPattern.test(fen.trim());
-    } catch {
-      return false;
-    }
-  }, []);
-
   // 比较FEN激活差异
   const compareFenActivations = useCallback(async () => {
     if (!originalCircuitJson || !perturbedFen.trim()) {
       alert('请先上传graph文件并输入perturbed FEN');
-      return;
-    }
-
-    // 验证FEN
-    if (!validateFen(perturbedFen)) {
-      alert('无效的FEN格式，请检查输入');
       return;
     }
 
@@ -1672,7 +1654,16 @@ export const CircuitVisualization = () => {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        let errorMessage = `HTTP ${response.status}: ${errorText}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson.detail) {
+            errorMessage = errorJson.detail;
+          }
+        } catch {
+          // 如果无法解析JSON，使用原始错误文本
+        }
+        throw new Error(errorMessage);
       }
 
       const result = await response.json();
@@ -1709,12 +1700,13 @@ export const CircuitVisualization = () => {
 
     } catch (error) {
       console.error('❌ 比较失败:', error);
-      addLog(`❌ 比较失败: ${error}`);
-      alert(`比较失败: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      addLog(`❌ 比较失败: ${errorMessage}`);
+      alert(`比较失败: ${errorMessage}`);
     } finally {
       setIsComparingFens(false);
     }
-  }, [originalCircuitJson, perturbedFen, linkGraphData, validateFen, extractFenFromPrompt]);
+  }, [originalCircuitJson, perturbedFen, linkGraphData, extractFenFromPrompt]);
 
   if (error) {
     return (
@@ -1747,6 +1739,9 @@ export const CircuitVisualization = () => {
   if (!linkGraphData) {
     return (
       <div className="space-y-6">
+        {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+        <SaeComboLoader />
+
         {/* Header */}
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-semibold">Circuit Visualization</h2>
@@ -1816,6 +1811,9 @@ export const CircuitVisualization = () => {
 
   return (
     <div className="space-y-6 w-full max-w-full overflow-hidden">
+      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+      <SaeComboLoader />
+
       {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-2">
