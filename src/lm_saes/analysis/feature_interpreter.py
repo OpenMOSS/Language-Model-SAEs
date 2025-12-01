@@ -15,12 +15,13 @@ import random
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncGenerator, Callable, Generator, Literal, Optional
+from typing import Any, AsyncGenerator, Callable, Literal, Optional
 
 import json_repair
 import numpy as np
 import torch
 from datasets import Dataset
+from jaxtyping import Float
 from pydantic import BaseModel, Field
 
 from lm_saes.backend.language_model import LanguageModel
@@ -234,7 +235,7 @@ class TokenizedSample:
     @staticmethod
     def construct(
         text: str,
-        activations: list[float],
+        activations: Float[torch.Tensor],
         origins: list[dict[str, Any]],
         max_activation: float,
     ) -> "TokenizedSample":
@@ -494,7 +495,7 @@ class FeatureInterpreter:
         )
         return activating_examples, non_activating_examples
 
-    def _generate_explanation_prompt_neuronpedia(self, activating_examples: list[TokenizedSample], top_positive_logits: dict[str, float] | None = None) -> tuple[str, str]:
+    def _generate_explanation_prompt_neuronpedia(self, activating_examples: list[TokenizedSample], top_positive_logits: dict[str, list[dict[str, Any]]] | None = None) -> tuple[str, str]:
         """Generate a prompt for explanation generation with neuronpedia.
 
         Args:
@@ -1066,6 +1067,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         """
         if feature_indices is None:
             sae_record = self.mongo_client.get_sae(sae_name, sae_series)
+            assert sae_record is not None, f"SAE {sae_name} {sae_series} not found"
             feature_indices = list(range(sae_record.cfg.d_sae))
 
         total_features = len(feature_indices)

@@ -2,17 +2,17 @@
 
 import asyncio
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Optional
 
 from datasets import Dataset
 from pydantic_settings import BaseSettings
+from tqdm.asyncio import tqdm
 
 from lm_saes.analysis.feature_interpreter import AutoInterpConfig, FeatureInterpreter
 from lm_saes.config import LanguageModelConfig, MongoDBConfig
 from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset_shard, load_model
-from lm_saes.utils.logging import get_logger, setup_logging
-from tqdm.asyncio import tqdm
+from lm_saes.utils.logging import get_logger
 
 logger = get_logger("runners.autointerp")
 
