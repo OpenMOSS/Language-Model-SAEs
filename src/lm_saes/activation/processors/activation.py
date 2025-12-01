@@ -5,6 +5,7 @@ import torch
 from more_itertools import batched
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.experimental import local_map
 from tqdm import tqdm
 
 from lm_saes.activation.processors.core import BaseActivationProcessor
@@ -253,7 +254,14 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
             tokens = d["tokens"]
 
             if ignore_token_ids is not None:
-                mask = torch.isin(tokens, torch.tensor(ignore_token_ids).to(tokens.device), invert=True)
+                mask: torch.Tensor = (
+                    local_map(
+                        lambda x: torch.isin(x, torch.tensor(ignore_token_ids).to(x.device), invert=True),
+                        out_placements=DimMap({"data": 0}).placements(tokens.device_mesh),
+                    )(tokens)
+                    if isinstance(tokens, DTensor)
+                    else torch.isin(tokens, torch.tensor(ignore_token_ids).to(tokens.device), invert=True)
+                )
             else:
                 mask = d["mask"].bool()
 
