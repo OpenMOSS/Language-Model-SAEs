@@ -17,7 +17,7 @@ from .abstract_sae import AbstractSparseAutoEncoder
 from .config import SAEConfig
 
 try:
-    from sae_lens import (JumpReLUSAE, TopKSAE, StandardSAE)
+    from sae_lens import JumpReLUSAE, StandardSAE, TopKSAE
     sae_lens_warning = False
 except ImportError:
     sae_lens_warning = True
