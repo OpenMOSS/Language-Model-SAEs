@@ -1,5 +1,7 @@
+import asyncio
 import json
 from functools import lru_cache
+from typing import Any
 
 from datasets import Dataset
 from pydantic_settings import BaseSettings
@@ -116,8 +118,8 @@ def get_feature(graph_path):
     return result_list
 
 
-def auto_interp4graph(settings: AutoInterp4GraphSettings):
-    """Automatically interpret features using LLMs.
+async def auto_interp4graph(settings: AutoInterp4GraphSettings):
+    """Automatically interpret features using LLMs with async API calls.
 
     Args:
         settings: Configuration
@@ -140,40 +142,61 @@ def auto_interp4graph(settings: AutoInterp4GraphSettings):
         dataset = load_dataset_shard(dataset_cfg, shard_idx, n_shards)
         return dataset
 
-    for todo_feature in feature_list:
-        sae_name = todo_feature["sae_name"]
-        feature_idx = todo_feature["feature_idx"]
+    # Create semaphore to limit concurrent API requests
+    semaphore = asyncio.Semaphore(settings.max_workers)
 
-        feature = mongo_client.get_feature(sae_name, settings.sae_series, feature_idx)
-        if feature is not None:
-            if feature.interpretation is None or settings.cover:
-                result = {
-                    "feature_index": feature.index,
-                    "sae_name": sae_name,
-                    "sae_series": settings.sae_series,
-                } | interpreter.interpret_single_feature(feature, language_model, get_dataset, settings.analysis_name)
+    async def process_feature(todo_feature: dict[str, Any]) -> None:
+        """Process a single feature with semaphore control."""
+        async with semaphore:
+            sae_name = todo_feature["sae_name"]
+            feature_idx = todo_feature["feature_idx"]
 
-                interpretation = {
-                    "text": result["explanation"],
-                    "validation": [
-                        {"method": eval_result["method"], "passed": eval_result["passed"], "detail": eval_result}
-                        for eval_result in result["evaluations"]
-                    ],
-                    "complexity": result["complexity"],
-                    "consistency": result["consistency"],
-                    "detail": result["explanation_details"],
-                    "passed": result["passed"],
-                    "time": result["time"],
-                }
-                logger.info(
-                    f"Updating feature {result['feature_index']} in {sae_name}\nTime: {result['time']}\nExplanation: {interpretation['text']}"
-                )
-                mongo_client.update_feature(
-                    sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
-                )
-            elif feature is not None:
-                logger.info(
-                    f"Already interp feature {feature_idx} in {sae_name}\nExplanation: {feature.interpretation}"
-                )
-            else:
-                logger.info(f"Feature {feature_idx} in {sae_name} does not exist. Please check it.")
+            feature = mongo_client.get_feature(sae_name, settings.sae_series, feature_idx)
+            if feature is not None:
+                if feature.interpretation is None or settings.cover:
+                    result = await interpreter.interpret_single_feature(
+                        feature, language_model, get_dataset, settings.analysis_name
+                    )
+                    result = {
+                        "feature_index": feature.index,
+                        "sae_name": sae_name,
+                        "sae_series": settings.sae_series,
+                    } | result
+
+                    interpretation = {
+                        "text": result["explanation"],
+                        "validation": [
+                            {"method": eval_result["method"], "passed": eval_result["passed"], "detail": eval_result}
+                            for eval_result in result["evaluations"]
+                        ],
+                        "complexity": result["complexity"],
+                        "consistency": result["consistency"],
+                        "detail": result["explanation_details"],
+                        "passed": result["passed"],
+                        "time": result["time"],
+                    }
+                    logger.info(
+                        f"Updating feature {result['feature_index']} in {sae_name}\nTime: {result['time']}\nExplanation: {interpretation['text']}"
+                    )
+                    mongo_client.update_feature(
+                        sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
+                    )
+                elif feature is not None:
+                    logger.info(
+                        f"Already interp feature {feature_idx} in {sae_name}\nExplanation: {feature.interpretation}"
+                    )
+                else:
+                    logger.info(f"Feature {feature_idx} in {sae_name} does not exist. Please check it.")
+
+    # Process all features concurrently
+    tasks = [process_feature(todo_feature) for todo_feature in feature_list]
+    await asyncio.gather(*tasks)
+
+
+def auto_interp4graph_sync(settings: AutoInterp4GraphSettings):
+    """Synchronous wrapper for auto_interp4graph.
+
+    Args:
+        settings: Configuration
+    """
+    asyncio.run(auto_interp4graph(settings))
