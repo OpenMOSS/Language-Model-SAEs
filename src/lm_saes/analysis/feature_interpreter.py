@@ -10,11 +10,12 @@ It includes:
    - Fuzzing: Having LLMs identify correctly marked activating tokens
 """
 
+import asyncio
 import random
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Generator, Literal, Optional
+from typing import Any, AsyncGenerator, Callable, Generator, Literal, Optional
 
 import json_repair
 import numpy as np
@@ -250,15 +251,15 @@ class TokenizedSample:
         segments = []
         for i in range(len(sorted_positions) - 1):
             start, end = sorted_positions[i], sorted_positions[i + 1]
-            # try:
-            segment_activation = max(
-                act
-                for origin, act in zip(origins, activations)
-                if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
-            )
-            # except Exception:
-            #     logger.error(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n")
-            #     continue
+            try:
+                segment_activation = max(
+                    act
+                    for origin, act in zip(origins, activations)
+                    if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
+                )
+            except Exception:
+                logger.error(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n")
+                continue
             segments.append(Segment(text[start:end], segment_activation))
 
         return TokenizedSample(segments, max_activation)
@@ -309,34 +310,31 @@ def generate_activating_examples(
             feature_acts_,
         )
     ):
+        # try:
+        dataset = datasets(dataset_name, shard_idx, n_shards)
+        # context_idx = context_idx.astype(int)
+        data = dataset[int(context_idx)]
+
+        # Process the sample using model's trace method
         try:
-            dataset = datasets(dataset_name, shard_idx, n_shards)
-            # context_idx = context_idx.astype(int)
-            data = dataset[int(context_idx)]
-
-            # Process the sample using model's trace method
             origins = model.trace({k: [v] for k, v in data.items()})[0]
-
-            max_act_pos = torch.argmax(torch.tensor(feature_acts)).item()
-            # print(f'{max_act_pos=}')
-            # print(f'{feature_acts=}')
-
-            left_end = max(0, max_act_pos - max_length // 2)
-            right_end = min(len(origins), max_act_pos + max_length // 2)
-
-            # Create TokenizedExample using the trace information
-            sample = TokenizedSample.construct(
-                text=data["text"],
-                activations=feature_acts[left_end:right_end],
-                origins=origins[left_end:right_end],
-                max_activation=analysis.max_feature_acts,
-            )
-            # print('run activating')
-            samples.append(sample)
-
         except Exception as e:
             logger.error(f"{error_prefix} {e}")
             continue
+
+        max_act_pos = torch.argmax(feature_acts).item()
+
+        left_end = max(0, max_act_pos - max_length // 2)
+        right_end = min(len(origins), max_act_pos + max_length // 2)
+
+        # Create TokenizedExample using the trace information
+        sample = TokenizedSample.construct(
+            text=data["text"],
+            activations=feature_acts[left_end:right_end],
+            origins=origins[left_end:right_end],
+            max_activation=analysis.max_feature_acts,
+        )
+        samples.append(sample)
 
         if len(samples) >= n:
             break
@@ -377,9 +375,7 @@ def generate_non_activating_examples(
     if sampling_idx == -1:
         return samples
     sampling = analysis.samplings[sampling_idx]
-    # print(f'{len(analysis.samplings)=}')
-    # for sample in analysis.samplings:
-    #     print(sample.name)
+
     assert sampling.name == "non_activating", f"{error_prefix} Sampling {sampling.name} is not non_activating"
     for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts_indices, feature_acts_values) in enumerate(
         zip(
@@ -440,26 +436,27 @@ class FeatureInterpreter:
         """
         self.cfg = cfg
         self.mongo_client = mongo_client
-        self.logits = None
         # Set up LLM client for explanation generation
         self._setup_llm_clients()
 
     def _setup_llm_clients(self):
-        """Set up OpenAI client for explanation generation and evaluation."""
+        """Set up async OpenAI client for explanation generation and evaluation."""
         try:
             import httpx
-            import openai
-            from openai import DefaultHttpxClient
+            from openai import AsyncOpenAI
 
-            self.explainer_client = openai.Client(
+            # Set up async HTTP client with proxy if needed
+            http_client = None
+            if self.cfg.openai_proxy:
+                http_client = httpx.AsyncClient(
+                    proxy=self.cfg.openai_proxy,
+                    transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
+                )
+
+            self.explainer_client = AsyncOpenAI(
                 base_url=self.cfg.openai_base_url,
                 api_key=self.cfg.openai_api_key,
-                http_client=DefaultHttpxClient(
-                    proxy=self.cfg.openai_proxy,
-                    transport=httpx.HTTPTransport(local_address="0.0.0.0"),
-                )
-                if self.cfg.openai_proxy
-                else None,
+                http_client=http_client,
             )
         except ImportError:
             raise ImportError("OpenAI package not installed. Please install it with `uv add openai`.")
@@ -495,10 +492,9 @@ class FeatureInterpreter:
             analysis=analysis,
             max_length=max_length,
         )
-        # self.logits = None
         return activating_examples, non_activating_examples
 
-    def _generate_explanation_prompt_neuronpedia(self, activating_examples: list[TokenizedSample]) -> tuple[str, str]:
+    def _generate_explanation_prompt_neuronpedia(self, activating_examples: list[TokenizedSample], top_positive_logits: dict[str, float] | None = None) -> tuple[str, str]:
         """Generate a prompt for explanation generation with neuronpedia.
 
         Args:
@@ -507,7 +503,7 @@ class FeatureInterpreter:
         Returns:
             Prompt string for the LLM
         """
-        system_prompt = """You are explaining the behavior of a neuron in a neural network. Your response should be a very concise explanation (1-6 words) that captures what the neuron detects or predicts by finding patterns in lists.\n\n
+        system_prompt = """You are explaining the behavior of a neuron in a neural network. Your final response should be a very concise explanation (1-6 words) that captures what the neuron detects or predicts by finding patterns in lists.\n\n
 To determine the explanation, you are given four lists:\n\n
 - MAX_ACTIVATING_TOKENS, which are the top activating tokens in the top activating texts.\n
 - TOKENS_AFTER_MAX_ACTIVATING_TOKEN, which are the tokens immediately after the max activating token.\n
@@ -519,33 +515,33 @@ Method 2: Look at TOKENS_AFTER_MAX_ACTIVATING_TOKEN. Try to find a specific patt
 Method 3: Look at TOP_POSITIVE_LOGITS for similarities and describe it very briefly (1-3 words).\n
 Method 4: Look at TOP_ACTIVATING_TEXTS and make a best guess by describing the broad theme or context, ignoring the max activating tokens.\n\n
 Rules:\n
-- Keep your explanation extremely concise (1-6 words, mostly 1-3 words).\n
+- You can think carefully in your internal thinking process, but keep your returned explanation extremely concise (1-6 words, mostly 1-3 words).\n
 - Do not add unnecessary phrases like "words related to", "concepts related to", or "variations of the word".\n
 - Do not mention "tokens" or "patterns" in your explanation.\n
 - The explanation should be specific. For example, "unique words" is not a specific enough pattern, nor is "foreign words".\n
 - Remember to use the \'say [the pattern]\' when using Method 2 above (pattern found in TOKENS_AFTER_MAX_ACTIVATING_TOKEN).\n
 - If you absolutely cannot make any guesses, return the first token in MAX_ACTIVATING_TOKENS.\n\n
-Respond by going through each method number until you find one that helps you find an explanation for what this neuron is detecting or predicting. If a method does not help you find an explanation, briefly explain why it does not, then go on to the next method. Finally, end your response with the method number you used, the reason for your explanation, and then the explanation.\n
+Think carefully by going through each method number until you find one that helps you find an explanation for what this neuron is detecting or predicting. If a method does not help you find an explanation, briefly explain why it does not, then go on to the next method. Finally, end your thinking process with the method number you used, the reason for your explanation, and return the explanation in a brief manner.\n
 
-Exsample:
+Example:
 {
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nwatching\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nShe\nenjoy\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nwalking\nWA\nwaiting\nwas\nwe\nWHAM\nwish\nwin\nwake\nwhisper\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nShe was taking a nap when her phone started ringing.\nI enjoy watching movies with my family.\n\n</TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
-Method 1 fails: MAX_ACTIVATING_TOKENS (She, enjoy) are not similar tokens.\nMethod 2 succeeds: All TOKENS_AFTER_MAX_ACTIVATING_TOKEN have a pattern in common: they all start with "w".\nExplanation: say "w" words
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nwatching\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nShe\nenjoy\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nwalking\nWA\nwaiting\nwas\nwe\nWHAM\nwish\nwin\nwake\nwhisper\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nShe was taking a nap when her phone started ringing.\nI enjoy watching movies with my family.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
+Method 1 fails: MAX_ACTIVATING_TOKENS (She, enjoy) are not similar tokens.\nMethod 2 succeeds: All TOKENS_AFTER_MAX_ACTIVATING_TOKEN have a pattern in common: they all start with "w".\nExplanation: say "w" words</THINKING>\n\nsay "w" words
 }
 
 {
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwarm\nthe\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nand\nAnd\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nelephant\nguitar\nmountain\nbicycle\nocean\ntelescope\ncandle\numbrella\ntornado\nbutterfly\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nIt was a beautiful day outside with clear skies and warm sunshine.\nAnd the garden has roses and tulips and daisies and sunflowers blooming together.\n\n</TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
-Method 1 succeeds: All MAX_ACTIVATING_TOKENS are the word "and".\nExplanation: and
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwarm\nthe\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nand\nAnd\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nelephant\nguitar\nmountain\nbicycle\nocean\ntelescope\ncandle\numbrella\ntornado\nbutterfly\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nIt was a beautiful day outside with clear skies and warm sunshine.\nAnd the garden has roses and tulips and daisies and sunflowers blooming together.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
+Method 1 succeeds: All MAX_ACTIVATING_TOKENS are the word "and".\nExplanation: and</THINKING>\n\nand
 }
 
 {
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nare\n,\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nbanana\nblueberries\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\napple\norange\npineapple\nwatermelon\nkiwi\npeach\npear\ngrape\ncherry\nplum\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nThe apple and banana are delicious foods that provide essential vitamins and nutrients.\nI enjoy eating fresh strawberries, blueberries, and mangoes during the summer months.\n\n</TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
-Method 1 succeeds: All MAX_ACTIVATING_TOKENS (banana, blueberries) are fruits.\nExplanation: fruits\n
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nare\n,\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nbanana\nblueberries\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\napple\norange\npineapple\nwatermelon\nkiwi\npeach\npear\ngrape\ncherry\nplum\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nThe apple and banana are delicious foods that provide essential vitamins and nutrients.\nI enjoy eating fresh strawberries, blueberries, and mangoes during the summer months.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
+Method 1 succeeds: All MAX_ACTIVATING_TOKENS (banana, blueberries) are fruits.\nExplanation: fruits\n</THINKING>\n\nfruits
 }
 
 {
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nplaces\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nwar\nsome\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n4\nfour\nfourth\n4th\nIV\nFour\nFOUR\n~4\n4.0\nquartet\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nthe civil war was a major topic in history class .\n seasons of the year are winter , spring , summer , and fall or autumn in some places .\n\n</TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
-Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nMethod 2 fails: TOKENS_AFTER_MAX_ACTIVATING_TOKEN (was, places) are not all similar tokens and don't have a text pattern in common.\nMethod 3 succeeds: All TOP_POSITIVE_LOGITS are the number 4.\nExplanation: 4\n
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nplaces\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nwar\nsome\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n4\nfour\nfourth\n4th\nIV\nFour\nFOUR\n~4\n4.0\nquartet\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nthe civil war was a major topic in history class .\n seasons of the year are winter , spring , summer , and fall or autumn in some places .\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
+Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nMethod 2 fails: TOKENS_AFTER_MAX_ACTIVATING_TOKEN (was, places) are not all similar tokens and don't have a text pattern in common.\nMethod 3 succeeds: All TOP_POSITIVE_LOGITS are the number 4.\nExplanation: 4</THINKING>\n\n4
 }
 """
         examples_to_show = activating_examples[: self.cfg.n_activating_examples]
@@ -559,8 +555,8 @@ Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nM
             max_activating_tokens = max_activating_tokens + example.display_max(self.cfg.activation_threshold)
             plain_activating_tokens = plain_activating_tokens + example.display_plain() + "\n"
 
-        if self.logits is not None:
-            for text in self.logits["top_positive"]:
+        if top_positive_logits is not None:
+            for text in top_positive_logits:
                 logit_activating_tokens = logit_activating_tokens + text["token"] + "\n"
         else:
             logit_activating_tokens = next_activating_tokens
@@ -648,25 +644,23 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
 
         return system_prompt, user_prompt
 
-    def generate_explanation(self, activating_examples: list[TokenizedSample]) -> dict[str, Any]:
+    async def generate_explanation(self, activating_examples: list[TokenizedSample], top_positive_logits: dict[str, float] | None = None) -> dict[str, Any]:
         """Generate an explanation for a feature based on activating examples.
 
         Args:
             activating_examples: List of examples where the feature activates
-
+            top_positive_logits: Top positive logits for the feature
         Returns:
             Dictionary with explanation and metadata
         """
         if self.cfg.explainer_type is ExplainerType.OPENAI:
             system_prompt, user_prompt = self._generate_explanation_prompt(activating_examples)
         else:
-            system_prompt, user_prompt = self._generate_explanation_prompt_neuronpedia(activating_examples)
+            system_prompt, user_prompt = self._generate_explanation_prompt_neuronpedia(activating_examples, top_positive_logits)
         start_time = time.time()
-        # print(f'{system_prompt=}')
-        print(f"{user_prompt=}")
 
         if self.cfg.explainer_type is ExplainerType.OPENAI:
-            response = self.explainer_client.chat.completions.create(
+            response = await self.explainer_client.chat.completions.create(
                 model=self.cfg.openai_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -680,28 +674,22 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
             )
             explanation = json_repair.loads(response.choices[0].message.content)
         else:
-            response = self.explainer_client.chat.completions.create(
+            response = await self.explainer_client.chat.completions.create(
                 model=self.cfg.openai_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
+                stream=False,
             )
 
             # assert response.choices[0].message.content is not None, (
             #     f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
             # )
             # explanation = json_repair.loads(response.choices[0].message.content)
-            def extract_explanation(s: str):
-                keyword = "Explanation: "
-                start_index = s.find(keyword)
-                if start_index == -1:
-                    return None
-                else:
-                    return s[start_index + len(keyword) :]
 
             explanation = {
-                "final_explanation": extract_explanation(response.choices[0].message.content),
+                "final_explanation": response.choices[0].message.content,
                 "activation_consistency": 5,
                 "complexity": 5,
             }
@@ -736,7 +724,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
 
         return system_prompt, user_prompt
 
-    def evaluate_explanation_detection(
+    async def evaluate_explanation_detection(
         self,
         explanation: dict[str, Any],
         activating_examples: list[TokenizedSample],
@@ -789,7 +777,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
 
         # Get response from OpenAI
         start_time = time.time()
-        response = self.explainer_client.chat.completions.create(
+        response = await self.explainer_client.chat.completions.create(
             model=self.cfg.openai_model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -892,7 +880,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         n_to_highlight = max(3, n_highlighted)  # Highlight at least 3 tokens
         return highlight_random_tokens(sample, n_to_highlight)
 
-    def evaluate_explanation_fuzzing(
+    async def evaluate_explanation_fuzzing(
         self, explanation: dict[str, Any], activating_examples: list[TokenizedSample]
     ) -> dict[str, Any]:
         """Evaluate an explanation using the fuzzing method.
@@ -950,7 +938,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
 
         # Get response from OpenAI
         start_time = time.time()
-        response = self.explainer_client.chat.completions.create(
+        response = await self.explainer_client.chat.completions.create(
             model=self.cfg.openai_model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -962,8 +950,6 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             f"No fuzzing response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
         )
         fuzzing_response: dict[str, Any] = json_repair.loads(response.choices[0].message.content)  # type: ignore
-        # print(f"Fuzzing for feature :\n{fuzzing_response}\n\n")
-        # Parse response (CORRECT/INCORRECT for each example)
         predictions: list[bool] = fuzzing_response["evaluation_results"]
         response_time = time.time() - start_time
         # Pad predictions if needed
@@ -1003,60 +989,31 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             "time": response_time,
         }
 
-    def interpret_single_feature(
+    async def interpret_single_feature(
         self,
-        feature: FeatureRecord,
-        model: LanguageModel,
-        datasets: Callable[[str, int, int], Dataset],
-        analysis_name: str = "default",
+        activating_examples: list[TokenizedSample],
+        non_activating_examples: list[TokenizedSample],
+        top_positive_logits: dict[str, float] | None = None,
     ) -> dict[str, Any]:
-        """Generate and evaluate explanations for multiple features.
-
-        Args:
-            feature: Feature to interpret
-            model: Language model to use for generating activations
-            datasets: Dataset to sample non-activating examples from
-            analysis_name: Name of the analysis to use
-
-        Returns:
-            Dictionary mapping feature indices to their interpretation results
-        """
-
         start_time = time.time()
         response_time = 0
 
-        # if self.cfg.explainer_type is ExplainerType.NEURONPEDIA:
-        self.logits = feature.logits
-
-        activating_examples, non_activating_examples = self.get_feature_examples(
-            feature=feature,
-            model=model,
-            datasets=datasets,
-            analysis_name=analysis_name,
-            max_length=self.cfg.max_length,
-        )
-
-        # print(f'{len(activating_examples)=} {len(non_activating_examples)=}')
-
         # Generate explanation for the feature
-        explanation_result = self.generate_explanation(activating_examples)
+        explanation_result = await self.generate_explanation(activating_examples, top_positive_logits)
         explanation: dict[str, Any] = explanation_result["response"]
         response_time += explanation_result["time"]
-        # print(f"Explanation for feature {feature.index}:\n{explanation}\n\n")
         # Evaluate explanation
         evaluation_results = []
 
         if ScorerType.DETECTION in self.cfg.scorer_type:
-            detection_result = self.evaluate_explanation_detection(
+            detection_result = await self.evaluate_explanation_detection(
                 explanation, activating_examples, non_activating_examples
             )
-            # print(f"Detection result for feature {feature.index}:\n{detection_result}\n\n")
             evaluation_results.append(detection_result)
-            # print(detection_result)
             response_time += detection_result["time"]
 
         if ScorerType.FUZZING in self.cfg.scorer_type:
-            fuzzing_result = self.evaluate_explanation_fuzzing(explanation, activating_examples)
+            fuzzing_result = await self.evaluate_explanation_fuzzing(explanation, activating_examples)
             # print(f"Fuzzing result for feature {feature.index}:\n{fuzzing_result}\n\n")
             evaluation_results.append(fuzzing_result)
             response_time += fuzzing_result["time"]
@@ -1064,7 +1021,6 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         total_time = time.time() - start_time
 
         return {
-            "analysis_name": analysis_name,
             "explanation": explanation["final_explanation"],
             "complexity": explanation["complexity"],
             "consistency": explanation["activation_consistency"],
@@ -1082,34 +1038,114 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             },
         }
 
-    def interpret_features(
+    async def interpret_features(
         self,
         sae_name: str,
         sae_series: str,
-        feature_indices: list[int],
         model: LanguageModel,
         datasets: Callable[[str, int, int], Dataset],
         analysis_name: str = "default",
-    ) -> Generator[dict[str, Any], None, None]:
-        """Generate and evaluate explanations for multiple features.
+        feature_indices: Optional[list[int]] = None,
+        max_concurrent: int = 10,
+        progress_callback: Optional[Callable[[int, int, int], None]] = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Generate and evaluate explanations for multiple features with async concurrency.
 
         Args:
             sae_name: Name of the SAE
             sae_series: Series of the SAE
-            feature_indices: Indices of the features to interpret
             model: Language model to use for generating activations
-            datasets: Dataset to sample non-activating examples from
+            datasets: Callable to fetch datasets
             analysis_name: Name of the analysis to use
+            feature_indices: Optional list of specific feature indices to interpret. If None, interprets all features.
+            max_concurrent: Maximum number of concurrent API requests
+            progress_callback: Optional callback function(completed, total, current_feature_index) for progress updates
 
-        Returns:
-            Dictionary mapping feature indices to their interpretation results
+        Yields:
+            Dictionary with interpretation results for each feature
         """
+        if feature_indices is None:
+            sae_record = self.mongo_client.get_sae(sae_name, sae_series)
+            feature_indices = list(range(sae_record.cfg.d_sae))
 
-        for feature_index in feature_indices:
-            feature = self.mongo_client.get_feature(sae_name, sae_series, feature_index)
-            if feature is not None and feature.interpretation is None:
-                yield {
-                    "feature_index": feature.index,
-                    "sae_name": sae_name,
-                    "sae_series": sae_series,
-                } | self.interpret_single_feature(feature, model, datasets, analysis_name)
+        total_features = len(feature_indices)
+        completed = 0
+        skipped = 0
+        failed = 0
+
+        logger.info(f"Starting interpretation of {total_features} features (max concurrent: {max_concurrent})")
+
+        # Create semaphore to limit concurrent API requests
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def interpret_with_semaphore(feature_index: int) -> tuple[Optional[dict[str, Any]], int, bool, bool]:
+            """Interpret a single feature with semaphore control.
+            
+            Returns:
+                Tuple of (result, feature_index, was_skipped, was_error)
+            """
+            async with semaphore:
+                feature = self.mongo_client.get_feature(sae_name, sae_series, feature_index)
+        
+                if feature is not None and feature.interpretation is None:
+                    activating_examples, non_activating_examples = self.get_feature_examples(
+                        feature=feature,
+                        model=model,
+                        datasets=datasets,
+                        analysis_name=analysis_name,
+                        max_length=self.cfg.max_length,
+                    )
+                    result = await self.interpret_single_feature(
+                        activating_examples=activating_examples,
+                        non_activating_examples=non_activating_examples,
+                        top_positive_logits=feature.logits,
+                    )
+                    return (
+                        {
+                            "feature_index": feature.index,
+                            "sae_name": sae_name,
+                            "sae_series": sae_series,
+                        } | result,
+                        feature_index,
+                        False,
+                        False,
+                    )
+                else:
+                    # Feature already has interpretation or doesn't exist
+                    return None, feature_index, True, False
+
+        # Process features concurrently
+        tasks = [interpret_with_semaphore(feature_index) for feature_index in feature_indices]
+        
+        # Yield results as they complete
+        for coro in asyncio.as_completed(tasks):
+            result, feature_index, was_skipped, was_error = await coro
+            
+            if was_skipped:
+                skipped += 1
+                logger.debug(f"Feature {feature_index} skipped (already has interpretation)")
+            elif was_error:
+                failed += 1
+            elif result is not None:
+                completed += 1
+                logger.info(
+                    f"Completed feature {feature_index} ({completed}/{total_features} completed, "
+                    f"{skipped} skipped, {failed} failed)"
+                )
+                yield result
+            else:
+                skipped += 1
+
+            # Calculate total processed (completed + skipped + failed)
+            total_processed = completed + skipped + failed
+            
+            # Call progress callback if provided
+            if progress_callback is not None:
+                try:
+                    progress_callback(total_processed, total_features, feature_index)
+                except Exception as e:
+                    logger.warning(f"Progress callback error: {e}")
+        
+        logger.info(
+            f"Interpretation complete: {completed} completed, {skipped} skipped, {failed} failed out of {total_features} total"
+        )
