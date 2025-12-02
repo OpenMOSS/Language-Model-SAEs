@@ -22,6 +22,7 @@ from lm_saes.metrics import (
     L2NormErrorMetric,
     LossMetric,
     MeanFeatureActMetric,
+    Metric,
     ModelSpecificMetric,
 )
 from lm_saes.sae import SparseAutoEncoder
@@ -43,7 +44,7 @@ class Evaluator:
         wandb_logger: Run | None = None,
         model: HookedTransformer | None = None,
     ) -> dict[str, float]:
-        metrics = [
+        metrics: list[Metric] = [
             FrequencyMetric(sae),
             LossMetric(sae),
             MeanFeatureActMetric(sae),
