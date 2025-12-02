@@ -25,6 +25,8 @@ dependencies = [
     "argparse>=1.4.0",
     "pyyaml>=6.0.2",
     "tomlkit>=0.13.2",
+    "torch>=2.9.0", 
+    "torchvision>=0.22.1",
     "pydantic-settings>=2.7.1",
     "typing-extensions>=4.13.2",
     "more-itertools>=10.7.0",
@@ -105,20 +107,11 @@ flash-attn = [
 ]
 
 [project.optional-dependencies]
-# NPU variant of PyTorch (for Huawei Ascend hardware)
-default = ["torch==2.8.0", "torchvision>=0.22.1"]
-
 npu = [
-    "torch==2.6.0",
-    "torchvision>=0.20.1",
-    "torch-npu==2.6.0rc1",
+    "torch-npu==2.9.0rc1",
 ]
 
 triton = ["triton"]
-
-[tool.uv.sources]
-torch = [{ index = "torch-cpu", extra = "npu" }]
-torchvision = [{ index = "torch-cpu", extra = "npu" }]
 
 [[tool.uv.index]]
 name = "torch-cpu"
@@ -187,7 +180,6 @@ reportPrivateImportUsage = false
 [tool.uv]
 package = true
 no-build-isolation-package = ["flash-attn"]
-conflicts = [[{ extra = "default" }, { extra = "npu" }], [{ extra = "triton" }, { extra = "npu" }],]
 
 [[tool.uv.dependency-metadata]]
 name = "flash-attn"
