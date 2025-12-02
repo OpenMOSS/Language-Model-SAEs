@@ -1131,7 +1131,6 @@ class Search:
             self.stop_ = True
     
     def run_blocking(self) -> None: 
-        """阻塞运行搜索直到完成"""
         while not self.stop_:
             self.execute_one_iteration()
             if self.total_playouts_ >= self.params_.max_playouts: # search stopper 2

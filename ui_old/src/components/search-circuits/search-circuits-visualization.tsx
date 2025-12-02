@@ -10,6 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { Zap, ChevronDown, ChevronRight, Maximize2, Download, Trash2, Play, Square, Settings, Loader2, AlertCircle } from "lucide-react";
 import { EdgeCircuitTracePanel, EdgeCircuitTraceResult } from "./edge-circuit-trace-panel";
 import { ModelLoadingStatus, useModelLoadingStatus } from "@/components/shared/model-loading-status";
+import { SaeComboLoader } from "@/components/common/SaeComboLoader";
 
 // 搜索追踪数据类型定义
 interface SearchNode {
@@ -735,16 +736,21 @@ export const SearchCircuitsVisualization = () => {
   // 错误状态
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <h3 className="text-lg font-semibold text-red-600 mb-2">加载失败</h3>
-          <p className="text-gray-600">{error}</p>
-          <button
-            onClick={() => setError(null)}
-            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-          >
-            重试
-          </button>
+      <div className="space-y-6">
+        {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder），共享后端缓存与加载日志 */}
+        <SaeComboLoader />
+
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <h3 className="text-lg font-semibold text-red-600 mb-2">加载失败</h3>
+            <p className="text-gray-600">{error}</p>
+            <button
+              onClick={() => setError(null)}
+              className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            >
+              重试
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -753,10 +759,15 @@ export const SearchCircuitsVisualization = () => {
   // 加载状态
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">正在加载搜索追踪数据...</p>
+      <div className="space-y-6">
+        {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder），共享后端缓存与加载日志 */}
+        <SaeComboLoader />
+
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-gray-600">正在加载搜索追踪数据...</p>
+          </div>
         </div>
       </div>
     );
@@ -766,6 +777,9 @@ export const SearchCircuitsVisualization = () => {
   if (!searchData) {
     return (
       <div className="space-y-6">
+        {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder），共享后端缓存与加载日志 */}
+        <SaeComboLoader />
+
         <div
           className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
             isDragOver
@@ -815,6 +829,9 @@ export const SearchCircuitsVisualization = () => {
   // 主视图
   return (
     <div className="space-y-6">
+      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder），共享后端缓存与加载日志 */}
+      <SaeComboLoader />
+
       {/* 头部信息 */}
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-4">

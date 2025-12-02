@@ -317,12 +317,15 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   const { board, isWhiteToMove } = parsedBoard;
 
-  // 黑方行棋时翻转棋盘显示（受开关控制）
+  // 保持原有 flip 语义：黑方行棋时整体上下翻转棋盘（受开关控制）
   const flip = autoFlipWhenBlack ? !isWhiteToMove : false;
 
-  // 根据 flip 决定是否翻转棋盘
+  // 显示棋盘：
+  // 1. 先按 flip 在垂直方向（上下）翻转整盘棋
+  // 2. 然后始终对每一行做左右镜像，这样棋盘和激活索引在左右方向上对齐
   const displayBoard = useMemo(() => {
-    return flip ? [...board].reverse() : board;
+    const baseBoard = flip ? [...board].reverse() : board;
+    return baseBoard.map((row) => [...row].reverse());
   }, [board, flip]);
 
   // 解析移动信息
@@ -330,55 +333,62 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     return move ? parseMove(move) : null;
   }, [move]);
 
-  // 根据显示位置计算实际的squareIndex（考虑翻转）
+  // 根据显示位置计算实际的squareIndex（考虑上下 flip + 左右镜像）
   const getActualSquareIndex = (displayRow: number, col: number): number => {
+    // 先还原垂直方向：displayRow → 实际行
     const actualRow = flip ? (7 - displayRow) : displayRow;
-    return getSquareIndex(actualRow, col);
+    // 每一行都做了左右镜像：显示列 0 对应实际列 7，显示列 7 对应实际列 0
+    const actualCol = 7 - col;
+    return getSquareIndex(actualRow, actualCol);
   };
 
   // 激活值索引映射 - 激活值数组按照标准棋盘坐标：a1=0, b1=1, ..., h8=63
   const getActivationIndex = (displayRow: number, col: number): number => {
-    // 将显示行转换回原始棋盘行（根据棋盘是否翻转）
+    // 先还原到“原始棋盘行”（在是否 flip 之后）
     const originalRow = flip ? (7 - displayRow) : displayRow;
-    // 根据flip_activation参数决定是否翻转激活值索引
+    // 左右镜像：显示列 0 → 实际列 7
+    const actualCol = 7 - col;
+
+    // 根据 flip_activation 参数决定是否在行方向上再做一次翻转
     if (flip_activation) {
       // 翻转激活值索引：FEN第0行对应第1行，FEN第7行对应第8行
-      return originalRow * 8 + col;
+      return originalRow * 8 + actualCol;
     } else {
       // 不翻转激活值索引：FEN第0行对应第8行，FEN第7行对应第1行
       const standardRow = 7 - originalRow;
-      return standardRow * 8 + col;
+      return standardRow * 8 + actualCol;
     }
   };
 
-  // 新增：根据棋盘朝向(flip)计算显示位置（用于棋盘元素/箭头对齐棋盘格子）
+  // 新增：根据实际索引计算显示位置（考虑上下 flip + 左右镜像）
   const getBoardDisplayPosition = (actualSquareIndex: number) => {
     const actualRow = Math.floor(actualSquareIndex / 8);
-    const col = actualSquareIndex % 8;
+    const actualCol = actualSquareIndex % 8;
+    // 垂直方向：实际行 → 显示行
     const displayRow = flip ? (7 - actualRow) : actualRow;
-    return { row: displayRow, col };
+    // 水平方向：左右镜像
+    const displayCol = 7 - actualCol;
+    return { row: displayRow, col: displayCol };
   };
 
   // 根据显示行索引获取棋盘行号（1-8）
   const getDisplayRowNumber = (displayRowIndex: number) => {
     if (flip) {
-      // 翻转时：显示行0对应第1行，显示行7对应第8行
+      // 黑方视角：显示行0对应第1行，显示行7对应第8行
       return displayRowIndex + 1;
-    } else {
-      // 正常时：显示行0对应第8行，显示行7对应第1行
-      return 8 - displayRowIndex;
     }
+    // 白方视角：显示行0对应第8行，显示行7对应第1行
+    return 8 - displayRowIndex;
   };
 
   // 根据显示列索引获取棋盘列字母（a-h）
   const getDisplayColLetter = (colIndex: number) => {
     if (flip) {
-      // 翻转时：列0对应h，列7对应a
+      // 黑方视角：从左到右 h..a
       return String.fromCharCode(104 - colIndex); // 104 = 'h'
-    } else {
-      // 正常时：列0对应a，列7对应h
-      return String.fromCharCode(97 + colIndex); // 97 = 'a'
     }
+    // 白方视角：从左到右 a..h
+    return String.fromCharCode(97 + colIndex); // 97 = 'a'
   };
 
   // 统一的 从索引到标准坐标的命名（不依赖行棋方）
@@ -487,11 +497,10 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
           {displayBoard.map((row, displayRowIndex) =>
             row.map((_, colIndex) => {
               const piece = row[colIndex];
-              // 计算格子颜色：当翻转时，需要反转格子颜色
+              // 计算格子颜色：
               // 在标准棋盘上，a1是黑格（dark），h1是白格（light）
-              // 翻转后，所有黑格应该变成白格，所有白格应该变成黑格
               const normalIsLight = (displayRowIndex + colIndex) % 2 === 0;
-              const isLight = flip ? !normalIsLight : normalIsLight;
+              const isLight = normalIsLight;
               const squareIndex = getActualSquareIndex(displayRowIndex, colIndex);
               const activationIndex = getActivationIndex(displayRowIndex, colIndex);
               const activation = activations?.[activationIndex] || 0;
@@ -616,13 +625,13 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                   {/* 坐标标记 */}
                   {showCoordinates && (
                     <>
-                      {/* 行号：显示在左侧（colIndex === 0）或右侧（翻转时） */}
+                      {/* 行号：白方视角在左侧，黑方视角在右侧 */}
                       {(!flip && colIndex === 0) || (flip && colIndex === 7) ? (
                         <div className={`absolute ${flip ? 'right-1' : 'left-1'} top-1 text-xs font-bold opacity-60`}>
                           {getDisplayRowNumber(displayRowIndex)}
                         </div>
                       ) : null}
-                      {/* 列字母：显示在底部（displayRowIndex === 7）或顶部（翻转时） */}
+                      {/* 列字母：白方视角在底部一行，黑方视角在顶部一行 */}
                       {(!flip && displayRowIndex === 7) || (flip && displayRowIndex === 0) ? (
                         <div className={`absolute ${flip ? 'top-1' : 'bottom-1'} ${flip ? 'left-1' : 'right-1'} text-xs font-bold opacity-60`}>
                           {getDisplayColLetter(colIndex)}

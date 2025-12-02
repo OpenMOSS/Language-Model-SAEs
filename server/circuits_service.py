@@ -63,32 +63,50 @@ _loading_lock = threading.Lock()
 _is_loading: Dict[str, bool] = {}  # model_name -> is_loading
 
 
-def get_cached_models(model_name: str) -> Tuple[Optional[HookedTransformer], Optional[Dict[int, SparseAutoEncoder]], Optional[List[LowRankSparseAttention]], Optional[ReplacementModel]]:
-    """获取缓存的模型、transcoders和lorsas"""
+def get_cached_models(cache_key: str) -> Tuple[Optional[HookedTransformer], Optional[Dict[int, SparseAutoEncoder]], Optional[List[LowRankSparseAttention]], Optional[ReplacementModel]]:
+    """
+    获取缓存的模型、transcoders和lorsas
+    
+    Args:
+        cache_key: 缓存键，格式为 "model_name" 或 "model_name::combo_id"
+    """
     global _global_hooked_models, _global_transcoders_cache, _global_lorsas_cache, _global_replacement_models_cache
     
+    # HookedTransformer 模型不依赖 combo_id，只使用 model_name
+    model_name = cache_key.split("::")[0] if "::" in cache_key else cache_key
     hooked_model = _global_hooked_models.get(model_name)
-    transcoders = _global_transcoders_cache.get(model_name)
-    lorsas = _global_lorsas_cache.get(model_name)
-    replacement_model = _global_replacement_models_cache.get(model_name)
+    
+    # transcoders, lorsas, replacement_model 使用完整的 cache_key（包含 combo_id）
+    transcoders = _global_transcoders_cache.get(cache_key)
+    lorsas = _global_lorsas_cache.get(cache_key)
+    replacement_model = _global_replacement_models_cache.get(cache_key)
     
     return hooked_model, transcoders, lorsas, replacement_model
 
 
 def set_cached_models(
-    model_name: str,
+    cache_key: str,
     hooked_model: HookedTransformer,
     transcoders: Dict[int, SparseAutoEncoder],
     lorsas: List[LowRankSparseAttention],
     replacement_model: ReplacementModel
 ):
-    """设置缓存的模型、transcoders和lorsas"""
+    """
+    设置缓存的模型、transcoders和lorsas
+    
+    Args:
+        cache_key: 缓存键，格式为 "model_name" 或 "model_name::combo_id"
+    """
     global _global_hooked_models, _global_transcoders_cache, _global_lorsas_cache, _global_replacement_models_cache
     
+    # HookedTransformer 模型不依赖 combo_id，只使用 model_name
+    model_name = cache_key.split("::")[0] if "::" in cache_key else cache_key
     _global_hooked_models[model_name] = hooked_model
-    _global_transcoders_cache[model_name] = transcoders
-    _global_lorsas_cache[model_name] = lorsas
-    _global_replacement_models_cache[model_name] = replacement_model
+    
+    # transcoders, lorsas, replacement_model 使用完整的 cache_key（包含 combo_id）
+    _global_transcoders_cache[cache_key] = transcoders
+    _global_lorsas_cache[cache_key] = lorsas
+    _global_replacement_models_cache[cache_key] = replacement_model
 
 
 def load_model_and_transcoders(
@@ -98,26 +116,41 @@ def load_model_and_transcoders(
     lorsa_base_path: str,
     n_layers: int = 15,
     hooked_model: Optional[HookedTransformer] = None,  # 新增参数
-    loading_logs: Optional[list] = None  # 新增参数：用于收集加载日志
+    loading_logs: Optional[list] = None,  # 新增参数：用于收集加载日志
+    cancel_flag: Optional[dict] = None,  # 新增参数：用于检查是否应该中断加载 {"combo_key": should_cancel}
+    cache_key: Optional[str] = None  # 新增参数：缓存键，格式为 "model_name::combo_id"，如果不提供则使用 model_name
 ) -> Tuple[ReplacementModel, Dict[int, SparseAutoEncoder], List[LowRankSparseAttention]]:
-    """加载模型和transcoders（带全局缓存和加载锁，防止重复加载）"""
+    """
+    加载模型和transcoders（带全局缓存和加载锁，防止重复加载）
+    
+    Args:
+        cache_key: 缓存键，格式为 "model_name::combo_id"。如果不提供，则使用 model_name（向后兼容）
+    """
     global _global_hooked_models, _global_transcoders_cache, _global_lorsas_cache, _global_replacement_models_cache
     global _loading_lock, _is_loading
     
     logger = logging.getLogger(__name__)
+    
+    # 确定缓存键
+    if cache_key is None:
+        cache_key = model_name
     
     # 辅助函数：添加日志（同时打印到控制台和收集到日志列表）
     def add_log(message: str):
         print(message)
         logger.info(message)
         if loading_logs is not None:
-            loading_logs.append({
+            log_entry = {
                 "timestamp": time.time(),
                 "message": message
-            })
+            }
+            loading_logs.append(log_entry)
+            # 调试：打印日志列表的长度
+            if len(loading_logs) % 5 == 0:  # 每5条日志打印一次
+                print(f"📝 当前日志列表长度: {len(loading_logs)}")
     
     # 先检查全局缓存（无锁快速检查）
-    cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(model_name)
+    cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(cache_key)
     
     # 检查缓存是否完整（有transcoders和lorsas，且层数正确）
     if cached_transcoders is not None and cached_lorsas is not None:
@@ -130,48 +163,48 @@ def load_model_and_transcoders(
     # 获取加载锁，防止并发加载
     with _loading_lock:
         # 再次检查缓存（双重检查锁定模式）
-        cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(model_name)
+        cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(cache_key)
         if cached_transcoders is not None and cached_lorsas is not None:
             if len(cached_transcoders) == n_layers and len(cached_lorsas) == n_layers:
                 if cached_replacement_model is not None:
-                    add_log(f"✅ 使用缓存的模型、transcoders和lorsas（双重检查）: {model_name}")
+                    add_log(f"✅ 使用缓存的模型、transcoders和lorsas（双重检查）: {cache_key}")
                     return cached_replacement_model, cached_transcoders, cached_lorsas
         
-        # 检查是否正在加载
-        if _is_loading.get(model_name, False):
-            add_log(f"⏳ 模型 {model_name} 正在被其他线程加载，等待...")
+        # 检查是否正在加载（使用 cache_key 作为加载状态键）
+        if _is_loading.get(cache_key, False):
+            add_log(f"⏳ 模型 {cache_key} 正在被其他线程加载，等待...")
             # 释放锁并等待
     
     # 如果正在加载，等待加载完成
     wait_count = 0
     max_wait = 600  # 最多等待600秒
-    while _is_loading.get(model_name, False) and wait_count < max_wait:
+    while _is_loading.get(cache_key, False) and wait_count < max_wait:
         time.sleep(1)
         wait_count += 1
         if wait_count % 10 == 0:
             add_log(f"⏳ 等待模型加载中... ({wait_count}秒)")
     
     # 再次检查缓存
-    cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(model_name)
+    cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(cache_key)
     if cached_transcoders is not None and cached_lorsas is not None:
         if len(cached_transcoders) == n_layers and len(cached_lorsas) == n_layers:
             if cached_replacement_model is not None:
-                add_log(f"✅ 使用缓存的模型、transcoders和lorsas（等待后）: {model_name}")
+                add_log(f"✅ 使用缓存的模型、transcoders和lorsas（等待后）: {cache_key}")
                 return cached_replacement_model, cached_transcoders, cached_lorsas
     
     # 获取加载锁并标记为正在加载
     with _loading_lock:
         # 最终检查
-        cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(model_name)
+        cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(cache_key)
         if cached_transcoders is not None and cached_lorsas is not None:
             if len(cached_transcoders) == n_layers and len(cached_lorsas) == n_layers:
                 if cached_replacement_model is not None:
-                    add_log(f"✅ 使用缓存的模型、transcoders和lorsas（最终检查）: {model_name}")
+                    add_log(f"✅ 使用缓存的模型、transcoders和lorsas（最终检查）: {cache_key}")
                     return cached_replacement_model, cached_transcoders, cached_lorsas
         
-        # 标记为正在加载
-        _is_loading[model_name] = True
-        add_log(f"🔒 获取加载锁，开始加载模型: {model_name}")
+        # 标记为正在加载（使用 cache_key）
+        _is_loading[cache_key] = True
+        add_log(f"🔒 获取加载锁，开始加载模型: {cache_key}")
     
     try:
         # 如果缓存不完整或不存在，则加载
@@ -194,14 +227,25 @@ def load_model_and_transcoders(
             _global_hooked_models[model_name] = model
             add_log("✅ HookedTransformer模型加载完成")
         
-        # 初始化或获取已有的transcoders缓存
-        if model_name not in _global_transcoders_cache:
-            _global_transcoders_cache[model_name] = {}
-        transcoders = _global_transcoders_cache[model_name]
+        # 初始化或获取已有的transcoders缓存（使用 cache_key）
+        if cache_key not in _global_transcoders_cache:
+            _global_transcoders_cache[cache_key] = {}
+        transcoders = _global_transcoders_cache[cache_key]
         
         # 加载transcoders（逐层检查，避免重复加载）
         add_log(f"🔍 开始加载Transcoders，共{n_layers}层...")
         for layer in range(n_layers):
+            # 检查是否应该中断加载
+            if cancel_flag is not None:
+                # 如果有检查函数，调用它；否则直接检查 should_cancel
+                if "check_fn" in cancel_flag and callable(cancel_flag["check_fn"]):
+                    should_cancel = cancel_flag["check_fn"]()
+                else:
+                    should_cancel = cancel_flag.get("should_cancel", False)
+                if should_cancel:
+                    add_log(f"🛑 加载被中断（TC Layer {layer}/{n_layers-1}）")
+                    raise InterruptedError("加载被用户中断")
+            
             # 检查该层是否已经加载
             if layer in transcoders:
                 add_log(f"  [TC Layer {layer}/{n_layers-1}] ✅ 已缓存，跳过加载")
@@ -221,14 +265,25 @@ def load_model_and_transcoders(
         
         add_log(f"✅ 所有Transcoders加载完成，共{len(transcoders)}层")
         
-        # 初始化或获取已有的lorsas缓存
-        if model_name not in _global_lorsas_cache:
-            _global_lorsas_cache[model_name] = []
-        lorsas = _global_lorsas_cache[model_name]
+        # 初始化或获取已有的lorsas缓存（使用 cache_key）
+        if cache_key not in _global_lorsas_cache:
+            _global_lorsas_cache[cache_key] = []
+        lorsas = _global_lorsas_cache[cache_key]
         
         # 加载LORSA（逐层检查，避免重复加载）
         add_log(f"🔍 开始加载LoRSAs，共{n_layers}层...")
         for layer in range(n_layers):
+            # 检查是否应该中断加载
+            if cancel_flag is not None:
+                # 如果有检查函数，调用它；否则直接检查 should_cancel
+                if "check_fn" in cancel_flag and callable(cancel_flag["check_fn"]):
+                    should_cancel = cancel_flag["check_fn"]()
+                else:
+                    should_cancel = cancel_flag.get("should_cancel", False)
+                if should_cancel:
+                    add_log(f"🛑 加载被中断（LoRSA Layer {layer}/{n_layers-1}）")
+                    raise InterruptedError("加载被用户中断")
+            
             # 检查该层是否已经加载
             if layer < len(lorsas):
                 add_log(f"  [LoRSA Layer {layer}/{n_layers-1}] ✅ 已缓存，跳过加载")
@@ -254,17 +309,49 @@ def load_model_and_transcoders(
         )
         add_log("✅ ReplacementModel创建完成")
         
-        # 缓存所有加载的模型
-        set_cached_models(model_name, model, transcoders, lorsas, replacement_model)
-        add_log(f"✅ 模型、transcoders和lorsas已缓存: {model_name}")
+        # 缓存所有加载的模型（使用 cache_key）
+        set_cached_models(cache_key, model, transcoders, lorsas, replacement_model)
+        add_log(f"✅ 模型、transcoders和lorsas已缓存: {cache_key}")
         
         return replacement_model, transcoders, lorsas
+    except Exception as e:
+        # 任何异常（包括 OOM）时，清理当前 cache_key 下已加载的 SAE，避免占用显存
+        add_log(f"❌ 加载过程中出错，将清空缓存 {cache_key}: {e}")
+        try:
+            # 将已加载的 SAE 挪到 CPU 再删除引用
+            if cache_key in _global_transcoders_cache:
+                for sae in _global_transcoders_cache[cache_key].values():
+                    try:
+                        if hasattr(sae, "to"):
+                            sae.to("cpu")
+                    except Exception:
+                        continue
+                del _global_transcoders_cache[cache_key]
+            if cache_key in _global_lorsas_cache:
+                for sae in _global_lorsas_cache[cache_key]:
+                    try:
+                        if hasattr(sae, "to"):
+                            sae.to("cpu")
+                    except Exception:
+                        continue
+                del _global_lorsas_cache[cache_key]
+            if cache_key in _global_replacement_models_cache:
+                del _global_replacement_models_cache[cache_key]
+        finally:
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    add_log("🧹 已在异常后调用 torch.cuda.empty_cache() 释放显存")
+            except Exception:
+                pass
+        # 将异常继续抛出，让上层处理 HTTP 错误码等
+        raise
     
     finally:
-        # 释放加载锁
+        # 释放加载锁（使用 cache_key）
         with _loading_lock:
-            _is_loading[model_name] = False
-            add_log(f"🔓 释放加载锁: {model_name}")
+            _is_loading[cache_key] = False
+            add_log(f"🔓 释放加载锁: {cache_key}")
 
 
 def setup_mongodb(mongo_uri: str, mongo_db: str) -> Optional[MongoClient]:
@@ -570,7 +657,8 @@ def run_circuit_trace(
     hooked_model: Optional[HookedTransformer] = None,  # 新增参数
     cached_transcoders: Optional[Dict[int, SparseAutoEncoder]] = None,  # 新增：缓存的transcoders
     cached_lorsas: Optional[List[LowRankSparseAttention]] = None,  # 新增：缓存的lorsas
-    cached_replacement_model: Optional[ReplacementModel] = None  # 新增：缓存的replacement_model
+    cached_replacement_model: Optional[ReplacementModel] = None,  # 新增：缓存的replacement_model
+    sae_combo_id: Optional[str] = None  # 新增：SAE组合ID，用于生成正确的analysis_name模板
 ) -> Dict[str, Any]:
     """运行circuit trace并返回graph数据"""
     logger = setup_logging(log_level)
@@ -642,10 +730,50 @@ def run_circuit_trace(
             sae_series=sae_series
         )
         
-        # 创建JSON数据
+        # 根据sae_combo_id获取对应的analysis_name（从BT4_SAE_COMBOS配置中读取）
+        # 如果sae_combo_id为None，尝试从tc_base_path和lorsa_base_path推断
+        try:
+            try:
+                from .constants import get_bt4_sae_combo, BT4_SAE_COMBOS
+            except ImportError:
+                from constants import get_bt4_sae_combo, BT4_SAE_COMBOS
+            
+            # 如果sae_combo_id为None，尝试从路径推断
+            if sae_combo_id is None:
+                # 从路径中提取组合ID（例如：/path/to/tc/k_30_e_16 -> k_30_e_16）
+                import os
+                tc_path_parts = os.path.normpath(tc_base_path).split(os.sep)
+                lorsa_path_parts = os.path.normpath(lorsa_base_path).split(os.sep)
+                
+                # 查找路径中的组合ID（通常在路径的最后几部分）
+                inferred_combo_id = None
+                for combo_id in BT4_SAE_COMBOS.keys():
+                    if combo_id in tc_path_parts or combo_id in lorsa_path_parts:
+                        inferred_combo_id = combo_id
+                        break
+                
+                if inferred_combo_id:
+                    sae_combo_id = inferred_combo_id
+                    logger.info(f"从路径推断SAE组合ID: {sae_combo_id}")
+                else:
+                    logger.warning(f"无法从路径推断SAE组合ID，使用默认组合")
+            
+            combo_cfg = get_bt4_sae_combo(sae_combo_id)
+            # 直接从配置中读取analysis_name字段（如果存在），否则回退到模板字段
+            lorsa_analysis_name = combo_cfg.get("lorsa_analysis_name", combo_cfg.get("lorsa_sae_name_template", ""))
+            tc_analysis_name = combo_cfg.get("tc_analysis_name", combo_cfg.get("tc_sae_name_template", ""))
+            logger.info(f"使用SAE组合 {combo_cfg['id']} 的analysis_name: LoRSA={lorsa_analysis_name}, TC={tc_analysis_name}")
+        except Exception as e:
+            logger.warning(f"无法获取SAE组合配置，使用空字符串: {e}")
+            import traceback
+            traceback.print_exc()
+            lorsa_analysis_name = ""
+            tc_analysis_name = ""
+        
+        # 创建JSON数据，传递analysis_name（从BT4_SAE_COMBOS配置中读取）
         graph_data = create_graph_json_data(
             graph, slug, node_threshold, edge_threshold, 
-            sae_series, "", ""
+            sae_series, lorsa_analysis_name, tc_analysis_name
         )
         
         logger.info("Circuit trace分析完成!")
@@ -829,8 +957,8 @@ def check_dense_features(
         threshold: 激活次数阈值，None表示无限大（所有节点都不是dense）
         mongo_client: MongoDB客户端
         sae_series: SAE系列名称
-        lorsa_analysis_name: LoRSA分析名称模板（如 "BT4_lorsa_L{}A"）
-        tc_analysis_name: TC分析名称模板（如 "BT4_tc_L{}M"）
+        lorsa_analysis_name: LoRSA分析名称模板（如 ""）
+        tc_analysis_name: TC分析名称模板（如 "BT4_tc_L{}M"）BT4_lorsa_L{}A
     
     Returns:
         dense节点的node_id列表

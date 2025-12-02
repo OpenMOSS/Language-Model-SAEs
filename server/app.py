@@ -20,9 +20,21 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 # 全局 BT4 常量（模型与 SAE 路径），兼容脚本运行和 package 导入
 try:
-    from .constants import BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH
+    from .constants import (
+        BT4_TC_BASE_PATH,
+        BT4_LORSA_BASE_PATH,
+        BT4_SAE_COMBOS,
+        BT4_DEFAULT_SAE_COMBO,
+        get_bt4_sae_combo,
+    )
 except ImportError:
-    from constants import BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH
+    from constants import (
+        BT4_TC_BASE_PATH,
+        BT4_LORSA_BASE_PATH,
+        BT4_SAE_COMBOS,
+        BT4_DEFAULT_SAE_COMBO,
+        get_bt4_sae_combo,
+    )
 try:
     from torchvision import transforms
 except ImportError:
@@ -152,23 +164,37 @@ def get_sae(name: str) -> SparseAutoEncoder:
     return sae
 
 
-# 添加全局模型缓存（先初始化本地缓存，circuits_service导入后会更新）
-_hooked_models = {}
+###############################################################################
+# 全局模型 / SAE 组合缓存与加载状态
+###############################################################################
+
+# 当前使用的 BT4 SAE 组合 ID（例如 "k_64_e_32"），默认使用常量中的默认组合
+CURRENT_BT4_SAE_COMBO_ID: str = BT4_DEFAULT_SAE_COMBO
+
+
+def _make_combo_cache_key(model_name: str, combo_id: str | None) -> str:
+    """为缓存/日志生成键：同一模型不同组合使用不同 key。"""
+
+    if not combo_id:
+        return model_name
+    return f"{model_name}::{combo_id}"
+
+
+# 添加全局模型缓存（先初始化本地缓存，circuits_service 导入后会更新）
+_hooked_models: Dict[str, Any] = {}
 _transcoders_cache: Dict[str, Dict[int, SparseAutoEncoder]] = {}
-_lorsas_cache: Dict[str, Any] = {}  # List[LowRankSparseAttention]，使用Any避免导入问题
-_replacement_models_cache: Dict[str, Any] = {}  # ReplacementModel缓存
+_lorsas_cache: Dict[str, Any] = {}  # combo_key -> List[LowRankSparseAttention]
+_replacement_models_cache: Dict[str, Any] = {}  # combo_key -> ReplacementModel
 
 # 添加全局加载日志缓存（用于前端显示）
-_loading_logs: Dict[str, list] = {}  # model_name -> [log1, log2, ...]
+_loading_logs: Dict[str, list] = {}  # combo_key -> [log1, log2, ...]
 
 # 添加全局加载状态跟踪（用于避免重复加载）
 import threading
-_loading_locks: Dict[str, threading.Lock] = {}  # model_name -> Lock
-_loading_status: Dict[str, dict] = {}  # model_name -> {"is_loading": bool, "loading_task": asyncio.Task or None}
 
-# 添加全局加载状态跟踪（用于避免重复加载）
-_loading_status: Dict[str, dict] = {}  # model_name -> {"is_loading": bool, "progress": {"tc": int, "lorsa": int}, "lock": threading.Lock}
-import threading
+_loading_locks: Dict[str, threading.Lock] = {}  # combo_key -> Lock
+_loading_status: Dict[str, dict] = {}  # combo_key -> {"is_loading": bool}
+_cancel_loading: Dict[str, bool] = {}  # combo_key -> should_cancel (用于中断加载)
 
 def get_hooked_model(model_name: str = 'lc0/BT4-1024x15x32h'):
     """获取或加载HookedTransformer模型 - 仅支持BT4（带全局缓存）"""
@@ -177,7 +203,7 @@ def get_hooked_model(model_name: str = 'lc0/BT4-1024x15x32h'):
     # 强制使用BT4模型
     model_name = 'lc0/BT4-1024x15x32h'
     
-    # 先检查circuits_service的缓存
+    # 先检查circuits_service的缓存（只对模型本身，不区分 SAE 组合）
     if CIRCUITS_SERVICE_AVAILABLE and get_cached_models is not None:
         cached_hooked_model, _, _, _ = get_cached_models(model_name)
         if cached_hooked_model is not None:
@@ -204,17 +230,24 @@ def get_hooked_model(model_name: str = 'lc0/BT4-1024x15x32h'):
     
     return _hooked_models[model_name]
 
-def get_cached_transcoders_and_lorsas(model_name: str) -> Tuple[Optional[Dict[int, SparseAutoEncoder]], Optional[List[LowRankSparseAttention]]]:
-    """获取缓存的transcoders和lorsas（优先使用circuits_service的共享缓存）"""
+def get_cached_transcoders_and_lorsas(
+    model_name: str,
+    sae_combo_id: str | None = None,
+) -> Tuple[Optional[Dict[int, SparseAutoEncoder]], Optional[List[LowRankSparseAttention]]]:
+    """获取缓存的 transcoders 和 lorsas（优先使用 circuits_service 的共享缓存）"""
+
+    combo_id = sae_combo_id or CURRENT_BT4_SAE_COMBO_ID
+    cache_key = _make_combo_cache_key(model_name, combo_id)
+
     # 先检查circuits_service的缓存
     if CIRCUITS_SERVICE_AVAILABLE and get_cached_models is not None:
-        _, cached_transcoders, cached_lorsas, _ = get_cached_models(model_name)
+        _, cached_transcoders, cached_lorsas, _ = get_cached_models(cache_key)
         if cached_transcoders is not None and cached_lorsas is not None:
             return cached_transcoders, cached_lorsas
-    
+
     # 检查本地缓存
     global _transcoders_cache, _lorsas_cache
-    return _transcoders_cache.get(model_name), _lorsas_cache.get(model_name)
+    return _transcoders_cache.get(cache_key), _lorsas_cache.get(cache_key)
 
 def get_available_models():
     """获取可用的模型列表 - 仅支持BT4"""
@@ -283,6 +316,36 @@ async def oom_error_handler(request, exc):
 @app.get("/dictionaries")
 def list_dictionaries():
     return client.list_saes(sae_series=sae_series, has_analyses=True)
+
+
+###############################################################################
+# BT4 SAE 组合相关 API
+###############################################################################
+
+
+@app.get("/sae/combos")
+def list_sae_combos() -> Dict[str, Any]:
+    """
+    返回可选的 BT4 SAE 组合列表及默认组合。
+
+    这些组合来自 `exp/38mongoanalyses/组合.txt`，前端只能在这些组合中选择。
+    """
+
+    combos = [
+        {
+            "id": cfg["id"],
+            "label": cfg["label"],
+            "tc_base_path": cfg["tc_base_path"],
+            "lorsa_base_path": cfg["lorsa_base_path"],
+        }
+        for cfg in BT4_SAE_COMBOS.values()
+    ]
+
+    return {
+        "default_id": BT4_DEFAULT_SAE_COMBO,
+        "current_id": CURRENT_BT4_SAE_COMBO_ID,
+        "combos": combos,
+    }
 
 
 @app.get("/images/{dataset_name}")
@@ -804,10 +867,23 @@ def sync_clerps_to_interpretations(request: dict):
         if not isinstance(nodes, list):
             raise HTTPException(status_code=400, detail="nodes must be a list")
         
+        # 根据analysis_name找到对应的组合配置
+        combo_cfg = None
+        if lorsa_analysis_name or tc_analysis_name:
+            for combo_id, cfg in BT4_SAE_COMBOS.items():
+                if (lorsa_analysis_name and cfg.get("lorsa_analysis_name") == lorsa_analysis_name) or \
+                   (tc_analysis_name and cfg.get("tc_analysis_name") == tc_analysis_name):
+                    combo_cfg = cfg
+                    break
+        
         print(f"🔄 开始同步clerps到interpretations:")
         print(f"   - 节点数量: {len(nodes)}")
-        print(f"   - LoRSA模板: {lorsa_analysis_name}")
-        print(f"   - TC模板: {tc_analysis_name}")
+        print(f"   - LoRSA analysis_name: {lorsa_analysis_name}")
+        print(f"   - TC analysis_name: {tc_analysis_name}")
+        if combo_cfg:
+            print(f"   - 找到组合配置: {combo_cfg.get('id')}")
+            print(f"   - LoRSA模板: {combo_cfg.get('lorsa_sae_name_template')}")
+            print(f"   - TC模板: {combo_cfg.get('tc_sae_name_template')}")
         
         synced_count = 0
         skipped_count = 0
@@ -826,15 +902,23 @@ def sync_clerps_to_interpretations(request: dict):
                 skipped_count += 1
                 continue
             
-            # 构建SAE名称
+            # 构建SAE名称（使用模板）
             sae_name = None
             if 'lorsa' in feature_type:
-                if lorsa_analysis_name:
+                if combo_cfg and combo_cfg.get('lorsa_sae_name_template'):
+                    # 使用模板，替换{layer}为实际层号
+                    sae_name = combo_cfg['lorsa_sae_name_template'].format(layer=layer)
+                elif lorsa_analysis_name:
+                    # 向后兼容：如果没有找到组合配置，尝试使用旧的方式
                     sae_name = lorsa_analysis_name.replace("{}", str(layer))
                 else:
                     sae_name = f"BT4_lorsa_L{layer}A"
             elif 'transcoder' in feature_type or 'cross layer transcoder' in feature_type:
-                if tc_analysis_name:
+                if combo_cfg and combo_cfg.get('tc_sae_name_template'):
+                    # 使用模板，替换{layer}为实际层号
+                    sae_name = combo_cfg['tc_sae_name_template'].format(layer=layer)
+                elif tc_analysis_name:
+                    # 向后兼容：如果没有找到组合配置，尝试使用旧的方式
                     sae_name = tc_analysis_name.replace("{}", str(layer))
                 else:
                     sae_name = f"BT4_tc_L{layer}M"
@@ -914,10 +998,23 @@ def sync_interpretations_to_clerps(request: dict):
         if not isinstance(nodes, list):
             raise HTTPException(status_code=400, detail="nodes must be a list")
         
+        # 根据analysis_name找到对应的组合配置
+        combo_cfg = None
+        if lorsa_analysis_name or tc_analysis_name:
+            for combo_id, cfg in BT4_SAE_COMBOS.items():
+                if (lorsa_analysis_name and cfg.get("lorsa_analysis_name") == lorsa_analysis_name) or \
+                   (tc_analysis_name and cfg.get("tc_analysis_name") == tc_analysis_name):
+                    combo_cfg = cfg
+                    break
+        
         print(f"🔄 开始从interpretations同步到clerps:")
         print(f"   - 节点数量: {len(nodes)}")
-        print(f"   - LoRSA模板: {lorsa_analysis_name}")
-        print(f"   - TC模板: {tc_analysis_name}")
+        print(f"   - LoRSA analysis_name: {lorsa_analysis_name}")
+        print(f"   - TC analysis_name: {tc_analysis_name}")
+        if combo_cfg:
+            print(f"   - 找到组合配置: {combo_cfg.get('id')}")
+            print(f"   - LoRSA模板: {combo_cfg.get('lorsa_sae_name_template')}")
+            print(f"   - TC模板: {combo_cfg.get('tc_sae_name_template')}")
         
         updated_nodes = []
         found_count = 0
@@ -929,15 +1026,23 @@ def sync_interpretations_to_clerps(request: dict):
             layer = node.get('layer')
             feature_type = node.get('feature_type', '').lower()
             
-            # 构建SAE名称
+            # 构建SAE名称（使用模板）
             sae_name = None
             if 'lorsa' in feature_type:
-                if lorsa_analysis_name:
+                if combo_cfg and combo_cfg.get('lorsa_sae_name_template'):
+                    # 使用模板，替换{layer}为实际层号
+                    sae_name = combo_cfg['lorsa_sae_name_template'].format(layer=layer)
+                elif lorsa_analysis_name:
+                    # 向后兼容：如果没有找到组合配置，尝试使用旧的方式
                     sae_name = lorsa_analysis_name.replace("{}", str(layer))
                 else:
                     sae_name = f"BT4_lorsa_L{layer}A"
             elif 'transcoder' in feature_type or 'cross layer transcoder' in feature_type:
-                if tc_analysis_name:
+                if combo_cfg and combo_cfg.get('tc_sae_name_template'):
+                    # 使用模板，替换{layer}为实际层号
+                    sae_name = combo_cfg['tc_sae_name_template'].format(layer=layer)
+                elif tc_analysis_name:
+                    # 向后兼容：如果没有找到组合配置，尝试使用旧的方式
                     sae_name = tc_analysis_name.replace("{}", str(layer))
                 else:
                     sae_name = f"BT4_tc_L{layer}M"
@@ -1630,82 +1735,186 @@ _logit_lens_instances = {}
 @app.post("/circuit/preload_models")
 def preload_circuit_models(request: dict):
     """
-    预加载transcoders和lorsas模型，以便后续的circuit trace能够快速使用
-    
+    预加载 transcoders 和 lorsas 模型，以便后续的 circuit trace 能够快速使用。
+
     Args:
         request: 包含模型信息的请求体
             - model_name: 模型名称 (可选，默认: "lc0/BT4-1024x15x32h")
-    
-    Returns:
-        预加载状态和结果
+            - sae_combo_id: SAE 组合 ID（例如 "k_64_e_32"，可选，默认使用后端当前组合）
+
+    行为：
+        - 如果选择了与当前不同的组合，会先清理之前组合的 SAE 缓存并尝试释放显存；
+        - 同一组合在已加载且完整时直接返回 already_loaded；
+        - 加载过程中的进度日志会写入全局 _loading_logs，前端可轮询查看。
     """
+
+    global CURRENT_BT4_SAE_COMBO_ID, _loading_locks, _loading_status, _loading_logs, _cancel_loading
+    global _transcoders_cache, _lorsas_cache, _replacement_models_cache
+
     model_name = request.get("model_name", "lc0/BT4-1024x15x32h")
+    requested_combo_id = request.get("sae_combo_id") or CURRENT_BT4_SAE_COMBO_ID
+
+    # 归一化组合配置（如果传入了未知 ID，会回退到默认组合）
+    combo_cfg = get_bt4_sae_combo(requested_combo_id)
+    combo_id = combo_cfg["id"]
+    combo_key = _make_combo_cache_key(model_name, combo_id)
     
+    # 如果切换组合，先中断当前正在加载的其他组合
+    if combo_id != CURRENT_BT4_SAE_COMBO_ID:
+        # 中断所有其他组合的加载
+        for other_combo_key in list(_cancel_loading.keys()):
+            if other_combo_key != combo_key:
+                _cancel_loading[other_combo_key] = True
+                print(f"🛑 标记中断加载: {other_combo_key}")
+                # 如果该组合正在加载，也在日志中记录
+                if other_combo_key in _loading_logs:
+                    _loading_logs[other_combo_key].append({
+                        "timestamp": time.time(),
+                        "message": f"🛑 加载被中断（切换到新组合 {combo_id}）",
+                    })
+
     try:
         if not CIRCUITS_SERVICE_AVAILABLE or load_model_and_transcoders is None:
             raise HTTPException(status_code=503, detail="Circuit tracing service not available")
-        
-        # 获取或创建加载锁
-        global _loading_locks, _loading_status, _loading_logs
-        if model_name not in _loading_locks:
-            _loading_locks[model_name] = threading.Lock()
-        
+
+        # 如果切换组合，则清空之前组合的 SAE 缓存并尝试释放显存
+        if combo_id != CURRENT_BT4_SAE_COMBO_ID:
+            print(f"🔁 棋类 SAE 组合切换: {CURRENT_BT4_SAE_COMBO_ID} -> {combo_id}，开始清理旧缓存")
+
+            # 清空所有 SAE 缓存（包括 circuits_service 的全局缓存），仅保留 HookedTransformer 模型本身
+            for cache_name, cache in [
+                ("_transcoders_cache", _transcoders_cache),
+                ("_lorsas_cache", _lorsas_cache),
+                ("_replacement_models_cache", _replacement_models_cache),
+            ]:
+                try:
+                    for cache_key, v in list(cache.items()):
+                        # 尝试把 SAE 挪到 CPU，再删除引用
+                        if isinstance(v, dict):
+                            for sae in v.values():
+                                try:
+                                    if hasattr(sae, "to"):
+                                        sae.to("cpu")
+                                except Exception:
+                                    continue
+                        elif isinstance(v, list):
+                            for sae in v:
+                                try:
+                                    if hasattr(sae, "to"):
+                                        sae.to("cpu")
+                                except Exception:
+                                    continue
+                        del cache[cache_key]
+                    print(f"   - 已清空缓存 {cache_name}")
+                except Exception as clear_err:
+                    print(f"   ⚠️ 清理缓存 {cache_name} 时出错: {clear_err}")
+            
+            # 同时清理 circuits_service 的全局缓存
+            if CIRCUITS_SERVICE_AVAILABLE:
+                try:
+                    for cache_key in list(_global_transcoders_cache.keys()):
+                        if cache_key != model_name:  # 保留 HookedTransformer 的缓存键（只有 model_name）
+                            del _global_transcoders_cache[cache_key]
+                    for cache_key in list(_global_lorsas_cache.keys()):
+                        if cache_key != model_name:
+                            del _global_lorsas_cache[cache_key]
+                    for cache_key in list(_global_replacement_models_cache.keys()):
+                        if cache_key != model_name:
+                            del _global_replacement_models_cache[cache_key]
+                    print("   - 已清空 circuits_service 全局缓存")
+                except Exception as clear_err:
+                    print(f"   ⚠️ 清理 circuits_service 全局缓存时出错: {clear_err}")
+
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    print("   - 已调用 torch.cuda.empty_cache() 释放显存")
+            except Exception as e:
+                print(f"   ⚠️ 调用 empty_cache 失败: {e}")
+
+            # 清理旧的patching分析器
+            try:
+                from intervention import clear_patching_analyzer
+                clear_patching_analyzer(CURRENT_BT4_SAE_COMBO_ID)
+                print("   - 已清理旧的patching分析器")
+            except (ImportError, Exception) as e:
+                print(f"   ⚠️ 清理patching分析器失败: {e}")
+
+            CURRENT_BT4_SAE_COMBO_ID = combo_id
+
+        # 为当前组合创建/获取加载锁
+        if combo_key not in _loading_locks:
+            _loading_locks[combo_key] = threading.Lock()
+
         # 检查是否已经预加载
-        cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name)
+        cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name, combo_id)
         if cached_transcoders is not None and cached_lorsas is not None:
-            # 检查是否完整（15层）
             if len(cached_transcoders) == 15 and len(cached_lorsas) == 15:
-                print(f"✅ Transcoders和LoRSAs已经预加载: {model_name}")
+                print(f"✅ Transcoders 和 LoRSAs 已经预加载: {model_name} @ {combo_id}")
                 return {
                     "status": "already_loaded",
-                    "message": f"模型 {model_name} 的transcoders和lorsas已经预加载",
+                    "message": f"模型 {model_name} 组合 {combo_id} 的 transcoders 和 lorsas 已经预加载",
                     "model_name": model_name,
+                    "sae_combo_id": combo_id,
                     "n_layers": len(cached_lorsas),
                     "transcoders_count": len(cached_transcoders),
-                    "lorsas_count": len(cached_lorsas)
+                    "lorsas_count": len(cached_lorsas),
                 }
-        
+
         # 使用锁来避免并发加载
-        with _loading_locks[model_name]:
+        with _loading_locks[combo_key]:
             # 再次检查是否已经加载（可能在等待锁的过程中已经加载完成）
-            cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name)
+            cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name, combo_id)
             if cached_transcoders is not None and cached_lorsas is not None:
                 if len(cached_transcoders) == 15 and len(cached_lorsas) == 15:
-                    print(f"✅ Transcoders和LoRSAs已经预加载（在锁内检查）: {model_name}")
+                    print(f"✅ Transcoders 和 LoRSAs 已经预加载（在锁内检查）: {model_name} @ {combo_id}")
                     return {
                         "status": "already_loaded",
-                        "message": f"模型 {model_name} 的transcoders和lorsas已经预加载",
+                        "message": f"模型 {model_name} 组合 {combo_id} 的 transcoders 和 lorsas 已经预加载",
                         "model_name": model_name,
+                        "sae_combo_id": combo_id,
                         "n_layers": len(cached_lorsas),
                         "transcoders_count": len(cached_transcoders),
-                        "lorsas_count": len(cached_lorsas)
+                        "lorsas_count": len(cached_lorsas),
                     }
-            
-            # 标记正在加载
-            _loading_status[model_name] = {"is_loading": True}
-            print(f"🔍 开始预加载transcoders和lorsas: {model_name}")
-            
+
+            # 标记正在加载，并清除中断标志
+            _loading_status[combo_key] = {"is_loading": True}
+            _cancel_loading[combo_key] = False
+            print(f"🔍 开始预加载 transcoders 和 lorsas: {model_name} @ {combo_id}")
+
             try:
-                # 获取HookedTransformer模型
+                # 获取 HookedTransformer 模型
                 hooked_model = get_hooked_model(model_name)
-                
-                # 根据模型名称设置正确的路径（目前仅支持 BT4）
-                if 'BT4' in model_name:
-                    tc_base_path = BT4_TC_BASE_PATH
-                    lorsa_base_path = BT4_LORSA_BASE_PATH
-                    n_layers = 15
-                else:
+
+                # 仅支持 BT4
+                if "BT4" not in model_name:
                     raise HTTPException(status_code=400, detail="Unsupported Model!")
-                
+
+                tc_base_path = combo_cfg["tc_base_path"]
+                lorsa_base_path = combo_cfg["lorsa_base_path"]
+                n_layers = 15
+
                 # 初始化加载日志
-                if model_name not in _loading_logs:
-                    _loading_logs[model_name] = []
-                loading_logs = _loading_logs[model_name]
-                loading_logs.clear()  # 清空旧的日志
-                print(f"📝 初始化加载日志列表: model_name={model_name}, 列表ID={id(loading_logs)}")
-                
-                # 加载transcoders和lorsas
+                if combo_key not in _loading_logs:
+                    _loading_logs[combo_key] = []
+                loading_logs = _loading_logs[combo_key]
+                loading_logs.clear()
+                # 添加初始日志
+                loading_logs.append({
+                    "timestamp": time.time(),
+                    "message": f"🔍 开始预加载 transcoders 和 lorsas: {model_name} @ {combo_id}",
+                })
+                print(f"📝 初始化加载日志列表: combo_key={combo_key}, 列表ID={id(loading_logs)}")
+
+                # 加载 transcoders 和 lorsas
                 device = "cuda" if torch.cuda.is_available() else "cpu"
+                # 创建取消标志字典（通过引用传递，可以在循环中检查）
+                # 使用一个包装函数来定期检查取消标志
+                def check_cancel():
+                    return _cancel_loading.get(combo_key, False)
+                
+                cancel_flag = {"should_cancel": False, "combo_key": combo_key, "check_fn": check_cancel}
                 replacement_model, transcoders, lorsas = load_model_and_transcoders(
                     model_name=model_name,
                     device=device,
@@ -1713,107 +1922,198 @@ def preload_circuit_models(request: dict):
                     lorsa_base_path=lorsa_base_path,
                     n_layers=n_layers,
                     hooked_model=hooked_model,
-                    loading_logs=loading_logs
+                    loading_logs=loading_logs,
+                    cancel_flag=cancel_flag,
+                    cache_key=combo_key,  # 传递 cache_key 以区分不同组合
                 )
-                
-                # 确保日志已写入
+
                 print(f"📝 加载完成后的日志数量: {len(loading_logs)}")
-                print(f"📝 全局字典中的日志数量: {len(_loading_logs.get(model_name, []))}")
-                
-                # 缓存transcoders和lorsas（同时更新共享缓存和本地缓存）
-                global _transcoders_cache, _lorsas_cache, _replacement_models_cache
-                _transcoders_cache[model_name] = transcoders
-                _lorsas_cache[model_name] = lorsas
-                _replacement_models_cache[model_name] = replacement_model
-                
-                # 如果circuits_service可用，也更新共享缓存
+
+                # 缓存 transcoders 和 lorsas（同时更新共享缓存和本地缓存）
+                _transcoders_cache[combo_key] = transcoders
+                _lorsas_cache[combo_key] = lorsas
+                _replacement_models_cache[combo_key] = replacement_model
+
+                # 如果 circuits_service 可用，也更新共享缓存（使用 combo_key 作为缓存键）
                 if CIRCUITS_SERVICE_AVAILABLE and set_cached_models is not None:
-                    set_cached_models(model_name, hooked_model, transcoders, lorsas, replacement_model)
-                
-                print(f"✅ 预加载完成: {model_name}")
+                    set_cached_models(combo_key, hooked_model, transcoders, lorsas, replacement_model)
+
+                print(f"✅ 预加载完成: {model_name} @ {combo_id}")
                 print(f"   - Transcoders: {len(transcoders)} 层")
                 print(f"   - LoRSAs: {len(lorsas)} 层")
-                
+
                 # 添加完成日志
-                if model_name in _loading_logs:
-                    _loading_logs[model_name].append({
-                        "timestamp": time.time(),
-                        "message": f"✅ 预加载完成: {model_name}"
-                    })
-                    _loading_logs[model_name].append({
-                        "timestamp": time.time(),
-                        "message": f"   - Transcoders: {len(transcoders)} 层"
-                    })
-                    _loading_logs[model_name].append({
-                        "timestamp": time.time(),
-                        "message": f"   - LoRSAs: {len(lorsas)} 层"
-                    })
-                
-                # 标记加载完成
-                _loading_status[model_name] = {"is_loading": False}
-                
+                if combo_key in _loading_logs:
+                    _loading_logs[combo_key].append(
+                        {
+                            "timestamp": time.time(),
+                            "message": f"✅ 预加载完成: {model_name} @ {combo_id}",
+                        }
+                    )
+                    _loading_logs[combo_key].append(
+                        {
+                            "timestamp": time.time(),
+                            "message": f"   - Transcoders: {len(transcoders)} 层",
+                        }
+                    )
+                    _loading_logs[combo_key].append(
+                        {
+                            "timestamp": time.time(),
+                            "message": f"   - LoRSAs: {len(lorsas)} 层",
+                        }
+                    )
+
+                _loading_status[combo_key] = {"is_loading": False}
+
                 return {
                     "status": "loaded",
-                    "message": f"成功预加载模型 {model_name} 的transcoders和lorsas",
+                    "message": f"成功预加载模型 {model_name} 组合 {combo_id} 的 transcoders 和 lorsas",
                     "model_name": model_name,
+                    "sae_combo_id": combo_id,
                     "n_layers": n_layers,
                     "transcoders_count": len(transcoders),
                     "lorsas_count": len(lorsas),
-                    "device": device
+                    "device": device,
                 }
-            except Exception as e:
-                # 标记加载失败
-                _loading_status[model_name] = {"is_loading": False}
+            except InterruptedError as e:
+                # 加载被中断，清空已加载的部分缓存
+                _loading_status[combo_key] = {"is_loading": False}
+                _cancel_loading[combo_key] = False
+                # 清空该组合的缓存
+                if combo_key in _transcoders_cache:
+                    del _transcoders_cache[combo_key]
+                if combo_key in _lorsas_cache:
+                    del _lorsas_cache[combo_key]
+                if combo_key in _replacement_models_cache:
+                    del _replacement_models_cache[combo_key]
+                if combo_key in _loading_logs:
+                    _loading_logs[combo_key].append({
+                        "timestamp": time.time(),
+                        "message": f"🛑 加载已中断并清空缓存: {str(e)}",
+                    })
+                print(f"🛑 加载被中断，已清空缓存: {combo_key}")
+                raise HTTPException(status_code=499, detail=f"加载被中断: {str(e)}")
+            except Exception:
+                _loading_status[combo_key] = {"is_loading": False}
                 raise
-        
+
     except HTTPException:
         raise
     except Exception as e:
         import traceback
+
         traceback.print_exc()
-        # 添加错误日志（_loading_logs 和 _loading_status 已在函数开头声明为 global）
-        if model_name in _loading_logs:
-            _loading_logs[model_name].append({
-                "timestamp": time.time(),
-                "message": f"❌ 预加载失败: {str(e)}"
-            })
-        # 标记加载失败
-        if model_name in _loading_status:
-            _loading_status[model_name] = {"is_loading": False}
+        if combo_key in _loading_logs:
+            _loading_logs[combo_key].append(
+                {
+                    "timestamp": time.time(),
+                    "message": f"❌ 预加载失败: {str(e)}",
+                }
+            )
+        if combo_key in _loading_status:
+            _loading_status[combo_key] = {"is_loading": False}
         raise HTTPException(status_code=500, detail=f"预加载失败: {str(e)}")
 
 
+@app.post("/circuit/cancel_loading")
+def cancel_loading(request: dict):
+    """
+    中断正在进行的模型加载
+    
+    Args:
+        request: 包含模型信息的请求体
+            - model_name: 模型名称 (可选，默认: "lc0/BT4-1024x15x32h")
+            - sae_combo_id: SAE 组合 ID（可选，如果不提供则中断所有正在加载的组合）
+    
+    Returns:
+        中断结果
+    """
+    global _cancel_loading, _loading_status, _loading_logs
+    global _transcoders_cache, _lorsas_cache, _replacement_models_cache
+    
+    model_name = request.get("model_name", "lc0/BT4-1024x15x32h")
+    requested_combo_id = request.get("sae_combo_id")
+    
+    if requested_combo_id:
+        # 中断指定的组合
+        combo_cfg = get_bt4_sae_combo(requested_combo_id)
+        combo_id = combo_cfg["id"]
+        combo_key = _make_combo_cache_key(model_name, combo_id)
+        
+        if combo_key in _loading_status and _loading_status[combo_key].get("is_loading", False):
+            _cancel_loading[combo_key] = True
+            print(f"🛑 标记中断加载: {combo_key}")
+            return {
+                "status": "cancelled",
+                "message": f"已标记中断组合 {combo_id} 的加载",
+                "model_name": model_name,
+                "sae_combo_id": combo_id,
+            }
+        else:
+            return {
+                "status": "not_loading",
+                "message": f"组合 {combo_id} 当前没有正在加载",
+                "model_name": model_name,
+                "sae_combo_id": combo_id,
+            }
+    else:
+        # 中断所有正在加载的组合
+        cancelled_keys = []
+        for combo_key, status in _loading_status.items():
+            if status.get("is_loading", False):
+                _cancel_loading[combo_key] = True
+                cancelled_keys.append(combo_key)
+                print(f"🛑 标记中断加载: {combo_key}")
+        
+        return {
+            "status": "cancelled" if cancelled_keys else "no_loading",
+            "message": f"已标记中断 {len(cancelled_keys)} 个组合的加载" if cancelled_keys else "当前没有正在加载的组合",
+            "cancelled_keys": cancelled_keys,
+        }
+
+
 @app.get("/circuit/loading_logs")
-def get_loading_logs(model_name: str = "lc0/BT4-1024x15x32h"):
+def get_loading_logs(
+    model_name: str = "lc0/BT4-1024x15x32h",
+    sae_combo_id: str | None = None,
+):
     """
     获取模型加载日志
     
     Args:
         model_name: 模型名称 (查询参数，默认: "lc0/BT4-1024x15x32h")
+        sae_combo_id: SAE组合ID (查询参数，可选)
     
     Returns:
         加载日志列表
     """
-    global _loading_logs
+
+    global _loading_logs, _loading_status
+
     # URL解码，处理可能的双重编码问题
     import urllib.parse
+
     decoded_model_name = urllib.parse.unquote(model_name)
-    # 如果还是编码的，再解码一次
-    if '%' in decoded_model_name:
+    if "%" in decoded_model_name:
         decoded_model_name = urllib.parse.unquote(decoded_model_name)
-    
-    # 尝试多种可能的键名
-    logs = _loading_logs.get(decoded_model_name, [])
-    if not logs:
-        # 如果没找到，尝试原始键名
-        logs = _loading_logs.get(model_name, [])
+
+    combo_id = sae_combo_id or CURRENT_BT4_SAE_COMBO_ID
+    combo_cfg = get_bt4_sae_combo(combo_id)
+    normalized_combo_id = combo_cfg["id"]
+    combo_key = _make_combo_cache_key(decoded_model_name, normalized_combo_id)
+
+    logs = _loading_logs.get(combo_key, [])
+    is_loading = _loading_status.get(combo_key, {}).get("is_loading", False)
     
     # 调试信息
-    
+    print(f"📊 GET /circuit/loading_logs: combo_key={combo_key}, logs_count={len(logs)}, is_loading={is_loading}")
+
     return {
         "model_name": decoded_model_name,
+        "sae_combo_id": normalized_combo_id,
         "logs": logs,
-        "total_count": len(logs)
+        "total_count": len(logs),
+        "is_loading": is_loading,
     }
 
 
@@ -1952,38 +2252,46 @@ def circuit_trace(request: dict):
                 else:
                     print(f"⚠️ 加载完成但缓存不完整，将使用当前缓存或报错: {model_name}")
         
-        # 根据模型名称设置正确的路径（即使使用缓存，也需要路径用于兼容性）
+        # 获取当前使用的SAE组合ID（从请求中获取，如果没有则使用当前全局组合）
+        sae_combo_id = request.get("sae_combo_id") or CURRENT_BT4_SAE_COMBO_ID
+        combo_cfg = get_bt4_sae_combo(sae_combo_id)
+        normalized_combo_id = combo_cfg["id"]
+        
+        # 根据组合ID设置正确的路径（即使使用缓存，也需要路径用于兼容性）
         if 'BT4' in model_name:
-            tc_base_path = BT4_TC_BASE_PATH
-            lorsa_base_path = BT4_LORSA_BASE_PATH
+            tc_base_path = combo_cfg["tc_base_path"]
+            lorsa_base_path = combo_cfg["lorsa_base_path"]
         else:
             raise HTTPException(status_code=400, detail="Unsupported Model!")
         
-        # 等待后再次检查缓存（因为等待过程中缓存可能已经完整）
-        if not cache_complete:
-            cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name)
-            cached_replacement_model = _replacement_models_cache.get(model_name)
-            cache_complete = (cached_transcoders is not None and cached_lorsas is not None and 
-                             cached_replacement_model is not None and
-                             len(cached_transcoders) == 15 and len(cached_lorsas) == 15)
+        # 使用组合ID获取正确的缓存（因为不同组合使用不同的缓存键）
+        combo_key = _make_combo_cache_key(model_name, normalized_combo_id)
+        cached_transcoders = _transcoders_cache.get(combo_key)
+        cached_lorsas = _lorsas_cache.get(combo_key)
+        cached_replacement_model = _replacement_models_cache.get(combo_key)
+        
+        # 重新检查缓存完整性
+        cache_complete = (cached_transcoders is not None and cached_lorsas is not None and 
+                         cached_replacement_model is not None and
+                         len(cached_transcoders) == 15 and len(cached_lorsas) == 15)
         
         if cache_complete:
             # 使用缓存的transcoders和lorsas，不需要重新加载
-            print(f"✅ 使用缓存的transcoders、lorsas和replacement_model: {model_name}")
+            print(f"✅ 使用缓存的transcoders、lorsas和replacement_model: {model_name} @ {normalized_combo_id}")
         else:
             # 检查是否仍在加载
-            is_still_loading = _loading_status.get(model_name, {}).get("is_loading", False)
+            is_still_loading = _loading_status.get(combo_key, {}).get("is_loading", False)
             if is_still_loading:
                 # 如果仍在加载，继续等待
                 print(f"⏳ 缓存不完整但仍在使用中加载，将继续等待...")
-                raise HTTPException(status_code=503, detail=f"模型 {model_name} 正在加载中，请稍后重试。当前进度: TC {len(cached_transcoders) if cached_transcoders else 0}/15, LoRSA {len(cached_lorsas) if cached_lorsas else 0}/15")
+                raise HTTPException(status_code=503, detail=f"模型 {model_name} 组合 {normalized_combo_id} 正在加载中，请稍后重试。当前进度: TC {len(cached_transcoders) if cached_transcoders else 0}/15, LoRSA {len(cached_lorsas) if cached_lorsas else 0}/15")
             elif cached_transcoders is None or cached_lorsas is None:
                 # 完全没有缓存，需要加载
-                print(f"⚠️ 未找到缓存，将重新加载transcoders和lorsas: {model_name}")
+                print(f"⚠️ 未找到缓存，将重新加载transcoders和lorsas: {model_name} @ {normalized_combo_id}")
                 print("   提示：建议先调用 /circuit/preload_models 进行预加载以加速")
             else:
                 # 有部分缓存但不完整，也重新加载（这种情况不应该发生，因为应该等待加载完成）
-                print(f"⚠️ 缓存不完整（TC: {len(cached_transcoders)}, LoRSA: {len(cached_lorsas)}），将重新加载: {model_name}")
+                print(f"⚠️ 缓存不完整（TC: {len(cached_transcoders)}, LoRSA: {len(cached_lorsas)}），将重新加载: {model_name} @ {normalized_combo_id}")
         
         # 运行circuit trace，传递已缓存的模型和transcoders/lorsas
         graph_data = run_circuit_trace(
@@ -2008,7 +2316,8 @@ def circuit_trace(request: dict):
             hooked_model=hooked_model,  # 传递已缓存的模型
             cached_transcoders=cached_transcoders,  # 传递缓存的transcoders
             cached_lorsas=cached_lorsas,  # 传递缓存的lorsas
-            cached_replacement_model=cached_replacement_model  # 传递缓存的replacement_model
+            cached_replacement_model=cached_replacement_model,  # 传递缓存的replacement_model
+            sae_combo_id=normalized_combo_id  # 传递归一化后的SAE组合ID，用于生成正确的analysis_name模板
         )
         
         return graph_data
@@ -2906,39 +3215,60 @@ def compare_fen_activations_api(request: dict):
         print(f"   - 模型: {model_name}")
         print(f"   - 激活阈值: {activation_threshold}")
         
-        # 获取或加载模型和transcoders/lorsas
-        cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(model_name)
-        
+        # 获取或加载模型和 transcoders/lorsas
+        # 优先使用预加载的缓存，并在有加载锁时禁止重新加载
         n_layers = 15
-        if cached_transcoders is None or cached_lorsas is None or cached_replacement_model is None:
-            print(f"⚠️ 模型未预加载，开始加载: {model_name}")
-            
-            # 获取HookedTransformer模型
-            hooked_model = get_hooked_model(model_name)
-            
-            # 根据模型名称设置正确的路径
-            if 'BT4' in model_name:
-                tc_base_path = BT4_TC_BASE_PATH
-                lorsa_base_path = BT4_LORSA_BASE_PATH
-            else:
-                raise HTTPException(status_code=400, detail="Unsupported Model!")
-            
-            # 加载transcoders和lorsas
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            replacement_model, transcoders, lorsas = load_model_and_transcoders(
-                model_name=model_name,
-                device=device,
-                tc_base_path=tc_base_path,
-                lorsa_base_path=lorsa_base_path,
-                n_layers=n_layers,
-                hooked_model=hooked_model,
-                loading_logs=None
+
+        # 统一使用当前组合 ID（与 SaeComboLoader / circuit_trace 保持一致）
+        sae_combo_id = request.get("sae_combo_id") or CURRENT_BT4_SAE_COMBO_ID
+        combo_cfg = get_bt4_sae_combo(sae_combo_id)
+        normalized_combo_id = combo_cfg["id"]
+        combo_key = _make_combo_cache_key(model_name, normalized_combo_id)
+
+        # 获取 HookedTransformer 模型（自身有缓存）
+        hooked_model = get_hooked_model(model_name)
+
+        # 先从本地缓存中取（按 combo_key 区分不同组合）
+        global _transcoders_cache, _lorsas_cache, _replacement_models_cache, _loading_status
+        cached_transcoders = _transcoders_cache.get(combo_key)
+        cached_lorsas = _lorsas_cache.get(combo_key)
+        cached_replacement_model = _replacement_models_cache.get(combo_key)
+
+        cache_complete = (
+            cached_transcoders is not None
+            and cached_lorsas is not None
+            and cached_replacement_model is not None
+            and len(cached_transcoders) == n_layers
+            and len(cached_lorsas) == n_layers
+        )
+
+        is_loading = _loading_status.get(combo_key, {}).get("is_loading", False)
+
+        # 如果当前组合正在加载，直接报错，禁止在锁未释放时重复加载
+        if not cache_complete and is_loading:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Transcoders/LoRSAs for model {model_name} combo {normalized_combo_id} "
+                    f"are still loading. 请等待加载完成或取消后再比较激活差异。"
+                ),
             )
-        else:
-            print(f"✅ 使用预加载的模型: {model_name}")
+
+        if cache_complete:
+            # 正常使用已预加载好的模型与 SAE
+            print(f"✅ 使用预加载的 transcoders/LoRSAs: {model_name} @ {normalized_combo_id}")
             replacement_model = cached_replacement_model
             transcoders = cached_transcoders
             lorsas = cached_lorsas
+        else:
+            # 【严格模式】完全禁止在 compare 接口里主动加载 LoRSA / TC
+            # 要求调用方必须先通过 /circuit/preload_models 预加载相应组合
+            msg = (
+                f"No cached transcoders/LoRSAs for model {model_name} combo {normalized_combo_id}. "
+                "请先调用 /circuit/preload_models 预加载该组合后再比较激活差异。"
+            )
+            print(f"❌ {msg}")
+            raise HTTPException(status_code=503, detail=msg)
         
         # 执行比较
         result = compare_fen_activations(

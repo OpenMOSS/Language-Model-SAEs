@@ -347,6 +347,10 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       // 固定使用BT4模型
       const modelName = 'lc0/BT4-1024x15x32h';
       
+      // 获取当前选中的 SAE 组合 ID（从 localStorage 读取，与 SaeComboLoader 保持一致）
+      const LOCAL_STORAGE_KEY = "bt4_sae_combo_id";
+      const currentSaeComboId = window.localStorage.getItem(LOCAL_STORAGE_KEY) || null;
+      
       // 构建请求体
       const requestBody: any = { 
         fen: effectiveGameFen,
@@ -359,6 +363,11 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         max_act_times: circuitParams.max_act_times,
         save_activation_info: true
       };
+      
+      // 如果前端有选中的 SAE 组合 ID，传递给后端
+      if (currentSaeComboId) {
+        requestBody.sae_combo_id = currentSaeComboId;
+      }
       
       // Both trace需要传递negative move
       if (orderMode === 'both') {
@@ -374,6 +383,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         '实际使用的 move_uci': requestBody.move_uci,
         '用户输入的 positiveMove': positiveMove,
         '用户输入的 negativeMove': negativeMove,
+        '当前 SAE 组合 ID': currentSaeComboId,
       });
       
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace`, {
@@ -400,11 +410,14 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           }
         }
         
-        // 确保 metadata 中包含正确的模型信息（固定使用BT4模型）
+        // 后端已经根据 sae_combo_id 从 constants.py 设置了正确的 metadata，
+        // 直接使用后端返回的值，不再覆盖
         if (data.metadata) {
-          data.metadata.lorsa_analysis_name = 'BT4_lorsa_L{}A';
-          data.metadata.tc_analysis_name = 'BT4_tc_L{}M';
-          console.log('🔍 设置 BT4 模型 metadata:', data.metadata);
+          console.log('🔍 后端返回的 metadata:', {
+            lorsa_analysis_name: data.metadata.lorsa_analysis_name,
+            tc_analysis_name: data.metadata.tc_analysis_name,
+            sae_combo_id: currentSaeComboId,
+          });
         }
         
         handleCircuitTraceResult(data);

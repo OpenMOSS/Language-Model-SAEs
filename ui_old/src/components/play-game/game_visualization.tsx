@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Loader2, RotateCcw, Play, Square, Move, Undo2, Download } from 'lucide-react';
+import { SaeComboLoader } from '@/components/common/SaeComboLoader';
+import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 
 interface GameState {
   fen: string;
@@ -1043,6 +1045,9 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+      <SaeComboLoader />
+
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">与模型对局</h1>
         <div className="flex items-center gap-4">
@@ -1050,19 +1055,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             <span>黑方回合自动翻转</span>
             <Switch checked={autoFlipWhenBlack} onCheckedChange={setAutoFlipWhenBlack} />
           </div>
-          {/* 加载日志按钮 */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setShowLoadingLogs(!showLoadingLogs);
-              if (!showLoadingLogs) {
-                fetchLoadingLogs();
-              }
-            }}
-          >
-            加载日志 {showLoadingLogs ? '（隐藏）' : '（显示）'}
-          </Button>
         <div className="flex gap-2">
           <Button
             onClick={() => startNewGame()}
@@ -1198,23 +1190,15 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                       </Button>
                     </div>
                   </div>
-                  <div 
+                  <div
                     id="loading-logs-container"
                     className="bg-gray-900 text-green-400 p-4 font-mono text-sm max-h-64 overflow-y-auto"
                   >
                     <div className="space-y-1">
-                      {loadingLogs.length === 0 ? (
-                        <div className="text-gray-500">暂无日志...</div>
-                      ) : (
-                        loadingLogs.map((log, index) => (
-                          <div key={index} className="whitespace-pre-wrap">
-                            {log.message}
-                          </div>
-                        ))
-                      )}
-                      {isLoadingModels && (
-                        <div className="text-yellow-400 animate-pulse">加载中...</div>
-                      )}
+                      {/* 旧的加载日志展示逻辑已被顶部的 SAE 组合加载面板取代，这里仅保留提示文案 */}
+                      <div className="text-gray-500">
+                        日志已迁移到页面顶部的「BT4 SAE 组合选择」面板中，请在那里查看 LoRSA / Transcoder 加载进度。
+                      </div>
                     </div>
                   </div>
                 </div>

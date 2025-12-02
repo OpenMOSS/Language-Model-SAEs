@@ -40,16 +40,11 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
   const [isLoading, setIsLoading] = useState(false);
   const [logs, setLogs] = useState<{ timestamp: number; message: string }[]>([]);
 
-  // 前端展示的日志条数上限（只保留最近 N 条，避免面板无限增长）
-  const MAX_VISIBLE_LOGS = 200;
-
-  const backendBase = import.meta.env.VITE_BACKEND_URL ?? "";
-
   // 拉取可用组合信息
   useEffect(() => {
     const fetchCombos = async () => {
       try {
-        const res = await fetch(`${backendBase}/sae/combos`);
+        const res = await fetch("/sae/combos");
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -68,39 +63,16 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
 
         setSelectedId(initialId);
         setLoadedId(data.current_id ?? initialId);
-        
-        // 立即获取该组合的历史日志（跨页面共享）
-        if (initialId) {
-          try {
-            const logParams = new URLSearchParams({
-              model_name: "lc0/BT4-1024x15x32h",
-              sae_combo_id: initialId,
-            });
-            const logRes = await fetch(`${backendBase}/circuit/loading_logs?${logParams.toString()}`);
-            if (logRes.ok) {
-              const logData: LoadingLogsResponse & { is_loading?: boolean } = await logRes.json();
-              const allLogs = logData.logs ?? [];
-              const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
-              setLogs(sliced);
-              // 同步加载状态
-              if (logData.is_loading) {
-                setIsLoading(true);
-              }
-            }
-          } catch (logErr) {
-            console.warn("Failed to fetch initial loading logs:", logErr);
-          }
-        }
       } catch (err) {
         console.error("Failed to fetch SAE combos:", err);
       }
     };
     fetchCombos();
-  }, [backendBase]);
+  }, []);
 
-  // 轮询日志（即使不在加载中也要轮询，以便显示历史日志和实时更新）
+  // 轮询日志
   useEffect(() => {
-    if (!selectedId) return;
+    if (!isLoading || !selectedId) return;
 
     let cancelled = false;
 
@@ -110,86 +82,34 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
           model_name: "lc0/BT4-1024x15x32h",
           sae_combo_id: selectedId,
         });
-        const res = await fetch(`${backendBase}/circuit/loading_logs?${params.toString()}`);
+        const res = await fetch(`/circuit/loading_logs?${params.toString()}`);
         if (!res.ok) return;
-        const data: LoadingLogsResponse & { is_loading?: boolean } = await res.json();
+        const data: LoadingLogsResponse = await res.json();
         if (!cancelled) {
-          const allLogs = data.logs ?? [];
-          // 只保留最近 MAX_VISIBLE_LOGS 条
-          const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
-          setLogs(sliced);
-          // 如果后端显示正在加载，但前端状态不是，更新前端状态
-          if (data.is_loading && !isLoading) {
-            setIsLoading(true);
-          } else if (!data.is_loading && isLoading) {
-            setIsLoading(false);
-          }
+          setLogs(data.logs ?? []);
         }
       } catch (err) {
         console.error("Failed to fetch loading logs:", err);
       }
     };
 
-    // 立即执行一次，然后开始轮询（这样切换页面时能立即看到日志）
     poll();
     const timer = window.setInterval(poll, 1000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedId, isLoading, backendBase]);
-
-  const handleCancel = useCallback(async () => {
-    try {
-      const body = {
-        model_name: "lc0/BT4-1024x15x32h",
-        sae_combo_id: loadedId || selectedId,
-      };
-      await fetch(`${backendBase}/circuit/cancel_loading`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-    } catch (err) {
-      console.error("Failed to cancel loading:", err);
-    }
-  }, [loadedId, selectedId, backendBase]);
+  }, [isLoading, selectedId]);
 
   const handleReload = useCallback(async () => {
     if (!selectedId) return;
-    
-    // 如果当前有其他组合正在加载，先中断它
-    if (loadedId && loadedId !== selectedId && isLoading) {
-      try {
-        await fetch(`${backendBase}/circuit/cancel_loading`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model_name: "lc0/BT4-1024x15x32h",
-            sae_combo_id: loadedId,
-          }),
-        });
-        // 等待一小段时间让中断生效
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      } catch (err) {
-        console.warn("Failed to cancel previous loading:", err);
-      }
-    }
-    
     setIsLoading(true);
     try {
-      // 每次重新加载前清空本地日志缓存，避免遗留旧组合的日志
-      setLogs([]);
-
       const body = {
         model_name: "lc0/BT4-1024x15x32h",
         sae_combo_id: selectedId,
       };
-      const res = await fetch(`${backendBase}/circuit/preload_models`, {
+      const res = await fetch("/circuit/preload_models", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -209,7 +129,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
     } finally {
       setIsLoading(false);
     }
-  }, [selectedId, loadedId, isLoading, backendBase]);
+  }, [selectedId]);
 
   const canReload = selectedId != null && selectedId !== loadedId && !isLoading;
 
@@ -236,30 +156,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Select
             value={selectedId ?? undefined}
-            onValueChange={async (value) => {
-              setSelectedId(value);
-              // 切换组合时立即获取该组合的日志
-              try {
-                const params = new URLSearchParams({
-                  model_name: "lc0/BT4-1024x15x32h",
-                  sae_combo_id: value,
-                });
-                const res = await fetch(`${backendBase}/circuit/loading_logs?${params.toString()}`);
-                if (res.ok) {
-                  const data: LoadingLogsResponse & { is_loading?: boolean } = await res.json();
-                  const allLogs = data.logs ?? [];
-                  const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
-                  setLogs(sliced);
-                  if (data.is_loading) {
-                    setIsLoading(true);
-                  } else {
-                    setIsLoading(false);
-                  }
-                }
-              } catch (err) {
-                console.warn("Failed to fetch logs when switching combo:", err);
-              }
-            }}
+            onValueChange={(value) => setSelectedId(value)}
           >
             <SelectTrigger className="w-56 bg-white">
               <SelectValue placeholder="选择 SAE 组合" />
@@ -286,17 +183,6 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
               ? "已加载"
               : "加载 / 重新加载"}
           </Button>
-          {isLoading && (
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              onClick={handleCancel}
-              className="whitespace-nowrap"
-            >
-              中断加载
-            </Button>
-          )}
         </div>
       </div>
       <div className="mt-2 max-h-40 overflow-y-auto rounded bg-blue-100 p-2 text-xs font-mono leading-relaxed">

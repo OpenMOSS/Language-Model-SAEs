@@ -3,6 +3,7 @@ import { SectionNavigator } from "@/components/app/section-navigator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import { FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
@@ -199,6 +200,15 @@ export const FeaturesPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDictionary]);
 
+  // Memoize dictionary options for Combobox
+  const dictionaryOptions = useMemo(() => {
+    if (!dictionariesState.value) return [];
+    return dictionariesState.value.map((dict) => ({
+      value: dict,
+      label: dict,
+    }));
+  }, [dictionariesState.value]);
+
   // Memoize sections calculation
   const sections = useMemo(() => [
     {
@@ -239,24 +249,18 @@ export const FeaturesPage = () => {
       <div className="pt-4 pb-20 px-20 flex flex-col items-center gap-12">
         <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
           <span className="font-bold justify-self-end">Select dictionary:</span>
-          <Select
+          <Combobox
             disabled={dictionariesState.loading || featureLoading}
-            value={selectedDictionary || undefined}
-            onValueChange={(value) => {
+            value={selectedDictionary || null}
+            onChange={(value) => {
               setSelectedDictionary(value);
             }}
-          >
-            <SelectTrigger className="bg-white">
-              <SelectValue placeholder="Select a dictionary" />
-            </SelectTrigger>
-            <SelectContent>
-              {dictionariesState.value?.map((dictionary, i) => (
-                <SelectItem key={i} value={dictionary}>
-                  {dictionary}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={dictionaryOptions}
+            placeholder="选择字典..."
+            commandPlaceholder="搜索字典..."
+            emptyIndicator="未找到匹配的字典"
+            className="w-full"
+          />
           <Button
             disabled={dictionariesState.loading || featureLoading}
             onClick={async () => {

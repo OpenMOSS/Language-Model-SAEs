@@ -19,9 +19,9 @@ except ImportError:
 
 # 全局 BT4 配置常量（兼容脚本运行和 package 导入）
 try:
-    from .constants import BT4_MODEL_NAME, BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH
+    from .constants import BT4_MODEL_NAME, BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH, get_bt4_sae_combo
 except ImportError:
-    from constants import BT4_MODEL_NAME, BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH
+    from constants import BT4_MODEL_NAME, BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH, get_bt4_sae_combo
 
 
 class PatchingAnalyzer:
@@ -285,74 +285,104 @@ class PatchingAnalyzer:
 
 
 # 全局分析器实例（延迟初始化，仅支持BT4）
-_patching_analyzer = None
+# 使用字典存储不同组合的分析器，key为combo_id
+_patching_analyzers: Dict[str, PatchingAnalyzer] = {}
+_current_combo_id: Optional[str] = None
 
-def get_patching_analyzer(metadata: Optional[Dict[str, Any]] = None) -> PatchingAnalyzer:
-    """获取或创建仅支持BT4的patching分析器实例。metadata参数保留以保证兼容性。"""
-    del metadata  # BT4模式下不再根据metadata切换模型
-    global _patching_analyzer
+def clear_patching_analyzer(combo_id: Optional[str] = None):
+    """清理指定组合的patching分析器，如果combo_id为None则清理所有"""
+    global _patching_analyzers, _current_combo_id
+    if combo_id is None:
+        _patching_analyzers.clear()
+        _current_combo_id = None
+        print("🧹 已清理所有patching分析器")
+    elif combo_id in _patching_analyzers:
+        del _patching_analyzers[combo_id]
+        if _current_combo_id == combo_id:
+            _current_combo_id = None
+        print(f"🧹 已清理组合 {combo_id} 的patching分析器")
+
+def get_patching_analyzer(metadata: Optional[Dict[str, Any]] = None, combo_id: Optional[str] = None) -> PatchingAnalyzer:
+    """
+    获取或创建仅支持BT4的patching分析器实例。
     
-    if _patching_analyzer is not None:
-        return _patching_analyzer
+    Args:
+        metadata: 保留参数以保证兼容性，已弃用
+        combo_id: SAE组合ID（例如 "k_128_e_128"），如果不提供则从app.py获取当前组合
+    
+    Returns:
+        PatchingAnalyzer: 分析器实例
+    """
+    global _patching_analyzers, _current_combo_id
+    
+    # 获取当前组合ID
+    if combo_id is None:
+        try:
+            # 尝试从app.py获取当前组合
+            import sys
+            if 'app' in sys.modules:
+                from app import CURRENT_BT4_SAE_COMBO_ID
+                combo_id = CURRENT_BT4_SAE_COMBO_ID
+            else:
+                # 如果app模块未加载，使用默认组合
+                combo_id = "k_128_e_128"
+        except (ImportError, AttributeError):
+            # 如果无法获取，使用默认组合
+            combo_id = "k_128_e_128"
+    
+    # 如果已经有该组合的分析器，直接返回
+    if combo_id in _patching_analyzers:
+        return _patching_analyzers[combo_id]
     
     try:
         from transformer_lens import HookedTransformer
         from lm_saes import SparseAutoEncoder, LowRankSparseAttention
         
-        print("🔍 正在初始化BT4 Patching分析器...")
-        print(f"📁 TC路径: {BT4_TC_BASE_PATH}")
-        print(f"📁 LORSA路径: {BT4_LORSA_BASE_PATH}")
+        # 获取当前组合的配置
+        combo_cfg = get_bt4_sae_combo(combo_id)
+        tc_base_path = combo_cfg["tc_base_path"]
+        lorsa_base_path = combo_cfg["lorsa_base_path"]
+        
+        print(f"🔍 正在初始化BT4 Patching分析器（组合: {combo_id}）...")
+        print(f"📁 TC路径: {tc_base_path}")
+        print(f"📁 LORSA路径: {lorsa_base_path}")
         print(f"🔍 使用模型: {BT4_MODEL_NAME}")
         
-        # 尝试从circuits_service获取缓存的模型
+        # 构建cache_key（与preload_circuit_models保持一致）
+        cache_key = f"{BT4_MODEL_NAME}::{combo_id}"
+        
+        # 尝试从circuits_service获取缓存的模型（使用cache_key）
         try:
             from circuits_service import get_cached_models
-            cached_hooked_model, cached_transcoders, cached_lorsas, _ = get_cached_models(BT4_MODEL_NAME)
+            cached_hooked_model, cached_transcoders, cached_lorsas, _ = get_cached_models(cache_key)
             
             if cached_hooked_model is not None and cached_transcoders is not None and cached_lorsas is not None:
                 if len(cached_transcoders) == 15 and len(cached_lorsas) == 15:
-                    print("✅ 使用缓存的模型、transcoders和lorsas")
+                    print(f"✅ 使用缓存的模型、transcoders和lorsas（组合: {combo_id}）")
                     model = cached_hooked_model
                     transcoders = cached_transcoders
                     lorsas = cached_lorsas
                 else:
-                    raise ValueError("缓存不完整")
+                    raise ValueError(f"缓存不完整: transcoders={len(cached_transcoders)}, lorsas={len(cached_lorsas)}")
             else:
-                raise ValueError("缓存不存在")
+                raise ValueError(f"缓存不存在: cache_key={cache_key}")
         except (ImportError, ValueError) as e:
-            print(f"⚠️ 无法使用缓存，重新加载: {e}")
-            
-            model = HookedTransformer.from_pretrained_no_processing(
-                BT4_MODEL_NAME,
-                dtype=torch.float32,
-            ).eval()
-            
-            transcoders = {}
-            for layer in range(15):
-                tc_path = f"{BT4_TC_BASE_PATH}/L{layer}"
-                print(f"📁 加载TC L{layer}: {tc_path}")
-                transcoders[layer] = SparseAutoEncoder.from_pretrained(
-                    tc_path,
-                    dtype=torch.float32,
-                    device='cuda',
-                )
-            
-            lorsas = []
-            for layer in range(15):
-                lorsa_path = f"{BT4_LORSA_BASE_PATH}/L{layer}"
-                print(f"📁 加载LORSA L{layer}: {lorsa_path}")
-                lorsas.append(LowRankSparseAttention.from_pretrained(
-                    lorsa_path, 
-                    device='cuda'
-                ))
+            print(f"⚠️ 无法使用缓存，需要等待预加载完成: {e}")
+            print(f"💡 提示: 请先调用 /circuit/preload_models 预加载组合 {combo_id} 的模型")
+            raise RuntimeError(
+                f"组合 {combo_id} 的模型尚未预加载。请先调用 /circuit/preload_models 接口预加载模型，"
+                f"或等待预加载完成后再使用patching分析功能。"
+            )
         
-        _patching_analyzer = PatchingAnalyzer(model, transcoders, lorsas)
-        print("✅ BT4 Patching分析器初始化成功")
+        # 创建分析器并缓存
+        analyzer = PatchingAnalyzer(model, transcoders, lorsas)
+        _patching_analyzers[combo_id] = analyzer
+        _current_combo_id = combo_id
+        print(f"✅ BT4 Patching分析器初始化成功（组合: {combo_id}）")
+        return analyzer
     except Exception as e:
         print(f"❌ Patching分析器初始化失败: {e}")
         raise
-    
-    return _patching_analyzer
 
 
 def run_feature_steering_analysis(fen: str, feature_type: str, layer: int, 

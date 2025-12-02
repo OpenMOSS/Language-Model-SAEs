@@ -9,6 +9,7 @@ import { Feature } from "@/types/feature";
 import { FeatureCard } from "@/components/feature/feature-card";
 import { ChessBoard } from "@/components/chess/chess-board";
 import React from "react"; // Added missing import for React
+import { SaeComboLoader } from "@/components/common/SaeComboLoader";
 
 // 定义节点激活数据的类型
 interface NodeActivationData {
@@ -1738,6 +1739,9 @@ export const CircuitVisualization = () => {
   if (!linkGraphData) {
     return (
       <div className="space-y-6">
+        {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+        <SaeComboLoader />
+
         {/* Header */}
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-semibold">Circuit Visualization</h2>
@@ -1807,6 +1811,9 @@ export const CircuitVisualization = () => {
 
   return (
     <div className="space-y-6 w-full max-w-full overflow-hidden">
+      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+      <SaeComboLoader />
+
       {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-2">

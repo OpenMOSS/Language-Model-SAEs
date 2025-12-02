@@ -12,7 +12,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Loader2, RotateCcw, Play, Square, Move, Undo2, Download } from 'lucide-react';
 import { SaeComboLoader } from '@/components/common/SaeComboLoader';
-import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 
 interface GameState {
   fen: string;
@@ -159,9 +158,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     Variant: 'Standard',
   });
 
-  // 认输/和棋对话框状态
-  const [showEndGameDialog, setShowEndGameDialog] = useState(false);
-  const [endGameType, setEndGameType] = useState<'resign' | 'draw' | null>(null);
+  // 认输/和棋对话框状态（已移除，现在直接调用 endGame）
   const [selectedOpening, setSelectedOpening] = useState(OPENING_POSITIONS[0]);
   const [customFen, setCustomFen] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -183,19 +180,13 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   const [manualMove, setManualMove] = useState('');
   const [moveError, setMoveError] = useState('');
   
-  // 固定使用BT4模型
-  const selectedModel = 'lc0/BT4-1024x15x32h';
-  
-  // 加载日志窗口状态
-  const [showLoadingLogs, setShowLoadingLogs] = useState(false);
-  const [loadingLogs, setLoadingLogs] = useState<Array<{timestamp: number; message: string}>>([]);
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  // 已移除：加载日志现在由 SaeComboLoader 组件统一管理
 
   // 新增：用于强制更新组件（由于 Chess 实例是可变的）
   const [, setDummy] = useState(0);
 
   // 新增：Circuit Trace状态
-  const [isTracing, setIsTracing] = useState(false);
+  const [isTracing] = useState(false);
 
   // 新增：MCTS 搜索设置
   const [useSearch, setUseSearch] = useState(false);
@@ -416,7 +407,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     setAnalysis(null);
     setIsAutoPlay(false);
     setShowPgnDialog(false);
-    setShowEndGameDialog(false);
     
     if (autoPlayInterval) {
       clearInterval(autoPlayInterval);
@@ -452,7 +442,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       setAnalysis(null); // 清空旧分析
       setIsAutoPlay(false);
       setShowPgnDialog(false);
-      setShowEndGameDialog(false);
       if (autoPlayInterval) { clearInterval(autoPlayInterval); setAutoPlayInterval(null); }
       // 刷新分析（如有需要，可注释掉）
       // getStockfishAnalysis(newGame.fen()); // 如果你希望用“分析模式”自动刷新分析结果，请取消注释
@@ -614,17 +603,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       // 在替换实例前，先从当前game提取完整历史与状态
       const historyVerbose = game.history({ verbose: true }) as any[];
       const movesUci = historyVerbose.map(m => m.from + m.to + (m.promotion ? m.promotion : ''));
-      const nextFen = game.fen();
-      const isGameOver = game.isGameOver();
-      let winner: string | null = null;
-      if (isGameOver) {
-        if (game.isCheckmate()) {
-          winner = game.turn() === 'w' ? 'Black' : 'White';
-        } else if (game.isDraw()) {
-          winner = 'Draw';
-        }
-      }
-      const isPlayerTurn = game.turn() === 'w';
 
       // 用PGN重建以保留历史，避免FEN丢失undo栈
       const pgn = game.pgn();
@@ -924,13 +902,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
 
   // 处理认输
   const handleResign = useCallback((player: 'White' | 'Black') => {
-    setEndGameType('resign');
     endGame('resignation', player === 'White' ? 'Black' : 'White');
   }, [endGame]);
 
   // 处理和棋
   const handleDraw = useCallback(() => {
-    setEndGameType('draw');
     endGame('draw');
   }, [endGame]);
 
@@ -940,106 +916,9 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   }, []);
 
 
-  // 获取加载日志
-  const fetchLoadingLogs = useCallback(async () => {
-    try {
-      // 固定使用BT4模型
-      const model_name = 'lc0/BT4-1024x15x32h';
-      const url = `${import.meta.env.VITE_BACKEND_URL}/circuit/loading_logs?model_name=${encodeURIComponent(model_name)}`;
-      console.log('📥 获取加载日志:', url);
-      
-      const response = await fetch(url);
-      if (response.ok) {
-        const data = await response.json();
-        console.log('📥 收到日志数据:', { count: data.total_count, logs: data.logs });
-        setLoadingLogs(data.logs || []);
-        // 自动滚动到底部
-        setTimeout(() => {
-          const logContainer = document.getElementById('loading-logs-container');
-          if (logContainer) {
-            logContainer.scrollTop = logContainer.scrollHeight;
-          }
-        }, 100);
-        return data.logs || [];
-      } else {
-        const errorText = await response.text();
-        console.error('获取加载日志失败:', response.status, errorText);
-      }
-    } catch (error) {
-      console.error('获取加载日志出错:', error);
-    }
-    return [];
-  }, []);
+  // 已移除：加载日志和预加载逻辑现在由 SaeComboLoader 组件统一管理
 
-  // 预加载transcoders和lorsas，以便后续circuit trace能够快速使用
-  const preloadCircuitModels = useCallback(async () => {
-    try {
-      // 固定使用BT4模型
-      const model_name = 'lc0/BT4-1024x15x32h';
-      console.log('🔍 开始预加载transcoders和lorsas:', model_name);
-      
-      // 重置日志并显示日志窗口
-      setLoadingLogs([]);
-      setShowLoadingLogs(true);
-      setIsLoadingModels(true);
-      
-      // 先获取一次日志，确保日志列表已初始化
-      await fetchLoadingLogs();
-      
-      // 开始轮询日志（在API调用之前开始，因为加载是同步的）
-      const logPollInterval = setInterval(async () => {
-        await fetchLoadingLogs();
-      }, 500); // 每500ms轮询一次
-      
-      // 发送预加载请求（加载是同步进行的，所以API会阻塞直到加载完成）
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/preload_models`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ model_name }),
-      });
-
-      // API响应后，继续轮询一段时间，确保获取所有日志
-      // 因为加载可能在API响应之前或之后完成
-      setTimeout(async () => {
-        await fetchLoadingLogs();
-      }, 1000);
-      
-      // 再等待一段时间后停止轮询
-      setTimeout(() => {
-        clearInterval(logPollInterval);
-        fetchLoadingLogs(); // 最后获取一次日志
-        setIsLoadingModels(false);
-      }, 2000);
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.status === 'already_loaded') {
-          console.log('✅ Transcoders和LoRSAs已经预加载:', data);
-          clearInterval(logPollInterval);
-          setIsLoadingModels(false);
-        } else {
-          console.log('✅ 预加载完成:', data);
-        }
-      } else {
-        const errorText = await response.text();
-        console.warn('⚠️ 预加载transcoders和lorsas失败:', errorText);
-        clearInterval(logPollInterval);
-        setIsLoadingModels(false);
-        // 预加载失败不影响正常使用，只打印警告
-      }
-    } catch (error) {
-      setIsLoadingModels(false);
-      console.warn('⚠️ 预加载transcoders和lorsas出错:', error);
-      // 预加载失败不影响正常使用，只打印警告
-    }
-  }, [fetchLoadingLogs]);
-
-  // 组件加载时预加载transcoders和lorsas
-  useEffect(() => {
-    preloadCircuitModels();
-  }, [preloadCircuitModels]);
+  // 已移除自动加载逻辑：现在通过页面顶部的 SaeComboLoader 组件手动加载
 
   // 不自动触发模型走棋，用户需点击"让模型走棋"按钮
 
@@ -1166,43 +1045,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                 </div>
               </div>
               
-              {/* 加载日志框 - 固定在移动历史下方 */}
-              {showLoadingLogs && (
-                <div className="mt-4 border rounded-lg overflow-hidden">
-                  <div className="bg-gray-800 text-white px-4 py-2 flex items-center justify-between">
-                    <h3 className="font-semibold">模型加载日志</h3>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={fetchLoadingLogs}
-                        className="text-white hover:bg-gray-700"
-                      >
-                        刷新
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setShowLoadingLogs(false)}
-                        className="text-white hover:bg-gray-700"
-                      >
-                        隐藏
-                      </Button>
-                    </div>
-                  </div>
-                  <div
-                    id="loading-logs-container"
-                    className="bg-gray-900 text-green-400 p-4 font-mono text-sm max-h-64 overflow-y-auto"
-                  >
-                    <div className="space-y-1">
-                      {/* 旧的加载日志展示逻辑已被顶部的 SAE 组合加载面板取代，这里仅保留提示文案 */}
-                      <div className="text-gray-500">
-                        日志已迁移到页面顶部的「BT4 SAE 组合选择」面板中，请在那里查看 LoRSA / Transcoder 加载进度。
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* 加载日志已迁移到页面顶部的 SaeComboLoader 组件 */}
             </CardContent>
           </Card>
         </div>

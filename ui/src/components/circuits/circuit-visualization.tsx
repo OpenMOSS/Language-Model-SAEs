@@ -251,6 +251,43 @@ export const CircuitVisualization = () => {
     // 保留回调函数以保持接口兼容性
   }, []);
 
+  // 检查analysis_name是否在已知组合中
+  const checkAnalysisNames = useCallback((metadata: any): { isValid: boolean; warnings: string[] } => {
+    const knownAnalysisNames = [
+      "BT4_tc_k30_e16",
+      "BT4_lorsa_k30_e16",
+      "BT4_tc_k64_e32",
+      "BT4_lorsa_k64_e32",
+      "BT4_tc_k128_e64",
+      "BT4_lorsa_k128_e64",
+      "BT4_tc_k256_e128",
+      "BT4_lorsa_k256_e128",
+      "BT4_tc",  // k128_e128 (默认组合，无后缀)
+      "BT4_lorsa",  // k128_e128 (默认组合，无后缀)
+    ];
+    
+    const warnings: string[] = [];
+    const lorsaAnalysisName = metadata?.lorsa_analysis_name;
+    const tcAnalysisName = metadata?.tc_analysis_name || metadata?.clt_analysis_name;
+    
+    if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string') {
+      if (!knownAnalysisNames.includes(lorsaAnalysisName)) {
+        warnings.push(`⚠️ LoRSA analysis_name "${lorsaAnalysisName}" 不在已知组合中，将使用默认组合 k128_e128 (BT4_lorsa)`);
+      }
+    }
+    
+    if (tcAnalysisName && typeof tcAnalysisName === 'string') {
+      if (!knownAnalysisNames.includes(tcAnalysisName)) {
+        warnings.push(`⚠️ TC analysis_name "${tcAnalysisName}" 不在已知组合中，将使用默认组合 k128_e128 (BT4_tc)`);
+      }
+    }
+    
+    return {
+      isValid: warnings.length === 0,
+      warnings
+    };
+  }, []);
+
   // 单文件上传（保留，兼容）
   const handleSingleFileUpload = useCallback(async (file: File) => {
     if (!file.name.endsWith('.json')) {
@@ -264,6 +301,18 @@ export const CircuitVisualization = () => {
       
       const text = await file.text();
       const jsonData: CircuitJsonData = JSON.parse(text);
+      
+      // 检查analysis_name是否在已知组合中
+      const metadata = jsonData?.metadata || {};
+      const { isValid, warnings } = checkAnalysisNames(metadata);
+      
+      if (!isValid && warnings.length > 0) {
+        // 显示警告，但不阻止加载
+        const warningMessage = warnings.join('\n') + '\n\n将使用默认组合 k128_e128 进行 feature 分析。';
+        console.warn('⚠️ Circuit文件analysis_name检查:', warnings);
+        alert(warningMessage);
+      }
+      
       // 基础变换
       const data = transformCircuitData(jsonData);
       // 注入来源信息（单文件索引为 0）
@@ -306,7 +355,7 @@ export const CircuitVisualization = () => {
     } finally {
       setLoading(false);
     }
-  }, [setLinkGraphData, setLoading, setError, setClickedId, setHoveredId, setPinnedIds, setHiddenIds, setSelectedFeature, setConnectedFeatures]);
+  }, [setLinkGraphData, setLoading, setError, setClickedId, setHoveredId, setPinnedIds, setHiddenIds, setSelectedFeature, setConnectedFeatures, checkAnalysisNames]);
 
   // 多文件上传（1-4 个）
   const handleMultiFilesUpload = useCallback(async (files: FileList | File[]) => {
@@ -323,6 +372,24 @@ export const CircuitVisualization = () => {
       const texts = await Promise.all(list.map(f => f.text()));
       const jsons: CircuitJsonData[] = texts.map(t => JSON.parse(t));
       const fileNames = list.map(f => f.name);
+
+      // 检查所有文件的analysis_name
+      const allWarnings: string[] = [];
+      jsons.forEach((json, index) => {
+        const metadata = json?.metadata || {};
+        const { warnings } = checkAnalysisNames(metadata);
+        if (warnings.length > 0) {
+          warnings.forEach(w => {
+            allWarnings.push(`[文件 ${fileNames[index]}]: ${w}`);
+          });
+        }
+      });
+      
+      if (allWarnings.length > 0) {
+        const warningMessage = allWarnings.join('\n') + '\n\n将使用默认组合 k128_e128 进行 feature 分析。';
+        console.warn('⚠️ Circuit文件analysis_name检查:', allWarnings);
+        alert(warningMessage);
+      }
 
       // 合并
       const merged = jsons.length === 1 
@@ -368,7 +435,7 @@ export const CircuitVisualization = () => {
     } finally {
       setLoading(false);
     }
-  }, [mergeGraphs, setLinkGraphData, setLoading, setError, setClickedId, setHoveredId, setPinnedIds, setHiddenIds, setSelectedFeature, setConnectedFeatures]);
+  }, [mergeGraphs, setLinkGraphData, setLoading, setError, setClickedId, setHoveredId, setPinnedIds, setHiddenIds, setSelectedFeature, setConnectedFeatures, checkAnalysisNames]);
 
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -818,6 +885,85 @@ export const CircuitVisualization = () => {
     return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
   }, []);
  
+  // 辅助函数：根据metadata中的analysis_name（不带层号）确定字典名（带层号）
+  const getDictionaryName = useCallback((layerIdx: number, isLorsa: boolean): string => {
+    // 已知的BT4 SAE组合analysis_name列表（来自server/constants.py，不带层号）
+    const knownAnalysisNames = [
+      "BT4_tc_k30_e16",
+      "BT4_lorsa_k30_e16",
+      "BT4_tc_k64_e32",
+      "BT4_lorsa_k64_e32",
+      "BT4_tc_k128_e64",
+      "BT4_lorsa_k128_e64",
+      "BT4_tc_k256_e128",
+      "BT4_lorsa_k256_e128",
+      "BT4_tc",  // k128_e128 (默认组合，无后缀)
+      "BT4_lorsa",  // k128_e128 (默认组合，无后缀)
+    ];
+    
+    let dictionary: string;
+    let usingDefault = false;
+    
+    if (isLorsa) {
+      const lorsaAnalysisName = linkGraphData?.metadata?.lorsa_analysis_name;
+      if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string') {
+        // 检查analysis_name是否在已知列表中
+        const isKnown = knownAnalysisNames.includes(lorsaAnalysisName);
+        
+        if (isKnown) {
+          // 根据analysis_name构建完整的字典名（加上层号）
+          if (lorsaAnalysisName === "BT4_lorsa") {
+            // 默认组合：BT4_lorsa -> BT4_lorsa_L{layer}A
+            dictionary = `BT4_lorsa_L${layerIdx}A`;
+          } else {
+            // 其他组合：BT4_lorsa_k256_e128 -> BT4_lorsa_L{layer}A_k256_e128
+            // 从 "BT4_lorsa_k256_e128" 提取后缀 "k256_e128"
+            const suffix = lorsaAnalysisName.replace("BT4_lorsa_", "");
+            dictionary = `BT4_lorsa_L${layerIdx}A_${suffix}`;
+          }
+        } else {
+          console.warn(`⚠️ LoRSA analysis_name "${lorsaAnalysisName}" 不在已知组合中，使用默认组合 k128_e128`);
+          dictionary = `BT4_lorsa_L${layerIdx}A`;
+          usingDefault = true;
+        }
+      } else {
+        dictionary = `BT4_lorsa_L${layerIdx}A`;
+        usingDefault = true;
+      }
+    } else {
+      const tcAnalysisName = (linkGraphData?.metadata as any)?.tc_analysis_name || linkGraphData?.metadata?.clt_analysis_name;
+      if (tcAnalysisName && typeof tcAnalysisName === 'string') {
+        const isKnown = knownAnalysisNames.includes(tcAnalysisName);
+        
+        if (isKnown) {
+          // 根据analysis_name构建完整的字典名（加上层号）
+          if (tcAnalysisName === "BT4_tc") {
+            // 默认组合：BT4_tc -> BT4_tc_L{layer}M
+            dictionary = `BT4_tc_L${layerIdx}M`;
+          } else {
+            // 其他组合：BT4_tc_k256_e128 -> BT4_tc_L{layer}M_k256_e128
+            // 从 "BT4_tc_k256_e128" 提取后缀 "k256_e128"
+            const suffix = tcAnalysisName.replace("BT4_tc_", "");
+            dictionary = `BT4_tc_L${layerIdx}M_${suffix}`;
+          }
+        } else {
+          console.warn(`⚠️ TC analysis_name "${tcAnalysisName}" 不在已知组合中，使用默认组合 k128_e128`);
+          dictionary = `BT4_tc_L${layerIdx}M`;
+          usingDefault = true;
+        }
+      } else {
+        dictionary = `BT4_tc_L${layerIdx}M`;
+        usingDefault = true;
+      }
+    }
+    
+    if (usingDefault) {
+      console.warn(`⚠️ 使用默认组合 k128_e128 的字典名: ${dictionary}`);
+    }
+    
+    return dictionary;
+  }, [linkGraphData]);
+
   // 提取相关数据
   const fen = extractFenFromPrompt();
   const outputMove = extractOutputMove();
@@ -1008,31 +1154,8 @@ export const CircuitVisualization = () => {
       const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
       const isLorsa = currentNode?.feature_type?.toLowerCase() === 'lorsa';
       
-      // 使用metadata信息确定字典名
-      let dictionary: string;
-      if (isLorsa) {
-        const lorsaAnalysisName = linkGraphData?.metadata?.lorsa_analysis_name;
-        if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string' && lorsaAnalysisName.includes('BT4')) {
-          // BT4格式: BT4_lorsa_L{layer}A
-          dictionary = `BT4_lorsa_L${layerIdx}A`;
-        } else {
-          dictionary = lorsaAnalysisName ? lorsaAnalysisName.replace("{}", layerIdx.toString()) : `lc0-lorsa-L${layerIdx}`;
-        }
-      } else {
-        const tcAnalysisName = (linkGraphData?.metadata as any)?.tc_analysis_name || linkGraphData?.metadata?.clt_analysis_name;
-        console.log('🔍 Transcoders 调试信息:', {
-          tcAnalysisName,
-          tcAnalysisNameType: typeof tcAnalysisName,
-          includesBT4: tcAnalysisName && typeof tcAnalysisName === 'string' ? tcAnalysisName.includes('BT4') : false,
-          layerIdx
-        });
-        if (tcAnalysisName && typeof tcAnalysisName === 'string' && tcAnalysisName.includes('BT4')) {
-          // BT4格式: BT4_tc_L{layer}M
-          dictionary = `BT4_tc_L${layerIdx}M`;
-        } else {
-          dictionary = tcAnalysisName ? tcAnalysisName.replace("{}", layerIdx.toString()) : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
-        }
-      }
+      // 使用辅助函数获取字典名
+      const dictionary = getDictionaryName(layerIdx, isLorsa);
       
       console.log('🔍 获取 Top Activation 数据:', {
         nodeId,
@@ -1188,7 +1311,7 @@ export const CircuitVisualization = () => {
     } finally {
       setLoadingTopActivations(false);
     }
-  }, [linkGraphData]);
+  }, [linkGraphData, getDictionaryName]);
 
   // 获取 Token Predictions 数据的函数
   const fetchTokenPredictions = useCallback(async (nodeId: string) => {
@@ -1837,7 +1960,7 @@ export const CircuitVisualization = () => {
                 />
                 <button
                   onClick={compareFenActivations}
-                  disabled={isComparingFens || !perturbedFen.trim() || !originalCircuitJson}
+                  disabled={isComparingFens || !perturbedFen.trim()}
                   className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
                   title="比较原始FEN和扰动FEN的激活差异"
                 >
@@ -2513,31 +2636,8 @@ export const CircuitVisualization = () => {
             totalLinksInData: displayLinkGraphData.links.length
           });
           
-          // 根据节点类型构建正确的dictionary名
-          let dictionary: string;
-          if (isLorsa) {
-            const lorsaAnalysisName = displayLinkGraphData?.metadata?.lorsa_analysis_name;
-            if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string' && lorsaAnalysisName.includes('BT4')) {
-              // BT4格式: BT4_lorsa_L{layer}A
-              dictionary = `BT4_lorsa_L${layerIdx}A`;
-            } else {
-              dictionary = lorsaAnalysisName ? lorsaAnalysisName.replace("{}", layerIdx.toString()) : `lc0-lorsa-L${layerIdx}`;
-            }
-          } else {
-            const tcAnalysisName = (displayLinkGraphData?.metadata as any)?.tc_analysis_name || displayLinkGraphData?.metadata?.clt_analysis_name;
-            console.log('🔍 Selected Feature Details Transcoders 调试信息:', {
-              tcAnalysisName,
-              tcAnalysisNameType: typeof tcAnalysisName,
-              includesBT4: tcAnalysisName && typeof tcAnalysisName === 'string' ? tcAnalysisName.includes('BT4') : false,
-              layerIdx
-            });
-            if (tcAnalysisName && typeof tcAnalysisName === 'string' && tcAnalysisName.includes('BT4')) {
-              // BT4格式: BT4_tc_L{layer}M
-              dictionary = `BT4_tc_L${layerIdx}M`;
-            } else {
-              dictionary = tcAnalysisName ? tcAnalysisName.replace("{}", layerIdx.toString()) : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
-            }
-          }
+          // 使用辅助函数获取字典名
+          const dictionary = getDictionaryName(layerIdx, isLorsa);
           
           const nodeTypeDisplay = isLorsa ? 'LORSA' : 'SAE';
           

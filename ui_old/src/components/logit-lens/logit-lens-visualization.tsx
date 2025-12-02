@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { ChessBoard } from '@/components/chess/chess-board';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 
 interface LayerMoveData {
   idx: number;
@@ -116,8 +117,6 @@ interface MeanAblationResult {
 export const LogitLensVisualization: React.FC = () => {
   const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
   const [targetMove, setTargetMove] = useState('');
-  // 固定使用BT4模型
-  const selectedModel = 'lc0/BT4-1024x15x32h';
   const [isLoading, setIsLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<LogitLensResult | null>(null);
   const [selectedLayer, setSelectedLayer] = useState<number>(0);
@@ -231,6 +230,9 @@ export const LogitLensVisualization: React.FC = () => {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+      <SaeComboLoader />
+
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold flex items-center gap-2">
           <Layers className="w-8 h-8" />
