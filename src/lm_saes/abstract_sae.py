@@ -682,14 +682,17 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
                         # Use local_map to perform mean reduction locally. This will lower the backward memory usage (likely due to DTensor bug).
                         if isinstance(score, DTensor):
-                            approx_frequency = local_map(
-                                lambda x: einops.reduce(
-                                    x,
-                                    "... d_sae -> 1 d_sae",
-                                    "mean",
-                                ),
-                                DimMap({"model": 1, "data": 0, "head": 0}).placements(score.device_mesh),
-                            )(score).mean(0)
+                            approx_frequency = cast(
+                                torch.Tensor,
+                                local_map(
+                                    lambda x: einops.reduce(
+                                        x,
+                                        "... d_sae -> 1 d_sae",
+                                        "mean",
+                                    ),
+                                    DimMap({"model": 1, "data": 0, "head": 0}).placements(score.device_mesh),
+                                )(score),
+                            ).mean(0)
                         else:
                             approx_frequency = einops.reduce(
                                 score,

@@ -310,10 +310,16 @@ class CrossCoder(AbstractSparseAutoEncoder):
         if not isinstance(hidden_pre, DTensor):
             accumulated_hidden_pre = torch.sum(hidden_pre, dim=-2)  # "... n_heads d_sae -> ... d_sae"
         else:
-            accumulated_hidden_pre = local_map(
-                lambda x: torch.sum(x, dim=-2, keepdim=True),
-                list(hidden_pre.placements),
-            )(hidden_pre).sum(dim=-2)  # "... n_heads d_sae -> ... d_sae"
+            accumulated_hidden_pre = cast(
+                DTensor,
+                cast(
+                    DTensor,
+                    local_map(
+                        lambda x: torch.sum(x, dim=-2, keepdim=True),
+                        list(hidden_pre.placements),
+                    )(hidden_pre),
+                ).sum(dim=-2),
+            )  # "... n_heads d_sae -> ... d_sae"
 
             with timer.time("encode_redistribute_tensor_pre_repeat"):
                 accumulated_hidden_pre = DimMap({"data": 0, "model": -1}).redistribute(accumulated_hidden_pre)
