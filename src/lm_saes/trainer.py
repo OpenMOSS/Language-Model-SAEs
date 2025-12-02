@@ -29,7 +29,6 @@ from lm_saes.optim import SparseAdam, get_scheduler
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
-from lm_saes.utils.tensor_dict import batch_size
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("trainer")

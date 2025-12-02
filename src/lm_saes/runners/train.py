@@ -395,7 +395,9 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         trainer = Trainer(settings.trainer)
 
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
-    end_of_stream = trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+    end_of_stream = trainer.fit(
+        sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger
+    )
 
     logger.info("Training completed, saving CrossCoder")
     if end_of_stream:
@@ -959,7 +961,9 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         trainer = Trainer(settings.trainer)
 
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
-    end_of_stream = trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+    end_of_stream = trainer.fit(
+        sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger
+    )
 
     logger.info("Training completed, saving MOLT model")
     if end_of_stream:
