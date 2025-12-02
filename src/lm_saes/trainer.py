@@ -380,8 +380,8 @@ class Trainer:
                 {
                     "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
                     "details/n_training_tokens": self.cur_tokens,
-                    "details/l1_coefficient": ctx["l1_coefficient"],
-                    "details/lp_coefficient": ctx["lp_coefficient"],
+                    "details/l1_coefficient": ctx.get("l1_coefficient"),
+                    "details/lp_coefficient": ctx.get("lp_coefficient"),
                 }
             )
 
