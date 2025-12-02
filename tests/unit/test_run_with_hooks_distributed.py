@@ -102,7 +102,7 @@ def run_with_hooks_distributed(
 
     def to_tensor(input: torch.Tensor) -> torch.Tensor:
         if isinstance(input, DTensor):
-            assert input.placements == DimMap({"data": 0}).placements(cast(DeviceMesh, device_mesh))
+            assert input.placements == tuple(DimMap({"data": 0}).placements(cast(DeviceMesh, device_mesh)))
             return input.to_local()
         else:
             return input
