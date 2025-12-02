@@ -213,7 +213,8 @@ class Trainer:
         activation_stream: Iterable[dict[str, Tensor]],
         wandb_logger: Run | None = None,
     ):
-        bs = batch_size(next(iter(activation_stream)))
+        batch = next(iter(activation_stream))
+        bs = batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum()))
         self.total_training_steps = self.cfg.total_training_tokens // bs
 
         def calculate_warmup_steps(warmup_steps: float | int) -> int:
