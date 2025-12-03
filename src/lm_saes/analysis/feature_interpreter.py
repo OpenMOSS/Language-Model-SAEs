@@ -207,12 +207,17 @@ class TokenizedSample:
         # max_activation_text = "".join([seg.display_max(threshold * self.max_activation) for seg in self.segments])
         max_activation_text = ""
         hash_ = {}
-        for seg in self.segments:
+        for i, seg in enumerate(self.segments):
             if seg.activation > threshold * self.max_activation:
                 text = seg.text
                 if text != "" and hash_.get(text, None) is None:
                     hash_[text] = 1
-                    max_activation_text = text + "\n"
+                    # Get previous 3 tokens
+                    prev_tokens = []
+                    for j in range(max(0, i - 3), i):
+                        prev_tokens.append(self.segments[j].text)
+                    prev_text = "".join(prev_tokens)
+                    max_activation_text += f"({prev_text}) {text}\n"
         return max_activation_text
 
     def display_next(self, threshold: float = 0.7) -> str:
@@ -235,7 +240,7 @@ class TokenizedSample:
     @staticmethod
     def construct(
         text: str,
-        activations: Float[torch.Tensor],
+        activations: Float[torch.Tensor, "n_tokens"],
         origins: list[dict[str, Any]],
         max_activation: float,
     ) -> "TokenizedSample":
@@ -261,7 +266,7 @@ class TokenizedSample:
             except Exception:
                 logger.error(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n")
                 continue
-            segments.append(Segment(text[start:end], segment_activation))
+            segments.append(Segment(text[start:end], segment_activation.item()))
 
         return TokenizedSample(segments, max_activation)
 
@@ -408,7 +413,7 @@ def generate_non_activating_examples(
             # Create TokenizedExample using the trace information
             sample = TokenizedSample.construct(
                 text=data["text"],
-                activations=feature_acts[:max_length].tolist(),
+                activations=feature_acts[:max_length],
                 origins=origins[:max_length],
                 max_activation=analysis.max_feature_acts,
             )
@@ -495,7 +500,7 @@ class FeatureInterpreter:
         )
         return activating_examples, non_activating_examples
 
-    def _generate_explanation_prompt_neuronpedia(self, activating_examples: list[TokenizedSample], top_positive_logits: dict[str, list[dict[str, Any]]] | None = None) -> tuple[str, str]:
+    def _generate_explanation_prompt_neuronpedia(self, activating_examples: list[TokenizedSample], top_logits: dict[str, list[dict[str, Any]]] | None = None) -> tuple[str, str]:
         """Generate a prompt for explanation generation with neuronpedia.
 
         Args:
@@ -506,7 +511,7 @@ class FeatureInterpreter:
         """
         system_prompt = """You are explaining the behavior of a neuron in a neural network. Your final response should be a very concise explanation (1-6 words) that captures what the neuron detects or predicts by finding patterns in lists.\n\n
 To determine the explanation, you are given four lists:\n\n
-- MAX_ACTIVATING_TOKENS, which are the top activating tokens in the top activating texts.\n
+- MAX_ACTIVATING_TOKENS, which are the top activating tokens in the top activating texts. Each max activating token is shown with the previous 3 tokens in parentheses for context, e.g., "(Who am) I".\n
 - TOKENS_AFTER_MAX_ACTIVATING_TOKEN, which are the tokens immediately after the max activating token.\n
 - TOP_POSITIVE_LOGITS, which are the most likely words or tokens associated with this neuron.\n
 - TOP_ACTIVATING_TEXTS, which are top activating texts.\n\n
@@ -524,7 +529,7 @@ Rules:\n
 - If you absolutely cannot make any guesses, return the first token in MAX_ACTIVATING_TOKENS.\n\n
 Think carefully by going through each method number until you find one that helps you find an explanation for what this neuron is detecting or predicting. If a method does not help you find an explanation, briefly explain why it does not, then go on to the next method. Finally, end your thinking process with the method number you used, the reason for your explanation, and return the explanation in a brief manner.\n
 
-Example:
+Examples:
 {
 <TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nwatching\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nShe\nenjoy\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nwalking\nWA\nwaiting\nwas\nwe\nWHAM\nwish\nwin\nwake\nwhisper\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nShe was taking a nap when her phone started ringing.\nI enjoy watching movies with my family.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
 Method 1 fails: MAX_ACTIVATING_TOKENS (She, enjoy) are not similar tokens.\nMethod 2 succeeds: All TOKENS_AFTER_MAX_ACTIVATING_TOKEN have a pattern in common: they all start with "w".\nExplanation: say "w" words</THINKING>\n\nsay "w" words
@@ -556,8 +561,8 @@ Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nM
             max_activating_tokens = max_activating_tokens + example.display_max(self.cfg.activation_threshold)
             plain_activating_tokens = plain_activating_tokens + example.display_plain() + "\n"
 
-        if top_positive_logits is not None:
-            for text in top_positive_logits:
+        if top_logits is not None:
+            for text in top_logits['positive']:
                 logit_activating_tokens = logit_activating_tokens + text["token"] + "\n"
         else:
             logit_activating_tokens = next_activating_tokens
@@ -645,7 +650,7 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
 
         return system_prompt, user_prompt
 
-    async def generate_explanation(self, activating_examples: list[TokenizedSample], top_positive_logits: dict[str, float] | None = None) -> dict[str, Any]:
+    async def generate_explanation(self, activating_examples: list[TokenizedSample], top_logits: dict[str, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
         """Generate an explanation for a feature based on activating examples.
 
         Args:
@@ -657,7 +662,7 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
         if self.cfg.explainer_type is ExplainerType.OPENAI:
             system_prompt, user_prompt = self._generate_explanation_prompt(activating_examples)
         else:
-            system_prompt, user_prompt = self._generate_explanation_prompt_neuronpedia(activating_examples, top_positive_logits)
+            system_prompt, user_prompt = self._generate_explanation_prompt_neuronpedia(activating_examples, top_logits)
         start_time = time.time()
 
         if self.cfg.explainer_type is ExplainerType.OPENAI:
@@ -994,13 +999,13 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         self,
         activating_examples: list[TokenizedSample],
         non_activating_examples: list[TokenizedSample],
-        top_positive_logits: dict[str, float] | None = None,
+        top_logits: dict[str, list[dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
         start_time = time.time()
         response_time = 0
 
         # Generate explanation for the feature
-        explanation_result = await self.generate_explanation(activating_examples, top_positive_logits)
+        explanation_result = await self.generate_explanation(activating_examples, top_logits)
         explanation: dict[str, Any] = explanation_result["response"]
         response_time += explanation_result["time"]
         # Evaluate explanation
@@ -1100,7 +1105,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
                     result = await self.interpret_single_feature(
                         activating_examples=activating_examples,
                         non_activating_examples=non_activating_examples,
-                        top_positive_logits=feature.logits,
+                        top_logits=feature.logits,
                     )
                     return (
                         {
