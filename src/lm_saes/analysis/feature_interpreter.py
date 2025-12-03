@@ -21,7 +21,6 @@ import json_repair
 import numpy as np
 import torch
 from datasets import Dataset
-from jaxtyping import Float
 from pydantic import BaseModel, Field
 
 from lm_saes.backend.language_model import LanguageModel
@@ -240,7 +239,7 @@ class TokenizedSample:
     @staticmethod
     def construct(
         text: str,
-        activations: Float[torch.Tensor, "n_tokens"],
+        activations: torch.Tensor,
         origins: list[dict[str, Any]],
         max_activation: float,
     ) -> "TokenizedSample":
