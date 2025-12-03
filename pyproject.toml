@@ -114,7 +114,7 @@ npu = [
 
 triton = ["triton"]
 
-sae_lens = ["sae-lens==6.22.3"]
+sae_lens = ["sae-lens>=6.22.3"]
 
 [tool.uv.sources]
 torch = [{ index = "torch-cpu", extra = "npu" }]

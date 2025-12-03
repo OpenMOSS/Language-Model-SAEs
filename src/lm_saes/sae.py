@@ -434,18 +434,12 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         self.b_E.copy_(-hidden_pre.mean(dim=0))
     
     @classmethod
+    @torch.no_grad()
     def from_saelens(cls, sae_saelens):
-        
-        try:
-            from sae_lens import JumpReLUSAE, StandardSAE, TopKSAE
-            sae_lens_warning = False
-        except ImportError:
-            sae_lens_warning = True
-        
-        # Check env
-        assert not sae_lens_warning, "Warning: sae_lens library not found."
+        from sae_lens import JumpReLUSAE, StandardSAE, TopKSAE
         
         # Check Configuration
+        assert isinstance(sae_saelens, JumpReLUSAE) or isinstance(sae_saelens, StandardSAE) or isinstance(sae_saelens, TopKSAE), f'Only support JumpReLUSAE, StandardSAE, TopKSAE, but get {type(sae_saelens)}'
         assert sae_saelens.cfg.reshape_activations == 'none', f"The 'reshape_activations' should be 'none' but get {sae_saelens.cfg.reshape_activations}."
         assert not sae_saelens.cfg.apply_b_dec_to_input, f"The 'apply_b_dec_to_input' should be 'False' but get {sae_saelens.cfg.apply_b_dec_to_input}."
         assert sae_saelens.cfg.normalize_activations == 'none', f"The 'normalize_activations' should be 'false' but get {sae_saelens.cfg.normalize_activations}."
@@ -469,7 +463,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             activation_fn = 'jumprelu'
             jumprelu_threshold_window = 2
         
-        print('act_fn', activation_fn)
         # create cfg
         cfg = SAEConfig(
             sae_type = "sae",
@@ -486,29 +479,23 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         
         model = cls.from_config(cfg, None)
         
-        with torch.no_grad():
-            model.W_D.data.copy_(sae_saelens.W_dec)
-            model.W_E.data.copy_(sae_saelens.W_enc)
-            model.b_D.data.copy_(sae_saelens.b_dec)
-            model.b_E.data.copy_(sae_saelens.b_enc)
-            
-            if isinstance(sae_saelens, JumpReLUSAE):
-                model.activation_function.log_jumprelu_threshold.copy_(torch.log(sae_saelens.threshold.clone().detach()))
+        model.W_D.copy_(sae_saelens.W_dec)
+        model.W_E.copy_(sae_saelens.W_enc)
+        model.b_D.copy_(sae_saelens.b_dec)
+        model.b_E.copy_(sae_saelens.b_enc)
+        
+        if isinstance(sae_saelens, JumpReLUSAE):
+            model.activation_function.log_jumprelu_threshold.copy_(torch.log(sae_saelens.threshold.clone().detach()))
         
         return model
     
     @torch.no_grad()
     def to_saelens(self, model_name:str='unknown'):
-        
-        try:
-            from sae_lens import JumpReLUSAE, JumpReLUSAEConfig, StandardSAE, StandardSAEConfig, TopKSAE, TopKSAEConfig
-            from sae_lens.saes.sae import SAEMetadata
-            sae_lens_warning = False
-        except ImportError:
-            sae_lens_warning = True
+        from sae_lens import JumpReLUSAE, JumpReLUSAEConfig, StandardSAE, StandardSAEConfig, TopKSAE, TopKSAEConfig
+        from sae_lens.saes.sae import SAEMetadata
+
         
         # Check env
-        assert not sae_lens_warning, "Warning: sae_lens library not found."
         assert not self.cfg.use_glu_encoder, "Can't convert sae with use_glu_encoder=True to SAE Lens format."
         
         # Parse
@@ -571,6 +558,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         model.b_enc.copy_(self.b_E)
         
         if isinstance(model, JumpReLUSAE):
-            model.threshold.copy_(self.activation_function.log_jumprelu_threshold)
+            model.threshold.copy_(self.activation_function.log_jumprelu_threshold.exp())
         
         return model 
