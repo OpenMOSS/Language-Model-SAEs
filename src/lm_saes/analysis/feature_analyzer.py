@@ -17,7 +17,8 @@ from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import DimMap, masked_fill, to_local
+from lm_saes.utils.distributed import DimMap, masked_fill, slice_fill, to_local
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
@@ -111,7 +112,7 @@ class FeatureAnalyzer:
             )
             sample_result_cur = {
                 k: v[
-                    : min(self.cfg.subsamples[name]["n_samples"], (sample_result_cur["elt"] != -torch.inf).sum().item())
+                    : min(self.cfg.subsamples[name]["n_samples"], item((sample_result_cur["elt"] != -torch.inf).sum()))
                 ]
                 for k, v in sample_result_cur.items()
             }
@@ -253,7 +254,7 @@ class FeatureAnalyzer:
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.amax(dim=-2)
             if isinstance(sae, LowRankSparseAttention) and sae.cfg.skip_bos:
-                feature_acts[:, 0, :] = 0
+                feature_acts = slice_fill(feature_acts, (slice(None), 0, slice(None)), 0)
             assert feature_acts.shape == (tokens.shape[0], tokens.shape[1], sae.cfg.d_sae), (
                 f"feature_acts.shape: {feature_acts.shape}, expected: {(tokens.shape[0], tokens.shape[1], sae.cfg.d_sae)}"
             )
@@ -285,6 +286,10 @@ class FeatureAnalyzer:
                     )
                     for k, v in discrete_meta.items()
                 }
+            else:
+                discrete_meta = {
+                    k: repeat(v, "batch_size -> batch_size d_sae", d_sae=d_sae_local) for k, v in discrete_meta.items()
+                }
             sample_result = self._process_batch(
                 feature_acts, discrete_meta, sample_result, max_feature_acts, device_mesh
             )
@@ -292,7 +297,7 @@ class FeatureAnalyzer:
             # Update progress
             n_tokens_current = tokens.numel()
             n_tokens += n_tokens_current
-            n_analyzed_tokens += cast(int, ignore_token_masks.int().sum().item())
+            n_analyzed_tokens += cast(int, item(ignore_token_masks.int().sum()))
             pbar.update(n_tokens_current)
             if n_tokens >= self.cfg.total_analyzing_tokens:
                 break

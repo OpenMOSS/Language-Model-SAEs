@@ -34,7 +34,9 @@ from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.discrete import KeyedDiscreteMapper
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.misc import is_primary_rank
 
 from .base import PostAnalysisProcessor, register_post_analysis_processor
 
@@ -123,7 +125,11 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
 
         visited = 0
         active_head_mask = act_times.ne(0)
-        pbar = tqdm(total=interested_pairs.shape[0], desc="Processing LoRSA z patterns")
+        pbar = tqdm(
+            total=interested_pairs.shape[0],
+            desc="Processing LoRSA z patterns",
+            disable=not is_primary_rank(device_mesh),
+        )
         # Iterate through activation stream
         for batch_data in activation_stream:
             # Extract metadata from batch
@@ -171,7 +177,7 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
                     size=z_pattern_data.size(),
                 )
 
-                pbar.update(n_unfiltered_interested_pairs.item())
+                pbar.update(item(n_unfiltered_interested_pairs))
 
             if visited == interested_pairs.shape[0]:
                 break

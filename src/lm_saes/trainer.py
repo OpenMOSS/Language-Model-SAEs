@@ -1,3 +1,4 @@
+import json
 import math
 import os
 from pathlib import Path
@@ -14,11 +15,20 @@ from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.config import TrainerConfig
+from lm_saes.metrics import (
+    ExplainedVarianceMetric,
+    FrequencyMetric,
+    L0Metric,
+    L2NormErrorMetric,
+    LossMetric,
+    MeanFeatureActMetric,
+    Metric,
+    ModelSpecificMetric,
+)
 from lm_saes.optim import SparseAdam, get_scheduler
-from lm_saes.utils.distributed.ops import full_tensor
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
-from lm_saes.utils.tensor_dict import batch_size
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("trainer")
@@ -39,6 +49,7 @@ class Trainer:
         self.optimizer: Optimizer | None = None
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
+        self.metrics: list[Metric] = []
 
     def save_checkpoint(self, sae: AbstractSparseAutoEncoder, checkpoint_path: Path | str) -> None:
         """
@@ -77,11 +88,12 @@ class Trainer:
                 "checkpoint_thresholds": self.checkpoint_thresholds,
                 "cfg": self.cfg,
             }
-
             # Save trainer state
             trainer_path = checkpoint_dir / "trainer.pt"
             torch.save(trainer_state, trainer_path)
-
+            if self.wandb_logger is not None:
+                with open(checkpoint_dir / "wandb_run_id.json", "w") as f:
+                    json.dump({"wandb_run_id": self.wandb_logger.id}, f)
         # Save optimizer state - handle distributed tensors
         if self.optimizer is not None:
             if sae.device_mesh is None:
@@ -200,7 +212,8 @@ class Trainer:
         activation_stream: Iterable[dict[str, Tensor]],
         wandb_logger: Run | None = None,
     ):
-        bs = batch_size(next(iter(activation_stream)))
+        batch = next(iter(activation_stream))
+        bs = batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum()))
         self.total_training_steps = self.cfg.total_training_tokens // bs
 
         def calculate_warmup_steps(warmup_steps: float | int) -> int:
@@ -320,7 +333,7 @@ class Trainer:
 
         lp_coefficient = self.cfg.lp_coefficient if self.cfg.lp_coefficient is not None else 0.0
 
-        loss, (loss_data, aux_data) = sae.compute_loss(
+        ctx = sae.compute_loss(
             batch,
             sparsity_loss_type=self.cfg.sparsity_loss_type,
             tanh_stretch_coefficient=self.cfg.tanh_stretch_coefficient,
@@ -331,133 +344,57 @@ class Trainer:
             lp_coefficient=lp_coefficient,
             frequency_scale=self.cfg.frequency_scale,
         )
-
-        loss_dict = (
-            {
-                "loss": loss,
-                "batch_size": batch_size(batch),
-                "l1_coefficient": l1_coefficient,
-                "lp_coefficient": lp_coefficient,
-            }
-            | loss_data
-            | aux_data
-        )
-        return loss_dict
+        return ctx
 
     @torch.no_grad()
     @timer.time("log")
-    def _log(self, sae: AbstractSparseAutoEncoder, log_info: dict, batch: dict[str, Tensor]):
+    def _log(self, sae: AbstractSparseAutoEncoder, ctx: dict[str, Any]):
         """Log training metrics and sparsity statistics.
 
         Delegates model-specific logging to the model's methods.
         """
         assert self.optimizer is not None, "Optimizer must be initialized"
-        label = sae.prepare_label(batch)
 
-        # Prepare logging data (model-specific transformations)
-        log_info, label = sae.prepare_logging_data(log_info.copy(), label)
+        # Initialize metrics on first call
+        if not self.metrics:
+            self.metrics = [
+                FrequencyMetric(sae),
+                LossMetric(sae),
+                MeanFeatureActMetric(sae),
+                ExplainedVarianceMetric(sae),
+                L0Metric(sae),
+                L2NormErrorMetric(sae),
+                ModelSpecificMetric(sae),
+            ]
 
-        # Compute activation frequency scores
-        act_freq_scores = sae.compute_activation_frequency_scores(log_info["feature_acts"])
-        act_freq_scores = full_tensor(act_freq_scores)
+        for metric in self.metrics:
+            ctx = {**ctx, **metric.update(ctx)}
 
-        log_info["act_freq_scores"] += act_freq_scores
-        log_info["n_frac_active_tokens"] += log_info["batch_size"]
-        # Log sparsity metrics periodically
-        if (self.cur_step + 1) % self.cfg.feature_sampling_window == 0:
-            feature_sparsity = log_info["act_freq_scores"] / log_info["n_frac_active_tokens"]
-            wandb_log_dict = sae.compute_sparsity_metrics(feature_sparsity)
-            if is_primary_rank(sae.device_mesh):
-                log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Sparsity Metrics")
-            if self.wandb_logger is not None:
-                self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
-            log_info["act_freq_scores"].zero_()
-            log_info["n_frac_active_tokens"].zero_()
-
-        # Log training metrics periodically
         if (self.cur_step + 1) % self.cfg.log_frequency == 0:
-            feature_acts = log_info["feature_acts"]
-            reconstructed = log_info["reconstructed"]
+            metrics = {}
 
-            # Convert DTensors to regular tensors for computation
-            feature_acts = full_tensor(feature_acts)
-            reconstructed = full_tensor(reconstructed)
-            label = full_tensor(label)
+            for metric in self.metrics:
+                metrics.update(metric.compute())
 
-            # Compute common metrics
-            act_feature_counts = feature_acts.gt(0).float().sum()
-            mean_feature_act = feature_acts.sum() / act_feature_counts
-            mean_feature_act = full_tensor(mean_feature_act)
-
-            l0 = (feature_acts > 0).float().sum(-1)
-            l0 = full_tensor(l0)
-
-            l_rec = full_tensor(log_info["l_rec"])
-            l_s = full_tensor(log_info.get("l_s", None)) if log_info.get("l_s", None) is not None else None  # pyright: ignore[reportArgumentType]
-            l_p = full_tensor(log_info.get("l_p", None)) if log_info.get("l_p", None) is not None else None  # pyright: ignore[reportArgumentType]
-
-            # Compute reconstruction metrics
-            per_token_l2_loss = (reconstructed - label).pow(2).sum(dim=-1)
-            total_variance = (label - label.mean(dim=0)).pow(2).sum(dim=-1)
-            l2_norm_error = per_token_l2_loss.sqrt().mean()
-            l2_norm_error_ratio = l2_norm_error / label.norm(p=2, dim=-1).mean()
-            explained_variance_legacy = 1 - per_token_l2_loss / total_variance
-            l2_loss_mean = per_token_l2_loss.mean(dim=0)
-            total_variance_mean = total_variance.mean(dim=0)
-            if torch.any(torch.isinf(total_variance_mean)):
-                logger.warning("Some of total_variance_mean is inf. Check dtype or scaling.")
-            explained_variance = 1 - l2_loss_mean / total_variance_mean
-
-            # Add model-specific training metrics (may modify l0 shape)
-            model_metrics = sae.compute_training_metrics(
-                feature_acts=feature_acts,
-                reconstructed=reconstructed,
-                label=label,
-                l_rec=l_rec,
-                l0=l0,
-                explained_variance=explained_variance,
-                explained_variance_legacy=explained_variance_legacy,
+            metrics.update(
+                {
+                    "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
+                    "details/n_training_tokens": self.cur_tokens,
+                    "details/l1_coefficient": ctx.get("l1_coefficient"),
+                    "details/lp_coefficient": ctx.get("lp_coefficient"),
+                }
             )
 
-            # Aggregate l0 for overall metric if needed (e.g., CLT sums over layers)
-            l0_for_overall = sae.aggregate_l0(l0)
-
-            # Build base metrics dictionary
-            wandb_log_dict = {
-                # losses
-                "losses/mse_loss": l_rec.mean().item(),
-                **({"losses/sparsity_loss": l_s.mean().item()} if l_s is not None else {}),
-                **({"losses/lp_loss": l_p.mean().item()} if l_p is not None else {}),
-                "losses/overall_loss": full_tensor(log_info["loss"]).item(),
-                # variance explained
-                "metrics/explained_variance": explained_variance.mean().item(),
-                "metrics/explained_variance_legacy": explained_variance_legacy.mean().item(),
-                # sparsity
-                "metrics/l0": l0_for_overall.mean().item(),
-                "metrics/mean_feature_act": mean_feature_act.item(),
-                "metrics/l2_norm_error": l2_norm_error.item(),
-                "metrics/l2_norm_error_ratio": l2_norm_error_ratio.item(),
-                # details
-                "details/current_learning_rate": self.optimizer.param_groups[0]["lr"],
-                "details/n_training_tokens": self.cur_tokens,
-                "details/l1_coefficient": log_info["l1_coefficient"],
-                "details/lp_coefficient": log_info["lp_coefficient"],
-            }
-
-            # Add model-specific metrics
-            wandb_log_dict.update(model_metrics)
-
-            # Add timer information
-            wandb_log_dict.update(sae.log_statistics())
+            metrics.update(sae.log_statistics())
 
             if is_primary_rank(sae.device_mesh):
-                log_metrics(logger.logger, wandb_log_dict, step=self.cur_step + 1, title="Training Metrics")
+                log_metrics(logger.logger, metrics, step=self.cur_step + 1, title="Training Metrics")
 
             if timer.enabled:
                 logger.info(f"\nTimer Summary:\n{timer.summary()}\n")
 
             if self.wandb_logger is not None:
-                self.wandb_logger.log(wandb_log_dict, step=self.cur_step + 1)
+                self.wandb_logger.log(metrics, step=self.cur_step + 1)
 
     @timer.time("save_checkpoint")
     def _maybe_save_sae_checkpoint(self, sae: AbstractSparseAutoEncoder):
@@ -490,18 +427,6 @@ class Trainer:
             "Optimizer and scheduler should be already initialized"
         )
 
-        maybe_local_d_sae = sae.cfg.d_sae  # if sae.device_mesh is None else sae.cfg.d_sae // sae.device_mesh.size()
-        if sae.cfg.sae_type == "clt":
-            act_freq_scores_shape = (
-                sae.cfg.n_layers,  # type: ignore
-                maybe_local_d_sae,
-            )
-        else:
-            act_freq_scores_shape = (maybe_local_d_sae,)  # type: ignore
-        log_info = {
-            "act_freq_scores": torch.zeros(act_freq_scores_shape, device=sae.cfg.device, dtype=sae.cfg.dtype),
-            "n_frac_active_tokens": torch.tensor([0], device=sae.cfg.device, dtype=torch.int),
-        }
         proc_bar = tqdm(total=self.total_training_steps, smoothing=0.001, disable=not is_primary_rank(sae.device_mesh))
         proc_bar.update(self.cur_step)
 
@@ -517,30 +442,29 @@ class Trainer:
                     sae.train()
 
                     with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
-                        loss_dict = self._training_step(sae, batch)
+                        ctx = self._training_step(sae, batch)
 
-                    log_info.update(loss_dict)
                     proc_bar.set_description(
-                        f"loss: {log_info['loss'].item():.2f}, learning rate: {self.optimizer.param_groups[0]['lr']:.2e}"
+                        f"loss: {item(ctx['loss']):.2f}, learning rate: {self.optimizer.param_groups[0]['lr']:.2e}"
                     )
 
                     if not self.cfg.skip_metrics_calculation:
                         with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
-                            self._log(sae, log_info, batch)
+                            self._log(sae, ctx)
 
                     with timer.time("refresh_batch"):
                         del batch
                         batch = next(activation_stream)
 
                     with timer.time("backward"):
-                        loss_dict["loss"].backward()
+                        ctx["loss"].backward()
 
                     with timer.time("clip_grad_norm"):
                         # exclude the grad of the jumprelu threshold
                         assert sae.device_mesh is None or self.cfg.clip_grad_norm <= 0, (
                             "clip_grad_norm must be 0 for distributed training"
                         )
-                        loss_dict["grad_norm"] = torch.nn.utils.clip_grad_norm_(
+                        ctx["grad_norm"] = torch.nn.utils.clip_grad_norm_(
                             [
                                 param
                                 for name, param in sae.named_parameters()
@@ -557,12 +481,13 @@ class Trainer:
                         with timer.time("evaluation"):
                             eval_fn(sae)
 
-                    self._maybe_save_sae_checkpoint(sae)
                     with timer.time("scheduler_step"):
                         self.scheduler.step()
-
                     self.cur_step += 1
-                    self.cur_tokens += batch_size(batch)
+                    self.cur_tokens += (
+                        batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum()))
+                    )
+                    self._maybe_save_sae_checkpoint(sae)
                     if self.cur_tokens >= self.cfg.total_training_tokens:
                         break
         except StopIteration:

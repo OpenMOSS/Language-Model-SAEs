@@ -65,7 +65,6 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     use_triton_kernel: bool = False
     sparsity_threshold_for_triton_spmm_kernel: float = 0.996
     sparsity_threshold_for_csr: float = 0.05
-    circuit_tracing_mode: bool = False
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
     promote_act_fn_dtype: Annotated[
@@ -524,12 +523,7 @@ class TrainerConfig(BaseConfig):
 
 
 class EvalConfig(BaseConfig):
-    feature_sampling_window: int = 1000
     total_eval_tokens: int = 1000000
-    use_cached_activations: bool = False
-    device: str = "cpu"
-    fold_activation_scale: bool = True
-    """Whether to fold the activation scale into the SAE model"""
 
 
 class GraphEvalConfig(BaseConfig):
@@ -789,6 +783,8 @@ class WandbConfig(BaseConfig):
     wandb_project: str = "gpt2-sae-training"
     exp_name: str | None = None
     wandb_entity: str | None = None
+    wandb_run_id: str | None = None
+    wandb_resume: Literal["allow", "must", "never", "auto"] = "never"
 
 
 class MongoDBConfig(BaseConfig):
