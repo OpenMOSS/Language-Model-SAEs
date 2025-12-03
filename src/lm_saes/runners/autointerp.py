@@ -97,28 +97,26 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
             progress_bar.refresh()
             progress_bar.set_postfix({"current": current_feature})
     
-    try:
-        async for result in interpreter.interpret_features(
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            model=language_model,
-            datasets=get_dataset,
-            analysis_name=settings.analysis_name,
-            feature_indices=settings.features,
-            max_concurrent=settings.max_workers,
-            progress_callback=progress_callback,
-        ):
-            interpretation = {
-                "text": result["explanation"],
-            }
-            assert interpretation['text'] is not None
-            mongo_client.update_feature(
-                settings.sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
-            )
-    finally:
-        if progress_bar is not None:
-            progress_bar.close()
-            logger.info(f"Completed interpretation: {processed_count}/{total_count} features processed")
+    async for result in interpreter.interpret_features(
+        sae_name=settings.sae_name,
+        sae_series=settings.sae_series,
+        model=language_model,
+        datasets=get_dataset,
+        analysis_name=settings.analysis_name,
+        feature_indices=settings.features,
+        max_concurrent=settings.max_workers,
+        progress_callback=progress_callback,
+    ):
+        interpretation = {
+            "text": result["explanation"],
+        }
+        assert interpretation['text'] is not None
+        mongo_client.update_feature(
+            settings.sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
+        )
+    if progress_bar is not None:
+        progress_bar.close()
+        logger.info(f"Completed interpretation: {processed_count}/{total_count} features processed")
 
 
 def auto_interp(settings: AutoInterpSettings):

@@ -1147,10 +1147,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             
             # Call progress callback if provided
             if progress_callback is not None:
-                try:
-                    progress_callback(total_processed, total_features, feature_index)
-                except Exception as e:
-                    logger.warning(f"Progress callback error: {e}")
+                progress_callback(total_processed, total_features, feature_index)
         
         logger.info(
             f"Interpretation complete: {completed} completed, {skipped} skipped, {failed} failed out of {total_features} total"
