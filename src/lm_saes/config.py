@@ -82,7 +82,8 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
     @property
     def d_sae(self) -> int:
-        return int(self.d_model * self.expansion_factor)
+        d_sae = int(self.d_model * self.expansion_factor)
+        return d_sae
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):

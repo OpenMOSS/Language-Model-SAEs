@@ -16,12 +16,6 @@ from lm_saes.utils.logging import get_distributed_logger
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import SAEConfig
 
-try:
-    from sae_lens import JumpReLUSAE, StandardSAE, TopKSAE
-    sae_lens_warning = False
-except ImportError:
-    sae_lens_warning = True
-
 logger = get_distributed_logger("sae")
 
 
@@ -442,6 +436,12 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     @classmethod
     def from_saelens(cls, sae_saelens):
         
+        try:
+            from sae_lens import JumpReLUSAE, StandardSAE, TopKSAE
+            sae_lens_warning = False
+        except ImportError:
+            sae_lens_warning = True
+        
         # Check env
         assert not sae_lens_warning, "Warning: sae_lens library not found."
         
@@ -496,3 +496,81 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
                 model.activation_function.log_jumprelu_threshold.copy_(torch.log(sae_saelens.threshold.clone().detach()))
         
         return model
+    
+    @torch.no_grad()
+    def to_saelens(self, model_name:str='unknown'):
+        
+        try:
+            from sae_lens import JumpReLUSAE, JumpReLUSAEConfig, StandardSAE, StandardSAEConfig, TopKSAE, TopKSAEConfig
+            from sae_lens.saes.sae import SAEMetadata
+            sae_lens_warning = False
+        except ImportError:
+            sae_lens_warning = True
+        
+        # Check env
+        assert not sae_lens_warning, "Warning: sae_lens library not found."
+        assert not self.cfg.use_glu_encoder, "Can't convert sae with use_glu_encoder=True to SAE Lens format."
+        
+        # Parse
+        d_in = self.cfg.d_model
+        d_sae = self.cfg.d_sae
+        activation_fn = self.cfg.act_fn
+        hook_name = self.cfg.hook_point_in
+        dtype = self.cfg.dtype
+        
+        # Create model
+        if activation_fn == 'relu':
+            cfg_saelens = StandardSAEConfig(
+                d_in=d_in,
+                d_sae=d_sae,
+                dtype=str(dtype),
+                device="cpu",
+                apply_b_dec_to_input=False,
+                normalize_activations="none",
+                metadata=SAEMetadata(
+                    model_name=model_name,
+                    hook_name=hook_name,
+                ),
+            )
+            model = StandardSAE(cfg_saelens)
+        elif activation_fn == 'jumprelu':
+            cfg_saelens = JumpReLUSAEConfig(
+                d_in=d_in,
+                d_sae=d_sae,
+                dtype=str(dtype),
+                device="cpu",
+                apply_b_dec_to_input=False,
+                normalize_activations="none",
+                metadata=SAEMetadata(
+                    model_name=model_name,
+                    hook_name=hook_name,
+                ),
+            )
+            model = JumpReLUSAE(cfg_saelens)
+        elif activation_fn == 'topk':
+            cfg_saelens = TopKSAEConfig(
+                k=self.cfg.top_k,
+                d_in=d_in,
+                d_sae=d_sae,
+                dtype=str(dtype),
+                device="cpu",
+                apply_b_dec_to_input=False,
+                normalize_activations="none",
+                rescale_acts_by_decoder_norm=self.cfg.sparsity_include_decoder_norm,
+                metadata=SAEMetadata(
+                    model_name=model_name,
+                    hook_name=hook_name,
+                ),
+            )
+            model = TopKSAE(cfg_saelens)
+        
+        # Depulicate weights
+        model.W_dec.copy_(self.W_D)
+        model.W_enc.copy_(self.W_E)
+        model.b_dec.copy_(self.b_D)
+        model.b_enc.copy_(self.b_E)
+        
+        if isinstance(model, JumpReLUSAE):
+            model.threshold.copy_(self.activation_function.log_jumprelu_threshold)
+        
+        return model 
