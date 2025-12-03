@@ -462,6 +462,8 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         elif isinstance(sae_saelens, JumpReLUSAE):
             activation_fn = 'jumprelu'
             jumprelu_threshold_window = 2
+        else:
+            raise TypeError(f'Only support JumpReLUSAE, StandardSAE, TopKSAE, but get {type(sae_saelens)}')
         
         # create cfg
         cfg = SAEConfig(
@@ -496,6 +498,8 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
         
         # Check env
+        assert self.cfg.hook_point_in != self.cfg.hook_point_out, "Not support transcoder yet."
+        assert not isinstance(self.b_D, DTensor), "Not support distributed setting yet."
         assert not self.cfg.use_glu_encoder, "Can't convert sae with use_glu_encoder=True to SAE Lens format."
         
         # Parse
@@ -550,6 +554,8 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
                 ),
             )
             model = TopKSAE(cfg_saelens)
+        else:
+            raise TypeError("Not support such activation function yet.")
         
         # Depulicate weights
         model.W_dec.copy_(self.W_D)

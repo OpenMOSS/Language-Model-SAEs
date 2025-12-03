@@ -269,7 +269,7 @@ class MOLTConfig(BaseSAEConfig):
         assert self.rank_distribution, "rank_distribution cannot be empty"
 
         # Calculate base d_sae
-        base_d_sae = self.d_model * self.expansion_factor
+        base_d_sae = self.d_sae
 
         # For distributed training, use special logic to ensure consistency
         if self.model_parallel_size_training > 1:
