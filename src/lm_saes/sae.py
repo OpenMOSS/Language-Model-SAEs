@@ -10,6 +10,7 @@ from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
+from lm_saes.activation_functions import JumpReLU
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger
 
@@ -448,6 +449,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         d_model = sae_saelens.cfg.d_in
         d_sae = sae_saelens.cfg.d_sae
         hook_name = sae_saelens.cfg.metadata.hook_name
+        assert isinstance(hook_name, str)
         dtype = sae_saelens.W_enc.dtype
         
         rescale_acts_by_decoder_norm = False
@@ -487,6 +489,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         model.b_E.copy_(sae_saelens.b_enc)
         
         if isinstance(sae_saelens, JumpReLUSAE):
+            assert isinstance(model.activation_function, JumpReLU)
             model.activation_function.log_jumprelu_threshold.copy_(torch.log(sae_saelens.threshold.clone().detach()))
         
         return model
@@ -564,6 +567,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         model.b_enc.copy_(self.b_E)
         
         if isinstance(model, JumpReLUSAE):
+            assert isinstance(self.activation_function, JumpReLU)
             model.threshold.copy_(self.activation_function.log_jumprelu_threshold.exp())
         
         return model 
