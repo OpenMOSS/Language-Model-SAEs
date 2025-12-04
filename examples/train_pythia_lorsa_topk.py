@@ -81,8 +81,8 @@ if __name__ == "__main__":
             ],
             target=ActivationFactoryTarget.ACTIVATIONS_2D,
             hook_points=["blocks.6.ln1.hook_normalized", "blocks.6.hook_attn_out"],
-            batch_size=4096,
-            buffer_size=4096 * 4,
+            batch_size=32,
+            buffer_size=None,
             buffer_shuffle=BufferShuffleConfig(
                 perm_seed=42,
                 generator_device="cuda",
