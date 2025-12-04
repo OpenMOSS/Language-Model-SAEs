@@ -517,8 +517,9 @@ To determine the explanation, you are given four lists:\n\n
 You should look for a pattern by trying the following methods in order. Once you find a pattern, stop and return that pattern. Do not proceed to the later methods.\n
 Method 1: Look at MAX_ACTIVATING_TOKENS. If they share something specific in common, or are all the same token or a variation of the same token (like different cases or conjugations), respond with that token.\n
 Method 2: Look at TOKENS_AFTER_MAX_ACTIVATING_TOKEN. Try to find a specific pattern or similarity in all the tokens. A common pattern is that they all start with the same letter. If you find a pattern (like \'s word\', \'the ending -ing\', \'number 8\'), respond with \'say [the pattern]\'. You can ignore uppercase/lowercase differences for this.\n
-Method 3: Look at TOP_POSITIVE_LOGITS for similarities and describe it very briefly (1-3 words).\n
-Method 4: Look at TOP_ACTIVATING_TEXTS and make a best guess by describing the broad theme or context, ignoring the max activating tokens.\n\n
+Method 3: Look at TOP_POSITIVE_LOGITS for similarities and describe it very briefly (1-3 words). These tokens are the most likely to be predicted with this neuron.\n
+Method 4: Look at TOP_NEGATIVE_LOGITS for similarities and describe it very briefly (1-3 words). These tokens are the most suppressed by this neuron.\n
+Method 5: Look at TOP_ACTIVATING_TEXTS and make a best guess by describing the broad theme or context, ignoring the max activating tokens.\n\n
 Rules:\n
 - You can think carefully in your internal thinking process, but keep your returned explanation extremely concise (1-6 words, mostly 1-3 words).\n
 - Do not add unnecessary phrases like "words related to", "concepts related to", or "variations of the word".\n
@@ -530,22 +531,22 @@ Think carefully by going through each method number until you find one that help
 
 Examples:
 {
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nwatching\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nShe\nenjoy\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nwalking\nWA\nwaiting\nwas\nwe\nWHAM\nwish\nwin\nwake\nwhisper\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nShe was taking a nap when her phone started ringing.\nI enjoy watching movies with my family.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nwatching\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nShe\nenjoy\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nwalking\nWA\nwaiting\nwas\nwe\nWHAM\nwish\nwin\nwake\nwhisper\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_NEGATIVE_LOGITS>\ndoes\napple\n\\n\nused\nsay\nvitamins\nneus\nautumn\nsun\nanation</TOP_NEGATIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nShe was taking a nap when her phone started ringing.\nI enjoy watching movies with my family.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
 Method 1 fails: MAX_ACTIVATING_TOKENS (She, enjoy) are not similar tokens.\nMethod 2 succeeds: All TOKENS_AFTER_MAX_ACTIVATING_TOKEN have a pattern in common: they all start with "w".\nExplanation: say "w" words</THINKING>\n\nsay "w" words
 }
 
 {
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwarm\nthe\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nand\nAnd\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nelephant\nguitar\nmountain\nbicycle\nocean\ntelescope\ncandle\numbrella\ntornado\nbutterfly\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nIt was a beautiful day outside with clear skies and warm sunshine.\nAnd the garden has roses and tulips and daisies and sunflowers blooming together.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwarm\nthe\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nand\nAnd\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nelephant\nguitar\nmountain\nbicycle\nocean\ntelescope\ncandle\numbrella\ntornado\nbutterfly\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_NEGATIVE_LOGITS>\ndoes\napple\n\\n\nused\nsay\nvitamins\nneus\nautumn\nsun\nanation</TOP_NEGATIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nIt was a beautiful day outside with clear skies and warm sunshine.\nAnd the garden has roses and tulips and daisies and sunflowers blooming together.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
 Method 1 succeeds: All MAX_ACTIVATING_TOKENS are the word "and".\nExplanation: and</THINKING>\n\nand
 }
 
 {
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nare\n,\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nbanana\nblueberries\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\napple\norange\npineapple\nwatermelon\nkiwi\npeach\npear\ngrape\ncherry\nplum\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nThe apple and banana are delicious foods that provide essential vitamins and nutrients.\nI enjoy eating fresh strawberries, blueberries, and mangoes during the summer months.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nare\n,\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nbanana\nblueberries\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\napple\norange\npineapple\nwatermelon\nkiwi\npeach\npear\ngrape\ncherry\nplum\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_NEGATIVE_LOGITS>\ndoes\napple\n\\n\nused\nsay\nvitamins\nneus\nautumn\nsun\nanation</TOP_NEGATIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nThe apple and banana are delicious foods that provide essential vitamins and nutrients.\nI enjoy eating fresh strawberries, blueberries, and mangoes during the summer months.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
 Method 1 succeeds: All MAX_ACTIVATING_TOKENS (banana, blueberries) are fruits.\nExplanation: fruits\n</THINKING>\n\nfruits
 }
 
 {
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nplaces\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nwar\nsome\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n4\nfour\nfourth\n4th\nIV\nFour\nFOUR\n~4\n4.0\nquartet\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nthe civil war was a major topic in history class .\n seasons of the year are winter , spring , summer , and fall or autumn in some places .\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nplaces\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nwar\nsome\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n4\nfour\nfourth\n4th\nIV\nFour\nFOUR\n~4\n4.0\nquartet\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_NEGATIVE_LOGITS>\ndoes\napple\n\\n\nused\nsay\nvitamins\nneus\nautumn\nsun\nanation</TOP_NEGATIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nthe civil war was a major topic in history class .\n seasons of the year are winter , spring , summer , and fall or autumn in some places .\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
 Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nMethod 2 fails: TOKENS_AFTER_MAX_ACTIVATING_TOKEN (was, places) are not all similar tokens and don't have a text pattern in common.\nMethod 3 succeeds: All TOP_POSITIVE_LOGITS are the number 4.\nExplanation: 4</THINKING>\n\n4
 }
 """
@@ -554,6 +555,7 @@ Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nM
         max_activating_tokens = ""
         plain_activating_tokens = ""
         logit_activating_tokens = ""
+        logit_suppressing_tokens = ""
 
         for i, example in enumerate(examples_to_show, 1):
             next_activating_tokens = next_activating_tokens + example.display_next(self.cfg.activation_threshold)
@@ -563,11 +565,14 @@ Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nM
         if top_logits is not None:
             for text in top_logits['positive']:
                 logit_activating_tokens = logit_activating_tokens + text["token"] + "\n"
+            for text in top_logits['negative']:
+                logit_suppressing_tokens = logit_suppressing_tokens + text["token"] + "\n"
         else:
             logit_activating_tokens = next_activating_tokens
+            logit_suppressing_tokens = "none"
 
         user_prompt: str = f"""
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n{next_activating_tokens}\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\n{max_activating_tokens}\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n{logit_activating_tokens}\n<\\TOP_POSITIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\n{plain_activating_tokens}\n<\\TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
+<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n{next_activating_tokens}\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\n{max_activating_tokens}\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n{logit_activating_tokens}\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_NEGATIVE_LOGITS>\n\n{logit_suppressing_tokens}\n</TOP_NEGATIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\n{plain_activating_tokens}\n<\\TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
 """
         return system_prompt, user_prompt
 
