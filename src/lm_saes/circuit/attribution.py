@@ -32,8 +32,15 @@ from einops import einsum
 from tqdm import tqdm
 from transformer_lens.hook_points import HookPoint
 
+from typing import Dict
+
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.sae import SparseAutoEncoder
+
+# Type definition for transcoders: per-layer (dict) or cross-layer (CLT)
+TranscoderSet = Dict[int, SparseAutoEncoder]
+TranscoderType = Dict[int, SparseAutoEncoder] | CrossLayerTranscoder
 
 from ..utils.logging import get_distributed_logger
 from .graph import Graph
@@ -586,6 +593,26 @@ def compute_salient_logits(
 
 
 @torch.no_grad()
+def select_scaled_decoder_vecs_plt(
+    activations: torch.sparse.Tensor, transcoders: Dict[int, SparseAutoEncoder]
+) -> torch.Tensor:
+    """Return decoder rows for **active** features only (per-layer transcoders).
+
+    The return value is already scaled by the feature activation, making it
+    suitable as ``inject_values`` during gradient overrides.
+    """
+    rows: List[torch.Tensor] = []
+    n_layers = len(activations)
+    for layer in range(n_layers):
+        if activations[layer] is not None:
+            row = activations[layer].coalesce()
+            _, feat_idx = row.indices()
+            # For per-layer transcoders, decoder is just W_D for that layer
+            rows.append(transcoders[layer].W_D[feat_idx] * row.values()[:, None])
+    return torch.cat(rows) if rows else torch.empty(0, transcoders[0].cfg.d_model, device=activations[0].device)
+
+
+@torch.no_grad()
 def select_scaled_decoder_vecs_clt(activations: torch.sparse.Tensor, transcoders: CrossLayerTranscoder) -> torch.Tensor:
     """Return decoder rows for **active** features only.
 
@@ -616,6 +643,20 @@ def select_scaled_decoder_vecs_lorsa(
         _, head_idx = row.coalesce().indices()
         rows.append(lorsas[layer].W_O[head_idx])
     return torch.cat(rows) * activation_matrix.values()[:, None]
+
+
+@torch.no_grad()
+def select_encoder_rows_plt(
+    activation_matrix: torch.sparse.Tensor, transcoders: Dict[int, SparseAutoEncoder]
+) -> torch.Tensor:
+    """Return encoder rows for **active** features only (per-layer transcoders)."""
+    rows: List[torch.Tensor] = []
+    for layer, row in enumerate(activation_matrix):
+        if row is not None:
+            _, feat_idx = row.coalesce().indices()
+            # For per-layer transcoders, encoder is W_E for that layer
+            rows.append(transcoders[layer].W_E.T[feat_idx])
+    return torch.cat(rows) if rows else torch.empty(0, transcoders[0].cfg.d_model, device=activation_matrix[0].device)
 
 
 @torch.no_grad()
@@ -781,8 +822,14 @@ def _run_attribution(
         lorsa_decoder_vecs = None
         lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = None, None, None
 
-    clt_decoder_vecs = select_scaled_decoder_vecs_clt(clt_activation_matrix, model.transcoders)
-    clt_encoder_rows = select_encoder_rows_clt(clt_activation_matrix, model.transcoders)
+    # Handle both per-layer and cross-layer transcoders
+    if isinstance(model.transcoders, CrossLayerTranscoder):
+        clt_decoder_vecs = select_scaled_decoder_vecs_clt(clt_activation_matrix, model.transcoders)
+        clt_encoder_rows = select_encoder_rows_clt(clt_activation_matrix, model.transcoders)
+    else:
+        # Per-layer transcoders
+        clt_decoder_vecs = select_scaled_decoder_vecs_per_layer(clt_activation_matrix, model.transcoders)
+        clt_encoder_rows = select_encoder_rows_per_layer(clt_activation_matrix, model.transcoders)
 
     ctx = AttributionContext(
         lorsa_activation_matrix,
