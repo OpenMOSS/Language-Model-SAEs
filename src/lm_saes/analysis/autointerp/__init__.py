@@ -6,14 +6,6 @@ process, organized by purpose:
 - evaluation_prompts: Prompts for evaluating feature explanations
 """
 
-from .evaluation_prompts import (
-    generate_detection_prompt,
-    generate_fuzzing_prompt,
-)
-from .explanation_prompts import (
-    generate_explanation_prompt,
-    generate_explanation_prompt_neuronpedia,
-)
 from .autointerp_base import (
     AutoInterpConfig,
     ExplainerType,
@@ -22,10 +14,17 @@ from .autointerp_base import (
     TokenizedSample,
     process_token,
 )
+from .evaluation_prompts import (
+    generate_detection_prompt,
+    generate_fuzzing_prompt,
+)
+from .explanation_prompts import (
+    generate_explanation_prompt,
+    generate_explanation_prompt_neuronpedia,
+)
 from .feature_interpreter import (
     FeatureInterpreter,
 )
-
 
 __all__ = [
     "generate_explanation_prompt",

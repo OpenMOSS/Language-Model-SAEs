@@ -6,10 +6,10 @@ including configuration, data structures, and helper functions.
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 import torch
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from lm_saes.config import BaseConfig
 from lm_saes.utils.logging import get_logger

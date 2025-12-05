@@ -13,31 +13,25 @@ It includes:
 import asyncio
 import random
 import time
-from dataclasses import dataclass
-from enum import Enum
+import traceback
 from typing import Any, AsyncGenerator, Callable, Literal, Optional
-from tqdm import tqdm
-
 
 import json_repair
 import numpy as np
 import torch
 from datasets import Dataset
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from lm_saes.analysis.autointerp import (
-    generate_detection_prompt,
-    generate_explanation_prompt,
-    generate_explanation_prompt_neuronpedia,
-    generate_fuzzing_prompt,
-)
 from lm_saes.analysis.autointerp import (
     AutoInterpConfig,
     ExplainerType,
     ScorerType,
     Segment,
     TokenizedSample,
-    process_token,
+    generate_detection_prompt,
+    generate_explanation_prompt,
+    generate_explanation_prompt_neuronpedia,
+    generate_fuzzing_prompt,
 )
 from lm_saes.backend.language_model import LanguageModel
 from lm_saes.database import FeatureAnalysis, FeatureRecord, MongoClient
@@ -45,8 +39,6 @@ from lm_saes.utils.logging import get_logger
 
 logger = get_logger("analysis.feature_interpreter")
 
-
-import traceback
 
 class Step(BaseModel):
     """A step in the chain-of-thought process."""
@@ -181,7 +173,7 @@ def generate_activating_examples(
         # Process the sample using model's trace method
         try:
             origins = model.trace({k: [v] for k, v in data.items()})[0]
-        except Exception as e:
+        except Exception:
             continue
 
         max_act_pos = torch.argmax(feature_acts).item()
@@ -376,7 +368,7 @@ class FeatureInterpreter:
             n=self.cfg.n_non_activating_examples,
             max_length=max_length,
         )
-        return activating_examples, None
+        return activating_examples, non_activating_examples
 
 
     async def generate_explanation(self, activating_examples: list[TokenizedSample], top_logits: dict[str, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
