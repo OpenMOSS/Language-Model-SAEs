@@ -1,12 +1,12 @@
-from .direct_logit_attributor import DirectLogitAttributor
-from .feature_analyzer import FeatureAnalyzer
-from .feature_interpreter import (
+from lm_saes.analysis.autointerp import (
     AutoInterpConfig,
     ExplainerType,
-    FeatureInterpreter,
     ScorerType,
     TokenizedSample,
 )
+from .direct_logit_attributor import DirectLogitAttributor
+from .feature_analyzer import FeatureAnalyzer
+from lm_saes.analysis.autointerp import FeatureInterpreter
 
 __all__ = [
     "FeatureAnalyzer",

@@ -16,6 +16,8 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, AsyncGenerator, Callable, Literal, Optional
+from tqdm import tqdm
+
 
 import json_repair
 import numpy as np
@@ -23,29 +25,28 @@ import torch
 from datasets import Dataset
 from pydantic import BaseModel, Field
 
+from lm_saes.analysis.autointerp import (
+    generate_detection_prompt,
+    generate_explanation_prompt,
+    generate_explanation_prompt_neuronpedia,
+    generate_fuzzing_prompt,
+)
+from lm_saes.analysis.autointerp import (
+    AutoInterpConfig,
+    ExplainerType,
+    ScorerType,
+    Segment,
+    TokenizedSample,
+    process_token,
+)
 from lm_saes.backend.language_model import LanguageModel
-from lm_saes.config import BaseConfig
 from lm_saes.database import FeatureAnalysis, FeatureRecord, MongoClient
 from lm_saes.utils.logging import get_logger
 
 logger = get_logger("analysis.feature_interpreter")
 
 
-class ExplainerType(str, Enum):
-    """Types of LLM explainers supported."""
-
-    OPENAI = "openai"
-    NEURONPEDIA = "neuronpedia"
-
-
-class ScorerType(str, Enum):
-    """Types of explanation scoring methods."""
-
-    DETECTION = "detection"
-    FUZZING = "fuzzing"
-    GENERATION = "generation"
-    SIMULATION = "simulation"
-
+import traceback
 
 class Step(BaseModel):
     """A step in the chain-of-thought process."""
@@ -121,155 +122,6 @@ AutoInterpEvaluation_Schema = {
 }
 
 
-class AutoInterpConfig(BaseConfig):
-    """Configuration for automatic interpretation of SAE features."""
-
-    # LLM settings
-    explainer_type: ExplainerType = ExplainerType.OPENAI
-    openai_api_key: Optional[str] = None
-    openai_model: str = "gpt-3.5-turbo"
-    openai_base_url: Optional[str] = None
-    openai_proxy: Optional[str] = None
-
-    # Activation retrieval settings
-    n_activating_examples: int = 7
-    n_non_activating_examples: int = 20
-    activation_threshold: float = 0.7  # Threshold relative to max activation for highlighting tokens
-    max_length: int = 50
-
-    # Scoring settings
-    scorer_type: list[ScorerType] = Field(default_factory=lambda: [ScorerType.DETECTION, ScorerType.FUZZING])
-
-    # Detection settings
-    detection_n_examples: int = 5  # Number of examples to show for detection
-
-    # Fuzzing settings
-    fuzzing_n_examples: int = 5  # Number of examples to use for fuzzing
-    fuzzing_decile_correct: int = 5  # Number of correctly marked examples per decile
-    fuzzing_decile_incorrect: int = 2  # Number of incorrectly marked examples per decile
-
-    # Prompting settings
-    include_cot: bool = True  # Whether to use chain-of-thought prompting
-
-
-@dataclass
-class Segment:
-    """A segment of text with its activation value."""
-
-    text: str
-    """The text of the segment."""
-
-    activation: float
-    """The activation value of the segment."""
-
-    def display(self, abs_threshold: float) -> str:
-        """Display the segment as a string with whether it's highlighted."""
-        if self.activation > abs_threshold:
-            return f"<<{self.text}>>"
-        else:
-            return self.text
-
-    def display_max(self, abs_threshold: float) -> str:
-        if self.activation > abs_threshold:
-            return f"{self.text}\n"
-        else:
-            return ""
-
-
-@dataclass
-class TokenizedSample:
-    """A tokenized sample with its activation pattern organized into segments."""
-
-    segments: list[Segment]
-    """List of segments, each containing start/end positions and activation values."""
-
-    max_activation: float
-    """Global maximum activation value."""
-
-    def display_highlighted(self, threshold: float = 0.7) -> str:
-        """Get the text with activating segments highlighted with << >> delimiters.
-
-        Args:
-            threshold: Threshold relative to max activation for highlighting
-
-        Returns:
-            Text with activating segments highlighted
-        """
-        highlighted_text = "".join([seg.display(threshold * self.max_activation) for seg in self.segments])
-        return highlighted_text
-
-    def display_plain(self) -> str:
-        """Get the text with all segments displayed."""
-        return "".join([seg.text for seg in self.segments])
-
-    def display_max(self, threshold: float = 0.7) -> str:
-        # max_activation_text = "".join([seg.display_max(threshold * self.max_activation) for seg in self.segments])
-        max_activation_text = ""
-        hash_ = {}
-        for i, seg in enumerate(self.segments):
-            if seg.activation > threshold * self.max_activation:
-                text = seg.text
-                if text != "" and hash_.get(text, None) is None:
-                    hash_[text] = 1
-                    # Get previous 3 tokens
-                    prev_tokens = []
-                    for j in range(max(0, i - 3), i):
-                        prev_tokens.append(self.segments[j].text)
-                    prev_text = "".join(prev_tokens)
-                    max_activation_text += f"({prev_text}) {text}\n"
-        return max_activation_text
-
-    def display_next(self, threshold: float = 0.7) -> str:
-        # max_activation_text = "".join([seg.display_max(threshold * self.max_activation) for seg in self.segments])
-        next_activation_text = ""
-        hash_ = {}
-        Flag = False
-        for seg in self.segments:
-            if Flag:
-                text = seg.text
-                if text != "" and hash_.get(text, None) is None:
-                    hash_[text] = 1
-                    next_activation_text = text + "\n"
-            if seg.activation > threshold * self.max_activation:
-                Flag = True
-            else:
-                Flag = False
-        return next_activation_text
-
-    @staticmethod
-    def construct(
-        text: str,
-        activations: torch.Tensor,
-        origins: list[dict[str, Any]],
-        max_activation: float,
-    ) -> "TokenizedSample":
-        """Construct a TokenizedSample from text, activations, and origins."""
-        positions: set[int] = set()
-        for origin in origins:
-            if origin and origin["key"] == "text":
-                assert "range" in origin, f"Origin {origin} does not have a range"
-                positions.add(origin["range"][0])
-                positions.add(origin["range"][1])
-
-        sorted_positions = sorted(positions)
-
-        segments = []
-        for i in range(len(sorted_positions) - 1):
-            start, end = sorted_positions[i], sorted_positions[i + 1]
-            try:
-                segment_activation = max(
-                    act
-                    for origin, act in zip(origins, activations)
-                    if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
-                )
-            except Exception:
-                logger.error(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n")
-                continue
-            segments.append(Segment(text[start:end], segment_activation.item()))
-
-        return TokenizedSample(segments, max_activation)
-
-
 def generate_activating_examples(
     feature: FeatureRecord,
     model: LanguageModel,
@@ -292,19 +144,27 @@ def generate_activating_examples(
         List of TokenizedExample with high activation for the feature
     """
     samples: list[TokenizedSample] = []
-    error_prefix = f"Error processing activating examples of feature {feature.index}: "
 
-    # Get examples from each sampling
+    # Get examples from top activations
     sampling = analysis.samplings[0]
-    # print(f'{sampling.context_idx.shape=}')
-    # print(f'{sampling.feature_acts_values.shape=} {sampling.feature_acts_indices=}')
-    # feature_acts_ = torch.sparse_coo_tensor(torch.Tensor(sampling.feature_acts_indices), torch.Tensor(sampling.feature_acts_values), (1024, sampling.context_idx.shape[0]))
     feature_acts_ = torch.sparse_coo_tensor(
-        torch.Tensor(sampling.feature_acts_indices),
-        torch.Tensor(sampling.feature_acts_values),
+        torch.tensor(sampling.feature_acts_indices),
+        torch.tensor(sampling.feature_acts_values),
         (int(np.max(sampling.feature_acts_indices[0])), 2048),
     )
     feature_acts_ = feature_acts_.to_dense()
+
+    # Lorsa z pattern data so we can explain which tokens are contributing to the activation
+    # We want to operate in coo format since zpattern is 3-d
+    # z_pattern_indices: [n_samples, n_ctx, n_ctx]
+    # z_pattern_values: [n_samples, n_ctx, n_ctx]
+    if sampling.z_pattern_indices is not None:
+        assert sampling.z_pattern_values is not None, "Z pattern values are not available"
+        z_pattern_indices = torch.tensor(sampling.z_pattern_indices).int()
+        z_pattern_values = torch.tensor(sampling.z_pattern_values)
+    else:
+        z_pattern_indices = None
+        z_pattern_values = None
 
     for i, (dataset_name, shard_idx, n_shards, context_idx, feature_acts) in enumerate(
         zip(
@@ -315,16 +175,13 @@ def generate_activating_examples(
             feature_acts_,
         )
     ):
-        # try:
         dataset = datasets(dataset_name, shard_idx, n_shards)
-        # context_idx = context_idx.astype(int)
         data = dataset[int(context_idx)]
 
         # Process the sample using model's trace method
         try:
             origins = model.trace({k: [v] for k, v in data.items()})[0]
         except Exception as e:
-            logger.error(f"{error_prefix} {e}")
             continue
 
         max_act_pos = torch.argmax(feature_acts).item()
@@ -339,6 +196,24 @@ def generate_activating_examples(
             origins=origins[left_end:right_end],
             max_activation=analysis.max_feature_acts,
         )
+        # Find max contributing previous tokens for Lorsa.
+        # We want to operate in coo format since zpattern is 3-d.
+        if z_pattern_indices is not None and z_pattern_values is not None:
+            current_sequence_mask = z_pattern_indices[0] == i
+            current_z_pattern_indices = z_pattern_indices[1:, current_sequence_mask]
+            current_z_pattern_values = z_pattern_values[current_sequence_mask]
+            # Need to adjust indices since the text has been cropped
+            # and remove negative indices
+            out_of_right_end_indices = current_z_pattern_indices.lt(right_end).all(dim=0)
+            current_z_pattern_indices -= left_end
+            z_pattern_with_negative_indices = current_z_pattern_indices.ge(0).all(dim=0)
+            mask = out_of_right_end_indices * z_pattern_with_negative_indices
+            sample.add_z_pattern_data(
+                current_z_pattern_indices[:, mask],
+                current_z_pattern_values[mask],
+                origins,
+            )
+
         samples.append(sample)
 
         if len(samples) >= n:
@@ -370,6 +245,8 @@ def generate_non_activating_examples(
     """
 
     samples: list[TokenizedSample] = []
+    if n == 0:
+        return samples
     error_prefix = f"Error processing non-activating examples of feature {feature.index}:"
 
     sampling_idx = -1
@@ -488,6 +365,7 @@ class FeatureInterpreter:
             model=model,
             datasets=datasets,
             analysis=analysis,
+            n=self.cfg.n_activating_examples,
             max_length=max_length,
         )
         non_activating_examples = generate_non_activating_examples(
@@ -495,164 +373,11 @@ class FeatureInterpreter:
             model=model,
             datasets=datasets,
             analysis=analysis,
+            n=self.cfg.n_non_activating_examples,
             max_length=max_length,
         )
-        return activating_examples, non_activating_examples
+        return activating_examples, None
 
-    def _generate_explanation_prompt_neuronpedia(self, activating_examples: list[TokenizedSample], top_logits: dict[str, list[dict[str, Any]]] | None = None) -> tuple[str, str]:
-        """Generate a prompt for explanation generation with neuronpedia.
-
-        Args:
-            activating_examples: List of activating examples
-
-        Returns:
-            Prompt string for the LLM
-        """
-        system_prompt = """You are explaining the behavior of a neuron in a neural network. Your final response should be a very concise explanation (1-6 words) that captures what the neuron detects or predicts by finding patterns in lists.\n\n
-To determine the explanation, you are given four lists:\n\n
-- MAX_ACTIVATING_TOKENS, which are the top activating tokens in the top activating texts. Each max activating token is shown with the previous 3 tokens in parentheses for context, e.g., "(Who am) I".\n
-- TOKENS_AFTER_MAX_ACTIVATING_TOKEN, which are the tokens immediately after the max activating token.\n
-- TOP_POSITIVE_LOGITS, which are the most likely words or tokens associated with this neuron.\n
-- TOP_ACTIVATING_TEXTS, which are top activating texts.\n\n
-You should look for a pattern by trying the following methods in order. Once you find a pattern, stop and return that pattern. Do not proceed to the later methods.\n
-Method 1: Look at MAX_ACTIVATING_TOKENS. If they share something specific in common, or are all the same token or a variation of the same token (like different cases or conjugations), respond with that token.\n
-Method 2: Look at TOKENS_AFTER_MAX_ACTIVATING_TOKEN. Try to find a specific pattern or similarity in all the tokens. A common pattern is that they all start with the same letter. If you find a pattern (like \'s word\', \'the ending -ing\', \'number 8\'), respond with \'say [the pattern]\'. You can ignore uppercase/lowercase differences for this.\n
-Method 3: Look at TOP_POSITIVE_LOGITS for similarities and describe it very briefly (1-3 words). These tokens are the most likely to be predicted with this neuron.\n
-Method 4: Look at TOP_NEGATIVE_LOGITS for similarities and describe it very briefly (1-3 words). These tokens are the most suppressed by this neuron.\n
-Method 5: Look at TOP_ACTIVATING_TEXTS and make a best guess by describing the broad theme or context, ignoring the max activating tokens.\n\n
-Rules:\n
-- You can think carefully in your internal thinking process, but keep your returned explanation extremely concise (1-6 words, mostly 1-3 words).\n
-- Do not add unnecessary phrases like "words related to", "concepts related to", or "variations of the word".\n
-- Do not mention "tokens" or "patterns" in your explanation.\n
-- The explanation should be specific. For example, "unique words" is not a specific enough pattern, nor is "foreign words".\n
-- Remember to use the \'say [the pattern]\' when using Method 2 above (pattern found in TOKENS_AFTER_MAX_ACTIVATING_TOKEN).\n
-- If you absolutely cannot make any guesses, return the first token in MAX_ACTIVATING_TOKENS.\n\n
-Think carefully by going through each method number until you find one that helps you find an explanation for what this neuron is detecting or predicting. If a method does not help you find an explanation, briefly explain why it does not, then go on to the next method. Finally, end your thinking process with the method number you used, the reason for your explanation, and return the explanation in a brief manner.\n
-
-Examples:
-{
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nwatching\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nShe\nenjoy\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nwalking\nWA\nwaiting\nwas\nwe\nWHAM\nwish\nwin\nwake\nwhisper\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_NEGATIVE_LOGITS>\ndoes\napple\n\\n\nused\nsay\nvitamins\nneus\nautumn\nsun\nanation</TOP_NEGATIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nShe was taking a nap when her phone started ringing.\nI enjoy watching movies with my family.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
-Method 1 fails: MAX_ACTIVATING_TOKENS (She, enjoy) are not similar tokens.\nMethod 2 succeeds: All TOKENS_AFTER_MAX_ACTIVATING_TOKEN have a pattern in common: they all start with "w".\nExplanation: say "w" words</THINKING>\n\nsay "w" words
-}
-
-{
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwarm\nthe\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nand\nAnd\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\nelephant\nguitar\nmountain\nbicycle\nocean\ntelescope\ncandle\numbrella\ntornado\nbutterfly\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_NEGATIVE_LOGITS>\ndoes\napple\n\\n\nused\nsay\nvitamins\nneus\nautumn\nsun\nanation</TOP_NEGATIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nIt was a beautiful day outside with clear skies and warm sunshine.\nAnd the garden has roses and tulips and daisies and sunflowers blooming together.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
-Method 1 succeeds: All MAX_ACTIVATING_TOKENS are the word "and".\nExplanation: and</THINKING>\n\nand
-}
-
-{
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nare\n,\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nbanana\nblueberries\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\napple\norange\npineapple\nwatermelon\nkiwi\npeach\npear\ngrape\ncherry\nplum\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_NEGATIVE_LOGITS>\ndoes\napple\n\\n\nused\nsay\nvitamins\nneus\nautumn\nsun\nanation</TOP_NEGATIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nThe apple and banana are delicious foods that provide essential vitamins and nutrients.\nI enjoy eating fresh strawberries, blueberries, and mangoes during the summer months.\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
-Method 1 succeeds: All MAX_ACTIVATING_TOKENS (banana, blueberries) are fruits.\nExplanation: fruits\n</THINKING>\n\nfruits
-}
-
-{
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\nwas\nplaces\n\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\nwar\nsome\n\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n4\nfour\nfourth\n4th\nIV\nFour\nFOUR\n~4\n4.0\nquartet\n\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_NEGATIVE_LOGITS>\ndoes\napple\n\\n\nused\nsay\nvitamins\nneus\nautumn\nsun\nanation</TOP_NEGATIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\nthe civil war was a major topic in history class .\n seasons of the year are winter , spring , summer , and fall or autumn in some places .\n\n</TOP_ACTIVATING_TEXTS>\n\n\n<THINKING>Explanation of neuron behavior: \n
-Method 1 fails: MAX_ACTIVATING_TOKENS (war, some) are not all the same token.\nMethod 2 fails: TOKENS_AFTER_MAX_ACTIVATING_TOKEN (was, places) are not all similar tokens and don't have a text pattern in common.\nMethod 3 succeeds: All TOP_POSITIVE_LOGITS are the number 4.\nExplanation: 4</THINKING>\n\n4
-}
-"""
-        examples_to_show = activating_examples[: self.cfg.n_activating_examples]
-        next_activating_tokens = ""
-        max_activating_tokens = ""
-        plain_activating_tokens = ""
-        logit_activating_tokens = ""
-        logit_suppressing_tokens = ""
-
-        for i, example in enumerate(examples_to_show, 1):
-            next_activating_tokens = next_activating_tokens + example.display_next(self.cfg.activation_threshold)
-            max_activating_tokens = max_activating_tokens + example.display_max(self.cfg.activation_threshold)
-            plain_activating_tokens = plain_activating_tokens + example.display_plain() + "\n"
-
-        if top_logits is not None:
-            for text in top_logits['positive']:
-                logit_activating_tokens = logit_activating_tokens + text["token"] + "\n"
-            for text in top_logits['negative']:
-                logit_suppressing_tokens = logit_suppressing_tokens + text["token"] + "\n"
-        else:
-            logit_activating_tokens = next_activating_tokens
-            logit_suppressing_tokens = "none"
-
-        user_prompt: str = f"""
-<TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n{next_activating_tokens}\n</TOKENS_AFTER_MAX_ACTIVATING_TOKEN>\n\n\n<MAX_ACTIVATING_TOKENS>\n\n{max_activating_tokens}\n</MAX_ACTIVATING_TOKENS>\n\n\n<TOP_POSITIVE_LOGITS>\n\n{logit_activating_tokens}\n</TOP_POSITIVE_LOGITS>\n\n\n<TOP_NEGATIVE_LOGITS>\n\n{logit_suppressing_tokens}\n</TOP_NEGATIVE_LOGITS>\n\n\n<TOP_ACTIVATING_TEXTS>\n\n{plain_activating_tokens}\n<\\TOP_ACTIVATING_TEXTS>\n\n\nExplanation of neuron behavior: \n
-"""
-        return system_prompt, user_prompt
-
-    def _generate_explanation_prompt(self, activating_examples: list[TokenizedSample]) -> tuple[str, str]:
-        """Generate a prompt for explanation generation.
-
-        Args:
-            activating_examples: List of activating examples
-
-        Returns:
-            Prompt string for the LLM
-        """
-        cot_prompt = ""
-        if self.cfg.include_cot:
-            cot_prompt += "\n\nTo explain this feature, please follow these steps:\n"
-            cot_prompt += "Step 1: List a couple activating and contextual tokens you find interesting. "
-            cot_prompt += "Search for patterns in these tokens, if there are any. Don't list more than 5 tokens.\n"
-            cot_prompt += "Step 2: Write down general shared features of the text examples.\n"
-            cot_prompt += "Step 3: Write a concise explanation of what this feature detects.\n"
-
-        examples_prompt = """Some examples:
-
-{
-    "steps": ["Activating token: <<knows>>. Contextual tokens: Who, ?. Pattern: <<knows>> is consistently activated, often found in sentences starting with interrogative words like 'Who' and ending with a question mark.", "Shared features include consistent activation on the word 'knows'. The surrounding text always forms a question. The questions do not seem to expect a literal answer, suggesting they are rhetorical.", "This feature activates on the word knows in rhetorical questions"],
-    "final_explanation": "The feature activates on the word 'knows' in rhetorical questions.",
-    "activation_consistency": 5,
-    "complexity": 4
-}
-
-{
-    "steps": ["Activating tokens: <<Entwickler>>, <<Enterprise>>, <<Entertainment>>, <<Entity>>, <<Entrance>>. Pattern: All activating instances are on words that begin with the specific substring 'Ent'. The activation is on the 'Ent' portion itself.", "The shared feature across all examples is the presence of words starting with the capitalized substring 'Ent'. The feature appears to be case-sensitive and position-specific (start of the word). No other contextual or semantic patterns are observed."],
-    "final_explanation": "The feature activates on the substring 'Ent' at the start of words",
-    "activation_consistency": 5,
-    "complexity": 1
-}
-
-{
-    "steps": ["Activating tokens: <<budget deficit>>, <<interest rates>>, <<fiscal stimulus>>, <<trade policy>>, <<unemployment benefits>>. Pattern: Activations highlight phrases and concepts central to economic discussions and government actions.","The examples consistently involve discussions of economic indicators, government spending, financial regulation, or international trade agreements. While most activations clearly relate to economic policies enacted or debated by governmental bodies, some activations might be on broader economic news or expert commentary where the direct link to a specific government policy is less explicit, or on related but not identical topics like corporate financial health in response to policy."],
-    "final_explanation": "The feature activates on text about government economic policy",
-    "activation_consistency": 3,
-    "complexity": 5
-}
-
-"""
-        system_prompt: str = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. The activating words in each document are indicated with << ... >>. We will give you a list of documents on which the feature activates, in order from most strongly activating to least strongly activating.
-
-Your task is to:
-
-First, Summarize the Activation: Look at the parts of the document the feature activates for and summarize in a single sentence what the feature is activating on. Try not to be overly specific in your explanation. Note that some features will activate only on specific words or substrings, but others will activate on most/all words in a sentence provided that sentence contains some particular concept. Your explanation should cover most or all activating words (for example, don't give an explanation which is specific to a single word if all words in a sentence cause the feature to activate). Pay attention to things like the capitalization and punctuation of the activating words or concepts, if that seems relevant. Keep the explanation as short and simple as possible, limited to 20 words or less. Omit punctuation and formatting. You should avoid giving long lists of words.{cot_prompt}
-
-Second, Assess Activation Consistency: Based on your summary and the provided examples, evaluate the consistency of the feature's activation. Return your assessment as a single integer from the following scale:
-
-5: Clear pattern with no deviating examples
-4: Clear pattern with one or two deviating examples
-3: Clear overall pattern but quite a few examples not fitting that pattern
-2: Broad consistent theme but lacking structure
-1: No discernible pattern
-
-Third, Assess Feature Complexity: Based on your summary and the nature of the activation, evaluate the complexity of the feature. Return your assessment as a single integer from the following scale:
-
-5: Rich feature firing on diverse contexts with an interesting unifying theme, e.g., "feelings of togetherness"
-4: Feature relating to high-level semantic structure, e.g., "return statements in code"
-3: Moderate complexity, such as a phrase, category, or tracking sentence structure, e.g., "website URLs"
-2: Single word or token feature but including multiple languages or spelling, e.g., "mentions of dog"
-1: Single token feature, e.g., "the token '('"
-
-Your output should be a JSON object that has the following fields: `steps`, `final_explanation`, `activation_consistency`, `complexity`. `steps` should be an array of strings with a length not exceeding 3, each representing a step in the chain-of-thought process. `final_explanation` should be a string in the form of 'This feature activates on... '. `activation_consistency` should be an integer between 1 and 5, representing the consistency of the feature. `complexity` should be an integer between 1 and 5, representing the complexity of the feature.
-
-{examples_prompt}
-"""
-
-        user_prompt = "The activating documents are given below:\n\n"
-        # Select a subset of examples to show
-        examples_to_show = activating_examples[: self.cfg.n_activating_examples]
-
-        for i, example in enumerate(examples_to_show, 1):
-            highlighted = example.display_highlighted(self.cfg.activation_threshold)
-            user_prompt += f"Example {i}: {highlighted}\n\n"
-
-        return system_prompt, user_prompt
 
     async def generate_explanation(self, activating_examples: list[TokenizedSample], top_logits: dict[str, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
         """Generate an explanation for a feature based on activating examples.
@@ -664,9 +389,10 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
             Dictionary with explanation and metadata
         """
         if self.cfg.explainer_type is ExplainerType.OPENAI:
-            system_prompt, user_prompt = self._generate_explanation_prompt(activating_examples)
+            system_prompt, user_prompt = generate_explanation_prompt(self.cfg, activating_examples)
         else:
-            system_prompt, user_prompt = self._generate_explanation_prompt_neuronpedia(activating_examples, top_logits)
+            system_prompt, user_prompt = generate_explanation_prompt_neuronpedia(self.cfg, activating_examples, top_logits)
+            print(system_prompt, user_prompt)
         start_time = time.time()
 
         if self.cfg.explainer_type is ExplainerType.OPENAI:
@@ -678,7 +404,6 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
                 ],
                 response_format={"type": "json_object"},
             )
-
             assert response.choices[0].message.content is not None, (
                 f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
             )
@@ -693,11 +418,6 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
                 stream=False,
             )
 
-            # assert response.choices[0].message.content is not None, (
-            #     f"No explanation returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
-            # )
-            # explanation = json_repair.loads(response.choices[0].message.content)
-
             explanation = {
                 "final_explanation": response.choices[0].message.content,
                 "activation_consistency": 5,
@@ -711,28 +431,6 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
             "time": response_time,
         }
 
-    def _generate_detection_prompt(
-        self, explanation: dict[str, Any], examples: list[TokenizedSample]
-    ) -> tuple[str, str]:
-        """Generate a prompt for detection evaluation.
-
-        Args:
-            explanation: The explanation to evaluate
-            examples: List of examples (mix of activating and non-activating)
-
-        Returns:
-            Prompt string for the LLM
-        """
-        system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. You will be given a short explanation of what this feature activates for, and then be shown {len(examples)} example sequences in random order. You will have to return a boolean list of the examples where you think the feature should activate at least once, on ANY of the words or substrings in the document, true if it does, false if it doesn't. Try not to be overly specific in your interpretation of the explanation."""
-        system_prompt += """
-Your output should be a JSON object that has the following fields: `steps`, `evaluation_results`. `steps` should be an array of strings, each representing a step in the chain-of-thought process within 50 words. `evaluation_results` should be an array of booleans, each representing whether the feature should activate on the corresponding example.
-"""
-        user_prompt = f"Here is the explanation:\n\n{explanation['final_explanation']}\n\nHere are the examples:\n\n"
-
-        for i, example in enumerate(examples, 1):
-            user_prompt += f"Example {i}: {example.display_plain()}\n"
-
-        return system_prompt, user_prompt
 
     async def evaluate_explanation_detection(
         self,
@@ -783,7 +481,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         ground_truth = [1 if ex in test_activating else 0 for ex in all_examples]
 
         # Generate prompt
-        system_prompt, user_prompt = self._generate_detection_prompt(explanation, all_examples)
+        system_prompt, user_prompt = generate_detection_prompt(self.cfg, explanation, all_examples)
 
         # Get response from OpenAI
         start_time = time.time()
@@ -799,7 +497,6 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             f"No detection response returned from OpenAI\n\nsystem_prompt: {system_prompt}\n\nuser_prompt: {user_prompt}\n\nresponse: {response}"
         )
         detection_response: dict[str, Any] = json_repair.loads(response.choices[0].message.content)  # type: ignore
-        # print(f"Detection for feature :\n{detection_response}\n\n")
         predictions: list[bool] = detection_response["evaluation_results"]
         response_time = time.time() - start_time
 
@@ -837,31 +534,6 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             "time": response_time,
         }
 
-    def _generate_fuzzing_prompt(
-        self,
-        explanation: dict[str, Any],
-        examples: list[tuple[TokenizedSample, bool]],  # (sample, is_correctly_marked)
-    ) -> tuple[str, str]:
-        """Generate a prompt for fuzzing evaluation.
-
-        Args:
-            explanation: The explanation to evaluate
-            examples: List of tuples (example, is_correctly_marked)
-
-        Returns:
-            Prompt string for the LLM
-        """
-        system_prompt = f"""We're studying features in a neural network. Each feature activates on some particular word/words/substring/concept in a short document. You will be given a short explanation of what this feature activates for, and then be shown {len(examples)} example sequences in random order. In each example, text segments highlighted with << >> are presented as activating the feature as described in the explanation. You will have to return a boolean list of the examples where you think the highlighted parts CORRECTLY correspond to the explanation, true if they do, false if they don't. Try not to be overly specific in your interpretation of the explanation."""
-        system_prompt += """
-Your output should be a JSON object that has the following fields: `steps`, `evaluation_results`. `steps` should be an array of strings, each representing a step in the chain-of-thought process within 50 words. `evaluation_results` should be an array of booleans, each representing whether the feature should activate on the corresponding example.
-"""
-        user_prompt = f"Here is the explanation:\n\n{explanation['final_explanation']}\n\nHere are the examples:\n\n"
-
-        for i, (example, _) in enumerate(examples, 1):
-            highlighted = example.display_highlighted(self.cfg.activation_threshold)
-            user_prompt += f"Example {i}: {highlighted}\n"
-
-        return system_prompt, user_prompt
 
     def _create_incorrectly_marked_example(self, sample: TokenizedSample) -> TokenizedSample:
         """Create an incorrectly marked version of an example.
@@ -944,7 +616,7 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         random.shuffle(examples_with_labels)
 
         # Generate prompt
-        system_prompt, user_prompt = self._generate_fuzzing_prompt(explanation, examples_with_labels)
+        system_prompt, user_prompt = generate_fuzzing_prompt(self.cfg, explanation, examples_with_labels)
 
         # Get response from OpenAI
         start_time = time.time()
@@ -1024,7 +696,6 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
 
         if ScorerType.FUZZING in self.cfg.scorer_type:
             fuzzing_result = await self.evaluate_explanation_fuzzing(explanation, activating_examples)
-            # print(f"Fuzzing result for feature {feature.index}:\n{fuzzing_result}\n\n")
             evaluation_results.append(fuzzing_result)
             response_time += fuzzing_result["time"]
 
@@ -1097,33 +768,38 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
             """
             async with semaphore:
                 feature = self.mongo_client.get_feature(sae_name, sae_series, feature_index)
-        
-                if feature is not None and feature.interpretation is None:
-                    activating_examples, non_activating_examples = self.get_feature_examples(
-                        feature=feature,
-                        model=model,
-                        datasets=datasets,
-                        analysis_name=analysis_name,
-                        max_length=self.cfg.max_length,
-                    )
-                    result = await self.interpret_single_feature(
-                        activating_examples=activating_examples,
-                        non_activating_examples=non_activating_examples,
-                        top_logits=feature.logits,
-                    )
-                    return (
-                        {
-                            "feature_index": feature.index,
-                            "sae_name": sae_name,
-                            "sae_series": sae_series,
-                        } | result,
-                        feature_index,
-                        False,
-                        False,
-                    )
-                else:
-                    # Feature already has interpretation or doesn't exist
-                    return None, feature_index, True, False
+                try:
+                    if feature is not None and (
+                        self.cfg.overwrite_existing or feature.interpretation is None
+                    ) and feature.analyses[0].act_times > 0:
+                        activating_examples, non_activating_examples = self.get_feature_examples(
+                            feature=feature,
+                            model=model,
+                            datasets=datasets,
+                            analysis_name=analysis_name,
+                            max_length=self.cfg.max_length,
+                        )
+                        result = await self.interpret_single_feature(
+                            activating_examples=activating_examples,
+                            non_activating_examples=non_activating_examples,
+                            top_logits=feature.logits,
+                        )
+                        return (
+                            {
+                                "feature_index": feature.index,
+                                "sae_name": sae_name,
+                                "sae_series": sae_series,
+                            } | result,
+                            feature_index,
+                            False,
+                            False,
+                        )
+                    else:
+                        # Feature already has interpretation or doesn't exist
+                        return None, feature_index, True, False
+                except Exception as e:
+                    logger.error(f"Error interpreting feature {feature_index}:\n{e}\n{traceback.format_exc()}")
+                    return None, feature_index, False, True
 
         # Process features concurrently
         tasks = [interpret_with_semaphore(feature_index) for feature_index in feature_indices]
@@ -1157,3 +833,4 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         logger.info(
             f"Interpretation complete: {completed} completed, {skipped} skipped, {failed} failed out of {total_features} total"
         )
+

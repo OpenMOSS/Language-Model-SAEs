@@ -8,7 +8,8 @@ from datasets import Dataset
 from pydantic_settings import BaseSettings
 from tqdm.asyncio import tqdm
 
-from lm_saes.analysis.feature_interpreter import AutoInterpConfig, FeatureInterpreter
+from lm_saes.analysis.autointerp import AutoInterpConfig
+from lm_saes.analysis.autointerp import FeatureInterpreter
 from lm_saes.config import LanguageModelConfig, MongoDBConfig
 from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset_shard, load_model
