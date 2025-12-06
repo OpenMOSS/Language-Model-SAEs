@@ -26,7 +26,7 @@ export const Sample = <T extends { token: Uint8Array }>({
   const [folded, setFolded] = useState(true);
 
   return (
-    <div className={cn(folded && foldedStart !== undefined && "-m-1 p-1 rounded-lg hover:bg-gray-100")}>
+    <div className={cn(folded && foldedStart !== undefined && "cursor-pointer -m-1 p-1 rounded-lg hover:bg-gray-100")}>
       <div
         className={cn(folded && foldedStart !== undefined && "line-clamp-3 pb-[1px]")}
         onClick={foldedStart !== undefined && folded ? () => setFolded(!folded) : undefined}

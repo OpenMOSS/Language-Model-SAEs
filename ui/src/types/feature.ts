@@ -48,7 +48,7 @@ export const InterpretationSchema = z.object({
         })
         .optional(),
     })
-  ).optional(),
+  ),
   detail: z
     .object({
       userPrompt: z.string(),
