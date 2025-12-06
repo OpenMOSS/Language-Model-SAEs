@@ -314,7 +314,7 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
           </div>
         </div>
         <div className="flex flex-col gap-4 basis-1/3 min-w-1/3">
-          {interpretation?.validation.map((validation, i) => (
+          {interpretation?.validation?.map((validation, i) => (
             <div key={i} className="flex items-center gap-2">
               {validation.passed ? (
                 <Check size={20} className="text-green-500" />
