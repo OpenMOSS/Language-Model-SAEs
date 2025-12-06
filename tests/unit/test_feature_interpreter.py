@@ -3,7 +3,7 @@ from typing import Any, Callable
 import pytest
 import torch
 
-from lm_saes.analysis.autointerp import (
+from lm_saes.analysis.feature_interpreter import (
     AutoInterpConfig,
     AutoInterpEvaluation,
     AutoInterpExplanation,

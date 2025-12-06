@@ -8,7 +8,6 @@ import pymongo.database
 import pymongo.errors
 from bson import ObjectId
 from pydantic import BaseModel
-from tqdm import tqdm
 
 from lm_saes.config import (
     BaseSAEConfig,
@@ -388,7 +387,7 @@ class MongoClient:
             self.enable_gridfs()
 
         operations = []
-        for i, feature_analysis in enumerate(tqdm(analysis, desc="Adding feature analyses to MongoDB...")):
+        for i, feature_analysis in enumerate(analysis):
             # Convert numpy arrays to GridFS references
             processed_analysis = self._to_gridfs(feature_analysis)
             update_operation = pymongo.UpdateOne(
@@ -453,7 +452,7 @@ class MongoClient:
 
     def update_features(self, sae_name: str, sae_series: str, update_data: list[dict], start_idx: int = 0):
         operations = []
-        for i, feature_update in enumerate(tqdm(update_data, desc="Updating features in MongoDB...")):
+        for i, feature_update in enumerate(update_data):
             update_operation = pymongo.UpdateOne(
                 {"sae_name": sae_name, "sae_series": sae_series, "index": start_idx + i},
                 {"$set": feature_update},
