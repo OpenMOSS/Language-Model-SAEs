@@ -365,7 +365,10 @@ class MongoClient:
         return sae["path"]
 
     def get_sae_model_name(self, sae_name: str, sae_series: str) -> Optional[str]:
-        return self.sae_collection.find_one({"name": sae_name, "series": sae_series})["model_name"]
+        sae = self.sae_collection.find_one({"name": sae_name, "series": sae_series})
+        if sae is None:
+            return None
+        return sae["model_name"]
 
     def add_dataset(self, name: str, cfg: DatasetConfig):
         self.dataset_collection.update_one({"name": name}, {"$set": {"cfg": cfg.model_dump()}}, upsert=True)
