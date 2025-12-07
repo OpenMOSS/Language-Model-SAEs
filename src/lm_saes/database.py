@@ -190,9 +190,9 @@ class MongoClient:
         if isinstance(data, ObjectId) and self.fs.exists(data):
             self.fs.delete(data)
 
-    def create_sae(self, name: str, series: str, path: str, cfg: BaseSAEConfig):
+    def create_sae(self, name: str, series: str, path: str, cfg: BaseSAEConfig, model_name: str | None = None):
         inserted_id = self.sae_collection.insert_one(
-            {"name": name, "series": series, "path": path, "cfg": cfg.model_dump()}
+            {"name": name, "series": series, "path": path, "cfg": cfg.model_dump(), "model_name": model_name}
         ).inserted_id
         self.feature_collection.insert_many(
             [{"sae_name": name, "sae_series": series, "index": i} for i in range(cfg.d_sae)]
@@ -362,6 +362,9 @@ class MongoClient:
         if sae is None:
             return None
         return sae["path"]
+
+    def get_sae_model_name(self, sae_name: str, sae_series: str) -> Optional[str]:
+        return self.sae_collection.find_one({"name": sae_name, "series": sae_series})["model_name"]
 
     def add_dataset(self, name: str, cfg: DatasetConfig):
         self.dataset_collection.update_one({"name": name}, {"$set": {"cfg": cfg.model_dump()}}, upsert=True)
