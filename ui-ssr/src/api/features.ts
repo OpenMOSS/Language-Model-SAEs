@@ -52,7 +52,7 @@ const buildMetricFiltersParam = (
 export const fetchFeature = createServerFn({ method: 'GET' })
   .inputValidator((data: { dictionary: string; featureIndex: number }) => data)
   .handler(async ({ data: { dictionary, featureIndex } }) => {
-    const url = `${process.env.BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}`
+    const url = `${process.env.BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}?no_samplings=true`
 
     const response = await fetch(url, {
       method: 'GET',
@@ -69,11 +69,71 @@ export const fetchFeature = createServerFn({ method: 'GET' })
     const decoded = decode(new Uint8Array(arrayBuffer)) as any
     const camelCased = camelcaseKeys(decoded, {
       deep: true,
-      stopPaths: ['sample_groups.samples.context'],
+      stopPaths: [
+        'sample_groups.samples.feature_acts_indices',
+        'sample_groups.samples.feature_acts_values',
+        'sample_groups.samples.z_pattern_indices',
+        'sample_groups.samples.z_pattern_values',
+      ],
     })
 
     return FeatureSchema.parse(camelCased)
   })
+
+export const fetchSamplings = createServerFn({ method: 'GET' })
+  .inputValidator((data: { dictionary: string; featureIndex: number }) => data)
+  .handler(async ({ data: { dictionary, featureIndex } }) => {
+    const url = `${process.env.BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/samplings`
+    const response = await fetch(url)
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch samplings: ${await response.text()}`)
+    }
+
+    const data = await response.json()
+
+    const camelCased = camelcaseKeys(data, {
+      deep: true,
+    })
+
+    return z
+      .array(z.object({ name: z.string(), length: z.number() }))
+      .parse(camelCased)
+  })
+
+export const fetchSamples = createServerFn({ method: 'GET' })
+  .inputValidator(
+    (data: {
+      dictionary: string
+      featureIndex: number
+      samplingName: string
+      start: number
+      length: number
+    }) => data,
+  )
+  .handler(
+    async ({
+      data: { dictionary, featureIndex, samplingName, start, length },
+    }) => {
+      const url = `${process.env.BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/sampling/${samplingName}?start=${start}&length=${length}`
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/x-msgpack',
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch samples: ${await response.text()}`)
+      }
+
+      const arrayBuffer = await response.arrayBuffer()
+      const decoded = decode(new Uint8Array(arrayBuffer)) as any
+      const camelCased = camelcaseKeys(decoded)
+
+      return z.array(FeatureSampleCompactSchema).parse(camelCased)
+    },
+  )
 
 export const countFeatures = createServerFn({ method: 'GET' })
   .inputValidator(
@@ -166,10 +226,4 @@ export const toggleBookmark = createServerFn({ method: 'POST' })
     }
 
     return !isBookmarked
-  })
-
-export const getImageUrl = createServerFn({ method: 'GET' })
-  .inputValidator((data: { imagePath: string }) => data)
-  .handler(({ data: { imagePath } }) => {
-    return `${process.env.BACKEND_URL}${imagePath}`
   })

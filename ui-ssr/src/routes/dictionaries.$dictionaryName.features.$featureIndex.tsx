@@ -15,6 +15,7 @@ import { InferenceCard } from '@/components/feature/inference-card'
 import {
   dictionariesQueryOptions,
   featureQueryOptions,
+  samplingsQueryOptions,
 } from '@/hooks/useFeatures'
 
 const searchParamsSchema = z.object({
@@ -31,6 +32,12 @@ export const Route = createFileRoute(
   loader: async ({ context, params }) => {
     const dictionaries = await context.queryClient.ensureQueryData(
       dictionariesQueryOptions(),
+    )
+    context.queryClient.prefetchQuery(
+      samplingsQueryOptions({
+        dictionary: params.dictionaryName,
+        featureIndex: Number(params.featureIndex),
+      }),
     )
     const feature = await context.queryClient.ensureQueryData(
       featureQueryOptions({

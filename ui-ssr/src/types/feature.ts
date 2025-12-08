@@ -83,12 +83,6 @@ export const FeatureSchema = z.object({
   actTimes: z.number(),
   maxFeatureAct: z.number(),
   nAnalyzedTokens: z.number().nullish(),
-  sampleGroups: z.array(
-    z.object({
-      analysisName: z.string(),
-      samples: z.array(FeatureSampleCompactSchema),
-    }),
-  ),
   logits: z
     .object({
       topPositive: z.array(

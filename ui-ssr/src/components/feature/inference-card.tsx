@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Info } from '@/components/ui/info'
 import { Input } from '@/components/ui/input'
 import { ProgressBar } from '@/components/ui/progress-bar'
+import { cn } from '@/lib/utils'
 
 type InferenceCardProps = {
   dictionaryName: string
@@ -28,7 +29,10 @@ export const InferenceCard = ({
 
   return (
     <Card
-      className={`relative w-full overflow-hidden transition-all duration-200 ${submitMutation.isError ? 'border-red-500 hover:border-red-600' : ''}`}
+      className={cn(
+        'relative w-full overflow-hidden transition-all duration-200',
+        submitMutation.isError && 'border-red-500 hover:border-red-600',
+      )}
     >
       <ProgressBar isAnimating={submitMutation.isPending} />
       <CardHeader>

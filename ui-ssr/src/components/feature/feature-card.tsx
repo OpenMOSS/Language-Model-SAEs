@@ -3,14 +3,46 @@ import { Info } from '../ui/info'
 import { FeatureSampleGroup } from './sample'
 import type { Feature } from '@/types/feature'
 import { Card, CardContent } from '@/components/ui/card'
+import { samplingsQueryOptions } from '@/hooks/useFeatures'
+import { useIsFetching, useQueries, useQuery } from '@tanstack/react-query'
+import { cn } from '@/lib/utils'
+import { ProgressBar } from '../ui/progress-bar'
 
 type FeatureCardProps = {
   feature: Feature
 }
 
 export const FeatureCard = memo(({ feature }: FeatureCardProps) => {
+  const samplings = useQuery(
+    samplingsQueryOptions({
+      dictionary: feature.dictionaryName,
+      featureIndex: feature.featureIndex,
+    }),
+  )
+
+  const isSamplesFetching =
+    useIsFetching({
+      queryKey: ['samples', feature.dictionaryName, feature.featureIndex],
+    }) > 0
+
+  const samplingNames = samplings.data?.map((s) => s.name) ?? []
+  const samplesQueries = useQueries({
+    queries: samplingNames.map((name) => ({
+      queryKey: ['samples', feature.dictionaryName, feature.featureIndex, name],
+      enabled: false,
+    })),
+  })
+  const isSamplesError = samplesQueries.some((q) => q.isError)
+
   return (
-    <Card className="w-full">
+    <Card
+      className={cn(
+        'relative w-full overflow-hidden transition-all duration-200',
+        (samplings.isError || isSamplesError) &&
+          'border-red-500 hover:border-red-600',
+      )}
+    >
+      <ProgressBar isAnimating={samplings.isPending || isSamplesFetching} />
       <CardContent>
         <div className="flex flex-col gap-2 pt-6">
           <div className="flex gap-6">
@@ -99,10 +131,14 @@ export const FeatureCard = memo(({ feature }: FeatureCardProps) => {
           </div>
 
           <div className="flex flex-col w-full gap-4">
-            <FeatureSampleGroup
-              feature={feature}
-              sampleGroup={feature.sampleGroups[0]}
-            />
+            {samplings.data?.map(({ name, length }) => (
+              <FeatureSampleGroup
+                key={name}
+                feature={feature}
+                samplingName={name}
+                totalLength={length}
+              />
+            ))}
           </div>
         </div>
       </CardContent>

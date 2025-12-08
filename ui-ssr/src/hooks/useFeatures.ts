@@ -1,11 +1,17 @@
 import {
   queryOptions,
+  useInfiniteQuery,
   useMutation,
-  useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
 import type { Feature } from '@/types/feature'
-import { fetchDictionaries, fetchFeature, toggleBookmark } from '@/api/features'
+import {
+  fetchDictionaries,
+  fetchFeature,
+  fetchSamples,
+  fetchSamplings,
+  toggleBookmark,
+} from '@/api/features'
 
 export const dictionariesQueryOptions = () =>
   queryOptions({
@@ -24,6 +30,37 @@ export const featureQueryOptions = (params: {
       fetchFeature({
         data: params,
       }),
+  })
+
+export const samplingsQueryOptions = (params: {
+  dictionary: string
+  featureIndex: number
+}) =>
+  queryOptions({
+    queryKey: ['samplings', params.dictionary, params.featureIndex],
+    queryFn: () => fetchSamplings({ data: params }),
+  })
+
+export const useSamples = (params: {
+  dictionary: string
+  featureIndex: number
+  samplingName: string
+  totalLength: number
+}) =>
+  useInfiniteQuery({
+    queryKey: [
+      'samples',
+      params.dictionary,
+      params.featureIndex,
+      params.samplingName,
+    ],
+    queryFn: ({ pageParam = 0 }) =>
+      fetchSamples({ data: { ...params, start: pageParam, length: 5 } }),
+    getNextPageParam: (_, allPages) =>
+      allPages.reduce((acc, page) => acc + page.length, 0) < params.totalLength
+        ? allPages.reduce((acc, page) => acc + page.length, 0)
+        : undefined,
+    initialPageParam: 0,
   })
 
 export function useToggleBookmark() {

@@ -9,12 +9,13 @@ import { cn } from '@/lib/utils'
 import { getAccentClassname } from '@/utils/style'
 import { findHighestActivatingToken, getZPatternForToken } from '@/utils/token'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from '@/components/ui/hover-card'
-import { AppPagination } from '@/components/ui/pagination'
+import { useSamples } from '@/hooks/useFeatures'
 
 /**
  * Helper function to get activation value for a given index from COO format.
@@ -72,37 +73,40 @@ export const TokenInfo = ({
 
 export type FeatureSampleGroupProps = {
   feature: Feature
-  sampleGroup: Feature['sampleGroups'][0]
+  samplingName: string
+  totalLength: number
 }
 
 export const FeatureSampleGroup = ({
   feature,
-  sampleGroup,
+  samplingName,
+  totalLength,
 }: FeatureSampleGroupProps) => {
-  const analysisNameMap = (analysisName: string) => {
-    if (analysisName === 'top_activations') {
+  const { data, fetchNextPage, hasNextPage, isFetching } = useSamples({
+    dictionary: feature.dictionaryName,
+    featureIndex: feature.featureIndex,
+    samplingName,
+    totalLength,
+  })
+
+  const samples = useMemo(
+    () => data?.pages.flatMap((page) => page) ?? [],
+    [data],
+  )
+
+  const samplingNameMap = (samplingName: string) => {
+    if (samplingName === 'top_activations') {
       return 'TOP ACTIVATIONS'
-    } else if (/^subsample-/.test(analysisName)) {
-      const [, proportion] = analysisName.split('-')
+    } else if (/^subsample-/.test(samplingName)) {
+      const [, proportion] = samplingName.split('-')
       const percentage = parseFloat(proportion) * 100
       return `SUBSAMPLING ${percentage}%`
     } else {
-      return analysisName
+      return samplingName
     }
   }
 
-  const [page, setPage] = useState<number>(1)
   const [visibleRange, setVisibleRange] = useState<number>(50)
-
-  const maxPage = useMemo(
-    () => Math.ceil(sampleGroup.samples.length / 10),
-    [sampleGroup.samples.length],
-  )
-
-  const currentSamples = useMemo(
-    () => sampleGroup.samples.slice((page - 1) * 10, page * 10),
-    [sampleGroup.samples, page],
-  )
 
   const rangeOptions = [
     { label: 'Stacked', value: 10 },
@@ -111,17 +115,17 @@ export const FeatureSampleGroup = ({
     { label: 'Full', value: Infinity },
   ]
 
-  const analysisName = analysisNameMap(sampleGroup.analysisName)
+  const samplingNameDisplay = samplingNameMap(samplingName)
 
   return (
     <div className="flex flex-col mt-4 -mx-6">
       <div className="flex items-center justify-between bg-slate-50 py-2 px-6 border-y border-slate-200">
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-muted-foreground uppercase ml-2">
-            {analysisName.split(' ').slice(0, -1).join(' ')}
+            {samplingNameDisplay.split(' ').slice(0, -1).join(' ')}
           </span>
           <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full uppercase shadow-sm">
-            {analysisName.split(' ').slice(-1)[0]}
+            {samplingNameDisplay.split(' ').slice(-1)[0]}
           </span>
         </div>
 
@@ -145,21 +149,23 @@ export const FeatureSampleGroup = ({
         </div>
       </div>
 
-      {currentSamples.map((sample, i) => (
+      {samples.map((sample, i) => (
         <FeatureActivationSample
-          key={(page - 1) * 10 + i}
+          key={i}
           sample={sample}
           maxFeatureAct={feature.maxFeatureAct}
           visibleRange={visibleRange}
           className="border-b border-slate-200 last:border-0 py-2 px-6"
         />
       ))}
-      <AppPagination
-        className="mt-6"
-        page={page}
-        setPage={setPage}
-        maxPage={maxPage}
-      />
+      <div className="flex justify-center">
+        <Spinner isAnimating={isFetching} className="mt-4" />
+      </div>
+      {hasNextPage && !isFetching && (
+        <Button size="sm" className="mx-6 mt-4" onClick={() => fetchNextPage()}>
+          Load more
+        </Button>
+      )}
     </div>
   )
 }

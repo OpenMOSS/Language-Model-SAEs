@@ -203,6 +203,7 @@ def get_feature(
     feature_index: str | int,
     feature_analysis_name: str | None = None,
     metric_filters: str | None = None,
+    no_samplings: bool = False,
 ):
     # Parse feature_index if it's a string
     if isinstance(feature_index, str) and feature_index != "random":
@@ -261,44 +262,11 @@ def get_feature(
         shard_idx=None,
         n_shards=None,
     ):
-        """Process a sample to extract and format feature data.
-
-        Args:
-            sparse_feature_acts: Sparse feature activations,
-                optional z pattern activations
-            decoder_norms: Decoder norms
-            context_idx: Context index in the dataset
-            dataset_name: Name of the dataset
-            model_name: Name of the model
-            shard_idx: Index of the dataset shard, defaults to 0
-            n_shards: Total number of shards, defaults to 1
-
-        Returns:
-            dict: Processed sample data
-        """  # Get model and dataset
         model = get_model(name=model_name)
-        # model = None
         data = get_dataset(name=dataset_name, shard_idx=shard_idx, n_shards=n_shards)[context_idx.item()]
 
-        # Get origins for the features
         origins = model.trace({k: [v] for k, v in data.items()})[0]
 
-        # Process image data if present
-        image_key = next(
-            (key for key in ["image", "images"] if key in data),
-            None,
-        )
-        if image_key is not None:
-            image_urls = [
-                f"/images/{dataset_name}?context_idx={context_idx}&"
-                f"shard_idx={shard_idx}&n_shards={n_shards}&"
-                f"image_idx={img_idx}"
-                for img_idx in range(len(data[image_key]))
-            ]
-            del data[image_key]
-            data["images"] = image_urls
-
-        # Trim to matching lengths
         (
             feature_acts_indices,
             feature_acts_values,
@@ -306,11 +274,6 @@ def get_feature(
             z_pattern_values,
         ) = sparse_feature_acts
 
-        origins, feature_acts_indices, feature_acts_values = trim_minimum(
-            origins,
-            feature_acts_indices,
-            feature_acts_values,
-        )
         assert origins is not None and feature_acts_indices is not None and feature_acts_values is not None, (
             "Origins and feature acts must not be None"
         )
@@ -331,93 +294,70 @@ def get_feature(
             "z_pattern_values": z_pattern_values,
         }
 
+    def index_select(
+        indices: np.ndarray,
+        values: np.ndarray,
+        i: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Select i-th sample from sparse tensor indices and values."""
+        mask = indices[0] == i
+        return indices[1:, mask], values[mask]
+
     def process_sparse_feature_acts(
         feature_acts_indices: np.ndarray,
         feature_acts_values: np.ndarray,
-        z_pattern_indices: np.ndarray | None = None,
-        z_pattern_values: np.ndarray | None = None,
+        z_pattern_indices: np.ndarray | None,
+        z_pattern_values: np.ndarray | None,
+        start: int,
+        end: int,
     ) -> Generator[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None], Any, None]:
-        """Process sparse feature acts.
+        for i in range(start, end):
+            feature_acts_indices_i, feature_acts_values_i = index_select(feature_acts_indices, feature_acts_values, i)
+            if z_pattern_indices is not None and z_pattern_values is not None:
+                z_pattern_indices_i, z_pattern_values_i = index_select(z_pattern_indices, z_pattern_values, i)
+            else:
+                z_pattern_indices_i, z_pattern_values_i = None, None
+            yield feature_acts_indices_i[0], feature_acts_values_i, z_pattern_indices_i, z_pattern_values_i
 
-        Args:
-            feature_acts_indices: Feature acts indices
-            feature_acts_values: Feature acts values
-            z_pattern_indices: Z pattern indices
-            z_pattern_values: Z pattern values
+    if no_samplings:
+        sample_groups = []
+    else:
+        # Process all samples for each sampling
+        sample_groups = []
+        for sampling in analysis.samplings:
+            # Using zip to process correlated data instead of indexing
+            samples = [
+                process_sample(
+                    sparse_feature_acts=sparse_feature_acts,
+                    context_idx=context_idx,
+                    dataset_name=dataset_name,
+                    model_name=model_name,
+                    shard_idx=shard_idx,
+                    n_shards=n_shards,
+                )
+                for sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
+                    process_sparse_feature_acts(
+                        sampling.feature_acts_indices,
+                        sampling.feature_acts_values,
+                        sampling.z_pattern_indices,
+                        sampling.z_pattern_values,
+                        0,
+                        len(sampling.context_idx),
+                    ),
+                    sampling.context_idx,
+                    sampling.dataset_name,
+                    sampling.model_name,
+                    sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts_indices),
+                    sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts_indices),
+                )
+            ]
 
-        TODO: This is really ugly, we should find a better way to do this.
-        """
-        _, feature_acts_counts = np.unique(
-            feature_acts_indices[0],
-            return_counts=True,
-        )
-        _, z_pattern_counts = (
-            np.unique(z_pattern_indices[0], return_counts=True) if z_pattern_indices is not None else (None, None)
-        )
-
-        feature_acts_sample_ranges = np.concatenate([[0], np.cumsum(feature_acts_counts)])
-        z_pattern_sample_ranges = (
-            np.concatenate([[0], np.cumsum(z_pattern_counts)]) if z_pattern_counts is not None else None
-        )
-
-        feature_acts_sample_ranges = list(zip(feature_acts_sample_ranges[:-1], feature_acts_sample_ranges[1:]))
-        z_pattern_sample_ranges = (
-            list(zip(z_pattern_sample_ranges[:-1], z_pattern_sample_ranges[1:]))
-            if z_pattern_sample_ranges is not None
-            else [(None, None)] * len(feature_acts_sample_ranges)
-        )
-        if z_pattern_sample_ranges[0][0] is not None:
-            assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), (
-                "Feature acts and z pattern must have the same number of samples"
+            sample_groups.append(
+                {
+                    "analysis_name": sampling.name,
+                    "samples": samples,
+                }
             )
-
-        for (feature_acts_start, feature_acts_end), (z_pattern_start, z_pattern_end) in zip(
-            feature_acts_sample_ranges, z_pattern_sample_ranges
-        ):
-            feature_acts_indices_i = feature_acts_indices[1, feature_acts_start:feature_acts_end]
-            feature_acts_values_i = feature_acts_values[feature_acts_start:feature_acts_end]
-            z_pattern_indices_i = (
-                z_pattern_indices[1:, z_pattern_start:z_pattern_end] if z_pattern_indices is not None else None
-            )
-            z_pattern_values_i = (
-                z_pattern_values[z_pattern_start:z_pattern_end] if z_pattern_values is not None else None
-            )
-            yield feature_acts_indices_i, feature_acts_values_i, z_pattern_indices_i, z_pattern_values_i
-
-    # Process all samples for each sampling
-    sample_groups = []
-    for sampling in analysis.samplings:
-        # Using zip to process correlated data instead of indexing
-        samples = [
-            process_sample(
-                sparse_feature_acts=sparse_feature_acts,
-                context_idx=context_idx,
-                dataset_name=dataset_name,
-                model_name=model_name,
-                shard_idx=shard_idx,
-                n_shards=n_shards,
-            )
-            for sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
-                process_sparse_feature_acts(
-                    sampling.feature_acts_indices,
-                    sampling.feature_acts_values,
-                    sampling.z_pattern_indices,
-                    sampling.z_pattern_values,
-                ),
-                sampling.context_idx,
-                sampling.dataset_name,
-                sampling.model_name,
-                sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts_indices),
-                sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts_indices),
-            )
-        ]
-
-        sample_groups.append(
-            {
-                "analysis_name": sampling.name,
-                "samples": samples,
-            }
-        )
 
     # Prepare response
     response_data = {
@@ -432,7 +372,7 @@ def get_feature(
         "act_times": analysis.act_times,
         "max_feature_act": analysis.max_feature_acts,
         "n_analyzed_tokens": analysis.n_analyzed_tokens,
-        "sample_groups": sample_groups,
+        "sample_groups": sample_groups if not no_samplings else None,
         "is_bookmarked": client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature.index),
     }
 
@@ -440,6 +380,146 @@ def get_feature(
         content=msgpack.packb(make_serializable(response_data)),
         media_type="application/x-msgpack",
     )
+
+
+@app.get("/dictionaries/{name}/features/{feature_index}/samplings")
+def get_samplings(name: str, feature_index: int, analysis_name: str | None = None):
+    """Get all available samplings for a feature."""
+    feature = client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
+    if feature is None:
+        return Response(content=f"Feature {feature_index} not found in SAE {name}", status_code=404)
+    analysis = next(
+        (a for a in feature.analyses if a.name == analysis_name or analysis_name is None),
+        None,
+    )
+    if analysis is None:
+        return Response(content=f"Analysis {analysis_name} not found in SAE {name}", status_code=404)
+    return [{"name": sampling.name, "length": len(sampling.context_idx)} for sampling in analysis.samplings]
+
+
+@app.get("/dictionaries/{name}/features/{feature_index}/sampling/{sampling_name}")
+def get_samples(
+    name: str,
+    feature_index: int,
+    sampling_name: str,
+    analysis_name: str | None = None,
+    start: int = 0,
+    length: int | None = None,
+):
+    """Get all samples for a feature."""
+    feature = client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
+    if feature is None:
+        return Response(content=f"Feature {feature_index} not found in SAE {name}", status_code=404)
+
+    analysis = next(
+        (a for a in feature.analyses if a.name == analysis_name or analysis_name is None),
+        None,
+    )
+    if analysis is None:
+        return Response(content=f"Analysis {analysis_name} not found in SAE {name}", status_code=404)
+
+    sampling = next(
+        (s for s in analysis.samplings if s.name == sampling_name),
+        None,
+    )
+    if sampling is None:
+        return Response(content=f"Sampling {sampling_name} not found in Analysis {analysis_name}", status_code=404)
+
+    def process_sample(
+        *,
+        sparse_feature_acts,
+        context_idx,
+        dataset_name,
+        model_name,
+        shard_idx=None,
+        n_shards=None,
+    ):
+        model = get_model(name=model_name)
+        data = get_dataset(name=dataset_name, shard_idx=shard_idx, n_shards=n_shards)[context_idx.item()]
+
+        origins = model.trace({k: [v] for k, v in data.items()})[0]
+
+        (
+            feature_acts_indices,
+            feature_acts_values,
+            z_pattern_indices,
+            z_pattern_values,
+        ) = sparse_feature_acts
+
+        assert origins is not None and feature_acts_indices is not None and feature_acts_values is not None, (
+            "Origins and feature acts must not be None"
+        )
+
+        # Process text data if present
+        if "text" in data:
+            text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
+            if text_ranges:
+                max_text_origin = max(text_ranges, key=lambda x: x[1])
+                data["text"] = data["text"][: max_text_origin[1]]
+
+        return {
+            **data,
+            "origins": origins,
+            "feature_acts_indices": feature_acts_indices,
+            "feature_acts_values": feature_acts_values,
+            "z_pattern_indices": z_pattern_indices,
+            "z_pattern_values": z_pattern_values,
+        }
+
+    def index_select(
+        indices: np.ndarray,
+        values: np.ndarray,
+        i: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Select i-th sample from sparse tensor indices and values."""
+        mask = indices[0] == i
+        return indices[1:, mask], values[mask]
+
+    def process_sparse_feature_acts(
+        feature_acts_indices: np.ndarray,
+        feature_acts_values: np.ndarray,
+        z_pattern_indices: np.ndarray | None,
+        z_pattern_values: np.ndarray | None,
+        start: int,
+        end: int,
+    ) -> Generator[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None], Any, None]:
+        for i in range(start, end):
+            feature_acts_indices_i, feature_acts_values_i = index_select(feature_acts_indices, feature_acts_values, i)
+            if z_pattern_indices is not None and z_pattern_values is not None:
+                z_pattern_indices_i, z_pattern_values_i = index_select(z_pattern_indices, z_pattern_values, i)
+            else:
+                z_pattern_indices_i, z_pattern_values_i = None, None
+            yield feature_acts_indices_i[0], feature_acts_values_i, z_pattern_indices_i, z_pattern_values_i
+
+    end = min(start + length if length is not None else len(sampling.context_idx), len(sampling.context_idx))
+
+    samples = [
+        process_sample(
+            sparse_feature_acts=sparse_feature_acts,
+            context_idx=context_idx,
+            dataset_name=dataset_name,
+            model_name=model_name,
+            shard_idx=shard_idx,
+            n_shards=n_shards,
+        )
+        for sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
+            process_sparse_feature_acts(
+                sampling.feature_acts_indices,
+                sampling.feature_acts_values,
+                sampling.z_pattern_indices,
+                sampling.z_pattern_values,
+                start,
+                end,
+            ),
+            sampling.context_idx[start:end],
+            sampling.dataset_name[start:end],
+            sampling.model_name[start:end],
+            sampling.shard_idx[start:end] if sampling.shard_idx is not None else [0] * (end - start),
+            sampling.n_shards[start:end] if sampling.n_shards is not None else [1] * (end - start),
+        )
+    ]
+
+    return Response(content=msgpack.packb(make_serializable(samples)), media_type="application/x-msgpack")
 
 
 @app.get("/dictionaries/{name}")
