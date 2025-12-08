@@ -164,9 +164,14 @@ function FeaturesPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="font-token text-sm rounded-md w-fit">
-                Token "ph"
-              </div>
+              {!feature.interpretation && (
+                <p className="text-neutral-500">No interpretation available.</p>
+              )}
+              {feature.interpretation && (
+                <div className="font-token text-sm rounded-md w-fit">
+                  {feature.interpretation.text}
+                </div>
+              )}
             </CardContent>
           </Card>
           <InferenceCard
