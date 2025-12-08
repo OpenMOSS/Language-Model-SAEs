@@ -444,17 +444,20 @@ class Trainer:
                     with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
                         ctx = self._training_step(sae, batch)
 
+                    # Get GPU memory usage if available
+                    mem_info = ""
+                    if torch.cuda.is_available():
+                        mem_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+                        mem_reserved = torch.cuda.memory_reserved() / 1024**3  # GB
+                        mem_info = f", mem: {mem_allocated:.2f}/{mem_reserved:.2f}GB"
+
                     proc_bar.set_description(
-                        f"loss: {item(ctx['loss']):.2f}, learning rate: {self.optimizer.param_groups[0]['lr']:.2e}"
+                        f"loss: {item(ctx['loss']):.2f}, lr: {self.optimizer.param_groups[0]['lr']:.2e}{mem_info}"
                     )
 
                     if not self.cfg.skip_metrics_calculation:
                         with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
                             self._log(sae, ctx)
-
-                    with timer.time("refresh_batch"):
-                        del batch
-                        batch = next(activation_stream)
 
                     with timer.time("backward"):
                         ctx["loss"].backward()
@@ -490,6 +493,9 @@ class Trainer:
                     self._maybe_save_sae_checkpoint(sae)
                     if self.cur_tokens >= self.cfg.total_training_tokens:
                         break
+                    with timer.time("refresh_batch"):
+                        del batch
+                        batch = next(activation_stream)
         except StopIteration:
             logger.info("the current stream has ended")
             return True

@@ -681,8 +681,6 @@ class LanguageModelConfig(BaseModelConfig):
     """ Whether to use Flash Attention. """
     cache_dir: str | None = None
     """ The directory of the HuggingFace cache. Should have the same effect as `HF_HOME`. """
-    d_model: int = 768
-    """ The dimension of the model. """
     local_files_only: bool = False
     """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
     max_length: int = 2048
