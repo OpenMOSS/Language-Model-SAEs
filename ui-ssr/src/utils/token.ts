@@ -10,12 +10,10 @@ type Token = {
  * @param tokens - The tokens to group.
  * @returns An array of token groups.
  */
-export const groupToken = <T extends Token>(
-  tokens: Array<T>,
-): Array<Array<T>> => {
+export const groupToken = <T extends Token>(tokens: T[]): T[][] => {
   const decoder = new TextDecoder('utf-8', { fatal: true })
 
-  return tokens.reduce<[Array<Array<T>>, Array<T>]>(
+  return tokens.reduce<[T[][], T[]]>(
     ([groups, currentGroup], token) => {
       const newGroup = [...currentGroup, token]
       try {
@@ -36,9 +34,9 @@ export const groupToken = <T extends Token>(
  * @returns A list of starting positions of each token group. Will always start with 0.
  */
 export const countTokenGroupPositions = <T extends Token>(
-  tokenGroups: Array<Array<T>>,
-): Array<number> => {
-  return tokenGroups.reduce<Array<number>>(
+  tokenGroups: T[][],
+): number[] => {
+  return tokenGroups.reduce<number[]>(
     (acc, tokenGroup) => {
       const tokenCount = tokenGroup.length
       return [...acc, acc[acc.length - 1] + tokenCount]
@@ -73,19 +71,19 @@ export const hex = (token: Token | Uint8Array): string => {
  * @returns The contributing tokens and their contributions, or null.
  */
 export const getZPatternForToken = (
-  zPatternIndices: Array<Array<number>> | null | undefined,
-  zPatternValues: Array<number> | null | undefined,
+  zPatternIndices: number[][] | null | undefined,
+  zPatternValues: number[] | null | undefined,
   tokenIndex: number,
 ): {
-  contributingTokens: Array<number>
-  contributions: Array<number>
+  contributingTokens: number[]
+  contributions: number[]
 } | null => {
   if (!zPatternIndices || !zPatternValues) {
     return null
   }
 
-  const contributingTokens: Array<number> = []
-  const contributions: Array<number> = []
+  const contributingTokens: number[] = []
+  const contributions: number[] = []
 
   // Find all z pattern entries that contribute to this token
   for (let i = 0; i < zPatternIndices[0].length; i++) {
@@ -108,8 +106,8 @@ export const getZPatternForToken = (
  * @returns The token index and activation value, or null.
  */
 export const findHighestActivatingToken = (
-  featureActsIndices: Array<number>,
-  featureActsValues: Array<number>,
+  featureActsIndices: number[],
+  featureActsValues: number[],
 ): { tokenIndex: number; activationValue: number } | null => {
   if (featureActsIndices.length === 0 || featureActsValues.length === 0) {
     return null

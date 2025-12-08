@@ -4,9 +4,9 @@
  * @param arrays - The arrays to zip.
  * @returns An array of tuples.
  */
-export const zip = <T extends Array<Array<unknown>>>(
+export const zip = <T extends unknown[][]>(
   ...arrays: T
-): Array<{ [K in keyof T]: T[K] extends Array<infer U> ? U : never }> => {
+): { [K in keyof T]: T[K] extends (infer U)[] ? U : never }[] => {
   const minLength = arrays.reduce(
     (min, arr) => Math.min(min, arr.length),
     Infinity,
@@ -16,7 +16,7 @@ export const zip = <T extends Array<Array<unknown>>>(
   for (let i = 0; i < minLength; i++) {
     result.push(
       arrays.map((arr) => arr[i]) as {
-        [K in keyof T]: T[K] extends Array<infer U> ? U : never
+        [K in keyof T]: T[K] extends (infer U)[] ? U : never
       },
     )
   }
@@ -30,7 +30,7 @@ export const zip = <T extends Array<Array<unknown>>>(
  * @param arrays - The arrays to merge.
  * @returns A single Uint8Array.
  */
-export const mergeUint8Arrays = (arrays: Array<Uint8Array>): Uint8Array => {
+export const mergeUint8Arrays = (arrays: Uint8Array[]): Uint8Array => {
   const totalLength = arrays.reduce((acc, arr) => acc + arr.length, 0)
   const result = new Uint8Array(totalLength)
   let offset = 0

@@ -11,7 +11,7 @@ import {
 interface LabeledSelectProps extends React.ComponentProps<typeof Select> {
   label: string
   placeholder?: string
-  options: Array<{ value: string; label: string }>
+  options: { value: string; label: string }[]
   className?: string
   triggerClassName?: string
 }

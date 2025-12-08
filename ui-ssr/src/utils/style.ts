@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition */
 export const getAccentClassname = (
   featureAct: number,
   maxFeatureAct: number,

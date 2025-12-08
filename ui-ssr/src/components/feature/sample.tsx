@@ -21,8 +21,8 @@ import { useSamples } from '@/hooks/useFeatures'
  * Helper function to get activation value for a given index from COO format.
  */
 const getActivationValue = (
-  indices: Array<number>,
-  values: Array<number>,
+  indices: number[],
+  values: number[],
   targetIndex: number,
 ): number => {
   const indexPosition = indices.indexOf(targetIndex)
@@ -254,13 +254,13 @@ export const FeatureActivationSample = memo(
 
     // Memoize segments calculation
     const segments = useMemo(() => {
-      const segmentList: Array<{
+      const segmentList: {
         start: number
         end: number
         highlights: typeof textHighlights
         maxSegmentAct: number
         index: number
-      }> = []
+      }[] = []
 
       if (sample.text && textHighlights.length > 0 && maxActivationHighlight) {
         // Get all unique positions
