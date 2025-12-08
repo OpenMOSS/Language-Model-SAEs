@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DictionariesIndexRouteImport } from './routes/dictionaries.index'
+import { Route as DictionariesDictionaryNameIndexRouteImport } from './routes/dictionaries.$dictionaryName.index'
 import { Route as DictionariesDictionaryNameFeaturesFeatureIndexRouteImport } from './routes/dictionaries.$dictionaryName.features.$featureIndex'
 
 const IndexRoute = IndexRouteImport.update({
@@ -23,6 +24,12 @@ const DictionariesIndexRoute = DictionariesIndexRouteImport.update({
   path: '/dictionaries/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DictionariesDictionaryNameIndexRoute =
+  DictionariesDictionaryNameIndexRouteImport.update({
+    id: '/dictionaries/$dictionaryName/',
+    path: '/dictionaries/$dictionaryName/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const DictionariesDictionaryNameFeaturesFeatureIndexRoute =
   DictionariesDictionaryNameFeaturesFeatureIndexRouteImport.update({
     id: '/dictionaries/$dictionaryName/features/$featureIndex',
@@ -33,17 +40,20 @@ const DictionariesDictionaryNameFeaturesFeatureIndexRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
+  '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
+  '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/dictionaries/': typeof DictionariesIndexRoute
+  '/dictionaries/$dictionaryName/': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 export interface FileRouteTypes {
@@ -51,22 +61,26 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/dictionaries'
+    | '/dictionaries/$dictionaryName'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/dictionaries'
+    | '/dictionaries/$dictionaryName'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
   id:
     | '__root__'
     | '/'
     | '/dictionaries/'
+    | '/dictionaries/$dictionaryName/'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DictionariesIndexRoute: typeof DictionariesIndexRoute
+  DictionariesDictionaryNameIndexRoute: typeof DictionariesDictionaryNameIndexRoute
   DictionariesDictionaryNameFeaturesFeatureIndexRoute: typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 
@@ -86,6 +100,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DictionariesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dictionaries/$dictionaryName/': {
+      id: '/dictionaries/$dictionaryName/'
+      path: '/dictionaries/$dictionaryName'
+      fullPath: '/dictionaries/$dictionaryName'
+      preLoaderRoute: typeof DictionariesDictionaryNameIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dictionaries/$dictionaryName/features/$featureIndex': {
       id: '/dictionaries/$dictionaryName/features/$featureIndex'
       path: '/dictionaries/$dictionaryName/features/$featureIndex'
@@ -99,6 +120,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DictionariesIndexRoute: DictionariesIndexRoute,
+  DictionariesDictionaryNameIndexRoute: DictionariesDictionaryNameIndexRoute,
   DictionariesDictionaryNameFeaturesFeatureIndexRoute:
     DictionariesDictionaryNameFeaturesFeatureIndexRoute,
 }

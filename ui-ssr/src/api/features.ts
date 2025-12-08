@@ -2,7 +2,11 @@ import { decode } from '@msgpack/msgpack'
 import camelcaseKeys from 'camelcase-keys'
 import { z } from 'zod'
 import { createServerFn } from '@tanstack/react-start'
-import { FeatureSampleCompactSchema, FeatureSchema } from '@/types/feature'
+import {
+  FeatureCompactSchema,
+  FeatureSampleCompactSchema,
+  FeatureSchema,
+} from '@/types/feature'
 
 export const fetchDictionaries = createServerFn({ method: 'GET' }).handler(
   async () => {
@@ -170,6 +174,37 @@ export const countFeatures = createServerFn({ method: 'GET' })
 
     const data = await response.json()
     return z.object({ count: z.number() }).parse(data).count
+  })
+
+export const fetchFeatures = createServerFn({ method: 'GET' })
+  .inputValidator(
+    (data: {
+      dictionary: string
+      start: number
+      end: number
+      analysisName?: string | null
+    }) => data,
+  )
+  .handler(async ({ data: { dictionary, start, end, analysisName } }) => {
+    const url = `${process.env.BACKEND_URL}/dictionaries/${dictionary}/features?start=${start}&end=${end}${analysisName ? `&analysis_name=${analysisName}` : ''}`
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch features: ${await response.text()}`)
+    }
+
+    const arrayBuffer = await response.arrayBuffer()
+    const decoded = decode(new Uint8Array(arrayBuffer)) as any
+    const camelCased = camelcaseKeys(decoded, {
+      deep: true,
+    })
+
+    return z.array(FeatureCompactSchema).parse(camelCased)
   })
 
 export const submitCustomInput = createServerFn({ method: 'POST' })

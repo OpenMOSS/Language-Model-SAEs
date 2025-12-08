@@ -8,6 +8,7 @@ import type { Feature } from '@/types/feature'
 import {
   fetchDictionaries,
   fetchFeature,
+  fetchFeatures,
   fetchSamples,
   fetchSamplings,
   toggleBookmark,
@@ -39,6 +40,41 @@ export const samplingsQueryOptions = (params: {
   queryOptions({
     queryKey: ['samplings', params.dictionary, params.featureIndex],
     queryFn: () => fetchSamplings({ data: params }),
+  })
+
+export const useFeatures = (params: { dictionary: string }) =>
+  useInfiniteQuery({
+    queryKey: ['features', params.dictionary],
+    queryFn: ({ pageParam = 0 }) =>
+      fetchFeatures({
+        data: {
+          dictionary: params.dictionary,
+          start: pageParam,
+          end: pageParam + 10,
+        },
+      }),
+    getNextPageParam: (lastPage) =>
+      lastPage.length > 0
+        ? lastPage[lastPage.length - 1].featureIndex
+        : undefined,
+    initialPageParam: 0,
+  })
+
+export const samplesQueryOptions = (params: {
+  dictionary: string
+  featureIndex: number
+  samplingName: string
+  length: number
+}) =>
+  queryOptions({
+    queryKey: [
+      'samples',
+      params.dictionary,
+      params.featureIndex,
+      params.samplingName,
+      params.length,
+    ],
+    queryFn: () => fetchSamples({ data: { ...params, start: 0 } }),
   })
 
 export const useSamples = (params: {

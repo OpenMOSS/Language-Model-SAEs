@@ -245,14 +245,15 @@ class MongoClient:
         if self.is_gridfs_enabled():
             feature = self._from_gridfs(feature)
 
-        # print(f'{feature.keys()}')
-        # for k in feature:
-        #     print(f'{k} {type(feature[k])}')
-        #     if k == 'analyses':
-        #         print('feature_acts_indices', feature[k][0]['samplings'][0]['feature_acts_indices'])
-        #         print('feature_acts_indices', feature[k][0]['samplings'][0]['feature_acts_values'])
-
         return FeatureRecord.model_validate(feature)
+
+    def list_features(self, sae_name: str, sae_series: str | None, indices: list[int]) -> list[FeatureRecord]:
+        features = self.feature_collection.find(
+            {"sae_name": sae_name, "sae_series": sae_series, "index": {"$in": indices}}
+        ).sort("index", pymongo.ASCENDING)
+        if self.is_gridfs_enabled():
+            features = [self._from_gridfs(feature) for feature in features]
+        return [FeatureRecord.model_validate(feature) for feature in features]
 
     def get_analysis(self, name: str, sae_name: str, sae_series: str) -> Optional[AnalysisRecord]:
         analysis = self.analysis_collection.find_one({"name": name, "sae_name": sae_name, "sae_series": sae_series})

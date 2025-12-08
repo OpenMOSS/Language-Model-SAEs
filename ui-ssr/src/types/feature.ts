@@ -77,3 +77,16 @@ export const FeatureSchema = z.object({
 })
 
 export type Feature = z.infer<typeof FeatureSchema>
+
+export const FeatureCompactSchema = z.object({
+  featureIndex: z.number(),
+  dictionaryName: z.string(),
+  analysisName: z.string(),
+  interpretation: InterpretationSchema.nullish(),
+  actTimes: z.number(),
+  maxFeatureAct: z.number(),
+  nAnalyzedTokens: z.number().nullish(),
+  samples: z.array(FeatureSampleCompactSchema),
+})
+
+export type FeatureCompact = z.infer<typeof FeatureCompactSchema>

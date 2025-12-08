@@ -10,9 +10,10 @@ import { cn } from '@/lib/utils'
 
 type FeatureCardProps = {
   feature: Feature
+  className?: string
 }
 
-export const FeatureCard = memo(({ feature }: FeatureCardProps) => {
+export const FeatureCard = memo(({ feature, className }: FeatureCardProps) => {
   const samplings = useQuery(
     samplingsQueryOptions({
       dictionary: feature.dictionaryName,
@@ -38,6 +39,7 @@ export const FeatureCard = memo(({ feature }: FeatureCardProps) => {
     <Card
       className={cn(
         'relative w-full overflow-hidden transition-all duration-200',
+        className,
         (samplings.isError || isSamplesError) &&
           'border-red-500 hover:border-red-600',
       )}

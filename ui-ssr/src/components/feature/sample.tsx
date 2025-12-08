@@ -175,6 +175,9 @@ export type FeatureActivationSampleProps = {
   maxFeatureAct: number
   visibleRange?: number
   className?: string
+  sampleTextClassName?: string
+  showHighestActivatingToken?: boolean
+  showHoverCard?: boolean
 }
 
 /**
@@ -186,6 +189,9 @@ export const FeatureActivationSample = memo(
     maxFeatureAct,
     visibleRange,
     className,
+    sampleTextClassName,
+    showHighestActivatingToken = true,
+    showHoverCard = true,
   }: FeatureActivationSampleProps) => {
     const [hoveredTokenIndex, setHoveredTokenIndex] = useState<number | null>(
       null,
@@ -385,77 +391,99 @@ export const FeatureActivationSample = memo(
 
     return (
       <div className={cn('w-full flex gap-4 items-center', className)}>
-        <div className="flex flex-col items-center justify-center min-w-[80px] gap-1">
-          {(highestActivatingTokenText || firstTokenText) && (
-            <span className="bg-slate-200 text-slate-700 text-xs px-2 py-0.5 rounded font-medium whitespace-nowrap max-w-[80px] overflow-hidden text-ellipsis">
-              {(highestActivatingTokenText || firstTokenText)
-                ?.replaceAll('\n', '↵')
-                .replaceAll('\t', '→')
-                .replaceAll(' ', '_')}
-            </span>
-          )}
-          {highestActivatingToken ? (
-            <span className="text-orange-600 font-bold text-sm">
-              {highestActivatingToken.activationValue.toFixed(2)}
-            </span>
-          ) : (
-            <span className="text-slate-400 font-bold text-sm">0.00</span>
-          )}
-        </div>
+        {showHighestActivatingToken && (
+          <div className="flex flex-col items-center justify-center min-w-[80px] gap-1">
+            {(highestActivatingTokenText || firstTokenText) && (
+              <span className="bg-slate-200 text-slate-700 text-xs px-2 py-0.5 rounded font-medium whitespace-nowrap max-w-[80px] overflow-hidden text-ellipsis">
+                {(highestActivatingTokenText || firstTokenText)
+                  ?.replaceAll('\n', '↵')
+                  .replaceAll('\t', '→')
+                  .replaceAll(' ', '_')}
+              </span>
+            )}
+            {highestActivatingToken ? (
+              <span className="text-orange-600 font-bold text-sm">
+                {highestActivatingToken.activationValue.toFixed(2)}
+              </span>
+            ) : (
+              <span className="text-slate-400 font-bold text-sm">0.00</span>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-4 w-full justify-between cursor-default">
           {/* Text display with highlights */}
           {sample.text && (
             <div className="flex flex-col gap-2">
-              <div className="relative flex flex-wrap whitespace-pre-wrap text-sm leading-relaxed font-mono text-slate-600">
+              <div
+                className={cn(
+                  'relative flex flex-wrap whitespace-pre-wrap text-sm leading-relaxed font-mono text-slate-600',
+                  sampleTextClassName,
+                )}
+              >
                 {visibleSegments.map((segment, index) => {
                   const segmentText = sample.text!.slice(
                     segment.start,
                     segment.end,
                   )
-
-                  return (
-                    <span key={index} className="inline-flex items-center">
-                      <HoverCard openDelay={0} closeDelay={0}>
-                        <HoverCardTrigger asChild>
-                          <span
-                            className={cn(
-                              'relative inline-flex items-center',
-                              getSegmentHighlightClass(segment),
-                            )}
-                            onMouseEnter={() => {
-                              setHoveredTokenIndex(
-                                sample.origins.indexOf(
-                                  segment.highlights.reduce((p, c) =>
-                                    c.featureAct > p.featureAct ? c : p,
-                                  ).origin,
-                                ),
-                              )
-                            }}
-                            onMouseLeave={() => {
-                              setHoveredTokenIndex(null)
-                            }}
-                          >
-                            {segmentText
-                              .replaceAll('\n', '↵')
-                              .replaceAll('\t', '→')}
-                          </span>
-                        </HoverCardTrigger>
-                        <HoverCardContent>
-                          <div className="flex flex-col gap-2">
-                            {segment.highlights.map((highlight, i) => (
-                              <TokenInfo
-                                key={i}
-                                featureAct={highlight.featureAct}
-                                maxFeatureAct={maxFeatureAct}
-                                origin={highlight.origin}
-                              />
-                            ))}
-                          </div>
-                        </HoverCardContent>
-                      </HoverCard>
-                    </span>
-                  )
+                  if (showHoverCard) {
+                    return (
+                      <span key={index} className="inline-flex items-center">
+                        <HoverCard openDelay={0} closeDelay={0}>
+                          <HoverCardTrigger asChild>
+                            <span
+                              className={cn(
+                                'relative inline-flex items-center',
+                                getSegmentHighlightClass(segment),
+                              )}
+                              onMouseEnter={() => {
+                                setHoveredTokenIndex(
+                                  sample.origins.indexOf(
+                                    segment.highlights.reduce((p, c) =>
+                                      c.featureAct > p.featureAct ? c : p,
+                                    ).origin,
+                                  ),
+                                )
+                              }}
+                              onMouseLeave={() => {
+                                setHoveredTokenIndex(null)
+                              }}
+                            >
+                              {segmentText
+                                .replaceAll('\n', '↵')
+                                .replaceAll('\t', '→')}
+                            </span>
+                          </HoverCardTrigger>
+                          <HoverCardContent>
+                            <div className="flex flex-col gap-2">
+                              {segment.highlights.map((highlight, i) => (
+                                <TokenInfo
+                                  key={i}
+                                  featureAct={highlight.featureAct}
+                                  maxFeatureAct={maxFeatureAct}
+                                  origin={highlight.origin}
+                                />
+                              ))}
+                            </div>
+                          </HoverCardContent>
+                        </HoverCard>
+                      </span>
+                    )
+                  } else {
+                    return (
+                      <span
+                        key={index}
+                        className={cn(
+                          'inline-flex items-center',
+                          getSegmentHighlightClass(segment),
+                        )}
+                      >
+                        {segmentText
+                          .replaceAll('\n', '↵')
+                          .replaceAll('\t', '→')}
+                      </span>
+                    )
+                  }
                 })}
               </div>
             </div>
