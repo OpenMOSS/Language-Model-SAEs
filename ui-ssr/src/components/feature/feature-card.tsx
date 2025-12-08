@@ -1,12 +1,12 @@
 import { memo } from 'react'
+import { useIsFetching, useQueries, useQuery } from '@tanstack/react-query'
 import { Info } from '../ui/info'
+import { ProgressBar } from '../ui/progress-bar'
 import { FeatureSampleGroup } from './sample'
 import type { Feature } from '@/types/feature'
 import { Card, CardContent } from '@/components/ui/card'
 import { samplingsQueryOptions } from '@/hooks/useFeatures'
-import { useIsFetching, useQueries, useQuery } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
-import { ProgressBar } from '../ui/progress-bar'
 
 type FeatureCardProps = {
   feature: Feature

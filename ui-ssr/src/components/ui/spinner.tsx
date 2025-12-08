@@ -22,7 +22,6 @@ export function Spinner({ isAnimating, className }: SpinnerProps) {
         className,
       )}
       style={{
-        opacity: isFinished ? 0 : 1,
         transitionDuration: `${animationDuration}ms`,
       }}
     >
@@ -30,4 +29,3 @@ export function Spinner({ isAnimating, className }: SpinnerProps) {
     </div>
   )
 }
-
