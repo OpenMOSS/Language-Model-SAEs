@@ -1,0 +1,2 @@
+cd ui-ssr
+bun run lint-staged
