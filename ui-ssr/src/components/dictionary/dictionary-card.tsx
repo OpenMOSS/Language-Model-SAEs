@@ -1,15 +1,17 @@
 import { useQuery } from '@tanstack/react-query'
-import { memo, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import { Layers } from 'lucide-react'
-import { ProgressBar } from '../ui/progress-bar'
+import { memo, useState } from 'react'
+
 import { FeatureCard } from '../feature/feature-card'
 import { FeatureCardCompact } from '../feature/feature-card-compact'
-import { Info } from '../ui/info'
 import { Spinner } from '../ui/spinner'
+import { IntersectionObserver } from '../ui/intersection-observer'
+
 import type { FeatureCompact } from '@/types/feature'
-import { cn } from '@/lib/utils'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { featureQueryOptions, useFeatures } from '@/hooks/useFeatures'
+import { cn } from '@/lib/utils'
 
 type DictionaryCardProps = {
   dictionaryName: string
@@ -32,9 +34,9 @@ const FeatureListItem = memo(
         className={cn(
           'w-full text-left transition-all duration-150 cursor-pointer relative',
           'hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-700/50',
-          'border-b border-slate-100 last:border-b-0',
+          'border-b border-slate-3 last:border-b-0',
           isSelected &&
-            'bg-slate-100 hover:bg-slate-100 ring-2 ring-sky-600 z-10',
+            'bg-slate-100 hover:bg-slate-100 inset-ring-2 inset-ring-sky-600 z-10',
         )}
       >
         <FeatureCardCompact
@@ -54,11 +56,17 @@ const FeatureList = memo(
     selectedIndex,
     onSelectFeature,
     className,
+    onLoadMore,
+    hasNextPage,
+    isFetchingNextPage,
   }: {
     features: FeatureCompact[]
     selectedIndex: number | null
     onSelectFeature: (index: number) => void
     className?: string
+    onLoadMore: () => void
+    hasNextPage: boolean
+    isFetchingNextPage: boolean
   }) => {
     return (
       <div className={cn('flex flex-col', className)}>
@@ -68,14 +76,25 @@ const FeatureList = memo(
             <p className="text-sm">No features found</p>
           </div>
         ) : (
-          features.map((feature) => (
-            <FeatureListItem
-              key={feature.featureIndex}
-              feature={feature}
-              isSelected={selectedIndex === feature.featureIndex}
-              onClick={() => onSelectFeature(feature.featureIndex)}
-            />
-          ))
+          <>
+            {features.map((feature) => (
+              <FeatureListItem
+                key={feature.featureIndex}
+                feature={feature}
+                isSelected={selectedIndex === feature.featureIndex}
+                onClick={() => onSelectFeature(feature.featureIndex)}
+              />
+            ))}
+            <IntersectionObserver
+              onIntersect={onLoadMore}
+              enabled={hasNextPage}
+              className="h-8 w-full flex items-center justify-center p-1"
+            >
+              {isFetchingNextPage && (
+                <Spinner isAnimating={true} className="text-slate-400" />
+              )}
+            </IntersectionObserver>
+          </>
         )}
       </div>
     )
@@ -91,43 +110,30 @@ const FeatureCardSelfQueried = memo(
     className,
   }: {
     dictionaryName: string
-    featureIndex: number | null
+    featureIndex: number
     className?: string
   }) => {
     const { data } = useQuery({
       ...featureQueryOptions({
         dictionary: dictionaryName,
-        featureIndex: featureIndex ?? 0,
+        featureIndex: featureIndex,
       }),
-      enabled: featureIndex !== null,
     })
-
-    if (featureIndex === null) {
-      return (
-        <Card className={className}>
-          <CardContent className="flex flex-col items-center justify-center h-full">
-            <p className="text-slate-500 text-sm font-medium">
-              Select a feature to view details
-            </p>
-            <p className="text-slate-400 text-xs mt-1">
-              Click on any feature from the list
-            </p>
-          </CardContent>
-        </Card>
-      )
-    }
 
     if (!data) {
       return (
-        <Card className={className}>
-          <CardContent className="flex flex-col items-center justify-center h-full">
-            <Spinner isAnimating={true} />
-          </CardContent>
-        </Card>
+        <div className="flex flex-col items-center justify-center h-full">
+          <Spinner isAnimating={true} />
+        </div>
       )
     }
 
-    return <FeatureCard feature={data} className={className} />
+    return (
+      <FeatureCard
+        feature={data}
+        className={cn('rounded-none border-none', className)}
+      />
+    )
   },
 )
 
@@ -135,7 +141,14 @@ FeatureCardSelfQueried.displayName = 'FeatureCardSelfQueried'
 
 export const DictionaryCard = memo(
   ({ dictionaryName }: DictionaryCardProps) => {
-    const { data, isLoading, isError } = useFeatures({
+    const {
+      data,
+      isLoading,
+      isError,
+      fetchNextPage,
+      hasNextPage,
+      isFetchingNextPage,
+    } = useFeatures({
       dictionary: dictionaryName,
     })
 
@@ -143,30 +156,99 @@ export const DictionaryCard = memo(
       number | null
     >(null)
 
-    const features = data?.pages.flatMap((page) => page) ?? []
+    const features = data?.pages.flatMap((page) => page)
 
     return (
-      <div className="flex gap-4 h-[750px] w-[1600px]">
-        <Card className="min-w-[380px] basis-[380px] shrink-0 flex flex-col rounded-xl border border-slate-200 bg-white overflow-hidden">
-          <CardHeader className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/50">
-            <CardTitle className="text-xs font-semibold tracking-wide text-slate-500">
-              Features from
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="overflow-y-auto p-0.5">
+      <Card className="flex h-[750px] w-[1600px] overflow-hidden">
+        <div className="min-w-[380px] basis-[380px] shrink-0 flex flex-col border-r border-slate-300 bg-white">
+          <div className="w-full h-[50px] uppercase px-4 flex items-center justify-center gap-1 border-b border-b-slate-300 shrink-0 font-semibold tracking-tight text-sm text-slate-700 cursor-default">
+            Features from
+            <Link
+              to={'/dictionaries/$dictionaryName'}
+              params={{ dictionaryName }}
+              className="text-sky-600 hover:text-sky-700"
+            >
+              {dictionaryName.replace('_', '-')}
+            </Link>
+          </div>
+          {features && (
             <FeatureList
               features={features}
               selectedIndex={selectedFeatureIndex}
               onSelectFeature={setSelectedFeatureIndex}
+              onLoadMore={() => fetchNextPage()}
+              hasNextPage={hasNextPage}
+              isFetchingNextPage={isFetchingNextPage}
+              className="overflow-y-auto grow"
             />
-          </CardContent>
-        </Card>
-        <FeatureCardSelfQueried
-          dictionaryName={dictionaryName}
-          featureIndex={selectedFeatureIndex}
-          className="grow overflow-y-auto"
-        />
-      </div>
+          )}
+          {isLoading && (
+            <div className="flex flex-col items-center justify-center h-full">
+              <Spinner isAnimating={true} />
+            </div>
+          )}
+          {isError && (
+            <div className="flex flex-col items-center justify-center h-full">
+              <p className="text-slate-500 text-sm font-medium">
+                Error loading features
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col grow">
+          {selectedFeatureIndex !== null && (
+            <>
+              <div className="relative w-full h-[50px] uppercase px-4 flex items-center justify-center text-sm gap-1 border-b border-b-slate-300 shrink-0 font-semibold tracking-tight text-slate-700 cursor-default">
+                Feature{' '}
+                <Link
+                  to={'/dictionaries/$dictionaryName/features/$featureIndex'}
+                  params={{
+                    dictionaryName,
+                    featureIndex: selectedFeatureIndex.toString(),
+                  }}
+                  className="text-sky-600 hover:text-sky-700"
+                >
+                  #{selectedFeatureIndex}
+                </Link>{' '}
+                from{' '}
+                <Link
+                  to={'/dictionaries/$dictionaryName'}
+                  params={{ dictionaryName }}
+                  className="text-sky-600 hover:text-sky-700"
+                >
+                  {dictionaryName.replace('_', '-')}
+                </Link>
+                <Link
+                  to={'/dictionaries/$dictionaryName/features/$featureIndex'}
+                  params={{
+                    dictionaryName,
+                    featureIndex: selectedFeatureIndex.toString(),
+                  }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-sky-600 hover:text-sky-700"
+                >
+                  Show Detail
+                </Link>
+              </div>
+              <FeatureCardSelfQueried
+                dictionaryName={dictionaryName}
+                featureIndex={selectedFeatureIndex}
+                className="overflow-y-auto grow [scrollbar-gutter:stable]"
+              />
+            </>
+          )}
+          {selectedFeatureIndex === null && (
+            <div className="flex flex-col items-center justify-center h-full self-center">
+              <p className="text-slate-500 text-sm font-medium">
+                Select a feature to view details
+              </p>
+              <p className="text-slate-400 text-xs mt-1">
+                Click on any feature from the list
+              </p>
+            </div>
+          )}
+        </div>
+      </Card>
     )
   },
 )

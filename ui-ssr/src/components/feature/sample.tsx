@@ -158,13 +158,19 @@ export const FeatureSampleGroup = ({
           className="border-b border-slate-200 last:border-0 py-2 px-6"
         />
       ))}
-      <div className="flex justify-center">
-        <Spinner isAnimating={isFetching} className="mt-4" />
-      </div>
+      {isFetching && (
+        <div className="flex justify-center">
+          <div className="flex justify-center px-6 py-4">
+            <Spinner isAnimating={isFetching} />
+          </div>
+        </div>
+      )}
       {hasNextPage && !isFetching && (
-        <Button size="sm" className="mx-6 mt-4" onClick={() => fetchNextPage()}>
-          Load more
-        </Button>
+        <div className="flex justify-center px-6 py-4">
+          <Button className="w-full" size="sm" onClick={() => fetchNextPage()}>
+            Load more
+          </Button>
+        </div>
       )}
     </div>
   )

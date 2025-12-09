@@ -12,14 +12,19 @@ export const FeatureCardCompact = memo(
   ({ feature, className }: FeatureCardCompactProps) => {
     return (
       <div className={cn('flex flex-col gap-2 p-2', className)}>
-        {!feature.interpretation && (
-          <p className="text-neutral-500">No interpretation available.</p>
-        )}
-        {feature.interpretation && (
-          <div className="font-token font-medium text-sm rounded-md w-fit">
-            {feature.interpretation.text}
-          </div>
-        )}
+        <div className="flex items-center justify-between gap-1">
+          {!feature.interpretation && (
+            <div className="font-token font-medium text-sm rounded-md w-fit text-neutral-500">
+              N/A
+            </div>
+          )}
+          {feature.interpretation && (
+            <div className="font-token font-medium text-sm rounded-md w-fit">
+              {feature.interpretation.text}
+            </div>
+          )}
+          <div className="text-slate-500 text-xs">#{feature.featureIndex}</div>
+        </div>
         <FeatureActivationSample
           sample={feature.samples[0]}
           maxFeatureAct={feature.maxFeatureAct}

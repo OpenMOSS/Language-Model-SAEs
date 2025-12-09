@@ -50,12 +50,12 @@ export const useFeatures = (params: { dictionary: string }) =>
         data: {
           dictionary: params.dictionary,
           start: pageParam,
-          end: pageParam + 10,
+          end: pageParam + 25,
         },
       }),
     getNextPageParam: (lastPage) =>
       lastPage.length > 0
-        ? lastPage[lastPage.length - 1].featureIndex
+        ? lastPage[lastPage.length - 1].featureIndex + 1
         : undefined,
     initialPageParam: 0,
   })

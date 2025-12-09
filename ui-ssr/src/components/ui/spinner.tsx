@@ -1,4 +1,3 @@
-import { useNProgress } from '@tanem/react-nprogress'
 import { Loader2 } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
@@ -9,11 +8,7 @@ interface SpinnerProps {
 }
 
 export function Spinner({ isAnimating, className }: SpinnerProps) {
-  const { animationDuration, isFinished } = useNProgress({
-    isAnimating,
-  })
-
-  if (isFinished) return null
+  if (!isAnimating) return null
 
   return (
     <div
@@ -21,9 +16,6 @@ export function Spinner({ isAnimating, className }: SpinnerProps) {
         'pointer-events-none transition-opacity ease-linear',
         className,
       )}
-      style={{
-        transitionDuration: `${animationDuration}ms`,
-      }}
     >
       <Loader2 className="animate-spin" />
     </div>

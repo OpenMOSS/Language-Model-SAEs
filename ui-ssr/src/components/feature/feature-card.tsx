@@ -45,7 +45,7 @@ export const FeatureCard = memo(({ feature, className }: FeatureCardProps) => {
       )}
     >
       <ProgressBar isAnimating={samplings.isPending || isSamplesFetching} />
-      <CardContent>
+      <CardContent className="py-0">
         <div className="flex flex-col gap-2 pt-6">
           <div className="flex gap-6">
             <div className="flex flex-col basis-1/2 min-w-0 gap-4">
