@@ -186,7 +186,7 @@ export const fetchFeatures = createServerFn({ method: 'GET' })
     }) => data,
   )
   .handler(async ({ data: { dictionary, start, end, analysisName } }) => {
-    const url = `${process.env.BACKEND_URL}/dictionaries/${dictionary}/features?start=${start}&end=${end}${analysisName ? `&analysis_name=${analysisName}` : ''}`
+    const url = `${process.env.BACKEND_URL}/dictionaries/${dictionary}/features?start=${start}&end=${end}${analysisName ? `&analysis_name=${analysisName}` : ''}&visible_range=5`
     const response = await fetch(url, {
       method: 'GET',
       headers: {
@@ -198,10 +198,15 @@ export const fetchFeatures = createServerFn({ method: 'GET' })
       throw new Error(`Failed to fetch features: ${await response.text()}`)
     }
 
-    const arrayBuffer = await response.arrayBuffer()
-    const decoded = decode(new Uint8Array(arrayBuffer)) as any
-    const camelCased = camelcaseKeys(decoded, {
+    const data = await response.json()
+    const camelCased = camelcaseKeys(data, {
       deep: true,
+      stopPaths: [
+        'samples.feature_acts_indices',
+        'samples.feature_acts_values',
+        'samples.z_pattern_indices',
+        'samples.z_pattern_values',
+      ],
     })
 
     return z.array(FeatureCompactSchema).parse(camelCased)

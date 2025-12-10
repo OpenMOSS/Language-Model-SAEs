@@ -198,19 +198,22 @@ def count_features_with_filters(
 
 
 def extract_samples(
-    sampling: FeatureAnalysisSampling, start: int | None = None, end: int | None = None
+    sampling: FeatureAnalysisSampling,
+    start: int | None = None,
+    end: int | None = None,
+    visible_range: int | None = None,
 ) -> list[dict[str, Any]]:
     def process_sample(
         *,
-        sparse_feature_acts,
-        context_idx,
-        dataset_name,
-        model_name,
-        shard_idx=None,
-        n_shards=None,
+        sparse_feature_acts: tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None],
+        context_idx: int,
+        dataset_name: str,
+        model_name: str,
+        shard_idx: int | None = None,
+        n_shards: int | None = None,
     ):
         model = get_model(name=model_name)
-        data = get_dataset(name=dataset_name, shard_idx=shard_idx, n_shards=n_shards)[context_idx.item()]
+        data = get_dataset(name=dataset_name, shard_idx=shard_idx, n_shards=n_shards)[context_idx]
 
         origins = model.trace({k: [v] for k, v in data.items()})[0]
 
@@ -225,15 +228,42 @@ def extract_samples(
             "Origins and feature acts must not be None"
         )
 
-        # Process text data if present
+        token_offset = 0
+        if visible_range is not None:  # Drop tokens before and after the highest activating token
+            max_feature_act_index = int(feature_acts_indices[np.argmax(feature_acts_values).item()].item())
+            feature_acts_mask = np.logical_and(
+                feature_acts_indices > max_feature_act_index - visible_range,
+                feature_acts_indices < max_feature_act_index + visible_range,
+            )
+            feature_acts_indices = feature_acts_indices[feature_acts_mask]
+            feature_acts_values = feature_acts_values[feature_acts_mask]
+
+            if z_pattern_indices is not None and z_pattern_values is not None:
+                z_pattern_mask = np.logical_and(
+                    z_pattern_indices > max_feature_act_index - visible_range,
+                    z_pattern_indices < max_feature_act_index + visible_range,
+                ).all(axis=0)
+                z_pattern_indices = z_pattern_indices[:, z_pattern_mask]
+                z_pattern_values = z_pattern_values[z_pattern_mask]
+
+            token_offset = max(0, max_feature_act_index - visible_range)
+
+            origins = origins[token_offset : max_feature_act_index + visible_range]
+
+        text_offset = None
         if "text" in data:
             text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
             if text_ranges:
                 max_text_origin = max(text_ranges, key=lambda x: x[1])
                 data["text"] = data["text"][: max_text_origin[1]]
+                if visible_range is not None:
+                    text_offset = min(text_ranges, key=lambda x: x[0])[0]
+                    data["text"] = data["text"][text_offset:]
 
         return {
             **data,
+            "token_offset": token_offset,
+            "text_offset": text_offset,
             "origins": origins,
             "feature_acts_indices": feature_acts_indices,
             "feature_acts_values": feature_acts_values,
@@ -384,7 +414,14 @@ def get_feature(
 
 
 @app.get("/dictionaries/{name}/features")
-def list_features(name: str, start: int, end: int, analysis_name: str | None = None, sample_length: int = 1):
+def list_features(
+    name: str,
+    start: int,
+    end: int,
+    analysis_name: str | None = None,
+    sample_length: int = 1,
+    visible_range: int | None = None,
+):
     features = client.list_features(sae_name=name, sae_series=sae_series, indices=list(range(start, end)))
 
     def process_feature(feature: FeatureRecord):
@@ -400,7 +437,9 @@ def list_features(name: str, start: int, end: int, analysis_name: str | None = N
             None,
         )
 
-        samples = extract_samples(sampling, 0, sample_length) if sampling is not None else None
+        samples = (
+            extract_samples(sampling, 0, sample_length, visible_range=visible_range) if sampling is not None else None
+        )
 
         return {
             "feature_index": feature.index,
@@ -415,10 +454,7 @@ def list_features(name: str, start: int, end: int, analysis_name: str | None = N
 
     results = [process_feature(feature) for feature in features]
 
-    return Response(
-        content=msgpack.packb(make_serializable(results)),
-        media_type="application/x-msgpack",
-    )
+    return make_serializable(results)
 
 
 @app.get("/dictionaries/{name}/features/{feature_index}/samplings")
@@ -444,6 +480,7 @@ def get_samples(
     analysis_name: str | None = None,
     start: int = 0,
     length: int | None = None,
+    visible_range: int | None = None,
 ):
     """Get all samples for a feature."""
     feature = client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
@@ -464,7 +501,7 @@ def get_samples(
     if sampling is None:
         return Response(content=f"Sampling {sampling_name} not found in Analysis {analysis_name}", status_code=404)
 
-    samples = extract_samples(sampling, start, None if length is None else start + length)
+    samples = extract_samples(sampling, start, None if length is None else start + length, visible_range=visible_range)
     return Response(
         content=msgpack.packb(make_serializable(samples)),
         media_type="application/x-msgpack",

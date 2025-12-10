@@ -212,14 +212,14 @@ export const FeatureActivationSample = memo(
             featureAct: getActivationValue(
               sample.featureActsIndices,
               sample.featureActsValues,
-              index,
+              index + sample.tokenOffset,
             ),
           }))
           .filter(
             (item): item is { origin: TextTokenOrigin; featureAct: number } =>
               item.origin?.key === 'text',
           ),
-      [sample.origins, sample.featureActsIndices, sample.featureActsValues],
+      [sample],
     )
 
     // Memoize max activation highlight
@@ -247,12 +247,16 @@ export const FeatureActivationSample = memo(
 
     const highestActivatingTokenText = useMemo(() => {
       if (!highestActivatingToken || !sample.text) return null
-      const origin = sample.origins[highestActivatingToken.tokenIndex]
+      const origin =
+        sample.origins[highestActivatingToken.tokenIndex - sample.tokenOffset]
       if (origin && origin.key === 'text') {
-        return sample.text.slice(origin.range[0], origin.range[1])
+        return sample.text.slice(
+          origin.range[0] - (sample.textOffset ?? 0),
+          origin.range[1] - (sample.textOffset ?? 0),
+        )
       }
       return null
-    }, [highestActivatingToken, sample.origins, sample.text])
+    }, [highestActivatingToken, sample.origins, sample.text, sample.textOffset])
 
     // Get z pattern for hovered token
     const hoveredZPattern = useMemo(() => {
@@ -390,10 +394,18 @@ export const FeatureActivationSample = memo(
       if (!sample.text || sample.origins.length === 0) return null
       const firstOrigin = sample.origins[0]
       if (firstOrigin && firstOrigin.key === 'text') {
-        return sample.text.slice(firstOrigin.range[0], firstOrigin.range[1])
+        return sample.text.slice(
+          firstOrigin.range[0] - (sample.textOffset ?? 0),
+          firstOrigin.range[1] - (sample.textOffset ?? 0),
+        )
       }
       return null
-    }, [highestActivatingTokenText, sample.text, sample.origins])
+    }, [
+      highestActivatingTokenText,
+      sample.text,
+      sample.origins,
+      sample.textOffset,
+    ])
 
     return (
       <div className={cn('w-full flex gap-4 items-center', className)}>
@@ -429,8 +441,8 @@ export const FeatureActivationSample = memo(
               >
                 {visibleSegments.map((segment, index) => {
                   const segmentText = sample.text!.slice(
-                    segment.start,
-                    segment.end,
+                    segment.start - (sample.textOffset ?? 0),
+                    segment.end - (sample.textOffset ?? 0),
                   )
                   if (showHoverCard) {
                     return (

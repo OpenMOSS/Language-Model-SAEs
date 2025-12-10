@@ -4,6 +4,7 @@ import {
   useMutation,
   useQueryClient,
 } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import type { Feature } from '@/types/feature'
 import {
   fetchDictionaries,
@@ -42,23 +43,66 @@ export const samplingsQueryOptions = (params: {
     queryFn: () => fetchSamplings({ data: params }),
   })
 
-export const useFeatures = (params: { dictionary: string }) =>
-  useInfiniteQuery({
-    queryKey: ['features', params.dictionary],
-    queryFn: ({ pageParam = 0 }) =>
-      fetchFeatures({
+export const useFeatures = (params: {
+  dictionary: string
+  concernedFeatureIndex: number
+}) => {
+  const [concernedFeatureIndex, setConcernedFeatureIndex] = useState(
+    params.concernedFeatureIndex,
+  )
+  const queryStart = Math.max(0, concernedFeatureIndex - 12)
+  const queryEnd = queryStart + 25
+  const query = useInfiniteQuery({
+    queryKey: ['features', params.dictionary, concernedFeatureIndex],
+    queryFn: ({
+      pageParam: { start, end },
+    }: {
+      pageParam: { start: number; end: number }
+    }) => {
+      return fetchFeatures({
         data: {
           dictionary: params.dictionary,
-          start: pageParam,
-          end: pageParam + 25,
+          start,
+          end,
         },
-      }),
-    getNextPageParam: (lastPage) =>
-      lastPage.length > 0
-        ? lastPage[lastPage.length - 1].featureIndex + 1
-        : undefined,
-    initialPageParam: 0,
+      })
+    },
+    getNextPageParam: (lastPage) => {
+      if (lastPage.length === 0) return undefined
+      const lastFeature = lastPage[lastPage.length - 1]
+      const nextStart = lastFeature.featureIndex + 1
+      return { start: nextStart, end: nextStart + 25 }
+    },
+    getPreviousPageParam: (firstPage) => {
+      if (firstPage.length === 0) return undefined
+      const firstFeature = firstPage[0]
+      const currentStart = firstFeature.featureIndex
+      if (currentStart <= 0) return undefined
+
+      const prevEnd = currentStart
+      const prevStart = Math.max(0, prevEnd - 25)
+      return { start: prevStart, end: prevEnd }
+    },
+    initialPageParam: {
+      start: queryStart,
+      end: queryEnd,
+    },
   })
+
+  const features = query.data?.pages.flatMap((page) => page) ?? []
+
+  useEffect(() => {
+    const queryHasConcernedFeature = features.some(
+      (feature) => feature.featureIndex == concernedFeatureIndex,
+    )
+    const matchState = concernedFeatureIndex === params.concernedFeatureIndex
+    if (!queryHasConcernedFeature && !matchState) {
+      setConcernedFeatureIndex(params.concernedFeatureIndex)
+    }
+  }, [params.concernedFeatureIndex])
+
+  return query
+}
 
 export const samplesQueryOptions = (params: {
   dictionary: string

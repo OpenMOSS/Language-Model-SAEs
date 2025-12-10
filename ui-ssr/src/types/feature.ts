@@ -25,6 +25,8 @@ export type TokenOrigin = z.infer<typeof TokenOriginSchema>
 export const FeatureSampleCompactSchema = z.object({
   text: z.string().nullish(),
   images: z.array(z.string()).nullish(),
+  tokenOffset: z.number(),
+  textOffset: z.number().nullish(),
   origins: z.array(TokenOriginSchema.nullable()),
   // COO format: indices where feature is active
   featureActsIndices: z.array(z.number()),
