@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { Layers } from 'lucide-react'
 import { Spinner } from '../ui/spinner'
 import { IntersectionObserver } from '../ui/intersection-observer'
@@ -76,11 +76,43 @@ export const FeatureList = memo(
     hasPreviousPage?: boolean
     isLoading?: boolean
   }) => {
+    const containerRef = useRef<HTMLDivElement>(null)
+    const previousScrollHeightRef = useRef(0)
+    const previousFirstFeatureIndexRef = useRef<number | null>(null)
+
+    const handleLoadPrevious = useCallback(() => {
+      if (containerRef.current) {
+        previousScrollHeightRef.current = containerRef.current.scrollHeight
+      }
+      onLoadPrevious?.()
+    }, [onLoadPrevious])
+
+    useLayoutEffect(() => {
+      if (!containerRef.current) return
+
+      const currentFirstIndex = features[0]?.featureIndex
+
+      if (previousScrollHeightRef.current > 0) {
+        const newScrollHeight = containerRef.current.scrollHeight
+        const diff = newScrollHeight - previousScrollHeightRef.current
+
+        if (
+          diff > 0 &&
+          currentFirstIndex !== previousFirstFeatureIndexRef.current
+        ) {
+          containerRef.current.scrollTop += diff
+        }
+        previousScrollHeightRef.current = 0
+      }
+
+      previousFirstFeatureIndexRef.current = currentFirstIndex ?? null
+    }, [features])
+
     return (
-      <div className={cn('flex flex-col', className)}>
+      <div ref={containerRef} className={cn('flex flex-col', className)}>
         {hasPreviousPage && onLoadPrevious && (
           <IntersectionObserver
-            onIntersect={onLoadPrevious}
+            onIntersect={handleLoadPrevious}
             enabled={hasPreviousPage}
             className="h-8 w-full flex items-center justify-center p-1"
           >
