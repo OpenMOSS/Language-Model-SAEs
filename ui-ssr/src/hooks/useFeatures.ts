@@ -47,13 +47,22 @@ export const useFeatures = (params: {
   dictionary: string
   concernedFeatureIndex: number
 }) => {
-  const [concernedFeatureIndex, setConcernedFeatureIndex] = useState(
-    params.concernedFeatureIndex,
-  )
-  const queryStart = Math.max(0, concernedFeatureIndex - 12)
+  const [anchor, setAnchor] = useState({
+    dictionary: params.dictionary,
+    featureIndex: params.concernedFeatureIndex,
+  })
+
+  if (anchor.dictionary !== params.dictionary) {
+    setAnchor({
+      dictionary: params.dictionary,
+      featureIndex: params.concernedFeatureIndex,
+    })
+  }
+
+  const queryStart = Math.max(0, anchor.featureIndex - 12)
   const queryEnd = queryStart + 25
   const query = useInfiniteQuery({
-    queryKey: ['features', params.dictionary, concernedFeatureIndex],
+    queryKey: ['features', params.dictionary, anchor.featureIndex],
     queryFn: ({
       pageParam: { start, end },
     }: {
@@ -91,13 +100,19 @@ export const useFeatures = (params: {
 
   const features = query.data?.pages.flatMap((page) => page) ?? []
 
+  // Effect only for the "feature out of range" case
   useEffect(() => {
-    const queryHasConcernedFeature = features.some(
-      (feature) => feature.featureIndex == params.concernedFeatureIndex,
+    const featureLoaded = features.some(
+      (f) => f.featureIndex === params.concernedFeatureIndex,
     )
-    const matchState = concernedFeatureIndex === params.concernedFeatureIndex
-    if (!queryHasConcernedFeature && !matchState) {
-      setConcernedFeatureIndex(params.concernedFeatureIndex)
+    if (
+      !featureLoaded &&
+      anchor.featureIndex !== params.concernedFeatureIndex
+    ) {
+      setAnchor({
+        dictionary: params.dictionary,
+        featureIndex: params.concernedFeatureIndex,
+      })
     }
   }, [params.concernedFeatureIndex])
 
@@ -126,22 +141,56 @@ export const useSamples = (params: {
   featureIndex: number
   samplingName: string
   totalLength: number
-}) =>
-  useInfiniteQuery({
+  visibleRange?: number
+}) => {
+  const [anchor, setAnchor] = useState({
+    dictionary: params.dictionary,
+    featureIndex: params.featureIndex,
+    samplingName: params.samplingName,
+    visibleRange: params.visibleRange,
+  })
+
+  if (
+    anchor.dictionary !== params.dictionary ||
+    anchor.featureIndex !== params.featureIndex ||
+    anchor.samplingName !== params.samplingName ||
+    (anchor.visibleRange !== undefined && params.visibleRange === undefined) ||
+    (anchor.visibleRange !== undefined &&
+      params.visibleRange !== undefined &&
+      anchor.visibleRange > params.visibleRange)
+  ) {
+    setAnchor({
+      dictionary: params.dictionary,
+      featureIndex: params.featureIndex,
+      samplingName: params.samplingName,
+      visibleRange: params.visibleRange,
+    })
+  }
+
+  return useInfiniteQuery({
     queryKey: [
       'samples',
       params.dictionary,
-      params.featureIndex,
-      params.samplingName,
+      anchor.featureIndex,
+      anchor.samplingName,
+      anchor.visibleRange,
     ],
     queryFn: ({ pageParam = 0 }) =>
-      fetchSamples({ data: { ...params, start: pageParam, length: 5 } }),
+      fetchSamples({
+        data: {
+          ...params,
+          start: pageParam,
+          length: 5,
+          visibleRange: anchor.visibleRange,
+        },
+      }),
     getNextPageParam: (_, allPages) =>
       allPages.reduce((acc, page) => acc + page.length, 0) < params.totalLength
         ? allPages.reduce((acc, page) => acc + page.length, 0)
         : undefined,
     initialPageParam: 0,
   })
+}
 
 export function useToggleBookmark() {
   const queryClient = useQueryClient()

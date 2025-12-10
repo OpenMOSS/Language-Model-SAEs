@@ -113,13 +113,21 @@ export const fetchSamples = createServerFn({ method: 'GET' })
       samplingName: string
       start: number
       length: number
+      visibleRange?: number
     }) => data,
   )
   .handler(
     async ({
-      data: { dictionary, featureIndex, samplingName, start, length },
+      data: {
+        dictionary,
+        featureIndex,
+        samplingName,
+        start,
+        length,
+        visibleRange,
+      },
     }) => {
-      const url = `${process.env.BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/sampling/${samplingName}?start=${start}&length=${length}`
+      const url = `${process.env.BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/sampling/${samplingName}?start=${start}&length=${length}${visibleRange ? `&visible_range=${visibleRange}` : ''}`
       const response = await fetch(url, {
         method: 'GET',
         headers: {

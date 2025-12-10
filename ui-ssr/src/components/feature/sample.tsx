@@ -82,11 +82,20 @@ export const FeatureSampleGroup = ({
   samplingName,
   totalLength,
 }: FeatureSampleGroupProps) => {
+  const rangeOptions = [
+    { label: 'Stacked', value: 10 },
+    { label: 'Snippet', value: 30 },
+    { label: 'Detail', value: 50 },
+    { label: 'Full', value: Infinity },
+  ]
+  const [visibleRange, setVisibleRange] = useState<number>(50)
+
   const { data, fetchNextPage, hasNextPage, isFetching } = useSamples({
     dictionary: feature.dictionaryName,
     featureIndex: feature.featureIndex,
     samplingName,
     totalLength,
+    visibleRange: visibleRange === Infinity ? undefined : visibleRange,
   })
 
   const samples = useMemo(
@@ -105,15 +114,6 @@ export const FeatureSampleGroup = ({
       return samplingName
     }
   }
-
-  const [visibleRange, setVisibleRange] = useState<number>(50)
-
-  const rangeOptions = [
-    { label: 'Stacked', value: 10 },
-    { label: 'Snippet', value: 30 },
-    { label: 'Detail', value: 50 },
-    { label: 'Full', value: Infinity },
-  ]
 
   const samplingNameDisplay = samplingNameMap(samplingName)
 
@@ -203,6 +203,9 @@ export const FeatureActivationSample = memo(
       null,
     )
 
+    const tokenOffset = sample.tokenOffset ?? 0
+    const textOffset = sample.textOffset ?? 0
+
     // Memoize text highlights processing
     const textHighlights = useMemo(
       () =>
@@ -212,7 +215,7 @@ export const FeatureActivationSample = memo(
             featureAct: getActivationValue(
               sample.featureActsIndices,
               sample.featureActsValues,
-              index + sample.tokenOffset,
+              index + tokenOffset,
             ),
           }))
           .filter(
@@ -248,15 +251,15 @@ export const FeatureActivationSample = memo(
     const highestActivatingTokenText = useMemo(() => {
       if (!highestActivatingToken || !sample.text) return null
       const origin =
-        sample.origins[highestActivatingToken.tokenIndex - sample.tokenOffset]
+        sample.origins[highestActivatingToken.tokenIndex - tokenOffset]
       if (origin && origin.key === 'text') {
         return sample.text.slice(
-          origin.range[0] - (sample.textOffset ?? 0),
-          origin.range[1] - (sample.textOffset ?? 0),
+          origin.range[0] - textOffset,
+          origin.range[1] - textOffset,
         )
       }
       return null
-    }, [highestActivatingToken, sample.origins, sample.text, sample.textOffset])
+    }, [highestActivatingToken, sample.origins, sample.text, textOffset])
 
     // Get z pattern for hovered token
     const hoveredZPattern = useMemo(() => {
@@ -395,17 +398,12 @@ export const FeatureActivationSample = memo(
       const firstOrigin = sample.origins[0]
       if (firstOrigin && firstOrigin.key === 'text') {
         return sample.text.slice(
-          firstOrigin.range[0] - (sample.textOffset ?? 0),
-          firstOrigin.range[1] - (sample.textOffset ?? 0),
+          firstOrigin.range[0] - textOffset,
+          firstOrigin.range[1] - textOffset,
         )
       }
       return null
-    }, [
-      highestActivatingTokenText,
-      sample.text,
-      sample.origins,
-      sample.textOffset,
-    ])
+    }, [highestActivatingTokenText, sample.text, sample.origins, textOffset])
 
     return (
       <div className={cn('w-full flex gap-4 items-center', className)}>
@@ -441,8 +439,8 @@ export const FeatureActivationSample = memo(
               >
                 {visibleSegments.map((segment, index) => {
                   const segmentText = sample.text!.slice(
-                    segment.start - (sample.textOffset ?? 0),
-                    segment.end - (sample.textOffset ?? 0),
+                    segment.start - textOffset,
+                    segment.end - textOffset,
                   )
                   if (showHoverCard) {
                     return (
