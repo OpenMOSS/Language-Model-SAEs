@@ -7,10 +7,9 @@ export const Route = createFileRoute('/dictionaries/')({
       dictionariesQueryOptions(),
     )
     throw redirect({
-      to: '/dictionaries/$dictionaryName/features/$featureIndex',
+      to: '/dictionaries/$dictionaryName',
       params: {
         dictionaryName: dictionaries[0],
-        featureIndex: '0',
       },
     })
   },

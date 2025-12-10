@@ -59,10 +59,10 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body className="min-h-screen bg-background">
+      <body className="h-screen bg-background flex flex-col overflow-hidden">
         <AppNavbar />
         <NavigationProgressBar />
-        <main>{children}</main>
+        <main className="flex-1 min-h-0">{children}</main>
         <Toaster />
         <TanStackDevtools
           config={{

@@ -22,7 +22,7 @@ function DictionaryIndexPage() {
   const [selectedDictionary, setSelectedDictionary] = useState(dictionaryName)
 
   return (
-    <div className="pt-4 pb-20 px-20 flex flex-col items-center gap-6">
+    <div className="h-full overflow-y-auto pt-4 pb-20 px-20 flex flex-col items-center gap-6">
       <div className="w-full flex justify-center items-center relative h-12">
         <div className="flex justify-center items-center gap-3">
           <div className="w-[300px]">

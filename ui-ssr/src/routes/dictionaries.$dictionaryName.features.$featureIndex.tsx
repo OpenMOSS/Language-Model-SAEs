@@ -97,11 +97,8 @@ function FeaturesPage() {
   const features = featuresData?.pages.flatMap((page) => page) ?? []
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-slate-50/50">
-      <div className="w-[300px] shrink-0 border-r border-slate-200 bg-white flex flex-col h-full overflow-hidden">
-        <div className="p-4 border-b border-slate-200 font-semibold text-sm text-slate-700 bg-white z-10">
-          Features
-        </div>
+    <div className="flex h-full w-full overflow-hidden bg-slate-50/50">
+      <div className="w-[350px] shrink-0 border-r border-slate-200 bg-white flex flex-col h-full overflow-hidden">
         <FeatureList
           features={features}
           selectedIndex={featureIndex}
@@ -111,7 +108,7 @@ function FeaturesPage() {
           onLoadPrevious={() => fetchPreviousPage()}
           hasPreviousPage={hasPreviousPage}
           isLoading={isFeaturesLoading}
-          className="overflow-y-auto grow"
+          className="overflow-y-auto grow no-scrollbar"
         />
       </div>
 

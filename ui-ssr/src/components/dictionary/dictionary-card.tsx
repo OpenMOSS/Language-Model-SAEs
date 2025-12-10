@@ -65,8 +65,8 @@ export const DictionaryCard = memo(
     const features = data?.pages.flatMap((page) => page)
 
     return (
-      <Card className="flex h-[750px] w-[1600px] overflow-hidden">
-        <div className="min-w-[380px] basis-[380px] shrink-0 flex flex-col border-r border-slate-300 bg-white">
+      <Card className="flex h-[750px] w-[1400px] overflow-hidden">
+        <div className="min-w-[350px] basis-[350px] shrink-0 flex flex-col border-r border-slate-300 bg-white">
           <div className="w-full h-[50px] uppercase px-4 flex items-center justify-center gap-1 border-b border-b-slate-300 shrink-0 font-semibold tracking-tight text-sm text-slate-700 cursor-default">
             Features from
             <Link
@@ -84,7 +84,7 @@ export const DictionaryCard = memo(
               onSelectFeature={setSelectedFeatureIndex}
               onLoadMore={() => fetchNextPage()}
               hasNextPage={hasNextPage}
-              className="overflow-y-auto grow"
+              className="overflow-y-auto grow no-scrollbar"
             />
           )}
           {isLoading && (

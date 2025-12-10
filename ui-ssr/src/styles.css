@@ -20,7 +20,15 @@ code {
 
 html {
   scroll-behavior: smooth;
-  scrollbar-gutter: stable;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
 }
 
 :root {
