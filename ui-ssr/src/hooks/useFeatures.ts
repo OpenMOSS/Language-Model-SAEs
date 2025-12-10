@@ -93,7 +93,7 @@ export const useFeatures = (params: {
 
   useEffect(() => {
     const queryHasConcernedFeature = features.some(
-      (feature) => feature.featureIndex == concernedFeatureIndex,
+      (feature) => feature.featureIndex == params.concernedFeatureIndex,
     )
     const matchState = concernedFeatureIndex === params.concernedFeatureIndex
     if (!queryHasConcernedFeature && !matchState) {
