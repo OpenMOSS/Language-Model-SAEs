@@ -216,22 +216,24 @@ class ExplainedVarianceMetric(Metric):
         )[0]  # shape: (d_model)
         per_token_l2_loss = (reconstructed - label).pow(2).sum(dim=-1)
         total_variance = (label - label_mean).pow(2).sum(dim=-1)
-        explained_variance_legacy = 1 - per_token_l2_loss / total_variance  # shape: (batch, n_context, d_model)
+        explained_variance_legacy = apply_token_mask(
+            1 - per_token_l2_loss / total_variance, self.sae.specs.label(label)[:-1], mask, reduction="mean"
+        )[0]
         l2_loss_mean = apply_token_mask(
             per_token_l2_loss,
             self.sae.specs.label(label)[:-1],
             mask,
             reduction="mean",
-        )[0]  # shape: (d_model)
+        )[0]
         total_variance_mean = apply_token_mask(
             total_variance,
             self.sae.specs.label(label)[:-1],
             mask,
             reduction="mean",
-        )[0]  # shape: (d_model)
+        )[0]
         if torch.any(torch.isinf(total_variance_mean)):
             logger.warning("Some of total_variance_mean is inf. Check dtype or scaling.")
-        explained_variance = 1 - l2_loss_mean / total_variance_mean  # shape: (d_model)
+        explained_variance = 1 - l2_loss_mean / total_variance_mean
         self.explained_variance.update(explained_variance)
         self.explained_variance_legacy.update(explained_variance_legacy)
         return {

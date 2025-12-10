@@ -984,9 +984,12 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         **kwargs,
     ) -> dict[str, float]:
         """Compute per-layer training metrics for CLT."""
-        per_layer_ev = explained_variance_legacy.mean(0)
+        assert explained_variance_legacy.ndim == 1 and len(explained_variance_legacy) == self.cfg.n_layers, (
+            f"explained_variance_legacy should be of shape (n_layers,), but got {explained_variance_legacy.shape}"
+        )
         clt_per_layer_ev_dict = {
-            f"metrics/explained_variance_L{l}": item(per_layer_ev[l].mean()) for l in range(per_layer_ev.size(0))
+            f"metrics/explained_variance_L{l}": item(explained_variance_legacy[l].mean())
+            for l in range(explained_variance_legacy.size(1))
         }
         clt_per_layer_l0_dict = {f"metrics/l0_layer{l}": item(l0[:, l].mean()) for l in range(l0.size(1))}
         return {**clt_per_layer_ev_dict, **clt_per_layer_l0_dict}
