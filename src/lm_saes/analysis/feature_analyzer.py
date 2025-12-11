@@ -50,6 +50,8 @@ class FeatureAnalyzer:
         sample_result: Mapping[str, Mapping[str, torch.Tensor] | None],
         max_feature_acts: torch.Tensor,  # [d_sae]
         device_mesh: DeviceMesh | None = None,
+        *,
+        sae_is_cnnsae: bool = False,
     ) -> Mapping[str, Mapping[str, torch.Tensor] | None]:
         """Process a batch of activations to update sampling results.
 
@@ -81,6 +83,39 @@ class FeatureAnalyzer:
             elt_cur = masked_fill(elt_cur, index, -torch.inf)
 
             sample_result_cur = sample_result[name]
+
+            # CNNSAE 特例：为每个 feature 单独保留 top-k 样本，而不是全局共享一组样本
+            if sae_is_cnnsae and name == "top_activations":
+                k = min(self.cfg.subsamples[name]["n_samples"], elt_cur.shape[0])
+                if k == 0:
+                    continue
+
+                # elt_cur: [batch, d_sae] -> per-feature topk
+                top_vals, top_idx = torch.topk(elt_cur, k=k, dim=0)  # shapes: [k, d_sae]
+
+                # feature_acts: [batch, d_sae, context] -> gather per feature
+                idx_expanded = top_idx.unsqueeze(-1).expand(-1, -1, feature_acts.shape[2])  # [k, d_sae, context]
+                feature_acts_top = torch.gather(feature_acts, dim=0, index=idx_expanded)  # [k, d_sae, context]
+
+                # gather meta: 支持 1D（batch）或 2D（batch, d_sae）形状
+                discrete_meta_top: dict[str, torch.Tensor] = {}
+                for mk, mv in discrete_meta.items():
+                    if mv.dim() == 1:
+                        # mv: [batch] -> [k, d_sae]
+                        discrete_meta_top[mk] = mv[top_idx]
+                    else:
+                        # mv: [batch, ...] -> 按 batch 维 gather 后恢复形状
+                        flat = top_idx.reshape(-1)
+                        gathered = mv[flat].reshape(top_idx.shape + mv.shape[1:])
+                        discrete_meta_top[mk] = gathered
+
+                sample_result_cur = {
+                    "elt": top_vals,
+                    "feature_acts": feature_acts_top,
+                    **discrete_meta_top,
+                }
+                sample_result = {**sample_result, name: sample_result_cur}
+                continue
 
             # Prepare batch data with proper dimensions
             batch_data = {
@@ -298,7 +333,12 @@ class FeatureAnalyzer:
                     for k, v in discrete_meta.items()
                 }
             sample_result = self._process_batch(
-                feature_acts, discrete_meta, sample_result, max_feature_acts, device_mesh
+                feature_acts,
+                discrete_meta,
+                sample_result,
+                max_feature_acts,
+                device_mesh,
+                sae_is_cnnsae=isinstance(sae, CNNSparseAutoEncoder),
             )
 
             # Update progress

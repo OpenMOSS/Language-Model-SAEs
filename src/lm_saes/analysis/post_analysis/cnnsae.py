@@ -29,16 +29,37 @@ class CNNSAEPostAnalysisProcessor(GenericPostAnalysisProcessor):
     
     def _extra_info(self, sampling_data: dict[str, Any], i: int) -> dict[str, Any]:
         """Extra information to add to the feature result."""
+        # `sampling_data["context_idx"]` 在当前实现中通常是 1D（top 样本维度），
+        # 若将来改成与通用实现一致的 2D（样本 x 特征），这里优先取对应列；
+        # 若仍为 1D，则直接返回同一批样本（保持兼容，不再触发越界）。
+        context_idx = sampling_data["context_idx"]
+        if context_idx.dim() == 2:
+            ctx = context_idx[:, i]
+        else:  # 1D fallback
+            ctx = context_idx
+
+        shard_idx_tensor = sampling_data.get("shard_idx")
+        if shard_idx_tensor is not None:
+            if shard_idx_tensor.dim() == 2:
+                shard = shard_idx_tensor[:, i]
+            else:
+                shard = shard_idx_tensor
+        else:
+            shard = torch.zeros_like(ctx, dtype=torch.int64)
+
+        n_shards_tensor = sampling_data.get("n_shards")
+        if n_shards_tensor is not None:
+            if n_shards_tensor.dim() == 2:
+                n_shards = n_shards_tensor[:, i]
+            else:
+                n_shards = n_shards_tensor
+        else:
+            n_shards = torch.ones_like(ctx, dtype=torch.int64)
+
         return {
-            # 和通用实现保持一致：为“当前 feature”取对应列的样本索引
-            # 这样每个 feature 都会拿到自己 top 样本的 context/shard，而不是整组共享
-            "context_idx": sampling_data["context_idx"][:, i].cpu().numpy(),
-            "shard_idx": sampling_data["shard_idx"][:, i].cpu().numpy()
-            if "shard_idx" in sampling_data
-            else torch.zeros_like(sampling_data["context_idx"][:, i].cpu(), dtype=torch.int64).numpy(),
-            "n_shards": sampling_data["n_shards"][:, i].cpu().numpy()
-            if "n_shards" in sampling_data
-            else torch.ones_like(sampling_data["context_idx"][:, i].cpu(), dtype=torch.int64).numpy(),
+            "context_idx": ctx.cpu().numpy(),
+            "shard_idx": shard.cpu().numpy(),
+            "n_shards": n_shards.cpu().numpy(),
         }
 
 
