@@ -30,13 +30,15 @@ class CNNSAEPostAnalysisProcessor(GenericPostAnalysisProcessor):
     def _extra_info(self, sampling_data: dict[str, Any], i: int) -> dict[str, Any]:
         """Extra information to add to the feature result."""
         return {
-            "context_idx": sampling_data["context_idx"][:].cpu().numpy(),
-            "shard_idx": sampling_data["shard_idx"][:].cpu().numpy()
+            # 和通用实现保持一致：为“当前 feature”取对应列的样本索引
+            # 这样每个 feature 都会拿到自己 top 样本的 context/shard，而不是整组共享
+            "context_idx": sampling_data["context_idx"][:, i].cpu().numpy(),
+            "shard_idx": sampling_data["shard_idx"][:, i].cpu().numpy()
             if "shard_idx" in sampling_data
-            else torch.zeros_like(sampling_data["context_idx"][:].cpu(), dtype=torch.int64).numpy(),
-            "n_shards": sampling_data["n_shards"][:].cpu().numpy()
+            else torch.zeros_like(sampling_data["context_idx"][:, i].cpu(), dtype=torch.int64).numpy(),
+            "n_shards": sampling_data["n_shards"][:, i].cpu().numpy()
             if "n_shards" in sampling_data
-            else torch.ones_like(sampling_data["context_idx"][:].cpu(), dtype=torch.int64).numpy(),
+            else torch.ones_like(sampling_data["context_idx"][:, i].cpu(), dtype=torch.int64).numpy(),
         }
 
 
