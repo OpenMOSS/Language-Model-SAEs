@@ -56,7 +56,7 @@ def set_tokens(tokenizer, bos_token_id, eos_token_id, pad_token_id):
     return tokenizer
 
 
-def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optional[tuple[int, int]]]:
+def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optional[dict[str, Any]]]:
     """Match the tokens to the input text, returning a list of tuples of the form (start_idx, end_idx) for each token."""
     # Initialize list to store token positions
     token_positions = []
@@ -66,8 +66,12 @@ def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optiona
 
     # For each token, try to find its position in the input text
     for token in str_tokens:
-        # Search for token in remaining text
-        pos = text.find(token, curr_pos)
+        # Optimization: Check if the token appears immediately at the current position
+        if text.startswith(token, curr_pos):
+            pos = curr_pos
+        else:
+            # Search for token in remaining text
+            pos = text.find(token, curr_pos)
 
         if pos != -1:
             # Found a match, store position and update curr_pos
@@ -266,7 +270,19 @@ class TransformerLensLanguageModel(LanguageModel):
         with timer.time("run_with_cache_until"):
             # _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points, use_flash_attn=False)
             _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
-        return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
+
+        mask = torch.isin(
+            tokens,
+            torch.tensor([self.pad_token_id, self.eos_token_id, self.bos_token_id]).to(tokens.device),
+            invert=True,
+        ).int()
+        attention_mask = torch.isin(tokens, torch.tensor([self.pad_token_id]).to(tokens.device), invert=True).int()
+
+        return {hook_point: activations[hook_point] for hook_point in hook_points} | {
+            "tokens": tokens,
+            "mask": mask,
+            "attention_mask": attention_mask,
+        }
 
 
 class HuggingFaceLanguageModel(LanguageModel):

@@ -1,7 +1,8 @@
-import io
 import json
 import os
-from functools import lru_cache
+import threading
+from contextlib import asynccontextmanager
+from functools import lru_cache, wraps
 from typing import Any, Generator, Optional
 
 import msgpack
@@ -21,43 +22,47 @@ except ImportError:
 
 from lm_saes.backend import LanguageModel
 from lm_saes.config import MongoDBConfig, SAEConfig
-from lm_saes.database import MongoClient
+from lm_saes.database import FeatureAnalysisSampling, FeatureRecord, MongoClient
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-app = FastAPI()
-
-app.add_middleware(GZipMiddleware, minimum_size=1000)
-
-print(os.environ.get("MONGO_URI", "mongodb://localhost:27017/"))
-print(os.environ.get("MONGO_DB", "mechinterp"))
 client = MongoClient(MongoDBConfig())
 sae_series = os.environ.get("SAE_SERIES", "default")
 tokenizer_only = os.environ.get("TOKENIZER_ONLY", "false").lower() == "true"
-if tokenizer_only:
-    print("WARNING: Tokenizer only mode is enabled, some features may not be available")
-
-# Remove global caches in favor of LRU cache
-# sae_cache: dict[str, SparseAutoEncoder] = {}
-# lm_cache: dict[str, LanguageModel] = {}
-# dataset_cache: dict[tuple[str, int, int], Dataset] = {}
 
 
-@lru_cache(maxsize=8)
-def get_model(name: str) -> LanguageModel:
-    """Load and cache a language model.
+def synchronized(func):
+    """Decorator to ensure sequential execution of a function based on parameters.
 
-    Args:
-        name: Name of the model to load
-
-    Returns:
-        LanguageModel: The loaded model
-
-    Raises:
-        ValueError: If the model is not found
+    Different parameters can be acquired in parallel, but the same parameters
+    will be executed sequentially.
     """
+    locks: dict[frozenset[tuple[str, Any]], threading.Lock] = {}
+    global_lock = threading.Lock()
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        assert len(args) == 0, "Positional arguments are not supported"
+        key = frozenset(kwargs.items())
+
+        # The lock creation is locked by the global lock to avoid race conditions on locks.
+        with global_lock:
+            if key not in locks:
+                locks[key] = threading.Lock()
+            lock = locks[key]
+
+        with lock:
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+@synchronized
+@lru_cache(maxsize=8)
+def get_model(*, name: str) -> LanguageModel:
+    """Load and cache a language model."""
     cfg = client.get_model_cfg(name)
     if cfg is None:
         raise ValueError(f"Model {name} not found")
@@ -65,45 +70,46 @@ def get_model(name: str) -> LanguageModel:
     return load_model(cfg)
 
 
+@synchronized
 @lru_cache(maxsize=16)
-def get_dataset(name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
-    """Load and cache a dataset shard.
-
-    Args:
-        name: Name of the dataset
-        shard_idx: Index of the shard to load
-        n_shards: Total number of shards
-
-    Returns:
-        Dataset: The loaded dataset shard
-
-    Raises:
-        AssertionError: If the dataset is not found
-    """
+def get_dataset(*, name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
+    """Load and cache a dataset shard."""
     cfg = client.get_dataset_cfg(name)
     assert cfg is not None, f"Dataset {name} not found"
     return load_dataset_shard(cfg, shard_idx, n_shards)
 
 
+@synchronized
 @lru_cache(maxsize=8)
-def get_sae(name: str) -> SparseAutoEncoder:
-    """Load and cache a sparse autoencoder.
-
-    Args:
-        name: Name of the SAE to load
-
-    Returns:
-        SparseAutoEncoder: The loaded SAE
-
-    Raises:
-        AssertionError: If the SAE is not found
-    """
+def get_sae(*, name: str) -> SparseAutoEncoder:
+    """Load and cache a sparse autoencoder."""
     path = client.get_sae_path(name, sae_series)
     assert path is not None, f"SAE {name} not found"
     cfg = SAEConfig.from_pretrained(path)
     sae = SparseAutoEncoder.from_config(cfg)
     sae.eval()
     return sae
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    preload_models = os.environ["PRELOAD_MODELS"].strip().split(",") if os.environ.get("PRELOAD_MODELS") else []
+    for model in preload_models:
+        get_model(name=model)
+
+    preload_saes = os.environ["PRELOAD_SAES"].strip().split(",") if os.environ.get("PRELOAD_SAES") else []
+    for sae in preload_saes:
+        get_sae(name=sae)
+
+    yield
+
+    get_model.cache_clear()
+    get_dataset.cache_clear()
+    get_sae.cache_clear()
+
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 def make_serializable(obj):
@@ -161,29 +167,6 @@ def list_dictionaries():
     return client.list_saes(sae_series=sae_series, has_analyses=True)
 
 
-@app.get("/images/{dataset_name}")
-def get_image(dataset_name: str, context_idx: int, image_idx: int, shard_idx: int = 0, n_shards: int = 1):
-    assert transforms is not None, "torchvision not found, image processing will be disabled"
-    dataset = get_dataset(dataset_name, shard_idx, n_shards)
-    data = dataset[int(context_idx)]
-
-    image_key = next((key for key in ["image", "images"] if key in data), None)
-    if image_key is None:
-        return Response(content="Image not found", status_code=404)
-
-    if len(data[image_key]) <= image_idx:
-        return Response(content="Image not found", status_code=404)
-
-    image_tensor = data[image_key][image_idx]
-
-    # Convert tensor to PIL Image and then to bytes
-    image = transforms.ToPILImage()(image_tensor.to(torch.uint8))
-    img_byte_arr = io.BytesIO()
-    image.save(img_byte_arr, format="PNG")
-
-    return Response(content=img_byte_arr.getvalue(), media_type="image/png")
-
-
 @app.get("/dictionaries/{name}/metrics")
 def get_available_metrics(name: str):
     """Get available metrics for a dictionary.
@@ -232,12 +215,142 @@ def count_features_with_filters(
     return {"count": count}
 
 
+def extract_samples(
+    sampling: FeatureAnalysisSampling,
+    start: int | None = None,
+    end: int | None = None,
+    visible_range: int | None = None,
+) -> list[dict[str, Any]]:
+    def process_sample(
+        *,
+        sparse_feature_acts: tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None],
+        context_idx: int,
+        dataset_name: str,
+        model_name: str,
+        shard_idx: int | None = None,
+        n_shards: int | None = None,
+    ):
+        model = get_model(name=model_name)
+        data = get_dataset(name=dataset_name, shard_idx=shard_idx, n_shards=n_shards)[context_idx]
+
+        origins = model.trace({k: [v] for k, v in data.items()})[0]
+
+        (
+            feature_acts_indices,
+            feature_acts_values,
+            z_pattern_indices,
+            z_pattern_values,
+        ) = sparse_feature_acts
+
+        assert origins is not None and feature_acts_indices is not None and feature_acts_values is not None, (
+            "Origins and feature acts must not be None"
+        )
+
+        token_offset = 0
+        if visible_range is not None:  # Drop tokens before and after the highest activating token
+            max_feature_act_index = int(feature_acts_indices[np.argmax(feature_acts_values).item()].item())
+            feature_acts_mask = np.logical_and(
+                feature_acts_indices > max_feature_act_index - visible_range,
+                feature_acts_indices < max_feature_act_index + visible_range,
+            )
+            feature_acts_indices = feature_acts_indices[feature_acts_mask]
+            feature_acts_values = feature_acts_values[feature_acts_mask]
+
+            if z_pattern_indices is not None and z_pattern_values is not None:
+                z_pattern_mask = np.logical_and(
+                    z_pattern_indices > max_feature_act_index - visible_range,
+                    z_pattern_indices < max_feature_act_index + visible_range,
+                ).all(axis=0)
+                z_pattern_indices = z_pattern_indices[:, z_pattern_mask]
+                z_pattern_values = z_pattern_values[z_pattern_mask]
+
+            token_offset = max(0, max_feature_act_index - visible_range)
+
+            origins = origins[token_offset : max_feature_act_index + visible_range]
+
+        text_offset = None
+        if "text" in data:
+            text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
+            if text_ranges:
+                max_text_origin = max(text_ranges, key=lambda x: x[1])
+                data["text"] = data["text"][: max_text_origin[1]]
+                if visible_range is not None:
+                    text_offset = min(text_ranges, key=lambda x: x[0])[0]
+                    data["text"] = data["text"][text_offset:]
+
+        return {
+            **data,
+            "token_offset": token_offset,
+            "text_offset": text_offset,
+            "origins": origins,
+            "feature_acts_indices": feature_acts_indices,
+            "feature_acts_values": feature_acts_values,
+            "z_pattern_indices": z_pattern_indices,
+            "z_pattern_values": z_pattern_values,
+        }
+
+    def index_select(
+        indices: np.ndarray,
+        values: np.ndarray,
+        i: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Select i-th sample from sparse tensor indices and values."""
+        mask = indices[0] == i
+        return indices[1:, mask], values[mask]
+
+    def process_sparse_feature_acts(
+        feature_acts_indices: np.ndarray,
+        feature_acts_values: np.ndarray,
+        z_pattern_indices: np.ndarray | None,
+        z_pattern_values: np.ndarray | None,
+        start: int,
+        end: int,
+    ) -> Generator[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None], Any, None]:
+        for i in range(start, end):
+            feature_acts_indices_i, feature_acts_values_i = index_select(feature_acts_indices, feature_acts_values, i)
+            if z_pattern_indices is not None and z_pattern_values is not None:
+                z_pattern_indices_i, z_pattern_values_i = index_select(z_pattern_indices, z_pattern_values, i)
+            else:
+                z_pattern_indices_i, z_pattern_values_i = None, None
+            yield feature_acts_indices_i[0], feature_acts_values_i, z_pattern_indices_i, z_pattern_values_i
+
+    start = start if start is not None else 0
+    end = end if end is not None else len(sampling.context_idx)
+
+    return [
+        process_sample(
+            sparse_feature_acts=sparse_feature_acts,
+            context_idx=context_idx,
+            dataset_name=dataset_name,
+            model_name=model_name,
+            shard_idx=shard_idx,
+            n_shards=n_shards,
+        )
+        for sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
+            process_sparse_feature_acts(
+                sampling.feature_acts_indices,
+                sampling.feature_acts_values,
+                sampling.z_pattern_indices,
+                sampling.z_pattern_values,
+                start,
+                end,
+            ),
+            sampling.context_idx[start:end],
+            sampling.dataset_name[start:end],
+            sampling.model_name[start:end],
+            sampling.shard_idx[start:end] if sampling.shard_idx is not None else [0] * (end - start),
+            sampling.n_shards[start:end] if sampling.n_shards is not None else [1] * (end - start),
+        )
+    ]
+
+
 @app.get("/dictionaries/{name}/features/{feature_index}")
 def get_feature(
     name: str,
     feature_index: str | int,
     feature_analysis_name: str | None = None,
     metric_filters: str | None = None,
+    no_samplings: bool = False,
 ):
     # Parse feature_index if it's a string
     if isinstance(feature_index, str) and feature_index != "random":
@@ -287,175 +400,16 @@ def get_feature(
             status_code=404,
         )
 
-    def process_sample(
-        *,
-        sparse_feature_acts,
-        context_idx,
-        dataset_name,
-        model_name,
-        shard_idx=None,
-        n_shards=None,
-    ):
-        """Process a sample to extract and format feature data.
-
-        Args:
-            sparse_feature_acts: Sparse feature activations,
-                optional z pattern activations
-            decoder_norms: Decoder norms
-            context_idx: Context index in the dataset
-            dataset_name: Name of the dataset
-            model_name: Name of the model
-            shard_idx: Index of the dataset shard, defaults to 0
-            n_shards: Total number of shards, defaults to 1
-
-        Returns:
-            dict: Processed sample data
-        """  # Get model and dataset
-        model = get_model(model_name)
-        # model = None
-        data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
-
-        # Get origins for the features
-        origins = model.trace({k: [v] for k, v in data.items()})[0]
-
-        # Process image data if present
-        image_key = next(
-            (key for key in ["image", "images"] if key in data),
-            None,
-        )
-        if image_key is not None:
-            image_urls = [
-                f"/images/{dataset_name}?context_idx={context_idx}&"
-                f"shard_idx={shard_idx}&n_shards={n_shards}&"
-                f"image_idx={img_idx}"
-                for img_idx in range(len(data[image_key]))
-            ]
-            del data[image_key]
-            data["images"] = image_urls
-
-        # Trim to matching lengths
-        (
-            feature_acts_indices,
-            feature_acts_values,
-            z_pattern_indices,
-            z_pattern_values,
-        ) = sparse_feature_acts
-
-        origins, feature_acts_indices, feature_acts_values = trim_minimum(
-            origins,
-            feature_acts_indices,
-            feature_acts_values,
-        )
-        assert origins is not None and feature_acts_indices is not None and feature_acts_values is not None, (
-            "Origins and feature acts must not be None"
-        )
-
-        # Process text data if present
-        if "text" in data:
-            text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
-            if text_ranges:
-                max_text_origin = max(text_ranges, key=lambda x: x[1])
-                data["text"] = data["text"][: max_text_origin[1]]
-
-        return {
-            **data,
-            "origins": origins,
-            "feature_acts_indices": feature_acts_indices,
-            "feature_acts_values": feature_acts_values,
-            "z_pattern_indices": z_pattern_indices,
-            "z_pattern_values": z_pattern_values,
-        }
-
-    def process_sparse_feature_acts(
-        feature_acts_indices: np.ndarray,
-        feature_acts_values: np.ndarray,
-        z_pattern_indices: np.ndarray | None = None,
-        z_pattern_values: np.ndarray | None = None,
-    ) -> Generator[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None], Any, None]:
-        """Process sparse feature acts.
-
-        Args:
-            feature_acts_indices: Feature acts indices
-            feature_acts_values: Feature acts values
-            z_pattern_indices: Z pattern indices
-            z_pattern_values: Z pattern values
-
-        TODO: This is really ugly, we should find a better way to do this.
-        """
-        _, feature_acts_counts = np.unique(
-            feature_acts_indices[0],
-            return_counts=True,
-        )
-        _, z_pattern_counts = (
-            np.unique(z_pattern_indices[0], return_counts=True) if z_pattern_indices is not None else (None, None)
-        )
-
-        feature_acts_sample_ranges = np.concatenate([[0], np.cumsum(feature_acts_counts)])
-        z_pattern_sample_ranges = (
-            np.concatenate([[0], np.cumsum(z_pattern_counts)]) if z_pattern_counts is not None else None
-        )
-
-        feature_acts_sample_ranges = list(zip(feature_acts_sample_ranges[:-1], feature_acts_sample_ranges[1:]))
-        z_pattern_sample_ranges = (
-            list(zip(z_pattern_sample_ranges[:-1], z_pattern_sample_ranges[1:]))
-            if z_pattern_sample_ranges is not None
-            else [(None, None)] * len(feature_acts_sample_ranges)
-        )
-        if z_pattern_sample_ranges[0][0] is not None:
-            assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), (
-                "Feature acts and z pattern must have the same number of samples"
-            )
-
-        for (feature_acts_start, feature_acts_end), (z_pattern_start, z_pattern_end) in zip(
-            feature_acts_sample_ranges, z_pattern_sample_ranges
-        ):
-            feature_acts_indices_i = feature_acts_indices[1, feature_acts_start:feature_acts_end]
-            feature_acts_values_i = feature_acts_values[feature_acts_start:feature_acts_end]
-            z_pattern_indices_i = (
-                z_pattern_indices[1:, z_pattern_start:z_pattern_end] if z_pattern_indices is not None else None
-            )
-            z_pattern_values_i = (
-                z_pattern_values[z_pattern_start:z_pattern_end] if z_pattern_values is not None else None
-            )
-            yield feature_acts_indices_i, feature_acts_values_i, z_pattern_indices_i, z_pattern_values_i
-
-    # Process all samples for each sampling
-    sample_groups = []
-    for sampling in analysis.samplings:
-        # Using zip to process correlated data instead of indexing
-        samples = [
-            process_sample(
-                sparse_feature_acts=sparse_feature_acts,
-                context_idx=context_idx,
-                dataset_name=dataset_name,
-                model_name=model_name,
-                shard_idx=shard_idx,
-                n_shards=n_shards,
-            )
-            for sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
-                process_sparse_feature_acts(
-                    sampling.feature_acts_indices,
-                    sampling.feature_acts_values,
-                    sampling.z_pattern_indices,
-                    sampling.z_pattern_values,
-                ),
-                sampling.context_idx,
-                sampling.dataset_name,
-                sampling.model_name,
-                sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts_indices),
-                sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts_indices),
-            )
+    sample_groups = (
+        [
+            {"analysis_name": sampling.name, "samples": extract_samples(sampling, 0, len(sampling.context_idx))}
+            for sampling in analysis.samplings
         ]
+        if not no_samplings
+        else None
+    )
 
-        sample_groups.append(
-            {
-                "analysis_name": sampling.name,
-                "samples": samples,
-            }
-        )
-
-    # Prepare response
-    response_data = {
+    result = {
         "feature_index": feature.index,
         "analysis_name": analysis.name,
         "interpretation": feature.interpretation,
@@ -472,87 +426,104 @@ def get_feature(
     }
 
     return Response(
-        content=msgpack.packb(make_serializable(response_data)),
+        content=msgpack.packb(make_serializable(result)),
         media_type="application/x-msgpack",
     )
 
 
-# @app.post("/dictionaries/{name}/cache_features")
-# def cache_features(
-#     name: str,
-#     features: list[dict[str, Any]] = Body(..., embed=True),
-#     output_dir: str = Body(...),
-# ):
-#     """Batch-fetch and persist feature payloads for offline reuse.
+@app.get("/dictionaries/{name}/features")
+def list_features(
+    name: str,
+    start: int,
+    end: int,
+    analysis_name: str | None = None,
+    sample_length: int = 1,
+    visible_range: int | None = None,
+):
+    features = client.list_features(sae_name=name, sae_series=sae_series, indices=list(range(start, end)))
 
-#     Args:
-#         name: Dictionary/SAE name.
-#         features: List of feature specs currently on screen. Each item should contain
-#             - feature_id: int
-#             - layer: int
-#             - is_lorsa: bool
-#             - analysis_name: Optional[str] (overrides auto selection)
-#         output_dir: Directory on the server filesystem to write files into.
+    def process_feature(feature: FeatureRecord):
+        analysis = next(
+            (a for a in feature.analyses if a.name == analysis_name or analysis_name is None),
+            None,
+        )
+        if analysis is None:
+            return None
 
-#     Returns:
-#         Dict with count and directory path.
-#     """
-#     os.makedirs(output_dir, exist_ok=True)
+        sampling = next(
+            (s for s in analysis.samplings if s.name == "top_activations"),
+            None,
+        )
 
-#     saved = 0
-#     for f in features:
-#         feature_id = int(f["feature_id"])  # may raise KeyError which FastAPI will surface
-#         layer = int(f["layer"])  # required for formatting analysis name
-#         is_lorsa = bool(f.get("is_lorsa", False))
-#         analysis_name_override = f.get("analysis_name")
+        samples = (
+            extract_samples(sampling, 0, sample_length, visible_range=visible_range) if sampling is not None else None
+        )
 
-#         # Determine analysis name for this feature
-#         formatted_analysis_name: str | None = None
-#         if analysis_name_override is not None:
-#             formatted_analysis_name = analysis_name_override
-#         else:
-#             try:
-#                 base_name = (
-#                     client.get_lorsa_analysis_name(name, sae_series)
-#                     if is_lorsa
-#                     else client.get_clt_analysis_name(name, sae_series)
-#                 )
-#             except AttributeError:
-#                 base_name = None
-#             if base_name is None:
-#                 feat = client.get_random_alive_feature(sae_name=name, sae_series=sae_series)
-#                 if feat is None:
-#                     return Response(content=f"Dictionary {name} not found", status_code=404)
-#                 available = [a.name for a in feat.analyses]
-#                 preferred = [a for a in available if ("lorsa" in a) == is_lorsa]
-#                 base_name = preferred[0] if preferred else available[0]
-#             formatted_analysis_name = base_name.replace("{}", str(layer))
+        return {
+            "feature_index": feature.index,
+            "analysis_name": analysis.name,
+            "interpretation": feature.interpretation,
+            "dictionary_name": feature.sae_name,
+            "act_times": analysis.act_times,
+            "max_feature_act": analysis.max_feature_acts,
+            "n_analyzed_tokens": analysis.n_analyzed_tokens,
+            "samples": samples,
+        }
 
-#         # Reuse existing single-feature endpoint logic. Align with frontend usage where
-#         # the path 'name' is the formatted analysis name used by GET /dictionaries/{name}/features/{id}.
-#         res = get_feature(name=formatted_analysis_name, feature_index=feature_id, feature_analysis_name=None)
-#         if isinstance(res, Response) and res.status_code != 200:
-#             # Skip but continue
-#             continue
+    results = [process_feature(feature) for feature in features]
 
-#         payload = res.body if isinstance(res, Response) else res
-#         # Write as msgpack for fidelity and also a JSON alongside for convenience
-#         base = os.path.join(output_dir, f"layer{layer}__feature{feature_id}__{formatted_analysis_name}.msgpack")
-#         with open(base, "wb") as fbin:
-#             fbin.write(payload)
-#         try:
-#             decoded = msgpack.unpackb(payload, raw=False)
-#             json_path = base.replace(".msgpack", ".json")
-#             # make_serializable handles tensors/np arrays
-#             import json as _json
+    return make_serializable(results)
 
-#             with open(json_path, "w") as fj:
-#                 _json.dump(make_serializable(decoded), fj)
-#         except Exception:
-#             pass
-#         saved += 1
 
-#     return {"saved": saved, "output_dir": output_dir}
+@app.get("/dictionaries/{name}/features/{feature_index}/samplings")
+def get_samplings(name: str, feature_index: int, analysis_name: str | None = None):
+    """Get all available samplings for a feature."""
+    feature = client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
+    if feature is None:
+        return Response(content=f"Feature {feature_index} not found in SAE {name}", status_code=404)
+    analysis = next(
+        (a for a in feature.analyses if a.name == analysis_name or analysis_name is None),
+        None,
+    )
+    if analysis is None:
+        return Response(content=f"Analysis {analysis_name} not found in SAE {name}", status_code=404)
+    return [{"name": sampling.name, "length": len(sampling.context_idx)} for sampling in analysis.samplings]
+
+
+@app.get("/dictionaries/{name}/features/{feature_index}/sampling/{sampling_name}")
+def get_samples(
+    name: str,
+    feature_index: int,
+    sampling_name: str,
+    analysis_name: str | None = None,
+    start: int = 0,
+    length: int | None = None,
+    visible_range: int | None = None,
+):
+    """Get all samples for a feature."""
+    feature = client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
+    if feature is None:
+        return Response(content=f"Feature {feature_index} not found in SAE {name}", status_code=404)
+
+    analysis = next(
+        (a for a in feature.analyses if a.name == analysis_name or analysis_name is None),
+        None,
+    )
+    if analysis is None:
+        return Response(content=f"Analysis {analysis_name} not found in SAE {name}", status_code=404)
+
+    sampling = next(
+        (s for s in analysis.samplings if s.name == sampling_name),
+        None,
+    )
+    if sampling is None:
+        return Response(content=f"Sampling {sampling_name} not found in Analysis {analysis_name}", status_code=404)
+
+    samples = extract_samples(sampling, start, None if length is None else start + length, visible_range=visible_range)
+    return Response(
+        content=msgpack.packb(make_serializable(samples)),
+        media_type="application/x-msgpack",
+    )
 
 
 @app.get("/dictionaries/{name}")
@@ -608,6 +579,38 @@ def get_analyses(name: str):
     # Extract unique analysis names from feature
     analyses = list(set(analysis.name for analysis in feature.analyses))
     return analyses
+
+
+@app.post("/dictionaries/{name}/features/{feature_index}/infer")
+def infer_feature(name: str, feature_index: int, text: str):
+    """Infer feature activations for a given text."""
+    model_name = client.get_sae_model_name(name, sae_series)
+    assert model_name is not None, f"SAE {name} not found or no model name is associated with it"
+    model = get_model(name=model_name)
+    sae = get_sae(name=name)
+
+    activations = model.to_activations({"text": [text]}, hook_points=sae.cfg.associated_hook_points)
+    activations = sae.normalize_activations(activations)
+    x, encoder_kwargs, _ = sae.prepare_input(activations)
+    feature_acts = sae.encode(x, **encoder_kwargs)[0, :, feature_index]
+
+    feature_acts = feature_acts.to_sparse()
+
+    origins = model.trace({"text": [text]})[0]
+
+    return Response(
+        content=msgpack.packb(
+            make_serializable(
+                {
+                    "text": text,
+                    "origins": origins,
+                    "feature_acts_indices": feature_acts.indices()[0],
+                    "feature_acts_values": feature_acts.values(),
+                }
+            )
+        ),
+        media_type="application/x-msgpack",
+    )
 
 
 @app.post("/dictionaries/{name}/features/{feature_index}/bookmark")

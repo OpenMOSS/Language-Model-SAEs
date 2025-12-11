@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Literal, Optional
 
+import torch
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
@@ -94,6 +95,9 @@ class GenerateActivationsSettings(BaseSettings):
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
+    override_dtype: torch.dtype | None = None
+    """Dtype to override the activations to. If `None`, will not override the dtype."""
+
     def model_post_init(self, __context: dict) -> None:
         """Validate configuration after initialization."""
         if self.mongo is not None:
@@ -162,6 +166,7 @@ def generate_activations(settings: GenerateActivationsSettings) -> None:
         buffer_size=settings.buffer_size,
         buffer_shuffle=settings.buffer_shuffle,
         ignore_token_ids=settings.ignore_token_ids,
+        override_dtype=settings.override_dtype,
     )
 
     # Configure activation writer

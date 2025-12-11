@@ -8,3 +8,14 @@ repos:
         args: [--fix]
       # Run the formatter.
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: ui-ssr-lint-staged
+        name: ui-ssr lint-staged
+        # Enter the directory and run lint-staged.
+        # lint-staged will handle the staged files selection and running prettier/eslint.
+        entry: bash -c 'cd ui-ssr && bun run check'
+        language: system
+        pass_filenames: false
+        files: ^ui-ssr/

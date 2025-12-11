@@ -10,6 +10,7 @@ from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.utils.distributed import distributed_topk
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.math import topk
 
@@ -59,7 +60,7 @@ def topk_to_jumprelu_conversion(
 
     origin_rec = sae(x)
 
-    threshold = threshold.squeeze().item()
+    threshold = item(threshold.squeeze())
     logger.info(f"Computed threshold: {threshold}")
 
     sae.cfg.act_fn = "jumprelu"
@@ -82,7 +83,7 @@ def topk_to_jumprelu_conversion(
     converted_rec = sae(x)
 
     logger.info(
-        f"Mean difference between original and converted reconstruction: {(origin_rec - converted_rec).mean().item()}"
+        f"Mean difference between original and converted reconstruction: {item((origin_rec - converted_rec).mean())}"
     )
 
     validation_batch = next(activation_stream)
@@ -91,6 +92,6 @@ def topk_to_jumprelu_conversion(
     feature_acts = sae.encode(x, **encoder_kwargs)
 
     l0 = feature_acts.gt(0).float().sum() / feature_acts.size(0)
-    logger.info(f"converted sae got L0 of {l0.item()}, should be {sae.cfg.top_k}")
+    logger.info(f"converted sae got L0 of {item(l0)}, should be {sae.cfg.top_k}")
 
     return sae

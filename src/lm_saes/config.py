@@ -54,7 +54,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"]
     d_model: int
-    expansion_factor: int
+    expansion_factor: float
     use_decoder_bias: bool = True
     act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
     norm_activation: str = "dataset-wise"
@@ -65,7 +65,6 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     use_triton_kernel: bool = False
     sparsity_threshold_for_triton_spmm_kernel: float = 0.996
     sparsity_threshold_for_csr: float = 0.05
-    circuit_tracing_mode: bool = False
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
     promote_act_fn_dtype: Annotated[
@@ -82,7 +81,8 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
     @property
     def d_sae(self) -> int:
-        return self.d_model * self.expansion_factor
+        d_sae = int(self.d_model * self.expansion_factor)
+        return d_sae
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
@@ -268,7 +268,7 @@ class MOLTConfig(BaseSAEConfig):
         assert self.rank_distribution, "rank_distribution cannot be empty"
 
         # Calculate base d_sae
-        base_d_sae = self.d_model * self.expansion_factor
+        base_d_sae = self.d_sae
 
         # For distributed training, use special logic to ensure consistency
         if self.model_parallel_size_training > 1:
@@ -523,12 +523,7 @@ class TrainerConfig(BaseConfig):
 
 
 class EvalConfig(BaseConfig):
-    feature_sampling_window: int = 1000
     total_eval_tokens: int = 1000000
-    use_cached_activations: bool = False
-    device: str = "cpu"
-    fold_activation_scale: bool = True
-    """Whether to fold the activation scale into the SAE model"""
 
 
 class GraphEvalConfig(BaseConfig):
@@ -686,8 +681,6 @@ class LanguageModelConfig(BaseModelConfig):
     """ Whether to use Flash Attention. """
     cache_dir: str | None = None
     """ The directory of the HuggingFace cache. Should have the same effect as `HF_HOME`. """
-    d_model: int = 768
-    """ The dimension of the model. """
     local_files_only: bool = False
     """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
     max_length: int = 2048
@@ -788,6 +781,8 @@ class WandbConfig(BaseConfig):
     wandb_project: str = "gpt2-sae-training"
     exp_name: str | None = None
     wandb_entity: str | None = None
+    wandb_run_id: str | None = None
+    wandb_resume: Literal["allow", "must", "never", "auto"] = "never"
 
 
 class MongoDBConfig(BaseConfig):

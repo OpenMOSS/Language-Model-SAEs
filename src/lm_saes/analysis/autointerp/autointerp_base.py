@@ -1,7 +1,7 @@
 """Utility classes and functions for auto-interpretation of SAE features.
 
 This module contains shared utilities used across the auto-interpretation system,
-including configuration, data structures, and helper functions.
+including configuration, data structußres, and helper functions.
 """
 
 from dataclasses import dataclass
@@ -244,3 +244,4 @@ class TokenizedSample:
             segments.append(Segment(text[start:end], segment_activation.item()))
 
         return TokenizedSample(segments, max_activation)
+ß

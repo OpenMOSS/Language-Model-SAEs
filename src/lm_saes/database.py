@@ -191,9 +191,9 @@ class MongoClient:
         if isinstance(data, ObjectId) and self.fs.exists(data):
             self.fs.delete(data)
 
-    def create_sae(self, name: str, series: str, path: str, cfg: BaseSAEConfig):
+    def create_sae(self, name: str, series: str, path: str, cfg: BaseSAEConfig, model_name: str | None = None):
         inserted_id = self.sae_collection.insert_one(
-            {"name": name, "series": series, "path": path, "cfg": cfg.model_dump()}
+            {"name": name, "series": series, "path": path, "cfg": cfg.model_dump(), "model_name": model_name}
         ).inserted_id
         self.feature_collection.insert_many(
             [{"sae_name": name, "sae_series": series, "index": i} for i in range(cfg.d_sae)]
@@ -245,14 +245,15 @@ class MongoClient:
         if self.is_gridfs_enabled():
             feature = self._from_gridfs(feature)
 
-        # print(f'{feature.keys()}')
-        # for k in feature:
-        #     print(f'{k} {type(feature[k])}')
-        #     if k == 'analyses':
-        #         print('feature_acts_indices', feature[k][0]['samplings'][0]['feature_acts_indices'])
-        #         print('feature_acts_indices', feature[k][0]['samplings'][0]['feature_acts_values'])
-
         return FeatureRecord.model_validate(feature)
+
+    def list_features(self, sae_name: str, sae_series: str | None, indices: list[int]) -> list[FeatureRecord]:
+        features = self.feature_collection.find(
+            {"sae_name": sae_name, "sae_series": sae_series, "index": {"$in": indices}}
+        ).sort("index", pymongo.ASCENDING)
+        if self.is_gridfs_enabled():
+            features = [self._from_gridfs(feature) for feature in features]
+        return [FeatureRecord.model_validate(feature) for feature in features]
 
     def get_analysis(self, name: str, sae_name: str, sae_series: str) -> Optional[AnalysisRecord]:
         analysis = self.analysis_collection.find_one({"name": name, "sae_name": sae_name, "sae_series": sae_series})
@@ -363,6 +364,12 @@ class MongoClient:
         if sae is None:
             return None
         return sae["path"]
+
+    def get_sae_model_name(self, sae_name: str, sae_series: str) -> Optional[str]:
+        sae = self.sae_collection.find_one({"name": sae_name, "series": sae_series})
+        if sae is None:
+            return None
+        return sae["model_name"]
 
     def add_dataset(self, name: str, cfg: DatasetConfig):
         self.dataset_collection.update_one({"name": name}, {"$set": {"cfg": cfg.model_dump()}}, upsert=True)

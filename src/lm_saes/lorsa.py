@@ -21,6 +21,8 @@ from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
+from lm_saes.utils.distributed.ops import item
+
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import LorsaConfig
 from .utils.distributed import DimMap, mesh_dim_size
@@ -619,7 +621,13 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         q, k, v = self._compute_qkv(x)
 
         # (n_active_features, q_pos, k_pos)
-        pattern = self._compute_attention_pattern(q, k)[qk_idx, 0]
+        all_patterns = self._compute_attention_pattern(q, k)
+        if isinstance(all_patterns, DTensor):
+            all_patterns = all_patterns.to_local()
+
+        pattern = all_patterns[qk_idx, 0]
+        if isinstance(v, DTensor):
+            v = v.to_local()
         return pattern.mul_(v[0, :, head_idx, None].permute(1, 2, 0))
 
     def encode_z_patterns(
@@ -738,10 +746,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         l1_coefficient: float = 1.0,
         return_aux_data: Literal[True] = True,
         **kwargs,
-    ) -> tuple[
-        Float[torch.Tensor, " batch"],
-        tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
-    ]: ...
+    ) -> dict[str, Any]: ...
 
     @overload
     def compute_loss(
@@ -778,10 +783,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, " batch"],
-        tuple[
-            Float[torch.Tensor, " batch"],
-            tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
-        ],
+        dict[str, Any],
     ]:
         """Compute the loss for the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
@@ -832,12 +834,16 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         loss_dict["l_p"] = None
 
         if return_aux_data:
-            aux_data = {
+            return {
+                "loss": loss,
+                **loss_dict,
+                "label": label,
+                "mask": batch.get("mask"),
+                "n_tokens": batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum())),
                 "feature_acts": feature_acts,
                 "reconstructed": reconstructed,
                 "hidden_pre": hidden_pre,
             }
-            return loss, (loss_dict, aux_data)
         return loss
 
     @classmethod
@@ -889,33 +895,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         if self.cfg.skip_bos:
             label = label[:, 1:]
         return label
-
-    @override
-    @torch.no_grad()
-    def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
-        """Compute activation frequency scores for LoRSA (mean over batch)."""
-        return (feature_acts > 0).float().sum(0).mean(0)
-
-    @override
-    @torch.no_grad()
-    def prepare_logging_data(
-        self,
-        log_info: dict[str, torch.Tensor],
-        label: torch.Tensor,
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-        """Prepare logging data by flattening dimensions for LoRSA."""
-        log_info = log_info.copy()
-        log_info["reconstructed"] = log_info["reconstructed"].flatten(0, 1)
-        label = label.flatten(0, 1)
-        return log_info, label
-
-    def _configure_gradient_flow(self):
-        def stop_gradient(tensor: torch.Tensor, hook: HookPoint):
-            return tensor.detach()
-
-        if self.cfg.use_post_qk_ln:
-            self.ln_q.hook_scale.add_hook(stop_gradient, is_permanent=True)
-            self.ln_k.hook_scale.add_hook(stop_gradient, is_permanent=True)
 
 
 class RMSNormPerHead(nn.Module):
