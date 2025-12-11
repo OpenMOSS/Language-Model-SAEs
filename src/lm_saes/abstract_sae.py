@@ -776,7 +776,11 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             Activation frequency scores tensor, aggregated appropriately for the model type.
             Default implementation returns sum over batch dimension.
         """
-        return (feature_acts > 0).float().sum(0)
+        # print(feature_acts.shape)
+        if len(feature_acts.shape) == 2:
+            return (feature_acts > 0).float().sum(0)
+        else:
+            return (feature_acts > 0).float().sum(0).mean(0) 
 
     @torch.no_grad()
     def compute_sparsity_metrics(self, feature_sparsity: torch.Tensor) -> dict[str, float]:

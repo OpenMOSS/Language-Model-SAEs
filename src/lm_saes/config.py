@@ -52,7 +52,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"]
+    sae_type: Literal["sae", "cnnsae", "crosscoder", "clt", "lorsa", "molt"]
     d_model: int
     expansion_factor: int
     use_decoder_bias: bool = True
@@ -116,7 +116,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
 
 class SAEConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "sae"
+    sae_type: Literal["sae", "cnnsae", "crosscoder", "clt", "lorsa", "molt"] = "sae"
     hook_point_in: str
     hook_point_out: str
     use_glu_encoder: bool = False
@@ -125,11 +125,15 @@ class SAEConfig(BaseSAEConfig):
     def associated_hook_points(self) -> list[str]:
         return [self.hook_point_in, self.hook_point_out]
 
-
+class CNNSAEConfig(SAEConfig):
+    sae_type: Literal["sae", "cnnsae", "crosscoder", "clt", "lorsa", "molt"] = "cnnsae"
+    kernel_size:int = 7
+    padding: int = 3
+    
 class LorsaConfig(BaseSAEConfig):
     """Configuration for Low Rank Sparse Attention."""
 
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "lorsa"
+    sae_type: Literal["sae", "cnnsae", "crosscoder", "clt", "lorsa", "molt"] = "lorsa"
 
     hook_point_in: str
     hook_point_out: str
@@ -189,7 +193,7 @@ class CLTConfig(BaseSAEConfig):
     reads from the residual stream at that layer and can decode to layers L through L-1.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "clt"
+    sae_type: Literal["sae", "cnnsae", "crosscoder", "clt", "lorsa", "molt"] = "clt"
     act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
     init_cross_layer_decoder_all_zero: bool = False
     hook_points_in: list[str]
@@ -229,7 +233,7 @@ class MOLTConfig(BaseSAEConfig):
     interpretable linear transforms.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "molt"
+    sae_type: Literal["sae", "cnnsae", "crosscoder", "clt", "lorsa", "molt"] = "molt"
     hook_point_in: str
     """Hook point to capture input activations from."""
     hook_point_out: str
@@ -425,7 +429,7 @@ class MOLTConfig(BaseSAEConfig):
 
 
 class CrossCoderConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "crosscoder"
+    sae_type: Literal["sae", "cnnsae", "crosscoder", "clt", "lorsa", "molt"] = "crosscoder"
     hook_points: list[str]
 
     @property

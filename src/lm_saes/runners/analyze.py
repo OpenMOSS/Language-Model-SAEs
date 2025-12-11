@@ -31,6 +31,7 @@ from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.molt import MixtureOfLinearTransform
+from lm_saes.cnnsae import CNNSparseAutoEncoder
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.runners.utils import load_config
 from lm_saes.sae import SparseAutoEncoder
@@ -221,6 +222,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
         "clt": CrossLayerTranscoder,
         "lorsa": LowRankSparseAttention,
         "molt": MixtureOfLinearTransform,
+        "cnnsae": CNNSparseAutoEncoder,
     }[settings.sae.sae_type]
     sae = sae_cls.from_config(settings.sae, device_mesh=device_mesh)
 

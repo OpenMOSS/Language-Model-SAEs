@@ -16,6 +16,7 @@ from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.cnnsae import CNNSparseAutoEncoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap, masked_fill, to_local
 from lm_saes.utils.misc import is_primary_rank
@@ -106,6 +107,14 @@ class FeatureAnalyzer:
                 continue
 
             # Sort and keep top N samples
+            # print(sample_result_cur.keys())
+            # print(type(sample_result_cur['feature_acts']))
+            # for k in sample_result_cur.keys():
+            #     if isinstance(sample_result_cur[k], torch.Tensor):
+            #         print(f"{k} : {sample_result_cur[k].shape}")
+            #     else:
+            #         print(f"{k} : {sample_result_cur[k]}")
+            # print(sample_result_cur)
             sample_result_cur = sort_dict_of_tensor(
                 sample_result_cur, sort_dim=0, sort_key="elt", descending=True, device_mesh=device_mesh
             )
@@ -236,6 +245,7 @@ class FeatureAnalyzer:
             x, encoder_kwargs, _ = sae.prepare_input(batch)
             tokens = batch["tokens"]
             feature_acts: torch.Tensor = sae.encode(x, **encoder_kwargs)
+            # print(f"{feature_acts.shape=}")
             if isinstance(feature_acts, DTensor):
                 assert device_mesh is not None, "Device mesh is required for DTensor feature activations"
                 if device_mesh is not feature_acts.device_mesh:
@@ -254,13 +264,15 @@ class FeatureAnalyzer:
                 feature_acts = feature_acts.amax(dim=-2)
             if isinstance(sae, LowRankSparseAttention) and sae.cfg.skip_bos:
                 feature_acts[:, 0, :] = 0
-            assert feature_acts.shape == (tokens.shape[0], tokens.shape[1], sae.cfg.d_sae), (
-                f"feature_acts.shape: {feature_acts.shape}, expected: {(tokens.shape[0], tokens.shape[1], sae.cfg.d_sae)}"
-            )
+            if not isinstance(sae, CNNSparseAutoEncoder):
+                assert feature_acts.shape == (tokens.shape[0], tokens.shape[1], sae.cfg.d_sae), (
+                    f"feature_acts.shape: {feature_acts.shape}, expected: {(tokens.shape[0], tokens.shape[1], sae.cfg.d_sae)}"
+                )
 
             # Compute ignore token masks
-            ignore_token_masks = self.compute_ignore_token_masks(tokens, self.cfg.ignore_token_ids)
-            feature_acts *= rearrange(ignore_token_masks, "batch_size n_ctx -> batch_size n_ctx 1")
+            if not isinstance(sae, CNNSparseAutoEncoder):
+                ignore_token_masks = self.compute_ignore_token_masks(tokens, self.cfg.ignore_token_ids)
+                feature_acts *= rearrange(ignore_token_masks, "batch_size n_ctx -> batch_size n_ctx 1")
 
             # Update activation statistics
             active_feature_count = feature_acts.gt(0.0).sum(dim=[0, 1])
@@ -292,7 +304,10 @@ class FeatureAnalyzer:
             # Update progress
             n_tokens_current = tokens.numel()
             n_tokens += n_tokens_current
-            n_analyzed_tokens += cast(int, ignore_token_masks.int().sum().item())
+            if not isinstance(sae, CNNSparseAutoEncoder):
+                n_analyzed_tokens += cast(int, ignore_token_masks.int().sum().item())
+            else:
+                n_analyzed_tokens += n_tokens_current
             pbar.update(n_tokens_current)
             if n_tokens >= self.cfg.total_analyzing_tokens:
                 break

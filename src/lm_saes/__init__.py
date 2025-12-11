@@ -3,6 +3,7 @@ from .activation_functions import JumpReLU
 from .analysis import DirectLogitAttributor, FeatureAnalyzer
 from .circuit import ReplacementModel, attribute
 from .clt import CrossLayerTranscoder
+from .cnnsae import CNNSparseAutoEncoder
 from .config import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
@@ -11,6 +12,7 @@ from .config import (
     ActivationWriterConfig,
     BufferShuffleConfig,
     CLTConfig,
+    CNNSAEConfig,
     CrossCoderConfig,
     DatasetConfig,
     DirectLogitAttributorConfig,
@@ -131,4 +133,6 @@ __all__ = [
     "train_molt",
     "TrainMOLTSettings",
     "DirectLogitAttributorConfig",
+    "CNNSAEConfig",
+    "CNNSparseAutoEncoder"
 ]

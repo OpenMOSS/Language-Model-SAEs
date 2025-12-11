@@ -266,6 +266,7 @@ class TransformerLensLanguageModel(LanguageModel):
         with timer.time("run_with_cache_until"):
             # _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points, use_flash_attn=False)
             _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
+        print("activation", hook_points[0], activations[hook_points[0]].shape, tokens.shape)
         return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
 
 

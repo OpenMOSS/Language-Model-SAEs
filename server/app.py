@@ -24,6 +24,7 @@ from lm_saes.config import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
+from torchvision.transforms import v2
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -80,7 +81,10 @@ def get_dataset(name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
     Raises:
         AssertionError: If the dataset is not found
     """
+    print(f"get_dataset: {name}")
     cfg = client.get_dataset_cfg(name)
+    print("get_dataset ok")
+    print(f"dataset_cfg: {cfg}")
     assert cfg is not None, f"Dataset {name} not found"
     return load_dataset_shard(cfg, shard_idx, n_shards)
 
@@ -183,6 +187,17 @@ def get_image(dataset_name: str, context_idx: int, image_idx: int, shard_idx: in
 
     return Response(content=img_byte_arr.getvalue(), media_type="image/png")
 
+@app.get("/images_single/{dataset_name}")
+def get_image_single(dataset_name: str, context_idx: int,  shard_idx: int = 0, n_shards: int = 1):
+    assert transforms is not None, "torchvision not found, image processing will be disabled"
+    dataset = get_dataset(dataset_name, shard_idx, n_shards)
+    data = dataset[int(context_idx)]
+
+    image = data['image']
+    img_byte_arr = io.BytesIO()
+    image.save(img_byte_arr, format="PNG")
+
+    return Response(content=img_byte_arr.getvalue(), media_type="image/png")
 
 @app.get("/dictionaries/{name}/metrics")
 def get_available_metrics(name: str):
@@ -311,60 +326,85 @@ def get_feature(
         Returns:
             dict: Processed sample data
         """  # Get model and dataset
-        model = get_model(model_name)
-        # model = None
+        print(f"{sparse_feature_acts=}")
+        # model = get_model(model_name)
+        model = None
+        print("get_data")
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
+        print("get_data ok")
+        print(f"{data=}")
 
-        # Get origins for the features
-        origins = model.trace({k: [v] for k, v in data.items()})[0]
-
-        # Process image data if present
-        image_key = next(
-            (key for key in ["image", "images"] if key in data),
-            None,
-        )
-        if image_key is not None:
-            image_urls = [
-                f"/images/{dataset_name}?context_idx={context_idx}&"
-                f"shard_idx={shard_idx}&n_shards={n_shards}&"
-                f"image_idx={img_idx}"
-                for img_idx in range(len(data[image_key]))
-            ]
-            del data[image_key]
-            data["images"] = image_urls
-
-        # Trim to matching lengths
         (
             feature_acts_indices,
             feature_acts_values,
             z_pattern_indices,
             z_pattern_values,
         ) = sparse_feature_acts
+        print(f"{type(feature_acts_indices)=}")
+        # Process image data if present
+        if dataset_name != "imagenet":
+            # Get origins for the features
+            origins = model.trace({k: [v] for k, v in data.items()})[0]
+            image_key = next(
+                (key for key in ["image", "images"] if key in data),
+                None,
+            )
+            if image_key is not None:
+                image_urls = [
+                    f"/images/{dataset_name}?context_idx={context_idx}&"
+                    f"shard_idx={shard_idx}&n_shards={n_shards}&"
+                    f"image_idx={img_idx}"
+                    for img_idx in range(len(data[image_key]))
+                ]
+                del data[image_key]
+                data["images"] = image_urls
 
-        origins, feature_acts_indices, feature_acts_values = trim_minimum(
-            origins,
-            feature_acts_indices,
-            feature_acts_values,
-        )
-        assert origins is not None and feature_acts_indices is not None and feature_acts_values is not None, (
-            "Origins and feature acts must not be None"
-        )
+            # Trim to matching lengths
+            origins, feature_acts_indices, feature_acts_values = trim_minimum(
+                origins,
+                feature_acts_indices,
+                feature_acts_values,
+            )
+            assert origins is not None and feature_acts_indices is not None and feature_acts_values is not None, (
+                "Origins and feature acts must not be None"
+            )
 
-        # Process text data if present
-        if "text" in data:
-            text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
-            if text_ranges:
-                max_text_origin = max(text_ranges, key=lambda x: x[1])
-                data["text"] = data["text"][: max_text_origin[1]]
+            # Process text data if present
+            if "text" in data:
+                text_ranges = [origin["range"] for origin in origins if origin is not None and origin["key"] == "text"]
+                if text_ranges:
+                    max_text_origin = max(text_ranges, key=lambda x: x[1])
+                    data["text"] = data["text"][: max_text_origin[1]]
 
-        return {
-            **data,
-            "origins": origins,
-            "feature_acts_indices": feature_acts_indices,
-            "feature_acts_values": feature_acts_values,
-            "z_pattern_indices": z_pattern_indices,
-            "z_pattern_values": z_pattern_values,
-        }
+            return {
+                **data,
+                "origins": origins,
+                "feature_acts_indices": feature_acts_indices,
+                "feature_acts_values": feature_acts_values,
+                "z_pattern_indices": z_pattern_indices,
+                "z_pattern_values": z_pattern_values,
+            }
+        else:
+            image_urls = [
+                f"/images_single/{dataset_name}?context_idx={context_idx}&shard_idx={shard_idx}&n_shards={n_shards}"
+            ]
+            data['images'] = image_urls
+            del data['image']
+            # transform = v2.Compose([
+            #     v2.ToImage(),
+            #     v2.CenterCrop((256, 256)),
+            #     v2.ToDtype(torch.long, scale=False)
+            # ])
+            # data['image'] = transform(data['image'])
+            # img = transform(img)
+            return {
+                **data,
+                "origins": [],
+                "feature_acts_indices": feature_acts_indices,
+                "feature_acts_values": feature_acts_values,
+                "z_pattern_indices": z_pattern_indices,
+                "z_pattern_values": z_pattern_values,
+            }
 
     def process_sparse_feature_acts(
         feature_acts_indices: np.ndarray,
@@ -401,10 +441,11 @@ def get_feature(
             if z_pattern_sample_ranges is not None
             else [(None, None)] * len(feature_acts_sample_ranges)
         )
-        if z_pattern_sample_ranges[0][0] is not None:
-            assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), (
-                "Feature acts and z pattern must have the same number of samples"
-            )
+        print(f"{z_pattern_sample_ranges=} {feature_acts_counts=}")
+        # if z_pattern_sample_ranges[0][0] is not None:
+        #     assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), (
+        #         "Feature acts and z pattern must have the same number of samples"
+        #     )
 
         for (feature_acts_start, feature_acts_end), (z_pattern_start, z_pattern_end) in zip(
             feature_acts_sample_ranges, z_pattern_sample_ranges
@@ -470,7 +511,7 @@ def get_feature(
         "sample_groups": sample_groups,
         "is_bookmarked": client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature.index),
     }
-
+    print(f"{response_data=}")
     return Response(
         content=msgpack.packb(make_serializable(response_data)),
         media_type="application/x-msgpack",

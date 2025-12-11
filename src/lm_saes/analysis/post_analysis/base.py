@@ -81,21 +81,28 @@ class PostAnalysisProcessor(ABC):
         # Step 3: Convert to final format
         logger.info("[PostAnalysisProcessor] Converting results to final per-feature format.")
         results = []
+        
         for i in tqdm(range(len(act_times)), desc="Converting results to final per-feature format"):
+            samplings = []
+            for k, v in sample_result.items():
+                tmp_dict = {}
+                for k2 in mapper.keys():
+                    if len(v[k2].shape)==2:
+                        tmp_dict[k2] = mapper.decode(k2, v[k2][:, i].tolist())
+                    else:
+                        tmp_dict[k2] = mapper.decode(k2, v[k2][:].tolist())
+                samplings.append({
+                    "name": k,
+                    **self._sparsify_feature_acts(v["feature_acts"][:, i]),
+                    **self._extra_info(v, i),
+                    **tmp_dict,
+                })
             feature_result = {
                 "act_times": act_times[i].item(),
                 "n_analyzed_tokens": n_analyzed_tokens,
                 "max_feature_acts": max_feature_acts[i].item(),
                 **(decoder_info[i] if decoder_info is not None else {}),
-                "samplings": [
-                    {
-                        "name": k,
-                        **self._sparsify_feature_acts(v["feature_acts"][:, i]),
-                        **self._extra_info(v, i),
-                        **{k2: mapper.decode(k2, v[k2][:, i].tolist()) for k2 in mapper.keys()},
-                    }
-                    for k, v in sample_result.items()
-                ],
+                "samplings": samplings,
             }
             results.append(feature_result)
 

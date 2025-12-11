@@ -161,6 +161,7 @@ class ActivationWriter:
                 logger.info(f"\nTimer Summary:\n{timer.summary()}\n")
 
             n_tokens_written += chunk["tokens"].numel()
+            # print("n_tolens_written", n_tokens_written, chunk["tokens"].shape)
             pbar.update(chunk["tokens"].numel())
 
             if total is not None and n_tokens_written >= total:

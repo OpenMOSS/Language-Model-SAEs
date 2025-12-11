@@ -47,10 +47,12 @@ def sort_dict_of_tensor(
             )
     else:
         sorted_idx = tensor_dict[sort_key].argsort(dim=sort_dim, descending=descending)
+        # print(f"{sorted_idx.shape=}")
         for k, v in tensor_dict.items():
-            tensor_dict[k] = v.gather(
-                sort_dim, repeat(sorted_idx, f"... -> ... {' '.join(['1'] * (v.ndim - sorted_idx.ndim))}").expand_as(v)
-            )
+            if len(tensor_dict[k].shape) >= len(sorted_idx):
+                tensor_dict[k] = v.gather(
+                    sort_dim, repeat(sorted_idx, f"... -> ... {' '.join(['1'] * (v.ndim - sorted_idx.ndim))}").expand_as(v)
+                )
     return tensor_dict
 
 

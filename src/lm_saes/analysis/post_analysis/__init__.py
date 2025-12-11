@@ -13,6 +13,7 @@ from .clt import CLTPostAnalysisProcessor
 from .crosscoder import CrossCoderPostAnalysisProcessor
 from .generic import GenericPostAnalysisProcessor
 from .lorsa import LorsaPostAnalysisProcessor
+from .cnnsae import CNNSAEPostAnalysisProcessor
 
 __all__ = [
     "PostAnalysisProcessor",
@@ -22,4 +23,5 @@ __all__ = [
     "GenericPostAnalysisProcessor",
     "LorsaPostAnalysisProcessor",
     "CLTPostAnalysisProcessor",
+    "CNNSAEPostAnalysisProcessor",
 ]

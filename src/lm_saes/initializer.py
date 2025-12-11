@@ -15,6 +15,7 @@ from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.cnnsae import CNNSparseAutoEncoder
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
 
@@ -65,9 +66,11 @@ class Initializer:
                 isinstance(sae, MixtureOfLinearTransform)
                 or isinstance(sae, LowRankSparseAttention)
                 or isinstance(sae, SparseAutoEncoder)
+                or isinstance(sae, CNNSparseAutoEncoder)
             ):
                 label = sae.prepare_label(batch)
                 normalized_mean_activation = label.mean(dim=list(range((batch[sae.cfg.hook_point_out].ndim - 1))))
+                print(f"label={label.shape} norm_mean_act={normalized_mean_activation.shape}")
                 sae.b_D.copy_(normalized_mean_activation)
             else:
                 raise ValueError(
@@ -129,6 +132,7 @@ class Initializer:
                 "clt": CrossLayerTranscoder,
                 "lorsa": LowRankSparseAttention,
                 "molt": MixtureOfLinearTransform,
+                "cnnsae": CNNSparseAutoEncoder,
             }[cfg.sae_type]
         except KeyError:
             raise ValueError(f"SAE type {cfg.sae_type} not supported.")

@@ -282,7 +282,9 @@ class ActivationTransformer(BaseActivationProcessor[Iterable[dict[str, Any]], It
                 assert mask.to_local().all(), "Mask must be all true for distributed tensors"
                 activations = {k: v for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
             else:
-                activations = {k: v[mask] for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
+                # print("tokens", d["tokens"].shape)
+                # print("activation", d['stages.2.21.hook_resid_post'].shape, d['meta'], d['tokens'].shape)
+                activations = {k: v for k, v in d.items() if isinstance(v, torch.Tensor)}  # Drop meta
 
             yield activations
 
@@ -358,9 +360,9 @@ class ActivationBatchler(BaseActivationProcessor[Iterable[dict[str, Any]], Itera
                 return len(x) if isinstance(x, DTensor) else len(x) * dp_size
 
             # Validate input: ensure all tensors and lists have consistent shapes
-            assert all(get_batch_size(d[k]) == get_batch_size(d[next(iter(d.keys()))]) for k in d.keys()), (
-                f"All tensors and lists must have the same batch size, {[(k, len(d[k])) for k in d.keys()]}"
-            )
+            # assert all(get_batch_size(d[k]) == get_batch_size(d[next(iter(d.keys()))]) for k in d.keys()), (
+            #     f"All tensors and lists must have the same batch size, {[(k, len(d[k])) for k in d.keys()]}"
+            # )
 
             # Add new data to buffer
             buffer = buffer.cat(d)

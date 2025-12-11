@@ -376,17 +376,17 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                     for k, v in activations.items():
                         if k in self.cache_dirs.keys():
                             activations[k] = v.to(self.dtype)
-
+                # print(activations)
                 # Flatten tokens if needed
-                while cast(torch.Tensor, activations["tokens"]).ndim >= 3:
+                # while cast(torch.Tensor, activations["tokens"]).ndim >= 3:
 
-                    def flatten(x: torch.Tensor | list[list[Any]]) -> torch.Tensor | list[Any]:
-                        if isinstance(x, torch.Tensor):
-                            return x.flatten(start_dim=0, end_dim=1)
-                        else:
-                            return [a for b in x for a in b]
+                #     def flatten(x: torch.Tensor | list[list[Any]]) -> torch.Tensor | list[Any]:
+                #         if isinstance(x, torch.Tensor):
+                #             return x.flatten(start_dim=0, end_dim=1)
+                #         else:
+                #             return [a for b in x for a in b]
 
-                    activations = {k: flatten(v) for k, v in activations.items()}
+                #     activations = {k: flatten(v) for k, v in activations.items()}
 
                 if self.device_mesh is not None:
                     activations = {

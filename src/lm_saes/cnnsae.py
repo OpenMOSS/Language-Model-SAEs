@@ -9,85 +9,42 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
+import torch.nn.functional as F
 
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger
 
 from .abstract_sae import AbstractSparseAutoEncoder
-from .config import SAEConfig
+from .config import CNNSAEConfig
 
-logger = get_distributed_logger("sae")
+from einops import einsum, rearrange
 
+logger = get_distributed_logger("cnnsae")
 
-class SparseAutoEncoder(AbstractSparseAutoEncoder):
-    def __init__(self, cfg: SAEConfig, device_mesh: DeviceMesh | None = None):
-        super(SparseAutoEncoder, self).__init__(cfg, device_mesh=device_mesh)
+def _reverse_repeat_tuple(t, n):
+    r"""Reverse the order of `t` and repeat each element for `n` times.
+
+    This can be used to translate padding arg used by Conv and Pooling modules
+    to the ones used by `F.pad`.
+    """
+    return tuple(x for x in reversed(t) for _ in range(n))
+
+class CNNSparseAutoEncoder(AbstractSparseAutoEncoder):
+    def __init__(self, cfg: CNNSAEConfig, device_mesh: DeviceMesh | None = None):
+        super(CNNSparseAutoEncoder, self).__init__(cfg, device_mesh=device_mesh)
+        assert device_mesh is None
         self.cfg = cfg
-
-        if device_mesh is None:
-            self.W_E = nn.Parameter(torch.empty(cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
-            self.b_E = nn.Parameter(torch.empty(cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
-            self.W_D = nn.Parameter(torch.empty(cfg.d_sae, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
-            if cfg.use_decoder_bias:
-                self.b_D = nn.Parameter(torch.empty(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
-
-            if cfg.use_glu_encoder:
-                self.W_E_glu = nn.Parameter(torch.empty(cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
-                self.b_E_glu = nn.Parameter(torch.empty(cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
-        else:
-            self.W_E = nn.Parameter(
-                torch.distributed.tensor.empty(
-                    cfg.d_model,
-                    cfg.d_sae,
-                    dtype=cfg.dtype,
-                    device_mesh=device_mesh,
-                    placements=self.dim_maps()["W_E"].placements(device_mesh),
-                )
-            )
-            self.b_E = nn.Parameter(
-                torch.distributed.tensor.empty(
-                    cfg.d_sae,
-                    dtype=cfg.dtype,
-                    device_mesh=device_mesh,
-                    placements=self.dim_maps()["b_E"].placements(device_mesh),
-                )
-            )
-            self.W_D = nn.Parameter(
-                torch.distributed.tensor.empty(
-                    cfg.d_sae,
-                    cfg.d_model,
-                    dtype=cfg.dtype,
-                    device_mesh=device_mesh,
-                    placements=self.dim_maps()["W_D"].placements(device_mesh),
-                )
-            )
-            if cfg.use_decoder_bias:
-                self.b_D = nn.Parameter(
-                    torch.distributed.tensor.empty(
-                        cfg.d_model,
-                        dtype=cfg.dtype,
-                        device_mesh=device_mesh,
-                        placements=self.dim_maps()["b_D"].placements(device_mesh),
-                    )
-                )
-            if cfg.use_glu_encoder:
-                self.W_E_glu = nn.Parameter(
-                    torch.distributed.tensor.empty(
-                        cfg.d_model,
-                        cfg.d_sae,
-                        dtype=cfg.dtype,
-                        device_mesh=device_mesh,
-                        placements=self.dim_maps()["W_E_glu"].placements(device_mesh),
-                    )
-                )
-                self.b_E_glu = nn.Parameter(
-                    torch.distributed.tensor.empty(
-                        cfg.d_sae,
-                        dtype=cfg.dtype,
-                        device_mesh=device_mesh,
-                        placements=self.dim_maps()["b_E_glu"].placements(device_mesh),
-                    )
-                )
+                
+        self.W_conv = nn.Parameter(torch.empty(cfg.d_sae, cfg.d_model, 7, 7, device=cfg.device, dtype=cfg.dtype))
+        self.b_conv = nn.Parameter(torch.zeros(cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+        self.layer_norm_weight = nn.Parameter(torch.ones(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
+        self.layer_norm_bias = nn.Parameter(torch.zeros(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
+        # self.W_E = nn.Parameter(torch.empty(cfg.d_model, cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+        # self.b_E = nn.Parameter(torch.empty(cfg.d_sae, device=cfg.device, dtype=cfg.dtype))
+        
+        self.W_D = nn.Parameter(torch.empty(cfg.d_sae, cfg.d_model, device=cfg.device, dtype=cfg.dtype))
+        if cfg.use_decoder_bias:
+            self.b_D = nn.Parameter(torch.empty(cfg.d_model, device=cfg.device, dtype=cfg.dtype))
 
         self.hook_hidden_pre = HookPoint()
         self.hook_feature_acts = HookPoint()
@@ -96,15 +53,12 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     @override
     def encoder_norm(self, keepdim: bool = False):
         """Compute the norm of the encoder weight."""
-        if not isinstance(self.W_E, DTensor):
-            return torch.norm(self.W_E, p=2, dim=0, keepdim=keepdim).to(self.cfg.device)
-        else:
-            assert self.device_mesh is not None
-            return DTensor.from_local(
-                torch.norm(self.W_E.to_local(), p=2, dim=0, keepdim=keepdim),
-                device_mesh=self.device_mesh,
-                placements=DimMap({"model": 1 if keepdim else 0}).placements(self.device_mesh),
-            )
+        return torch.norm(self.W_conv, p=2, dim=(1,2,3), keepdim=keepdim)
+        # return torch.norm(self.W_E, p=2, dim=1, keepdim=keepdim).to(self.cfg.device)
+    
+    # def encoder_norm2(self, keepdim: bool = False):
+    #     """Compute the norm of the encoder weight."""
+    #     return torch.norm(self.W_E2, p=2, dim=(1,2,3), keepdim=keepdim).to(self.cfg.device)
 
     @override
     def decoder_norm(self, keepdim: bool = False) -> torch.Tensor:
@@ -142,7 +96,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @torch.no_grad()
     def set_encoder_to_fixed_norm(self, value: float):
-        self.W_E.mul_(value / self.encoder_norm(keepdim=True))
+        # self.W_E.mul_(value / self.encoder_norm(keepdim=True))
+        self.W_conv.mul_(value/self.encoder_norm(keepdim=True))
+        # self.W_E2.mul_(value/self.encoder_norm2(keepdim=True))
 
     def dim_maps(self) -> dict[str, DimMap]:
         """Return a dictionary mapping parameter names to dimension maps.
@@ -202,7 +158,8 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         output_norm_factor: float = (
             math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_out]
         )
-        self.b_E.div_(input_norm_factor)
+        # self.b_E.div_(input_norm_factor)
+        self.b_conv.div_(input_norm_factor)
         if self.cfg.use_decoder_bias:
             assert self.b_D is not None, "Decoder bias should exist if use_decoder_bias is True"
             self.b_D.div_(output_norm_factor)
@@ -245,10 +202,12 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         x: Union[
             Float[torch.Tensor, "batch d_model"],
             Float[torch.Tensor, "batch seq_len d_model"],
+            Float[torch.Tensor, "batch d_model H W"],
         ],
         return_hidden_pre: bool = False,
         **kwargs,
     ) -> Union[
+        Float[torch.Tensor, "batch d_sae H W"],
         Float[torch.Tensor, "batch d_sae"],
         Float[torch.Tensor, "batch seq_len d_sae"],
         tuple[
@@ -275,20 +234,34 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
                 Tuple of (feature_acts, hidden_pre) where both have shape (batch, d_sae) or (batch, seq_len, d_sae)
         """
         # Pass through encoder
-        hidden_pre = x @ self.W_E + self.b_E
+        # hidden_pre = x @ self.W_E + self.b_E
+        # print("input", x.shape)
+        b, S, dm = x.shape
+        h = int(math.sqrt(S))
+        x = rearrange(x, "b (h w) d -> b d h w", h=h)
+        # hidden_pre = self.Encoder(x)
+        hidden_pre = F.conv2d(x, self.W_conv, self.b_conv, padding=3)
+        # hidden_pre_u = hidden_pre.mean(dim=1, keepdim=True)
+        # hidden_pre_s = (hidden_pre - hidden_pre_u).pow(2).mean(dim=1, keepdim=True)
+        # hidden_pre = (hidden_pre-hidden_pre_u) / torch.sqrt(hidden_pre_s + 1e-6)
+        # hidden_pre = F.conv2d(hidden_pre, self.W_E2, self.b_E2, padding=2)
+        # hidden_pre = einsum(hidden_pre, self.W_E, "b c h w, c d -> b d h w") + self.b_E.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+        
+        # hidden_pre = hidden_pre.reshape(b,ds,-1).permute(0,2,1)
+        hidden_pre = rearrange(hidden_pre, "b d h w -> b (h w) d")
 
         # Apply GLU if configured
-        if self.cfg.use_glu_encoder:
-            hidden_pre_glu = torch.sigmoid(x @ self.W_E_glu + self.b_E_glu)
-            hidden_pre = hidden_pre * hidden_pre_glu
+        # if self.cfg.use_glu_encoder:
+        #     hidden_pre_glu = torch.sigmoid(x @ self.W_E_glu + self.b_E_glu)
+        #     hidden_pre = hidden_pre * hidden_pre_glu
 
         hidden_pre = self.hook_hidden_pre(hidden_pre)
 
-        # print("hidden_pre", hidden_pre.shape, x.shape)
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
+            # print("hidden_pre", hidden_pre.shape, "decoder_norm", self.decoder_norm().shape)
             hidden_pre = hidden_pre * self.decoder_norm()
-        
+
         feature_acts = self.activation_function(hidden_pre)
         feature_acts = self.hook_feature_acts(feature_acts)
 
@@ -304,11 +277,13 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         self,
         feature_acts: Union[
             Float[torch.Tensor, "batch d_sae"],
+            Float[torch.Tensor, "batch d_sae H W"],
             Float[torch.Tensor, "batch seq_len d_sae"],
         ],
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, "batch d_model"],
+        Float[torch.Tensor, "batch d_model H W"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:  # may be overridden by subclasses
         max_l0_in_batch = feature_acts.gt(0).to(feature_acts).sum(dim=-1).max()
@@ -324,12 +299,15 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
         assert reconstructed is not None, "Reconstructed cannot be None"
         if self.cfg.use_decoder_bias:
-            reconstructed = reconstructed + self.b_D
+            reconstructed = reconstructed + self.b_D# .unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
         reconstructed = self.hook_reconstructed(reconstructed)
 
         if isinstance(reconstructed, DTensor):
             reconstructed = DimMap({"data": 0}).redistribute(reconstructed)
 
+        # b, c, h, w = reconstructed.shape
+        # reconstructed = reconstructed.reshape(b, c, -1).permute(0,2,1)
+        
         return reconstructed
 
     def forward(
@@ -349,7 +327,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
-        cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
+        cfg = CNNSAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
         return cls.from_config(cfg)
 
     @torch.no_grad()
@@ -361,29 +339,37 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     @override
     @torch.no_grad()
     def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
-        self.W_E.copy_(self.W_D.contiguous().T * factor)
+        RuntimeError("Not support for cnnsae")
 
     @override
     @torch.no_grad()
     def init_parameters(self, **kwargs):
         super().init_parameters(**kwargs)
 
-        W_E = torch.empty(self.cfg.d_model, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(
-            -kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"]
-        )
+        W_conv = torch.empty(self.cfg.d_sae, self.cfg.d_model, 7, 7, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(-(self.cfg.d_sae)**(-0.5), (self.cfg.d_sae)**(-0.5))
+        # W_E = torch.empty(self.cfg.d_model, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(
+        #     -kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"]
+        # )
+        # W_E2 = torch.empty(self.cfg.d_sae, self.cfg.d_model*4, 5, 5, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(
+        #     -kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"]
+        # )
         W_D = torch.empty(self.cfg.d_sae, self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype).uniform_(
             -kwargs["decoder_uniform_bound"], kwargs["decoder_uniform_bound"]
         )
-        b_E = torch.zeros(self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype)
+        # b_E = torch.zeros(self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype)
+        # b_E2 = torch.zeros(self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype)
 
-        if self.device_mesh is not None:
-            W_E = self.dim_maps()["W_E"].distribute(W_E, self.device_mesh)
-            W_D = self.dim_maps()["W_D"].distribute(W_D, self.device_mesh)
-            b_E = self.dim_maps()["b_E"].distribute(b_E, self.device_mesh)
+        # if self.device_mesh is not None:
+        #     W_E = self.dim_maps()["W_E"].distribute(W_E, self.device_mesh)
+        #     W_D = self.dim_maps()["W_D"].distribute(W_D, self.device_mesh)
+        #     b_E = self.dim_maps()["b_E"].distribute(b_E, self.device_mesh)
 
-        self.W_E.copy_(W_E)
+        self.W_conv.copy_(W_conv)
+        # self.W_E.copy_(W_E)
+        # self.W_E2.copy_(W_E2)
         self.W_D.copy_(W_D)
-        self.b_E.copy_(b_E)
+        # self.b_E.copy_(b_E)
+        # self.b_E2.copy_(b_E2)
 
         if self.cfg.use_decoder_bias:
             b_D = torch.zeros(self.cfg.d_model, device=self.cfg.device, dtype=self.cfg.dtype)
@@ -393,28 +379,17 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
             self.b_D.copy_(b_D)
 
-        if self.cfg.use_glu_encoder:
-            W_E_glu = torch.empty(
-                self.cfg.d_model, self.cfg.d_sae, device=self.cfg.device, dtype=self.cfg.dtype
-            ).uniform_(-kwargs["encoder_uniform_bound"], kwargs["encoder_uniform_bound"])
-            if self.device_mesh is not None:
-                W_E_glu = self.dim_maps()["W_E_glu"].distribute(W_E_glu, self.device_mesh)
-            self.W_E_glu.copy_(W_E_glu)
 
     @override
     def prepare_input(
         self, batch: dict[str, torch.Tensor], **kwargs
     ) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
         x = batch[self.cfg.hook_point_in]
-        if len(x.shape) == 3:
-            x = x.reshape(x.shape[0]*x.shape[1], -1)
         return x, {}, {}
 
     @override
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
         label = batch[self.cfg.hook_point_out]
-        if len(label.shape) == 3:
-            label = label.reshape(label.shape[0]*label.shape[1], -1)
         return label
 
     @override
@@ -437,3 +412,16 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         x = self.prepare_input(activation_batch)[0]
         _, hidden_pre = self.encode(x, return_hidden_pre=True)
         self.b_E.copy_(-hidden_pre.mean(dim=0))
+    
+    @torch.no_grad()
+    def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
+        """Compute activation frequency scores for feature sparsity tracking.
+
+        Args:
+            feature_acts: Feature activations tensor
+
+        Returns:
+            Activation frequency scores tensor, aggregated appropriately for the model type.
+            Default implementation returns sum over batch dimension.
+        """
+        return (feature_acts > 0).float().sum(dim=(0,1))

@@ -33,6 +33,8 @@ from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from lm_saes.utils.misc import is_primary_rank
 
+from itertools import chain
+
 logger = get_distributed_logger("runners.train")
 
 
@@ -86,6 +88,8 @@ class TrainSAESettings(BaseSettings):
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
+    
+    epoch: int = 1
 
 
 def train_sae(settings: TrainSAESettings) -> None:
@@ -148,15 +152,21 @@ def train_sae(settings: TrainSAESettings) -> None:
         else None
     )
 
-    activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
+    activations_streams = []
+    for i in range(settings.epoch):
+        activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
-    logger.info("Processing activations stream")
-    activations_stream = activation_factory.process(
-        model=model,
-        model_name=settings.model_name,
-        datasets=datasets,
-    )
-
+        logger.info("Processing activations stream")
+        activations_stream = activation_factory.process(
+            model=model,
+            model_name=settings.model_name,
+            datasets=datasets,
+        )
+        
+        activations_streams.append(activations_stream)
+    
+    activations_stream = chain(*activations_streams)
+        
     logger.info("Initializing SAE")
     initializer = Initializer(settings.initializer)
 

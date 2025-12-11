@@ -11,16 +11,17 @@ from lm_saes.backend.language_model import (
     QwenVLLanguageModel,
     TransformerLensLanguageModel,
 )
+from lm_saes.backend.dino import dinov3
 from lm_saes.config import DatasetConfig, LanguageModelConfig, LLaDAConfig
 
 
 def dataset_transform(data):
-    if "image" in data:
-        # Rename image to images
-        data["images"] = data["image"]
-        del data["image"]
+    # if "image" in data:
+    #     # Rename image to images
+    #     data["images"] = data["image"]
+    #     del data["image"]
 
-        data["images"] = [[torch.tensor(image) for image in images] for images in data["images"]]
+    #     data["images"] = [[torch.tensor(image) for image in images] for images in data["images"]]
     return data
 
 
@@ -91,6 +92,8 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
         if cfg.model_name.startswith("GSAI-ML/LLaDA"):
             assert isinstance(cfg, LLaDAConfig)
             return LLaDALanguageModel(cfg)
+        elif cfg.model_name.startswith('dinov3'):
+            return dinov3(cfg)
         else:
             return TransformerLensLanguageModel(cfg)
     else:

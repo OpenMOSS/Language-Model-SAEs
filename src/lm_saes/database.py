@@ -367,7 +367,9 @@ class MongoClient:
         self.dataset_collection.update_one({"name": name}, {"$set": {"cfg": cfg.model_dump()}}, upsert=True)
 
     def get_dataset_cfg(self, name: str) -> Optional[DatasetConfig]:
+        print(f"get_dataset_cfg: {name}")
         dataset = self.dataset_collection.find_one({"name": name})
+        print("get_dataset_cfg ok")
         if dataset is None:
             return None
         return DatasetConfig.model_validate(dataset["cfg"])
