@@ -44,7 +44,7 @@ export const FeatureCard = memo(({ feature, className }: FeatureCardProps) => {
           'border-red-500 hover:border-red-600',
       )}
     >
-      <ProgressBar isAnimating={samplings.isPending || isSamplesFetching} />
+      {/* <ProgressBar isAnimating={samplings.isPending || isSamplesFetching} /> */}
       <CardContent className="py-0">
         <div className="flex flex-col gap-2 pt-6">
           <div className="flex gap-6">

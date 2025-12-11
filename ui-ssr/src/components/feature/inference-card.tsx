@@ -34,7 +34,7 @@ export const InferenceCard = ({
         submitMutation.isError && 'border-red-500 hover:border-red-600',
       )}
     >
-      <ProgressBar isAnimating={submitMutation.isPending} />
+      {/* <ProgressBar isAnimating={submitMutation.isPending} /> */}
       <CardHeader>
         <CardTitle className="font-semibold tracking-tight flex justify-center items-center text-sm text-slate-700 gap-1 cursor-default">
           INFERENCE{' '}
