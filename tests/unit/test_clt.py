@@ -133,8 +133,8 @@ class TestCrossLayerTranscoder:
         assert decoder_weights_1.shape == (2, 8, 4)  # (2, d_sae, d_model) - layers 0,1->1
 
         # Test getting decoder biases
-        bias_0 = clt_model.get_decoder_bias(0)  # layer 0 bias
-        bias_1 = clt_model.get_decoder_bias(1)  # layer 1 bias
+        bias_0 = clt_model.b_D[0]  # layer 0 bias
+        bias_1 = clt_model.b_D[1]  # layer 1 bias
 
         assert bias_0.shape == (4,)  # (d_model,)
         assert bias_1.shape == (4,)  # (d_model,)
