@@ -25,7 +25,6 @@ import time
 import weakref
 from functools import partial
 from typing import Any, Callable, List, Literal, Optional, Tuple, Union
-from dataclasses import dataclass, field
 
 import numpy as np
 import torch
@@ -33,32 +32,27 @@ from einops import einsum
 from tqdm import tqdm
 from transformer_lens.hook_points import HookPoint
 
-from typing import Dict
-
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.lorsa import LowRankSparseAttention
-from lm_saes.sae import SparseAutoEncoder
-from .utils.transcoder_set import TranscoderSet
-
-# Type definition for transcoders: per-layer (dict) or cross-layer (CLT)
-TranscoderType = TranscoderSet | CrossLayerTranscoder
 
 from ..utils.logging import get_distributed_logger
 from .graph import Graph
 from .replacement_model import ReplacementModel
-from .utils.disk_offload import offload_modules
 from .utils.attn_scores_attribution import compute_attn_scores_attribution
 from .utils.attribution_utils import (
+    compute_partial_influences,
     compute_salient_logits,
-    select_scaled_decoder_vecs_transcoder,
-    select_scaled_decoder_vecs_lorsa,
+    ensure_tokenized,
     select_encoder_rows,
     select_encoder_rows_lorsa,
-    compute_partial_influences,
-    ensure_tokenized,
+    select_scaled_decoder_vecs_lorsa,
+    select_scaled_decoder_vecs_transcoder,
 )
+from .utils.disk_offload import offload_modules
+from .utils.transcoder_set import TranscoderSet
 
 logger = get_distributed_logger("attribution")
+
+TranscoderType = TranscoderSet | CrossLayerTranscoder
 
 
 class AttributionContext:
@@ -196,7 +190,7 @@ class AttributionContext:
         attn_output_hook: str,
         mlp_output_hook: str,
         use_lorsa: bool = True,
-        use_clt = True,
+        use_clt=True,
     ) -> List[Tuple[str, Callable]]:
         """
         Create the complete backward-hook for computing attribution scores.
@@ -209,9 +203,9 @@ class AttributionContext:
         # Token-embedding nodes
         # lorsa_offset + clt_offset + attn_error_offset + mlp_error_offset
         token_offset = (
-            lorsa_activation_matrix._nnz() + clt_activation_matrix._nnz() + 2 * self.n_layers * n_pos
-        ) if self.use_lorsa else (
-            clt_activation_matrix._nnz() + self.n_layers * n_pos
+            (lorsa_activation_matrix._nnz() + clt_activation_matrix._nnz() + 2 * self.n_layers * n_pos)
+            if self.use_lorsa
+            else (clt_activation_matrix._nnz() + self.n_layers * n_pos)
         )
 
         token_hook = [
@@ -222,11 +216,7 @@ class AttributionContext:
             )
         ]
 
-        mlp_hook_fn = (
-            self._make_attribution_hooks_clt 
-            if use_clt
-            else self._make_attribution_hooks_plt
-        )
+        mlp_hook_fn = self._make_attribution_hooks_clt if use_clt else self._make_attribution_hooks_plt
 
         if use_lorsa:
             out = (
@@ -315,7 +305,7 @@ class AttributionContext:
         ]
 
         return feature_hooks + error_hooks
-    
+
     def _make_attribution_hooks_plt(
         self,
         activation_matrix: torch.sparse.Tensor,
@@ -350,7 +340,7 @@ class AttributionContext:
             self._compute_score_hook(
                 f"blocks.{layer}.{mlp_output_hook}",
                 decoder_vecs[start:end],
-                write_index=np.s_[lorsa_offset + start: lorsa_offset + end],
+                write_index=np.s_[lorsa_offset + start : lorsa_offset + end],
                 read_index=np.s_[:, nnz_positions[start:end]],
             )
             for layer, (start, end) in enumerate(layer_spans)
@@ -538,7 +528,6 @@ class AttributionContext:
         return buf.T[: len(layers)]
 
 
-
 def attribute(
     prompt: Union[str, torch.Tensor, List[int]],
     model: ReplacementModel,
@@ -623,11 +612,13 @@ def _run_attribution(
         error_vecs,
         token_vecs,
     ) = model.setup_attribution(input_ids, sparse=True)
-    
+
     lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas) if use_lorsa else None
-    lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = select_encoder_rows_lorsa(
-        lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, model.lorsas
-    ) if use_lorsa else (None, None, None)
+    lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = (
+        select_encoder_rows_lorsa(lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, model.lorsas)
+        if use_lorsa
+        else (None, None, None)
+    )
 
     clt_decoder_vecs = select_scaled_decoder_vecs_transcoder(clt_activation_matrix, model.transcoders)
     clt_encoder_rows = select_encoder_rows(clt_activation_matrix, model.transcoders)
@@ -879,6 +870,7 @@ def _run_attribution(
     # Phase 6: attribute attention scores
     # trace attention scores for every visited lorsa feature
     if qk_tracing_topk > 0:
+
         def idx_to_qk_idx(idx: torch.Tensor) -> torch.Tensor:
             ov_idx = lorsa_activation_matrix.indices()[2][idx]
             ov_group_sizes = torch.tensor(
@@ -896,7 +888,7 @@ def _run_attribution(
         # In practice this should tell us something
         selected_lorsa_feature_kpos = idx_to_z_pattern(selected_lorsa_feature).argmax(dim=-1)
         selected_lorsa_feature_qk_idx = idx_to_qk_idx(selected_lorsa_feature)
-        
+
         qk_tracing_results = {
             idx.item(): compute_attn_scores_attribution(
                 model,

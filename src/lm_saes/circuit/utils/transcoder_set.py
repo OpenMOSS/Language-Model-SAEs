@@ -1,9 +1,8 @@
-from typing import Dict, Iterator, List, Literal, Tuple, Union, overload
+from dataclasses import dataclass
+from typing import Dict, Iterator, List, Tuple, Union
 
 import torch
-from jaxtyping import Float
 from torch import nn
-from dataclasses import dataclass
 
 from ...clt import CrossLayerTranscoder
 from ...sae import SparseAutoEncoder
@@ -47,8 +46,7 @@ class TranscoderSet(nn.Module):
         super().__init__()
         # Validate that we have continuous layers from 0 to max
         assert set(transcoders.keys()) == set(range(max(transcoders.keys()) + 1)), (
-            f"Each layer should have a transcoder, but got transcoders for layers "
-            f"{set(transcoders.keys())}"
+            f"Each layer should have a transcoder, but got transcoders for layers {set(transcoders.keys())}"
         )
         self.cfg = config
         self.transcoders = nn.ModuleList([transcoders[i] for i in range(len(transcoders))])
@@ -56,8 +54,7 @@ class TranscoderSet(nn.Module):
         # Verify all transcoders have the same d_sae
         for transcoder in self.transcoders:
             assert transcoder.cfg.d_sae == self.cfg.d_sae, (
-                f"All transcoders must have the same d_sae, but got "
-                f"{transcoder.cfg.d_sae} != {self.cfg.d_sae}"
+                f"All transcoders must have the same d_sae, but got {transcoder.cfg.d_sae} != {self.cfg.d_sae}"
             )
 
     def __len__(self):
@@ -174,9 +171,7 @@ class TranscoderSet(nn.Module):
         sparse_acts_list = []
 
         for layer in range(self.cfg.n_layers):
-            sparse_acts, active_encoders = self.encode_sparse(
-                mlp_inputs[layer], layer_id=layer, zero_first_pos=True
-            )
+            sparse_acts, active_encoders = self.encode_sparse(mlp_inputs[layer], layer_id=layer, zero_first_pos=True)
             layer_reconstruction, active_decoders = self.decode_sparse(sparse_acts, layer_id=layer)
             reconstruction[layer] = layer_reconstruction
             encoder_vectors.append(active_encoders)
@@ -223,9 +218,9 @@ class TranscoderSet(nn.Module):
         # Map apply_activation_function to return_hidden_pre for compatibility
         if return_hidden_pre is None:
             return_hidden_pre = not apply_activation_function
-        
+
         result = self.transcoders[layer_id].encode(x, return_hidden_pre=return_hidden_pre, **kwargs)
-        
+
         # If apply_activation_function is False, return hidden_pre instead of feature_acts
         if not apply_activation_function and isinstance(result, tuple):
             return result[1]  # Return hidden_pre
@@ -233,7 +228,7 @@ class TranscoderSet(nn.Module):
             # Fallback: if we didn't get hidden_pre, encode again with return_hidden_pre=True
             _, hidden_pre = self.transcoders[layer_id].encode(x, return_hidden_pre=True, **kwargs)
             return hidden_pre
-        
+
         return result
 
     def encode_sparse(
@@ -297,15 +292,15 @@ class TranscoderSet(nn.Module):
         scaled_decoders = active_values.unsqueeze(-1) * decoder_vectors
 
         return reconstruction, scaled_decoders
-    
+
     @property
     def b_D(self) -> torch.Tensor:
         return torch.stack([transcoder.b_D for transcoder in self.transcoders], dim=0)
-    
+
     @property
     def W_D(self) -> torch.Tensor:
         return torch.stack([transcoder.W_D for transcoder in self.transcoders], dim=0)
-    
+
     @property
     def W_E(self) -> torch.Tensor:
         return torch.stack([transcoder.W_E for transcoder in self.transcoders], dim=0)
@@ -346,9 +341,7 @@ def load_transcoder_set(
                 f"All transcoders must have the same hook_point_out, but got "
                 f"{transcoder.cfg.hook_point_out} != {first_cfg.hook_point_out}"
             )
-        feature_input_hook = ".".join(
-            first_cfg.hook_point_in.split(".")[2:]
-        )  # 2: is to remove the "blocks.L" prefix
+        feature_input_hook = ".".join(first_cfg.hook_point_in.split(".")[2:])  # 2: is to remove the "blocks.L" prefix
         feature_output_hook = ".".join(first_cfg.hook_point_out.split(".")[2:])
         return transcoders, feature_input_hook, feature_output_hook
 

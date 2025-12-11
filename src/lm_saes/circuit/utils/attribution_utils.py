@@ -1,10 +1,12 @@
 """Utility functions for attribution computation."""
 
 from typing import List, Tuple, Union
+
 import torch
 
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.lorsa import LowRankSparseAttention
+
 from .transcoder_set import TranscoderSet
 
 # Type definition for transcoders: per-layer (dict) or cross-layer (CLT)
@@ -45,7 +47,9 @@ def compute_salient_logits(
 
 
 @torch.no_grad()
-def select_scaled_decoder_vecs_transcoder(activations: torch.sparse.Tensor, transcoders: TranscoderType) -> torch.Tensor:
+def select_scaled_decoder_vecs_transcoder(
+    activations: torch.sparse.Tensor, transcoders: TranscoderType
+) -> torch.Tensor:
     """Return decoder rows for **active** features only.
 
     activations: [layer, context, d_sae] in coo format.
@@ -57,11 +61,10 @@ def select_scaled_decoder_vecs_transcoder(activations: torch.sparse.Tensor, tran
         return torch.zeros(0, transcoders.W_D.shape[2], device=activations.device)
     if isinstance(transcoders, TranscoderSet):
         rows: List[torch.Tensor] = [
-            transcoders.W_D[layer, row.coalesce().indices()[1]]
-            for layer, row in enumerate(activations)
+            transcoders.W_D[layer, row.coalesce().indices()[1]] for layer, row in enumerate(activations)
         ]
         return torch.cat(rows) * activations.values()[:, None]
-    else: # CLT
+    else:  # CLT
         rows: List[torch.Tensor] = []
         feature_act_rows = [activations[layer_from].coalesce() for layer_from in range(transcoders.cfg.n_layers)]
         for layer_to in range(transcoders.cfg.n_layers):
@@ -74,18 +77,12 @@ def select_scaled_decoder_vecs_transcoder(activations: torch.sparse.Tensor, tran
 
 
 @torch.no_grad()
-def select_scaled_decoder_vecs_lorsa(
-    activations: torch.sparse.Tensor, lorsas: LowRankSparseAttention
-) -> torch.Tensor:
+def select_scaled_decoder_vecs_lorsa(activations: torch.sparse.Tensor, lorsas: LowRankSparseAttention) -> torch.Tensor:
     """Return encoder rows for **active** features only."""
     if activations._nnz() == 0:
         return torch.zeros(0, lorsas[0].W_O.shape[1], device=activations.device)
-    rows: List[torch.Tensor] = [
-        lorsas[layer].W_O[row.coalesce().indices()[1]]
-        for layer, row in enumerate(activations)
-    ]
+    rows: List[torch.Tensor] = [lorsas[layer].W_O[row.coalesce().indices()[1]] for layer, row in enumerate(activations)]
     return torch.cat(rows) * activations.values()[:, None]
-
 
 
 @torch.no_grad()

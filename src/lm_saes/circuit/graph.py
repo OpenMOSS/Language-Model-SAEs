@@ -1,7 +1,8 @@
 from typing import List, NamedTuple, Optional, Union
-from dataclasses import dataclass
+
 import torch
 from transformer_lens import HookedTransformerConfig
+
 from .utils.attn_scores_attribution import QKTracingResults
 
 
@@ -91,26 +92,28 @@ class Graph:
         n_tokens = len(self.input_tokens)
         n_logits = len(self.logit_tokens)
         n_selected_features = len(self.selected_features)
-        
+
         # Count LORSA features if used
-        n_lorsa_features = len(self.lorsa_active_features) if self.use_lorsa and self.lorsa_active_features is not None else 0
-        
+        n_lorsa_features = (
+            len(self.lorsa_active_features) if self.use_lorsa and self.lorsa_active_features is not None else 0
+        )
+
         # Count CLT features
         n_clt_features = len(self.clt_active_features) if self.clt_active_features is not None else 0
-        
+
         # Get model info
         model_name = getattr(self.cfg, "model_name", "Unknown")
         n_layers = getattr(self.cfg, "n_layers", "Unknown")
-        
+
         # Truncate input string if too long
         input_preview = self.input_string
-        
+
         # Format SAE series info
         sae_info = str(self.sae_series) if self.sae_series is not None else "None"
-        
+
         # Get adjacency matrix shape
         adj_shape = tuple(self.adjacency_matrix.shape)
-        
+
         lines = [
             f"Graph(slug='{self.slug}')",
             f"  Input: '{input_preview}'",
@@ -287,6 +290,7 @@ def prune_graph(graph: Graph, node_threshold: float = 0.8, edge_threshold: float
     final_scores[sorted_indices] = cumulative_scores
 
     return PruneResult(node_mask, edge_mask, final_scores)
+
 
 # @dataclass
 # class QKTracingResults:

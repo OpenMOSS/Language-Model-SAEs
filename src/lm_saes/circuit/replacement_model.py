@@ -9,14 +9,13 @@ from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from typing import Dict
-
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import LanguageModelConfig
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_model
-from lm_saes.sae import SparseAutoEncoder
+
 from .utils.transcoder_set import TranscoderSet
+
 # Type definition for transcoders: per-layer (dict) or cross-layer (CLT)
 TranscoderType = TranscoderSet | CrossLayerTranscoder
 
@@ -276,9 +275,9 @@ class ReplacementModel(HookedTransformer):
         # Configure Lorsa if needed
         self.use_lorsa = use_lorsa
         if use_lorsa and lorsas is not None:
-            assert not any(
-                lorsa.cfg.skip_bos for lorsa in lorsas
-            ), "Lorsa must not skip bos, will be handled by replacement model"
+            assert not any(lorsa.cfg.skip_bos for lorsa in lorsas), (
+                "Lorsa must not skip bos, will be handled by replacement model"
+            )
             for lorsa in lorsas:
                 lorsa.to(self.cfg.device, self.cfg.dtype)
             self.add_module("lorsas", nn.ModuleList(lorsas))
@@ -346,7 +345,7 @@ class ReplacementModel(HookedTransformer):
         for part in output_hook_parts:
             subblock = getattr(subblock, part)
         subblock.hook_out_grad = HookPoint()
-        
+
         subblock.add_hook(
             partial(
                 add_skip_connection,
@@ -432,6 +431,7 @@ class ReplacementModel(HookedTransformer):
         activation_hooks = []
 
         if self.use_lorsa:
+
             def cache_activations_attn(acts, hook, layer, zero_bos):
                 encode_result = self.lorsas[layer].encode(
                     acts,
@@ -473,11 +473,11 @@ class ReplacementModel(HookedTransformer):
                 transcoder_acts = self.transcoders.encode_layer(
                     acts, layer, apply_activation_function=apply_activation_function
                 )
-                
+
                 # Handle tuple return (feature_acts, hidden_pre) - extract the appropriate one
                 if isinstance(transcoder_acts, tuple):
                     transcoder_acts = transcoder_acts[1 if not apply_activation_function else 0]
-                
+
                 transcoder_acts = transcoder_acts.detach().squeeze(0)
 
                 if zero_bos:
@@ -509,11 +509,11 @@ class ReplacementModel(HookedTransformer):
                 transcoder_acts = self.transcoders.encode_layer(
                     acts, layer, apply_activation_function=apply_activation_function
                 )
-                
+
                 # Handle tuple return (feature_acts, hidden_pre) - extract the appropriate one
                 if isinstance(transcoder_acts, tuple):
                     transcoder_acts = transcoder_acts[1 if not apply_activation_function else 0]
-                
+
                 transcoder_acts = transcoder_acts.detach().squeeze(0)
 
                 if zero_bos:
@@ -541,7 +541,7 @@ class ReplacementModel(HookedTransformer):
             lorsa_attention_score,
             lorsa_attention_pattern,
             z_attention_pattern,
-            activation_hooks
+            activation_hooks,
         )
 
     def get_activations(
@@ -566,16 +566,12 @@ class ReplacementModel(HookedTransformer):
                 associated activation cache
         """
 
-        (
-            activation_cache,
-            lorsa_attention_score,
-            lorsa_attention_pattern,
-            _,
-            activation_hooks
-        ) = self._get_activation_caching_hooks(
-            sparse=sparse,
-            zero_bos=zero_bos,
-            apply_activation_function=apply_activation_function,
+        (activation_cache, lorsa_attention_score, lorsa_attention_pattern, _, activation_hooks) = (
+            self._get_activation_caching_hooks(
+                sparse=sparse,
+                zero_bos=zero_bos,
+                apply_activation_function=apply_activation_function,
+            )
         )
         with torch.inference_mode(), self.hooks(activation_hooks):
             logits = self(inputs)
@@ -632,13 +628,9 @@ class ReplacementModel(HookedTransformer):
         zero_bos = zero_bos and tokens[0].cpu().item() in special_token_ids  # == self.tokenizer.bos_token_id
 
         # cache activations and MLP in
-        (
-            activation_matrix,
-            lorsa_attention_score,
-            lorsa_attention_pattern,
-            z_attention_pattern,
-            activation_hooks
-        ) = self._get_activation_caching_hooks(sparse=sparse, zero_bos=zero_bos)
+        (activation_matrix, lorsa_attention_score, lorsa_attention_pattern, z_attention_pattern, activation_hooks) = (
+            self._get_activation_caching_hooks(sparse=sparse, zero_bos=zero_bos)
+        )
 
         if self.use_lorsa:
             attn_out_cache, attn_out_caching_hooks, _ = self.get_caching_hooks(
@@ -669,7 +661,7 @@ class ReplacementModel(HookedTransformer):
             )
         else:
             logits = self.run_with_hooks(tokens, fwd_hooks=(activation_hooks + mlp_out_caching_hooks))
-        
+
         if self.use_lorsa:
             lorsa_activation_matrix = activation_matrix[: self.cfg.n_layers]
             clt_activation_matrix = activation_matrix[self.cfg.n_layers :]
@@ -681,7 +673,7 @@ class ReplacementModel(HookedTransformer):
             lorsa_reconstruction = torch.stack(
                 [self.lorsas[layer].decode(lorsa_activation_matrix[layer]) for layer in range(self.cfg.n_layers)]
             )
-        
+
         clt_reconstruction = self.transcoders.decode(clt_activation_matrix)
 
         if self.use_lorsa:
@@ -847,15 +839,11 @@ class ReplacementModel(HookedTransformer):
             )
 
         # This activation cache will fill up during our forward intervention pass
-        (
-            activation_cache,
-            lorsa_attention_score,
-            lorsa_attention_pattern,
-            _,
-            activation_hooks
-        ) = self._get_activation_caching_hooks(
-            apply_activation_function=apply_activation_function,
-            sparse=sparse,
+        (activation_cache, lorsa_attention_score, lorsa_attention_pattern, _, activation_hooks) = (
+            self._get_activation_caching_hooks(
+                apply_activation_function=apply_activation_function,
+                sparse=sparse,
+            )
         )
 
         def calculate_delta_hook_mlp(activations, hook, layer: int, layer_interventions):
@@ -876,7 +864,7 @@ class ReplacementModel(HookedTransformer):
 
             # calculate delta value from the change of activation
             # Use unified decode interface
-            if hasattr(self.transcoders, 'decode'):
+            if hasattr(self.transcoders, "decode"):
                 # Both TranscoderSet and CrossLayerTranscoder have decode method
                 reconstruct_new = self.transcoders.decode(activation_deltas)
                 reconstruct_old = self.transcoders.decode(transcoder_activations)

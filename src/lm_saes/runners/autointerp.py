@@ -55,6 +55,7 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
         settings: Configuration for feature interpretation
         show_progress: Whether to show progress bar (requires tqdm)
     """
+
     @lru_cache(maxsize=None)
     def get_dataset(dataset_name: str, shard_idx: int, n_shards: int) -> Dataset:
         dataset_cfg = mongo_client.get_dataset_cfg(dataset_name)
@@ -65,15 +66,15 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
     mongo_client = MongoClient(settings.mongo)
     language_model = load_model(settings.model)
     interpreter = FeatureInterpreter(settings.auto_interp, mongo_client)
-    
+
     # Set up progress tracking
     progress_bar = None
     processed_count = 0
     total_count = None
-    
+
     def progress_callback(processed: int, total: int, current_feature: int) -> None:
         """Update progress bar and log progress.
-        
+
         Args:
             processed: Number of features processed (completed + skipped + failed)
             total: Total number of features to process
@@ -91,12 +92,12 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
                     dynamic_ncols=True,
                     initial=0,
                 )
-        
+
         if progress_bar is not None:
             progress_bar.n = processed
             progress_bar.refresh()
             progress_bar.set_postfix({"current": current_feature})
-    
+
     async for result in interpreter.interpret_features(
         sae_name=settings.sae_name,
         sae_series=settings.sae_series,
@@ -110,7 +111,7 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
         interpretation = {
             "text": result["explanation"],
         }
-        assert interpretation['text'] is not None
+        assert interpretation["text"] is not None
         mongo_client.update_feature(
             settings.sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
         )

@@ -330,7 +330,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             reconstructed = DimMap({"data": 0}).redistribute(reconstructed)
 
         return reconstructed
-    
+
     def decode_coo(
         self,
         feature_acts: Float[torch.sparse.Tensor, "seq_len d_sae"],

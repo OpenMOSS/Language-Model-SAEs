@@ -101,6 +101,7 @@ class Segment:
         else:
             return ""
 
+
 @dataclass
 class ZPatternSegment:
     """Data for a z pattern of a single token."""
@@ -111,6 +112,7 @@ class ZPatternSegment:
     """The contributions of the contributing tokens to the activation of the token."""
     max_contribution: float
     """The maximum contribution of the contributing tokens to the activation of the token."""
+
 
 @dataclass
 class TokenizedSample:
@@ -152,9 +154,13 @@ class TokenizedSample:
                     prev_text = "".join([self.segments[idx].text for idx in range(max(0, i - 3), i)])
                     if self.z_pattern_data is not None and i in self.z_pattern_data:
                         z_pattern_segment = self.z_pattern_data[i]
-                        k_prev_tokens = [f"({process_token(''.join([self.segments[idx].text for idx in range(max(0, j - 3), j)]))}) {process_token(self.segments[j].text)}" 
-                                         for j, contribution in zip(z_pattern_segment.contributing_indices, z_pattern_segment.contributions)
-                                         if contribution > threshold * z_pattern_segment.max_contribution]
+                        k_prev_tokens = [
+                            f"({process_token(''.join([self.segments[idx].text for idx in range(max(0, j - 3), j)]))}) {process_token(self.segments[j].text)}"
+                            for j, contribution in zip(
+                                z_pattern_segment.contributing_indices, z_pattern_segment.contributions
+                            )
+                            if contribution > threshold * z_pattern_segment.max_contribution
+                        ]
                         contributing_text = f"[{'; '.join(k_prev_tokens)}] => "
                         max_activation_text += contributing_text
                     max_activation_text += f"({process_token(prev_text)}) {process_token(text)}\n"
@@ -176,12 +182,9 @@ class TokenizedSample:
             else:
                 Flag = False
         return next_activation_text
-    
+
     def add_z_pattern_data(
-        self,
-        z_pattern_indices: torch.Tensor,
-        z_pattern_values: torch.Tensor,
-        origins: list[dict[str, Any]]
+        self, z_pattern_indices: torch.Tensor, z_pattern_values: torch.Tensor, origins: list[dict[str, Any]]
     ):
         self.z_pattern_data = {}
         activating_indices = z_pattern_indices[0].unique_consecutive()
@@ -193,7 +196,7 @@ class TokenizedSample:
                     contributions=z_pattern_values[contributing_indices_mask].tolist(),
                     max_contribution=z_pattern_values[contributing_indices_mask].max().item(),
                 )
-    
+
     def has_z_pattern_data(self):
         return self.z_pattern_data is not None
 
@@ -234,9 +237,10 @@ class TokenizedSample:
                     if origin and origin["key"] == "text" and origin["range"][0] >= start and origin["range"][1] <= end
                 )
             except Exception as e:
-                logger.error(f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n. Error: {e}")
+                logger.error(
+                    f"Error processing segment:\nstart={start}, end={end}, segment={text[start:end]}\n\n. Error: {e}"
+                )
                 continue
             segments.append(Segment(text[start:end], segment_activation.item()))
 
         return TokenizedSample(segments, max_activation)
-

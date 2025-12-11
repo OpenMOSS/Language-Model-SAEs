@@ -370,8 +370,9 @@ class FeatureInterpreter:
         )
         return activating_examples, non_activating_examples
 
-
-    async def generate_explanation(self, activating_examples: list[TokenizedSample], top_logits: dict[str, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
+    async def generate_explanation(
+        self, activating_examples: list[TokenizedSample], top_logits: dict[str, list[dict[str, Any]]] | None = None
+    ) -> dict[str, Any]:
         """Generate an explanation for a feature based on activating examples.
 
         Args:
@@ -383,7 +384,9 @@ class FeatureInterpreter:
         if self.cfg.explainer_type is ExplainerType.OPENAI:
             system_prompt, user_prompt = generate_explanation_prompt(self.cfg, activating_examples)
         else:
-            system_prompt, user_prompt = generate_explanation_prompt_neuronpedia(self.cfg, activating_examples, top_logits)
+            system_prompt, user_prompt = generate_explanation_prompt_neuronpedia(
+                self.cfg, activating_examples, top_logits
+            )
         start_time = time.time()
 
         if self.cfg.explainer_type is ExplainerType.OPENAI:
@@ -421,7 +424,6 @@ class FeatureInterpreter:
             "response": explanation,
             "time": response_time,
         }
-
 
     async def evaluate_explanation_detection(
         self,
@@ -524,7 +526,6 @@ class FeatureInterpreter:
             "passed": balanced_accuracy >= 0.7,  # Arbitrary threshold for passing
             "time": response_time,
         }
-
 
     def _create_incorrectly_marked_example(self, sample: TokenizedSample) -> TokenizedSample:
         """Create an incorrectly marked version of an example.
@@ -753,16 +754,18 @@ class FeatureInterpreter:
 
         async def interpret_with_semaphore(feature_index: int) -> tuple[Optional[dict[str, Any]], int, bool, bool]:
             """Interpret a single feature with semaphore control.
-            
+
             Returns:
                 Tuple of (result, feature_index, was_skipped, was_error)
             """
             async with semaphore:
                 feature = self.mongo_client.get_feature(sae_name, sae_series, feature_index)
                 try:
-                    if feature is not None and (
-                        self.cfg.overwrite_existing or feature.interpretation is None
-                    ) and feature.analyses[0].act_times > 0:
+                    if (
+                        feature is not None
+                        and (self.cfg.overwrite_existing or feature.interpretation is None)
+                        and feature.analyses[0].act_times > 0
+                    ):
                         activating_examples, non_activating_examples = self.get_feature_examples(
                             feature=feature,
                             model=model,
@@ -780,7 +783,8 @@ class FeatureInterpreter:
                                 "feature_index": feature.index,
                                 "sae_name": sae_name,
                                 "sae_series": sae_series,
-                            } | result,
+                            }
+                            | result,
                             feature_index,
                             False,
                             False,
@@ -794,11 +798,11 @@ class FeatureInterpreter:
 
         # Process features concurrently
         tasks = [interpret_with_semaphore(feature_index) for feature_index in feature_indices]
-        
+
         # Yield results as they complete
         for coro in asyncio.as_completed(tasks):
             result, feature_index, was_skipped, was_error = await coro
-            
+
             if was_skipped:
                 skipped += 1
                 logger.debug(f"Feature {feature_index} skipped (already has interpretation)")
@@ -816,12 +820,11 @@ class FeatureInterpreter:
 
             # Calculate total processed (completed + skipped + failed)
             total_processed = completed + skipped + failed
-            
+
             # Call progress callback if provided
             if progress_callback is not None:
                 progress_callback(total_processed, total_features, feature_index)
-        
+
         logger.info(
             f"Interpretation complete: {completed} completed, {skipped} skipped, {failed} failed out of {total_features} total"
         )
-

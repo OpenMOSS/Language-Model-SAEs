@@ -57,7 +57,7 @@ class Node(BaseModel):
         influence=None,
         activation=None,
         lorsa_pattern=None,
-        qk_tracing_results=None
+        qk_tracing_results=None,
     ):
         """Create a feature node."""
 
@@ -191,7 +191,7 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
                 influence=cumulative_scores[node_idx],
                 activation=interested_activation[orig_feature_idx],
                 lorsa_pattern=graph.lorsa_pattern[node_idx],
-                qk_tracing_results=graph.qk_tracing_results.get(orig_feature_idx.item(), None)
+                qk_tracing_results=graph.qk_tracing_results.get(orig_feature_idx.item(), None),
             )
 
         elif node_idx in range(n_features, error_end_idx):

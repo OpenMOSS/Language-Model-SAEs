@@ -149,7 +149,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def attn_scale(self) -> float:
         assert self.cfg.attn_scale is not None, "attn_scale must be initialized during config post initialization"
         return self.cfg.attn_scale
-    
+
     @property
     def b_O(self):
         return self.b_D
@@ -615,7 +615,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         head_idx: Int[torch.Tensor, " n_active_features"],
     ) -> Float[torch.Tensor, "n_active_features k_pos"]:
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
-        qk_idx: Tensor = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
+        qk_idx = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
         q, k, v = self._compute_qkv(x)
 
         # (n_active_features, q_pos, k_pos)
@@ -629,7 +629,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
 
         head_idx = torch.arange(self.cfg.d_sae)
-        qk_idx: Tensor = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
+        qk_idx = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
         q, k, v = self._compute_qkv(x)
 
         # (n_active_features, q_pos, k_pos)
