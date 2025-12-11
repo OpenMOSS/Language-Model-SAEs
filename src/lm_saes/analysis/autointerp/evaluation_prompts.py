@@ -62,4 +62,3 @@ Your output should be a JSON object that has the following fields: `steps`, `eva
         user_prompt += f"Example {i}: {highlighted}\n"
 
     return system_prompt, user_prompt
-

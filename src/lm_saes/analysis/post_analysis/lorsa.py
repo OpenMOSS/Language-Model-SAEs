@@ -93,13 +93,13 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
                 torch.arange(sampling_data["feature_acts"].shape[1], device=sae.cfg.device, dtype=torch.long)[None, :]
                 .expand(sampling_data["feature_acts"].shape[0], -1)
                 .flatten()
-            )
+            )  # [n_samples * d_sae]
             head_indices.append(head_index)
 
             _feature_acts.append(sampling_data["feature_acts"])
 
             # Get shard_idx and context_idx from metadata
-            # n_samples x d_sae
+            # n_samples * d_sae
             shard_indices = sampling_data.get(
                 "shard_idx", torch.zeros_like(sampling_data["feature_acts"][:, :, 0], dtype=torch.int64)
             ).flatten()

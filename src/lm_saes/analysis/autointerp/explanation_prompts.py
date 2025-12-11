@@ -104,6 +104,7 @@ Method 1 fails: MAX_ACTIVATING_TOKENS show self-attention patterns [(during the)
 }
 """
 
+
 def generate_explanation_prompt_neuronpedia(
     cfg: AutoInterpConfig,
     activating_examples: list[TokenizedSample],
@@ -119,7 +120,11 @@ def generate_explanation_prompt_neuronpedia(
     Returns:
         Tuple of (system_prompt, user_prompt) strings
     """
-    system_prompt = NEURONPEDIA_SYSTEM_PROMPT_Z_PATTERN if activating_examples[0].has_z_pattern_data() else NEURONPEDIA_SYSTEM_PROMPT_VANILLA
+    system_prompt = (
+        NEURONPEDIA_SYSTEM_PROMPT_Z_PATTERN
+        if activating_examples[0].has_z_pattern_data()
+        else NEURONPEDIA_SYSTEM_PROMPT_VANILLA
+    )
     examples_to_show = activating_examples[: cfg.n_activating_examples]
     next_activating_tokens = ""
     max_activating_tokens = ""
@@ -133,9 +138,9 @@ def generate_explanation_prompt_neuronpedia(
         plain_activating_tokens = plain_activating_tokens + process_token(example.display_plain()) + "\n"
 
     if top_logits is not None:
-        for text in top_logits['top_positive']:
+        for text in top_logits["top_positive"]:
             logit_activating_tokens = logit_activating_tokens + process_token(text["token"]) + "\n"
-        for text in top_logits['top_negative']:
+        for text in top_logits["top_negative"]:
             logit_suppressing_tokens = logit_suppressing_tokens + process_token(text["token"]) + "\n"
     else:
         logit_activating_tokens = next_activating_tokens
@@ -230,4 +235,3 @@ Your output should be a JSON object that has the following fields: `steps`, `fin
         user_prompt += f"Example {i}: {highlighted}\n\n"
 
     return system_prompt, user_prompt
-

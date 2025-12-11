@@ -3,6 +3,8 @@ from typing import List, NamedTuple, Optional, Union
 import torch
 from transformer_lens import HookedTransformerConfig
 
+from .utils.attn_scores_attribution import QKTracingResults
+
 
 class Graph:
     input_string: str
@@ -13,6 +15,7 @@ class Graph:
     clt_active_features: torch.Tensor
     clt_activation_values: torch.Tensor
     adjacency_matrix: torch.Tensor
+    qk_tracing_results: QKTracingResults
     selected_features: torch.Tensor
     logit_probabilities: torch.Tensor
     cfg: HookedTransformerConfig
@@ -34,6 +37,7 @@ class Graph:
         clt_activation_values: torch.Tensor,
         selected_features: torch.Tensor,
         adjacency_matrix: torch.Tensor,
+        qk_tracing_results: QKTracingResults,
         cfg: HookedTransformerConfig,
         slug: str = "untitled",
         sae_series: Optional[Union[str, List[str]]] = None,
@@ -58,6 +62,7 @@ class Graph:
             clt_activation_values (torch.Tensor): Activation values for CLT features.
             selected_features (torch.Tensor): Indices of selected features (for pruning, etc).
             adjacency_matrix (torch.Tensor): The adjacency matrix.
+            qk_tracing_results (QKTracingResults): The QK tracing results.
             cfg (HookedTransformerConfig): The cfg of the model.
             sae_series (Optional[Union[str,List[str]]], optional): The identifier of the transcoders used in the graph.
         """
@@ -75,11 +80,53 @@ class Graph:
         self.use_lorsa = use_lorsa
         self.lorsa_pattern = lorsa_pattern
         self.z_pattern = z_pattern
+        self.qk_tracing_results = qk_tracing_results
         if sae_series is None:
             print("Graph loaded without sae_series to identify it. Uploading will not be possible.")
         self.sae_series = sae_series
         self.selected_features = selected_features
         self.slug = slug
+
+    def __repr__(self) -> str:
+        """Return a string representation of the graph with basic information."""
+        n_tokens = len(self.input_tokens)
+        n_logits = len(self.logit_tokens)
+        n_selected_features = len(self.selected_features)
+
+        # Count LORSA features if used
+        n_lorsa_features = (
+            len(self.lorsa_active_features) if self.use_lorsa and self.lorsa_active_features is not None else 0
+        )
+
+        # Count CLT features
+        n_clt_features = len(self.clt_active_features) if self.clt_active_features is not None else 0
+
+        # Get model info
+        model_name = getattr(self.cfg, "model_name", "Unknown")
+        n_layers = getattr(self.cfg, "n_layers", "Unknown")
+
+        # Truncate input string if too long
+        input_preview = self.input_string
+
+        # Format SAE series info
+        sae_info = str(self.sae_series) if self.sae_series is not None else "None"
+
+        # Get adjacency matrix shape
+        adj_shape = tuple(self.adjacency_matrix.shape)
+
+        lines = [
+            f"Graph(slug='{self.slug}')",
+            f"  Input: '{input_preview}'",
+            f"  Model: {model_name} ({n_layers} layers)",
+            f"  Tokens: {n_tokens}",
+            f"  Logits: {n_logits}",
+            f"  Selected features: {n_selected_features}",
+            f"  Lorsa features: {n_lorsa_features}" + (" (enabled)" if self.use_lorsa else " (disabled)"),
+            f"  CLT features: {n_clt_features}",
+            f"  Adjacency matrix: {adj_shape}",
+            f"  SAE series: {sae_info}",
+        ]
+        return "\n".join(lines)
 
     def to(self, device):
         """Send all relevant tensors to the device (cpu, cuda, etc.)"""
@@ -243,3 +290,8 @@ def prune_graph(graph: Graph, node_threshold: float = 0.8, edge_threshold: float
     final_scores[sorted_indices] = cumulative_scores
 
     return PruneResult(node_mask, edge_mask, final_scores)
+
+
+# @dataclass
+# class QKTracingResults:
+#     lorsa_head

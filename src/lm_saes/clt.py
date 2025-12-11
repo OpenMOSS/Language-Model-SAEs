@@ -464,17 +464,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         """
         return self.W_D[layer_to]
 
-    def get_decoder_bias(self, layer_to: int) -> torch.Tensor:
-        """Get decoder bias for target layer layer_to.
-
-        Args:
-            layer_to: Target layer index (0 to n_layers-1)
-
-        Returns:
-            Decoder bias tensor of shape (d_model,)
-        """
-        return self.b_D[layer_to]
-
     @overload
     def encode(
         self,
@@ -662,13 +651,11 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             decode_single_output_layer = self._decode_single_output_layer_dense
 
         for layer_to in range(self.cfg.n_layers):
-            decoder_bias = self.get_decoder_bias(layer_to)  # (d_model,)
-
             # we only compute W_D @ feature_acts here, without b_D
             contribution = decode_single_output_layer(feature_acts, layer_to)  # type: ignore
 
             # Add bias contribution (single bias vector for this target layer)
-            contribution = contribution + decoder_bias
+            contribution = contribution + self.b_D[layer_to]  # (d_model,)
             if isinstance(contribution, DTensor):
                 contribution = DimMap({"data": 0}).redistribute(contribution)
 
