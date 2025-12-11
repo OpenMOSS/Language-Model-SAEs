@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+from contextlib import asynccontextmanager
 from functools import lru_cache, wraps
 from typing import Any, Generator, Optional
 
@@ -26,10 +27,6 @@ from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-
-app = FastAPI()
-
-app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 client = MongoClient(MongoDBConfig())
 sae_series = os.environ.get("SAE_SERIES", "default")
@@ -62,8 +59,8 @@ def synchronized(func):
     return wrapper
 
 
-@lru_cache(maxsize=8)
 @synchronized
+@lru_cache(maxsize=8)
 def get_model(*, name: str) -> LanguageModel:
     """Load and cache a language model."""
     cfg = client.get_model_cfg(name)
@@ -73,8 +70,8 @@ def get_model(*, name: str) -> LanguageModel:
     return load_model(cfg)
 
 
-@lru_cache(maxsize=16)
 @synchronized
+@lru_cache(maxsize=16)
 def get_dataset(*, name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
     """Load and cache a dataset shard."""
     cfg = client.get_dataset_cfg(name)
@@ -82,8 +79,8 @@ def get_dataset(*, name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
     return load_dataset_shard(cfg, shard_idx, n_shards)
 
 
-@lru_cache(maxsize=8)
 @synchronized
+@lru_cache(maxsize=8)
 def get_sae(*, name: str) -> SparseAutoEncoder:
     """Load and cache a sparse autoencoder."""
     path = client.get_sae_path(name, sae_series)
@@ -92,6 +89,27 @@ def get_sae(*, name: str) -> SparseAutoEncoder:
     sae = SparseAutoEncoder.from_config(cfg)
     sae.eval()
     return sae
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    preload_models = os.environ["PRELOAD_MODELS"].strip().split(",") if os.environ.get("PRELOAD_MODELS") else []
+    for model in preload_models:
+        get_model(name=model)
+
+    preload_saes = os.environ["PRELOAD_SAES"].strip().split(",") if os.environ.get("PRELOAD_SAES") else []
+    for sae in preload_saes:
+        get_sae(name=sae)
+
+    yield
+
+    get_model.cache_clear()
+    get_dataset.cache_clear()
+    get_sae.cache_clear()
+
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 def make_serializable(obj):
