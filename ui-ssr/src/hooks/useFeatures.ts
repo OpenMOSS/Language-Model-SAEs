@@ -157,7 +157,7 @@ export const useSamples = (params: {
     (anchor.visibleRange !== undefined && params.visibleRange === undefined) ||
     (anchor.visibleRange !== undefined &&
       params.visibleRange !== undefined &&
-      anchor.visibleRange > params.visibleRange)
+      anchor.visibleRange < params.visibleRange)
   ) {
     setAnchor({
       dictionary: params.dictionary,
