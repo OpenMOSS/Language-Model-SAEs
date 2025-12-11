@@ -1,63 +1,46 @@
-export const getAccentClassname = (
+import { formatCss, interpolate } from 'culori'
+
+const orangeInterpolator = interpolate(['#fff7ed', '#fbbf24'], 'oklab')
+
+const greenInterpolator = interpolate(
+  ['#dcfce7', '#bbf7d0', '#86efac', '#4ade80', '#22c55e'],
+  'oklab',
+)
+
+export const getAccentStyle = (
   featureAct: number,
   maxFeatureAct: number,
-  variant: 'text' | 'bg' | 'border' | 'zpattern' | '*:stroke',
-): string | null => {
-  const textAccentClassnames = [
-    null,
-    'text-orange-100',
-    'text-orange-200',
-    'text-orange-300',
-    'text-orange-400',
-    'text-orange-500',
-  ]
+  variant: 'text' | 'bg' | 'border' | 'zpattern',
+): { [key: string]: string } | undefined => {
+  if (featureAct <= 0 || maxFeatureAct <= 0) {
+    return undefined
+  }
 
-  const bgAccentClassnames = [
-    null,
-    'bg-orange-100',
-    'bg-orange-200',
-    'bg-orange-300',
-    'bg-orange-400',
-    'bg-orange-500',
-  ]
+  const ratio = Math.max(0, Math.min(featureAct / maxFeatureAct, 1))
 
-  const borderAccentClassnames = [
-    null,
-    'border-orange-100',
-    'border-orange-200',
-    'border-orange-300',
-    'border-orange-400',
-    'border-orange-500',
-  ]
+  let colorObject
 
-  const zPatternAccentClassnames = [
-    null,
-    'bg-green-100',
-    'bg-green-200',
-    'bg-green-300',
-    'bg-green-400',
-    'bg-green-500',
-  ]
+  if (variant === 'zpattern') {
+    colorObject = greenInterpolator(ratio)
+  } else {
+    // Use lighter/brighter scale for background to ensure contrast with black text
+    colorObject = orangeInterpolator(ratio)
+  }
 
-  const strokeAccentClassnames = [
-    null,
-    '*:stroke-gray-300',
-    '*:stroke-gray-400 *:stroke-2',
-    '*:stroke-gray-500 *:stroke-2',
-    '*:stroke-gray-600 *:stroke-2',
-    '*:stroke-gray-700 *:stroke-2',
-  ]
+  const colorStr = colorObject ? formatCss(colorObject) : undefined
 
-  const accentClassnames =
-    (variant === 'text' && textAccentClassnames) ||
-    (variant === 'bg' && bgAccentClassnames) ||
-    (variant === 'border' && borderAccentClassnames) ||
-    (variant === 'zpattern' && zPatternAccentClassnames) ||
-    strokeAccentClassnames
+  if (!colorStr) return undefined
 
-  return accentClassnames[
-    Math.ceil(
-      Math.min(featureAct / maxFeatureAct, 1) * (accentClassnames.length - 1),
-    )
-  ]
+  switch (variant) {
+    case 'text':
+      return { color: colorStr }
+    case 'bg':
+      return { backgroundColor: colorStr }
+    case 'border':
+      return { borderColor: colorStr }
+    case 'zpattern':
+      return { backgroundColor: colorStr }
+    default:
+      return undefined
+  }
 }

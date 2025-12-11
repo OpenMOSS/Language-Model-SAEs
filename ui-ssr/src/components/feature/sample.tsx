@@ -6,7 +6,7 @@ import type {
   TextTokenOrigin,
 } from '@/types/feature'
 import { cn } from '@/lib/utils'
-import { getAccentClassname } from '@/utils/style'
+import { getAccentStyle } from '@/utils/style'
 import { findHighestActivatingToken, getZPatternForToken } from '@/utils/token'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -30,6 +30,8 @@ const getActivationValue = (
 }
 
 export type TokenInfoProps = {
+  text: string
+  textOffset: number
   featureAct: number
   maxFeatureAct: number
   origin: TextTokenOrigin | ImageTokenOrigin
@@ -39,6 +41,8 @@ export type TokenInfoProps = {
  * Displays token information including origin and activation.
  */
 export const TokenInfo = ({
+  text,
+  textOffset,
   featureAct,
   maxFeatureAct,
   origin,
@@ -47,6 +51,22 @@ export const TokenInfo = ({
     <div className="grid grid-cols-2 gap-2">
       {origin.key === 'text' ? (
         <>
+          <div className="text-sm font-bold self-center">Text:</div>
+          <div className="text-sm flex items-center gap-1">
+            <span
+              className="font-mono whitespace-pre-wrap text-slate-600 px-1 py-0.5 rounded-sm"
+              style={getAccentStyle(featureAct, maxFeatureAct, 'bg')}
+            >
+              {text
+                .slice(
+                  origin.range[0] - textOffset,
+                  origin.range[1] - textOffset,
+                )
+                .replaceAll('\n', '↵')
+                .replaceAll('\t', '→')
+                .replaceAll(' ', '_')}
+            </span>
+          </div>
           <div className="text-sm font-bold">Text Range:</div>
           <div className="text-sm">{origin.range.join(' - ')}</div>
         </>
@@ -59,14 +79,7 @@ export const TokenInfo = ({
         </>
       )}
       <div className="text-sm font-bold">Activation:</div>
-      <div
-        className={cn(
-          'text-sm',
-          getAccentClassname(featureAct, maxFeatureAct, 'text'),
-        )}
-      >
-        {featureAct.toFixed(3)}
-      </div>
+      <div className="text-sm">{featureAct.toFixed(3)}</div>
     </div>
   )
 }
@@ -341,7 +354,7 @@ export const FeatureActivationSample = memo(
     )
 
     // Helper function to determine if a segment should be highlighted
-    const getSegmentHighlightClass = (segment: (typeof visibleSegments)[0]) => {
+    const getSegmentStyle = (segment: (typeof visibleSegments)[0]) => {
       if (hoveredZPattern) {
         const contribution = segment.highlights.map((highlight) => {
           // Find the token index for this highlight's origin
@@ -366,14 +379,22 @@ export const FeatureActivationSample = memo(
 
         if (containsHoveredToken) {
           return segment.maxSegmentAct > 0
-            ? getAccentClassname(segment.maxSegmentAct, maxFeatureAct, 'bg')
-            : ''
+            ? {
+                style: getAccentStyle(
+                  segment.maxSegmentAct,
+                  maxFeatureAct,
+                  'bg',
+                ),
+              }
+            : {}
         } else {
-          return getAccentClassname(
-            contribution.reduce((a, b) => a + b, 0),
-            maxFeatureAct,
-            'zpattern',
-          )
+          return {
+            style: getAccentStyle(
+              contribution.reduce((a, b) => a + b, 0),
+              maxFeatureAct,
+              'zpattern',
+            ),
+          }
         }
       }
 
@@ -385,10 +406,12 @@ export const FeatureActivationSample = memo(
         })
 
       return segment.maxSegmentAct > 0
-        ? getAccentClassname(segment.maxSegmentAct, maxFeatureAct, 'bg')
+        ? {
+            style: getAccentStyle(segment.maxSegmentAct, maxFeatureAct, 'bg'),
+          }
         : containsHoveredToken
-          ? 'bg-slate-200'
-          : ''
+          ? { className: 'bg-slate-200' }
+          : {}
     }
 
     // Get first token text for display when there's no activation
@@ -442,6 +465,8 @@ export const FeatureActivationSample = memo(
                     segment.start - textOffset,
                     segment.end - textOffset,
                   )
+                  const { className: segmentClassName, style: segmentStyle } =
+                    getSegmentStyle(segment)
                   if (showHoverCard) {
                     return (
                       <span key={index} className="inline-flex items-center">
@@ -450,8 +475,9 @@ export const FeatureActivationSample = memo(
                             <span
                               className={cn(
                                 'relative inline-flex items-center',
-                                getSegmentHighlightClass(segment),
+                                segmentClassName,
                               )}
+                              style={segmentStyle}
                               onMouseEnter={() => {
                                 setHoveredTokenIndex(
                                   sample.origins.indexOf(
@@ -475,6 +501,8 @@ export const FeatureActivationSample = memo(
                               {segment.highlights.map((highlight, i) => (
                                 <TokenInfo
                                   key={i}
+                                  text={sample.text!}
+                                  textOffset={textOffset}
                                   featureAct={highlight.featureAct}
                                   maxFeatureAct={maxFeatureAct}
                                   origin={highlight.origin}
@@ -491,8 +519,9 @@ export const FeatureActivationSample = memo(
                         key={index}
                         className={cn(
                           'inline-flex items-center',
-                          getSegmentHighlightClass(segment),
+                          segmentClassName,
                         )}
+                        style={segmentStyle}
                       >
                         {segmentText
                           .replaceAll('\n', '↵')
