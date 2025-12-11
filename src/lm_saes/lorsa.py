@@ -14,7 +14,6 @@ import torch.distributed.tensor
 import torch.nn as nn
 import torch.nn.functional as F
 from jaxtyping import Float, Int
-from torch._tensor import Tensor
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.nn.attention import SDPBackend, sdpa_kernel
@@ -114,11 +113,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         self.register_buffer("IGNORE", IGNORE)
 
         if self.cfg.use_post_qk_ln:
-            if self.cfg.normalization_type == "LN":
-                # self.qk_ln_type = LayerNormPerHead
-                # TODO: fix this
-                pass
-            elif self.cfg.normalization_type == "RMS":
+            # if self.cfg.normalization_type == "LN":
+            #     # TODO: fix this
+            #     pass
+            if self.cfg.normalization_type == "RMS":
                 self.qk_ln_type = RMSNormPerHead
             else:
                 raise ValueError(f"Invalid normalization type for QK-norm: {self.cfg.normalization_type}")
@@ -129,9 +127,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             assert self.qk_ln_type is not None
             self.ln_q = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_qk_heads, device_mesh=device_mesh)
             self.ln_k = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_qk_heads, device_mesh=device_mesh)
-
-        self.hook_k = HookPoint()  # [batch, pos, q_head_index, d_qk_head]
-        self.hook_q = HookPoint()  # [batch, pos, q_head_index, d_qk_head]
 
         if self.cfg.positional_embedding_type == "rotary":
             # Applies a rotation to each two-element chunk of keys and queries pre dot producting to bake in relative position.
@@ -154,6 +149,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def attn_scale(self) -> float:
         assert self.cfg.attn_scale is not None, "attn_scale must be initialized during config post initialization"
         return self.cfg.attn_scale
+    
+    @property
+    def b_O(self):
+        return self.b_D
 
     def init_parameters(self, **kwargs):
         """Initialize parameters."""
@@ -455,48 +454,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             )
         return z.permute(0, 2, 1, 3).reshape(*v.shape)
 
-    @overload
-    def compute_attn_scores(
-        self, x: Float[torch.Tensor, "batch seq_len d_model"], return_q_k: Literal[False] = False
-    ) -> Float[torch.Tensor, "batch n_qk_heads seq_len seq_len"]: ...
-
-    @overload
-    def compute_attn_scores(
-        self, x: Float[torch.Tensor, "batch seq_len d_model"], return_q_k: Literal[True]
-    ) -> Tuple[
-        Float[torch.Tensor, "batch n_qk_heads seq_len seq_len"],
-        Float[torch.Tensor, "batch seq_len n_qk_heads d_qk_head"],
-        Float[torch.Tensor, "batch seq_len n_qk_heads d_qk_head"],
-    ]: ...
-
-    def compute_attn_scores(
-        self, x: Float[torch.Tensor, "batch seq_len d_model"], return_q_k: bool = False
-    ) -> Union[
-        Float[torch.Tensor, "batch n_qk_heads seq_len seq_len"],
-        Tuple[
-            Float[torch.Tensor, "batch n_qk_heads seq_len seq_len"],
-            Float[torch.Tensor, "batch seq_len n_qk_heads d_qk_head"],
-            Float[torch.Tensor, "batch seq_len n_qk_heads d_qk_head"],
-        ],
-    ]:
-        """Compute the attention scores."""
-        q, k, v = self._compute_qkv(x)
-        q = self.hook_q(q)
-        k = self.hook_k(k)
-        q_ = q.permute(2, 0, 1, 3)
-        k_ = k.permute(2, 0, 3, 1)
-        scores = torch.einsum("nbqd,nbdk->nbqk", q_, k_) / self.attn_scale
-        scores = self._apply_causal_mask(scores)
-        scores = scores.permute(1, 0, 2, 3)
-        if return_q_k:
-            return (
-                scores,
-                q,
-                k,
-            )  # (batch, n_qk_heads, seq_len, seq_len), (batch, seq_len, n_qk_heads, d_qk_head), (batch, seq_len, n_qk_heads, d_qk_head)
-        else:
-            return scores  # (batch, n_qk_heads, seq_len, seq_len)
-
     @override
     @torch.no_grad()
     def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
@@ -668,7 +625,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def encode_z_patterns(
         self,
         x: Float[torch.Tensor, "batch seq_len d_model"],
-    ):
+    ) -> Float[torch.Tensor, "n_active_features q_pos k_pos"]:
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
 
         head_idx = torch.arange(self.cfg.d_sae)

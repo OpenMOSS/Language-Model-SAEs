@@ -384,7 +384,6 @@ class FeatureInterpreter:
             system_prompt, user_prompt = generate_explanation_prompt(self.cfg, activating_examples)
         else:
             system_prompt, user_prompt = generate_explanation_prompt_neuronpedia(self.cfg, activating_examples, top_logits)
-            print(system_prompt, user_prompt)
         start_time = time.time()
 
         if self.cfg.explainer_type is ExplainerType.OPENAI:

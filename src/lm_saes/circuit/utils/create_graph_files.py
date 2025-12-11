@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from transformers import AutoTokenizer
 
 from ..graph import Graph, prune_graph
+from .attn_scores_attribution import QKTracingResults
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class Node(BaseModel):
     influence: float | None = None
     activation: float | None = None
     lorsa_pattern: list | None = None
+    qk_tracing_results: QKTracingResults | None = None
 
     def __init__(self, **data):
         if "node_id" in data and "jsNodeId" not in data:
@@ -46,7 +48,17 @@ class Node(BaseModel):
         super().__init__(**data)
 
     @classmethod
-    def feature_node(cls, layer, pos, feat_idx, is_lorsa, influence=None, activation=None, lorsa_pattern=None):
+    def feature_node(
+        cls,
+        layer,
+        pos,
+        feat_idx,
+        is_lorsa,
+        influence=None,
+        activation=None,
+        lorsa_pattern=None,
+        qk_tracing_results=None
+    ):
         """Create a feature node."""
 
         def cantor_pairing(x, y):
@@ -64,6 +76,7 @@ class Node(BaseModel):
             influence=influence,
             activation=activation,
             lorsa_pattern=lorsa_pattern.tolist(),
+            qk_tracing_results=qk_tracing_results,
         )
 
     @classmethod
@@ -156,8 +169,8 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
 
     for node_idx in node_mask.nonzero().squeeze().tolist():
         if node_idx in range(n_features):
+            orig_feature_idx = graph.selected_features[node_idx]
             if use_lorsa:
-                orig_feature_idx = graph.selected_features[node_idx]
                 is_lorsa = orig_feature_idx < len(graph.lorsa_active_features)
                 if is_lorsa:
                     layer, pos, feat_idx = graph.lorsa_active_features[orig_feature_idx].tolist()
@@ -168,7 +181,6 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
                     interested_activation = graph.clt_activation_values
             else:
                 is_lorsa = False
-                orig_feature_idx = graph.selected_features[node_idx]
                 layer, pos, feat_idx = graph.clt_active_features[orig_feature_idx].tolist()
                 interested_activation = graph.clt_activation_values
             nodes[node_idx] = Node.feature_node(
@@ -179,6 +191,7 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
                 influence=cumulative_scores[node_idx],
                 activation=interested_activation[orig_feature_idx],
                 lorsa_pattern=graph.lorsa_pattern[node_idx],
+                qk_tracing_results=graph.qk_tracing_results.get(orig_feature_idx.item(), None)
             )
 
         elif node_idx in range(n_features, error_end_idx):
@@ -303,7 +316,7 @@ def create_graph_files(
         if graph.sae_series is None:
             raise ValueError(
                 "Neither sae_series nor graph.sae_series was set. One must be set to identify "
-                "which transcoders were used when creating the graph."
+                "which lorsas and transcoders were used when creating the graph."
             )
         sae_series = graph.sae_series
 
@@ -313,7 +326,6 @@ def create_graph_files(
         el.to(device) for el in prune_graph(graph, node_threshold, edge_threshold)
     )
 
-    print(f"{graph.cfg.tokenizer_name=}")
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
     nodes = create_nodes(graph, node_mask, tokenizer, cumulative_scores, use_lorsa=use_lorsa)
     used_nodes, used_edges = create_used_nodes_and_edges(graph, nodes, edge_mask)
