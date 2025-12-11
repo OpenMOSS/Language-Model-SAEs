@@ -93,9 +93,10 @@ class FeatureAnalyzer:
                 # elt_cur: [batch, d_sae] -> per-feature topk
                 top_vals, top_idx = torch.topk(elt_cur, k=k, dim=0)  # shapes: [k, d_sae]
 
-                # feature_acts: [batch, d_sae, context] -> gather per feature
-                idx_expanded = top_idx.unsqueeze(-1).expand(-1, -1, feature_acts.shape[2])  # [k, d_sae, context]
-                feature_acts_top = torch.gather(feature_acts, dim=0, index=idx_expanded)  # [k, d_sae, context]
+                # feature_acts: [batch, context, d_sae] -> 先转为 [batch, d_sae, context] 以按 batch 维聚合
+                feature_acts_perm = feature_acts.permute(0, 2, 1)  # [batch, d_sae, context]
+                idx_expanded = top_idx.unsqueeze(-1).expand(-1, -1, feature_acts_perm.shape[2])  # [k, d_sae, context]
+                feature_acts_top = torch.gather(feature_acts_perm, dim=0, index=idx_expanded)  # [k, d_sae, context]
 
                 # gather meta: 支持 1D（batch）或 2D（batch, d_sae）形状
                 discrete_meta_top: dict[str, torch.Tensor] = {}
