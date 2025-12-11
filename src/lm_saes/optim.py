@@ -8,6 +8,7 @@ from typing import Any, Optional
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
+from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
 
@@ -194,7 +195,13 @@ class SparseAdam(Optimizer):
 
                 grad = p.grad
 
-                # Skip if all gradients are zero
+                if isinstance(grad, DTensor):
+                    # TODO: Figure out how this bug is triggered
+                    # Workaround for a DTensor bug with unclear trigger conditions.
+                    # Without this, when computing exp_avg_sq, the result of (1 - beta2) * grad * grad
+                    # appears to be incorrectly cached as (1 - beta1) * grad * grad (i.e., reusing
+                    # the intermediate result from exp_avg computation).
+                    grad = grad.redistribute(p.device_mesh, p.placements)
                 if not grad.any():
                     continue
 
