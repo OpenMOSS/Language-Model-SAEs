@@ -56,10 +56,6 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
         show_progress: Whether to show progress bar (requires tqdm)
     """
 
-    Args:
-        settings: Configuration for feature interpretation
-        show_progress: Whether to show progress bar (requires tqdm)
-    """
     @lru_cache(maxsize=None)
     def get_dataset(dataset_name: str, shard_idx: int, n_shards: int) -> Dataset:
         dataset_cfg = mongo_client.get_dataset_cfg(dataset_name)
@@ -70,6 +66,7 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
     mongo_client = MongoClient(settings.mongo)
     language_model = load_model(settings.model)
     interpreter = FeatureInterpreter(settings.auto_interp, mongo_client)
+
     # Set up progress tracking
     progress_bar = None
     processed_count = 0
@@ -95,10 +92,12 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
                     dynamic_ncols=True,
                     initial=0,
                 )
+
         if progress_bar is not None:
             progress_bar.n = processed
             progress_bar.refresh()
             progress_bar.set_postfix({"current": current_feature})
+
     async for result in interpreter.interpret_features(
         sae_name=settings.sae_name,
         sae_series=settings.sae_series,

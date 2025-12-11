@@ -244,4 +244,3 @@ class TokenizedSample:
             segments.append(Segment(text[start:end], segment_activation.item()))
 
         return TokenizedSample(segments, max_activation)
-ß
