@@ -1,6 +1,7 @@
 import re
 import warnings
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from itertools import accumulate
 from typing import Any, Callable, Optional, Union, cast
 
@@ -247,6 +248,32 @@ class TransformerLensLanguageModel(LanguageModel):
             assert not is_distributed, "Input should not contain DTensor when device_mesh is None"
             return self.model.forward(*args, **kwargs)
 
+    def _to_tensor(self, input: torch.Tensor) -> torch.Tensor:
+        if isinstance(input, DTensor):
+            assert input.placements == tuple(DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)))
+            return input.to_local()
+        else:
+            return input
+
+    def _to_dtensor(self, input: torch.Tensor) -> torch.Tensor:
+        return (
+            DTensor.from_local(
+                input,
+                device_mesh=self.device_mesh,
+                placements=DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)),
+            )
+            if isinstance(input, torch.Tensor)
+            else input
+        )
+
+    def _wrap_hook_for_local(self, hook_fn):
+        def wrapped_hook_fn(*args, **kwargs):
+            args = pytree.tree_map(self._to_dtensor, args)
+            kwargs = pytree.tree_map(self._to_dtensor, kwargs)
+            return pytree.tree_map(self._to_tensor, hook_fn(*args, **kwargs))
+
+        return wrapped_hook_fn
+
     def run_with_hooks(
         self,
         *args,
@@ -259,36 +286,51 @@ class TransformerLensLanguageModel(LanguageModel):
         if self.device_mesh is None:
             return self.model.run_with_hooks(*args, fwd_hooks=fwd_hooks, bwd_hooks=bwd_hooks, **kwargs)
 
-        def to_tensor(input: torch.Tensor) -> torch.Tensor:
-            if isinstance(input, DTensor):
-                assert input.placements == tuple(DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)))
-                return input.to_local()
-            else:
-                return input
-
-        def to_dtensor(input: torch.Tensor) -> torch.Tensor:
-            return (
-                DTensor.from_local(
-                    input,
-                    device_mesh=self.device_mesh,
-                    placements=DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)),
-                )
-                if isinstance(input, torch.Tensor)
-                else input
-            )
-
-        def wrap_hook_for_local(hook_fn):
-            def wrapped_hook_fn(*args, **kwargs):
-                args = pytree.tree_map(to_dtensor, args)
-                kwargs = pytree.tree_map(to_dtensor, kwargs)
-                return pytree.tree_map(to_tensor, hook_fn(*args, **kwargs))
-
-            return wrapped_hook_fn
-
-        wrapped_fwd_hooks = [(name, wrap_hook_for_local(hook)) for name, hook in fwd_hooks]
-        wrapped_bwd_hooks = [(name, wrap_hook_for_local(hook)) for name, hook in bwd_hooks]
+        wrapped_fwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in fwd_hooks]
+        wrapped_bwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in bwd_hooks]
 
         return self.model.run_with_hooks(*args, fwd_hooks=wrapped_fwd_hooks, bwd_hooks=wrapped_bwd_hooks, **kwargs)
+
+    def run_with_cache(self, *args, **kwargs) -> Any:
+        assert self.model is not None, "model must be initialized"
+        if self.device_mesh is None:
+            return self.model.run_with_cache(*args, **kwargs)
+
+        args = pytree.tree_map(self._to_tensor, args)
+        kwargs = pytree.tree_map(self._to_tensor, kwargs)
+        return pytree.tree_map(self._to_dtensor, self.model.run_with_cache(*args, **kwargs))
+
+    def run_with_cache_until(self, *args, **kwargs) -> Any:
+        assert self.model is not None, "model must be initialized"
+        if self.device_mesh is None:
+            return self.model.run_with_cache_until(*args, **kwargs)
+
+        args = pytree.tree_map(self._to_tensor, args)
+        kwargs = pytree.tree_map(self._to_tensor, kwargs)
+        return pytree.tree_map(self._to_dtensor, self.model.run_with_cache_until(*args, **kwargs))
+
+    @contextmanager
+    def hooks(
+        self,
+        fwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
+        bwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
+        reset_hooks_end: bool = True,
+        clear_contexts: bool = False,
+    ):
+        assert self.model is not None, "model must be initialized"
+        wrapped_fwd_hooks = fwd_hooks
+        wrapped_bwd_hooks = bwd_hooks
+        if self.device_mesh is not None:
+            wrapped_fwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in fwd_hooks]
+            wrapped_bwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in bwd_hooks]
+
+        with self.model.hooks(
+            fwd_hooks=wrapped_fwd_hooks,
+            bwd_hooks=wrapped_bwd_hooks,
+            reset_hooks_end=reset_hooks_end,
+            clear_contexts=clear_contexts,
+        ):
+            yield self
 
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         if any(key in ["images", "videos"] for key in raw):
