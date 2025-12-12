@@ -371,7 +371,7 @@ class TransformerLensLanguageModel(LanguageModel):
             device=self.cfg.device,
             prepend_bos=self.cfg.prepend_bos,
         )
-        if self.device_mesh is not None:
+        if self.device_mesh is not None and n_context is None:
             num_token_list = [None for _ in range(dist.get_world_size(group=self.device_mesh.get_group("data")))]
             dist.all_gather_object(num_token_list, tokens.shape[1], group=self.device_mesh.get_group("data"))
             n_context = max(cast(list[int], num_token_list))
