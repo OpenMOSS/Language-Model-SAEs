@@ -1,10 +1,16 @@
 import re
 import warnings
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from itertools import accumulate
-from typing import Any, Optional, cast
+from typing import Any, Callable, Optional, Union, cast
 
 import torch
+import torch.distributed as dist
+import torch.utils._pytree as pytree
+from torch.distributed import DeviceMesh
+from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.experimental import local_map
 from transformer_lens import HookedTransformer
 from transformers import (
     AutoModelForCausalLM,
@@ -15,6 +21,7 @@ from transformers import (
 )
 
 from lm_saes.config import LanguageModelConfig, LLaDAConfig
+from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
 
@@ -157,8 +164,9 @@ class LanguageModel(ABC):
 
 
 class TransformerLensLanguageModel(LanguageModel):
-    def __init__(self, cfg: LanguageModelConfig):
+    def __init__(self, cfg: LanguageModelConfig, device_mesh: DeviceMesh | None = None):
         self.cfg = cfg
+        self.device_mesh = device_mesh
         if cfg.device == "cuda":
             self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
             print(f"cuda:{torch.cuda.current_device()}")
@@ -222,6 +230,108 @@ class TransformerLensLanguageModel(LanguageModel):
     def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
         return raw
 
+    def forward(self, *args, **kwargs):
+        assert self.model is not None, "model must be initialized"
+        # Collect all tensor arguments
+        tensors = [arg for arg in args if isinstance(arg, torch.Tensor)] + [
+            v for v in kwargs.values() if isinstance(v, torch.Tensor)
+        ]
+        # Check if all tensors are DTensors
+        is_distributed = len(tensors) > 0 and all(isinstance(t, DTensor) for t in tensors)
+        if self.device_mesh is not None:
+            assert is_distributed, "All tensor inputs must be DTensor when device_mesh is not None"
+            return local_map(
+                self.model.forward,
+                out_placements=DimMap({"data": 0}).placements(self.device_mesh),
+            )(*args, **kwargs)
+        else:
+            assert not is_distributed, "Input should not contain DTensor when device_mesh is None"
+            return self.model.forward(*args, **kwargs)
+
+    def _to_tensor(self, input: torch.Tensor) -> torch.Tensor:
+        if isinstance(input, DTensor):
+            assert input.placements == tuple(DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)))
+            return input.to_local()
+        else:
+            return input
+
+    def _to_dtensor(self, input: torch.Tensor) -> torch.Tensor:
+        return (
+            DTensor.from_local(
+                input,
+                device_mesh=self.device_mesh,
+                placements=DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)),
+            )
+            if isinstance(input, torch.Tensor)
+            else input
+        )
+
+    def _wrap_hook_for_local(self, hook_fn):
+        def wrapped_hook_fn(*args, **kwargs):
+            args = pytree.tree_map(self._to_dtensor, args)
+            kwargs = pytree.tree_map(self._to_dtensor, kwargs)
+            return pytree.tree_map(self._to_tensor, hook_fn(*args, **kwargs))
+
+        return wrapped_hook_fn
+
+    def run_with_hooks(
+        self,
+        *args,
+        fwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
+        bwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
+        **kwargs,
+    ) -> Any:
+        assert self.model is not None, "model must be initialized"
+
+        if self.device_mesh is None:
+            return self.model.run_with_hooks(*args, fwd_hooks=fwd_hooks, bwd_hooks=bwd_hooks, **kwargs)
+
+        wrapped_fwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in fwd_hooks]
+        wrapped_bwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in bwd_hooks]
+
+        return self.model.run_with_hooks(*args, fwd_hooks=wrapped_fwd_hooks, bwd_hooks=wrapped_bwd_hooks, **kwargs)
+
+    def run_with_cache(self, *args, **kwargs) -> Any:
+        assert self.model is not None, "model must be initialized"
+        if self.device_mesh is None:
+            return self.model.run_with_cache(*args, **kwargs)
+
+        args = pytree.tree_map(self._to_tensor, args)
+        kwargs = pytree.tree_map(self._to_tensor, kwargs)
+        return pytree.tree_map(self._to_dtensor, self.model.run_with_cache(*args, **kwargs))
+
+    def run_with_cache_until(self, *args, **kwargs) -> Any:
+        assert self.model is not None, "model must be initialized"
+        if self.device_mesh is None:
+            return self.model.run_with_cache_until(*args, **kwargs)
+
+        args = pytree.tree_map(self._to_tensor, args)
+        kwargs = pytree.tree_map(self._to_tensor, kwargs)
+        return pytree.tree_map(self._to_dtensor, self.model.run_with_cache_until(*args, **kwargs))
+
+    @contextmanager
+    def hooks(
+        self,
+        fwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
+        bwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
+        reset_hooks_end: bool = True,
+        clear_contexts: bool = False,
+    ):
+        assert self.model is not None, "model must be initialized"
+        wrapped_fwd_hooks = fwd_hooks
+        wrapped_bwd_hooks = bwd_hooks
+        if self.device_mesh is not None:
+            wrapped_fwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in fwd_hooks]
+            wrapped_bwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in bwd_hooks]
+
+        with self.model.hooks(
+            fwd_hooks=wrapped_fwd_hooks,
+            bwd_hooks=wrapped_bwd_hooks,
+            reset_hooks_end=reset_hooks_end,
+            clear_contexts=clear_contexts,
+        ):
+            yield self
+
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
@@ -261,6 +371,10 @@ class TransformerLensLanguageModel(LanguageModel):
             device=self.cfg.device,
             prepend_bos=self.cfg.prepend_bos,
         )
+        if self.device_mesh is not None and n_context is None:
+            num_token_list = [None for _ in range(dist.get_world_size(group=self.device_mesh.get_group("data")))]
+            dist.all_gather_object(num_token_list, tokens.shape[1], group=self.device_mesh.get_group("data"))
+            n_context = max(cast(list[int], num_token_list))
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
@@ -279,9 +393,23 @@ class TransformerLensLanguageModel(LanguageModel):
         attention_mask = torch.isin(tokens, torch.tensor([self.pad_token_id]).to(tokens.device), invert=True).int()
 
         return {hook_point: activations[hook_point] for hook_point in hook_points} | {
-            "tokens": tokens,
-            "mask": mask,
-            "attention_mask": attention_mask,
+            "tokens": tokens
+            if self.device_mesh is None
+            else DTensor.from_local(
+                tokens, device_mesh=self.device_mesh, placements=DimMap({"data": 0}).placements(self.device_mesh)
+            ),
+            "mask": mask
+            if self.device_mesh is None
+            else DTensor.from_local(
+                mask, device_mesh=self.device_mesh, placements=DimMap({"data": 0}).placements(self.device_mesh)
+            ),
+            "attention_mask": attention_mask
+            if self.device_mesh is None
+            else DTensor.from_local(
+                attention_mask,
+                device_mesh=self.device_mesh,
+                placements=DimMap({"data": 0}).placements(self.device_mesh),
+            ),
         }
 
 
