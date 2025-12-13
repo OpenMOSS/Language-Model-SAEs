@@ -295,13 +295,14 @@ class ReplacementModel(HookedTransformer):
         self.setup()
 
     def _configure_gradient_flow(self):
-        for layer in range(self.cfg.n_layers):
-            self._configure_skip_connection(self.blocks[layer], layer)
-            if self.use_lorsa:
-                self.lorsas[layer]._configure_gradient_flow()
-
         def stop_gradient(acts, hook):
             return acts.detach()
+        
+        for layer in range(self.cfg.n_layers):
+            self._configure_skip_connection(self.blocks[layer], layer)
+            if self.use_lorsa and self.lorsas[layer].cfg.use_post_qk_ln:
+                self.lorsas[layer].ln_q.hook_scale.add_hook(stop_gradient, is_permanent=True)
+                self.lorsas[layer].ln_k.hook_scale.add_hook(stop_gradient, is_permanent=True)
 
         for block in self.blocks:
             # We don't need to stop gradient for the attention pattern if we have lorsa
