@@ -14,12 +14,6 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-try:
-    from torchvision import transforms
-except ImportError:
-    transforms = None
-    print("WARNING: torchvision not found, image processing will be disabled")
-
 from lm_saes.backend import LanguageModel
 from lm_saes.config import MongoDBConfig, SAEConfig
 from lm_saes.database import FeatureAnalysisSampling, FeatureRecord, MongoClient
@@ -33,30 +27,34 @@ sae_series = os.environ.get("SAE_SERIES", "default")
 tokenizer_only = os.environ.get("TOKENIZER_ONLY", "false").lower() == "true"
 
 
-def synchronized(func):
+class synchronized:
     """Decorator to ensure sequential execution of a function based on parameters.
 
     Different parameters can be acquired in parallel, but the same parameters
     will be executed sequentially.
     """
-    locks: dict[frozenset[tuple[str, Any]], threading.Lock] = {}
-    global_lock = threading.Lock()
 
-    @wraps(func)
-    def wrapper(*args, **kwargs):
+    def __init__(self, func):
+        self._func = func
+        self._locks: dict[frozenset[tuple[str, Any]], threading.Lock] = {}
+        self._global_lock = threading.Lock()
+        wraps(func)(self)
+
+    def __call__(self, *args, **kwargs):
         assert len(args) == 0, "Positional arguments are not supported"
         key = frozenset(kwargs.items())
 
         # The lock creation is locked by the global lock to avoid race conditions on locks.
-        with global_lock:
-            if key not in locks:
-                locks[key] = threading.Lock()
-            lock = locks[key]
+        with self._global_lock:
+            if key not in self._locks:
+                self._locks[key] = threading.Lock()
+            lock = self._locks[key]
 
         with lock:
-            return func(*args, **kwargs)
+            return self._func(*args, **kwargs)
 
-    return wrapper
+    def __getattr__(self, name: str):
+        return getattr(self._func, name)
 
 
 @synchronized
