@@ -9,12 +9,15 @@ import json
 import logging
 import sys
 import time
+import io
+import contextlib
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 
 import torch
 import chess
 from transformer_lens import HookedTransformer
+from tqdm import tqdm
 
 # 全局 BT4 常量（模型与 SAE 路径）
 # 兼容直接运行 server 目录和作为 package 导入两种方式
@@ -49,6 +52,152 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     return logging.getLogger(__name__)
+
+
+class TeeWriter:
+    """一个同时写入多个目标的writer类"""
+    def __init__(self, *targets):
+        self.targets = targets
+    
+    def write(self, text):
+        for target in self.targets:
+            target.write(text)
+    
+    def flush(self):
+        for target in self.targets:
+            if hasattr(target, 'flush'):
+                target.flush()
+
+
+class LogCapture:
+    """捕获print、logger和tqdm输出的上下文管理器"""
+    
+    def __init__(self, log_list: list):
+        """
+        Args:
+            log_list: 用于存储日志的列表，每个元素为 {"timestamp": float, "message": str}
+        """
+        self.log_list = log_list
+        self.original_stdout = sys.stdout
+        self.original_stderr = sys.stderr
+        self.log_buffer = io.StringIO()
+        self.log_handlers = []
+        
+    def _log_message(self, message: str):
+        """将消息添加到日志列表"""
+        if message.strip():  # 只添加非空消息
+            self.log_list.append({
+                "timestamp": time.time(),
+                "message": message.strip()
+            })
+    
+    def _write_and_log(self, text: str, original_stream):
+        """写入原始流并记录日志"""
+        original_stream.write(text)  # 先写入原始流
+        # 按行分割并记录
+        if text:
+            for line in text.rstrip('\n').split('\n'):
+                if line.strip():
+                    self._log_message(line)
+    
+    def _setup_logger_handler(self):
+        """设置logger处理器"""
+        class LogListHandler(logging.Handler):
+            def __init__(self, log_list):
+                super().__init__()
+                self.log_list = log_list
+                
+            def emit(self, record):
+                log_entry = self.format(record)
+                self.log_list.append({
+                    "timestamp": time.time(),
+                    "message": log_entry
+                })
+        
+        # 为attribution logger添加handler
+        attribution_logger = logging.getLogger("attribution")
+        handler = LogListHandler(self.log_list)
+        handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+        attribution_logger.addHandler(handler)
+        self.log_handlers.append((attribution_logger, handler))
+        
+        # 也为root logger添加handler（捕获所有日志）
+        root_logger = logging.getLogger()
+        root_handler = LogListHandler(self.log_list)
+        root_handler.setFormatter(logging.Formatter('%(name)s - %(levelname)s - %(message)s'))
+        root_logger.addHandler(root_handler)
+        self.log_handlers.append((root_logger, root_handler))
+    
+    def _setup_tqdm_handler(self):
+        """设置tqdm的写入函数"""
+        # 保存原始的tqdm.write
+        self.original_tqdm_write = tqdm.write
+        
+        def custom_tqdm_write(s, file=None, end="\n", nolock=False):
+            # 调用原始函数
+            self.original_tqdm_write(s, file=file, end=end, nolock=nolock)
+            # 记录日志
+            if s.strip():
+                self._log_message(s.strip())
+        
+        tqdm.write = custom_tqdm_write
+    
+    def __enter__(self):
+        # 创建一个包装的stdout，同时写入原始stdout和记录日志
+        class LoggingStdout:
+            def __init__(self, original, log_capture):
+                self.original = original
+                self.log_capture = log_capture
+            
+            def write(self, text):
+                self.log_capture._write_and_log(text, self.original)
+            
+            def flush(self):
+                self.original.flush()
+            
+            def __getattr__(self, name):
+                return getattr(self.original, name)
+        
+        class LoggingStderr:
+            def __init__(self, original, log_capture):
+                self.original = original
+                self.log_capture = log_capture
+            
+            def write(self, text):
+                self.log_capture._write_and_log(text, self.original)
+            
+            def flush(self):
+                self.original.flush()
+            
+            def __getattr__(self, name):
+                return getattr(self.original, name)
+        
+        # 替换stdout和stderr
+        sys.stdout = LoggingStdout(self.original_stdout, self)
+        sys.stderr = LoggingStderr(self.original_stderr, self)
+        
+        # 设置logger handler
+        self._setup_logger_handler()
+        
+        # 设置tqdm handler
+        self._setup_tqdm_handler()
+        
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # 恢复stdout和stderr
+        sys.stdout = self.original_stdout
+        sys.stderr = self.original_stderr
+        
+        # 移除logger handlers
+        for logger, handler in self.log_handlers:
+            logger.removeHandler(handler)
+        
+        # 恢复tqdm.write
+        if hasattr(self, 'original_tqdm_write'):
+            tqdm.write = self.original_tqdm_write
+        
+        return False  # 不抑制异常
 
 
 # 全局缓存（与app.py共享）
@@ -658,10 +807,18 @@ def run_circuit_trace(
     cached_transcoders: Optional[Dict[int, SparseAutoEncoder]] = None,  # 新增：缓存的transcoders
     cached_lorsas: Optional[List[LowRankSparseAttention]] = None,  # 新增：缓存的lorsas
     cached_replacement_model: Optional[ReplacementModel] = None,  # 新增：缓存的replacement_model
-    sae_combo_id: Optional[str] = None  # 新增：SAE组合ID，用于生成正确的analysis_name模板
+    sae_combo_id: Optional[str] = None,  # 新增：SAE组合ID，用于生成正确的analysis_name模板
+    trace_logs: Optional[list] = None  # 新增：用于存储日志的列表
 ) -> Dict[str, Any]:
     """运行circuit trace并返回graph数据"""
     logger = setup_logging(log_level)
+    
+    # 如果提供了trace_logs，使用日志捕获
+    if trace_logs is not None:
+        log_capture = LogCapture(trace_logs)
+        log_capture.__enter__()
+    else:
+        log_capture = None
     
     # 设置设备
     if device == "cuda" and not torch.cuda.is_available():
@@ -777,11 +934,21 @@ def run_circuit_trace(
         )
         
         logger.info("Circuit trace分析完成!")
+        
+        # 退出日志捕获
+        if log_capture is not None:
+            log_capture.__exit__(None, None, None)
+        
         return graph_data
         
     except Exception as e:
         logger.error(f"有点问题: {e}")
         # logger.error(f"执行过程中发生错误: {e}")
+        
+        # 确保退出日志捕获
+        if log_capture is not None:
+            log_capture.__exit__(None, None, None)
+        
         raise
 
 

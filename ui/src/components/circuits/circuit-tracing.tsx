@@ -70,6 +70,10 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   const [topActivations, setTopActivations] = useState<any[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
 
+  // Circuit Trace 日志相关状态
+  const [traceLogs, setTraceLogs] = useState<Array<{timestamp: number; message: string}>>([]);
+  const MAX_VISIBLE_LOGS = 100;
+
   // 直接使用父组件传入的上一步FEN，不再使用本地缓存覆盖
   const effectiveGameFen = gameFen;
 
@@ -152,6 +156,60 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     nodeType?: string;
     clerp?: string;
   }
+
+  // 轮询circuit trace日志
+  useEffect(() => {
+    // 如果不在tracing且没有日志，不轮询
+    if (!isTracing && traceLogs.length === 0) return;
+
+    let cancelled = false;
+    let pollCount = 0;
+    const MAX_POLL_AFTER_COMPLETE = 5; // tracing完成后继续轮询5次以确保获取所有日志
+
+    const poll = async () => {
+      try {
+        const params = new URLSearchParams({
+          model_name: "lc0/BT4-1024x15x32h",
+          fen: effectiveGameFen,
+        });
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/logs?${params.toString()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) {
+          const allLogs = data.logs ?? [];
+          // 只保留最近 MAX_VISIBLE_LOGS 条
+          const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
+          setTraceLogs(sliced);
+          
+          // 如果tracing已完成且已轮询足够次数，停止轮询
+          if (!isTracing && !data.is_tracing) {
+            pollCount++;
+            if (pollCount >= MAX_POLL_AFTER_COMPLETE) {
+              cancelled = true;
+            }
+          } else {
+            pollCount = 0; // 重置计数
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch circuit trace logs:", err);
+      }
+    };
+
+    // 立即执行一次，然后开始轮询
+    poll();
+    const timer = window.setInterval(() => {
+      if (!cancelled) {
+        poll();
+      } else {
+        window.clearInterval(timer);
+      }
+    }, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isTracing, effectiveGameFen, traceLogs.length]);
 
   // 新增：handleCircuitTrace函数
   const handleCircuitTraceResult = useCallback((result: any) => {
@@ -237,6 +295,21 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
 
   // 修改handleCircuitTrace函数来支持不同的order_mode和both trace
   const handleCircuitTrace = useCallback(async (orderMode: 'positive' | 'negative' | 'both' = 'positive') => {
+    // 先检查后端是否有正在进行的circuit tracing进程
+    try {
+      const statusResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/status`);
+      if (statusResponse.ok) {
+        const status = await statusResponse.json();
+        if (status.is_tracing) {
+          alert('后端正在执行另一个circuit tracing进程，请等待完成后再试');
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('检查circuit tracing状态失败:', error);
+      // 如果检查失败，仍然继续执行（避免因为网络问题阻止用户操作）
+    }
+    
     let moveUci: string | null = null;
     const lastMoveStr: string | null = lastMove ? lastMove : null;
     
@@ -342,6 +415,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
     
     onCircuitTraceStart?.();
+    
+    // 清空之前的日志
+    setTraceLogs([]);
     
     try {
       // 固定使用BT4模型
@@ -1049,6 +1125,27 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {/* Circuit Trace 日志显示 */}
+          {(isTracing || traceLogs.length > 0) && (
+            <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+              <div className="mb-2 font-semibold">
+                {isTracing ? '🔍 Circuit Tracing 日志' : '📋 Circuit Tracing 日志（已完成）'}
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded bg-blue-100 p-2 text-xs font-mono leading-relaxed">
+                {traceLogs.length === 0 ? (
+                  <div className="text-blue-700 opacity-80">
+                    {isTracing ? '等待日志...' : '暂无日志'}
+                  </div>
+                ) : (
+                  traceLogs.map((log, idx) => (
+                    <div key={`${log.timestamp}-${idx}`} className="mb-1">
+                      {new Date(log.timestamp * 1000).toLocaleTimeString()} - {log.message}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
           <div className="space-y-4">
             {/* Side选择框 */}
             <div className="space-y-2">

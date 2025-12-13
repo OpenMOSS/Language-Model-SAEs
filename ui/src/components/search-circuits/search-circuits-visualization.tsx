@@ -393,6 +393,21 @@ export const SearchCircuitsVisualization = () => {
   const startBatchTrace = useCallback(async () => {
     if (!searchData || !isModelLoaded) return;
     
+    // 先检查后端是否有正在进行的circuit tracing进程
+    try {
+      const statusResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/status`);
+      if (statusResponse.ok) {
+        const status = await statusResponse.json();
+        if (status.is_tracing) {
+          alert('后端正在执行另一个circuit tracing进程，请等待完成后再试');
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('检查circuit tracing状态失败:', error);
+      // 如果检查失败，仍然继续执行（避免因为网络问题阻止用户操作）
+    }
+    
     const allEdges = getAllUniqueEdges();
     const edgesToTrace = batchTraceParams.skipExisting 
       ? allEdges.filter(edge => !edgeTraceResults.has(getEdgeKey(edge)))
@@ -413,6 +428,23 @@ export const SearchCircuitsVisualization = () => {
       if (batchTraceAbortRef.current) {
         console.log('🛑 批量 Trace 被用户中止');
         break;
+      }
+      
+      // 在每次循环迭代前也检查一次状态（防止在批量trace过程中用户启动了另一个trace）
+      try {
+        const statusResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/status`);
+        if (statusResponse.ok) {
+          const status = await statusResponse.json();
+          if (status.is_tracing && i > 0) {
+            // 如果不是第一个请求，说明有新的trace开始了，中止批量trace
+            console.log('🛑 检测到新的circuit tracing进程，中止批量 Trace');
+            batchTraceAbortRef.current = true;
+            break;
+          }
+        }
+      } catch (error) {
+        console.error('检查circuit tracing状态失败:', error);
+        // 如果检查失败，继续执行
       }
       
       const edge = edgesToTrace[i];

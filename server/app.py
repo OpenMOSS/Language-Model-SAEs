@@ -196,6 +196,10 @@ _loading_locks: Dict[str, threading.Lock] = {}  # combo_key -> Lock
 _loading_status: Dict[str, dict] = {}  # combo_key -> {"is_loading": bool}
 _cancel_loading: Dict[str, bool] = {}  # combo_key -> should_cancel (用于中断加载)
 
+# Circuit tracing日志存储（用于前端显示）
+_circuit_trace_logs: Dict[str, list] = {}  # trace_key -> [log1, log2, ...]
+_circuit_trace_status: Dict[str, dict] = {}  # trace_key -> {"is_tracing": bool}
+
 def get_hooked_model(model_name: str = 'lc0/BT4-1024x15x32h'):
     """获取或加载HookedTransformer模型 - 仅支持BT4（带全局缓存）"""
     global _hooked_models
@@ -1731,6 +1735,10 @@ except ImportError:
 # 全局Logit Lens缓存
 _logit_lens_instances = {}
 
+# Circuit tracing进程跟踪（防止同时运行多个trace）
+_circuit_tracing_lock = threading.Lock()
+_is_circuit_tracing = False
+
 
 @app.post("/circuit/preload_models")
 def preload_circuit_models(request: dict):
@@ -2141,197 +2149,305 @@ def circuit_trace(request: dict):
     Returns:
         Graph数据 (JSON格式)
     """
+    global _is_circuit_tracing
+    
     try:
         # 检查circuits_service是否可用
         if not CIRCUITS_SERVICE_AVAILABLE:
             raise HTTPException(status_code=503, detail="Circuit tracing service not available")
         
-        # 提取参数
-        fen = request.get("fen")
-        if not fen:
-            raise HTTPException(status_code=400, detail="FEN string is required")
+        # 检查是否有正在进行的circuit tracing进程
+        with _circuit_tracing_lock:
+            if _is_circuit_tracing:
+                raise HTTPException(status_code=409, detail="另一个circuit tracing进程正在进行中，请等待完成后再试")
+            _is_circuit_tracing = True
         
-        move_uci = request.get("move_uci")
-        negative_move_uci = request.get("negative_move_uci", None)  # 新增negative_move_uci参数
-        
-        side = request.get("side", "k")
-        max_feature_nodes = request.get("max_feature_nodes", 4096)
-        node_threshold = request.get("node_threshold", 0.73)
-        edge_threshold = request.get("edge_threshold", 0.57)
-        max_n_logits = request.get("max_n_logits", 1)
-        desired_logit_prob = request.get("desired_logit_prob", 0.95)
-        batch_size = request.get("batch_size", 1)
-        order_mode = request.get("order_mode", "positive")
-        encoder_demean = request.get("encoder_demean", False)
-        save_activation_info = request.get("save_activation_info", True)  # 默认启用激活信息保存
-        max_act_times = request.get("max_act_times", None)  # 添加最大激活次数参数
-        # 强制使用BT4模型
-        model_name = "lc0/BT4-1024x15x32h"
-        
-        print(f"🔍 Circuit Trace 请求参数:")
-        print(f"   - FEN: {fen}")
-        print(f"   - Move UCI: {move_uci}")
-        print(f"   - Negative Move UCI: {negative_move_uci}")
-        print(f"   - Model Name: {model_name}")
-        print(f"   - Side: {side}")
-        print(f"   - Order Mode: {order_mode}")
-        print(f"   - Max Act Times: {max_act_times}")
-        
-        # 验证 side 参数
-        if side not in ["q", "k", "both"]:
-            raise HTTPException(status_code=400, detail="side must be 'q', 'k', or 'both'")
-        
-        # 验证 order_mode 参数和处理both模式
-        if order_mode == "both":
-            # Both模式：需要positive move和negative move
+        try:
+            # 提取参数
+            fen = request.get("fen")
+            if not fen:
+                raise HTTPException(status_code=400, detail="FEN string is required")
+            
+            move_uci = request.get("move_uci")
+            negative_move_uci = request.get("negative_move_uci", None)  # 新增negative_move_uci参数
+            
+            side = request.get("side", "k")
+            max_feature_nodes = request.get("max_feature_nodes", 4096)
+            node_threshold = request.get("node_threshold", 0.73)
+            edge_threshold = request.get("edge_threshold", 0.57)
+            max_n_logits = request.get("max_n_logits", 1)
+            desired_logit_prob = request.get("desired_logit_prob", 0.95)
+            batch_size = request.get("batch_size", 1)
+            order_mode = request.get("order_mode", "positive")
+            encoder_demean = request.get("encoder_demean", False)
+            save_activation_info = request.get("save_activation_info", True)  # 默认启用激活信息保存
+            max_act_times = request.get("max_act_times", None)  # 添加最大激活次数参数
+            # 强制使用BT4模型
+            model_name = "lc0/BT4-1024x15x32h"
+            
+            print(f"🔍 Circuit Trace 请求参数:")
+            print(f"   - FEN: {fen}")
+            print(f"   - Move UCI: {move_uci}")
+            print(f"   - Negative Move UCI: {negative_move_uci}")
+            print(f"   - Model Name: {model_name}")
+            print(f"   - Side: {side}")
+            print(f"   - Order Mode: {order_mode}")
+            print(f"   - Max Act Times: {max_act_times}")
+            
+            # 验证 side 参数
+            if side not in ["q", "k", "both"]:
+                raise HTTPException(status_code=400, detail="side must be 'q', 'k', or 'both'")
+            
+            # 验证 order_mode 参数和处理both模式
+            if order_mode == "both":
+                # Both模式：需要positive move和negative move
+                if not move_uci:
+                    raise HTTPException(status_code=400, detail="move_uci (positive move) is required for 'both' mode")
+                if not negative_move_uci:
+                    raise HTTPException(status_code=400, detail="negative_move_uci is required for 'both' mode")
+                # Both模式强制side为both
+                side = "both"
+                # 将order_mode转换为move_pair，以便后端处理
+                order_mode = "move_pair"
+            elif order_mode not in ["positive", "negative"]:
+                raise HTTPException(status_code=400, detail="order_mode must be 'positive', 'negative', or 'both'")
+            
+            # 验证move_uci
             if not move_uci:
-                raise HTTPException(status_code=400, detail="move_uci (positive move) is required for 'both' mode")
-            if not negative_move_uci:
-                raise HTTPException(status_code=400, detail="negative_move_uci is required for 'both' mode")
-            # Both模式强制side为both
-            side = "both"
-            # 将order_mode转换为move_pair，以便后端处理
-            order_mode = "move_pair"
-        elif order_mode not in ["positive", "negative"]:
-            raise HTTPException(status_code=400, detail="order_mode must be 'positive', 'negative', or 'both'")
-        
-        # 验证move_uci
-        if not move_uci:
-            raise HTTPException(status_code=400, detail="move_uci is required")
-        
-        # 获取已缓存的HookedTransformer模型
-        hooked_model = get_hooked_model(model_name)
-        
-        # 检查是否有缓存的transcoders和lorsas
-        cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name)
-        cached_replacement_model = _replacement_models_cache.get(model_name)
-        
-        # 检查是否正在加载
-        global _loading_status, _loading_locks
-        is_loading = _loading_status.get(model_name, {}).get("is_loading", False)
-        
-        # 如果缓存不完整且正在加载，等待加载完成
-        cache_complete = (cached_transcoders is not None and cached_lorsas is not None and 
-                         cached_replacement_model is not None and
-                         len(cached_transcoders) == 15 and len(cached_lorsas) == 15)
-        
-        if not cache_complete and is_loading:
-            print(f"⏳ 检测到正在加载TC/LoRSA，等待加载完成（避免重复加载）: {model_name}")
-            # 获取加载锁（等待加载完成）
-            if model_name not in _loading_locks:
-                _loading_locks[model_name] = threading.Lock()
+                raise HTTPException(status_code=400, detail="move_uci is required")
             
-            # 等待加载完成（最多等待10分钟，因为加载可能需要较长时间）
-            max_wait_time = 600  # 10分钟
-            wait_start = time.time()
-            wait_interval = 1  # 每秒检查一次
-            while (time.time() - wait_start) < max_wait_time:
-                is_loading = _loading_status.get(model_name, {}).get("is_loading", False)
-                # 重新检查缓存
-                cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name)
-                cached_replacement_model = _replacement_models_cache.get(model_name)
-                cache_complete = (cached_transcoders is not None and cached_lorsas is not None and 
-                                 cached_replacement_model is not None and
-                                 len(cached_transcoders) == 15 and len(cached_lorsas) == 15)
-                if cache_complete:
-                    print(f"✅ 等待加载完成，已获取完整缓存: {model_name} (等待时间: {time.time() - wait_start:.1f}秒)")
-                    break
-                if not is_loading and not cache_complete:
-                    # 加载已完成但缓存不完整，可能是加载失败
-                    print(f"⚠️ 加载已完成但缓存不完整，可能需要重新加载: {model_name}")
-                    break
-                time.sleep(wait_interval)
-                elapsed = time.time() - wait_start
-                if int(elapsed) % 10 == 0 and int(elapsed) > 0:  # 每10秒打印一次
-                    print(f"⏳ 仍在等待加载完成... (已等待 {elapsed:.1f}秒, TC: {len(cached_transcoders) if cached_transcoders else 0}, LoRSA: {len(cached_lorsas) if cached_lorsas else 0})")
+            # 获取已缓存的HookedTransformer模型
+            hooked_model = get_hooked_model(model_name)
             
-            if not cache_complete:
-                elapsed = time.time() - wait_start
-                if elapsed >= max_wait_time:
-                    print(f"⚠️ 等待加载超时（{elapsed:.1f}秒），但将继续使用当前缓存或报错: {model_name}")
-                else:
-                    print(f"⚠️ 加载完成但缓存不完整，将使用当前缓存或报错: {model_name}")
-        
-        # 获取当前使用的SAE组合ID（从请求中获取，如果没有则使用当前全局组合）
-        sae_combo_id = request.get("sae_combo_id") or CURRENT_BT4_SAE_COMBO_ID
-        combo_cfg = get_bt4_sae_combo(sae_combo_id)
-        normalized_combo_id = combo_cfg["id"]
-        
-        # 根据组合ID设置正确的路径（即使使用缓存，也需要路径用于兼容性）
-        if 'BT4' in model_name:
-            tc_base_path = combo_cfg["tc_base_path"]
-            lorsa_base_path = combo_cfg["lorsa_base_path"]
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported Model!")
-        
-        # 使用组合ID获取正确的缓存（因为不同组合使用不同的缓存键）
-        combo_key = _make_combo_cache_key(model_name, normalized_combo_id)
-        cached_transcoders = _transcoders_cache.get(combo_key)
-        cached_lorsas = _lorsas_cache.get(combo_key)
-        cached_replacement_model = _replacement_models_cache.get(combo_key)
-        
-        # 重新检查缓存完整性
-        cache_complete = (cached_transcoders is not None and cached_lorsas is not None and 
-                         cached_replacement_model is not None and
-                         len(cached_transcoders) == 15 and len(cached_lorsas) == 15)
-        
-        if cache_complete:
-            # 使用缓存的transcoders和lorsas，不需要重新加载
-            print(f"✅ 使用缓存的transcoders、lorsas和replacement_model: {model_name} @ {normalized_combo_id}")
-        else:
-            # 检查是否仍在加载
-            is_still_loading = _loading_status.get(combo_key, {}).get("is_loading", False)
-            if is_still_loading:
-                # 如果仍在加载，继续等待
-                print(f"⏳ 缓存不完整但仍在使用中加载，将继续等待...")
-                raise HTTPException(status_code=503, detail=f"模型 {model_name} 组合 {normalized_combo_id} 正在加载中，请稍后重试。当前进度: TC {len(cached_transcoders) if cached_transcoders else 0}/15, LoRSA {len(cached_lorsas) if cached_lorsas else 0}/15")
-            elif cached_transcoders is None or cached_lorsas is None:
-                # 完全没有缓存，需要加载
-                print(f"⚠️ 未找到缓存，将重新加载transcoders和lorsas: {model_name} @ {normalized_combo_id}")
-                print("   提示：建议先调用 /circuit/preload_models 进行预加载以加速")
+            # 检查是否有缓存的transcoders和lorsas
+            cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name)
+            cached_replacement_model = _replacement_models_cache.get(model_name)
+            
+            # 检查是否正在加载
+            global _loading_status, _loading_locks
+            is_loading = _loading_status.get(model_name, {}).get("is_loading", False)
+            
+            # 如果缓存不完整且正在加载，等待加载完成
+            cache_complete = (cached_transcoders is not None and cached_lorsas is not None and 
+                             cached_replacement_model is not None and
+                             len(cached_transcoders) == 15 and len(cached_lorsas) == 15)
+            
+            if not cache_complete and is_loading:
+                print(f"⏳ 检测到正在加载TC/LoRSA，等待加载完成（避免重复加载）: {model_name}")
+                # 获取加载锁（等待加载完成）
+                if model_name not in _loading_locks:
+                    _loading_locks[model_name] = threading.Lock()
+                
+                # 等待加载完成（最多等待10分钟，因为加载可能需要较长时间）
+                max_wait_time = 600  # 10分钟
+                wait_start = time.time()
+                wait_interval = 1  # 每秒检查一次
+                while (time.time() - wait_start) < max_wait_time:
+                    is_loading = _loading_status.get(model_name, {}).get("is_loading", False)
+                    # 重新检查缓存
+                    cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name)
+                    cached_replacement_model = _replacement_models_cache.get(model_name)
+                    cache_complete = (cached_transcoders is not None and cached_lorsas is not None and 
+                                     cached_replacement_model is not None and
+                                     len(cached_transcoders) == 15 and len(cached_lorsas) == 15)
+                    if cache_complete:
+                        print(f"✅ 等待加载完成，已获取完整缓存: {model_name} (等待时间: {time.time() - wait_start:.1f}秒)")
+                        break
+                    if not is_loading and not cache_complete:
+                        # 加载已完成但缓存不完整，可能是加载失败
+                        print(f"⚠️ 加载已完成但缓存不完整，可能需要重新加载: {model_name}")
+                        break
+                    time.sleep(wait_interval)
+                    elapsed = time.time() - wait_start
+                    if int(elapsed) % 10 == 0 and int(elapsed) > 0:  # 每10秒打印一次
+                        print(f"⏳ 仍在等待加载完成... (已等待 {elapsed:.1f}秒, TC: {len(cached_transcoders) if cached_transcoders else 0}, LoRSA: {len(cached_lorsas) if cached_lorsas else 0})")
+                
+                if not cache_complete:
+                    elapsed = time.time() - wait_start
+                    if elapsed >= max_wait_time:
+                        print(f"⚠️ 等待加载超时（{elapsed:.1f}秒），但将继续使用当前缓存或报错: {model_name}")
+                    else:
+                        print(f"⚠️ 加载完成但缓存不完整，将使用当前缓存或报错: {model_name}")
+            
+            # 获取当前使用的SAE组合ID（从请求中获取，如果没有则使用当前全局组合）
+            sae_combo_id = request.get("sae_combo_id") or CURRENT_BT4_SAE_COMBO_ID
+            combo_cfg = get_bt4_sae_combo(sae_combo_id)
+            normalized_combo_id = combo_cfg["id"]
+            
+            # 根据组合ID设置正确的路径（即使使用缓存，也需要路径用于兼容性）
+            if 'BT4' in model_name:
+                tc_base_path = combo_cfg["tc_base_path"]
+                lorsa_base_path = combo_cfg["lorsa_base_path"]
             else:
-                # 有部分缓存但不完整，也重新加载（这种情况不应该发生，因为应该等待加载完成）
-                print(f"⚠️ 缓存不完整（TC: {len(cached_transcoders)}, LoRSA: {len(cached_lorsas)}），将重新加载: {model_name} @ {normalized_combo_id}")
+                raise HTTPException(status_code=400, detail="Unsupported Model!")
+            
+            # 使用组合ID获取正确的缓存（因为不同组合使用不同的缓存键）
+            combo_key = _make_combo_cache_key(model_name, normalized_combo_id)
+            cached_transcoders = _transcoders_cache.get(combo_key)
+            cached_lorsas = _lorsas_cache.get(combo_key)
+            cached_replacement_model = _replacement_models_cache.get(combo_key)
+            
+            # 重新检查缓存完整性
+            cache_complete = (cached_transcoders is not None and cached_lorsas is not None and 
+                             cached_replacement_model is not None and
+                             len(cached_transcoders) == 15 and len(cached_lorsas) == 15)
+            
+            if cache_complete:
+                # 使用缓存的transcoders和lorsas，不需要重新加载
+                print(f"✅ 使用缓存的transcoders、lorsas和replacement_model: {model_name} @ {normalized_combo_id}")
+            else:
+                # 检查是否仍在加载
+                is_still_loading = _loading_status.get(combo_key, {}).get("is_loading", False)
+                if is_still_loading:
+                    # 如果仍在加载，继续等待
+                    print(f"⏳ 缓存不完整但仍在使用中加载，将继续等待...")
+                    raise HTTPException(status_code=503, detail=f"模型 {model_name} 组合 {normalized_combo_id} 正在加载中，请稍后重试。当前进度: TC {len(cached_transcoders) if cached_transcoders else 0}/15, LoRSA {len(cached_lorsas) if cached_lorsas else 0}/15")
+                elif cached_transcoders is None or cached_lorsas is None:
+                    # 完全没有缓存，需要加载
+                    print(f"⚠️ 未找到缓存，将重新加载transcoders和lorsas: {model_name} @ {normalized_combo_id}")
+                    print("   提示：建议先调用 /circuit/preload_models 进行预加载以加速")
+                else:
+                    # 有部分缓存但不完整，也重新加载（这种情况不应该发生，因为应该等待加载完成）
+                    print(f"⚠️ 缓存不完整（TC: {len(cached_transcoders)}, LoRSA: {len(cached_lorsas)}），将重新加载: {model_name} @ {normalized_combo_id}")
+            
+            # 创建trace_key用于日志存储
+            trace_key = f"{model_name}::{normalized_combo_id}::{fen}::{move_uci}"
+            
+            # 初始化日志列表
+            if trace_key not in _circuit_trace_logs:
+                _circuit_trace_logs[trace_key] = []
+            trace_logs = _circuit_trace_logs[trace_key]
+            trace_logs.clear()  # 清空之前的日志
+            
+            # 设置tracing状态
+            _circuit_trace_status[trace_key] = {"is_tracing": True}
+            
+            # 添加初始日志
+            trace_logs.append({
+                "timestamp": time.time(),
+                "message": f"🔍 开始Circuit Trace: FEN={fen}, Move={move_uci}, Side={side}, OrderMode={order_mode}"
+            })
+            
+            try:
+                # 运行circuit trace，传递已缓存的模型和transcoders/lorsas以及日志列表
+                graph_data = run_circuit_trace(
+                    prompt=fen,
+                    move_uci=move_uci,
+                    negative_move_uci=negative_move_uci,  # 传递negative_move_uci
+                    model_name=model_name,  # 添加模型名称参数
+                    tc_base_path=tc_base_path,  # 传递正确的TC路径
+                    lorsa_base_path=lorsa_base_path,  # 传递正确的LORSA路径
+                    side=side,
+                    max_feature_nodes=max_feature_nodes,
+                    node_threshold=node_threshold,
+                    edge_threshold=edge_threshold,
+                    max_n_logits=max_n_logits,
+                    desired_logit_prob=desired_logit_prob,
+                    batch_size=batch_size,
+                    order_mode=order_mode,
+                    encoder_demean=encoder_demean,
+                    save_activation_info=save_activation_info,
+                    act_times_max=max_act_times,  # 传递最大激活次数参数
+                    log_level="INFO",
+                    hooked_model=hooked_model,  # 传递已缓存的模型
+                    cached_transcoders=cached_transcoders,  # 传递缓存的transcoders
+                    cached_lorsas=cached_lorsas,  # 传递缓存的lorsas
+                    cached_replacement_model=cached_replacement_model,  # 传递缓存的replacement_model
+                    sae_combo_id=normalized_combo_id,  # 传递归一化后的SAE组合ID，用于生成正确的analysis_name模板
+                    trace_logs=trace_logs  # 传递日志列表
+                )
+                
+                # 添加完成日志
+                trace_logs.append({
+                    "timestamp": time.time(),
+                    "message": "✅ Circuit Trace完成!"
+                })
+                
+            finally:
+                # 更新tracing状态
+                _circuit_trace_status[trace_key] = {"is_tracing": False}
+            
+            return graph_data
         
-        # 运行circuit trace，传递已缓存的模型和transcoders/lorsas
-        graph_data = run_circuit_trace(
-            prompt=fen,
-            move_uci=move_uci,
-            negative_move_uci=negative_move_uci,  # 传递negative_move_uci
-            model_name=model_name,  # 添加模型名称参数
-            tc_base_path=tc_base_path,  # 传递正确的TC路径
-            lorsa_base_path=lorsa_base_path,  # 传递正确的LORSA路径
-            side=side,
-            max_feature_nodes=max_feature_nodes,
-            node_threshold=node_threshold,
-            edge_threshold=edge_threshold,
-            max_n_logits=max_n_logits,
-            desired_logit_prob=desired_logit_prob,
-            batch_size=batch_size,
-            order_mode=order_mode,
-            encoder_demean=encoder_demean,
-            save_activation_info=save_activation_info,
-            act_times_max=max_act_times,  # 传递最大激活次数参数
-            log_level="INFO",
-            hooked_model=hooked_model,  # 传递已缓存的模型
-            cached_transcoders=cached_transcoders,  # 传递缓存的transcoders
-            cached_lorsas=cached_lorsas,  # 传递缓存的lorsas
-            cached_replacement_model=cached_replacement_model,  # 传递缓存的replacement_model
-            sae_combo_id=normalized_combo_id  # 传递归一化后的SAE组合ID，用于生成正确的analysis_name模板
-        )
+        finally:
+            # 无论成功还是失败，都要清除标志
+            with _circuit_tracing_lock:
+                _is_circuit_tracing = False
         
-        return graph_data
-        
+    except HTTPException:
+        # HTTPException需要重新抛出（标志已在finally中清除）
+        raise
     except Exception as e:
+        # 其他异常转换为HTTPException（标志已在finally中清除）
         raise HTTPException(status_code=500, detail=f"Circuit trace analysis failed: {str(e)}")
 
 
 @app.get("/circuit_trace/status")
 def circuit_trace_status():
     """检查circuit trace服务的状态"""
+    global _is_circuit_tracing
     return {
         "available": CIRCUITS_SERVICE_AVAILABLE,
-        "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE
+        "hooked_transformer_available": HOOKED_TRANSFORMER_AVAILABLE,
+        "is_tracing": _is_circuit_tracing
+    }
+
+
+@app.get("/circuit_trace/logs")
+def get_circuit_trace_logs(
+    model_name: str = "lc0/BT4-1024x15x32h",
+    sae_combo_id: str | None = None,
+    fen: str | None = None,
+    move_uci: str | None = None,
+):
+    """
+    获取circuit tracing的日志
+    
+    Args:
+        model_name: 模型名称 (查询参数，默认: "lc0/BT4-1024x15x32h")
+        sae_combo_id: SAE组合ID (查询参数，可选)
+        fen: FEN字符串 (查询参数，可选)
+        move_uci: UCI移动 (查询参数，可选)
+    
+    Returns:
+        Circuit tracing日志列表
+    """
+    global _circuit_trace_logs, _circuit_trace_status
+    
+    # 如果提供了所有参数，使用精确匹配
+    if fen and move_uci:
+        combo_id = sae_combo_id or CURRENT_BT4_SAE_COMBO_ID
+        combo_cfg = get_bt4_sae_combo(combo_id)
+        normalized_combo_id = combo_cfg["id"]
+        trace_key = f"{model_name}::{normalized_combo_id}::{fen}::{move_uci}"
+        logs = _circuit_trace_logs.get(trace_key, [])
+        is_tracing = _circuit_trace_status.get(trace_key, {}).get("is_tracing", False)
+    else:
+        # 否则返回最近的日志（按时间戳排序）
+        all_logs = []
+        for trace_key, log_list in _circuit_trace_logs.items():
+            if log_list:
+                # 获取最后一条日志的时间戳
+                last_log_time = log_list[-1]["timestamp"] if log_list else 0
+                all_logs.append((last_log_time, trace_key, log_list))
+        
+        # 按时间戳降序排序
+        all_logs.sort(key=lambda x: x[0], reverse=True)
+        
+        # 返回最近一条trace的日志
+        if all_logs:
+            _, trace_key, logs = all_logs[0]
+            is_tracing = _circuit_trace_status.get(trace_key, {}).get("is_tracing", False)
+        else:
+            logs = []
+            is_tracing = False
+    
+    return {
+        "model_name": model_name,
+        "sae_combo_id": sae_combo_id or CURRENT_BT4_SAE_COMBO_ID,
+        "logs": logs,
+        "total_count": len(logs),
+        "is_tracing": is_tracing,
     }
 
 

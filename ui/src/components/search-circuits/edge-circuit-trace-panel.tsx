@@ -119,6 +119,21 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
 
   // 处理 Circuit Trace
   const handleCircuitTrace = useCallback(async () => {
+    // 先检查后端是否有正在进行的circuit tracing进程
+    try {
+      const statusResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/status`);
+      if (statusResponse.ok) {
+        const status = await statusResponse.json();
+        if (status.is_tracing) {
+          alert('后端正在执行另一个circuit tracing进程，请等待完成后再试');
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('检查circuit tracing状态失败:', error);
+      // 如果检查失败，仍然继续执行（避免因为网络问题阻止用户操作）
+    }
+    
     setIsTracing(true);
     
     try {

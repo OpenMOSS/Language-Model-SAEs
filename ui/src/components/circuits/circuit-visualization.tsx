@@ -10,6 +10,7 @@ import { FeatureCard } from "@/components/feature/feature-card";
 import { ChessBoard } from "@/components/chess/chess-board";
 import React from "react"; // Added missing import for React
 import { SaeComboLoader } from "@/components/common/SaeComboLoader";
+import { useModelLoadingStatus } from "@/components/shared/model-loading-status";
 
 // 定义节点激活数据的类型
 interface NodeActivationData {
@@ -37,6 +38,8 @@ export const CircuitVisualization = () => {
     setPinnedIds,
     setHiddenIds,
   } = useCircuitState();
+
+  const { isLoaded: isSaeLoaded } = useModelLoadingStatus();
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
@@ -1314,8 +1317,15 @@ export const CircuitVisualization = () => {
   }, [linkGraphData, getDictionaryName]);
 
   // 获取 Token Predictions 数据的函数
-  const fetchTokenPredictions = useCallback(async (nodeId: string) => {
+  const fetchTokenPredictions = useCallback(async (nodeId: string, currentSteeringScale?: number) => {
     if (!nodeId || !fen) return;
+
+    if (!isSaeLoaded) {
+      console.warn("TC/LoRSA 未加载，跳过 steering_analysis 调用");
+      alert("请先在上方加载 TC/LoRSA 组合（SaeComboLoader），再使用 steering 功能。");
+      setTokenPredictions(null);
+      return;
+    }
     
     setLoadingTokenPredictions(true);
     try {
@@ -1330,13 +1340,17 @@ export const CircuitVisualization = () => {
       const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
       const featureType = currentNode?.feature_type?.toLowerCase() === 'lorsa' ? 'lorsa' : 'transcoder';
       
+      // 使用传入的 steeringScale 或当前状态中的值
+      const scaleToUse = currentSteeringScale !== undefined ? currentSteeringScale : steeringScale;
+      
       console.log('🔍 获取 Token Predictions 数据:', {
         nodeId,
         layerIdx,
         featureIndex,
         pos,
         featureType,
-        fen
+        fen,
+        steering_scale: scaleToUse
       });
       
       // 调用后端 API 进行 steering 分析（支持 steering_scale 参数）
@@ -1353,7 +1367,7 @@ export const CircuitVisualization = () => {
             layer: layerIdx,
             pos: pos,
             feature: featureIndex,
-            steering_scale: steeringScale,
+            steering_scale: scaleToUse,
             metadata: linkGraphData?.metadata
           })
         }
@@ -1375,18 +1389,17 @@ export const CircuitVisualization = () => {
     } finally {
       setLoadingTokenPredictions(false);
     }
-  }, [fen, linkGraphData, steeringScale]);
+  }, [fen, linkGraphData, isSaeLoaded, steeringScale]);
 
-  // 当点击节点时获取 Top Activation 和 Token Predictions 数据
+  // 当点击节点时获取 Top Activation 数据（Token Predictions 改为手动触发）
   React.useEffect(() => {
     if (clickedId) {
       fetchTopActivations(clickedId);
-      fetchTokenPredictions(clickedId);
     } else {
       setTopActivations([]);
       setTokenPredictions(null);
     }
-  }, [clickedId, fetchTopActivations, fetchTokenPredictions]);
+  }, [clickedId, fetchTopActivations]);
 
   // 同步clerps到后端interpretations
   const syncClerpsToBackend = useCallback(async () => {
@@ -1594,27 +1607,41 @@ export const CircuitVisualization = () => {
       
       // 从metadata中提取模型名称并转换为analysis_name
       const metadata = (linkGraphData.metadata || {}) as any;
-      const lorsaModelName = metadata.lorsa_analysis_name;
-      const tcModelName = metadata.tc_analysis_name || metadata.clt_analysis_name;
+      const lorsaAnalysisNameRaw = metadata.lorsa_analysis_name;
+      const tcAnalysisNameRaw = metadata.tc_analysis_name || metadata.clt_analysis_name;
       // 从metadata中读取sae_series，如果没有则使用默认值
       const saeSeries = (metadata as any).sae_series || 'BT4-exp128';
       
-      // 根据模型名称构建analysis_name模板
+      // 根据analysis_name构建模板
+      // 格式：如果analysis_name是 "BT4_lorsa_k30_e16"，模板应该是 "BT4_lorsa_L{}A_k30_e16"
+      // 如果analysis_name是 "BT4_lorsa"（默认），模板应该是 "BT4_lorsa_L{}A"
       let lorsaAnalysisName = undefined;
       let tcAnalysisName = undefined;
       
-      if (lorsaModelName) {
-        if (lorsaModelName.includes('BT4')) {
-          lorsaAnalysisName = 'BT4_lorsa_L{}A';
-        } else if (lorsaModelName.includes('T82')) {
+      if (lorsaAnalysisNameRaw) {
+        if (lorsaAnalysisNameRaw.includes('BT4_lorsa')) {
+          // 提取后缀（如果有）："BT4_lorsa_k30_e16" -> "k30_e16"
+          const suffix = lorsaAnalysisNameRaw.replace('BT4_lorsa', '').replace(/^_/, '');
+          if (suffix) {
+            lorsaAnalysisName = `BT4_lorsa_L{}A_${suffix}`;
+          } else {
+            lorsaAnalysisName = 'BT4_lorsa_L{}A';
+          }
+        } else if (lorsaAnalysisNameRaw.includes('T82')) {
           lorsaAnalysisName = 'lc0-lorsa-L{}';
         }
       }
       
-      if (tcModelName) {
-        if (tcModelName.includes('BT4')) {
-          tcAnalysisName = 'BT4_tc_L{}M';
-        } else if (tcModelName.includes('T82')) {
+      if (tcAnalysisNameRaw) {
+        if (tcAnalysisNameRaw.includes('BT4_tc')) {
+          // 提取后缀（如果有）："BT4_tc_k30_e16" -> "k30_e16"
+          const suffix = tcAnalysisNameRaw.replace('BT4_tc', '').replace(/^_/, '');
+          if (suffix) {
+            tcAnalysisName = `BT4_tc_L{}M_${suffix}`;
+          } else {
+            tcAnalysisName = 'BT4_tc_L{}M';
+          }
+        } else if (tcAnalysisNameRaw.includes('T82')) {
           tcAnalysisName = 'lc0_L{}M_16x_k30_lr2e-03_auxk_sparseadam';
         }
       }
@@ -1623,8 +1650,8 @@ export const CircuitVisualization = () => {
         totalNodes: nodes.length,
         threshold: threshold,
         saeSeries: saeSeries,
-        lorsaModelName: lorsaModelName,
-        tcModelName: tcModelName,
+        lorsaAnalysisNameRaw: lorsaAnalysisNameRaw,
+        tcAnalysisNameRaw: tcAnalysisNameRaw,
         lorsaAnalysisName: lorsaAnalysisName,
         tcAnalysisName: tcAnalysisName,
         sampleNodes: nodes.slice(0, 3)
@@ -2155,6 +2182,7 @@ export const CircuitVisualization = () => {
               zPatternIndices={nodeActivationData?.zPatternIndices}
               zPatternValues={nodeActivationData?.zPatternValues}
               flip_activation={Boolean(fen && fen.split(' ')[1] === 'b')}
+              autoFlipWhenBlack={true}
               sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
               analysisName={nodeActivationData?.nodeType || 'Circuit Node'}
               moveColor={(clickedId ? (displayLinkGraphData.nodes.find(n => n.nodeId === clickedId)?.nodeColor) : undefined) as any}
@@ -2252,6 +2280,7 @@ export const CircuitVisualization = () => {
                   zPatternIndices={belongs ? perFileActivation.zPatternIndices : undefined}
                   zPatternValues={belongs ? perFileActivation.zPatternValues : undefined}
                   flip_activation={Boolean(fileFen && fileFen.split(' ')[1] === 'b')}
+                  autoFlipWhenBlack={true}
                   sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
                   analysisName={(perFileActivation?.nodeType || 'Circuit Node') + ` @${idx+1}`}
                   moveColor={UNIQUE_GRAPH_COLORS[idx % UNIQUE_GRAPH_COLORS.length]}
@@ -2388,9 +2417,24 @@ export const CircuitVisualization = () => {
                         setSteeringScaleInput('0');
                       }
                     }}
-                    title="调节steering放大系数，支持负数输入，修改后将自动重新分析"
+                    title="调节steering放大系数，支持负数输入"
                   />
                 </div>
+                <button
+                  onClick={() => clickedId && fetchTokenPredictions(clickedId)}
+                  disabled={loadingTokenPredictions || !clickedId || !fen}
+                  className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
+                  title="运行特征干预分析"
+                >
+                  {loadingTokenPredictions ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      分析中...
+                    </>
+                  ) : (
+                    '开始分析'
+                  )}
+                </button>
                 {loadingTokenPredictions && (
                   <div className="flex items-center space-x-2">
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
@@ -2478,7 +2522,8 @@ export const CircuitVisualization = () => {
               </div>
             ) : (
               <div className="text-center py-8 text-gray-500">
-                <p>点击节点以运行Token Predictions分析</p>
+                <p>点击"开始分析"按钮以运行Token Predictions分析</p>
+                <p className="text-sm mt-2">请先在上方加载 TC/LoRSA 组合（SaeComboLoader）</p>
               </div>
             )}
           </div>

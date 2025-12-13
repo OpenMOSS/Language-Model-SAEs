@@ -193,7 +193,7 @@ def compare_fen_activations(
         lorsa_feature_act = lorsas[layer].encode(lorsa_input)
         lorsa_feature_acts_perturbed.append(lorsa_feature_act)
         
-        tc_input = cache_perturbed[f'blocks.{layer}.hook_attn_in']
+        tc_input = cache_perturbed[f'blocks.{layer}.resid_mid_after_ln']
         tc_feature_act = transcoders[layer].encode(tc_input)
         tc_feature_acts_perturbed.append(tc_feature_act)
     
