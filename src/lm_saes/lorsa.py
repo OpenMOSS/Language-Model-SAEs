@@ -734,7 +734,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
     @override
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
-        self.W_O.data = self.W_O.data * value / self.W_O.data.norm(dim=1, keepdim=True)
+        if force_exact:
+            self.W_O.mul_(value / self.decoder_norm(keepdim=True))
+        else:
+            self.W_O.mul_(value / torch.clamp(self.decoder_norm(keepdim=True), min=value))
 
     @override
     @torch.no_grad()
