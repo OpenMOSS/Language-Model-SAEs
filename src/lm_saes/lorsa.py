@@ -164,10 +164,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         torch.nn.init.xavier_uniform_(self.W_K)
 
         W_V_bound = 1 / math.sqrt(self.cfg.d_sae)
-        torch.nn.init.uniform_(self.W_V, -W_V_bound, W_V_bound)
+        # torch.nn.init.uniform_(self.W_V, -W_V_bound, W_V_bound)
+        torch.nn.init.normal_(self.W_V, mean=0, std=W_V_bound)
 
         W_O_bound = 1 / math.sqrt(self.cfg.d_model)
-        torch.nn.init.uniform_(self.W_O, -W_O_bound, W_O_bound)
+        # torch.nn.init.uniform_(self.W_O, -W_O_bound, W_O_bound)
+        torch.nn.init.normal_(self.W_O, mean=0, std=W_O_bound)
 
         torch.nn.init.zeros_(self.b_Q)
         torch.nn.init.zeros_(self.b_K)
@@ -189,8 +191,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             lorsa_qk_start_idx = model_parallel_rank * self.cfg.n_qk_heads // model_parallel_size
             lorsa_qk_end_idx = lorsa_qk_start_idx + self.cfg.n_qk_heads // model_parallel_size
             lorsa_qk_indices = torch.arange(lorsa_qk_start_idx, lorsa_qk_end_idx)
-            W_Q_local = mhsa.W_Q[lorsa_qk_indices // qk_exp_factor]
-            W_K_local = mhsa.W_K[lorsa_qk_indices // qk_exp_factor]
+            W_Q_local = mhsa.W_Q[lorsa_qk_indices // qk_exp_factor] / input_norm_factor
+            W_K_local = mhsa.W_K[lorsa_qk_indices // qk_exp_factor] / input_norm_factor
             W_Q = DTensor.from_local(
                 W_Q_local,
                 device_mesh=self.device_mesh,
@@ -322,6 +324,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 )
             self.W_V.copy_(self.W_V.data / self.W_V.data.norm(dim=1, keepdim=True))
             self.W_O.copy_(self.W_O.data / self.W_O.data.norm(dim=1, keepdim=True))
+
+    @torch.no_grad()
+    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch: dict[str, torch.Tensor]):
+        x = self.prepare_input(activation_batch)[0]
+        _, hidden_pre = self.encode(x, return_hidden_pre=True)
+        self.b_V.copy_(-hidden_pre.mean(dim=[0, 1]))
 
     def _calculate_sin_cos_rotary(
         self,
