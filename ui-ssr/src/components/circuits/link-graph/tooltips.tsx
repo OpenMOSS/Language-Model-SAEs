@@ -1,0 +1,119 @@
+import React, { useEffect, useRef } from 'react'
+import * as d3 from 'd3'
+import type { Node } from '@/types/circuit'
+
+interface TooltipsProps {
+  positionedNodes: Node[]
+  visState: { hoveredId: string | null }
+  dimensions: { width: number; height: number }
+}
+
+const BOTTOM_PADDING = 40
+
+export const Tooltips: React.FC<TooltipsProps> = React.memo(
+  ({ positionedNodes, visState, dimensions }) => {
+    const svgRef = useRef<SVGGElement>(null)
+    const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    // Clear any existing timeout when hover state changes
+    useEffect(() => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+        timeoutRef.current = null
+      }
+    }, [visState.hoveredId])
+
+    // Set a fallback timeout to clear tooltips
+    useEffect(() => {
+      if (visState.hoveredId && !timeoutRef.current) {
+        timeoutRef.current = setTimeout(() => {
+          timeoutRef.current = null
+        }, 10000) // 10 second fallback
+      }
+
+      return () => {
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current)
+          timeoutRef.current = null
+        }
+      }
+    }, [visState.hoveredId])
+
+    useEffect(() => {
+      if (!svgRef.current) return
+
+      const svg = d3.select(svgRef.current)
+      svg.selectAll('*').remove()
+
+      if (!visState.hoveredId) {
+        return
+      }
+
+      const hoveredNode = positionedNodes.find(
+        (d) => d.nodeId === visState.hoveredId,
+      )
+
+      if (hoveredNode) {
+        const tooltip = svg.append('g')
+
+        // Determine tooltip content
+        let tooltipText = ''
+        if (hoveredNode.localClerp) {
+          tooltipText = hoveredNode.localClerp
+        } else if (hoveredNode.remoteClerp) {
+          tooltipText = hoveredNode.remoteClerp
+        } else {
+          tooltipText = `Feature: ${hoveredNode.featureId} (Layer ${hoveredNode.layerIdx})`
+        }
+
+        // Calculate tooltip dimensions
+        const textWidth = tooltipText.length * 6
+        const tooltipWidth = Math.max(120, textWidth + 20)
+        const tooltipHeight = 20
+        const padding = 10
+
+        let tooltipX = hoveredNode.pos[0] + padding
+        let tooltipY = hoveredNode.pos[1] - 15
+
+        // Adjust position if off-screen
+        if (tooltipX + tooltipWidth > dimensions.width - padding) {
+          tooltipX = hoveredNode.pos[0] - tooltipWidth - padding
+        }
+
+        if (tooltipY < padding) {
+          tooltipY = hoveredNode.pos[1] + padding
+        }
+
+        if (
+          tooltipY + tooltipHeight >
+          dimensions.height - BOTTOM_PADDING - padding
+        ) {
+          tooltipY = hoveredNode.pos[1] - tooltipHeight - padding
+        }
+
+        // Background rectangle
+        tooltip
+          .append('rect')
+          .attr('x', tooltipX)
+          .attr('y', tooltipY)
+          .attr('width', tooltipWidth)
+          .attr('height', tooltipHeight)
+          .attr('fill', 'rgba(0, 0, 0, 0.8)')
+          .attr('rx', 2)
+
+        // Tooltip text
+        tooltip
+          .append('text')
+          .attr('x', tooltipX + 5)
+          .attr('y', tooltipY + 13)
+          .attr('fill', 'white')
+          .attr('font-size', '10px')
+          .text(tooltipText)
+      }
+    }, [positionedNodes, visState.hoveredId, dimensions])
+
+    return <g ref={svgRef} />
+  },
+)
+
+Tooltips.displayName = 'Tooltips'

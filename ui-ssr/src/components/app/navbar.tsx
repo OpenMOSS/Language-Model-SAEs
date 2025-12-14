@@ -19,11 +19,21 @@ export const AppNavbar = () => {
           <Link
             className={cn(
               'transition-colors hover:text-foreground/80 text-foreground/60',
-              pathname === '/dictionaries' && 'text-foreground font-medium',
+              pathname.startsWith('/dictionaries') &&
+                'text-foreground font-medium',
             )}
             to="/dictionaries"
           >
             Dictionaries
+          </Link>
+          <Link
+            className={cn(
+              'transition-colors hover:text-foreground/80 text-foreground/60',
+              pathname.startsWith('/circuits') && 'text-foreground font-medium',
+            )}
+            to="/circuits"
+          >
+            Circuits
           </Link>
         </div>
       </div>

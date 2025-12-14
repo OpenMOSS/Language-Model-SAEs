@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DictionariesIndexRouteImport } from './routes/dictionaries.index'
+import { Route as CircuitsIndexRouteImport } from './routes/circuits.index'
 import { Route as DictionariesDictionaryNameIndexRouteImport } from './routes/dictionaries.$dictionaryName.index'
 import { Route as DictionariesDictionaryNameFeaturesFeatureIndexRouteImport } from './routes/dictionaries.$dictionaryName.features.$featureIndex'
 
@@ -22,6 +23,11 @@ const IndexRoute = IndexRouteImport.update({
 const DictionariesIndexRoute = DictionariesIndexRouteImport.update({
   id: '/dictionaries/',
   path: '/dictionaries/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CircuitsIndexRoute = CircuitsIndexRouteImport.update({
+  id: '/circuits/',
+  path: '/circuits/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DictionariesDictionaryNameIndexRoute =
@@ -39,12 +45,14 @@ const DictionariesDictionaryNameFeaturesFeatureIndexRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/circuits': typeof CircuitsIndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/circuits': typeof CircuitsIndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
@@ -52,6 +60,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/circuits/': typeof CircuitsIndexRoute
   '/dictionaries/': typeof DictionariesIndexRoute
   '/dictionaries/$dictionaryName/': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
@@ -60,18 +69,21 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/circuits'
     | '/dictionaries'
     | '/dictionaries/$dictionaryName'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/circuits'
     | '/dictionaries'
     | '/dictionaries/$dictionaryName'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
   id:
     | '__root__'
     | '/'
+    | '/circuits/'
     | '/dictionaries/'
     | '/dictionaries/$dictionaryName/'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
@@ -79,6 +91,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CircuitsIndexRoute: typeof CircuitsIndexRoute
   DictionariesIndexRoute: typeof DictionariesIndexRoute
   DictionariesDictionaryNameIndexRoute: typeof DictionariesDictionaryNameIndexRoute
   DictionariesDictionaryNameFeaturesFeatureIndexRoute: typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
@@ -100,6 +113,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DictionariesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/circuits/': {
+      id: '/circuits/'
+      path: '/circuits'
+      fullPath: '/circuits'
+      preLoaderRoute: typeof CircuitsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dictionaries/$dictionaryName/': {
       id: '/dictionaries/$dictionaryName/'
       path: '/dictionaries/$dictionaryName'
@@ -119,6 +139,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CircuitsIndexRoute: CircuitsIndexRoute,
   DictionariesIndexRoute: DictionariesIndexRoute,
   DictionariesDictionaryNameIndexRoute: DictionariesDictionaryNameIndexRoute,
   DictionariesDictionaryNameFeaturesFeatureIndexRoute:
