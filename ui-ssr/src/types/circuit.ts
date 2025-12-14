@@ -1,52 +1,50 @@
+// Base types from JSON data (after camelCase transformation)
 export interface Node {
-  id: string
   nodeId: string
-  featureId: string
-  feature_type: string
-  ctx_idx: number
-  layerIdx: number
-  pos: [number, number]
-  xOffset: number
-  yOffset: number
-  nodeColor: string
-  logitPct?: number
-  logitToken?: string
-  featureIndex?: number
-  localClerp?: string
-  remoteClerp?: string
-  sourceLinks?: Link[]
-  targetLinks?: Link[]
+  feature: number
+  layer: number
+  ctxIdx: number
+  featureType: string
+  tokenProb: number
+  isTargetLogit: boolean
+  clerp: string
 }
 
-export interface Link {
+export interface Edge {
   source: string
   target: string
-  pathStr: string
-  color: string
-  strokeWidth: number
-  weight?: number
-  pctInput?: number
+  weight: number
 }
 
-export interface LinkGraphData {
+// Positioned types for visualization
+export interface PositionedNode extends Node {
+  pos: [number, number]
+}
+
+export interface PositionedEdge extends Edge {
+  pathStr: string
+}
+
+// Circuit data container
+export interface CircuitData {
   nodes: Node[]
-  links: Link[]
+  edges: Edge[]
   metadata: CircuitMetadata
 }
 
 export interface CircuitMetadata {
-  prompt_tokens: string[]
-  lorsa_analysis_name?: string
-  clt_analysis_name?: string
+  promptTokens: string[]
+  lorsaAnalysisName?: string
+  cltAnalysisName?: string
 }
 
 export interface VisState {
   pinnedIds: string[]
   clickedId: string | null
   hoveredId: string | null
-  isShowAllLinks: boolean
 }
 
+// Raw JSON data structure
 export interface CircuitJsonData {
   metadata: {
     slug: string

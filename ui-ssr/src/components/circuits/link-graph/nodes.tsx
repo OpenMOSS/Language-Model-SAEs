@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef } from 'react'
 import * as d3 from 'd3'
-import type { Link, Node } from '@/types/circuit'
+import type { PositionedEdge, PositionedNode } from '@/types/circuit'
+import { getNodeColor } from '@/utils/circuit'
 
 interface NodesProps {
-  positionedNodes: Node[]
-  positionedLinks: Link[]
+  positionedNodes: PositionedNode[]
+  positionedEdges: PositionedEdge[]
   visState: {
     clickedId: string | null
     hoveredId: string | null
@@ -17,7 +18,7 @@ interface NodesProps {
 export const Nodes: React.FC<NodesProps> = React.memo(
   ({
     positionedNodes,
-    positionedLinks,
+    positionedEdges,
     visState,
     onNodeMouseEnter,
     onNodeMouseLeave,
@@ -46,13 +47,13 @@ export const Nodes: React.FC<NodesProps> = React.memo(
     const isConnected = useCallback(
       (nodeId: string) => {
         if (!visState.clickedId) return false
-        return positionedLinks.some(
-          (link) =>
-            (link.source === visState.clickedId && link.target === nodeId) ||
-            (link.target === visState.clickedId && link.source === nodeId),
+        return positionedEdges.some(
+          (edge) =>
+            (edge.source === visState.clickedId && edge.target === nodeId) ||
+            (edge.target === visState.clickedId && edge.source === nodeId),
         )
       },
-      [visState.clickedId, positionedLinks],
+      [visState.clickedId, positionedEdges],
     )
 
     useEffect(() => {
@@ -72,7 +73,7 @@ export const Nodes: React.FC<NodesProps> = React.memo(
         .attr('cx', (d: any) => d.pos[0])
         .attr('cy', (d: any) => d.pos[1])
         .attr('r', (d: any) => (isConnected(d.nodeId) ? 6 : 4))
-        .attr('fill', (d: any) => d.nodeColor)
+        .attr('fill', (d: any) => getNodeColor(d.featureType))
         .attr('stroke', (d: any) => {
           if (d.nodeId === visState.clickedId) return '#ef4444'
           if (isConnected(d.nodeId)) return '#10b981'
@@ -102,7 +103,7 @@ export const Nodes: React.FC<NodesProps> = React.memo(
         .attr('cx', (d: any) => d.pos[0])
         .attr('cy', (d: any) => d.pos[1])
         .attr('r', (d: any) => (isConnected(d.nodeId) ? 6 : 4))
-        .attr('fill', (d: any) => d.nodeColor)
+        .attr('fill', (d: any) => getNodeColor(d.featureType))
         .attr('stroke', (d: any) => {
           if (d.nodeId === visState.clickedId) return '#ef4444'
           if (isConnected(d.nodeId)) return '#10b981'
@@ -147,7 +148,7 @@ export const Nodes: React.FC<NodesProps> = React.memo(
       }
     }, [
       positionedNodes,
-      positionedLinks,
+      positionedEdges,
       visState,
       handleMouseEnter,
       handleMouseLeave,

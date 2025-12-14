@@ -4,12 +4,12 @@ import * as d3 from 'd3'
 interface GridLinesProps {
   dimensions: { width: number; height: number }
   calculatedCtxCounts: {
-    ctx_idx: number
+    ctxIdx: number
     maxCount: number
     cumsum: number
   }[]
   x: d3.ScaleLinear<number, number>
-  positionedNodes: { ctx_idx: number }[]
+  positionedNodes: { ctxIdx: number }[]
 }
 
 const BOTTOM_PADDING = 40
@@ -24,12 +24,11 @@ export const GridLines: React.FC<GridLinesProps> = React.memo(
       const svg = d3.select(svgRef.current)
       svg.selectAll('*').remove()
 
-      const earliestCtxWithNodes =
-        d3.min(positionedNodes, (d) => d.ctx_idx) || 0
+      const earliestCtxWithNodes = d3.min(positionedNodes, (d) => d.ctxIdx) || 0
 
       calculatedCtxCounts.forEach((ctxData) => {
-        if (ctxData.ctx_idx >= earliestCtxWithNodes) {
-          const xPos = x(ctxData.ctx_idx)
+        if (ctxData.ctxIdx >= earliestCtxWithNodes) {
+          const xPos = x(ctxData.ctxIdx)
           svg
             .append('line')
             .attr('x1', xPos)

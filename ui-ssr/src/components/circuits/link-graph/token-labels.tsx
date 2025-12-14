@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react'
 import * as d3 from 'd3'
 
 interface TokenLabelsProps {
-  tokenData: { token: string; ctx_idx: number; x: number }[]
+  tokenData: { token: string; ctxIdx: number; x: number }[]
   dimensions: { width: number; height: number }
 }
 
@@ -18,10 +18,9 @@ export const TokenLabels: React.FC<TokenLabelsProps> = React.memo(
       const svg = d3.select(svgRef.current)
       svg.selectAll('*').remove()
 
-      // Draw prompt tokens at the bottom
       svg
         .selectAll('text')
-        .data(tokenData, (d: any) => d.ctx_idx)
+        .data(tokenData, (d: any) => d.ctxIdx)
         .enter()
         .append('text')
         .attr('x', (d: any) => d.x)

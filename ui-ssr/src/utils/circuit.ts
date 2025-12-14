@@ -1,9 +1,9 @@
 import type {
+  CircuitData,
   CircuitJsonData,
   CircuitMetadata,
-  Link,
-  LinkGraphData,
   Node,
+  PositionedNode,
 } from '@/types/circuit'
 
 export function extractLayerAndFeature(
@@ -24,25 +24,14 @@ export function extractLayerAndFeature(
   }
 }
 
-export function featureTypeToText(type: string): string {
-  switch (type) {
-    case 'embedding':
-      return 'E'
-    case 'logit':
-      return 'L'
-    default:
-      return type.charAt(0).toUpperCase()
-  }
-}
-
 export function getDictionaryName(
   metadata: CircuitMetadata,
   layer: number,
   isLorsa: boolean,
 ): string | null {
   const analysisName = isLorsa
-    ? metadata.lorsa_analysis_name
-    : metadata.clt_analysis_name
+    ? metadata.lorsaAnalysisName
+    : metadata.cltAnalysisName
   if (!analysisName) return null
 
   const parts = analysisName.split('/')
@@ -51,7 +40,7 @@ export function getDictionaryName(
   return `${parts[0]}/${isLorsa ? 'attn' : 'mlp'}_${layer}`
 }
 
-function getNodeColor(featureType: string): string {
+export function getNodeColor(featureType: string): string {
   switch (featureType) {
     case 'logit':
       return '#ff6b6b'
@@ -66,75 +55,73 @@ function getNodeColor(featureType: string): string {
   }
 }
 
-export function transformCircuitData(jsonData: CircuitJsonData): LinkGraphData {
+export function getEdgeColor(weight: number): string {
+  return weight > 0 ? '#4CAF50' : '#F44336'
+}
+
+export function getEdgeStrokeWidth(weight: number): number {
+  return Math.max(0.5, Math.min(3, Math.abs(weight) * 10))
+}
+
+export function transformCircuitData(jsonData: CircuitJsonData): CircuitData {
   const nodes: Node[] = jsonData.nodes.map((node) => ({
-    id: node.node_id,
     nodeId: node.node_id,
-    featureId: node.feature.toString(),
-    feature_type: node.feature_type,
-    ctx_idx: node.ctx_idx,
-    layerIdx: node.layer + 1,
-    pos: [0, 0],
-    xOffset: 0,
-    yOffset: 0,
-    nodeColor: getNodeColor(node.feature_type),
-    logitPct: node.token_prob,
-    logitToken: node.is_target_logit ? 'target' : undefined,
-    localClerp: node.clerp,
+    feature: node.feature,
+    layer: node.layer,
+    ctxIdx: node.ctx_idx,
+    featureType: node.feature_type,
+    tokenProb: node.token_prob,
+    isTargetLogit: node.is_target_logit,
+    clerp: node.clerp,
   }))
 
-  const edges = jsonData.links || []
-
-  const links: Link[] = edges.map((edge) => {
-    const strokeWidth = Math.max(0.5, Math.min(3, Math.abs(edge.weight) * 10))
-    const color = edge.weight > 0 ? '#4CAF50' : '#F44336'
-
-    return {
-      source: edge.source,
-      target: edge.target,
-      pathStr: '',
-      color,
-      strokeWidth,
-      weight: edge.weight,
-      pctInput: Math.abs(edge.weight) * 100,
-    }
-  })
-
-  nodes.forEach((node) => {
-    node.sourceLinks = links.filter((link) => link.source === node.nodeId)
-    node.targetLinks = links.filter((link) => link.target === node.nodeId)
-  })
+  const edges = (jsonData.links || []).map((edge) => ({
+    source: edge.source,
+    target: edge.target,
+    weight: edge.weight,
+  }))
 
   return {
     nodes,
-    links,
+    edges,
     metadata: {
-      prompt_tokens: jsonData.metadata.prompt_tokens,
-      lorsa_analysis_name: jsonData.metadata.lorsa_analysis_name,
-      clt_analysis_name: jsonData.metadata.clt_analysis_name,
+      promptTokens: jsonData.metadata.prompt_tokens,
+      lorsaAnalysisName: jsonData.metadata.lorsa_analysis_name,
+      cltAnalysisName: jsonData.metadata.clt_analysis_name,
     },
   }
 }
 
-export function formatFeatureId(node: Node, verbose: boolean = true): string {
-  if (node.feature_type === 'cross layer transcoder') {
-    const layerIdx = Math.floor(node.layerIdx / 2) - 1
-    const featureId = node.id.split('_')[1]
+export function formatFeatureId(
+  node: Node | PositionedNode,
+  verbose: boolean = true,
+): string {
+  const layerIdx = node.layer + 1
+  if (node.featureType === 'cross layer transcoder') {
+    const mlpLayer = Math.floor(layerIdx / 2) - 1
+    const featureId = node.nodeId.split('_')[1]
+    return verbose ? `M${mlpLayer}#${featureId}@${node.ctxIdx}` : `M${mlpLayer}`
+  } else if (node.featureType === 'lorsa') {
+    const attnLayer = Math.floor(layerIdx / 2)
+    const featureId = node.nodeId.split('_')[1]
     return verbose
-      ? `M${layerIdx}#${featureId}@${node.ctx_idx}`
-      : `M${layerIdx}`
-  } else if (node.feature_type === 'lorsa') {
-    const layerIdx = Math.floor(node.layerIdx / 2)
-    const featureId = node.id.split('_')[1]
-    return verbose
-      ? `A${layerIdx}#${featureId}@${node.ctx_idx}`
-      : `A${layerIdx}`
-  } else if (node.feature_type === 'embedding') {
-    return `Emb@${node.ctx_idx}`
-  } else if (node.feature_type === 'mlp reconstruction error') {
-    return `M${Math.floor(node.layerIdx / 2) - 1}Error@${node.ctx_idx}`
-  } else if (node.feature_type === 'lorsa error') {
-    return `A${Math.floor(node.layerIdx / 2)}Error@${node.ctx_idx}`
+      ? `A${attnLayer}#${featureId}@${node.ctxIdx}`
+      : `A${attnLayer}`
+  } else if (node.featureType === 'embedding') {
+    return `Emb@${node.ctxIdx}`
+  } else if (node.featureType === 'mlp reconstruction error') {
+    return `M${Math.floor(layerIdx / 2) - 1}Error@${node.ctxIdx}`
+  } else if (node.featureType === 'lorsa error') {
+    return `A${Math.floor(layerIdx / 2)}Error@${node.ctxIdx}`
   }
   return ' '
+}
+
+export function findEdgeWeight(
+  edges: { source: string; target: string; weight: number }[],
+  source: string,
+  target: string,
+): number | undefined {
+  const edge = edges.find((e) => e.source === source && e.target === target)
+  return edge?.weight
 }

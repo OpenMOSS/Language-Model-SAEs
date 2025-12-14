@@ -3,7 +3,7 @@ import * as d3 from 'd3'
 
 interface RowBackgroundsProps {
   dimensions: { width: number; height: number }
-  positionedNodes: { layerIdx: number }[]
+  positionedNodes: { layer: number }[]
   y: d3.ScaleBand<number>
 }
 
@@ -17,7 +17,7 @@ export const RowBackgrounds: React.FC<RowBackgroundsProps> = React.memo(
       const svg = d3.select(svgRef.current)
       svg.selectAll('*').remove()
 
-      const yNumTicks = (d3.max(positionedNodes, (d) => d.layerIdx) || 0) + 1
+      const yNumTicks = (d3.max(positionedNodes, (d) => d.layer) || 0) + 2
 
       d3.range(yNumTicks).forEach((layerIdx: number) => {
         const yPos = y(layerIdx) || 0

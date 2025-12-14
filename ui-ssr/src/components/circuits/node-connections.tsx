@@ -1,22 +1,15 @@
-import React, { useCallback, useMemo } from 'react'
-import type { Link, LinkGraphData, Node } from '@/types/circuit'
-import type { Feature } from '@/types/feature'
-import {
-  extractLayerAndFeature,
-  formatFeatureId,
-  getDictionaryName,
-} from '@/utils/circuit'
-import { fetchFeature } from '@/api/features'
+import React, { useMemo } from 'react'
+import type { CircuitData, Node } from '@/types/circuit'
+import { findEdgeWeight, formatFeatureId } from '@/utils/circuit'
 
 interface NodeConnectionsProps {
-  data: LinkGraphData
+  data: CircuitData
   clickedId: string | null
   hoveredId: string | null
   pinnedIds: string[]
   hiddenIds: string[]
-  onFeatureClick: (node: Node, isMetaKey: boolean) => void
-  onFeatureSelect: (feature: Feature | null) => void
-  onFeatureHover: (nodeId: string | null) => void
+  onNodeClick: (nodeId: string, metaKey: boolean) => void
+  onNodeHover: (nodeId: string | null) => void
 }
 
 interface ConnectionSection {
@@ -36,9 +29,8 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
   hoveredId,
   pinnedIds,
   hiddenIds,
-  onFeatureClick,
-  onFeatureSelect,
-  onFeatureHover,
+  onNodeClick,
+  onNodeHover,
 }) => {
   const clickedNode = useMemo(
     () => data.nodes.find((node) => node.nodeId === clickedId),
@@ -46,23 +38,23 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
   )
 
   const connectionTypes = useMemo((): ConnectionType[] => {
-    if (!clickedNode || !clickedNode.sourceLinks || !clickedNode.targetLinks) {
-      return []
-    }
+    if (!clickedNode) return []
 
-    const inputNodes = data.nodes.filter(
-      (node) =>
-        node.nodeId !== clickedNode.nodeId &&
-        node.sourceLinks &&
-        node.sourceLinks.some((link) => link.target === clickedNode.nodeId),
-    )
+    const inputNodes = data.nodes.filter((node) => {
+      if (node.nodeId === clickedNode.nodeId) return false
+      return data.edges.some(
+        (edge) =>
+          edge.source === node.nodeId && edge.target === clickedNode.nodeId,
+      )
+    })
 
-    const outputNodes = data.nodes.filter(
-      (node) =>
-        node.nodeId !== clickedNode.nodeId &&
-        clickedNode.sourceLinks &&
-        clickedNode.sourceLinks.some((link) => link.target === node.nodeId),
-    )
+    const outputNodes = data.nodes.filter((node) => {
+      if (node.nodeId === clickedNode.nodeId) return false
+      return data.edges.some(
+        (edge) =>
+          edge.source === clickedNode.nodeId && edge.target === node.nodeId,
+      )
+    })
 
     return [
       {
@@ -70,22 +62,22 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
         title: 'Input Features',
         sections: ['Positive', 'Negative'].map((title) => {
           const nodes = inputNodes.filter((node) => {
-            const link = node.sourceLinks?.find(
-              (l) => l.target === clickedNode.nodeId,
+            const weight = findEdgeWeight(
+              data.edges,
+              node.nodeId,
+              clickedNode.nodeId,
             )
-            if (!link || link.weight === undefined) return false
-            return title === 'Positive' ? link.weight > 0 : link.weight < 0
+            if (weight === undefined) return false
+            return title === 'Positive' ? weight > 0 : weight < 0
           })
 
           nodes.sort((a, b) => {
-            const linkA = a.sourceLinks?.find(
-              (l) => l.target === clickedNode.nodeId,
+            const weightA = Math.abs(
+              findEdgeWeight(data.edges, a.nodeId, clickedNode.nodeId) || 0,
             )
-            const linkB = b.sourceLinks?.find(
-              (l) => l.target === clickedNode.nodeId,
+            const weightB = Math.abs(
+              findEdgeWeight(data.edges, b.nodeId, clickedNode.nodeId) || 0,
             )
-            const weightA = Math.abs(linkA?.weight || 0)
-            const weightB = Math.abs(linkB?.weight || 0)
             return weightB - weightA
           })
 
@@ -97,22 +89,22 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
         title: 'Output Features',
         sections: ['Positive', 'Negative'].map((title) => {
           const nodes = outputNodes.filter((node) => {
-            const link = clickedNode.sourceLinks?.find(
-              (l) => l.target === node.nodeId,
+            const weight = findEdgeWeight(
+              data.edges,
+              clickedNode.nodeId,
+              node.nodeId,
             )
-            if (!link || link.weight === undefined) return false
-            return title === 'Positive' ? link.weight > 0 : link.weight < 0
+            if (weight === undefined) return false
+            return title === 'Positive' ? weight > 0 : weight < 0
           })
 
           nodes.sort((a, b) => {
-            const linkA = clickedNode.sourceLinks?.find(
-              (l) => l.target === a.nodeId,
+            const weightA = Math.abs(
+              findEdgeWeight(data.edges, clickedNode.nodeId, a.nodeId) || 0,
             )
-            const linkB = clickedNode.sourceLinks?.find(
-              (l) => l.target === b.nodeId,
+            const weightB = Math.abs(
+              findEdgeWeight(data.edges, clickedNode.nodeId, b.nodeId) || 0,
             )
-            const weightA = Math.abs(linkA?.weight || 0)
-            const weightB = Math.abs(linkB?.weight || 0)
             return weightB - weightA
           })
 
@@ -120,133 +112,54 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
         }),
       },
     ]
-  }, [
-    data.nodes,
-    clickedNode?.nodeId,
-    clickedNode?.sourceLinks,
-    clickedNode?.targetLinks,
-  ])
+  }, [data.nodes, data.edges, clickedNode?.nodeId])
 
-  const handleNodeClick = useCallback(
-    async (nodeId: string, metaKey: boolean) => {
-      const node = data.nodes.find((n) => n.id === nodeId)
-      if (!node) return
+  const renderFeatureRow = (node: Node, type: 'input' | 'output') => {
+    if (!clickedNode) return null
 
-      onFeatureClick?.(node, metaKey)
+    const weight =
+      type === 'input'
+        ? findEdgeWeight(data.edges, node.nodeId, clickedNode.nodeId)
+        : findEdgeWeight(data.edges, clickedNode.nodeId, node.nodeId)
 
-      if (!metaKey) {
-        if (clickedId === nodeId) {
-          onFeatureSelect?.(null)
-        } else {
-          if (
-            node.feature_type === 'cross layer transcoder' ||
-            node.feature_type === 'lorsa'
-          ) {
-            const layerAndFeature = extractLayerAndFeature(nodeId)
-            if (layerAndFeature) {
-              const { layer, featureId, isLorsa } = layerAndFeature
-              const dictionaryName = getDictionaryName(
-                data.metadata,
-                layer,
-                isLorsa,
-              )
+    if (weight === undefined) return null
 
-              if (dictionaryName) {
-                try {
-                  const feature = await fetchFeature({
-                    data: {
-                      dictionary: dictionaryName,
-                      featureIndex: featureId,
-                    },
-                  })
-                  if (feature) {
-                    onFeatureSelect?.(feature)
-                  } else {
-                    onFeatureSelect?.(null)
-                  }
-                } catch (error) {
-                  console.error('Failed to fetch feature:', error)
-                  onFeatureSelect?.(null)
-                }
-              } else {
-                onFeatureSelect?.(null)
-              }
-            } else {
-              onFeatureSelect?.(null)
-            }
-          } else {
-            onFeatureSelect?.(null)
-          }
-        }
-      }
-    },
-    [onFeatureClick, clickedId, data.nodes, data.metadata, onFeatureSelect],
-  )
+    const isPinned = pinnedIds.includes(node.nodeId)
+    const isHidden = hiddenIds.includes(String(node.feature))
+    const isHovered = node.nodeId === hoveredId
+    const isClicked = node.nodeId === clickedId
 
-  const renderFeatureRow = useCallback(
-    (node: Node, type: 'input' | 'output') => {
-      if (!clickedNode) return null
-
-      const link =
-        type === 'input'
-          ? node.sourceLinks?.find((l) => l.target === clickedNode.nodeId)
-          : clickedNode.sourceLinks?.find((l) => l.target === node.nodeId)
-
-      if (!link || link.weight === undefined) return null
-
-      const weight = link.weight
-      const isPinned = pinnedIds.includes(node.nodeId)
-      const isHidden = hiddenIds.includes(node.featureId)
-      const isHovered = node.nodeId === hoveredId
-      const isClicked = node.nodeId === clickedId
-
-      return (
-        <div
-          key={node.nodeId}
-          className={`py-0.5 px-1 border rounded cursor-pointer transition-colors ${
-            isPinned
-              ? 'bg-yellow-100 border-yellow-300'
-              : 'bg-gray-50 border-gray-200'
-          } ${isHidden ? 'opacity-50' : ''} ${isHovered ? 'ring-2 ring-blue-300' : ''} ${
-            isClicked ? 'ring-2 ring-blue-500' : ''
-          }`}
-          onClick={() => {
-            onFeatureClick(node, false)
-            handleNodeClick(node.nodeId, false)
-          }}
-          onMouseEnter={() => onFeatureHover(node.nodeId)}
-          onMouseLeave={() => onFeatureHover(null)}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-mono text-gray-600">
-                {formatFeatureId(node, false)}
-              </span>
-              <span className="text-xs font-medium">
-                {node.localClerp || node.remoteClerp || ''}
-              </span>
-            </div>
-            <div className="text-right">
-              <div className="text-xs font-mono">
-                {weight > 0 ? '+' : ''}
-                {weight.toFixed(3)}
-              </div>
+    return (
+      <div
+        key={node.nodeId}
+        className={`py-0.5 px-1 border rounded cursor-pointer transition-colors ${
+          isPinned
+            ? 'bg-yellow-100 border-yellow-300'
+            : 'bg-gray-50 border-gray-200'
+        } ${isHidden ? 'opacity-50' : ''} ${isHovered ? 'ring-2 ring-blue-300' : ''} ${
+          isClicked ? 'ring-2 ring-blue-500' : ''
+        }`}
+        onClick={() => onNodeClick(node.nodeId, false)}
+        onMouseEnter={() => onNodeHover(node.nodeId)}
+        onMouseLeave={() => onNodeHover(null)}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <span className="text-xs font-mono text-gray-600">
+              {formatFeatureId(node, false)}
+            </span>
+            <span className="text-xs font-medium">{node.clerp || ''}</span>
+          </div>
+          <div className="text-right">
+            <div className="text-xs font-mono">
+              {weight > 0 ? '+' : ''}
+              {weight.toFixed(3)}
             </div>
           </div>
         </div>
-      )
-    },
-    [
-      clickedNode,
-      pinnedIds,
-      hiddenIds,
-      hoveredId,
-      clickedId,
-      onFeatureClick,
-      onFeatureHover,
-      handleNodeClick,
-    ],
-  )
+      </div>
+    )
+  }
 
   const headerClassName = useMemo(
     () =>
@@ -272,9 +185,7 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
         <span className="inline-block mr-2 font-mono tabular-nums w-20 text-sm">
           {formatFeatureId(clickedNode)}
         </span>
-        <span className="font-medium text-sm">
-          {clickedNode.localClerp || clickedNode.remoteClerp || ''}
-        </span>
+        <span className="font-medium text-sm">{clickedNode.clerp || ''}</span>
       </div>
 
       <div className="flex-1 flex overflow-hidden gap-5">

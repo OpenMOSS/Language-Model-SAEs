@@ -1,9 +1,9 @@
 import React, { useEffect, useRef } from 'react'
 import * as d3 from 'd3'
-import type { Node } from '@/types/circuit'
+import type { PositionedNode } from '@/types/circuit'
 
 interface TooltipsProps {
-  positionedNodes: Node[]
+  positionedNodes: PositionedNode[]
   visState: { hoveredId: string | null }
   dimensions: { width: number; height: number }
 }
@@ -54,14 +54,9 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
       if (hoveredNode) {
         const tooltip = svg.append('g')
 
-        let tooltipText = ''
-        if (hoveredNode.localClerp) {
-          tooltipText = hoveredNode.localClerp
-        } else if (hoveredNode.remoteClerp) {
-          tooltipText = hoveredNode.remoteClerp
-        } else {
-          tooltipText = `Feature: ${hoveredNode.featureId} (Layer ${hoveredNode.layerIdx})`
-        }
+        const tooltipText =
+          hoveredNode.clerp ||
+          `Feature: ${hoveredNode.feature} (Layer ${hoveredNode.layer})`
 
         const textWidth = tooltipText.length * 6
         const tooltipWidth = Math.max(120, textWidth + 20)

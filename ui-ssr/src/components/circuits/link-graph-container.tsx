@@ -1,124 +1,19 @@
-import { useCallback } from 'react'
 import { LinkGraph } from './link-graph/link-graph'
-import type { LinkGraphData, Node, VisState } from '@/types/circuit'
-import type { Feature } from '@/types/feature'
-import { extractLayerAndFeature, getDictionaryName } from '@/utils/circuit'
-import { fetchFeature } from '@/api/features'
+import type { CircuitData, VisState } from '@/types/circuit'
 
 interface LinkGraphContainerProps {
-  data: LinkGraphData
-  onNodeClick?: (node: Node, isMetaKey: boolean) => void
-  onNodeHover?: (nodeId: string | null) => void
-  onFeatureSelect?: (feature: Feature | null) => void
-  onConnectedFeaturesSelect?: (features: Feature[]) => void
-  onConnectedFeaturesLoading?: (loading: boolean) => void
-  clickedId?: string | null
-  hoveredId?: string | null
-  pinnedIds?: string[]
+  data: CircuitData
+  visState: VisState
+  onNodeClick: (nodeId: string, metaKey: boolean) => void
+  onNodeHover: (nodeId: string | null) => void
 }
 
 export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
   data,
+  visState,
   onNodeClick,
   onNodeHover,
-  onFeatureSelect,
-  onConnectedFeaturesSelect,
-  onConnectedFeaturesLoading,
-  clickedId,
-  hoveredId,
-  pinnedIds = [],
 }) => {
-  const visState: VisState = {
-    pinnedIds,
-    clickedId: clickedId || null,
-    hoveredId: hoveredId || null,
-    isShowAllLinks: false,
-  }
-
-  const handleNodeClick = useCallback(
-    async (nodeId: string, metaKey: boolean) => {
-      const node = data.nodes.find((n) => n.id === nodeId)
-      if (!node) return
-
-      onNodeClick?.(node, metaKey)
-
-      if (!metaKey) {
-        if (clickedId === nodeId) {
-          onFeatureSelect?.(null)
-          onConnectedFeaturesSelect?.([])
-          onConnectedFeaturesLoading?.(false)
-        } else {
-          if (
-            node.feature_type === 'cross layer transcoder' ||
-            node.feature_type === 'lorsa'
-          ) {
-            const layerAndFeature = extractLayerAndFeature(nodeId)
-            if (layerAndFeature) {
-              const { layer, featureId, isLorsa } = layerAndFeature
-              const dictionaryName = getDictionaryName(
-                data.metadata,
-                layer,
-                isLorsa,
-              )
-
-              if (dictionaryName) {
-                try {
-                  onConnectedFeaturesLoading?.(true)
-                  const feature = await fetchFeature({
-                    data: {
-                      dictionary: dictionaryName,
-                      featureIndex: featureId,
-                    },
-                  })
-                  if (feature) {
-                    onFeatureSelect?.(feature)
-                  } else {
-                    onFeatureSelect?.(null)
-                    onConnectedFeaturesSelect?.([])
-                    onConnectedFeaturesLoading?.(false)
-                  }
-                } catch (error) {
-                  console.error('Failed to fetch feature:', error)
-                  onFeatureSelect?.(null)
-                  onConnectedFeaturesSelect?.([])
-                  onConnectedFeaturesLoading?.(false)
-                }
-              } else {
-                onFeatureSelect?.(null)
-                onConnectedFeaturesSelect?.([])
-                onConnectedFeaturesLoading?.(false)
-              }
-            } else {
-              onFeatureSelect?.(null)
-              onConnectedFeaturesSelect?.([])
-              onConnectedFeaturesLoading?.(false)
-            }
-          } else {
-            onFeatureSelect?.(null)
-            onConnectedFeaturesSelect?.([])
-            onConnectedFeaturesLoading?.(false)
-          }
-        }
-      }
-    },
-    [
-      onNodeClick,
-      clickedId,
-      data.nodes,
-      data.metadata,
-      onFeatureSelect,
-      onConnectedFeaturesSelect,
-      onConnectedFeaturesLoading,
-    ],
-  )
-
-  const handleNodeHover = useCallback(
-    (nodeId: string | null) => {
-      onNodeHover?.(nodeId)
-    },
-    [onNodeHover],
-  )
-
   return (
     <div className="w-full h-full overflow-hidden">
       <div className="mb-4">
@@ -139,8 +34,8 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
             <LinkGraph
               data={data}
               visState={visState}
-              onNodeClick={handleNodeClick}
-              onNodeHover={handleNodeHover}
+              onNodeClick={onNodeClick}
+              onNodeHover={onNodeHover}
             />
           </div>
         </div>

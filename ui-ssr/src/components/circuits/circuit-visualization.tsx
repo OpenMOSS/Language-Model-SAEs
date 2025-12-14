@@ -1,13 +1,18 @@
-import { useCallback, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useCallback, useMemo, useState } from 'react'
 import { LinkGraphContainer } from './link-graph-container'
 import { NodeConnections } from './node-connections'
-import type { CircuitJsonData, LinkGraphData, Node } from '@/types/circuit'
-import type { Feature } from '@/types/feature'
-import { transformCircuitData } from '@/utils/circuit'
+import type { CircuitData, CircuitJsonData, VisState } from '@/types/circuit'
+import {
+  extractLayerAndFeature,
+  getDictionaryName,
+  transformCircuitData,
+} from '@/utils/circuit'
 import { FeatureCard } from '@/components/feature/feature-card'
+import { featureQueryOptions } from '@/hooks/useFeatures'
 
 export const CircuitVisualization = () => {
-  const [linkGraphData, setLinkGraphData] = useState<LinkGraphData | null>(null)
+  const [circuitData, setCircuitData] = useState<CircuitData | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [clickedId, setClickedId] = useState<string | null>(null)
@@ -15,45 +20,64 @@ export const CircuitVisualization = () => {
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
   const [hiddenIds, setHiddenIds] = useState<string[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
-  const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null)
-  const [connectedFeatures, setConnectedFeatures] = useState<Feature[]>([])
-  const [isLoadingConnectedFeatures, setIsLoadingConnectedFeatures] =
-    useState(false)
 
-  const handleFeatureClick = useCallback(
-    (node: Node, isMetaKey: boolean) => {
-      if (isMetaKey) {
-        const newPinnedIds = pinnedIds.includes(node.nodeId)
-          ? pinnedIds.filter((id) => id !== node.nodeId)
-          : [...pinnedIds, node.nodeId]
-        setPinnedIds(newPinnedIds)
-      } else {
-        setClickedId(node.nodeId === clickedId ? null : node.nodeId)
-      }
-    },
-    [clickedId, pinnedIds],
+  const visState: VisState = useMemo(
+    () => ({
+      pinnedIds,
+      clickedId,
+      hoveredId,
+    }),
+    [pinnedIds, clickedId, hoveredId],
   )
 
-  const handleFeatureHover = useCallback(
-    (nodeId: string | null) => {
-      if (nodeId !== hoveredId) {
-        setHoveredId(nodeId)
-      }
-    },
-    [hoveredId],
-  )
+  const featureQueryParams = useMemo(() => {
+    if (!clickedId || !circuitData) return null
 
-  const handleFeatureSelect = useCallback((feature: Feature | null) => {
-    setSelectedFeature(feature)
+    const node = circuitData.nodes.find((n) => n.nodeId === clickedId)
+    if (!node) return null
+
+    if (
+      node.featureType !== 'cross layer transcoder' &&
+      node.featureType !== 'lorsa'
+    ) {
+      return null
+    }
+
+    const layerAndFeature = extractLayerAndFeature(clickedId)
+    if (!layerAndFeature) return null
+
+    const { layer, featureId, isLorsa } = layerAndFeature
+    const dictionaryName = getDictionaryName(
+      circuitData.metadata,
+      layer,
+      isLorsa,
+    )
+    if (!dictionaryName) return null
+
+    return { dictionary: dictionaryName, featureIndex: featureId }
+  }, [clickedId, circuitData])
+
+  const featureQuery = useQuery({
+    ...featureQueryOptions(
+      featureQueryParams ?? { dictionary: '', featureIndex: 0 },
+    ),
+    enabled: featureQueryParams !== null,
+  })
+
+  const handleNodeClick = useCallback((nodeId: string, metaKey: boolean) => {
+    if (metaKey) {
+      setPinnedIds((prev) =>
+        prev.includes(nodeId)
+          ? prev.filter((id) => id !== nodeId)
+          : [...prev, nodeId],
+      )
+    } else {
+      setClickedId((prev) => (prev === nodeId ? null : nodeId))
+    }
   }, [])
 
-  const handleConnectedFeaturesSelect = useCallback((features: Feature[]) => {
-    setConnectedFeatures(features)
-    setIsLoadingConnectedFeatures(false)
-  }, [])
-
-  const handleConnectedFeaturesLoading = useCallback((loading: boolean) => {
-    setIsLoadingConnectedFeatures(loading)
+  const handleNodeHover = useCallback((nodeId: string | null) => {
+    setHoveredId(nodeId)
   }, [])
 
   const handleFileUpload = useCallback(async (file: File) => {
@@ -69,13 +93,11 @@ export const CircuitVisualization = () => {
       const text = await file.text()
       const jsonData: CircuitJsonData = JSON.parse(text)
       const data = transformCircuitData(jsonData)
-      setLinkGraphData(data)
+      setCircuitData(data)
       setClickedId(null)
       setHoveredId(null)
       setPinnedIds([])
       setHiddenIds([])
-      setSelectedFeature(null)
-      setConnectedFeatures([])
     } catch (err) {
       console.error('Failed to load circuit data:', err)
       setError(
@@ -149,7 +171,7 @@ export const CircuitVisualization = () => {
     )
   }
 
-  if (!linkGraphData) {
+  if (!circuitData) {
     return (
       <div className="space-y-6">
         <div className="flex justify-between items-center">
@@ -218,12 +240,12 @@ export const CircuitVisualization = () => {
         <div className="flex items-center space-x-2">
           <h2 className="text-l font-bold">Prompt:</h2>
           <h2 className="text-l">
-            {linkGraphData.metadata.prompt_tokens.join(' ')}
+            {circuitData.metadata.promptTokens.join(' ')}
           </h2>
         </div>
         <div className="flex items-center space-x-2">
           <button
-            onClick={() => setLinkGraphData(null)}
+            onClick={() => setCircuitData(null)}
             className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
           >
             Upload New File
@@ -236,52 +258,41 @@ export const CircuitVisualization = () => {
           <div className="flex-1 min-w-0 max-w-full border rounded-lg p-4 bg-white shadow-sm overflow-hidden">
             <div className="w-full h-full overflow-hidden relative">
               <LinkGraphContainer
-                data={linkGraphData}
-                onNodeClick={handleFeatureClick}
-                onNodeHover={handleFeatureHover}
-                onFeatureSelect={handleFeatureSelect}
-                onConnectedFeaturesSelect={handleConnectedFeaturesSelect}
-                onConnectedFeaturesLoading={handleConnectedFeaturesLoading}
-                clickedId={clickedId}
-                hoveredId={hoveredId}
-                pinnedIds={pinnedIds}
+                data={circuitData}
+                visState={visState}
+                onNodeClick={handleNodeClick}
+                onNodeHover={handleNodeHover}
               />
             </div>
           </div>
 
           <div className="w-96 flex-shrink-0 border rounded-lg p-4 bg-white shadow-sm overflow-hidden">
             <NodeConnections
-              data={linkGraphData}
+              data={circuitData}
               clickedId={clickedId}
               hoveredId={hoveredId}
               pinnedIds={pinnedIds}
               hiddenIds={hiddenIds}
-              onFeatureClick={handleFeatureClick}
-              onFeatureSelect={handleFeatureSelect}
-              onFeatureHover={handleFeatureHover}
+              onNodeClick={handleNodeClick}
+              onNodeHover={handleNodeHover}
             />
           </div>
         </div>
 
         {clickedId && (
           <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">
-                Selected Feature Details
-              </h3>
-              {connectedFeatures.length > 0 && (
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-600">
-                    Connected features:
-                  </span>
-                  <span className="px-2 py-1 bg-green-100 text-green-800 text-sm font-medium rounded-full">
-                    {connectedFeatures.length}
-                  </span>
+            <h3 className="text-lg font-semibold mb-4">
+              Selected Feature Details
+            </h3>
+            {featureQuery.isPending && featureQueryParams ? (
+              <div className="flex items-center justify-center p-8 bg-gray-50 border rounded-lg">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                  <p className="text-gray-600">Loading feature...</p>
                 </div>
-              )}
-            </div>
-            {selectedFeature ? (
-              <FeatureCard feature={selectedFeature} />
+              </div>
+            ) : featureQuery.data ? (
+              <FeatureCard feature={featureQuery.data} />
             ) : (
               <div className="flex items-center justify-center p-8 bg-gray-50 border rounded-lg">
                 <div className="text-center">
