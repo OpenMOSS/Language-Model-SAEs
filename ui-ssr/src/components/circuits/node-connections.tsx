@@ -30,9 +30,6 @@ interface ConnectionType {
   sections: ConnectionSection[]
 }
 
-/**
- * Component to display connections for a selected node.
- */
 export const NodeConnections: React.FC<NodeConnectionsProps> = ({
   data,
   clickedId,
@@ -43,19 +40,16 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
   onFeatureSelect,
   onFeatureHover,
 }) => {
-  // Memoize the clicked node
   const clickedNode = useMemo(
     () => data.nodes.find((node) => node.nodeId === clickedId),
     [data.nodes, clickedId],
   )
 
-  // Memoize the connection types computation
   const connectionTypes = useMemo((): ConnectionType[] => {
     if (!clickedNode || !clickedNode.sourceLinks || !clickedNode.targetLinks) {
       return []
     }
 
-    // Input features: nodes that have links TO the clicked node
     const inputNodes = data.nodes.filter(
       (node) =>
         node.nodeId !== clickedNode.nodeId &&
@@ -63,7 +57,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
         node.sourceLinks.some((link) => link.target === clickedNode.nodeId),
     )
 
-    // Output features: nodes that the clicked node has links TO
     const outputNodes = data.nodes.filter(
       (node) =>
         node.nodeId !== clickedNode.nodeId &&
@@ -84,7 +77,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
             return title === 'Positive' ? link.weight > 0 : link.weight < 0
           })
 
-          // Sort by absolute weight
           nodes.sort((a, b) => {
             const linkA = a.sourceLinks?.find(
               (l) => l.target === clickedNode.nodeId,
@@ -112,7 +104,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
             return title === 'Positive' ? link.weight > 0 : link.weight < 0
           })
 
-          // Sort by absolute weight
           nodes.sort((a, b) => {
             const linkA = clickedNode.sourceLinks?.find(
               (l) => l.target === a.nodeId,
@@ -192,7 +183,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     [onFeatureClick, clickedId, data.nodes, data.metadata, onFeatureSelect],
   )
 
-  // Render a feature row
   const renderFeatureRow = useCallback(
     (node: Node, type: 'input' | 'output') => {
       if (!clickedNode) return null
@@ -213,7 +203,7 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
       return (
         <div
           key={node.nodeId}
-          className={`feature-row py-0.5 px-1 border rounded cursor-pointer transition-colors ${
+          className={`py-0.5 px-1 border rounded cursor-pointer transition-colors ${
             isPinned
               ? 'bg-yellow-100 border-yellow-300'
               : 'bg-gray-50 border-gray-200'
@@ -258,10 +248,9 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     ],
   )
 
-  // Header styling
   const headerClassName = useMemo(
     () =>
-      `header-top-row section-title mb-3 cursor-pointer p-2 rounded-lg border ${
+      `mb-3 cursor-pointer p-2 rounded-lg border ${
         clickedNode && pinnedIds.includes(clickedNode.nodeId)
           ? 'bg-yellow-50 border-yellow-200 text-yellow-800'
           : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
@@ -271,40 +260,33 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
 
   if (!clickedNode) {
     return (
-      <div className="node-connections flex flex-col h-full overflow-y-auto">
-        <div className="header-top-row section-title mb-3">
-          Click a feature on the left for details
-        </div>
+      <div className="flex flex-col h-full overflow-y-auto">
+        <div className="mb-3">Click a feature on the left for details</div>
       </div>
     )
   }
 
   return (
-    <div className="node-connections flex flex-col h-full overflow-y-auto">
-      {/* Header */}
+    <div className="flex flex-col h-full overflow-y-auto">
       <div className={headerClassName}>
         <span className="inline-block mr-2 font-mono tabular-nums w-20 text-sm">
           {formatFeatureId(clickedNode)}
         </span>
-        <span className="feature-title font-medium text-sm">
+        <span className="font-medium text-sm">
           {clickedNode.localClerp || clickedNode.remoteClerp || ''}
         </span>
       </div>
 
-      {/* Connections */}
-      <div className="connections flex-1 flex overflow-hidden gap-5">
+      <div className="flex-1 flex overflow-hidden gap-5">
         {connectionTypes.map((type) => (
-          <div
-            key={type.id}
-            className={`features flex-1 ${type.id === 'output' ? 'output' : 'input'}`}
-          >
-            <div className="section-title text-lg font-semibold mb-2 text-gray-800">
+          <div key={type.id} className="flex-1">
+            <div className="text-lg font-semibold mb-2 text-gray-800">
               {type.title}
             </div>
 
-            <div className="effects space-y-1 overflow-y-auto h-full">
+            <div className="space-y-1 overflow-y-auto h-full">
               {type.sections.map((section) => (
-                <div key={section.title} className="section">
+                <div key={section.title}>
                   <h4
                     className={`text-xs font-medium mb-0.5 px-2 py-0.5 rounded ${
                       section.title === 'Positive'

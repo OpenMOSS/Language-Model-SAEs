@@ -24,7 +24,6 @@ export const GridLines: React.FC<GridLinesProps> = React.memo(
       const svg = d3.select(svgRef.current)
       svg.selectAll('*').remove()
 
-      // Draw grid lines
       const earliestCtxWithNodes =
         d3.min(positionedNodes, (d) => d.ctx_idx) || 0
 

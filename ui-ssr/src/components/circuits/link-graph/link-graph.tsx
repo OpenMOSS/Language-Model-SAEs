@@ -31,7 +31,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
 
-  // Memoize expensive calculations
   const { calculatedCtxCounts, x, y, positionedNodes, positionedLinks } =
     useMemo(() => {
       if (!data.nodes.length) {
@@ -85,7 +84,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         0,
       ])
 
-      // Position nodes
       calculatedCtxCounts.forEach((d: any) => {
         d.width = x(d.ctx_idx + 1) - x(d.ctx_idx)
       })
@@ -96,10 +94,8 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
           d3.min(calculatedCtxCounts.slice(1), (d: any) => d.width / 2) || 8,
         ) + 0
 
-      // Create a copy of nodes to avoid mutating the original data
       const positionedNodes: Node[] = nodes.map((node) => ({ ...node }))
 
-      // Position nodes within each context and layer
       calculatedCtxCounts.forEach((ctxData: any) => {
         if (ctxData.layerGroups.size === 0) return
 
@@ -116,7 +112,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
           sortedNodes.forEach((node, i) => {
             const totalWidth = (sortedNodes.length - 1) * spacing
             const startX = ctxWidth - totalWidth
-            // Find the node in positionedNodes and update it
             const posNode = positionedNodes.find(
               (n) => n.nodeId === node.nodeId,
             )
@@ -135,7 +130,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         ]
       })
 
-      // Update link paths and populate node link references
       const positionedLinks: Link[] = data.links
         .map((d) => {
           const sourceNode = positionedNodes.find((n) => n.nodeId === d.source)
@@ -155,7 +149,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       return { calculatedCtxCounts, x, y, positionedNodes, positionedLinks }
     }, [data.nodes, data.links, dimensions.width, dimensions.height])
 
-  // Handle mouse enter/leave
   const handleNodeMouseEnter = useCallback(
     (nodeId: string) => {
       onNodeHover(nodeId)
@@ -167,7 +160,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     onNodeHover(null)
   }, [onNodeHover])
 
-  // Handle resize
   useEffect(() => {
     const updateDimensions = () => {
       if (containerRef.current) {
@@ -191,7 +183,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     }
   }, [])
 
-  // Memoize token data calculation
   const tokenData = useMemo(() => {
     if (!data.metadata?.prompt_tokens || !positionedNodes.length || !x)
       return []
@@ -222,7 +213,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       })
   }, [data.metadata?.prompt_tokens, positionedNodes, x])
 
-  // Early return if no data or scales
   if (!positionedNodes.length || !x || !y) {
     return (
       <div

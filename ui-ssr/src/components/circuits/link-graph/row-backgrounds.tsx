@@ -19,12 +19,9 @@ export const RowBackgrounds: React.FC<RowBackgroundsProps> = React.memo(
 
       const yNumTicks = (d3.max(positionedNodes, (d) => d.layerIdx) || 0) + 1
 
-      // Draw alternating row backgrounds
       d3.range(yNumTicks).forEach((layerIdx: number) => {
         const yPos = y(layerIdx) || 0
         const rowHeight = y.bandwidth()
-
-        // Alternate between two subtle background colors
         const backgroundColor = layerIdx % 2 === 0 ? '#F5F4EE' : '#EBE9E0'
 
         svg

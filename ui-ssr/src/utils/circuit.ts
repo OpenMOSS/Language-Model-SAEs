@@ -1,7 +1,3 @@
-/**
- * Utility functions for circuit visualization.
- */
-
 import type {
   CircuitJsonData,
   CircuitMetadata,
@@ -10,12 +6,6 @@ import type {
   Node,
 } from '@/types/circuit'
 
-/**
- * Extract layer and feature ID from node ID.
- *
- * @param nodeId - The node ID string.
- * @returns Object with layer, featureId, and isLorsa, or null if invalid.
- */
 export function extractLayerAndFeature(
   nodeId: string,
 ): { layer: number; featureId: number; isLorsa: boolean } | null {
@@ -34,12 +24,6 @@ export function extractLayerAndFeature(
   }
 }
 
-/**
- * Convert feature type to display text.
- *
- * @param type - The feature type string.
- * @returns Display text for the feature type.
- */
 export function featureTypeToText(type: string): string {
   switch (type) {
     case 'embedding':
@@ -51,14 +35,6 @@ export function featureTypeToText(type: string): string {
   }
 }
 
-/**
- * Get dictionary name from circuit metadata based on layer and type.
- *
- * @param metadata - The circuit metadata.
- * @param layer - The layer index.
- * @param isLorsa - Whether this is a LORSA feature.
- * @returns The dictionary name or null.
- */
 export function getDictionaryName(
   metadata: CircuitMetadata,
   layer: number,
@@ -69,21 +45,12 @@ export function getDictionaryName(
     : metadata.clt_analysis_name
   if (!analysisName) return null
 
-  // The analysis name format is typically "dict_name/layer_X"
-  // We need to construct the full dictionary path
   const parts = analysisName.split('/')
   if (parts.length < 1) return null
 
-  // Return dictionary name with layer
   return `${parts[0]}/${isLorsa ? 'attn' : 'mlp'}_${layer}`
 }
 
-/**
- * Get color based on feature type.
- *
- * @param featureType - The type of feature.
- * @returns Hex color string.
- */
 function getNodeColor(featureType: string): string {
   switch (featureType) {
     case 'logit':
@@ -99,58 +66,40 @@ function getNodeColor(featureType: string): string {
   }
 }
 
-/**
- * Transform raw circuit JSON data to LinkGraphData format.
- *
- * @param jsonData - Raw circuit JSON data.
- * @returns Transformed LinkGraphData.
- */
 export function transformCircuitData(jsonData: CircuitJsonData): LinkGraphData {
-  // Transform nodes
-  const nodes: Node[] = jsonData.nodes.map((node) => {
-    const transformedNode: Node = {
-      id: node.node_id,
-      nodeId: node.node_id,
-      featureId: node.feature.toString(),
-      feature_type: node.feature_type,
-      ctx_idx: node.ctx_idx,
-      layerIdx: node.layer + 1,
-      pos: [0, 0], // Will be set by the component
-      xOffset: 0,
-      yOffset: 0,
-      nodeColor: getNodeColor(node.feature_type),
-      logitPct: node.token_prob,
-      logitToken: node.is_target_logit ? 'target' : undefined,
-      localClerp: node.clerp,
-    }
+  const nodes: Node[] = jsonData.nodes.map((node) => ({
+    id: node.node_id,
+    nodeId: node.node_id,
+    featureId: node.feature.toString(),
+    feature_type: node.feature_type,
+    ctx_idx: node.ctx_idx,
+    layerIdx: node.layer + 1,
+    pos: [0, 0],
+    xOffset: 0,
+    yOffset: 0,
+    nodeColor: getNodeColor(node.feature_type),
+    logitPct: node.token_prob,
+    logitToken: node.is_target_logit ? 'target' : undefined,
+    localClerp: node.clerp,
+  }))
 
-    return transformedNode
-  })
-
-  // Extract edges from the 'links' array in the JSON
   const edges = jsonData.links || []
 
-  const links: Link[] = edges.map(
-    (edge: { source: string; target: string; weight: number }) => {
-      // Calculate stroke width based on weight
-      const strokeWidth = Math.max(0.5, Math.min(3, Math.abs(edge.weight) * 10))
+  const links: Link[] = edges.map((edge) => {
+    const strokeWidth = Math.max(0.5, Math.min(3, Math.abs(edge.weight) * 10))
+    const color = edge.weight > 0 ? '#4CAF50' : '#F44336'
 
-      // Calculate color based on weight
-      const color = edge.weight > 0 ? '#4CAF50' : '#F44336'
+    return {
+      source: edge.source,
+      target: edge.target,
+      pathStr: '',
+      color,
+      strokeWidth,
+      weight: edge.weight,
+      pctInput: Math.abs(edge.weight) * 100,
+    }
+  })
 
-      return {
-        source: edge.source,
-        target: edge.target,
-        pathStr: '', // Will be set by the component after positioning
-        color,
-        strokeWidth,
-        weight: edge.weight,
-        pctInput: Math.abs(edge.weight) * 100, // Convert weight to percentage
-      }
-    },
-  )
-
-  // Populate sourceLinks and targetLinks for each node
   nodes.forEach((node) => {
     node.sourceLinks = links.filter((link) => link.source === node.nodeId)
     node.targetLinks = links.filter((link) => link.target === node.nodeId)
@@ -167,13 +116,6 @@ export function transformCircuitData(jsonData: CircuitJsonData): LinkGraphData {
   }
 }
 
-/**
- * Format a node's feature ID for display.
- *
- * @param node - The node to format.
- * @param verbose - Whether to include full details.
- * @returns Formatted feature ID string.
- */
 export function formatFeatureId(node: Node, verbose: boolean = true): string {
   if (node.feature_type === 'cross layer transcoder') {
     const layerIdx = Math.floor(node.layerIdx / 2) - 1

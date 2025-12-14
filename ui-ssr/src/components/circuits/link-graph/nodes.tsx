@@ -25,7 +25,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(
   }) => {
     const svgRef = useRef<SVGGElement>(null)
 
-    // Memoize the event handlers
     const handleMouseEnter = useCallback(
       (nodeId: string) => {
         onNodeMouseEnter(nodeId)
@@ -44,7 +43,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(
       [onNodeClick],
     )
 
-    // Helper to check if node is connected to clicked node
     const isConnected = useCallback(
       (nodeId: string) => {
         if (!visState.clickedId) return false
@@ -63,12 +61,10 @@ export const Nodes: React.FC<NodesProps> = React.memo(
       const svg = d3.select(svgRef.current)
       svg.selectAll('*').remove()
 
-      // Draw nodes
       const nodeSel = svg
         .selectAll('circle.node')
         .data(positionedNodes, (d: any) => d.nodeId)
 
-      // Enter: create new nodes
       const nodeEnter = nodeSel
         .enter()
         .append('circle')
@@ -101,7 +97,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(
           handleClick(d.nodeId, metaKey)
         })
 
-      // Merge enter and update selections
       nodeSel
         .merge(nodeEnter as any)
         .attr('cx', (d: any) => d.pos[0])
@@ -132,7 +127,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(
           handleClick(d.nodeId, metaKey)
         })
 
-      // Draw hover indicators
       svg
         .selectAll('circle.hover-indicator')
         .data(positionedNodes, (d: any) => d.nodeId)
@@ -148,7 +142,6 @@ export const Nodes: React.FC<NodesProps> = React.memo(
         .style('pointer-events', 'none')
         .style('opacity', (d: any) => (d.nodeId === visState.hoveredId ? 1 : 0))
 
-      // Cleanup
       return () => {
         handleMouseLeave()
       }

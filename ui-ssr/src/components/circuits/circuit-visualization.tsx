@@ -6,9 +6,6 @@ import type { Feature } from '@/types/feature'
 import { transformCircuitData } from '@/utils/circuit'
 import { FeatureCard } from '@/components/feature/feature-card'
 
-/**
- * Main circuit visualization component with file upload and graph display.
- */
 export const CircuitVisualization = () => {
   const [linkGraphData, setLinkGraphData] = useState<LinkGraphData | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -26,13 +23,11 @@ export const CircuitVisualization = () => {
   const handleFeatureClick = useCallback(
     (node: Node, isMetaKey: boolean) => {
       if (isMetaKey) {
-        // Toggle pinned state
         const newPinnedIds = pinnedIds.includes(node.nodeId)
           ? pinnedIds.filter((id) => id !== node.nodeId)
           : [...pinnedIds, node.nodeId]
         setPinnedIds(newPinnedIds)
       } else {
-        // Set clicked node
         setClickedId(node.nodeId === clickedId ? null : node.nodeId)
       }
     },
@@ -75,7 +70,6 @@ export const CircuitVisualization = () => {
       const jsonData: CircuitJsonData = JSON.parse(text)
       const data = transformCircuitData(jsonData)
       setLinkGraphData(data)
-      // Reset state when loading new data
       setClickedId(null)
       setHoveredId(null)
       setPinnedIds([])
@@ -158,12 +152,10 @@ export const CircuitVisualization = () => {
   if (!linkGraphData) {
     return (
       <div className="space-y-6">
-        {/* Header */}
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-semibold">Circuit Visualization</h2>
         </div>
 
-        {/* Upload Interface */}
         <div
           className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
             isDragOver
@@ -222,7 +214,6 @@ export const CircuitVisualization = () => {
 
   return (
     <div className="space-y-6 w-full max-w-full overflow-hidden">
-      {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-2">
           <h2 className="text-l font-bold">Prompt:</h2>
@@ -240,11 +231,8 @@ export const CircuitVisualization = () => {
         </div>
       </div>
 
-      {/* Circuit Visualization Layout */}
       <div className="space-y-6 w-full max-w-full overflow-hidden">
-        {/* Top Row: Link Graph and Node Connections side by side */}
         <div className="flex gap-6 h-[700px] w-full max-w-full overflow-hidden">
-          {/* Link Graph Component - Left Side */}
           <div className="flex-1 min-w-0 max-w-full border rounded-lg p-4 bg-white shadow-sm overflow-hidden">
             <div className="w-full h-full overflow-hidden relative">
               <LinkGraphContainer
@@ -261,7 +249,6 @@ export const CircuitVisualization = () => {
             </div>
           </div>
 
-          {/* Node Connections Component - Right Side */}
           <div className="w-96 flex-shrink-0 border rounded-lg p-4 bg-white shadow-sm overflow-hidden">
             <NodeConnections
               data={linkGraphData}
@@ -276,7 +263,6 @@ export const CircuitVisualization = () => {
           </div>
         </div>
 
-        {/* Bottom Row: Feature Card below Link Graph Container */}
         {clickedId && (
           <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
             <div className="flex justify-between items-center mb-4">

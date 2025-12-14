@@ -15,7 +15,6 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
     const svgRef = useRef<SVGGElement>(null)
     const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-    // Clear any existing timeout when hover state changes
     useEffect(() => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current)
@@ -23,12 +22,11 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
       }
     }, [visState.hoveredId])
 
-    // Set a fallback timeout to clear tooltips
     useEffect(() => {
       if (visState.hoveredId && !timeoutRef.current) {
         timeoutRef.current = setTimeout(() => {
           timeoutRef.current = null
-        }, 10000) // 10 second fallback
+        }, 10000)
       }
 
       return () => {
@@ -56,7 +54,6 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
       if (hoveredNode) {
         const tooltip = svg.append('g')
 
-        // Determine tooltip content
         let tooltipText = ''
         if (hoveredNode.localClerp) {
           tooltipText = hoveredNode.localClerp
@@ -66,7 +63,6 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
           tooltipText = `Feature: ${hoveredNode.featureId} (Layer ${hoveredNode.layerIdx})`
         }
 
-        // Calculate tooltip dimensions
         const textWidth = tooltipText.length * 6
         const tooltipWidth = Math.max(120, textWidth + 20)
         const tooltipHeight = 20
@@ -75,7 +71,6 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
         let tooltipX = hoveredNode.pos[0] + padding
         let tooltipY = hoveredNode.pos[1] - 15
 
-        // Adjust position if off-screen
         if (tooltipX + tooltipWidth > dimensions.width - padding) {
           tooltipX = hoveredNode.pos[0] - tooltipWidth - padding
         }
@@ -91,7 +86,6 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
           tooltipY = hoveredNode.pos[1] - tooltipHeight - padding
         }
 
-        // Background rectangle
         tooltip
           .append('rect')
           .attr('x', tooltipX)
@@ -101,7 +95,6 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
           .attr('fill', 'rgba(0, 0, 0, 0.8)')
           .attr('rx', 2)
 
-        // Tooltip text
         tooltip
           .append('text')
           .attr('x', tooltipX + 5)

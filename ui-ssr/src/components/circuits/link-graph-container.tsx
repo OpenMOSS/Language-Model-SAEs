@@ -17,9 +17,6 @@ interface LinkGraphContainerProps {
   pinnedIds?: string[]
 }
 
-/**
- * Container component for the LinkGraph with feature fetching logic.
- */
 export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
   data,
   onNodeClick,
@@ -31,7 +28,6 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
   hoveredId,
   pinnedIds = [],
 }) => {
-  // Create visState from props
   const visState: VisState = {
     pinnedIds,
     clickedId: clickedId || null,
@@ -44,18 +40,14 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
       const node = data.nodes.find((n) => n.id === nodeId)
       if (!node) return
 
-      // Always call parent handler first
       onNodeClick?.(node, metaKey)
 
-      // If not meta key, handle feature selection
       if (!metaKey) {
         if (clickedId === nodeId) {
-          // Deselecting the same node
           onFeatureSelect?.(null)
           onConnectedFeaturesSelect?.([])
           onConnectedFeaturesLoading?.(false)
         } else {
-          // Only fetch for supported node types
           if (
             node.feature_type === 'cross layer transcoder' ||
             node.feature_type === 'lorsa'

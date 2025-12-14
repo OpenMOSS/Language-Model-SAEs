@@ -18,7 +18,6 @@ export const YAxis: React.FC<YAxisProps> = React.memo(
 
       const yNumTicks = (d3.max(positionedNodes, (d) => d.layerIdx) || 0) + 1
 
-      // Draw Y-axis ticks and labels
       d3.range(yNumTicks).forEach((layerIdx: number) => {
         const yPos = (y(layerIdx) || 0) + y.bandwidth() / 2
 
