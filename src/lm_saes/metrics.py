@@ -1,10 +1,13 @@
 import functools
 from abc import ABC
+from math import sqrt
 from typing import Generic, TypeVar, cast
 
 import einops
 import torch
+import torch.distributed as dist
 from torch import Tensor
+from torch.distributed.tensor import DTensor
 from torch.types import Number
 from transformer_lens import HookedTransformer
 
@@ -62,17 +65,31 @@ T = TypeVar("T", bound=Number | Tensor)
 
 
 class Record(Generic[T]):
-    def __init__(self):
+    def __init__(self, reduction: str = "mean"):
         self.value: T | None = None
         self.count = 0
+        self.reduction = reduction
 
     def update(self, value: T, count: Tensor | int = 1):
-        self.value = cast(T, self.value + value) if self.value is not None else value
         self.count += count
+        if self.reduction in ["mean", "sum"]:
+            self.value = cast(T, self.value + value) if self.value is not None else value
+        elif self.reduction == "max":
+            self.value = cast(T, max(self.value, value)) if self.value is not None else value  # type: ignore
+        elif self.reduction == "min":
+            self.value = cast(T, min(self.value, value)) if self.value is not None else value  # type: ignore
+        else:
+            raise ValueError(f"Invalid reduction: {self.reduction}")
 
     def compute(self) -> T:
         assert self.value is not None, "Record must be updated before computing"
-        result = cast(T, self.value / self.count)
+        if self.reduction == "mean":
+            result = cast(T, self.value / self.count)
+        elif self.reduction in ["max", "min", "sum"]:
+            result = cast(T, self.value)
+        else:
+            raise ValueError(f"Invalid reduction: {self.reduction}")
+
         self.value = None
         self.count = 0
         return result
@@ -98,6 +115,36 @@ class Metric(ABC):
         Returns:
             Dictionary of metric names to values."""
         raise NotImplementedError("Subclasses must implement this method")
+
+
+class GradientNormMetric(Metric):
+    def __init__(self, sae: AbstractSparseAutoEncoder):
+        self.sae = sae
+        self.gradient_norm: Record[float] = Record("max")
+
+    def update(self, ctx: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        gradients = [
+            p.grad.to_local() if isinstance(p.grad, DTensor) else p.grad
+            for p in self.sae.parameters()
+            if p.grad is not None
+        ]
+        assert len(gradients) > 0, "No gradients found"
+
+        concat_grad = torch.cat([g.flatten() for g in gradients])
+
+        local_sq_norm = concat_grad.pow(2).sum()
+        local_nonzero_count = (concat_grad != 0).sum()
+
+        if self.sae.device_mesh is not None:
+            dist.all_reduce(local_sq_norm, op=dist.ReduceOp.SUM)
+            dist.all_reduce(local_nonzero_count, op=dist.ReduceOp.SUM)
+
+        gradient_norm = local_sq_norm.sqrt() / sqrt(local_nonzero_count)
+        self.gradient_norm.update(item(gradient_norm))
+        return {"gradient_norm_per_param": gradient_norm}
+
+    def compute(self) -> dict[str, Number]:
+        return {"metrics/gradient_norm_per_param": self.gradient_norm.compute()}
 
 
 class FrequencyMetric(Metric):

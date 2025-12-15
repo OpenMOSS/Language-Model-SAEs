@@ -18,6 +18,7 @@ from lm_saes.config import TrainerConfig
 from lm_saes.metrics import (
     ExplainedVarianceMetric,
     FrequencyMetric,
+    GradientNormMetric,
     L0Metric,
     L2NormErrorMetric,
     LossMetric,
@@ -365,6 +366,7 @@ class Trainer:
                 L0Metric(sae),
                 L2NormErrorMetric(sae),
                 ModelSpecificMetric(sae),
+                GradientNormMetric(sae),
             ]
 
         for metric in self.metrics:
@@ -455,12 +457,12 @@ class Trainer:
                         f"loss: {item(ctx['loss']):.2f}, lr: {self.optimizer.param_groups[0]['lr']:.2e}{mem_info}"
                     )
 
+                    with timer.time("backward"):
+                        ctx["loss"].backward()
+
                     if not self.cfg.skip_metrics_calculation:
                         with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
                             self._log(sae, ctx)
-
-                    with timer.time("backward"):
-                        ctx["loss"].backward()
 
                     with timer.time("clip_grad_norm"):
                         # exclude the grad of the jumprelu threshold
