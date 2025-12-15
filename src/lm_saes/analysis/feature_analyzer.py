@@ -76,11 +76,9 @@ class FeatureAnalyzer:
         # Process each subsample type (e.g. top activations)
         for name in self.cfg.subsamples.keys():
             elt_cur = elt.clone()
-            # Zero out samples above the subsample threshold
-            index = (
-                feature_acts.max(dim=1).values > max_feature_acts.unsqueeze(0) * self.cfg.subsamples[name]["proportion"]
-            )
-            elt_cur = masked_fill(elt_cur, index, -torch.inf)
+            # 关闭阈值掩码：不过滤样本，全部参与排序
+            # index = (feature_acts.max(dim=1).values > max_feature_acts.unsqueeze(0) * self.cfg.subsamples[name]["proportion"])
+            # elt_cur = masked_fill(elt_cur, index, -torch.inf)
 
             sample_result_cur = sample_result[name]
 
