@@ -275,9 +275,6 @@ class ReplacementModel(HookedTransformer):
         # Configure Lorsa if needed
         self.use_lorsa = use_lorsa
         if use_lorsa and lorsas is not None:
-            assert not any(lorsa.cfg.skip_bos for lorsa in lorsas), (
-                "Lorsa must not skip bos, will be handled by replacement model"
-            )
             for lorsa in lorsas:
                 lorsa.to(self.cfg.device, self.cfg.dtype)
             self.add_module("lorsas", nn.ModuleList(lorsas))

@@ -169,7 +169,6 @@ class TransformerLensLanguageModel(LanguageModel):
         self.device_mesh = device_mesh
         if cfg.device == "cuda":
             self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
-            print(f"cuda:{torch.cuda.current_device()}")
         elif cfg.device == "npu":
             self.device = torch.device(f"npu:{torch.npu.current_device()}")  # type: ignore[reportAttributeAccessIssue]
         else:
@@ -418,7 +417,6 @@ class HuggingFaceLanguageModel(LanguageModel):
         self.cfg = cfg
         if cfg.device == "cuda":
             self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
-            print(f"cuda:{torch.cuda.current_device()}")
         elif cfg.device == "npu":
             self.device = torch.device(f"npu:{torch.npu.current_device()}")  # type: ignore[reportAttributeAccessIssue]
         else:
@@ -441,7 +439,6 @@ class HuggingFaceLanguageModel(LanguageModel):
             local_files_only=cfg.local_files_only,
         )
         self.model.eval()
-        print("HuggingFaceLanguageModel initialized")
 
     def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
         return raw

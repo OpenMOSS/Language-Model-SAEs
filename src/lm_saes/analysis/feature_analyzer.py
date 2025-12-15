@@ -253,8 +253,6 @@ class FeatureAnalyzer:
                     tokens = DTensor.from_local(tokens, device_mesh, placements=DimMap({}).placements(device_mesh))
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.amax(dim=-2)
-            if isinstance(sae, LowRankSparseAttention) and sae.cfg.skip_bos:
-                feature_acts = slice_fill(feature_acts, (slice(None), 0, slice(None)), 0)
             assert feature_acts.shape == (tokens.shape[0], tokens.shape[1], sae.cfg.d_sae), (
                 f"feature_acts.shape: {feature_acts.shape}, expected: {(tokens.shape[0], tokens.shape[1], sae.cfg.d_sae)}"
             )

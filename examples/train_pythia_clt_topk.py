@@ -41,7 +41,6 @@ if __name__ == "__main__":
             k_schedule_type="exponential",
             k_exponential_factor=30,
             lr_warm_up_steps=1000,
-            use_batch_norm_mse=False,
             lr=5e-5,
             optimizer_class="adam",
             total_training_tokens=800_000_000,

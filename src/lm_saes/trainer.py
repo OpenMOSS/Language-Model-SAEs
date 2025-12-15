@@ -338,7 +338,6 @@ class Trainer:
             sparsity_loss_type=self.cfg.sparsity_loss_type,
             tanh_stretch_coefficient=self.cfg.tanh_stretch_coefficient,
             p=self.cfg.p,
-            use_batch_norm_mse=self.cfg.use_batch_norm_mse,
             return_aux_data=True,
             l1_coefficient=l1_coefficient,
             lp_coefficient=lp_coefficient,

@@ -564,8 +564,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             out = out + self.b_D
         if isinstance(out, DTensor):
             out = DimMap({"data": 0}).redistribute(out)
-        if self.cfg.skip_bos:
-            out = out[:, 1:]
         return out
 
     def _compute_qkv(
@@ -739,7 +737,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         self,
         batch: dict[str, torch.Tensor],
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
@@ -753,7 +750,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         self,
         batch: dict[str, torch.Tensor],
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
@@ -773,7 +769,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             | None
         ) = None,
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         frequency_scale: float = 0.01,
@@ -795,11 +790,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         reconstructed = self.decode(feature_acts, **decoder_kwargs)
 
         l_rec = (reconstructed - label).pow(2)
-        if use_batch_norm_mse:
-            l_rec = (
-                l_rec
-                / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
-            )
         l_rec = l_rec.sum(dim=-1)
         if isinstance(l_rec, DTensor):
             l_rec = l_rec.full_tensor()
@@ -892,8 +882,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs):
         """Prepare label tensor."""
         label = batch[self.cfg.hook_point_out]
-        if self.cfg.skip_bos:
-            label = label[:, 1:]
         return label
 
 
