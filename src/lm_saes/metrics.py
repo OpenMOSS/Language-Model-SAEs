@@ -117,7 +117,7 @@ class LossMetric(Metric):
         loss, l_rec, l_s, l_p = ctx["loss"], ctx["l_rec"], ctx.get("l_s"), ctx.get("l_p")
 
         self.loss.update(loss)
-        self.l_rec.update(l_rec)
+        self.l_rec.update(l_rec.mean())
         if l_s is not None:
             self.l_s.update(l_s.mean())
         if l_p is not None:

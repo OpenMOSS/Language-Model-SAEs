@@ -37,6 +37,8 @@ from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
 
+from .utils.tensor_specs import apply_token_mask
+
 logger = get_distributed_logger("abstract_sae")
 
 
@@ -654,13 +656,13 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             reconstructed = self.decode(feature_acts, **decoder_kwargs)
 
         with timer.time("loss_calculation"):
-            l_rec = (reconstructed - label).pow(2)
-            l_rec = l_rec.sum(dim=-1).mean()
+            l_rec = (reconstructed - label).pow(2).sum(dim=-1)
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
             loss_dict: dict[str, Optional[torch.Tensor]] = {
                 "l_rec": l_rec,
             }
+            l_rec, _ = apply_token_mask(l_rec, self.specs.loss(l_rec), batch["mask"], "mean")
             loss = l_rec
 
             if sparsity_loss_type is not None:

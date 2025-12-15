@@ -21,13 +21,10 @@ from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
-from lm_saes.utils.distributed.ops import item
-
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import LorsaConfig
 from .utils.distributed import DimMap, masked_fill, mesh_dim_size
 from .utils.logging import get_distributed_logger
-from .utils.tensor_specs import apply_token_mask
 
 logger = get_distributed_logger("lorsa")
 
@@ -750,7 +747,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         x_pos = x.size(1)
         # Avoid triggering https://github.com/pytorch/pytorch/issues/170427 in tensor parallelism (tp) settings
-        x_rot = x[:, :, :, : self.cfg.rotary_dim] if self.cfg.rotary_dim < x.size(-1) else x 
+        x_rot = x[:, :, :, : self.cfg.rotary_dim] if self.cfg.rotary_dim < x.size(-1) else x
         x_pass = x[:, :, :, self.cfg.rotary_dim :]
         x_flip = self._rotate_every_two(x_rot)
 
@@ -834,104 +831,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def set_encoder_to_fixed_norm(self, value: float):
         """Set encoder weights to fixed norm."""
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for lorsa")
-
-    @overload
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        *,
-        sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: Literal[True] = True,
-        **kwargs,
-    ) -> dict[str, Any]: ...
-
-    @overload
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        *,
-        sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: Literal[False],
-        **kwargs,
-    ) -> Float[torch.Tensor, " batch"]: ...
-
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        label: Float[torch.Tensor, "batch seq_len d_model"] | None = None,
-        *,
-        sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        frequency_scale: float = 0.01,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: bool = True,
-        **kwargs,
-    ) -> Union[
-        Float[torch.Tensor, " batch"],
-        dict[str, Any],
-    ]:
-        """Compute the loss for the autoencoder.
-        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
-        """
-        x, encoder_kwargs, decoder_kwargs = self.prepare_input(batch)
-        label = self.prepare_label(batch, **kwargs)
-
-        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
-        reconstructed = self.decode(feature_acts, **decoder_kwargs)
-
-        l_rec = (reconstructed - label).pow(2).sum(-1)
-        if isinstance(l_rec, DTensor):
-            l_rec = l_rec.full_tensor()
-        l_rec, _ = apply_token_mask(l_rec, self.specs.loss(l_rec), batch["mask"], "mean")
-        loss_dict: dict[str, Optional[torch.Tensor]] = {
-            "l_rec": l_rec,
-        }
-        loss = l_rec
-
-        if sparsity_loss_type is not None:
-            if sparsity_loss_type == "power":
-                l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
-            elif sparsity_loss_type == "tanh":
-                l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
-            elif sparsity_loss_type == "tanh-quad":
-                approx_frequency = einops.reduce(
-                    torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()),
-                    "... d_sae -> d_sae",
-                    "mean",
-                )
-                l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
-            else:
-                raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
-            if isinstance(l_s, DTensor):
-                l_s = l_s.full_tensor()
-            l_s = l1_coefficient * l_s
-            # WARNING: Some DTensor bugs make if l1_coefficient * l_s goes before full_tensor, the l1_coefficient value will be internally cached. Furthermore, it will cause the backward pass to fail with redistribution error. See https://github.com/pytorch/pytorch/issues/153603 and https://github.com/pytorch/pytorch/issues/153615 .
-            loss_dict["l_s"] = l_s
-            loss = loss + l_s.mean()
-        else:
-            loss_dict["l_s"] = None
-
-        loss_dict["l_p"] = None
-
-        if return_aux_data:
-            return {
-                "loss": loss,
-                **loss_dict,
-                "label": label,
-                "mask": batch.get("mask"),
-                "n_tokens": batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum())),
-                "feature_acts": feature_acts,
-                "reconstructed": reconstructed,
-                "hidden_pre": hidden_pre,
-            }
-        return loss
 
     @classmethod
     def from_pretrained(
