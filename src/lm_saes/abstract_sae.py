@@ -777,7 +777,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Initialize the W and D parameters with the active subspace."""
         raise NotImplementedError("Subclasses must implement this method")
 
-    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch: dict[str, torch.Tensor]):
+    def init_encoder_bias_with_mean_hidden_pre(self, batch: dict[str, torch.Tensor]):
         raise NotImplementedError("Subclasses must implement this method")
 
     def dim_maps(self) -> dict[str, DimMap]:

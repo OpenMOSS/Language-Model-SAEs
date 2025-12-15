@@ -439,8 +439,8 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
     @torch.no_grad()
     @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch):
-        x = self.prepare_input(activation_batch)[0]
+    def init_encoder_bias_with_mean_hidden_pre(self, batch: dict[str, torch.Tensor]):
+        x = self.prepare_input(batch)[0]
         if self.device_mesh is None:
             _, hidden_pre = self.encode(x, return_hidden_pre=True)
             self.b_E.copy_(-hidden_pre.mean(dim=0))
