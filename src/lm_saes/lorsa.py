@@ -660,7 +660,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         x = x.repeat_interleave(self.cfg.rotary_scale, dim=-1)
 
         x_pos = x.size(1)
-        x_rot = x[:, :, :, : self.cfg.rotary_dim]
+        # Avoid triggering https://github.com/pytorch/pytorch/issues/170427 in tensor parallelism (tp) settings
+        x_rot = x[:, :, :, : self.cfg.rotary_dim] if self.cfg.rotary_dim < x.size(-1) else x 
         x_pass = x[:, :, :, self.cfg.rotary_dim :]
         x_flip = self._rotate_every_two(x_rot)
 
