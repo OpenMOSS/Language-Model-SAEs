@@ -655,13 +655,13 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
-            l_rec = l_rec.sum(dim=-1)
+            l_rec = l_rec.sum(dim=-1).mean()
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
             loss_dict: dict[str, Optional[torch.Tensor]] = {
                 "l_rec": l_rec,
             }
-            loss = l_rec.mean()
+            loss = l_rec
 
             if sparsity_loss_type is not None:
                 with timer.time("sparsity_loss_calculation"):

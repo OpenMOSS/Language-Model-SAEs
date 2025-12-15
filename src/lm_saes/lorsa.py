@@ -27,6 +27,7 @@ from .abstract_sae import AbstractSparseAutoEncoder
 from .config import LorsaConfig
 from .utils.distributed import DimMap, mesh_dim_size
 from .utils.logging import get_distributed_logger
+from .utils.tensor_specs import apply_token_mask
 
 logger = get_distributed_logger("lorsa")
 
@@ -761,13 +762,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def compute_loss(
         self,
         batch: dict[str, torch.Tensor],
-        label: (
-            Union[
-                Float[torch.Tensor, "batch d_model"],
-                Float[torch.Tensor, "batch seq_len d_model"],
-            ]
-            | None
-        ) = None,
+        label: Float[torch.Tensor, "batch seq_len d_model"] | None = None,
         *,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
@@ -789,14 +784,19 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, **decoder_kwargs)
 
-        l_rec = (reconstructed - label).pow(2)
-        l_rec = l_rec.sum(dim=-1)
+        l_rec = (reconstructed - label).pow(2).sum(-1)
         if isinstance(l_rec, DTensor):
             l_rec = l_rec.full_tensor()
+        l_rec, _ = apply_token_mask(
+            l_rec,
+            self.specs.loss(l_rec),
+            batch["mask"],
+            "mean"
+        )
         loss_dict: dict[str, Optional[torch.Tensor]] = {
             "l_rec": l_rec,
         }
-        loss = l_rec.mean()
+        loss = l_rec
 
         if sparsity_loss_type is not None:
             if sparsity_loss_type == "power":

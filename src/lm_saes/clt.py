@@ -1045,13 +1045,13 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
-            l_rec = l_rec.sum(dim=-1)
+            l_rec = l_rec.sum(dim=-1).mean()
             if isinstance(l_rec, DTensor):
                 l_rec: Tensor = l_rec.full_tensor()
             loss_dict: dict[str, Optional[torch.Tensor]] = {
                 "l_rec": l_rec,
             }
-            loss = l_rec.mean()
+            loss = l_rec
 
             if sparsity_loss_type is not None:
                 decoder_norm: Union[Float[torch.Tensor, "n_layers d_sae"], DTensor] = self.decoder_norm_per_feature()

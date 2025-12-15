@@ -1,4 +1,3 @@
-import functools
 from abc import ABC
 from typing import Generic, TypeVar, cast
 
@@ -13,49 +12,9 @@ from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.tensor_specs import apply_token_mask, reduce
 
 logger = get_distributed_logger("metrics")
-
-
-def h(names: tuple[str, ...]) -> str:
-    return " ".join(names)
-
-
-def reduce(tensor: Tensor, specs: tuple[str, ...], reduction_map: dict[str, str]) -> tuple[Tensor, tuple[str, ...]]:
-    """Reduce the tensor by the mapping of dimension names to reduction functions."""
-
-    assert tensor.ndim == len(specs), f"Tensor has {tensor.ndim} dimensions, but specs have {len(specs)} dimensions"
-
-    def _reduce(tensor: Tensor, specs: tuple[str, ...], dim: str, reduction: str) -> tuple[Tensor, tuple[str, ...]]:
-        target_specs = tuple(filter(lambda x: x != dim, specs))
-        if specs == target_specs:
-            return tensor, target_specs
-        return einops.reduce(tensor, f"{h(specs)} -> {h(target_specs)}", reduction), target_specs
-
-    return functools.reduce(lambda acc, item: _reduce(*acc, *item), reduction_map.items(), (tensor, specs))
-
-
-def apply_token_mask(
-    tensor: Tensor, specs: tuple[str, ...], mask: Tensor | None = None, reduction: str = "sum"
-) -> tuple[Tensor, tuple[str, ...]]:
-    """Apply the token mask to the tensor. Mask should be a 0/1 tensor with the same shape as the token part of the tensor, i.e. the shape of batch and context dimensions."""
-
-    assert tensor.ndim == len(specs), f"Tensor has {tensor.ndim} dimensions, but specs have {len(specs)} dimensions"
-
-    if mask is None:
-        return reduce(tensor, specs, {"batch": reduction, "context": reduction})
-
-    token_specs = tuple(filter(lambda x: x in ["batch", "context"], specs))
-    token_shape = tuple([size for size, spec in zip(tensor.shape, specs) if spec in token_specs])
-    assert mask.shape == token_shape, (
-        f"Mask has shape {mask.shape}, but input tensor has token part of shape {token_shape}"
-    )
-
-    target_specs = tuple(filter(lambda x: x not in token_specs, specs))
-    result = einops.einsum(tensor, mask, f"{h(specs)} {h(token_specs)} -> {h(target_specs)}")
-    if reduction == "mean":
-        result = result / mask.sum()
-    return result, target_specs
 
 
 T = TypeVar("T", bound=Number | Tensor)
@@ -159,7 +118,7 @@ class LossMetric(Metric):
         loss, l_rec, l_s, l_p = ctx["loss"], ctx["l_rec"], ctx.get("l_s"), ctx.get("l_p")
 
         self.loss.update(loss)
-        self.l_rec.update(l_rec.mean())
+        self.l_rec.update(l_rec)
         if l_s is not None:
             self.l_s.update(l_s.mean())
         if l_p is not None:
