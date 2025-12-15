@@ -787,12 +787,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         l_rec = (reconstructed - label).pow(2).sum(-1)
         if isinstance(l_rec, DTensor):
             l_rec = l_rec.full_tensor()
-        l_rec, _ = apply_token_mask(
-            l_rec,
-            self.specs.loss(l_rec),
-            batch["mask"],
-            "mean"
-        )
+        l_rec, _ = apply_token_mask(l_rec, self.specs.loss(l_rec), batch["mask"], "mean")
         loss_dict: dict[str, Optional[torch.Tensor]] = {
             "l_rec": l_rec,
         }

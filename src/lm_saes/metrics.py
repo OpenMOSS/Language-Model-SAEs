@@ -1,7 +1,6 @@
 from abc import ABC
 from typing import Generic, TypeVar, cast
 
-import einops
 import torch
 from torch import Tensor
 from torch.types import Number

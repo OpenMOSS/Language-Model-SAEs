@@ -185,7 +185,6 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         assert "mask" in data, f"Loading cached activation {chunk.path} error: missing 'mask' field"
         assert "attention_mask" in data, f"Loading cached activation {chunk.path} error: missing 'attention_mask' field"
 
-
         return {
             "hook_point": hook_point,
             "activation": data["activation"],
@@ -378,7 +377,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
 
             # Check if we have all hook points for this chunk
             # -4 stands for initial tokens, meta, token_mask and attention_mask
-            if len(chunk_buffer[chunk_idx]) - 4 == len(self.cache_dirs):  
+            if len(chunk_buffer[chunk_idx]) - 4 == len(self.cache_dirs):
                 activations = chunk_buffer.pop(chunk_idx)
                 if self.dtype is not None:
                     for k, v in activations.items():

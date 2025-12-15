@@ -15,9 +15,8 @@ from lm_saes.analysis.post_analysis import get_post_analysis_processor
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import DimMap, masked_fill, slice_fill, to_local
+from lm_saes.utils.distributed import DimMap, masked_fill, to_local
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor

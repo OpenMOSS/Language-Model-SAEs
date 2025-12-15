@@ -1,7 +1,9 @@
-import torch
-import einops
 import functools
+
+import einops
+import torch
 from torch import Tensor
+
 
 class TensorSpecs:
     """Infer the specs of a tensor.
@@ -30,7 +32,7 @@ class TensorSpecs:
     @staticmethod
     def label(tensor: torch.Tensor) -> tuple[str, ...]:
         return TensorSpecs.reconstructed(tensor)
-    
+
     @staticmethod
     def loss(tensor: torch.Tensor) -> tuple[str, ...]:
         if tensor.ndim == 1:
@@ -39,6 +41,7 @@ class TensorSpecs:
             return ("batch", "context")
         else:
             raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
 
 def h(names: tuple[str, ...]) -> str:
     return " ".join(names)

@@ -215,7 +215,9 @@ class Trainer:
         batch = next(iter(activation_stream))
         bs = batch["tokens"].numel()
         if batch["mask"].numel() != batch["mask"].sum():
-            logger.warning(f"We are training with batches of varying length. So we will not use as many as `self.cfg.total_training_tokens` for training as we assume each batch is full to estimate training steps. `details/n_training_tokens` is accurate in this case.")
+            logger.warning(
+                "We are training with batches of varying length. So we will not use as many as `self.cfg.total_training_tokens` for training as we assume each batch is full to estimate training steps. `details/n_training_tokens` is accurate in this case."
+            )
 
         self.total_training_steps = self.cfg.total_training_tokens // bs
 
@@ -489,7 +491,9 @@ class Trainer:
                     with timer.time("scheduler_step"):
                         self.scheduler.step()
                     self.cur_step += 1
-                    self.cur_tokens += batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum()))
+                    self.cur_tokens += (
+                        batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum()))
+                    )
 
                     self._maybe_save_sae_checkpoint(sae)
                     if self.cur_step >= self.total_training_steps:
