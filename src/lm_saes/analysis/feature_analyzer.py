@@ -107,12 +107,42 @@ class FeatureAnalyzer:
                         flat = top_idx.reshape(-1)
                         gathered = mv[flat].reshape(top_idx.shape + mv.shape[1:])
                         discrete_meta_top[mk] = gathered
+                # 若已有历史样本，则与当前 batch 合并再取 per-feature top-k
+                if sample_result_cur is not None:
+                    elt_cat = torch.cat([sample_result_cur["elt"], top_vals], dim=0)  # [k_total, d_sae]
+                    k_keep = min(self.cfg.subsamples[name]["n_samples"], elt_cat.shape[0])
+                    top_vals_new, top_idx_cat = torch.topk(elt_cat, k=k_keep, dim=0)  # [k_keep, d_sae]
 
-                sample_result_cur = {
-                    "elt": top_vals,
-                    "feature_acts": feature_acts_top,
-                    **discrete_meta_top,
-                }
+                    def gather_cat(t: torch.Tensor) -> torch.Tensor:
+                        # t shape: [k_total, d_sae, ...] or [k_total, d_sae]
+                        if t.dim() == 2:
+                            return t.gather(0, top_idx_cat)
+                        idx = top_idx_cat
+                        for _ in range(t.dim() - 2):
+                            idx = idx.unsqueeze(-1)
+                        idx_exp = idx.expand([top_idx_cat.shape[0], top_idx_cat.shape[1], *t.shape[2:]])
+                        return t.gather(0, idx_exp)
+
+                    feature_acts_cat = torch.cat([sample_result_cur["feature_acts"], feature_acts_top], dim=0)
+                    feature_acts_new = gather_cat(feature_acts_cat)
+
+                    discrete_meta_top_new: dict[str, torch.Tensor] = {}
+                    for mk in discrete_meta_top:
+                        meta_cat = torch.cat([sample_result_cur[mk], discrete_meta_top[mk]], dim=0)
+                        discrete_meta_top_new[mk] = gather_cat(meta_cat)
+
+                    sample_result_cur = {
+                        "elt": top_vals_new,
+                        "feature_acts": feature_acts_new,
+                        **discrete_meta_top_new,
+                    }
+                else:
+                    sample_result_cur = {
+                        "elt": top_vals,
+                        "feature_acts": feature_acts_top,
+                        **discrete_meta_top,
+                    }
+
                 sample_result = {**sample_result, name: sample_result_cur}
                 continue
 
