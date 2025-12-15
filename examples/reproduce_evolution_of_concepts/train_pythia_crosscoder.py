@@ -96,7 +96,6 @@ if __name__ == "__main__":
             eval_frequency=1000000,
             n_checkpoints=0,
             sparsity_loss_type="tanh-quad",
-            use_batch_norm_mse=False,
             check_point_save_mode="linear",
             exp_result_path=exp_result_path,
             jumprelu_lr_factor=args.jumprelu_lr_factor,

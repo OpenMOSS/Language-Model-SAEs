@@ -214,7 +214,12 @@ class Trainer:
         wandb_logger: Run | None = None,
     ):
         batch = next(iter(activation_stream))
-        bs = batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum()))
+        bs = batch["tokens"].numel()
+        if batch["mask"].numel() != batch["mask"].sum():
+            logger.warning(
+                "We are training with batches of varying length. So we will not use as many as `self.cfg.total_training_tokens` for training as we assume each batch is full to estimate training steps. `details/n_training_tokens` is accurate in this case."
+            )
+
         self.total_training_steps = self.cfg.total_training_tokens // bs
 
         def calculate_warmup_steps(warmup_steps: float | int) -> int:
@@ -231,7 +236,7 @@ class Trainer:
         if self.cfg.n_checkpoints > 0:
             if self.cfg.check_point_save_mode == "linear":
                 self.checkpoint_thresholds = list(
-                    range(0, self.cfg.total_training_tokens, self.cfg.total_training_tokens // self.cfg.n_checkpoints)
+                    range(0, self.total_training_steps, self.total_training_steps // self.cfg.n_checkpoints)
                 )[1:]
             elif self.cfg.check_point_save_mode == "log":
                 self.checkpoint_thresholds = [
@@ -339,7 +344,6 @@ class Trainer:
             sparsity_loss_type=self.cfg.sparsity_loss_type,
             tanh_stretch_coefficient=self.cfg.tanh_stretch_coefficient,
             p=self.cfg.p,
-            use_batch_norm_mse=self.cfg.use_batch_norm_mse,
             return_aux_data=True,
             l1_coefficient=l1_coefficient,
             lp_coefficient=lp_coefficient,
@@ -400,7 +404,7 @@ class Trainer:
 
     @timer.time("save_checkpoint")
     def _maybe_save_sae_checkpoint(self, sae: AbstractSparseAutoEncoder):
-        if len(self.checkpoint_thresholds) > 0 and self.cur_tokens >= self.checkpoint_thresholds[0]:
+        if len(self.checkpoint_thresholds) > 0 and self.cur_step >= self.checkpoint_thresholds[0]:
             suffix = "safetensors" if sae.device_mesh is None else "dcp"
             path = os.path.join(
                 self.cfg.exp_result_path,
@@ -492,8 +496,9 @@ class Trainer:
                     self.cur_tokens += (
                         batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum()))
                     )
+
                     self._maybe_save_sae_checkpoint(sae)
-                    if self.cur_tokens >= self.cfg.total_training_tokens:
+                    if self.cur_step >= self.total_training_steps:
                         break
                     with timer.time("refresh_batch"):
                         del batch

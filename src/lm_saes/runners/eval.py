@@ -166,8 +166,8 @@ def eval_graph(settings: EvalGraphSettings) -> None:
             LowRankSparseAttention.from_pretrained(lorsa_cfg, device=settings.device)
             for lorsa_cfg in settings.lorsas_path
         ]
-        for lorsa in lorsas:
-            lorsa.cfg.skip_bos = False
+        # for lorsa in lorsas:
+        #     lorsa.cfg.skip_bos = False
     else:
         lorsas = None
 

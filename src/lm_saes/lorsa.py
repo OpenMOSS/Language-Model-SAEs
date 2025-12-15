@@ -21,8 +21,6 @@ from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
-from lm_saes.utils.distributed.ops import item
-
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import LorsaConfig
 from .utils.distributed import DimMap, masked_fill, mesh_dim_size
@@ -662,8 +660,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             out = out + self.b_D
         if isinstance(out, DTensor):
             out = DimMap({"data": 0}).redistribute(out)
-        if self.cfg.skip_bos:
-            out = out[:, 1:]
         return out
 
     def _compute_qkv(
@@ -751,7 +747,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         x_pos = x.size(1)
         # Avoid triggering https://github.com/pytorch/pytorch/issues/170427 in tensor parallelism (tp) settings
-        x_rot = x[:, :, :, : self.cfg.rotary_dim] if self.cfg.rotary_dim < x.size(-1) else x 
+        x_rot = x[:, :, :, : self.cfg.rotary_dim] if self.cfg.rotary_dim < x.size(-1) else x
         x_pass = x[:, :, :, self.cfg.rotary_dim :]
         x_flip = self._rotate_every_two(x_rot)
 
@@ -836,118 +832,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Set encoder weights to fixed norm."""
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for lorsa")
 
-    @overload
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: Literal[True] = True,
-        **kwargs,
-    ) -> dict[str, Any]: ...
-
-    @overload
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: Literal[False],
-        **kwargs,
-    ) -> Float[torch.Tensor, " batch"]: ...
-
-    def compute_loss(
-        self,
-        batch: dict[str, torch.Tensor],
-        label: (
-            Union[
-                Float[torch.Tensor, "batch d_model"],
-                Float[torch.Tensor, "batch seq_len d_model"],
-            ]
-            | None
-        ) = None,
-        *,
-        use_batch_norm_mse: bool = False,
-        sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
-        tanh_stretch_coefficient: float = 4.0,
-        frequency_scale: float = 0.01,
-        p: int = 1,
-        l1_coefficient: float = 1.0,
-        return_aux_data: bool = True,
-        **kwargs,
-    ) -> Union[
-        Float[torch.Tensor, " batch"],
-        dict[str, Any],
-    ]:
-        """Compute the loss for the autoencoder.
-        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
-        """
-        x, encoder_kwargs, decoder_kwargs = self.prepare_input(batch)
-        label = self.prepare_label(batch, **kwargs)
-
-        feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
-        reconstructed = self.decode(feature_acts, **decoder_kwargs)
-
-        l_rec = (reconstructed - label).pow(2)
-        if use_batch_norm_mse:
-            l_rec = (
-                l_rec
-                / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
-            )
-        l_rec = l_rec.sum(dim=-1)
-        if isinstance(l_rec, DTensor):
-            l_rec = l_rec.full_tensor()
-        loss_dict: dict[str, Optional[torch.Tensor]] = {
-            "l_rec": l_rec,
-        }
-        loss = l_rec.mean()
-
-        if sparsity_loss_type is not None:
-            if sparsity_loss_type == "power":
-                l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
-            elif sparsity_loss_type == "tanh":
-                l_s = torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()).sum(dim=-1)
-            elif sparsity_loss_type == "tanh-quad":
-                approx_frequency = einops.reduce(
-                    torch.tanh(tanh_stretch_coefficient * feature_acts * self.decoder_norm()),
-                    "... d_sae -> d_sae",
-                    "mean",
-                )
-                l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
-            else:
-                raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
-            if isinstance(l_s, DTensor):
-                l_s = l_s.full_tensor()
-            l_s = l1_coefficient * l_s
-            # WARNING: Some DTensor bugs make if l1_coefficient * l_s goes before full_tensor, the l1_coefficient value will be internally cached. Furthermore, it will cause the backward pass to fail with redistribution error. See https://github.com/pytorch/pytorch/issues/153603 and https://github.com/pytorch/pytorch/issues/153615 .
-            loss_dict["l_s"] = l_s
-            loss = loss + l_s.mean()
-        else:
-            loss_dict["l_s"] = None
-
-        loss_dict["l_p"] = None
-
-        if return_aux_data:
-            return {
-                "loss": loss,
-                **loss_dict,
-                "label": label,
-                "mask": batch.get("mask"),
-                "n_tokens": batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum())),
-                "feature_acts": feature_acts,
-                "reconstructed": reconstructed,
-                "hidden_pre": hidden_pre,
-            }
-        return loss
-
     @classmethod
     def from_pretrained(
         cls,
@@ -994,8 +878,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def prepare_label(self, batch: dict[str, torch.Tensor], **kwargs):
         """Prepare label tensor."""
         label = batch[self.cfg.hook_point_out]
-        if self.cfg.skip_bos:
-            label = label[:, 1:]
         return label
 
 

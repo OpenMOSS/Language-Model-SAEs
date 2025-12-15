@@ -986,7 +986,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         self,
         batch: dict[str, torch.Tensor],
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
@@ -1000,7 +999,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         self,
         batch: dict[str, torch.Tensor],
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
@@ -1022,7 +1020,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             ]
         ) = None,
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         frequency_scale: float = 0.01,
@@ -1048,18 +1045,13 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
-            if use_batch_norm_mse:
-                l_rec = (
-                    l_rec
-                    / (label - label.mean(dim=1, keepdim=True)).pow_(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
-                )
-            l_rec = l_rec.sum(dim=-1)
+            l_rec = l_rec.sum(dim=-1).mean()
             if isinstance(l_rec, DTensor):
                 l_rec: Tensor = l_rec.full_tensor()
             loss_dict: dict[str, Optional[torch.Tensor]] = {
                 "l_rec": l_rec,
             }
-            loss = l_rec.mean()
+            loss = l_rec
 
             if sparsity_loss_type is not None:
                 decoder_norm: Union[Float[torch.Tensor, "n_layers d_sae"], DTensor] = self.decoder_norm_per_feature()

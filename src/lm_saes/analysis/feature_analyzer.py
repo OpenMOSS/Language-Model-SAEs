@@ -15,9 +15,8 @@ from lm_saes.analysis.post_analysis import get_post_analysis_processor
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import FeatureAnalyzerConfig
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import DimMap, masked_fill, slice_fill, to_local
+from lm_saes.utils.distributed import DimMap, masked_fill, to_local
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
@@ -253,8 +252,6 @@ class FeatureAnalyzer:
                     tokens = DTensor.from_local(tokens, device_mesh, placements=DimMap({}).placements(device_mesh))
             if isinstance(sae, CrossCoder):
                 feature_acts = feature_acts.amax(dim=-2)
-            if isinstance(sae, LowRankSparseAttention) and sae.cfg.skip_bos:
-                feature_acts = slice_fill(feature_acts, (slice(None), 0, slice(None)), 0)
             assert feature_acts.shape == (tokens.shape[0], tokens.shape[1], sae.cfg.d_sae), (
                 f"feature_acts.shape: {feature_acts.shape}, expected: {(tokens.shape[0], tokens.shape[1], sae.cfg.d_sae)}"
             )

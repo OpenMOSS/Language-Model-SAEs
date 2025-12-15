@@ -147,9 +147,7 @@ class LorsaConfig(BaseSAEConfig):
     NTK_by_parts_low_freq_factor: float = 1.0
     NTK_by_parts_high_freq_factor: float = 1.0
     old_context_len: int = 2048
-
     n_ctx: int
-    skip_bos: bool = False
 
     # Attention settings
     attn_scale: float | None = None
@@ -478,7 +476,6 @@ class TrainerConfig(BaseConfig):
     k_cold_booting_steps: int | float = 0
     k_schedule_type: Literal["linear", "exponential"] = "linear"
     k_exponential_factor: float = 3.0
-    use_batch_norm_mse: bool = True
     skip_metrics_calculation: bool = False
     gradient_accumulation_steps: int = 1
 

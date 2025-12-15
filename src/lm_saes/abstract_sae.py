@@ -37,6 +37,8 @@ from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
 
+from .utils.tensor_specs import apply_token_mask
+
 logger = get_distributed_logger("abstract_sae")
 
 
@@ -594,7 +596,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         self,
         batch: dict[str, torch.Tensor],
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
@@ -609,7 +610,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         self,
         batch: dict[str, torch.Tensor],
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
@@ -631,7 +631,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             | None
         ) = None,
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         frequency_scale: float = 0.01,
@@ -657,19 +656,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             reconstructed = self.decode(feature_acts, **decoder_kwargs)
 
         with timer.time("loss_calculation"):
-            l_rec = (reconstructed - label).pow(2)
-            if use_batch_norm_mse:
-                l_rec = (
-                    l_rec
-                    / (label - label.mean(dim=0, keepdim=True)).pow(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
-                )
-            l_rec = l_rec.sum(dim=-1)
+            l_rec = (reconstructed - label).pow(2).sum(dim=-1)
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
             loss_dict: dict[str, Optional[torch.Tensor]] = {
                 "l_rec": l_rec,
             }
-            loss = l_rec.mean()
+            l_rec, _ = apply_token_mask(l_rec, self.specs.loss(l_rec), batch["mask"], "mean")
+            loss = l_rec
 
             if sparsity_loss_type is not None:
                 with timer.time("sparsity_loss_calculation"):

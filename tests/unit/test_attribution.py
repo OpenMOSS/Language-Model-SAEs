@@ -51,7 +51,6 @@ class TestAttribution:
                 hook_point_out="blocks.0.ln1.hook_attn_out",
                 rotary_base=1_000_000,
                 n_ctx=10,
-                skip_bos=True,
                 device="cpu",
                 dtype=torch.float32,
                 normalization_type="RMS",
@@ -69,7 +68,6 @@ class TestAttribution:
                 hook_point_out="blocks.1.ln1.hook_attn_out",
                 rotary_base=1_000_000,
                 n_ctx=10,
-                skip_bos=True,
                 device="cpu",
                 dtype=torch.float32,
                 normalization_type="RMS",
@@ -82,8 +80,6 @@ class TestAttribution:
             LowRankSparseAttention(simple_lorsa_configs[0]),
             LowRankSparseAttention(simple_lorsa_configs[1]),
         ]
-        for lorsa in _lorsa_models:
-            lorsa.cfg.skip_bos = False
 
         # Initialize model weights
         with torch.no_grad():
