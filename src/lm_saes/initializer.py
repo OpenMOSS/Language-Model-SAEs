@@ -75,6 +75,9 @@ class Initializer:
                     f"Bias initialization method {self.cfg.bias_init_method} is not supported for {sae.cfg.sae_type}"
                 )
 
+        if self.cfg.init_encoder_bias_with_mean_hidden_pre:
+            sae.init_encoder_bias_with_mean_hidden_pre(batch)
+
         @torch.autocast(device_type=sae.cfg.device, dtype=sae.cfg.dtype)
         def grid_search_best_init_norm(search_range: List[float]) -> float:
             losses: Dict[float, float] = {}
@@ -83,6 +86,8 @@ class Initializer:
                 sae.set_decoder_to_fixed_norm(norm, force_exact=True)
                 if self.cfg.init_encoder_with_decoder_transpose:
                     sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
+                if self.cfg.init_encoder_bias_with_mean_hidden_pre:
+                    sae.init_encoder_bias_with_mean_hidden_pre(batch)
                 mse = item(sae.compute_loss(batch)["l_rec"])  # type: ignore
                 losses[norm] = mse
             best_norm = min(losses, key=losses.get)  # type: ignore
@@ -102,6 +107,8 @@ class Initializer:
 
         if self.cfg.init_encoder_with_decoder_transpose:
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
+        if self.cfg.init_encoder_bias_with_mean_hidden_pre:
+            sae.init_encoder_bias_with_mean_hidden_pre(batch)
 
         return sae
 
@@ -192,7 +199,7 @@ class Initializer:
                     assert self.cfg.model_layer is not None, (
                         "Model layer must be provided for initializing Lorsa decoder weight with active subspace"
                     )
-                    sae.init_W_D_with_active_subspace_per_head(
+                    sae.init_W_V_with_active_subspace_per_head(
                         batch,
                         mhsa=cast(
                             Attention | GroupedQueryAttention,
@@ -206,9 +213,5 @@ class Initializer:
                     sae.init_W_D_with_active_subspace(batch, self.cfg.d_active_subspace)
 
             sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
-
-            if self.cfg.init_encoder_bias_with_mean_hidden_pre:
-                batch = sae.normalize_activations(activation_batch)
-                sae.init_encoder_bias_with_mean_hidden_pre(batch)
 
         return sae

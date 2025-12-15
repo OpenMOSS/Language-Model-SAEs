@@ -25,7 +25,7 @@ from lm_saes.utils.distributed.ops import item
 
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import LorsaConfig
-from .utils.distributed import DimMap, mesh_dim_size
+from .utils.distributed import DimMap, masked_fill, mesh_dim_size
 from .utils.logging import get_distributed_logger
 from .utils.tensor_specs import apply_token_mask
 
@@ -165,10 +165,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         torch.nn.init.xavier_uniform_(self.W_K)
 
         W_V_bound = 1 / math.sqrt(self.cfg.d_sae)
-        torch.nn.init.uniform_(self.W_V, -W_V_bound, W_V_bound)
+        # torch.nn.init.uniform_(self.W_V, -W_V_bound, W_V_bound)
+        torch.nn.init.normal_(self.W_V, mean=0, std=W_V_bound)
 
         W_O_bound = 1 / math.sqrt(self.cfg.d_model)
-        torch.nn.init.uniform_(self.W_O, -W_O_bound, W_O_bound)
+        # torch.nn.init.uniform_(self.W_O, -W_O_bound, W_O_bound)
+        torch.nn.init.normal_(self.W_O, mean=0, std=W_O_bound)
 
         torch.nn.init.zeros_(self.b_Q)
         torch.nn.init.zeros_(self.b_K)
@@ -190,8 +192,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             lorsa_qk_start_idx = model_parallel_rank * self.cfg.n_qk_heads // model_parallel_size
             lorsa_qk_end_idx = lorsa_qk_start_idx + self.cfg.n_qk_heads // model_parallel_size
             lorsa_qk_indices = torch.arange(lorsa_qk_start_idx, lorsa_qk_end_idx)
-            W_Q_local = mhsa.W_Q[lorsa_qk_indices // qk_exp_factor]
-            W_K_local = mhsa.W_K[lorsa_qk_indices // qk_exp_factor]
+            W_Q_local = mhsa.W_Q[lorsa_qk_indices // qk_exp_factor] / input_norm_factor
+            W_K_local = mhsa.W_K[lorsa_qk_indices // qk_exp_factor] / input_norm_factor
             W_Q = DTensor.from_local(
                 W_Q_local,
                 device_mesh=self.device_mesh,
@@ -310,19 +312,115 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 demeaned_output = output_flattened - output_flattened.mean(dim=0)
                 U, S, V = torch.svd(demeaned_output.T.to(torch.float32))
                 proj_weight = U[:, : self.cfg.d_qk_head]
-                self.W_O.data[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head] = (
-                    self.W_O.data[
+                self.W_O[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head] = (
+                    self.W_O[
                         orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head,
                         : self.cfg.d_qk_head,
                     ]
                     @ proj_weight.T
                 )
-                self.W_V.data[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head] = (
-                    self.W_O.data[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head]
+                self.W_V[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head] = (
+                    self.W_O[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head]
                     @ (mhsa.W_V[orig_head_index] @ mhsa.W_O[orig_head_index]).T
                 )
-            self.W_V.copy_(self.W_V.data / self.W_V.data.norm(dim=1, keepdim=True))
-            self.W_O.copy_(self.W_O.data / self.W_O.data.norm(dim=1, keepdim=True))
+            self.W_V.copy_(self.W_V / self.W_V.norm(dim=1, keepdim=True))
+            self.W_O.copy_(self.W_O / self.W_O.norm(dim=1, keepdim=True))
+
+    @torch.no_grad()
+    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    def init_W_V_with_active_subspace_per_head(
+        self, activation_batch: dict[str, torch.Tensor], mhsa: Attention | GroupedQueryAttention
+    ):
+        """
+        Initialize W_D with the active subspace for each head.
+        """
+        x = self.prepare_input(activation_batch)[0]
+        if isinstance(x, DTensor):
+            x = x.to_local()
+
+        v_per_head = (
+            x.reshape(-1, self.cfg.d_model) @ mhsa.W_V.permute(1, 0, 2).reshape(mhsa.cfg.d_model, mhsa.cfg.d_model)
+        ).reshape(-1, mhsa.cfg.n_heads, mhsa.cfg.d_head)
+        captured_v = torch.einsum("bnh,nhd->bnd", v_per_head, mhsa.W_V.permute(0, 2, 1))
+
+        n_ov_per_orig_head = self.cfg.n_ov_heads // mhsa.cfg.n_heads
+        if self.device_mesh is not None:
+            assert isinstance(self.W_O, DTensor)
+            assert isinstance(self.W_V, DTensor)
+            model_parallel_rank = self.device_mesh.get_local_rank(mesh_dim="model")
+            model_parallel_size = mesh_dim_size(self.device_mesh, "model")
+            orig_start_idx = model_parallel_rank * mhsa.cfg.n_heads // model_parallel_size
+            orig_end_idx = orig_start_idx + mhsa.cfg.n_heads // model_parallel_size
+            W_O_local = torch.empty_like(self.W_O.to_local())
+            W_V_local = torch.empty_like(self.W_V.to_local())
+            for orig_head_index in range(orig_start_idx, orig_end_idx):
+                v = captured_v[:, orig_head_index]
+                demeaned_v = v - v.mean(dim=0)
+                U, S, V = torch.svd(demeaned_v.T.to(torch.float32))
+                proj_weight = U[:, : self.cfg.d_qk_head]
+                start_idx = (orig_head_index - orig_start_idx) * n_ov_per_orig_head
+                end_idx = min(start_idx + n_ov_per_orig_head, W_O_local.size(0))
+                W_V_local[start_idx:end_idx] = (
+                    self.W_V.to_local()[start_idx:end_idx, : self.cfg.d_qk_head] @ proj_weight.T
+                )
+                W_O_local[start_idx:end_idx] = (
+                    W_V_local[start_idx:end_idx] @ mhsa.W_V[orig_head_index] @ mhsa.W_O[orig_head_index]
+                )
+            W_V_local = W_V_local / W_V_local.norm(dim=1, keepdim=True)
+            W_O_local = W_O_local / W_O_local.norm(dim=1, keepdim=True)
+            torch.distributed.broadcast(tensor=W_O_local, group=self.device_mesh.get_group("data"), group_src=0)
+            torch.distributed.broadcast(tensor=W_V_local, group=self.device_mesh.get_group("data"), group_src=0)
+            W_O_global = DTensor.from_local(
+                W_O_local, device_mesh=self.device_mesh, placements=self.dim_maps()["W_O"].placements(self.device_mesh)
+            )
+            W_V_global = DTensor.from_local(
+                W_V_local, device_mesh=self.device_mesh, placements=self.dim_maps()["W_V"].placements(self.device_mesh)
+            )
+            self.W_O.copy_(W_O_global)
+            self.W_V.copy_(W_V_global)
+        else:
+            for orig_head_index in range(mhsa.cfg.n_heads):
+                v = captured_v[:, orig_head_index]
+                demeaned_v = v - v.mean(dim=0)
+                U, S, V = torch.svd(demeaned_v.T.to(torch.float32))
+                proj_weight = U[:, : self.cfg.d_qk_head]
+                self.W_V[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head] = (
+                    self.W_V[
+                        orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head,
+                        : self.cfg.d_qk_head,
+                    ]
+                    @ proj_weight.T
+                )
+                self.W_O[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head] = (
+                    self.W_V[orig_head_index * n_ov_per_orig_head : (orig_head_index + 1) * n_ov_per_orig_head]
+                    @ mhsa.W_V[orig_head_index]
+                    @ mhsa.W_O[orig_head_index]
+                )
+            self.W_V.copy_(self.W_V / self.W_V.norm(dim=1, keepdim=True))
+            self.W_O.copy_(self.W_O / self.W_O.norm(dim=1, keepdim=True))
+
+    @torch.no_grad()
+    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    def init_encoder_bias_with_mean_hidden_pre(self, batch: dict[str, torch.Tensor]):
+        x = self.prepare_input(batch)[0]
+        _, hidden_pre = self.encode(x, return_hidden_pre=True)
+
+        if self.cfg.sparsity_include_decoder_norm:
+            hidden_pre = hidden_pre / self.decoder_norm()
+
+        self.b_V.sub_(hidden_pre.mean(dim=[0, 1]))
+
+    @torch.no_grad()
+    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    def reverse_for_off_center(self, batch: dict[str, torch.Tensor]):
+        x = self.prepare_input(batch)[0]
+        _, hidden_pre = self.encode(x, return_hidden_pre=True)
+        hidden_pre_flatten = hidden_pre.flatten(0, 1)
+        positive_freq = (hidden_pre_flatten > 0).sum(dim=0) / hidden_pre_flatten.size(0)
+        reverse_mask = positive_freq < 2e-1
+        reverse_factor = masked_fill(torch.ones_like(self.W_V), reverse_mask, -1)
+        self.W_V.mul_(reverse_factor)
+        self.W_O.mul_(reverse_factor)
 
     def _calculate_sin_cos_rotary(
         self,
@@ -651,7 +749,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         x = x.repeat_interleave(self.cfg.rotary_scale, dim=-1)
 
         x_pos = x.size(1)
-        x_rot = x[:, :, :, : self.cfg.rotary_dim]
+        # Avoid triggering https://github.com/pytorch/pytorch/issues/170427 in tensor parallelism (tp) settings
+        x_rot = x[:, :, :, : self.cfg.rotary_dim] if self.cfg.rotary_dim < x.size(-1) else x 
         x_pass = x[:, :, :, self.cfg.rotary_dim :]
         x_flip = self._rotate_every_two(x_rot)
 
@@ -725,7 +824,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
     @override
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
-        self.W_O.data = self.W_O.data * value / self.W_O.data.norm(dim=1, keepdim=True)
+        if force_exact:
+            self.W_O.mul_(value / self.decoder_norm(keepdim=True).mean())
+        else:
+            self.W_O.mul_(value / torch.clamp(self.decoder_norm(keepdim=True).mean(), min=value))
 
     @override
     @torch.no_grad()
