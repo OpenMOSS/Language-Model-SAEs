@@ -70,6 +70,11 @@ export const CircuitVisualization = () => {
   const [diffingLogs, setDiffingLogs] = useState<Array<{timestamp: number; message: string}>>([]); // 比较日志
   const [showDiffingLogs, setShowDiffingLogs] = useState(false); // 是否显示日志
 
+  // 子图功能相关状态
+  const [showSubgraph, setShowSubgraph] = useState(false); // 是否显示子图模式
+  const [subgraphData, setSubgraphData] = useState<any>(null); // 子图数据
+  const [subgraphRootNodeId, setSubgraphRootNodeId] = useState<string | null>(null); // 子图根节点ID
+
   // 多图支持：存放多份原始 JSON 及其文件名
   const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
 
@@ -231,9 +236,18 @@ export const CircuitVisualization = () => {
       setPinnedIds(newPinnedIds);
     } else {
       // Set clicked node
-      setClickedId(node.nodeId === clickedId ? null : node.nodeId);
+      const newClickedId = node.nodeId === clickedId ? null : node.nodeId;
+      setClickedId(newClickedId);
+      
+      // 如果点击了新节点且当前在子图模式下，退出子图模式
+      if (newClickedId !== clickedId && showSubgraph) {
+        setShowSubgraph(false);
+        setSubgraphData(null);
+        setSubgraphRootNodeId(null);
+        console.log('🔄 切换节点，自动退出子图模式');
+      }
     }
-  }, [clickedId, pinnedIds, setClickedId, setPinnedIds]);
+  }, [clickedId, pinnedIds, showSubgraph, setClickedId, setPinnedIds]);
 
   const handleFeatureHover = useCallback((nodeId: string | null) => {
     // Only update if the hovered ID has actually changed
@@ -352,6 +366,10 @@ export const CircuitVisualization = () => {
       setInactiveNodes(new Set());
       setDiffingLogs([]);
       setShowDiffingLogs(false);
+      // 清空子图相关状态
+      setShowSubgraph(false);
+      setSubgraphData(null);
+      setSubgraphRootNodeId(null);
     } catch (err) {
       console.error('Failed to load circuit data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load circuit data');
@@ -432,6 +450,10 @@ export const CircuitVisualization = () => {
       setInactiveNodes(new Set());
       setDiffingLogs([]);
       setShowDiffingLogs(false);
+      // 清空子图相关状态
+      setShowSubgraph(false);
+      setSubgraphData(null);
+      setSubgraphRootNodeId(null);
     } catch (err) {
       console.error('Failed to load circuit data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load circuit data');
@@ -1858,6 +1880,165 @@ export const CircuitVisualization = () => {
     }
   }, [originalCircuitJson, perturbedFen, linkGraphData, extractFenFromPrompt]);
 
+  // 递归查找某个节点的所有上游节点（包括它们的上游）
+  const findUpstreamNodes = useCallback((nodeId: string, graphData: any): Set<string> => {
+    const upstreamNodes = new Set<string>();
+    const visited = new Set<string>();
+    
+    const traverse = (currentNodeId: string) => {
+      if (visited.has(currentNodeId)) return;
+      visited.add(currentNodeId);
+      upstreamNodes.add(currentNodeId);
+      
+      // 查找指向当前节点的所有边（入边）
+      const incomingLinks = graphData.links.filter((link: any) => link.target === currentNodeId);
+      
+      // 递归查找每个源节点的上游
+      for (const link of incomingLinks) {
+        traverse(link.source);
+      }
+    };
+    
+    traverse(nodeId);
+    return upstreamNodes;
+  }, []);
+
+  // 创建子图数据
+  const createSubgraph = useCallback((rootNodeId: string, graphData: any) => {
+    const upstreamNodeIds = findUpstreamNodes(rootNodeId, graphData);
+    
+    // 过滤节点：只保留上游节点
+    const subgraphNodes = graphData.nodes.filter((node: any) => 
+      upstreamNodeIds.has(node.nodeId)
+    );
+    
+    // 过滤边：只保留两端都在子图中的边
+    const subgraphLinks = graphData.links.filter((link: any) => 
+      upstreamNodeIds.has(link.source) && upstreamNodeIds.has(link.target)
+    );
+    
+    // 创建子图数据结构
+    const subgraph = {
+      nodes: subgraphNodes,
+      links: subgraphLinks,
+      metadata: {
+        ...graphData.metadata,
+        subgraphRoot: rootNodeId,
+        originalNodeCount: graphData.nodes.length,
+        subgraphNodeCount: subgraphNodes.length,
+        originalLinkCount: graphData.links.length,
+        subgraphLinkCount: subgraphLinks.length,
+        createdAt: new Date().toISOString(),
+        isSubgraph: true
+      }
+    };
+    
+    console.log('🔍 创建子图:', {
+      rootNodeId,
+      totalUpstreamNodes: upstreamNodeIds.size,
+      subgraphNodes: subgraphNodes.length,
+      subgraphLinks: subgraphLinks.length,
+      originalNodes: graphData.nodes.length,
+      originalLinks: graphData.links.length
+    });
+    
+    return subgraph;
+  }, [findUpstreamNodes]);
+
+  // 显示子图
+  const handleShowSubgraph = useCallback(() => {
+    if (!clickedId || !displayLinkGraphData) return;
+    
+    const subgraph = createSubgraph(clickedId, displayLinkGraphData);
+    setSubgraphData(subgraph);
+    setSubgraphRootNodeId(clickedId);
+    setShowSubgraph(true);
+    
+    console.log('🎯 显示子图模式:', {
+      rootNodeId: clickedId,
+      nodeCount: subgraph.nodes.length,
+      linkCount: subgraph.links.length
+    });
+  }, [clickedId, displayLinkGraphData, createSubgraph]);
+
+  // 退出子图模式
+  const handleExitSubgraph = useCallback(() => {
+    setShowSubgraph(false);
+    setSubgraphData(null);
+    setSubgraphRootNodeId(null);
+    console.log('🔙 退出子图模式');
+  }, []);
+
+  // 保存子图为JSON文件
+  const handleSaveSubgraph = useCallback(() => {
+    if (!subgraphData || !subgraphRootNodeId) return;
+    
+    // 从原始数据中获取完整的节点信息（包括激活数据、z_pattern等）
+    const enrichSubgraphWithOriginalData = (subgraph: any) => {
+      if (!originalCircuitJson) return subgraph;
+      
+      const enrichedNodes = subgraph.nodes.map((node: any) => {
+        // 从原始JSON中查找对应的完整节点数据
+        const originalNodeData = getNodeActivationDataFromJson(originalCircuitJson, node.nodeId);
+        
+        return {
+          ...node,
+          // 添加原始数据中的完整信息
+          activations: originalNodeData.activations,
+          zPatternIndices: originalNodeData.zPatternIndices,
+          zPatternValues: originalNodeData.zPatternValues,
+          clerp: originalNodeData.clerp,
+          // 保留所有原始字段
+          ...(originalCircuitJson.nodes?.find((n: any) => n.node_id === node.nodeId) || {})
+        };
+      });
+      
+      return {
+        ...subgraph,
+        nodes: enrichedNodes
+      };
+    };
+    
+    const enrichedSubgraph = enrichSubgraphWithOriginalData(subgraphData);
+    
+    // 生成文件名
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const rootNodeForFilename = subgraphRootNodeId.replace(/[^a-zA-Z0-9]/g, '_');
+    const fileName = `subgraph_${rootNodeForFilename}_${timestamp}.json`;
+    
+    // 创建下载
+    const jsonString = JSON.stringify(enrichedSubgraph, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    console.log('💾 子图已保存:', {
+      fileName,
+      rootNodeId: subgraphRootNodeId,
+      nodeCount: enrichedSubgraph.nodes.length,
+      linkCount: enrichedSubgraph.links.length
+    });
+    
+    alert(
+      `✅ 子图已保存！\n\n` +
+      `📁 文件名: ${fileName}\n` +
+      `🎯 根节点: ${subgraphRootNodeId}\n` +
+      `📊 统计:\n` +
+      `  - 节点数: ${enrichedSubgraph.nodes.length}\n` +
+      `  - 边数: ${enrichedSubgraph.links.length}\n` +
+      `  - 包含完整激活数据和z_pattern信息\n\n` +
+      `💡 文件已保存到Downloads文件夹`
+    );
+    
+  }, [subgraphData, subgraphRootNodeId, originalCircuitJson, getNodeActivationDataFromJson]);
+
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -2293,14 +2474,98 @@ export const CircuitVisualization = () => {
 
       {/* Circuit Visualization Layout */}
       <div className="space-y-6 w-full max-w-full overflow-hidden">
+        {/* 子图模式控制栏 */}
+        {clickedId && (
+          <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2">
+                <span className="text-sm font-medium text-blue-900">选中节点:</span>
+                <code className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-sm font-mono">
+                  {clickedId}
+                </code>
+              </div>
+              
+              {!showSubgraph ? (
+                <button
+                  onClick={handleShowSubgraph}
+                  className="px-4 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 transition-colors flex items-center"
+                  title="显示以该节点为根的子图（包含所有上游节点）"
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  </svg>
+                  显示子图
+                </button>
+              ) : (
+                <div className="flex items-center space-x-3">
+                  <div className="flex items-center space-x-2 text-sm text-green-700">
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <span className="font-medium">子图模式</span>
+                    <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
+                      {subgraphData?.nodes.length || 0} 个节点
+                    </span>
+                  </div>
+                  
+                  <button
+                    onClick={handleSaveSubgraph}
+                    className="px-3 py-1 bg-green-500 text-white text-sm font-medium rounded hover:bg-green-600 transition-colors flex items-center"
+                    title="保存子图为JSON文件（包含完整的激活数据和z_pattern）"
+                  >
+                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    保存子图
+                  </button>
+                  
+                  <button
+                    onClick={handleExitSubgraph}
+                    className="px-3 py-1 bg-gray-500 text-white text-sm font-medium rounded hover:bg-gray-600 transition-colors flex items-center"
+                    title="退出子图模式，显示完整图形"
+                  >
+                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    退出子图
+                  </button>
+                </div>
+              )}
+            </div>
+            
+            {showSubgraph && subgraphData && (
+              <div className="text-xs text-gray-600 space-y-1">
+                <div className="flex items-center space-x-2">
+                  <span>根节点:</span>
+                  <code className="px-1 bg-gray-100 rounded">{subgraphRootNodeId}</code>
+                </div>
+                <div className="flex items-center space-x-4">
+                  <span>
+                    节点: {subgraphData.nodes.length}/{subgraphData.metadata?.originalNodeCount || 0}
+                    <span className="text-green-600 ml-1">
+                      ({((subgraphData.nodes.length / (subgraphData.metadata?.originalNodeCount || 1)) * 100).toFixed(1)}%)
+                    </span>
+                  </span>
+                  <span>
+                    边: {subgraphData.links.length}/{subgraphData.metadata?.originalLinkCount || 0}
+                    <span className="text-blue-600 ml-1">
+                      ({((subgraphData.links.length / (subgraphData.metadata?.originalLinkCount || 1)) * 100).toFixed(1)}%)
+                    </span>
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Top Row: Link Graph and Node Connections side by side */}
         <div className="flex gap-6 h-[700px] w-full max-w-full overflow-hidden">
           {/* Link Graph Component - Left Side */}
           <div className="flex-1 min-w-0 max-w-full border rounded-lg p-4 bg-white shadow-sm overflow-hidden">
             <div className="w-full h-full overflow-hidden relative">
-              {displayLinkGraphData && (
+              {(showSubgraph ? subgraphData : displayLinkGraphData) && (
                 <LinkGraphContainer 
-                  data={displayLinkGraphData} 
+                  data={showSubgraph ? subgraphData : displayLinkGraphData} 
                   onNodeClick={handleFeatureClick}
                   onNodeHover={handleFeatureHover}
                   onFeatureSelect={handleFeatureSelect}
@@ -2316,9 +2581,9 @@ export const CircuitVisualization = () => {
 
           {/* Node Connections Component - Right Side */}
           <div className="w-96 flex-shrink-0 border rounded-lg p-4 bg-white shadow-sm overflow-hidden">
-            {displayLinkGraphData && (
+            {(showSubgraph ? subgraphData : displayLinkGraphData) && (
               <NodeConnections
-                data={displayLinkGraphData}
+                data={showSubgraph ? subgraphData : displayLinkGraphData}
                 clickedId={clickedId}
                 hoveredId={hoveredId}
                 pinnedIds={pinnedIds}
