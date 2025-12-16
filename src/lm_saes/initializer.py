@@ -3,6 +3,7 @@ from typing import Dict, Iterable, List, cast
 import torch
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 from transformer_lens import HookedTransformer
 from transformer_lens.components import Attention, GroupedQueryAttention, TransformerBlock
 from wandb.sdk.wandb_run import Run
@@ -18,6 +19,7 @@ from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
+from lm_saes.utils.tensor_specs import apply_token_mask
 
 logger = get_distributed_logger("initializer")
 
@@ -88,7 +90,20 @@ class Initializer:
                     sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
                 if self.cfg.init_encoder_bias_with_mean_hidden_pre:
                     sae.init_encoder_bias_with_mean_hidden_pre(batch)
-                mse = item(sae.compute_loss(batch)["l_rec"])  # type: ignore
+                l_rec = sae.compute_loss(batch)["l_rec"]
+                if isinstance(batch["mask"], DTensor):
+                    assert not isinstance(l_rec, DTensor)
+                    mask = batch["mask"].full_tensor()
+                else:
+                    mask = batch["mask"]
+                mse = item(
+                    apply_token_mask(
+                        l_rec,
+                        sae.specs.loss(l_rec),
+                        mask,
+                        "mean",
+                    )[0]
+                )  # type: ignore
                 losses[norm] = mse
             best_norm = min(losses, key=losses.get)  # type: ignore
             return best_norm

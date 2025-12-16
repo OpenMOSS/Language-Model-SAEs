@@ -164,7 +164,12 @@ class LossMetric(Metric):
         loss, l_rec, l_s, l_p = ctx["loss"], ctx["l_rec"], ctx.get("l_s"), ctx.get("l_p")
 
         self.loss.update(loss)
-        self.l_rec.update(l_rec.mean())
+        if isinstance(ctx["mask"], DTensor):
+            assert not isinstance(l_rec, DTensor)
+            mask = ctx["mask"].full_tensor()
+        else:
+            mask = ctx["mask"]
+        self.l_rec.update(apply_token_mask(l_rec, self.sae.specs.loss(l_rec), mask, "mean")[0])
         if l_s is not None:
             self.l_s.update(l_s.mean())
         if l_p is not None:
