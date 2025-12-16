@@ -2311,8 +2311,20 @@ def circuit_trace(request: dict):
                     # 有部分缓存但不完整，也重新加载（这种情况不应该发生，因为应该等待加载完成）
                     print(f"⚠️ 缓存不完整（TC: {len(cached_transcoders)}, LoRSA: {len(cached_lorsas)}），将重新加载: {model_name} @ {normalized_combo_id}")
             
+            # 规范化FEN和move_uci（去除前后空格，统一格式）
+            normalized_fen = fen.strip() if fen else ""
+            normalized_move_uci = move_uci.strip() if move_uci else ""
+            
             # 创建trace_key用于日志存储
-            trace_key = f"{model_name}::{normalized_combo_id}::{fen}::{move_uci}"
+            trace_key = f"{model_name}::{normalized_combo_id}::{normalized_fen}::{normalized_move_uci}"
+            
+            print(f"🔍 保存trace结果 - trace_key: {trace_key}")
+            print(f"    - model_name: {model_name}")
+            print(f"    - normalized_combo_id: {normalized_combo_id}")
+            print(f"    - fen (原始): {repr(fen)}")
+            print(f"    - fen (规范化): {repr(normalized_fen)}")
+            print(f"    - move_uci (原始): {repr(move_uci)}")
+            print(f"    - move_uci (规范化): {repr(normalized_move_uci)}")
             
             # 初始化日志列表
             if trace_key not in _circuit_trace_logs:
@@ -2332,8 +2344,8 @@ def circuit_trace(request: dict):
             try:
                 # 运行circuit trace，传递已缓存的模型和transcoders/lorsas以及日志列表
                 graph_data = run_circuit_trace(
-                    prompt=fen,
-                    move_uci=move_uci,
+                    prompt=normalized_fen,
+                    move_uci=normalized_move_uci,
                     negative_move_uci=negative_move_uci,  # 传递negative_move_uci
                     model_name=model_name,  # 添加模型名称参数
                     tc_base_path=tc_base_path,  # 传递正确的TC路径
@@ -2414,11 +2426,48 @@ def circuit_trace_result(
     global _circuit_trace_results
 
     if fen and move_uci:
+        # 规范化FEN和move_uci（去除前后空格，统一格式）
+        normalized_fen = fen.strip() if fen else ""
+        normalized_move_uci = move_uci.strip() if move_uci else ""
+        
         combo_id = sae_combo_id or CURRENT_BT4_SAE_COMBO_ID
         combo_cfg = get_bt4_sae_combo(combo_id)
         normalized_combo_id = combo_cfg["id"]
-        trace_key = f"{model_name}::{normalized_combo_id}::{fen}::{move_uci}"
+        trace_key = f"{model_name}::{normalized_combo_id}::{normalized_fen}::{normalized_move_uci}"
+        
+        print(f"🔍 检索trace结果 - trace_key: {trace_key}")
+        print(f"    - model_name: {model_name}")
+        print(f"    - sae_combo_id (原始): {repr(sae_combo_id)}")
+        print(f"    - normalized_combo_id: {normalized_combo_id}")
+        print(f"    - fen (原始): {repr(fen)}")
+        print(f"    - fen (规范化): {repr(normalized_fen)}")
+        print(f"    - move_uci (原始): {repr(move_uci)}")
+        print(f"    - move_uci (规范化): {repr(normalized_move_uci)}")
+        print(f"    - 当前存储的trace_keys数量: {len(_circuit_trace_results)}")
+        if _circuit_trace_results:
+            print(f"    - 存储的trace_keys示例: {list(_circuit_trace_results.keys())[:3]}")
+        
         result = _circuit_trace_results.get(trace_key)
+        if result:
+            print(f"✅ 找到精确匹配的trace结果")
+        
+        # 如果精确匹配失败，尝试模糊匹配（忽略FEN中的空格差异）
+        if not result:
+            print(f"⚠️ 精确匹配失败，尝试模糊匹配...")
+            for key, payload in _circuit_trace_results.items():
+                # 解析key: model_name::combo_id::fen::move_uci
+                parts = key.split("::", 3)
+                if len(parts) == 4:
+                    stored_model, stored_combo, stored_fen, stored_move = parts
+                    # 比较规范化后的值
+                    if (stored_model == model_name and 
+                        stored_combo == normalized_combo_id and
+                        stored_fen.strip() == normalized_fen and
+                        stored_move.strip() == normalized_move_uci):
+                        print(f"✅ 找到模糊匹配的trace_key: {key}")
+                        result = payload
+                        break
+        
     else:
         latest_key = None
         latest_ts = -1
@@ -2428,9 +2477,15 @@ def circuit_trace_result(
                 latest_ts = ts
                 latest_key = key
         result = _circuit_trace_results.get(latest_key) if latest_key else None
+        if latest_key:
+            print(f"🔍 返回最新的trace结果 - trace_key: {latest_key}")
 
     if not result:
-        raise HTTPException(status_code=404, detail="未找到trace结果")
+        available_keys = list(_circuit_trace_results.keys())
+        error_msg = f"未找到trace结果 (查询的trace_key: {trace_key if fen and move_uci else 'N/A'})"
+        if available_keys:
+            error_msg += f"\n当前可用的trace_keys: {available_keys[:5]}"
+        raise HTTPException(status_code=404, detail=error_msg)
 
     return result
 
@@ -2458,10 +2513,14 @@ def get_circuit_trace_logs(
     
     # 如果提供了所有参数，使用精确匹配
     if fen and move_uci:
+        # 规范化FEN和move_uci（去除前后空格，统一格式）
+        normalized_fen = fen.strip() if fen else ""
+        normalized_move_uci = move_uci.strip() if move_uci else ""
+        
         combo_id = sae_combo_id or CURRENT_BT4_SAE_COMBO_ID
         combo_cfg = get_bt4_sae_combo(combo_id)
         normalized_combo_id = combo_cfg["id"]
-        trace_key = f"{model_name}::{normalized_combo_id}::{fen}::{move_uci}"
+        trace_key = f"{model_name}::{normalized_combo_id}::{normalized_fen}::{normalized_move_uci}"
         logs = _circuit_trace_logs.get(trace_key, [])
         is_tracing = _circuit_trace_status.get(trace_key, {}).get("is_tracing", False)
     else:
