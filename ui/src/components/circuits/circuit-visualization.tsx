@@ -239,15 +239,16 @@ export const CircuitVisualization = () => {
       const newClickedId = node.nodeId === clickedId ? null : node.nodeId;
       setClickedId(newClickedId);
       
-      // 如果点击了新节点且当前在子图模式下，退出子图模式
-      if (newClickedId !== clickedId && showSubgraph) {
-        setShowSubgraph(false);
-        setSubgraphData(null);
-        setSubgraphRootNodeId(null);
-        console.log('🔄 切换节点，自动退出子图模式');
-      }
+      // 注释掉自动退出子图模式的逻辑，让用户在子图中可以自由点击其他节点
+      // 用户可以通过"退出子图"按钮或"显示子图"按钮手动控制子图模式
+      // if (newClickedId !== clickedId && showSubgraph) {
+      //   setShowSubgraph(false);
+      //   setSubgraphData(null);
+      //   setSubgraphRootNodeId(null);
+      //   console.log('🔄 切换节点，自动退出子图模式');
+      // }
     }
-  }, [clickedId, pinnedIds, showSubgraph, setClickedId, setPinnedIds]);
+  }, [clickedId, pinnedIds, setClickedId, setPinnedIds]);
 
   const handleFeatureHover = useCallback((nodeId: string | null) => {
     // Only update if the hovered ID has actually changed
