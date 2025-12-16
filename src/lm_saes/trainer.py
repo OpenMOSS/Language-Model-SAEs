@@ -26,7 +26,7 @@ from lm_saes.metrics import (
     Metric,
     ModelSpecificMetric,
 )
-from lm_saes.optim import SparseAdam, get_scheduler
+from lm_saes.optim import SparseAdam, clip_grad_norm, get_scheduler
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import is_primary_rank
@@ -464,16 +464,12 @@ class Trainer:
                     with timer.time("backward"):
                         ctx["loss"].backward()
 
-                    if not self.cfg.skip_metrics_calculation:
-                        with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
-                            self._log(sae, ctx)
-
                     with timer.time("clip_grad_norm"):
                         # exclude the grad of the jumprelu threshold
                         assert sae.device_mesh is None or self.cfg.clip_grad_norm <= 0, (
                             "clip_grad_norm must be 0 for distributed training"
                         )
-                        ctx["grad_norm"] = torch.nn.utils.clip_grad_norm_(
+                        ctx["grad_norm_before_clipping"] = clip_grad_norm(
                             [
                                 param
                                 for name, param in sae.named_parameters()
@@ -481,6 +477,10 @@ class Trainer:
                             ],
                             max_norm=self.cfg.clip_grad_norm if self.cfg.clip_grad_norm > 0 else math.inf,
                         )
+
+                    if not self.cfg.skip_metrics_calculation:
+                        with torch.autocast(device_type=sae.cfg.device, dtype=self.cfg.amp_dtype):
+                            self._log(sae, ctx)
 
                     with timer.time("optimizer_step"):
                         self.optimizer.step()

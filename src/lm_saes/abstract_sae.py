@@ -665,6 +665,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 "l_rec": l_rec,
             }
             l_rec = apply_token_mask(l_rec, self.specs.loss(l_rec), mask, "mean")[0]
+
             loss = l_rec
 
             if sparsity_loss_type is not None:
