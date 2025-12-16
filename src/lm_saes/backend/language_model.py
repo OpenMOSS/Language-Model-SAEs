@@ -384,9 +384,10 @@ class TransformerLensLanguageModel(LanguageModel):
             # _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points, use_flash_attn=False)
             _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
 
+        # we do not want to filter out eos. It might be end of chats and include useful information
         mask = torch.isin(
             tokens,
-            torch.tensor([self.pad_token_id, self.eos_token_id, self.bos_token_id]).to(tokens.device),
+            torch.tensor([self.pad_token_id, self.bos_token_id]).to(tokens.device),
             invert=True,
         ).int()
         attention_mask = torch.isin(tokens, torch.tensor([self.pad_token_id]).to(tokens.device), invert=True).int()
