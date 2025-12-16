@@ -73,6 +73,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   // Circuit Trace 日志相关状态
   const [traceLogs, setTraceLogs] = useState<Array<{timestamp: number; message: string}>>([]);
   const MAX_VISIBLE_LOGS = 100;
+  const LAST_TRACE_REQUEST_KEY = 'circuit_trace_last_request_v1';
 
   // 直接使用父组件传入的上一步FEN，不再使用本地缓存覆盖
   const effectiveGameFen = gameFen;
@@ -90,6 +91,23 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       return obj[fen] || '';
     } catch {
       return '';
+    }
+  }, []);
+
+  const loadLastTraceRequest = useCallback((): any | null => {
+    try {
+      const raw = localStorage.getItem(LAST_TRACE_REQUEST_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const saveLastTraceRequest = useCallback((payload: any) => {
+    try {
+      localStorage.setItem(LAST_TRACE_REQUEST_KEY, JSON.stringify(payload));
+    } catch {
+      /* no-op */
     }
   }, []);
   
@@ -461,6 +479,14 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         '用户输入的 negativeMove': negativeMove,
         '当前 SAE 组合 ID': currentSaeComboId,
       });
+
+      saveLastTraceRequest({
+        fen: effectiveGameFen,
+        move_uci: requestBody.move_uci,
+        order_mode: orderMode,
+        side: requestBody.side,
+        sae_combo_id: currentSaeComboId,
+      });
       
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace`, {
         method: 'POST',
@@ -542,6 +568,83 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       alert('保存JSON失败');
     }
   }, [circuitTraceResult, circuitVisualizationData, gameFen, gameHistory]);
+
+  const fetchExistingTraceResult = useCallback(
+    async (fen: string, moveUci: string, saeComboId: string | null | undefined) => {
+      try {
+        const params = new URLSearchParams({
+          fen,
+          move_uci: moveUci,
+        });
+        if (saeComboId) {
+          params.set('sae_combo_id', saeComboId);
+        }
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/result?${params.toString()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.graph_data?.nodes) {
+          handleCircuitTraceResult(data.graph_data);
+          if (data.logs) {
+            const sliced = (data.logs as Array<{ timestamp: number; message: string }>)?.slice(-MAX_VISIBLE_LOGS) || [];
+            setTraceLogs(sliced);
+          }
+        }
+      } catch (err) {
+        console.error('恢复trace结果失败:', err);
+      }
+    },
+    [handleCircuitTraceResult],
+  );
+
+  useEffect(() => {
+    const last = loadLastTraceRequest();
+    if (!last || !last.fen || !last.move_uci) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 30;
+
+    const pollExisting = async () => {
+      if (cancelled) return;
+      try {
+        const params = new URLSearchParams({
+          model_name: 'lc0/BT4-1024x15x32h',
+          fen: last.fen,
+          move_uci: last.move_uci,
+        });
+        if (last.sae_combo_id) params.set('sae_combo_id', last.sae_combo_id);
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/logs?${params.toString()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const sliced = (data.logs as Array<{ timestamp: number; message: string }>)?.slice(-MAX_VISIBLE_LOGS) || [];
+        setTraceLogs(sliced);
+
+        if (!data.is_tracing) {
+          await fetchExistingTraceResult(last.fen, last.move_uci, last.sae_combo_id);
+          cancelled = true;
+          return;
+        }
+      } catch (err) {
+        console.error('恢复trace日志失败:', err);
+      }
+      attempts += 1;
+      if (attempts >= MAX_ATTEMPTS) cancelled = true;
+    };
+
+    pollExisting();
+    const timer = window.setInterval(() => {
+      if (!cancelled) {
+        pollExisting();
+      } else {
+        window.clearInterval(timer);
+      }
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loadLastTraceRequest, fetchExistingTraceResult]);
 
   // 处理参数设置
   const handleParamsChange = useCallback((key: keyof typeof circuitParams, value: string) => {

@@ -1965,12 +1965,18 @@ export const CircuitVisualization = () => {
       <SaeComboLoader />
 
       {/* Header */}
-      <div className="flex justify-between items-center">
-        <div className="flex items-center space-x-2">
-          <h2 className="text-l font-bold">Prompt:</h2>
-          <h2 className="text-l">{displayLinkGraphData?.metadata?.prompt_tokens?.join(' ') || ''}</h2>
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="flex items-center space-x-2 min-w-0">
+          <h2 className="text-l font-bold whitespace-nowrap">Prompt:</h2>
+          <h2 className="text-l truncate">{displayLinkGraphData?.metadata?.prompt_tokens?.join(' ') || ''}</h2>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-start justify-end gap-3 ml-auto">
+          <button
+            onClick={() => setLinkGraphData(null)}
+            className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+          >
+            Upload New File
+          </button>
           {/* Graph Feature Diffing 控件 - 只在单图时显示 */}
           {displayLinkGraphData && (!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && (
             <div className="flex items-center space-x-2 px-3 py-1 bg-yellow-50 rounded-md border border-yellow-200">
@@ -2139,12 +2145,6 @@ export const CircuitVisualization = () => {
               </div>
             </div>
           )}
-          <button
-            onClick={() => setLinkGraphData(null)}
-            className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
-          >
-            Upload New File
-          </button>
         </div>
       </div>
 
