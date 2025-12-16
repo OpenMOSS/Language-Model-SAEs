@@ -3,6 +3,7 @@ from typing import Generic, TypeVar, cast
 
 import torch
 from torch import Tensor
+from torch.distributed.tensor import DTensor
 from torch.types import Number
 from transformer_lens import HookedTransformer
 
