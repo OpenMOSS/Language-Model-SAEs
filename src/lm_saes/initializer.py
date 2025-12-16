@@ -88,15 +88,15 @@ class Initializer:
                     sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
                 if self.cfg.init_encoder_bias_with_mean_hidden_pre:
                     sae.init_encoder_bias_with_mean_hidden_pre(batch)
-                mse = item(sae.compute_loss(batch)["l_rec"])  # type: ignore
+                mse = item(sae.compute_loss(batch)["l_rec"].mean())
                 losses[norm] = mse
             best_norm = min(losses, key=losses.get)  # type: ignore
             return best_norm
 
         if self.cfg.grid_search_init_norm:
-            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
+            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())
             best_norm_fine_grained = grid_search_best_init_norm(
-                torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
+                torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()
             )
 
             logger.info(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")

@@ -607,13 +607,18 @@ class CrossCoder(AbstractSparseAutoEncoder):
     ) -> dict[str, float]:
         """Compute per-head training metrics for CrossCoder."""
         assert explained_variance.ndim == 1 and len(explained_variance) == len(self.cfg.hook_points)
+        feature_act_spec = self.specs.feature_acts(feature_acts)
+        l0_spec = tuple(spec for spec in feature_act_spec if spec != "sae")
+        l_rec_spec = tuple(
+            spec for spec in feature_act_spec if spec != "model" and spec != "batch" and spec != "context"
+        )
         metrics = {}
         for i, k in enumerate(self.cfg.hook_points):
             metrics.update(
                 {
                     f"crosscoder_metrics/{k}/explained_variance": item(explained_variance[i].mean()),
-                    f"crosscoder_metrics/{k}/l0": item(l0[:, i].mean()),
-                    f"crosscoder_metrics/{k}/l_rec": item(l_rec[:, i].mean()),
+                    f"crosscoder_metrics/{k}/l0": item(l0.select(l0_spec.index("heads"), i).mean()),
+                    f"crosscoder_metrics/{k}/l_rec": item(l_rec.select(l_rec_spec.index("heads"), i).mean()),
                 }
             )
         indices = feature_acts.amax(dim=1).nonzero(as_tuple=True)

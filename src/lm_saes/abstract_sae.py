@@ -657,14 +657,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2).sum(dim=-1)
-            if isinstance(l_rec, DTensor):
-                l_rec = l_rec.full_tensor()
-                assert isinstance(batch["mask"], DTensor)
-                mask = batch["mask"].full_tensor()
+            l_rec, _ = apply_token_mask(l_rec, self.specs.loss(l_rec), batch.get("mask"), "mean")
             loss_dict: dict[str, Optional[torch.Tensor]] = {
                 "l_rec": l_rec,
             }
-            l_rec, _ = apply_token_mask(l_rec, self.specs.loss(l_rec), mask, "mean")
             loss = l_rec
 
             if sparsity_loss_type is not None:
@@ -698,10 +694,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         l_s = (approx_frequency * (1 + approx_frequency / frequency_scale)).sum(dim=-1)
                     else:
                         raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
-                    if isinstance(l_s, DTensor):
-                        l_s = l_s.full_tensor()
                     l_s = l1_coefficient * l_s
-                    # WARNING: Some DTensor bugs make if l1_coefficient * l_s goes before full_tensor, the l1_coefficient value will be internally cached. Furthermore, it will cause the backward pass to fail with redistribution error. See https://github.com/pytorch/pytorch/issues/153603 and https://github.com/pytorch/pytorch/issues/153615 .
                     loss_dict["l_s"] = l_s
                     loss = loss + l_s.mean()
             else:
@@ -713,10 +706,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     # ReLU(exp(lp_threshold) - hidden_pre) * decoder_norm
                     jumprelu_threshold = self.activation_function.get_jumprelu_threshold()
                     l_p = torch.nn.functional.relu(jumprelu_threshold - hidden_pre) * self.decoder_norm()
-                    l_p = l_p.sum(dim=-1)
-                    if isinstance(l_p, DTensor):
-                        l_p = l_p.full_tensor()
-                    l_p = lp_coefficient * l_p
+                    l_p = lp_coefficient * l_p.sum(dim=-1)
                     loss_dict["l_p"] = l_p
                     loss = loss + l_p.mean()
             else:
