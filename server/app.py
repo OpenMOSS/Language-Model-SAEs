@@ -13,10 +13,17 @@ from datasets import Dataset
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from pydantic import BaseModel
 
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend import LanguageModel
-from lm_saes.config import MongoDBConfig, SAEConfig
+from lm_saes.circuit.attribution import attribute
+from lm_saes.circuit.replacement_model import ReplacementModel
+from lm_saes.circuit.utils.create_graph_files import serialize_graph
+from lm_saes.circuit.utils.transcoder_set import TranscoderSet, TranscoderSetConfig
+from lm_saes.config import BaseSAEConfig, MongoDBConfig
 from lm_saes.database import FeatureAnalysisSampling, FeatureRecord, MongoClient
+from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
 
@@ -79,12 +86,12 @@ def get_dataset(*, name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
 
 @synchronized
 @lru_cache(maxsize=8)
-def get_sae(*, name: str) -> SparseAutoEncoder:
+def get_sae(*, name: str) -> AbstractSparseAutoEncoder:
     """Load and cache a sparse autoencoder."""
     path = client.get_sae_path(name, sae_series)
     assert path is not None, f"SAE {name} not found"
-    cfg = SAEConfig.from_pretrained(path)
-    sae = SparseAutoEncoder.from_config(cfg)
+    cfg = BaseSAEConfig.from_pretrained(path)
+    sae = AbstractSparseAutoEncoder.from_config(cfg)
     sae.eval()
     return sae
 
@@ -609,6 +616,70 @@ def infer_feature(name: str, feature_index: int, text: str):
         ),
         media_type="application/x-msgpack",
     )
+
+
+@app.get("/sae-sets")
+def list_sae_sets():
+    """List all available SAE sets."""
+    return [sae_set.name for sae_set in client.list_sae_sets()]
+
+
+class TraceRequest(BaseModel):
+    text: str
+
+
+@app.post("/circuit/{sae_set_name}")
+def trace(sae_set_name: str, request: TraceRequest):
+    """Trace a given text through a given SAE set."""
+    text = request.text
+    sae_set = client.get_sae_set(name=sae_set_name)
+    assert sae_set is not None, f"SAE set {sae_set_name} not found"
+    sae_names = sae_set.sae_names
+    saes = {sae_name: get_sae(name=sae_name) for sae_name in sae_names}
+
+    model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
+    model = get_model(name=model_name)
+
+    lorsas = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, LowRankSparseAttention)}
+    for lorsa in lorsas.values():
+        lorsa.cfg.skip_bos = False
+    transcoders = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, SparseAutoEncoder)}
+    assert len(lorsas) == len(transcoders) == model.model.cfg.n_layers, (
+        "Currently only supports SAE sets with all layers"
+    )
+
+    plt_set = TranscoderSet(
+        TranscoderSetConfig(
+            n_layers=model.model.cfg.n_layers,
+            d_sae=list(transcoders.values())[0].cfg.d_sae,
+            feature_input_hook="ln2.hook_normalized",
+            feature_output_hook="hook_mlp_out",
+        ),
+        {i: transcoder for i, transcoder in enumerate(transcoders.values())},
+    )
+
+    replacement_model = ReplacementModel.from_pretrained(model.cfg, plt_set, list(lorsas.values()))
+
+    graph = attribute(
+        prompt=text,
+        model=replacement_model,
+        max_n_logits=1,
+        desired_logit_prob=0.98,
+        batch_size=1,
+        max_feature_nodes=256,
+        sae_series=sae_series,
+        qk_tracing_topk=10,
+    )
+    graph.cfg.tokenizer_name = model.cfg.model_from_pretrained_path or model.cfg.model_name
+    graph_data = serialize_graph(
+        graph=graph,
+        node_threshold=0.8,
+        edge_threshold=0.98,
+        clt_names=list(transcoders.keys()),
+        lorsa_names=list(lorsas.keys()),
+    )
+
+    return graph_data
 
 
 @app.post("/dictionaries/{name}/features/{feature_index}/bookmark")

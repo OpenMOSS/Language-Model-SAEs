@@ -6,7 +6,6 @@ interface NodeConnectionsProps {
   data: CircuitData
   clickedId: string | null
   hoveredId: string | null
-  pinnedIds: string[]
   hiddenIds: string[]
   onNodeClick: (nodeId: string, metaKey: boolean) => void
   onNodeHover: (nodeId: string | null) => void
@@ -27,7 +26,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
   data,
   clickedId,
   hoveredId,
-  pinnedIds,
   hiddenIds,
   onNodeClick,
   onNodeHover,
@@ -124,7 +122,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
 
     if (weight === undefined) return null
 
-    const isPinned = pinnedIds.includes(node.nodeId)
     const isHidden = hiddenIds.includes(String(node.feature))
     const isHovered = node.nodeId === hoveredId
     const isClicked = node.nodeId === clickedId
@@ -132,11 +129,7 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     return (
       <div
         key={node.nodeId}
-        className={`py-0.5 px-1 border rounded cursor-pointer transition-colors ${
-          isPinned
-            ? 'bg-yellow-100 border-yellow-300'
-            : 'bg-gray-50 border-gray-200'
-        } ${isHidden ? 'opacity-50' : ''} ${isHovered ? 'ring-2 ring-blue-300' : ''} ${
+        className={`py-0.5 px-1 border rounded cursor-pointer transition-colors ${'bg-gray-50 border-gray-200'} ${isHidden ? 'opacity-50' : ''} ${isHovered ? 'ring-2 ring-blue-300' : ''} ${
           isClicked ? 'ring-2 ring-blue-500' : ''
         }`}
         onClick={() => onNodeClick(node.nodeId, false)}
@@ -163,12 +156,8 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
 
   const headerClassName = useMemo(
     () =>
-      `mb-3 cursor-pointer p-2 rounded-lg border ${
-        clickedNode && pinnedIds.includes(clickedNode.nodeId)
-          ? 'bg-yellow-50 border-yellow-200 text-yellow-800'
-          : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
-      }`,
-    [pinnedIds, clickedNode?.nodeId],
+      `mb-3 cursor-pointer p-2 rounded-lg border ${'bg-gray-50 border-gray-200 hover:bg-gray-100'}`,
+    [clickedNode?.nodeId],
   )
 
   if (!clickedNode) {

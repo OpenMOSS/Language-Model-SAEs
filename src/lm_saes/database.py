@@ -82,6 +82,12 @@ class SAERecord(BaseModel):
     cfg: SAEConfig  # TODO: add more variants of SAEConfig
 
 
+class SAESetRecord(BaseModel):
+    name: str
+    sae_series: str
+    sae_names: list[str]
+
+
 class BookmarkRecord(BaseModel):
     """Record for bookmarked features.
 
@@ -113,6 +119,7 @@ class MongoClient:
         self.dataset_collection = self.db["datasets"]
         self.model_collection = self.db["models"]
         self.bookmark_collection = self.db["bookmarks"]
+        self.sae_set_collection = self.db["sae_sets"]
         self.sae_collection.create_index([("name", pymongo.ASCENDING), ("series", pymongo.ASCENDING)], unique=True)
         self.sae_collection.create_index([("series", pymongo.ASCENDING)])
         self.analysis_collection.create_index(
@@ -125,6 +132,8 @@ class MongoClient:
         )
         self.dataset_collection.create_index([("name", pymongo.ASCENDING)], unique=True)
         self.model_collection.create_index([("name", pymongo.ASCENDING)], unique=True)
+        self.sae_set_collection.create_index([("name", pymongo.ASCENDING)], unique=True)
+        self.sae_set_collection.create_index([("sae_series", pymongo.ASCENDING)])
         self.bookmark_collection.create_index(
             [("sae_name", pymongo.ASCENDING), ("sae_series", pymongo.ASCENDING), ("feature_index", pymongo.ASCENDING)],
             unique=True,
@@ -725,3 +734,15 @@ class MongoClient:
                 match_filter[f"metric.{metric_name}"] = filters
 
         return self.feature_collection.count_documents(match_filter)
+
+    def add_sae_set(self, name: str, sae_series: str, sae_names: list[str]):
+        self.sae_set_collection.insert_one({"name": name, "sae_series": sae_series, "sae_names": sae_names})
+
+    def get_sae_set(self, name: str) -> Optional[SAESetRecord]:
+        sae_set = self.sae_set_collection.find_one({"name": name})
+        if sae_set is None:
+            return None
+        return SAESetRecord.model_validate(sae_set)
+
+    def list_sae_sets(self) -> list[SAESetRecord]:
+        return [SAESetRecord.model_validate(sae_set) for sae_set in self.sae_set_collection.find()]

@@ -8,6 +8,7 @@ export interface Node {
   tokenProb: number
   isTargetLogit: boolean
   clerp: string
+  saeName?: string
 }
 
 export interface Edge {
@@ -34,12 +35,9 @@ export interface CircuitData {
 
 export interface CircuitMetadata {
   promptTokens: string[]
-  lorsaAnalysisName?: string
-  cltAnalysisName?: string
 }
 
 export interface VisState {
-  pinnedIds: string[]
   clickedId: string | null
   hoveredId: string | null
 }
@@ -51,8 +49,6 @@ export interface CircuitJsonData {
     scan: string
     prompt_tokens: string[]
     prompt: string
-    lorsa_analysis_name?: string
-    clt_analysis_name?: string
   }
   qParams: {
     linkType: string
@@ -73,6 +69,7 @@ export interface CircuitJsonData {
     reverse_ctx_idx: number
     jsNodeId: string
     clerp: string
+    sae_name?: string
   }[]
   links?: {
     source: string

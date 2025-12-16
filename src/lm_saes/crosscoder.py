@@ -11,7 +11,7 @@ from torch.distributed.tensor import DTensor, Partial, Shard
 from torch.distributed.tensor.experimental import local_map
 from typing_extensions import override
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder, register_sae_model
 from lm_saes.config import CrossCoderConfig
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.distributed.ops import full_tensor, item
@@ -47,6 +47,7 @@ class CrossCoderSpecs(TensorSpecs):
         return CrossCoderSpecs.reconstructed(tensor)
 
 
+@register_sae_model("crosscoder")
 class CrossCoder(AbstractSparseAutoEncoder):
     """Sparse AutoEncoder model.
 
