@@ -1,16 +1,14 @@
 from abc import ABC
-from math import sqrt
 from typing import Generic, TypeVar, cast
 
 import torch
-import torch.distributed as dist
 from torch import Tensor
-from torch.distributed.tensor import DTensor
 from torch.types import Number
 from transformer_lens import HookedTransformer
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.optim import compute_grad_norm
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
@@ -79,30 +77,24 @@ class GradientNormMetric(Metric):
     def __init__(self, sae: AbstractSparseAutoEncoder):
         self.sae = sae
         self.gradient_norm: Record[float] = Record("max")
+        self.gradient_norm_before_clipping: Record[float] = Record("max")
 
     def update(self, ctx: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        gradients = [
-            p.grad.to_local() if isinstance(p.grad, DTensor) else p.grad
-            for p in self.sae.parameters()
-            if p.grad is not None
-        ]
-        assert len(gradients) > 0, "No gradients found"
-
-        concat_grad = torch.cat([g.flatten() for g in gradients])
-
-        local_sq_norm = concat_grad.pow(2).sum()
-        local_nonzero_count = (concat_grad != 0).sum()
-
-        if self.sae.device_mesh is not None:
-            dist.all_reduce(local_sq_norm, op=dist.ReduceOp.SUM)
-            dist.all_reduce(local_nonzero_count, op=dist.ReduceOp.SUM)
-
-        gradient_norm = local_sq_norm.sqrt() / sqrt(local_nonzero_count)
+        gradient_norm_before_clipping = ctx.get("grad_norm_before_clipping")
+        assert gradient_norm_before_clipping is not None, "Gradient norm before clipping must be provided"
+        self.gradient_norm_before_clipping.update(item(gradient_norm_before_clipping))
+        gradient_norm = compute_grad_norm(self.sae.parameters(), self.sae.device_mesh)
         self.gradient_norm.update(item(gradient_norm))
-        return {"gradient_norm_per_param": gradient_norm}
+        return {
+            "gradient_norm_per_param": gradient_norm,
+            "gradient_norm_before_clipping": gradient_norm_before_clipping,
+        }
 
     def compute(self) -> dict[str, Number]:
-        return {"metrics/gradient_norm_per_param": self.gradient_norm.compute()}
+        return {
+            "metrics/gradient_norm_per_param": self.gradient_norm.compute(),
+            "metrics/gradient_norm_before_clipping": self.gradient_norm_before_clipping.compute(),
+        }
 
 
 class FrequencyMetric(Metric):

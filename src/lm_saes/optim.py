@@ -3,13 +3,17 @@ Took the LR scheduler from: https://github.com/jbloomAus/DecisionTransformerInte
 """
 
 import math
-from typing import Any, Optional
+from typing import Any, Iterable, Optional, cast
 
 import torch
+import torch.distributed as dist
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
+from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
+
+from lm_saes.utils.distributed.ops import item
 
 
 #  None
@@ -248,3 +252,41 @@ class SparseAdam(Optimizer):
                 p.data.sub_(update)
 
         return loss
+
+
+def compute_grad_norm(
+    params: Iterable[torch.nn.Parameter],
+    device_mesh: DeviceMesh | None = None,
+) -> torch.Tensor:
+    gradients = [
+        p.grad.to_local() if isinstance(p.grad, DTensor) else p.grad for p in list(params) if p.grad is not None
+    ]
+    assert len(gradients) > 0, "No gradients found"
+
+    local_total_norm = torch.stack([g.norm(2) for g in gradients]).norm(2)
+    local_nonzero_count = cast(torch.Tensor, sum((g != 0).sum() for g in gradients))
+
+    if device_mesh is not None:
+        local_sq_norm = local_total_norm.square()
+        dist.all_reduce(local_sq_norm, op=dist.ReduceOp.SUM, group=device_mesh.get_group("model"))
+        dist.all_reduce(local_nonzero_count, op=dist.ReduceOp.SUM, group=device_mesh.get_group("model"))
+        total_norm = local_sq_norm.sqrt()
+    else:
+        total_norm = local_total_norm
+
+    return total_norm / local_nonzero_count.sqrt()
+
+
+def clip_grad_norm(
+    params: Iterable[torch.nn.Parameter],
+    max_norm: float,
+    device_mesh: DeviceMesh | None = None,
+) -> torch.Tensor:
+    params = list(params)
+    grad_norm = compute_grad_norm(params, device_mesh)
+    if item(grad_norm) > max_norm:
+        for p in params:
+            if p.grad is not None:
+                p.grad.mul_(max_norm / (item(grad_norm) + 1e-6))
+
+    return grad_norm
