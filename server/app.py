@@ -3,7 +3,7 @@ import os
 import threading
 from contextlib import asynccontextmanager
 from functools import lru_cache, wraps
-from typing import Any, Generator, Optional
+from typing import Any, Callable, Generator, Generic, Optional, ParamSpec, TypeVar
 
 import msgpack
 import numpy as np
@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend import LanguageModel
+from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.circuit.attribution import attribute
 from lm_saes.circuit.replacement_model import ReplacementModel
 from lm_saes.circuit.utils.create_graph_files import serialize_graph
@@ -34,20 +35,26 @@ sae_series = os.environ.get("SAE_SERIES", "default")
 tokenizer_only = os.environ.get("TOKENIZER_ONLY", "false").lower() == "true"
 
 
-class synchronized:
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+class synchronized(Generic[P, R]):
     """Decorator to ensure sequential execution of a function based on parameters.
 
     Different parameters can be acquired in parallel, but the same parameters
     will be executed sequentially.
     """
 
-    def __init__(self, func):
+    _func: Callable[P, R]
+
+    def __init__(self, func: Callable[P, R]) -> None:
         self._func = func
         self._locks: dict[frozenset[tuple[str, Any]], threading.Lock] = {}
         self._global_lock = threading.Lock()
         wraps(func)(self)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         assert len(args) == 0, "Positional arguments are not supported"
         key = frozenset(kwargs.items())
 
@@ -58,7 +65,7 @@ class synchronized:
             lock = self._locks[key]
 
         with lock:
-            return self._func(*args, **kwargs)
+            return self._func(*args, **kwargs)  # type: ignore[call-arg]
 
     def __getattr__(self, name: str):
         return getattr(self._func, name)
@@ -639,10 +646,11 @@ def trace(sae_set_name: str, request: TraceRequest):
 
     model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
     model = get_model(name=model_name)
+    assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
+        "Circuit tracing only supports exact model of TransformerLens backend"
+    )
 
     lorsas = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, LowRankSparseAttention)}
-    for lorsa in lorsas.values():
-        lorsa.cfg.skip_bos = False
     transcoders = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, SparseAutoEncoder)}
     assert len(lorsas) == len(transcoders) == model.model.cfg.n_layers, (
         "Currently only supports SAE sets with all layers"
