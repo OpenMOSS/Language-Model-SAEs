@@ -659,10 +659,12 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             l_rec = (reconstructed - label).pow(2).sum(dim=-1)
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
+                assert isinstance(batch["mask"], DTensor)
+                mask = batch["mask"].full_tensor()
             loss_dict: dict[str, Optional[torch.Tensor]] = {
                 "l_rec": l_rec,
             }
-            l_rec, _ = apply_token_mask(l_rec, self.specs.loss(l_rec), batch["mask"], "mean")
+            l_rec, _ = apply_token_mask(l_rec, self.specs.loss(l_rec), mask, "mean")
             loss = l_rec
 
             if sparsity_loss_type is not None:
