@@ -42,6 +42,17 @@ from .utils.tensor_specs import apply_token_mask
 logger = get_distributed_logger("abstract_sae")
 
 
+SAE_TYPE_TO_MODEL_CLASS = {}
+
+
+def register_sae_model(name):
+    def _register(cls):
+        SAE_TYPE_TO_MODEL_CLASS[name] = cls
+        return cls
+
+    return _register
+
+
 class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     """Abstract base class for sparse autoencoder models.
 
@@ -391,6 +402,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def from_config(
         cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = True
     ) -> Self:
+        if cls is AbstractSparseAutoEncoder:
+            cls = SAE_TYPE_TO_MODEL_CLASS[cfg.sae_type]
+
         model = cls(cfg, device_mesh)
         if cfg.sae_pretrained_name_or_path is None:
             total_params = sum(param.numel() for param in model.parameters()) / 1e9

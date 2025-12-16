@@ -21,7 +21,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder, register_sae_model
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.config import CLTConfig
 from lm_saes.utils.distributed import DimMap
@@ -59,6 +59,7 @@ class CrossLayerTranscoderSpecs(TensorSpecs):
         return CrossLayerTranscoderSpecs.reconstructed(tensor)
 
 
+@register_sae_model("clt")
 class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     """Cross Layer Transcoder (CLT) implementation.
 

@@ -24,22 +24,6 @@ export function extractLayerAndFeature(
   }
 }
 
-export function getDictionaryName(
-  metadata: CircuitMetadata,
-  layer: number,
-  isLorsa: boolean,
-): string | null {
-  const analysisName = isLorsa
-    ? metadata.lorsaAnalysisName
-    : metadata.cltAnalysisName
-  if (!analysisName) return null
-
-  const parts = analysisName.split('/')
-  if (parts.length < 1) return null
-
-  return `${parts[0]}/${isLorsa ? 'attn' : 'mlp'}_${layer}`
-}
-
 export function getNodeColor(featureType: string): string {
   switch (featureType) {
     case 'logit':
@@ -73,6 +57,7 @@ export function transformCircuitData(jsonData: CircuitJsonData): CircuitData {
     tokenProb: node.token_prob,
     isTargetLogit: node.is_target_logit,
     clerp: node.clerp,
+    saeName: node.sae_name,
   }))
 
   const edges = (jsonData.links || []).map((edge) => ({
@@ -86,8 +71,6 @@ export function transformCircuitData(jsonData: CircuitJsonData): CircuitData {
     edges,
     metadata: {
       promptTokens: jsonData.metadata.prompt_tokens,
-      lorsaAnalysisName: jsonData.metadata.lorsa_analysis_name,
-      cltAnalysisName: jsonData.metadata.clt_analysis_name,
     },
   }
 }

@@ -22,6 +22,16 @@ from .utils.misc import (
     convert_torch_dtype_to_str,
 )
 
+SAE_TYPE_TO_CONFIG_CLASS = {}
+
+
+def register_sae_config(name):
+    def _register(cls):
+        SAE_TYPE_TO_CONFIG_CLASS[name] = cls
+        return cls
+
+    return _register
+
 
 class BaseConfig(BaseModel):
     pass
@@ -97,6 +107,9 @@ class BaseSAEConfig(BaseModelConfig, ABC):
             sae_config = json.load(f)
         sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
         sae_config["strict_loading"] = strict_loading
+
+        if cls is BaseSAEConfig:
+            cls = SAE_TYPE_TO_CONFIG_CLASS[sae_config["sae_type"]]
         return cls.model_validate({**sae_config, **kwargs})
 
     def save_hyperparameters(self, sae_path: str | Path, remove_loading_info: bool = True):
@@ -115,6 +128,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
         pass
 
 
+@register_sae_config("sae")
 class SAEConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "sae"
     hook_point_in: str
@@ -126,6 +140,7 @@ class SAEConfig(BaseSAEConfig):
         return [self.hook_point_in, self.hook_point_out]
 
 
+@register_sae_config("lorsa")
 class LorsaConfig(BaseSAEConfig):
     """Configuration for Low Rank Sparse Attention."""
 
@@ -180,6 +195,7 @@ class LorsaConfig(BaseSAEConfig):
             self.attn_scale = self.d_qk_head**0.5
 
 
+@register_sae_config("clt")
 class CLTConfig(BaseSAEConfig):
     """Configuration for Cross Layer Transcoder (CLT).
 
@@ -219,6 +235,7 @@ class CLTConfig(BaseSAEConfig):
         )
 
 
+@register_sae_config("molt")
 class MOLTConfig(BaseSAEConfig):
     """Configuration for Mixture of Linear Transforms (MOLT).
 
@@ -422,6 +439,7 @@ class MOLTConfig(BaseSAEConfig):
         return [self.hook_point_in, self.hook_point_out]
 
 
+@register_sae_config("crosscoder")
 class CrossCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "crosscoder"
     hook_points: list[str]

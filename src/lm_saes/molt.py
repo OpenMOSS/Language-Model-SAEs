@@ -9,7 +9,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
-from .abstract_sae import AbstractSparseAutoEncoder
+from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
 from .config import MOLTConfig
 from .utils.distributed import DimMap, item
 from .utils.logging import get_distributed_logger
@@ -18,6 +18,7 @@ from .utils.timer import timer
 logger = get_distributed_logger("molt")
 
 
+@register_sae_model("molt")
 class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     """Mixture of Linear Transforms (MOLT) model.
 

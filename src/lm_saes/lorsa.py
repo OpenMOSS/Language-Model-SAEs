@@ -21,7 +21,7 @@ from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
-from .abstract_sae import AbstractSparseAutoEncoder
+from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
 from .config import LorsaConfig
 from .utils.distributed import DimMap, masked_fill, mesh_dim_size
 from .utils.logging import get_distributed_logger
@@ -29,6 +29,7 @@ from .utils.logging import get_distributed_logger
 logger = get_distributed_logger("lorsa")
 
 
+@register_sae_model("lorsa")
 class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def __init__(self, cfg: LorsaConfig, device_mesh: Optional[DeviceMesh] = None):
         super().__init__(cfg, device_mesh=device_mesh)

@@ -14,12 +14,13 @@ from lm_saes.activation_functions import JumpReLU
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger
 
-from .abstract_sae import AbstractSparseAutoEncoder
+from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
 from .config import SAEConfig
 
 logger = get_distributed_logger("sae")
 
 
+@register_sae_model("sae")
 class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def __init__(self, cfg: SAEConfig, device_mesh: DeviceMesh | None = None):
         super(SparseAutoEncoder, self).__init__(cfg, device_mesh=device_mesh)

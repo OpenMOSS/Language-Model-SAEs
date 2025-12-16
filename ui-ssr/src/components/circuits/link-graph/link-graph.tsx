@@ -248,7 +248,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
             onNodeClick('', false)
           }
         }}
-        className="relative z-[1]"
+        className="relative z-1"
         style={{ pointerEvents: 'auto' }}
       >
         <RowBackgrounds
