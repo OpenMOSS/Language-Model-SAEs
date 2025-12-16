@@ -659,6 +659,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             l_rec = (reconstructed - label).pow(2).sum(dim=-1)
             if isinstance(l_rec, DTensor):
                 l_rec = l_rec.full_tensor()
+                assert isinstance(batch["mask"], DTensor)
+                batch["mask"] = batch["mask"].full_tensor()
             loss_dict: dict[str, Optional[torch.Tensor]] = {
                 "l_rec": l_rec,
             }
