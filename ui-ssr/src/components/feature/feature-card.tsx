@@ -1,7 +1,6 @@
 import { memo } from 'react'
 import { useIsFetching, useQueries, useQuery } from '@tanstack/react-query'
 import { Info } from '../ui/info'
-import { ProgressBar } from '../ui/progress-bar'
 import { FeatureSampleGroup } from './sample'
 import type { Feature } from '@/types/feature'
 import { Card, CardContent } from '@/components/ui/card'
@@ -20,11 +19,6 @@ export const FeatureCard = memo(({ feature, className }: FeatureCardProps) => {
       featureIndex: feature.featureIndex,
     }),
   )
-
-  const isSamplesFetching =
-    useIsFetching({
-      queryKey: ['samples', feature.dictionaryName, feature.featureIndex],
-    }) > 0
 
   const samplingNames = samplings.data?.map((s) => s.name) ?? []
   const samplesQueries = useQueries({

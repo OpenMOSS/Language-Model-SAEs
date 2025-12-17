@@ -116,6 +116,10 @@ export const FeatureSampleGroup = ({
     [data],
   )
 
+  if (samplingName === 'top_activations') {
+    console.log(samples[0])
+  }
+
   const samplingNameMap = (samplingName: string) => {
     if (samplingName === 'top_activations') {
       return 'TOP ACTIVATIONS'
@@ -123,6 +127,8 @@ export const FeatureSampleGroup = ({
       const [, proportion] = samplingName.split('-')
       const percentage = parseFloat(proportion) * 100
       return `SUBSAMPLING ${percentage}%`
+    } else if (samplingName === 'non_activating') {
+      return 'NON ACTIVATING'
     } else {
       return samplingName
     }
@@ -280,9 +286,14 @@ export const FeatureActivationSample = memo(
       return getZPatternForToken(
         sample.zPatternIndices,
         sample.zPatternValues,
-        hoveredTokenIndex,
+        hoveredTokenIndex + tokenOffset,
       )
-    }, [hoveredTokenIndex, sample.zPatternIndices, sample.zPatternValues])
+    }, [
+      hoveredTokenIndex,
+      sample.zPatternIndices,
+      sample.zPatternValues,
+      tokenOffset,
+    ])
 
     // Memoize segments calculation
     const segments = useMemo(() => {
@@ -358,9 +369,9 @@ export const FeatureActivationSample = memo(
       if (hoveredZPattern) {
         const contribution = segment.highlights.map((highlight) => {
           // Find the token index for this highlight's origin
-          const tokenIndex = sample.origins.findIndex(
-            (origin) => origin === highlight.origin,
-          )
+          const tokenIndex =
+            sample.origins.findIndex((origin) => origin === highlight.origin) +
+            tokenOffset
           const isContributing =
             hoveredZPattern.contributingTokens.includes(tokenIndex)
           return isContributing
