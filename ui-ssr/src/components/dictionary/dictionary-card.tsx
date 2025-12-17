@@ -101,7 +101,7 @@ export const DictionaryCard = memo(
           )}
         </div>
 
-        <div className="flex flex-col grow">
+        <div className="flex flex-col grow min-w-0 basis-0">
           {selectedFeatureIndex !== null && (
             <>
               <div className="relative w-full h-[50px] uppercase px-4 flex items-center justify-center text-sm gap-1 border-b border-b-slate-300 shrink-0 font-semibold tracking-tight text-slate-700 cursor-default">
