@@ -32,7 +32,7 @@ sys.path.append(str(project_root))
 
 # 导入项目模块
 from lm_saes import ReplacementModel, LowRankSparseAttention, SparseAutoEncoder
-from lm_saes.circuit.attribution_qk import attribute
+from lm_saes.circuit.attribution_qk_for_feature_attribution import attribute
 from lm_saes.circuit.graph_lc0 import Graph
 from lm_saes.circuit.utils.create_graph_files import create_graph_files, build_model, create_nodes, create_used_nodes_and_edges, prune_graph
 from lm_saes.circuit.leela_board import LeelaBoard
@@ -660,7 +660,7 @@ def create_graph_from_attribution(
                 raise ValueError("Attribution结果中没有找到'q'或'k'侧数据，无法进行both模式合并")
             
             # 导入merge_qk_graph函数
-            from lm_saes.circuit.attribution_qk import merge_qk_graph
+            from lm_saes.circuit.attribution_qk_for_feature_attribution import merge_qk_graph
             
             logger.info("开始合并q和k侧数据...")
             merged = merge_qk_graph(attribution_result)

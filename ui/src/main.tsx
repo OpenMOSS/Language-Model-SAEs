@@ -17,6 +17,7 @@ import { PlayGamePage } from "./routes/play-game/page";
 import { PlotGraphPage } from "./routes/plot-graph/page";
 import { LogitLensPage } from "./routes/logit-lens/page";
 import { TacticFeaturesPage } from "./routes/tactic-features/page";
+import { GlobalWeightPage } from "./routes/global-weight/page";
 
 const router = createBrowserRouter([
   {
@@ -66,6 +67,10 @@ const router = createBrowserRouter([
   {
     path: "/tactic-features",
     element: <TacticFeaturesPage />,
+  },
+  {
+    path: "/global-weight",
+    element: <GlobalWeightPage />,
   },
   {
     path: "/",

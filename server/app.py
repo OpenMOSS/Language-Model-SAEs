@@ -201,6 +201,114 @@ _circuit_trace_logs: Dict[str, list] = {}  # trace_key -> [log1, log2, ...]
 _circuit_trace_status: Dict[str, dict] = {}  # trace_key -> {"is_tracing": bool}
 _circuit_trace_results: Dict[str, dict] = {}  # trace_key -> {"graph_data": ..., "finished_at": ts}
 
+# Trace结果持久化目录
+TRACE_RESULTS_DIR = Path(__file__).parent.parent / "circuit_trace_results"
+TRACE_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+def _save_trace_result_to_disk(trace_key: str, result: dict) -> None:
+    """将trace结果保存到磁盘"""
+    try:
+        # 使用安全的文件名（替换特殊字符）
+        safe_key = trace_key.replace("::", "_").replace("/", "_").replace(" ", "_")
+        file_path = TRACE_RESULTS_DIR / f"{safe_key}.json"
+        
+        # 保存结果（包含trace_key以便恢复）
+        save_data = {
+            "trace_key": trace_key,
+            "result": result,
+            "saved_at": time.time()
+        }
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(save_data, f, ensure_ascii=False, indent=2)
+        
+        print(f"✅ Trace结果已保存到磁盘: {file_path}")
+    except Exception as e:
+        print(f"⚠️ 保存trace结果到磁盘失败: {e}")
+
+def _load_trace_results_from_disk() -> None:
+    """从磁盘加载已保存的trace结果"""
+    global _circuit_trace_results
+    
+    try:
+        if not TRACE_RESULTS_DIR.exists():
+            return
+        
+        loaded_count = 0
+        for file_path in TRACE_RESULTS_DIR.glob("*.json"):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    save_data = json.load(f)
+                
+                trace_key = save_data.get("trace_key")
+                result = save_data.get("result")
+                
+                if trace_key and result:
+                    # 只加载最近30天的结果（避免加载过多旧数据）
+                    saved_at = save_data.get("saved_at", 0)
+                    if time.time() - saved_at < 30 * 24 * 3600:
+                        _circuit_trace_results[trace_key] = result
+                        loaded_count += 1
+                    else:
+                        # 删除过期文件
+                        file_path.unlink()
+                        print(f"🗑️ 删除过期的trace结果: {file_path}")
+            except Exception as e:
+                print(f"⚠️ 加载trace结果文件失败 {file_path}: {e}")
+        
+        if loaded_count > 0:
+            print(f"✅ 从磁盘加载了 {loaded_count} 个trace结果")
+    except Exception as e:
+        print(f"⚠️ 加载trace结果失败: {e}")
+
+# 服务器启动时加载已保存的结果
+_load_trace_results_from_disk()
+
+# 使用统一的持久化存储（已在上方定义）
+def _load_trace_result_from_disk(trace_key: str) -> dict | None:
+    """从磁盘加载trace结果（使用统一的存储格式）"""
+    import urllib.parse
+    try:
+        # 使用安全的文件名
+        safe_key = trace_key.replace("::", "_").replace("/", "_").replace(" ", "_")
+        file_path = TRACE_RESULTS_DIR / f"{safe_key}.json"
+        
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                save_data = json.load(f)
+            
+            # 检查trace_key是否匹配
+            saved_trace_key = save_data.get("trace_key")
+            if saved_trace_key == trace_key:
+                result = save_data.get("result")
+                if result:
+                    print(f"✅ 从磁盘加载trace结果: {file_path}")
+                    return result
+        
+        # 如果精确匹配失败，尝试遍历所有文件查找匹配的trace_key（处理编码差异）
+        if TRACE_RESULTS_DIR.exists():
+            for storage_file in TRACE_RESULTS_DIR.glob("*.json"):
+                try:
+                    with open(storage_file, "r", encoding="utf-8") as f:
+                        save_data = json.load(f)
+                    
+                    saved_trace_key = save_data.get("trace_key")
+                    # 尝试解码比较（处理可能的编码差异）
+                    if saved_trace_key == trace_key:
+                        result = save_data.get("result")
+                        if result:
+                            print(f"✅ 从磁盘加载trace结果（通过遍历查找）: {storage_file}")
+                            return result
+                except Exception as e:
+                    continue
+        
+        return None
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        print(f"⚠️ 从磁盘加载trace结果失败 ({trace_key}): {e}")
+        return None
+
 def get_hooked_model(model_name: str = 'lc0/BT4-1024x15x32h'):
     """获取或加载HookedTransformer模型 - 仅支持BT4（带全局缓存）"""
     global _hooked_models
@@ -2169,8 +2277,15 @@ def circuit_trace(request: dict):
             if not fen:
                 raise HTTPException(status_code=400, detail="FEN string is required")
             
+            # 解码FEN以确保trace_key的一致性
+            fen = _decode_fen(fen)
+            
             move_uci = request.get("move_uci")
+            if move_uci:
+                move_uci = _decode_fen(move_uci)  # move_uci也可能被编码
             negative_move_uci = request.get("negative_move_uci", None)  # 新增negative_move_uci参数
+            if negative_move_uci:
+                negative_move_uci = _decode_fen(negative_move_uci)  # negative_move_uci也可能被编码
             
             side = request.get("side", "k")
             max_feature_nodes = request.get("max_feature_nodes", 4096)
@@ -2311,20 +2426,9 @@ def circuit_trace(request: dict):
                     # 有部分缓存但不完整，也重新加载（这种情况不应该发生，因为应该等待加载完成）
                     print(f"⚠️ 缓存不完整（TC: {len(cached_transcoders)}, LoRSA: {len(cached_lorsas)}），将重新加载: {model_name} @ {normalized_combo_id}")
             
-            # 规范化FEN和move_uci（去除前后空格，统一格式）
-            normalized_fen = fen.strip() if fen else ""
-            normalized_move_uci = move_uci.strip() if move_uci else ""
-            
-            # 创建trace_key用于日志存储
-            trace_key = f"{model_name}::{normalized_combo_id}::{normalized_fen}::{normalized_move_uci}"
-            
-            print(f"🔍 保存trace结果 - trace_key: {trace_key}")
-            print(f"    - model_name: {model_name}")
-            print(f"    - normalized_combo_id: {normalized_combo_id}")
-            print(f"    - fen (原始): {repr(fen)}")
-            print(f"    - fen (规范化): {repr(normalized_fen)}")
-            print(f"    - move_uci (原始): {repr(move_uci)}")
-            print(f"    - move_uci (规范化): {repr(normalized_move_uci)}")
+            # 创建trace_key用于日志存储（确保使用解码后的FEN和move_uci）
+            # fen和move_uci已经在前面被解码了
+            trace_key = f"{model_name}::{normalized_combo_id}::{fen}::{move_uci}"
             
             # 初始化日志列表
             if trace_key not in _circuit_trace_logs:
@@ -2344,8 +2448,8 @@ def circuit_trace(request: dict):
             try:
                 # 运行circuit trace，传递已缓存的模型和transcoders/lorsas以及日志列表
                 graph_data = run_circuit_trace(
-                    prompt=normalized_fen,
-                    move_uci=normalized_move_uci,
+                    prompt=fen,
+                    move_uci=move_uci,
                     negative_move_uci=negative_move_uci,  # 传递negative_move_uci
                     model_name=model_name,  # 添加模型名称参数
                     tc_base_path=tc_base_path,  # 传递正确的TC路径
@@ -2377,12 +2481,39 @@ def circuit_trace(request: dict):
                     "message": "✅ Circuit Trace完成!"
                 })
 
-                _circuit_trace_results[trace_key] = {
+                result_data = {
                     "graph_data": graph_data,
                     "finished_at": finished_ts,
                     "logs": list(trace_logs),
                 }
                 
+                # 保存到内存
+                _circuit_trace_results[trace_key] = result_data
+                
+                # 持久化到磁盘（确保即使服务器重启也能恢复）
+                try:
+                    _save_trace_result_to_disk(trace_key, result_data)
+                except Exception as e:
+                    print(f"⚠️ 持久化trace结果失败（但结果已保存在内存中）: {e}")
+                
+            except Exception as trace_error:
+                # 即使trace失败，也尝试保存部分结果（如果有的话）
+                print(f"⚠️ Circuit trace过程中出现异常: {trace_error}")
+                # 如果有部分结果，尝试保存
+                if trace_logs:
+                    try:
+                        partial_result = {
+                            "graph_data": None,
+                            "finished_at": time.time(),
+                            "logs": list(trace_logs),
+                            "error": str(trace_error)
+                        }
+                        _circuit_trace_results[trace_key] = partial_result
+                        _save_trace_result_to_disk(trace_key, partial_result)
+                    except:
+                        pass
+                # 重新抛出异常
+                raise
             finally:
                 # 更新tracing状态
                 _circuit_trace_status[trace_key] = {"is_tracing": False}
@@ -2422,53 +2553,35 @@ def circuit_trace_result(
 ):
     """
     获取最近一次完成的circuit trace结果
+    如果内存中没有，会尝试从磁盘加载
     """
     global _circuit_trace_results
 
     if fen and move_uci:
-        # 规范化FEN和move_uci（去除前后空格，统一格式）
-        normalized_fen = fen.strip() if fen else ""
-        normalized_move_uci = move_uci.strip() if move_uci else ""
+        # 解码FEN和move_uci以确保trace_key的一致性
+        decoded_fen = _decode_fen(fen)
+        decoded_move_uci = _decode_fen(move_uci)
+        decoded_model_name = _decode_fen(model_name)
         
         combo_id = sae_combo_id or CURRENT_BT4_SAE_COMBO_ID
         combo_cfg = get_bt4_sae_combo(combo_id)
         normalized_combo_id = combo_cfg["id"]
-        trace_key = f"{model_name}::{normalized_combo_id}::{normalized_fen}::{normalized_move_uci}"
+        trace_key = f"{decoded_model_name}::{normalized_combo_id}::{decoded_fen}::{decoded_move_uci}"
         
-        print(f"🔍 检索trace结果 - trace_key: {trace_key}")
-        print(f"    - model_name: {model_name}")
-        print(f"    - sae_combo_id (原始): {repr(sae_combo_id)}")
-        print(f"    - normalized_combo_id: {normalized_combo_id}")
-        print(f"    - fen (原始): {repr(fen)}")
-        print(f"    - fen (规范化): {repr(normalized_fen)}")
-        print(f"    - move_uci (原始): {repr(move_uci)}")
-        print(f"    - move_uci (规范化): {repr(normalized_move_uci)}")
-        print(f"    - 当前存储的trace_keys数量: {len(_circuit_trace_results)}")
-        if _circuit_trace_results:
-            print(f"    - 存储的trace_keys示例: {list(_circuit_trace_results.keys())[:3]}")
-        
+        # 先尝试从内存加载
         result = _circuit_trace_results.get(trace_key)
-        if result:
-            print(f"✅ 找到精确匹配的trace结果")
         
-        # 如果精确匹配失败，尝试模糊匹配（忽略FEN中的空格差异）
+        # 如果内存中没有，尝试从磁盘加载
         if not result:
-            print(f"⚠️ 精确匹配失败，尝试模糊匹配...")
-            for key, payload in _circuit_trace_results.items():
-                # 解析key: model_name::combo_id::fen::move_uci
-                parts = key.split("::", 3)
-                if len(parts) == 4:
-                    stored_model, stored_combo, stored_fen, stored_move = parts
-                    # 比较规范化后的值
-                    if (stored_model == model_name and 
-                        stored_combo == normalized_combo_id and
-                        stored_fen.strip() == normalized_fen and
-                        stored_move.strip() == normalized_move_uci):
-                        print(f"✅ 找到模糊匹配的trace_key: {key}")
-                        result = payload
-                        break
-        
+            print(f"🔍 内存中未找到trace结果，尝试从磁盘加载: {trace_key}")
+            disk_result = _load_trace_result_from_disk(trace_key)
+            if disk_result:
+                # 加载到内存中以便后续快速访问
+                _circuit_trace_results[trace_key] = disk_result
+                result = disk_result
+                print(f"✅ 成功从磁盘恢复trace结果: {trace_key}")
     else:
+        # 如果没有提供fen和move_uci，返回最近的结果
         latest_key = None
         latest_ts = -1
         for key, payload in _circuit_trace_results.items():
@@ -2476,16 +2589,41 @@ def circuit_trace_result(
             if ts > latest_ts:
                 latest_ts = ts
                 latest_key = key
+        
         result = _circuit_trace_results.get(latest_key) if latest_key else None
-        if latest_key:
-            print(f"🔍 返回最新的trace结果 - trace_key: {latest_key}")
+        
+        # 如果内存中没有，尝试从磁盘查找最新的
+        if not result:
+            print("🔍 内存中未找到最近的trace结果，尝试从磁盘查找...")
+            # 遍历磁盘上的所有trace文件，找到最新的
+            if TRACE_RESULTS_DIR.exists():
+                latest_disk_result = None
+                latest_disk_ts = -1
+                latest_trace_key = None
+                for storage_file in TRACE_RESULTS_DIR.glob("*.json"):
+                    try:
+                        with open(storage_file, "r", encoding="utf-8") as f:
+                            save_data = json.load(f)
+                        saved_trace_key = save_data.get("trace_key")
+                        disk_result = save_data.get("result")
+                        if disk_result:
+                            ts = disk_result.get("finished_at", 0)
+                            if ts > latest_disk_ts:
+                                latest_disk_ts = ts
+                                latest_disk_result = disk_result
+                                latest_trace_key = saved_trace_key
+                    except Exception as e:
+                        print(f"⚠️ 加载trace文件失败 {storage_file}: {e}")
+                        continue
+                
+                if latest_disk_result and latest_trace_key:
+                    # 加载到内存中
+                    _circuit_trace_results[latest_trace_key] = latest_disk_result
+                    result = latest_disk_result
+                    print(f"✅ 成功从磁盘恢复最新的trace结果: {latest_trace_key}")
 
     if not result:
-        available_keys = list(_circuit_trace_results.keys())
-        error_msg = f"未找到trace结果 (查询的trace_key: {trace_key if fen and move_uci else 'N/A'})"
-        if available_keys:
-            error_msg += f"\n当前可用的trace_keys: {available_keys[:5]}"
-        raise HTTPException(status_code=404, detail=error_msg)
+        raise HTTPException(status_code=404, detail="未找到trace结果")
 
     return result
 
@@ -2513,14 +2651,15 @@ def get_circuit_trace_logs(
     
     # 如果提供了所有参数，使用精确匹配
     if fen and move_uci:
-        # 规范化FEN和move_uci（去除前后空格，统一格式）
-        normalized_fen = fen.strip() if fen else ""
-        normalized_move_uci = move_uci.strip() if move_uci else ""
+        # 解码FEN和move_uci以确保trace_key的一致性
+        decoded_fen = _decode_fen(fen)
+        decoded_move_uci = _decode_fen(move_uci)
+        decoded_model_name = _decode_fen(model_name)
         
         combo_id = sae_combo_id or CURRENT_BT4_SAE_COMBO_ID
         combo_cfg = get_bt4_sae_combo(combo_id)
         normalized_combo_id = combo_cfg["id"]
-        trace_key = f"{model_name}::{normalized_combo_id}::{normalized_fen}::{normalized_move_uci}"
+        trace_key = f"{decoded_model_name}::{normalized_combo_id}::{decoded_fen}::{decoded_move_uci}"
         logs = _circuit_trace_logs.get(trace_key, [])
         is_tracing = _circuit_trace_status.get(trace_key, {}).get("is_tracing", False)
     else:
@@ -3512,6 +3651,138 @@ def compare_fen_activations_api(request: dict):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"比较失败: {str(e)}")
+
+
+def _decode_fen(fen: str) -> str:
+    """解码FEN字符串（支持多次解码，处理双重编码）"""
+    import urllib.parse
+    decoded = fen
+    while "%" in decoded:
+        new_decoded = urllib.parse.unquote(decoded)
+        if new_decoded == decoded:
+            break  # 没有更多编码了
+        decoded = new_decoded
+    return decoded
+
+
+# 导入 global_weight 模块
+try:
+    from .global_weight import (
+        load_max_activations,
+        tc_global_weight_in,
+        lorsa_global_weight_in,
+        tc_global_weight_out,
+        lorsa_global_weight_out,
+    )
+except ImportError:
+    from global_weight import (
+        load_max_activations,
+        tc_global_weight_in,
+        lorsa_global_weight_in,
+        tc_global_weight_out,
+        lorsa_global_weight_out,
+    )
+
+
+@app.get("/global_weight")
+def get_global_weight(
+    model_name: str = "lc0/BT4-1024x15x32h",
+    sae_combo_id: str | None = None,
+    feature_type: str = "tc",  # "tc" or "lorsa"
+    layer_idx: int = 0,
+    feature_idx: int = 0,
+    k: int = 100,
+):
+    """
+    获取feature的全局权重（输入和输出）
+    
+    Args:
+        model_name: 模型名称
+        sae_combo_id: SAE组合ID
+        feature_type: 特征类型 ("tc" 或 "lorsa")
+        layer_idx: 层索引
+        feature_idx: 特征索引
+        k: 返回的top k数量
+    
+    Returns:
+        包含输入和输出全局权重的字典
+    """
+    try:
+        # 获取SAE组合配置
+        combo_id = sae_combo_id or CURRENT_BT4_SAE_COMBO_ID
+        combo_cfg = get_bt4_sae_combo(combo_id)
+        normalized_combo_id = combo_cfg["id"]
+        combo_key = _make_combo_cache_key(model_name, normalized_combo_id)
+        
+        # 获取缓存的transcoders和lorsas
+        cached_transcoders = _transcoders_cache.get(combo_key)
+        cached_lorsas = _lorsas_cache.get(combo_key)
+        
+        if cached_transcoders is None or cached_lorsas is None:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Transcoders/LoRSAs未加载，请先调用 /circuit/preload_models 预加载"
+            )
+        
+        # 加载max activations数据
+        tc_max_acts, lorsa_max_acts = load_max_activations(
+            normalized_combo_id, device=device, get_bt4_sae_combo=get_bt4_sae_combo
+        )
+        
+        # 验证参数
+        if layer_idx < 0 or layer_idx >= len(cached_transcoders):
+            raise HTTPException(status_code=400, detail=f"layer_idx必须在0-{len(cached_transcoders)-1}之间")
+        
+        if feature_type == "tc":
+            if feature_idx < 0 or feature_idx >= cached_transcoders[layer_idx].cfg.d_sae:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"feature_idx必须在0-{cached_transcoders[layer_idx].cfg.d_sae-1}之间"
+                )
+            
+            # 计算TC的全局权重
+            features_in = tc_global_weight_in(
+                cached_transcoders, cached_lorsas, layer_idx, feature_idx,
+                tc_max_acts, lorsa_max_acts, k=k
+            )
+            features_out = tc_global_weight_out(
+                cached_transcoders, cached_lorsas, layer_idx, feature_idx,
+                tc_max_acts, lorsa_max_acts, k=k
+            )
+        elif feature_type == "lorsa":
+            if feature_idx < 0 or feature_idx >= cached_lorsas[layer_idx].cfg.d_sae:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"feature_idx必须在0-{cached_lorsas[layer_idx].cfg.d_sae-1}之间"
+                )
+            
+            # 计算LoRSA的全局权重
+            features_in = lorsa_global_weight_in(
+                cached_transcoders, cached_lorsas, layer_idx, feature_idx,
+                tc_max_acts, lorsa_max_acts, k=k
+            )
+            features_out = lorsa_global_weight_out(
+                cached_transcoders, cached_lorsas, layer_idx, feature_idx,
+                tc_max_acts, lorsa_max_acts, k=k
+            )
+        else:
+            raise HTTPException(status_code=400, detail="feature_type必须是'tc'或'lorsa'")
+        
+        return {
+            "feature_type": feature_type,
+            "layer_idx": layer_idx,
+            "feature_idx": feature_idx,
+            "feature_name": f"BT4_{feature_type}_L{layer_idx}{'M' if feature_type == 'tc' else 'A'}_k30_e16#{feature_idx}",
+            "features_in": [{"name": name, "weight": weight} for name, weight in features_in],
+            "features_out": [{"name": name, "weight": weight} for name, weight in features_out],
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"计算全局权重失败: {str(e)}")
 
 
 # 添加CORS中间件 - 必须在所有路由定义之后

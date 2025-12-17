@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Settings } from 'lucide-react';
+import { Loader2, Settings, ExternalLink } from 'lucide-react';
 import { LinkGraphContainer } from './link-graph-container';
 import { NodeConnections } from './node-connections';
 import { FeatureCard } from '@/components/feature/feature-card';
@@ -36,6 +36,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   onCircuitTraceEnd,
   isTracing = false,
 }) => {
+  const navigate = useNavigate();
   const [circuitTraceResult, setCircuitTraceResult] = useState<any>(null);
   const [circuitVisualizationData, setCircuitVisualizationData] = useState<any>(null);
   const [clickedNodeId, setClickedNodeId] = useState<string | null>(null);
@@ -1861,11 +1862,35 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                 
                 const nodeTypeDisplay = isLorsa ? 'LORSA' : 'SAE';
                 
+                // 跳转到 global-weight 页面的函数
+                const handleViewGlobalWeight = () => {
+                  const featureType = isLorsa ? 'lorsa' : 'tc';
+                  const saeComboId = circuitVisualizationData?.metadata?.sae_combo_id;
+                  const params = new URLSearchParams({
+                    feature_type: featureType,
+                    layer_idx: layerIdx.toString(),
+                    feature_idx: featureIndex.toString(),
+                  });
+                  if (saeComboId) {
+                    params.append('sae_combo_id', saeComboId);
+                  }
+                  navigate(`/global-weight?${params.toString()}`);
+                };
+                
                 return (
                   <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
                     <div className="flex justify-between items-center mb-4">
                       <h3 className="text-lg font-semibold">Selected Feature Details</h3>
                       <div className="flex items-center space-x-4">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleViewGlobalWeight}
+                          className="flex items-center gap-2"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          查看全局权重
+                        </Button>
                         {connectedFeatures.length > 0 && (
                           <div className="flex items-center space-x-2">
                             <span className="text-sm text-gray-600">Connected features:</span>
