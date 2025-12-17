@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import {
   GridLines,
@@ -138,6 +138,8 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         ]
       })
 
+      console.log('positionedNodes', positionedNodes)
+
       const positionedEdges: PositionedEdge[] = data.edges
         .map((edge) => {
           const sourceNode = positionedNodes.find(
@@ -161,16 +163,82 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       return { calculatedCtxCounts, x, y, positionedNodes, positionedEdges }
     }, [data.nodes, data.edges, dimensions.width, dimensions.height])
 
-  const handleNodeMouseEnter = useCallback(
-    (nodeId: string) => {
-      onNodeHover(nodeId)
-    },
-    [onNodeHover],
-  )
+  // Hover and click nearest node when mouse is close
+  useEffect(() => {
+    if (!svgRef.current || !positionedNodes.length) return
 
-  const handleNodeMouseLeave = useCallback(() => {
-    onNodeHover(null)
-  }, [onNodeHover])
+    const svg = svgRef.current
+    const MAGNET_THRESHOLD = 30
+
+    const findNearestNode = (
+      mouseX: number,
+      mouseY: number,
+    ): { node: PositionedNode | null; distance: number } => {
+      let nearestNode: PositionedNode | null = null
+      let minDistance = Infinity
+
+      for (const node of positionedNodes) {
+        const [nodeX, nodeY] = node.pos
+        const dx = mouseX - nodeX
+        const dy = mouseY - nodeY
+        const distance = Math.sqrt(dx * dx + dy * dy)
+
+        if (distance < minDistance) {
+          minDistance = distance
+          nearestNode = node
+        }
+      }
+
+      return { node: nearestNode, distance: minDistance }
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const rect = svg.getBoundingClientRect()
+      const mouseX = event.clientX - rect.left
+      const mouseY = event.clientY - rect.top
+
+      const { node: nearestNode, distance } = findNearestNode(mouseX, mouseY)
+
+      if (nearestNode && distance <= MAGNET_THRESHOLD) {
+        onNodeHover(nearestNode.nodeId)
+      } else {
+        onNodeHover(null)
+      }
+    }
+
+    const handleClick = (event: MouseEvent) => {
+      // Don't handle clicks on the SVG background (let the existing handler do that)
+      if ((event.target as Element).tagName === 'svg') {
+        return
+      }
+
+      const rect = svg.getBoundingClientRect()
+      const mouseX = event.clientX - rect.left
+      const mouseY = event.clientY - rect.top
+
+      const { node: nearestNode, distance } = findNearestNode(mouseX, mouseY)
+
+      if (nearestNode && distance <= MAGNET_THRESHOLD) {
+        event.stopPropagation()
+        const metaKey = event.metaKey || event.ctrlKey
+        onNodeClick(nearestNode.nodeId, metaKey)
+      }
+    }
+
+    svg.addEventListener('mousemove', handleMouseMove)
+    svg.addEventListener('click', handleClick)
+
+    return () => {
+      svg.removeEventListener('mousemove', handleMouseMove)
+      svg.removeEventListener('click', handleClick)
+    }
+  }, [
+    positionedNodes,
+    dimensions.width,
+    dimensions.height,
+    onNodeHover,
+    onNodeClick,
+  ])
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -270,9 +338,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
             clickedId: visState.clickedId,
             hoveredId: visState.hoveredId,
           }}
-          onNodeMouseEnter={handleNodeMouseEnter}
-          onNodeMouseLeave={handleNodeMouseLeave}
-          onNodeClick={onNodeClick}
         />
 
         <Tooltips
