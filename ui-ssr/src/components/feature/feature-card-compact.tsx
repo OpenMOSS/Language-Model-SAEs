@@ -25,15 +25,21 @@ export const FeatureCardCompact = memo(
           )}
           <div className="text-slate-500 text-xs">#{feature.featureIndex}</div>
         </div>
-        <FeatureActivationSample
-          sample={feature.samples[0]}
-          maxFeatureAct={feature.maxFeatureAct}
-          visibleRange={5}
-          showHighestActivatingToken={false}
-          showHoverCard={false}
-          className="pl-2 pr-2"
-          sampleTextClassName="text-xs line-clamp-1"
-        />
+        {feature.actTimes > 0 ? (
+          <FeatureActivationSample
+            sample={feature.samples[0]}
+            maxFeatureAct={feature.maxFeatureAct}
+            visibleRange={5}
+            showHighestActivatingToken={false}
+            showHoverCard={false}
+            className="px-2"
+            sampleTextClassName="text-xs line-clamp-1"
+          />
+        ) : (
+          <div className="flex flex-wrap whitespace-pre-wrap text-xs leading-relaxed font-mono text-slate-400 px-2 overflow-hidden text-ellipsis line-clamp-1">
+            No activation
+          </div>
+        )}
       </div>
     )
   },

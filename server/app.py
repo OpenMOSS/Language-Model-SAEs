@@ -260,7 +260,11 @@ def extract_samples(
 
         token_offset = 0
         if visible_range is not None:  # Drop tokens before and after the highest activating token
-            max_feature_act_index = int(feature_acts_indices[np.argmax(feature_acts_values).item()].item())
+            if len(feature_acts_indices) == 0:
+                max_feature_act_index = 0
+            else:
+                max_feature_act_index = int(feature_acts_indices[np.argmax(feature_acts_values).item()].item())
+
             feature_acts_mask = np.logical_and(
                 feature_acts_indices > max_feature_act_index - visible_range,
                 feature_acts_indices < max_feature_act_index + visible_range,
