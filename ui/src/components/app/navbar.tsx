@@ -100,6 +100,15 @@ export const AppNavbar = () => {
           >
             Tactic Features
           </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/global-weight" && "text-foreground"
+            )}
+            to="/global-weight"
+          >
+            Global Weight
+          </Link>
         </div>
       </div>
     </nav>

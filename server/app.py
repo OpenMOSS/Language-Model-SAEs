@@ -3712,16 +3712,29 @@ def get_global_weight(
         combo_id = sae_combo_id or CURRENT_BT4_SAE_COMBO_ID
         combo_cfg = get_bt4_sae_combo(combo_id)
         normalized_combo_id = combo_cfg["id"]
-        combo_key = _make_combo_cache_key(model_name, normalized_combo_id)
         
-        # 获取缓存的transcoders和lorsas
-        cached_transcoders = _transcoders_cache.get(combo_key)
-        cached_lorsas = _lorsas_cache.get(combo_key)
+        # 使用 get_cached_transcoders_and_lorsas 获取缓存的transcoders和lorsas
+        # 这个函数会先检查 circuits_service 的缓存，然后再检查本地缓存
+        cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name, normalized_combo_id)
         
         if cached_transcoders is None or cached_lorsas is None:
+            # 提供更详细的错误信息，包括请求的组合ID和当前服务器端的组合ID
+            cache_key = _make_combo_cache_key(model_name, normalized_combo_id)
+            error_detail = (
+                f"Transcoders/LoRSAs未加载，请先调用 /circuit/preload_models 预加载。"
+                f"请求的组合ID: {normalized_combo_id}, "
+                f"缓存键: {cache_key}, "
+                f"当前服务器端组合ID: {CURRENT_BT4_SAE_COMBO_ID}"
+            )
+            print(f"⚠️ /global_weight 请求失败: {error_detail}")
+            # 打印当前缓存键列表以帮助调试
+            if CIRCUITS_SERVICE_AVAILABLE:
+                from circuits_service import _global_transcoders_cache, _global_lorsas_cache
+                print(f"   circuits_service 缓存键: transcoders={list(_global_transcoders_cache.keys())}, lorsas={list(_global_lorsas_cache.keys())}")
+            print(f"   本地缓存键: transcoders={list(_transcoders_cache.keys())}, lorsas={list(_lorsas_cache.keys())}")
             raise HTTPException(
                 status_code=503,
-                detail=f"Transcoders/LoRSAs未加载，请先调用 /circuit/preload_models 预加载"
+                detail=error_detail
             )
         
         # 加载max activations数据

@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
-import { Node, Link, LinkGraphData } from './link-graph/types';
+import { Link } from 'react-router-dom';
+import { Node, Link as LinkType, LinkGraphData } from './link-graph/types';
 import { extractLayerAndFeature } from './link-graph/utils';
 import { fetchFeature, getDictionaryName } from "@/utils/api";
 import { Feature } from "@/types/feature";
@@ -323,6 +324,38 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     [pinnedIds, clickedNode?.nodeId]
   );
 
+  // 解析节点信息用于跳转到 global weight 页面（必须在早期返回之前调用）
+  const globalWeightParams = useMemo(() => {
+    if (!clickedNode) return null;
+    
+    // 从 nodeId 解析 layer 和 feature
+    const parts = clickedNode.nodeId.split('_');
+    if (parts.length < 2) return null;
+    
+    const rawLayer = parseInt(parts[0]) || 0;
+    const layerIdx = Math.floor(rawLayer / 2); // 除以2得到实际模型层数
+    const featureIdx = parseInt(parts[1]) || 0;
+    const isLorsa = clickedNode.feature_type?.toLowerCase() === 'lorsa';
+    const featureType = isLorsa ? 'lorsa' : 'tc';
+    
+    // 从 localStorage 读取 sae_combo_id
+    const saeComboId = typeof window !== 'undefined' 
+      ? window.localStorage.getItem('bt4_sae_combo_id') 
+      : null;
+    
+    const params = new URLSearchParams({
+      feature_type: featureType,
+      layer_idx: layerIdx.toString(),
+      feature_idx: featureIdx.toString(),
+    });
+    
+    if (saeComboId) {
+      params.append('sae_combo_id', saeComboId);
+    }
+    
+    return params.toString();
+  }, [clickedNode]);
+
   // Early return after all hooks have been called
   if (!clickedNode) {
     return (
@@ -349,15 +382,33 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
       </div>
 
       {/* Connections */}
-      <div className="connections flex-1 flex gap-5 min-h-0">
-        {connectionTypes.map(type => (
-          <div
-            key={type.id}
-            className={`features flex-1 flex flex-col min-h-0 ${type.id === 'output' ? 'output' : 'input'}`}
-          >
-            <div className="section-title text-lg font-semibold mb-2 text-gray-800 flex-shrink-0">
-              {type.title}
-            </div>
+      <div className="connections flex-1 flex flex-col gap-3 min-h-0">
+        {/* Global Weight 跳转按钮 - 显示在 Input Features 和 Output Features 上方 */}
+        {globalWeightParams && (
+          <div className="w-full flex-shrink-0">
+            <Link
+              to={`/global-weight?${globalWeightParams}`}
+              className="inline-flex items-center justify-center w-full px-3 py-2 bg-purple-500 text-white text-sm font-medium rounded-md hover:bg-purple-600 transition-colors"
+              title="查看该特征的全局权重分析"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              查看全局权重
+            </Link>
+          </div>
+        )}
+        
+        {/* Input Features 和 Output Features */}
+        <div className="flex-1 flex gap-5 min-h-0">
+          {connectionTypes.map(type => (
+            <div
+              key={type.id}
+              className={`features flex-1 flex flex-col min-h-0 ${type.id === 'output' ? 'output' : 'input'}`}
+            >
+              <div className="section-title text-lg font-semibold mb-2 text-gray-800 flex-shrink-0">
+                {type.title}
+              </div>
             
             <div className="effects space-y-2 flex-1 overflow-y-auto pr-2">
               {type.sections.map(section => (
@@ -377,6 +428,7 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
             </div>
           </div>
         ))}
+        </div>
       </div>
     </div>
   );
