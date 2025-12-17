@@ -336,22 +336,25 @@ class TransformerLensLanguageModel(LanguageModel):
             warnings.warn(
                 "Tracing with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
-        tokens = to_tokens(
-            self.tokenizer,
+        encoding = self.tokenizer(
             raw["text"],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
             max_length=self.cfg.max_length,
-            device=self.cfg.device,
-            prepend_bos=self.cfg.prepend_bos,
+            return_offsets_mapping=True,
         )
+        offsets = encoding["offset_mapping"]
+        tokens = encoding["input_ids"]
+        has_bos_prepended = torch.all(tokens[:, 0] == self.bos_token_id)
+        if self.cfg.prepend_bos and not has_bos_prepended:
+            offsets = [[None] + offset_ for offset_ in offsets]
+        elif not self.cfg.prepend_bos and has_bos_prepended:
+            offsets = [offset_[1:] for offset_ in offsets]
         if n_context is not None:
-            assert self.pad_token_id is not None, (
-                "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
-            )
-            tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
-        batch_str_tokens = [self.tokenizer.batch_decode(token, clean_up_tokenization_spaces=False) for token in tokens]
-        return [
-            _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
-        ]
+            offsets = [offset_[:n_context] for offset_ in offsets]
+            offsets = [offset_ + [None] * (n_context - len(offset_)) for offset_ in offsets]
+        return [[{"key": "text", "range": offset} for offset in offset_] for offset_ in offsets]
 
     @timer.time("to_activations")
     @torch.no_grad()
@@ -478,20 +481,25 @@ class HuggingFaceLanguageModel(LanguageModel):
         return activations
 
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
-        tokens = to_tokens(
-            self.tokenizer,
+        encoding = self.tokenizer(
             raw["text"],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
             max_length=self.cfg.max_length,
-            device=self.cfg.device,
-            prepend_bos=self.cfg.prepend_bos,
+            return_offsets_mapping=True,
         )
+        offsets = encoding["offset_mapping"]
+        tokens = encoding["input_ids"]
+        has_bos_prepended = torch.all(tokens[:, 0] == self.bos_token_id)
+        if self.cfg.prepend_bos and not has_bos_prepended:
+            offsets = [[None] + offset_ for offset_ in offsets]
+        elif not self.cfg.prepend_bos and has_bos_prepended:
+            offsets = [offset_[1:] for offset_ in offsets]
         if n_context is not None:
-            assert self.pad_token_id is not None, "Pad token ID must be set when n_context is provided"
-            tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
-        batch_str_tokens = [self.tokenizer.batch_decode(token, clean_up_tokenization_spaces=False) for token in tokens]
-        return [
-            _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
-        ]
+            offsets = [offset_[:n_context] for offset_ in offsets]
+            offsets = [offset_ + [None] * (n_context - len(offset_)) for offset_ in offsets]
+        return [[{"key": "text", "range": offset} for offset in offset_] for offset_ in offsets]
 
 
 class LLaDALanguageModel(TransformerLensLanguageModel):
