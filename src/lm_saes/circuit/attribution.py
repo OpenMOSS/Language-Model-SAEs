@@ -612,6 +612,8 @@ def _run_attribution(
         error_vecs,
         token_vecs,
     ) = model.setup_attribution(input_ids, sparse=True)
+    # we do not run forward passes in setup_attribution. Just assign some zero-inited tensors and set hooks for them
+    # they only have informative values set in Phase 1: forward pass later
 
     lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas) if use_lorsa else None
     lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = (
@@ -883,7 +885,7 @@ def _run_attribution(
         selected_lorsa_feature_qpos = idx_to_pos(selected_lorsa_feature)
         # currently we are only interested in the most prominent z pattern contributor for each lorsa feature
         # these k_poses are not even necessarily ones with the largest attention pattern due to effect from V
-        # This is not enough for explaining the attention scores.
+        # This is not enough for explaining the attention scores as a whole.
         # For now we only use qk tracing to get some sense of how lorsa attention pattern forms
         # In practice this should tell us something
         selected_lorsa_feature_kpos = idx_to_z_pattern(selected_lorsa_feature).argmax(dim=-1)
