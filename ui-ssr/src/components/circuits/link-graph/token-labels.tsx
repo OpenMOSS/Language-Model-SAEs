@@ -6,7 +6,7 @@ interface TokenLabelsProps {
   dimensions: { width: number; height: number }
 }
 
-const BOTTOM_PADDING = 40
+const BOTTOM_PADDING = 50
 
 export const TokenLabels: React.FC<TokenLabelsProps> = React.memo(
   ({ tokenData, dimensions }) => {
@@ -28,7 +28,7 @@ export const TokenLabels: React.FC<TokenLabelsProps> = React.memo(
         .attr(
           'transform',
           (d: any) =>
-            `rotate(-45, ${d.x}, ${dimensions.height - BOTTOM_PADDING + 10})`,
+            `rotate(-20, ${d.x}, ${dimensions.height - BOTTOM_PADDING + 10})`,
         )
         .attr('text-anchor', 'end')
         .attr('dominant-baseline', 'hanging')

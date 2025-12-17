@@ -24,7 +24,7 @@ interface LinkGraphProps {
 }
 
 const BOTTOM_PADDING = 50
-const SIDE_PADDING = 20
+const SIDE_PADDING = 70
 
 const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   data,
@@ -73,9 +73,10 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       const xDomain = [-1].concat(calculatedCtxCounts.map((d) => d.ctxIdx))
       const xRange = [SIDE_PADDING].concat(
         calculatedCtxCounts.map(
-          (d) =>
+          (d, i) =>
             SIDE_PADDING +
-            (d.cumsum * (dimensions.width - 2 * SIDE_PADDING)) / cumsum,
+            ((d.cumsum + 2 * (i + 1)) * (dimensions.width - SIDE_PADDING)) /
+              (cumsum + 2 * calculatedCtxCounts.length),
         ),
       )
       const x = d3
@@ -225,20 +226,14 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
 
   if (!positionedNodes.length || !x || !y) {
     return (
-      <div
-        ref={containerRef}
-        className="relative w-full h-[600px] border border-gray-200 rounded-lg overflow-hidden"
-      >
+      <div ref={containerRef} className="relative w-full h-[400px]">
         <div>Loading...</div>
       </div>
     )
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="relative w-full h-[600px] border border-gray-200 rounded-lg overflow-hidden"
-    >
+    <div ref={containerRef} className="relative w-full h-[400px]">
       <svg
         ref={svgRef}
         width={dimensions.width}

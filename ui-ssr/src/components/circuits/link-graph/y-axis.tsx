@@ -6,6 +6,8 @@ interface YAxisProps {
   y: d3.ScaleBand<number>
 }
 
+const SIDE_PADDING = 70
+
 export const YAxis: React.FC<YAxisProps> = React.memo(
   ({ positionedNodes, y }) => {
     const svgRef = useRef<SVGGElement>(null)
@@ -22,33 +24,32 @@ export const YAxis: React.FC<YAxisProps> = React.memo(
         const yPos = (y(layerIdx) || 0) + y.bandwidth() / 2
 
         let label: string
+        let textColor: string
         if (layerIdx === 0) {
           label = 'Emb'
+          textColor = '#6b21a8' // Embedding - purple
         } else if (layerIdx === yNumTicks - 1) {
           label = 'Logit'
+          textColor = '#9a3412' // Logits - orange
         } else if (layerIdx % 2 === 0) {
           label = `M${Math.floor(layerIdx / 2) - 1}`
+          textColor = '#166534' // MLP - green
         } else {
           label = `A${Math.floor(layerIdx / 2)}`
+          textColor = '#1e40af' // Attention - blue
         }
 
         svg
-          .append('line')
-          .attr('x1', 0)
-          .attr('y1', yPos)
-          .attr('x2', 8)
-          .attr('y2', yPos)
-          .attr('stroke', '#666')
-          .attr('stroke-width', '1')
-
-        svg
           .append('text')
-          .attr('x', 12)
+          .attr('x', SIDE_PADDING - 12)
           .attr('y', yPos + 4)
-          .attr('text-anchor', 'start')
+          .attr('text-anchor', 'end')
           .attr('font-size', '12px')
-          .attr('font-family', 'Arial, sans-serif')
-          .attr('fill', '#666')
+          .style(
+            'font-family',
+            "'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Consolas', 'Courier New', monospace",
+          )
+          .attr('fill', textColor)
           .text(label)
       })
     }, [positionedNodes, y])

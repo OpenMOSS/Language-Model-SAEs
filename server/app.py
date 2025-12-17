@@ -79,6 +79,7 @@ def get_model(*, name: str) -> LanguageModel:
     if cfg is None:
         raise ValueError(f"Model {name} not found")
     cfg.tokenizer_only = tokenizer_only
+    cfg.device = device
     return load_model(cfg)
 
 
@@ -98,6 +99,7 @@ def get_sae(*, name: str) -> AbstractSparseAutoEncoder:
     path = client.get_sae_path(name, sae_series)
     assert path is not None, f"SAE {name} not found"
     cfg = BaseSAEConfig.from_pretrained(path)
+    cfg.device = device
     sae = AbstractSparseAutoEncoder.from_config(cfg)
     sae.eval()
     return sae
