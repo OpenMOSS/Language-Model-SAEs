@@ -256,8 +256,15 @@ class FeatureAnalyzer:
                 f"feature_acts.shape: {feature_acts.shape}, expected: {(tokens.shape[0], tokens.shape[1], sae.cfg.d_sae)}"
             )
 
-            # Compute ignore token masks
-            ignore_token_masks = self.compute_ignore_token_masks(tokens, self.cfg.ignore_token_ids)
+            # Compute and apply ignore token masks
+            if self.cfg.ignore_token_ids is None and batch.get("mask") is not None:
+                ignore_token_masks = batch["mask"]
+                if device_mesh is not None and not isinstance(ignore_token_masks, DTensor):
+                    ignore_token_masks = DTensor.from_local(
+                        ignore_token_masks, device_mesh, placements=DimMap({}).placements(device_mesh)
+                    )
+            else:
+                ignore_token_masks = self.compute_ignore_token_masks(tokens, self.cfg.ignore_token_ids)
             feature_acts *= rearrange(ignore_token_masks, "batch_size n_ctx -> batch_size n_ctx 1")
 
             # Update activation statistics
