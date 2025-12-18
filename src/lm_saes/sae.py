@@ -440,6 +440,8 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         x = self.prepare_input(batch)[0]
 
         if self.device_mesh is not None:
+            assert isinstance(x, DTensor)
+            assert isinstance(self.W_E, DTensor)
             x = x.to_local()
             torch.distributed.broadcast(tensor=x, group=self.device_mesh.get_group("data"), group_src=0)
             orig_x = x / input_norm_factor
