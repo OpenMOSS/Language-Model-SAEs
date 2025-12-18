@@ -175,7 +175,11 @@ def train_sae(settings: TrainSAESettings) -> None:
         else None
     )
     sae = initializer.initialize_sae_from_config(
-        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger
+        settings.sae,
+        activation_stream=activations_stream,
+        device_mesh=device_mesh,
+        wandb_logger=wandb_logger,
+        model=model,
     )
     if settings.trainer.from_pretrained_path is not None:
         trainer = Trainer.from_checkpoint(

@@ -5,6 +5,7 @@ from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from transformer_lens import HookedTransformer
 from transformer_lens.components import Attention, GroupedQueryAttention, TransformerBlock
+from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
@@ -187,6 +188,25 @@ class Initializer:
             assert activation_stream is not None, "Activation iterator must be provided for initialization search"
             activation_batch = next(iter(activation_stream))  # type: ignore
 
+            if (
+                isinstance(sae, SparseAutoEncoder)
+                and sae.cfg.hook_point_in != sae.cfg.hook_point_out
+                and self.cfg.initialize_tc_with_mlp
+            ):
+                batch = sae.normalize_activations(activation_batch)
+                assert sae.cfg.norm_activation == "dataset-wise"
+                assert isinstance(model, TransformerLensLanguageModel) and model.model is not None
+                assert self.cfg.model_layer is not None
+                assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
+                assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), (
+                    "Block must be a TransformerBlock"
+                )
+                assert isinstance(model.model.blocks[self.cfg.model_layer].mlp, CanBeUsedAsMLP)
+                sae.init_tc_with_mlp(
+                    batch=batch,
+                    mlp=cast(CanBeUsedAsMLP, model.model.blocks[self.cfg.model_layer].mlp),
+                )
+
             if self.cfg.initialize_W_D_with_active_subspace:
                 batch = sae.normalize_activations(activation_batch)
                 if isinstance(sae, LowRankSparseAttention):
@@ -200,7 +220,7 @@ class Initializer:
                         "Model layer must be provided for initializing Lorsa decoder weight with active subspace"
                     )
                     sae.init_W_V_with_active_subspace_per_head(
-                        batch,
+                        batch=batch,
                         mhsa=cast(
                             Attention | GroupedQueryAttention,
                             model.model.blocks[self.cfg.model_layer].attn,
@@ -210,7 +230,7 @@ class Initializer:
                     assert self.cfg.d_active_subspace is not None, (
                         "d_active_subspace must be provided for initializing other SAEs with active subspace"
                     )
-                    sae.init_W_D_with_active_subspace(batch, self.cfg.d_active_subspace)
+                    sae.init_W_D_with_active_subspace(batch=batch, d_active_subspace=self.cfg.d_active_subspace)
 
             sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
 

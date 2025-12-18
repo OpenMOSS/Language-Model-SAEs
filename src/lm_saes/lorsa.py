@@ -244,12 +244,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     @torch.no_grad()
     @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
     def init_W_D_with_active_subspace_per_head(
-        self, activation_batch: dict[str, torch.Tensor], mhsa: Attention | GroupedQueryAttention
+        self, batch: dict[str, torch.Tensor], mhsa: Attention | GroupedQueryAttention
     ):
         """
         Initialize W_D with the active subspace for each head.
         """
-        x = self.prepare_input(activation_batch)[0]
+        x = self.prepare_input(batch)[0]
         if isinstance(x, DTensor):
             x = x.to_local()
 
@@ -327,12 +327,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     @torch.no_grad()
     @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
     def init_W_V_with_active_subspace_per_head(
-        self, activation_batch: dict[str, torch.Tensor], mhsa: Attention | GroupedQueryAttention
+        self, batch: dict[str, torch.Tensor], mhsa: Attention | GroupedQueryAttention
     ):
         """
         Initialize W_D with the active subspace for each head.
         """
-        x = self.prepare_input(activation_batch)[0]
+        x = self.prepare_input(batch)[0]
         if isinstance(x, DTensor):
             x = x.to_local()
 
@@ -402,9 +402,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def init_encoder_bias_with_mean_hidden_pre(self, batch: dict[str, torch.Tensor]):
         x = self.prepare_input(batch)[0]
         _, hidden_pre = self.encode(x, return_hidden_pre=True)
-
-        if self.cfg.sparsity_include_decoder_norm:
-            hidden_pre = hidden_pre / self.decoder_norm()
 
         self.b_V.sub_(hidden_pre.mean(dim=[0, 1]))
 
@@ -635,6 +632,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         if self.cfg.sparsity_include_decoder_norm:
             feature_acts = feature_acts / self.decoder_norm()
+            hidden_pre = hidden_pre / self.decoder_norm()
 
         return_values: list[torch.Tensor] = [feature_acts]
         if return_hidden_pre:

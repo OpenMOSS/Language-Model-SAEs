@@ -773,7 +773,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """
         return {}
 
-    def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
+    def init_W_D_with_active_subspace(self, batch: dict[str, torch.Tensor], d_active_subspace: int):
         """Initialize the W and D parameters with the active subspace."""
         raise NotImplementedError("Subclasses must implement this method")
 

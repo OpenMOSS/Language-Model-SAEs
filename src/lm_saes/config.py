@@ -464,6 +464,7 @@ class InitializerConfig(BaseConfig):
     initialize_W_D_with_active_subspace: bool = False
     d_active_subspace: int | None = None
     initialize_lorsa_with_mhsa: bool | None = None
+    initialize_tc_with_mlp: bool | None = None
     model_layer: int | None = None
     init_encoder_bias_with_mean_hidden_pre: bool = False
 
