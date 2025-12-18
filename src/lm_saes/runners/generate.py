@@ -56,7 +56,7 @@ class GenerateActivationsSettings(BaseSettings):
     model_batch_size: int = 1
     """Batch size for model forward"""
 
-    batch_size: Optional[int] = None
+    batch_size: int
     """Size of the batch for activation generation"""
 
     buffer_size: Optional[int] = None
