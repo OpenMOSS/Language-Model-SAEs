@@ -424,6 +424,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         """
         label = self.prepare_label(batch)
         if self.device_mesh is not None:
+            assert isinstance(label, DTensor)
             label = label.to_local()
             torch.distributed.broadcast(tensor=label, group=self.device_mesh.get_group("data"), group_src=0)
         demeaned_label = label - label.mean(dim=0)
