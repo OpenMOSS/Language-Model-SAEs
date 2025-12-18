@@ -271,6 +271,8 @@ class MongoClient:
         sae_series: str,
         name: str | None = None,
         metric_filters: Optional[dict[str, dict[str, float]]] = None,
+        act_times_min: float | None = None,
+        act_times_max: float | None = None,
     ) -> Optional[FeatureRecord]:
         """Get a random feature that has non-zero activation.
 
@@ -286,6 +288,14 @@ class MongoClient:
         elem_match: dict[str, Any] = {"max_feature_acts": {"$gt": 0}}
         if name is not None:
             elem_match["name"] = name
+        if act_times_min is not None or act_times_max is not None:
+            act_filter: dict[str, Any] = {}
+            if act_times_min is not None:
+                act_filter["$gte"] = act_times_min
+            if act_times_max is not None:
+                act_filter["$lte"] = act_times_max
+            if act_filter:
+                elem_match["act_times"] = act_filter
 
         match_filter: dict[str, Any] = {
             "sae_name": sae_name,
@@ -691,6 +701,8 @@ class MongoClient:
         sae_series: str,
         name: str | None = None,
         metric_filters: Optional[dict[str, dict[str, float]]] = None,
+        act_times_min: float | None = None,
+        act_times_max: float | None = None,
     ) -> int:
         """Count features that match the given filters.
 
@@ -706,6 +718,14 @@ class MongoClient:
         elem_match: dict[str, Any] = {"max_feature_acts": {"$gt": 0}}
         if name is not None:
             elem_match["name"] = name
+        if act_times_min is not None or act_times_max is not None:
+            act_filter: dict[str, Any] = {}
+            if act_times_min is not None:
+                act_filter["$gte"] = act_times_min
+            if act_times_max is not None:
+                act_filter["$lte"] = act_times_max
+            if act_filter:
+                elem_match["act_times"] = act_filter
 
         match_filter: dict[str, Any] = {
             "sae_name": sae_name,

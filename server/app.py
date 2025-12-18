@@ -218,6 +218,8 @@ def count_features_with_filters(
     name: str,
     feature_analysis_name: str | None = None,
     metric_filters: str | None = None,
+    act_times_min: float | None = None,
+    act_times_max: float | None = None,
 ):
     """Count features that match the given filters.
 
@@ -241,7 +243,12 @@ def count_features_with_filters(
             )
 
     count = client.count_features_with_filters(
-        sae_name=name, sae_series=sae_series, name=feature_analysis_name, metric_filters=parsed_metric_filters
+        sae_name=name,
+        sae_series=sae_series,
+        name=feature_analysis_name,
+        metric_filters=parsed_metric_filters,
+        act_times_min=act_times_min,
+        act_times_max=act_times_max,
     )
 
     return {"count": count}
@@ -253,6 +260,8 @@ def get_feature(
     feature_index: str | int,
     feature_analysis_name: str | None = None,
     metric_filters: str | None = None,
+    act_times_min: float | None = None,
+    act_times_max: float | None = None,
 ):
     # Parse feature_index if it's a string
     if isinstance(feature_index, str) and feature_index != "random":
@@ -278,7 +287,12 @@ def get_feature(
     # Get feature data
     feature = (
         client.get_random_alive_feature(
-            sae_name=name, sae_series=sae_series, name=feature_analysis_name, metric_filters=parsed_metric_filters
+            sae_name=name,
+            sae_series=sae_series,
+            name=feature_analysis_name,
+            metric_filters=parsed_metric_filters,
+            act_times_min=act_times_min,
+            act_times_max=act_times_max,
         )
         if feature_index == "random"
         else client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
