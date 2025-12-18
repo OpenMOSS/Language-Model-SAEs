@@ -30,10 +30,26 @@
 
 ## Installation
 
+Use [pip](https://pypi.org/project/pip/) to install Language-Model-SAEs:
+
+```bash
+pip install lm-saes==2.0.0b4
+```
+
+We also highly recommend using [uv](https://docs.astral.sh/uv/) to manage your own project dependencies. You can use
+
+```bash
+uv add lm-saes==2.0.0b4
+```
+
+to add Language-Model-SAEs as your project dependency.
+
+## Development
+
 We use [uv](https://docs.astral.sh/uv/) to manage the dependencies, which is an alternative to [poetry](https://python-poetry.org/) or [pdm](https://pdm-project.org/). To install the required packages, just install [uv](https://docs.astral.sh/uv/getting-started/installation/), and run the following command:
 
 ```bash
-uv sync --extra default
+uv sync
 ```
 
 This will install all the required packages for the codebase in `.venv` directory. For Ascend NPU support, run
@@ -47,15 +63,13 @@ A forked version of `TransformerLens` is also included in the dependencies to pr
 If you want to use the visualization tools, you also need to install the required packages for the frontend, which uses [bun](https://bun.sh/) for dependency management. Follow the instructions on the website to install it, and then run the following command:
 
 ```bash
-cd ui
+cd ui-ssr
 bun install
 ```
 
-`bun` is not well-supported on Windows, so you may need to use WSL or other Linux-based solutions to run the frontend, or consider using a different package manager, such as `pnpm` or `yarn`.
-
 ## Launch an Experiment
 
-The guidelines and examples for launching experiments are generally outdated. At this moment, you may explore `src/lm_saes/runners` folder for the interface for generating activations and training & analyzing SAE variants. For analyzing SAEs, a MongoDB instance is required. More instructions will be provided in near future.
+Explore the `examples` to check the basic usage of training/analyzing SAEs in different configurations. Note a MongoDB is recommended for recording the model/dataset/SAE configurations and required for storing analyses. For more advanced usage, you may explore `src/lm_saes/runners` folder for the interface for generating activations and training & analyzing SAE variants, and directly write your own variant of training/analyzing script at the runner level.
 
 ## Visualizing the Learned Dictionary
 
@@ -65,7 +79,7 @@ The analysis results will be saved using MongoDB, and you can use the provided v
 uvicorn server.app:app --port 24577 --env-file server/.env
 ```
 
-Then, copy the `ui/.env.example` file to `ui/.env` and modify the `VITE_BACKEND_URL` to fit your server settings (by default, it's `http://localhost:24577`), and start the frontend by running the following command:
+Then, copy the `ui/.env.example` file to `ui/.env` and modify the `BACKEND_URL` to fit your server settings (by default, it's `http://localhost:24577`), and start the frontend by running the following command:
 
 ```bash
 cd ui

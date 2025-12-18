@@ -650,18 +650,14 @@ class ActivationFactoryConfig(BaseConfig):
     """ The target to produce. """
     hook_points: list[str]
     """ The hook points to capture activations from. """
+    batch_size: int
+    """ The batch size to use for outputting activations. """
     num_workers: int = 4
     """ The number of workers to use for loading the dataset. """
     context_size: int | None = None
     """ The context size to use for generating activations. All tokens will be padded or truncated to this size. If `None`, will not pad or truncate tokens. This may lead to some error when re-batching activations of different context sizes."""
     model_batch_size: int = 1
-    """ The batch size to use for generating activations. """
-    batch_size: int | None = Field(
-        default_factory=lambda validated_model: 64
-        if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
-        else None
-    )
-    """ The batch size to use for outputting `activations-1d`. """
+    """ The batch size to use for model forward pass when generating activations. """
     override_dtype: Optional[
         Annotated[
             torch.dtype,
@@ -676,11 +672,7 @@ class ActivationFactoryConfig(BaseConfig):
         ]
     ] = None
     """ The dtype to use for outputting activations. If `None`, will not override the dtype. """
-    buffer_size: int | None = Field(
-        default_factory=lambda validated_model: 500_000
-        if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
-        else None
-    )
+    buffer_size: int | None = None
     """ Buffer size for online shuffling. If `None`, no shuffling will be performed. """
     buffer_shuffle: BufferShuffleConfig | None = None
     """" Manual seed and device of generator for generating randomperm in buffer. """
