@@ -7,18 +7,21 @@ from jaxtyping import Float
 from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
+from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
+from lm_saes.activation_functions import JumpReLU
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_distributed_logger
 
-from .abstract_sae import AbstractSparseAutoEncoder
+from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
 from .config import SAEConfig
 
 logger = get_distributed_logger("sae")
 
 
+@register_sae_model("sae")
 class SparseAutoEncoder(AbstractSparseAutoEncoder):
     def __init__(self, cfg: SAEConfig, device_mesh: DeviceMesh | None = None):
         super(SparseAutoEncoder, self).__init__(cfg, device_mesh=device_mesh)
@@ -331,25 +334,22 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
         return reconstructed
 
-    def forward(
+    def decode_coo(
         self,
-        x: Union[
-            Float[torch.Tensor, "batch d_model"],
-            Float[torch.Tensor, "batch seq_len d_model"],
-        ],
-        **kwargs,
-    ) -> Union[
-        Float[torch.Tensor, "batch d_model"],
-        Float[torch.Tensor, "batch seq_len d_model"],
-    ]:
-        feature_acts = self.encode(x, **kwargs)
-        reconstructed = self.decode(feature_acts, **kwargs)
+        feature_acts: Float[torch.sparse.Tensor, "seq_len d_sae"],
+    ) -> Float[torch.Tensor, "seq_len d_model"]:
+        """Decode feature activations back to model space using COO format."""
+        reconstructed = feature_acts @ self.W_D
+        if self.cfg.use_decoder_bias:
+            reconstructed = reconstructed + self.b_D
         return reconstructed
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+    def from_pretrained(
+        cls, pretrained_name_or_path: str, strict_loading: bool = True, fold_activation_scale: bool = True, **kwargs
+    ):
         cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        return cls.from_config(cfg)
+        return cls.from_config(cfg, fold_activation_scale=fold_activation_scale)
 
     @torch.no_grad()
     def _init_encoder_with_decoder_transpose(
@@ -414,21 +414,214 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @override
     @torch.no_grad()
-    def init_W_D_with_active_subspace(self, activation_batch: dict[str, torch.Tensor], d_active_subspace: int):
+    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    def init_W_D_with_active_subspace(self, batch: dict[str, torch.Tensor], d_active_subspace: int):
         """Initialize W_D with the active subspace.
 
         Args:
-            activation_batch: The activation batch.
+            batch: The batch.
             d_active_subspace: The dimension of the active subspace.
         """
-        label = self.prepare_label(activation_batch)
+        label = self.prepare_label(batch)
+        if self.device_mesh is not None:
+            assert isinstance(label, DTensor)
+            label = label.to_local()
+            torch.distributed.broadcast(tensor=label, group=self.device_mesh.get_group("data"), group_src=0)
         demeaned_label = label - label.mean(dim=0)
         U, S, V = torch.svd(demeaned_label.T.to(torch.float32))
         proj_weight = U[:, :d_active_subspace]  # [d_model, d_active_subspace]
         self.W_D.copy_(self.W_D.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
 
     @torch.no_grad()
-    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch: dict[str, torch.Tensor]):
-        x = self.prepare_input(activation_batch)[0]
+    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    def init_tc_with_mlp(self, batch: dict[str, torch.Tensor], mlp: CanBeUsedAsMLP):
+        assert self.cfg.norm_activation == "dataset-wise"
+        assert self.dataset_average_activation_norm is not None
+        input_norm_factor = math.sqrt(self.cfg.d_model) / self.dataset_average_activation_norm[self.cfg.hook_point_in]
+        x = self.prepare_input(batch)[0]
+
+        if self.device_mesh is not None:
+            assert isinstance(x, DTensor)
+            assert isinstance(self.W_E, DTensor)
+            x = x.to_local()
+            torch.distributed.broadcast(tensor=x, group=self.device_mesh.get_group("data"), group_src=0)
+            orig_x = x / input_norm_factor
+            W_E_local = self.W_E.to_local()
+            mlp_input_local = (
+                orig_x.mean(dim=0)
+                + (W_E_local / W_E_local.norm(dim=0, keepdim=True) * (orig_x - orig_x.mean(dim=0)).norm(dim=1).mean()).T
+            )
+            mlp_output_local = mlp.forward(mlp_input_local)
+            mlp_output_demeaned_local = mlp_output_local - mlp_output_local.mean(dim=0)
+            self.W_E.copy_(self.W_E / self.W_E.norm(dim=0, keepdim=True))
+            W_D = DTensor.from_local(
+                mlp_output_demeaned_local / mlp_output_demeaned_local.norm(dim=1, keepdim=True),
+                device_mesh=self.device_mesh,
+                placements=self.dim_maps()["W_D"].placements(self.device_mesh),
+            )
+            self.W_D.copy_(W_D)
+        else:
+            orig_x = x / input_norm_factor
+            mlp_input = (
+                orig_x.mean(dim=0)
+                + (self.W_E / self.W_E.norm(dim=0, keepdim=True) * (orig_x - orig_x.mean(dim=0)).norm(dim=1).mean()).T
+            )
+            mlp_output = mlp.forward(mlp_input)
+            mlp_output_demeaned = mlp_output - mlp_output.mean(dim=0)
+            self.W_E.copy_(self.W_E / self.W_E.norm(dim=0, keepdim=True))
+            self.W_D.copy_(mlp_output_demeaned / mlp_output_demeaned.norm(dim=1, keepdim=True))
+
+    @torch.no_grad()
+    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    def init_encoder_bias_with_mean_hidden_pre(self, batch: dict[str, torch.Tensor]):
+        x = self.prepare_input(batch)[0]
         _, hidden_pre = self.encode(x, return_hidden_pre=True)
-        self.b_E.copy_(-hidden_pre.mean(dim=0))
+
+        self.b_E.sub_(hidden_pre.mean(dim=0))
+
+    @classmethod
+    @torch.no_grad()
+    def from_saelens(cls, sae_saelens):
+        from sae_lens import JumpReLUSAE, StandardSAE, TopKSAE
+
+        # Check Configuration
+        assert (
+            isinstance(sae_saelens, JumpReLUSAE)
+            or isinstance(sae_saelens, StandardSAE)
+            or isinstance(sae_saelens, TopKSAE)
+        ), f"Only support JumpReLUSAE, StandardSAE, TopKSAE, but get {type(sae_saelens)}"
+        assert sae_saelens.cfg.reshape_activations == "none", (
+            f"The 'reshape_activations' should be 'none' but get {sae_saelens.cfg.reshape_activations}."
+        )
+        assert not sae_saelens.cfg.apply_b_dec_to_input, (
+            f"The 'apply_b_dec_to_input' should be 'False' but get {sae_saelens.cfg.apply_b_dec_to_input}."
+        )
+        assert sae_saelens.cfg.normalize_activations == "none", (
+            f"The 'normalize_activations' should be 'false' but get {sae_saelens.cfg.normalize_activations}."
+        )
+
+        # Parse
+        d_model = sae_saelens.cfg.d_in
+        d_sae = sae_saelens.cfg.d_sae
+        hook_name = sae_saelens.cfg.metadata.hook_name
+        assert isinstance(hook_name, str)
+        dtype = sae_saelens.W_enc.dtype
+
+        rescale_acts_by_decoder_norm = False
+        jumprelu_threshold_window = 0
+        k = 0
+        if isinstance(sae_saelens, StandardSAE):
+            activation_fn = "relu"
+        elif isinstance(sae_saelens, TopKSAE):
+            activation_fn = "topk"
+            k = sae_saelens.cfg.k
+            rescale_acts_by_decoder_norm = sae_saelens.cfg.rescale_acts_by_decoder_norm
+        elif isinstance(sae_saelens, JumpReLUSAE):
+            activation_fn = "jumprelu"
+            jumprelu_threshold_window = 2
+        else:
+            raise TypeError(f"Only support JumpReLUSAE, StandardSAE, TopKSAE, but get {type(sae_saelens)}")
+
+        # create cfg
+        cfg = SAEConfig(
+            sae_type="sae",
+            hook_point_in=hook_name,
+            hook_point_out=hook_name,
+            dtype=dtype,
+            d_model=d_model,
+            act_fn=activation_fn,
+            jumprelu_threshold_window=jumprelu_threshold_window,
+            top_k=k,
+            expansion_factor=d_sae / d_model,
+            sparsity_include_decoder_norm=rescale_acts_by_decoder_norm,
+        )
+
+        model = cls.from_config(cfg, None)
+
+        model.W_D.copy_(sae_saelens.W_dec)
+        model.W_E.copy_(sae_saelens.W_enc)
+        model.b_D.copy_(sae_saelens.b_dec)
+        model.b_E.copy_(sae_saelens.b_enc)
+
+        if isinstance(sae_saelens, JumpReLUSAE):
+            assert isinstance(model.activation_function, JumpReLU)
+            model.activation_function.log_jumprelu_threshold.copy_(torch.log(sae_saelens.threshold.clone().detach()))
+
+        return model
+
+    @torch.no_grad()
+    def to_saelens(self, model_name: str = "unknown"):
+        from sae_lens import JumpReLUSAE, JumpReLUSAEConfig, StandardSAE, StandardSAEConfig, TopKSAE, TopKSAEConfig
+        from sae_lens.saes.sae import SAEMetadata
+
+        # Check env
+        assert self.cfg.hook_point_in != self.cfg.hook_point_out, "Not support transcoder yet."
+        assert not isinstance(self.b_D, DTensor), "Not support distributed setting yet."
+        assert not self.cfg.use_glu_encoder, "Can't convert sae with use_glu_encoder=True to SAE Lens format."
+
+        # Parse
+        d_in = self.cfg.d_model
+        d_sae = self.cfg.d_sae
+        activation_fn = self.cfg.act_fn
+        hook_name = self.cfg.hook_point_in
+        dtype = self.cfg.dtype
+
+        # Create model
+        if activation_fn == "relu":
+            cfg_saelens = StandardSAEConfig(
+                d_in=d_in,
+                d_sae=d_sae,
+                dtype=str(dtype),
+                device="cpu",
+                apply_b_dec_to_input=False,
+                normalize_activations="none",
+                metadata=SAEMetadata(
+                    model_name=model_name,
+                    hook_name=hook_name,
+                ),
+            )
+            model = StandardSAE(cfg_saelens)
+        elif activation_fn == "jumprelu":
+            cfg_saelens = JumpReLUSAEConfig(
+                d_in=d_in,
+                d_sae=d_sae,
+                dtype=str(dtype),
+                device="cpu",
+                apply_b_dec_to_input=False,
+                normalize_activations="none",
+                metadata=SAEMetadata(
+                    model_name=model_name,
+                    hook_name=hook_name,
+                ),
+            )
+            model = JumpReLUSAE(cfg_saelens)
+        elif activation_fn == "topk":
+            cfg_saelens = TopKSAEConfig(
+                k=self.cfg.top_k,
+                d_in=d_in,
+                d_sae=d_sae,
+                dtype=str(dtype),
+                device="cpu",
+                apply_b_dec_to_input=False,
+                normalize_activations="none",
+                rescale_acts_by_decoder_norm=self.cfg.sparsity_include_decoder_norm,
+                metadata=SAEMetadata(
+                    model_name=model_name,
+                    hook_name=hook_name,
+                ),
+            )
+            model = TopKSAE(cfg_saelens)
+        else:
+            raise TypeError("Not support such activation function yet.")
+
+        # Depulicate weights
+        model.W_dec.copy_(self.W_D)
+        model.W_enc.copy_(self.W_E)
+        model.b_dec.copy_(self.b_D)
+        model.b_enc.copy_(self.b_E)
+
+        if isinstance(model, JumpReLUSAE):
+            assert isinstance(self.activation_function, JumpReLU)
+            model.threshold.copy_(self.activation_function.log_jumprelu_threshold.exp())
+
+        return model

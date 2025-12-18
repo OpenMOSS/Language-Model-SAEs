@@ -44,7 +44,6 @@ class TestDLA:
             hook_point_out="blocks.0.ln1.hook_attn_out",
             rotary_base=1_000_000,
             n_ctx=10,
-            skip_bos=True,
             device="cuda",
             dtype=torch.float32,
             normalization_type="RMS",

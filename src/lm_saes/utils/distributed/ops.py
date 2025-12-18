@@ -15,11 +15,16 @@ def full_tensor(x: Tensor) -> Tensor:
     return x
 
 
-def to_local(x: Float[Tensor | DTensor, "..."]) -> Float[Tensor, "..."]:
+def to_local(x: Tensor) -> Tensor:
     """Convert DTensor to local Tensor if needed."""
     if isinstance(x, DTensor):
         return x.to_local()
     return x
+
+
+def item(x: Tensor) -> float:
+    """Extract item from a Tensor. A dedicated function is necessary because DTensor.item() silently returns the local value."""
+    return full_tensor(x).item()
 
 
 @overload
@@ -174,4 +179,21 @@ def masked_fill(x: Float[Tensor, "..."], mask: Float[Tensor, "..."], value: floa
     else:
         assert isinstance(mask, Tensor), "mask must be a Tensor"
         x[mask] = value
+        return x
+
+
+def slice_fill(
+    x: Float[Tensor, "..."],
+    slice_tuple: Union[int, slice, Tuple[Union[int, slice, None], ...]],
+    value: Union[float, int, Tensor],
+) -> Float[Tensor, "..."]:
+    """
+    Fill a slice of a Tensor or DTensor with a value.
+    """
+    if isinstance(x, DTensor):
+        x_local = x.to_local()
+        x_local[slice_tuple] = value
+        return DTensor.from_local(x_local, device_mesh=x.device_mesh, placements=x.placements)
+    else:
+        x[slice_tuple] = value
         return x

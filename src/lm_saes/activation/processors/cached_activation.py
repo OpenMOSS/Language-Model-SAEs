@@ -182,10 +182,14 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         assert isinstance(data, dict), f"Loading cached activation {chunk.path} error: returned {type(data)}"
         assert "activation" in data, f"Loading cached activation {chunk.path} error: missing 'activation' field"
         assert "tokens" in data, f"Loading cached activation {chunk.path} error: missing 'tokens' field"
+        assert "mask" in data, f"Loading cached activation {chunk.path} error: missing 'mask' field"
+        assert "attention_mask" in data, f"Loading cached activation {chunk.path} error: missing 'attention_mask' field"
 
         return {
             "hook_point": hook_point,
             "activation": data["activation"],
+            "mask": data["mask"],
+            "attention_mask": data["attention_mask"],
             "tokens": data["tokens"],
             "meta": data.get("meta"),
             "chunk_idx": chunk_idx,
@@ -359,6 +363,8 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             if chunk_idx not in chunk_buffer:
                 chunk_buffer[chunk_idx] = {
                     "tokens": single_hook_data["tokens"],
+                    "mask": single_hook_data["mask"],
+                    "attention_mask": single_hook_data["attention_mask"],
                     "meta": single_hook_data["meta"],
                 }
 
@@ -370,7 +376,8 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
                 raise AssertionError(f"Loading cached activation error: tokens mismatch for chunk {chunk_idx}")
 
             # Check if we have all hook points for this chunk
-            if len(chunk_buffer[chunk_idx]) - 2 == len(self.cache_dirs):  # -2 for tokens and meta
+            # -4 stands for initial tokens, meta, token_mask and attention_mask
+            if len(chunk_buffer[chunk_idx]) - 4 == len(self.cache_dirs):
                 activations = chunk_buffer.pop(chunk_idx)
                 if self.dtype is not None:
                     for k, v in activations.items():

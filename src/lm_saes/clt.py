@@ -21,16 +21,45 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder, register_sae_model
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.config import CLTConfig
 from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("clt")
 
 
+class CrossLayerTranscoderSpecs(TensorSpecs):
+    """Tensor specs for CrossLayerTranscoder."""
+
+    @staticmethod
+    def feature_acts(tensor: torch.Tensor) -> tuple[str, ...]:
+        if tensor.ndim == 3:
+            return ("batch", "layers", "sae")
+        elif tensor.ndim == 4:
+            return ("batch", "context", "layers", "sae")
+        else:
+            raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
+    @staticmethod
+    def reconstructed(tensor: torch.Tensor) -> tuple[str, ...]:
+        if tensor.ndim == 3:
+            return ("layers", "batch", "model")
+        elif tensor.ndim == 4:
+            return ("layers", "batch", "context", "model")
+        else:
+            raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
+    @staticmethod
+    def label(tensor: torch.Tensor) -> tuple[str, ...]:
+        return CrossLayerTranscoderSpecs.reconstructed(tensor)
+
+
+@register_sae_model("clt")
 class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     """Cross Layer Transcoder (CLT) implementation.
 
@@ -41,6 +70,9 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
     We store all parameters in the same object and shard
     them across GPUs for efficient distributed training.
     """
+
+    specs: type[TensorSpecs] = CrossLayerTranscoderSpecs
+    """Tensor specs for CrossLayerTranscoder with layer dimension."""
 
     def __init__(self, cfg: CLTConfig, device_mesh: Optional[DeviceMesh] = None):
         """Initialize the Cross Layer Transcoder.
@@ -408,8 +440,8 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
     @torch.no_grad()
     @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-    def init_encoder_bias_with_mean_hidden_pre(self, activation_batch):
-        x = self.prepare_input(activation_batch)[0]
+    def init_encoder_bias_with_mean_hidden_pre(self, batch: dict[str, torch.Tensor]):
+        x = self.prepare_input(batch)[0]
         if self.device_mesh is None:
             _, hidden_pre = self.encode(x, return_hidden_pre=True)
             self.b_E.copy_(-hidden_pre.mean(dim=0))
@@ -432,17 +464,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             Decoder weights for all source layers to the specified target layer
         """
         return self.W_D[layer_to]
-
-    def get_decoder_bias(self, layer_to: int) -> torch.Tensor:
-        """Get decoder bias for target layer layer_to.
-
-        Args:
-            layer_to: Target layer index (0 to n_layers-1)
-
-        Returns:
-            Decoder bias tensor of shape (d_model,)
-        """
-        return self.b_D[layer_to]
 
     @overload
     def encode(
@@ -631,13 +652,11 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             decode_single_output_layer = self._decode_single_output_layer_dense
 
         for layer_to in range(self.cfg.n_layers):
-            decoder_bias = self.get_decoder_bias(layer_to)  # (d_model,)
-
             # we only compute W_D @ feature_acts here, without b_D
             contribution = decode_single_output_layer(feature_acts, layer_to)  # type: ignore
 
             # Add bias contribution (single bias vector for this target layer)
-            contribution = contribution + decoder_bias
+            contribution = contribution + self.b_D[layer_to]  # (d_model,)
             if isinstance(contribution, DTensor):
                 contribution = DimMap({"data": 0}).redistribute(contribution)
 
@@ -945,91 +964,42 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
     @override
     @torch.no_grad()
-    def prepare_logging_data(
-        self,
-        log_info: dict[str, torch.Tensor],
-        label: torch.Tensor,
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-        """Prepare logging data by permuting dimensions for CLT."""
-        log_info = log_info.copy()
-        log_info["reconstructed"] = log_info["reconstructed"].permute(1, 0, 2)
-        label = label.permute(1, 0, 2)
-        return log_info, label
-
-    @override
-    @torch.no_grad()
-    def compute_sparsity_metrics(self, feature_sparsity: torch.Tensor) -> dict[str, float]:
-        """Compute per-layer sparsity metrics for CLT."""
-        above_1e_1 = (feature_sparsity > 1e-1).sum(-1)
-        above_1e_2 = (feature_sparsity > 1e-2).sum(-1)
-        below_1e_5 = (feature_sparsity < 1e-5).sum(-1)
-        below_1e_6 = (feature_sparsity < 1e-6).sum(-1)
-        below_1e_7 = (feature_sparsity < 1e-7).sum(-1)
-        wandb_log_dict = {}
-
-        for l in range(self.cfg.n_layers):
-            wandb_log_dict[f"sparsity/above_1e-1_layer{l}"] = above_1e_1[l].item()
-            wandb_log_dict[f"sparsity/above_1e-2_layer{l}"] = above_1e_2[l].item()
-            wandb_log_dict[f"sparsity/below_1e-5_layer{l}"] = below_1e_5[l].item()
-            wandb_log_dict[f"sparsity/below_1e-6_layer{l}"] = below_1e_6[l].item()
-            wandb_log_dict[f"sparsity/below_1e-7_layer{l}"] = below_1e_7[l].item()
-
-        wandb_log_dict["sparsity/above_1e-1"] = above_1e_1.sum().item()
-        wandb_log_dict["sparsity/above_1e-2"] = above_1e_2.sum().item()
-        wandb_log_dict["sparsity/below_1e-5"] = below_1e_5.sum().item()
-        wandb_log_dict["sparsity/below_1e-6"] = below_1e_6.sum().item()
-        wandb_log_dict["sparsity/below_1e-7"] = below_1e_7.sum().item()
-        return wandb_log_dict
-
-    @override
-    @torch.no_grad()
     def compute_training_metrics(
         self,
-        feature_acts: torch.Tensor,
-        reconstructed: torch.Tensor,
-        label: torch.Tensor,
-        l_rec: torch.Tensor,
+        *,
         l0: torch.Tensor,
-        explained_variance: torch.Tensor,
         explained_variance_legacy: torch.Tensor,
+        **kwargs,
     ) -> dict[str, float]:
         """Compute per-layer training metrics for CLT."""
-        per_layer_ev = explained_variance_legacy.mean(0)
+        assert explained_variance_legacy.ndim == 1 and len(explained_variance_legacy) == self.cfg.n_layers, (
+            f"explained_variance_legacy should be of shape (n_layers,), but got {explained_variance_legacy.shape}"
+        )
         clt_per_layer_ev_dict = {
-            f"metrics/explained_variance_L{l}": per_layer_ev[l].item() for l in range(per_layer_ev.size(0))
+            f"metrics/explained_variance_L{l}": item(explained_variance_legacy[l].mean())
+            for l in range(explained_variance_legacy.size(1))
         }
-        clt_per_layer_l0_dict = {f"metrics/l0_layer{l}": l0[:, l].mean().item() for l in range(l0.size(1))}
+        clt_per_layer_l0_dict = {f"metrics/l0_layer{l}": item(l0[:, l].mean()) for l in range(l0.size(1))}
         return {**clt_per_layer_ev_dict, **clt_per_layer_l0_dict}
-
-    @override
-    @torch.no_grad()
-    def aggregate_l0(self, l0: torch.Tensor) -> torch.Tensor:
-        """Sum l0 over layers for overall metric."""
-        return l0.sum(-1)  # [batch_size, n_layers] -> [batch_size]
 
     @overload
     def compute_loss(
         self,
         batch: dict[str, torch.Tensor],
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
         l1_coefficient: float = 1.0,
         return_aux_data: Literal[True] = True,
         **kwargs,
-    ) -> tuple[
-        Float[torch.Tensor, " batch"],
-        tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
-    ]: ...
+    ) -> dict[str, Any]: ...
 
     @overload
     def compute_loss(
         self,
         batch: dict[str, torch.Tensor],
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         p: int = 1,
@@ -1051,7 +1021,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             ]
         ) = None,
         *,
-        use_batch_norm_mse: bool = False,
         sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None,
         tanh_stretch_coefficient: float = 4.0,
         frequency_scale: float = 0.01,
@@ -1061,10 +1030,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, " batch"],
-        tuple[
-            Float[torch.Tensor, " batch"],
-            tuple[dict[str, Optional[torch.Tensor]], dict[str, torch.Tensor]],
-        ],
+        dict[str, Any],
     ]:
         """Compute the loss for the autoencoder.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
@@ -1080,18 +1046,13 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2)
-            if use_batch_norm_mse:
-                l_rec = (
-                    l_rec
-                    / (label - label.mean(dim=1, keepdim=True)).pow_(2).sum(dim=-1, keepdim=True).clamp(min=1e-8).sqrt()
-                )
-            l_rec = l_rec.sum(dim=-1)
+            l_rec = l_rec.sum(dim=-1).mean()
             if isinstance(l_rec, DTensor):
                 l_rec: Tensor = l_rec.full_tensor()
             loss_dict: dict[str, Optional[torch.Tensor]] = {
                 "l_rec": l_rec,
             }
-            loss = l_rec.mean()
+            loss = l_rec
 
             if sparsity_loss_type is not None:
                 decoder_norm: Union[Float[torch.Tensor, "n_layers d_sae"], DTensor] = self.decoder_norm_per_feature()
@@ -1119,11 +1080,15 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 loss_dict["l_s"] = None
 
         if return_aux_data:
-            aux_data = {
+            return {
+                "loss": loss,
+                **loss_dict,
+                "label": label,
+                "mask": batch.get("mask"),
+                "n_tokens": batch["tokens"].numel() if batch.get("mask") is None else int(item(batch["mask"].sum())),
                 "feature_acts": feature_acts,
                 "reconstructed": reconstructed,
             }
-            return loss, (loss_dict, aux_data)
         return loss
 
     @override

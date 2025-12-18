@@ -1,10 +1,16 @@
 import re
 import warnings
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from itertools import accumulate
-from typing import Any, Optional, cast
+from typing import Any, Callable, Optional, Union, cast
 
 import torch
+import torch.distributed as dist
+import torch.utils._pytree as pytree
+from torch.distributed import DeviceMesh
+from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.experimental import local_map
 from transformer_lens import HookedTransformer
 from transformers import (
     AutoModelForCausalLM,
@@ -15,6 +21,7 @@ from transformers import (
 )
 
 from lm_saes.config import LanguageModelConfig, LLaDAConfig
+from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
 
@@ -56,7 +63,7 @@ def set_tokens(tokenizer, bos_token_id, eos_token_id, pad_token_id):
     return tokenizer
 
 
-def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optional[tuple[int, int]]]:
+def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optional[dict[str, Any]]]:
     """Match the tokens to the input text, returning a list of tuples of the form (start_idx, end_idx) for each token."""
     # Initialize list to store token positions
     token_positions = []
@@ -66,8 +73,12 @@ def _match_str_tokens_to_input(text: str, str_tokens: list[str]) -> list[Optiona
 
     # For each token, try to find its position in the input text
     for token in str_tokens:
-        # Search for token in remaining text
-        pos = text.find(token, curr_pos)
+        # Optimization: Check if the token appears immediately at the current position
+        if text.startswith(token, curr_pos):
+            pos = curr_pos
+        else:
+            # Search for token in remaining text
+            pos = text.find(token, curr_pos)
 
         if pos != -1:
             # Found a match, store position and update curr_pos
@@ -153,11 +164,11 @@ class LanguageModel(ABC):
 
 
 class TransformerLensLanguageModel(LanguageModel):
-    def __init__(self, cfg: LanguageModelConfig):
+    def __init__(self, cfg: LanguageModelConfig, device_mesh: DeviceMesh | None = None):
         self.cfg = cfg
+        self.device_mesh = device_mesh
         if cfg.device == "cuda":
             self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
-            print(f"cuda:{torch.cuda.current_device()}")
         elif cfg.device == "npu":
             self.device = torch.device(f"npu:{torch.npu.current_device()}")  # type: ignore[reportAttributeAccessIssue]
         else:
@@ -218,27 +229,132 @@ class TransformerLensLanguageModel(LanguageModel):
     def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
         return raw
 
+    def forward(self, *args, **kwargs):
+        assert self.model is not None, "model must be initialized"
+        # Collect all tensor arguments
+        tensors = [arg for arg in args if isinstance(arg, torch.Tensor)] + [
+            v for v in kwargs.values() if isinstance(v, torch.Tensor)
+        ]
+        # Check if all tensors are DTensors
+        is_distributed = len(tensors) > 0 and all(isinstance(t, DTensor) for t in tensors)
+        if self.device_mesh is not None:
+            assert is_distributed, "All tensor inputs must be DTensor when device_mesh is not None"
+            return local_map(
+                self.model.forward,
+                out_placements=DimMap({"data": 0}).placements(self.device_mesh),
+            )(*args, **kwargs)
+        else:
+            assert not is_distributed, "Input should not contain DTensor when device_mesh is None"
+            return self.model.forward(*args, **kwargs)
+
+    def _to_tensor(self, input: torch.Tensor) -> torch.Tensor:
+        if isinstance(input, DTensor):
+            assert input.placements == tuple(DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)))
+            return input.to_local()
+        else:
+            return input
+
+    def _to_dtensor(self, input: torch.Tensor) -> torch.Tensor:
+        return (
+            DTensor.from_local(
+                input,
+                device_mesh=self.device_mesh,
+                placements=DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)),
+            )
+            if isinstance(input, torch.Tensor)
+            else input
+        )
+
+    def _wrap_hook_for_local(self, hook_fn):
+        def wrapped_hook_fn(*args, **kwargs):
+            args = pytree.tree_map(self._to_dtensor, args)
+            kwargs = pytree.tree_map(self._to_dtensor, kwargs)
+            return pytree.tree_map(self._to_tensor, hook_fn(*args, **kwargs))
+
+        return wrapped_hook_fn
+
+    def run_with_hooks(
+        self,
+        *args,
+        fwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
+        bwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
+        **kwargs,
+    ) -> Any:
+        assert self.model is not None, "model must be initialized"
+
+        if self.device_mesh is None:
+            return self.model.run_with_hooks(*args, fwd_hooks=fwd_hooks, bwd_hooks=bwd_hooks, **kwargs)
+
+        wrapped_fwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in fwd_hooks]
+        wrapped_bwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in bwd_hooks]
+
+        return self.model.run_with_hooks(*args, fwd_hooks=wrapped_fwd_hooks, bwd_hooks=wrapped_bwd_hooks, **kwargs)
+
+    def run_with_cache(self, *args, **kwargs) -> Any:
+        assert self.model is not None, "model must be initialized"
+        if self.device_mesh is None:
+            return self.model.run_with_cache(*args, **kwargs)
+
+        args = pytree.tree_map(self._to_tensor, args)
+        kwargs = pytree.tree_map(self._to_tensor, kwargs)
+        return pytree.tree_map(self._to_dtensor, self.model.run_with_cache(*args, **kwargs))
+
+    def run_with_cache_until(self, *args, **kwargs) -> Any:
+        assert self.model is not None, "model must be initialized"
+        if self.device_mesh is None:
+            return self.model.run_with_cache_until(*args, **kwargs)
+
+        args = pytree.tree_map(self._to_tensor, args)
+        kwargs = pytree.tree_map(self._to_tensor, kwargs)
+        return pytree.tree_map(self._to_dtensor, self.model.run_with_cache_until(*args, **kwargs))
+
+    @contextmanager
+    def hooks(
+        self,
+        fwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
+        bwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
+        reset_hooks_end: bool = True,
+        clear_contexts: bool = False,
+    ):
+        assert self.model is not None, "model must be initialized"
+        wrapped_fwd_hooks = fwd_hooks
+        wrapped_bwd_hooks = bwd_hooks
+        if self.device_mesh is not None:
+            wrapped_fwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in fwd_hooks]
+            wrapped_bwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in bwd_hooks]
+
+        with self.model.hooks(
+            fwd_hooks=wrapped_fwd_hooks,
+            bwd_hooks=wrapped_bwd_hooks,
+            reset_hooks_end=reset_hooks_end,
+            clear_contexts=clear_contexts,
+        ):
+            yield self
+
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
                 "Tracing with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
-        tokens = to_tokens(
-            self.tokenizer,
+        encoding = self.tokenizer(
             raw["text"],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
             max_length=self.cfg.max_length,
-            device=self.cfg.device,
-            prepend_bos=self.cfg.prepend_bos,
+            return_offsets_mapping=True,
         )
+        offsets = encoding["offset_mapping"]
+        tokens = encoding["input_ids"]
+        has_bos_prepended = torch.all(tokens[:, 0] == self.bos_token_id)
+        if self.cfg.prepend_bos and not has_bos_prepended:
+            offsets = [[None] + offset_ for offset_ in offsets]
+        elif not self.cfg.prepend_bos and has_bos_prepended:
+            offsets = [offset_[1:] for offset_ in offsets]
         if n_context is not None:
-            assert self.pad_token_id is not None, (
-                "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
-            )
-            tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
-        batch_str_tokens = [self.tokenizer.batch_decode(token, clean_up_tokenization_spaces=False) for token in tokens]
-        return [
-            _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
-        ]
+            offsets = [offset_[:n_context] for offset_ in offsets]
+            offsets = [offset_ + [None] * (n_context - len(offset_)) for offset_ in offsets]
+        return [[{"key": "text", "range": offset} for offset in offset_] for offset_ in offsets]
 
     @timer.time("to_activations")
     @torch.no_grad()
@@ -257,6 +373,10 @@ class TransformerLensLanguageModel(LanguageModel):
             device=self.cfg.device,
             prepend_bos=self.cfg.prepend_bos,
         )
+        if self.device_mesh is not None and n_context is None:
+            num_token_list = [None for _ in range(dist.get_world_size(group=self.device_mesh.get_group("data")))]
+            dist.all_gather_object(num_token_list, tokens.shape[1], group=self.device_mesh.get_group("data"))
+            n_context = max(cast(list[int], num_token_list))
         if n_context is not None:
             assert self.pad_token_id is not None, (
                 "Pad token ID must be set for TransformerLensLanguageModel when n_context is provided"
@@ -266,7 +386,34 @@ class TransformerLensLanguageModel(LanguageModel):
         with timer.time("run_with_cache_until"):
             # _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points, use_flash_attn=False)
             _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
-        return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
+
+        # we do not want to filter out eos. It might be end of chats and include useful information
+        mask = torch.isin(
+            tokens,
+            torch.tensor([self.pad_token_id, self.bos_token_id]).to(tokens.device),
+            invert=True,
+        ).int()
+        attention_mask = torch.isin(tokens, torch.tensor([self.pad_token_id]).to(tokens.device), invert=True).int()
+
+        return {hook_point: activations[hook_point] for hook_point in hook_points} | {
+            "tokens": tokens
+            if self.device_mesh is None
+            else DTensor.from_local(
+                tokens, device_mesh=self.device_mesh, placements=DimMap({"data": 0}).placements(self.device_mesh)
+            ),
+            "mask": mask
+            if self.device_mesh is None
+            else DTensor.from_local(
+                mask, device_mesh=self.device_mesh, placements=DimMap({"data": 0}).placements(self.device_mesh)
+            ),
+            "attention_mask": attention_mask
+            if self.device_mesh is None
+            else DTensor.from_local(
+                attention_mask,
+                device_mesh=self.device_mesh,
+                placements=DimMap({"data": 0}).placements(self.device_mesh),
+            ),
+        }
 
 
 class HuggingFaceLanguageModel(LanguageModel):
@@ -274,7 +421,6 @@ class HuggingFaceLanguageModel(LanguageModel):
         self.cfg = cfg
         if cfg.device == "cuda":
             self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
-            print(f"cuda:{torch.cuda.current_device()}")
         elif cfg.device == "npu":
             self.device = torch.device(f"npu:{torch.npu.current_device()}")  # type: ignore[reportAttributeAccessIssue]
         else:
@@ -297,7 +443,6 @@ class HuggingFaceLanguageModel(LanguageModel):
             local_files_only=cfg.local_files_only,
         )
         self.model.eval()
-        print("HuggingFaceLanguageModel initialized")
 
     def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
         return raw
@@ -336,20 +481,25 @@ class HuggingFaceLanguageModel(LanguageModel):
         return activations
 
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
-        tokens = to_tokens(
-            self.tokenizer,
+        encoding = self.tokenizer(
             raw["text"],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
             max_length=self.cfg.max_length,
-            device=self.cfg.device,
-            prepend_bos=self.cfg.prepend_bos,
+            return_offsets_mapping=True,
         )
+        offsets = encoding["offset_mapping"]
+        tokens = encoding["input_ids"]
+        has_bos_prepended = torch.all(tokens[:, 0] == self.bos_token_id)
+        if self.cfg.prepend_bos and not has_bos_prepended:
+            offsets = [[None] + offset_ for offset_ in offsets]
+        elif not self.cfg.prepend_bos and has_bos_prepended:
+            offsets = [offset_[1:] for offset_ in offsets]
         if n_context is not None:
-            assert self.pad_token_id is not None, "Pad token ID must be set when n_context is provided"
-            tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
-        batch_str_tokens = [self.tokenizer.batch_decode(token, clean_up_tokenization_spaces=False) for token in tokens]
-        return [
-            _match_str_tokens_to_input(text, str_tokens) for (text, str_tokens) in zip(raw["text"], batch_str_tokens)
-        ]
+            offsets = [offset_[:n_context] for offset_ in offsets]
+            offsets = [offset_ + [None] * (n_context - len(offset_)) for offset_ in offsets]
+        return [[{"key": "text", "range": offset} for offset in offset_] for offset_ in offsets]
 
 
 class LLaDALanguageModel(TransformerLensLanguageModel):

@@ -9,15 +9,16 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
-from .abstract_sae import AbstractSparseAutoEncoder
+from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
 from .config import MOLTConfig
-from .utils.distributed import DimMap
+from .utils.distributed import DimMap, item
 from .utils.logging import get_distributed_logger
 from .utils.timer import timer
 
 logger = get_distributed_logger("molt")
 
 
+@register_sae_model("molt")
 class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     """Mixture of Linear Transforms (MOLT) model.
 
@@ -673,13 +674,10 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     @torch.no_grad()
     def compute_training_metrics(
         self,
-        feature_acts: torch.Tensor,
-        reconstructed: torch.Tensor,
-        label: torch.Tensor,
-        l_rec: torch.Tensor,
+        *,
         l0: torch.Tensor,
-        explained_variance: torch.Tensor,
-        explained_variance_legacy: torch.Tensor,
+        feature_acts: torch.Tensor,
+        **kwargs,
     ) -> dict[str, float]:
         """Compute per-rank group training metrics for MOLT."""
         metrics = {}
@@ -704,7 +702,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
                     # Count active transforms (l0) for this rank group
                     rank_l0 = (rank_features > 0).float().sum(-1)
-                    rank_l0_mean = rank_l0.mean().item()
+                    rank_l0_mean = item(rank_l0.mean())
 
                     # Record metrics
                     metrics[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean
@@ -716,24 +714,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         # Record total rank sum
         metrics["molt_metrics/total_rank_sum"] = total_rank_sum
         return metrics
-
-    @override
-    @timer.time("forward")
-    def forward(
-        self,
-        x: Union[
-            Float[torch.Tensor, "batch d_model"],
-            Float[torch.Tensor, "batch seq_len d_model"],
-        ],
-        **kwargs,
-    ) -> Union[
-        Float[torch.Tensor, "batch d_model"],
-        Float[torch.Tensor, "batch seq_len d_model"],
-    ]:
-        feature_acts = self.encode(x, **kwargs)
-        # Pass original x to decode through kwargs for MOLT computation
-        reconstructed = self.decode(feature_acts, original_x=x, **kwargs)
-        return reconstructed
 
     @override
     def load_distributed_state_dict(

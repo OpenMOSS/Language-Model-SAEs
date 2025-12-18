@@ -5,6 +5,7 @@ from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from transformer_lens import HookedTransformer
 from transformer_lens.components import Attention, GroupedQueryAttention, TransformerBlock
+from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
@@ -15,6 +16,7 @@ from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
 
@@ -74,6 +76,9 @@ class Initializer:
                     f"Bias initialization method {self.cfg.bias_init_method} is not supported for {sae.cfg.sae_type}"
                 )
 
+        if self.cfg.init_encoder_bias_with_mean_hidden_pre:
+            sae.init_encoder_bias_with_mean_hidden_pre(batch)
+
         @torch.autocast(device_type=sae.cfg.device, dtype=sae.cfg.dtype)
         def grid_search_best_init_norm(search_range: List[float]) -> float:
             losses: Dict[float, float] = {}
@@ -82,15 +87,17 @@ class Initializer:
                 sae.set_decoder_to_fixed_norm(norm, force_exact=True)
                 if self.cfg.init_encoder_with_decoder_transpose:
                     sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
-                mse = sae.compute_loss(batch)[1][0]["l_rec"].mean().item()  # type: ignore
+                if self.cfg.init_encoder_bias_with_mean_hidden_pre:
+                    sae.init_encoder_bias_with_mean_hidden_pre(batch)
+                mse = item(sae.compute_loss(batch)["l_rec"].mean())
                 losses[norm] = mse
             best_norm = min(losses, key=losses.get)  # type: ignore
             return best_norm
 
         if self.cfg.grid_search_init_norm:
-            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())  # type: ignore
+            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())
             best_norm_fine_grained = grid_search_best_init_norm(
-                torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()  # type: ignore
+                torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()
             )
 
             logger.info(f"The best (i.e. lowest MSE) initialized norm is {best_norm_fine_grained}")
@@ -101,6 +108,8 @@ class Initializer:
 
         if self.cfg.init_encoder_with_decoder_transpose:
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
+        if self.cfg.init_encoder_bias_with_mean_hidden_pre:
+            sae.init_encoder_bias_with_mean_hidden_pre(batch)
 
         return sae
 
@@ -179,6 +188,25 @@ class Initializer:
             assert activation_stream is not None, "Activation iterator must be provided for initialization search"
             activation_batch = next(iter(activation_stream))  # type: ignore
 
+            if (
+                isinstance(sae, SparseAutoEncoder)
+                and sae.cfg.hook_point_in != sae.cfg.hook_point_out
+                and self.cfg.initialize_tc_with_mlp
+            ):
+                batch = sae.normalize_activations(activation_batch)
+                assert sae.cfg.norm_activation == "dataset-wise"
+                assert isinstance(model, TransformerLensLanguageModel) and model.model is not None
+                assert self.cfg.model_layer is not None
+                assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
+                assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), (
+                    "Block must be a TransformerBlock"
+                )
+                assert isinstance(model.model.blocks[self.cfg.model_layer].mlp, CanBeUsedAsMLP)
+                sae.init_tc_with_mlp(
+                    batch=batch,
+                    mlp=cast(CanBeUsedAsMLP, model.model.blocks[self.cfg.model_layer].mlp),
+                )
+
             if self.cfg.initialize_W_D_with_active_subspace:
                 batch = sae.normalize_activations(activation_batch)
                 if isinstance(sae, LowRankSparseAttention):
@@ -191,8 +219,8 @@ class Initializer:
                     assert self.cfg.model_layer is not None, (
                         "Model layer must be provided for initializing Lorsa decoder weight with active subspace"
                     )
-                    sae.init_W_D_with_active_subspace_per_head(
-                        batch,
+                    sae.init_W_V_with_active_subspace_per_head(
+                        batch=batch,
                         mhsa=cast(
                             Attention | GroupedQueryAttention,
                             model.model.blocks[self.cfg.model_layer].attn,
@@ -202,12 +230,8 @@ class Initializer:
                     assert self.cfg.d_active_subspace is not None, (
                         "d_active_subspace must be provided for initializing other SAEs with active subspace"
                     )
-                    sae.init_W_D_with_active_subspace(batch, self.cfg.d_active_subspace)
+                    sae.init_W_D_with_active_subspace(batch=batch, d_active_subspace=self.cfg.d_active_subspace)
 
             sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
-
-            if self.cfg.init_encoder_bias_with_mean_hidden_pre:
-                batch = sae.normalize_activations(activation_batch)
-                sae.init_encoder_bias_with_mean_hidden_pre(batch)
 
         return sae

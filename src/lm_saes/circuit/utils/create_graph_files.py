@@ -1,27 +1,21 @@
 import logging
-import os
 import time
 from typing import List
 
-import torch
 from pydantic import BaseModel
 from transformers import AutoTokenizer
 
 from ..graph import Graph, prune_graph
+from .attn_scores_attribution import QKTracingResults
 
 logger = logging.getLogger(__name__)
 
 
 class Metadata(BaseModel):
-    slug: str
-    sae_series: str
     prompt_tokens: List[str]
     prompt: str
 
-    node_threshold: float | None = None
     schema_version: int | None = 1
-    lorsa_analysis_name: str | None = None
-    clt_analysis_name: str | None = None
 
 
 class Node(BaseModel):
@@ -31,28 +25,31 @@ class Node(BaseModel):
     ctx_idx: int
     feature_type: str
     token_prob: float = 0.0
+    sae_name: str | None = None
     is_target_logit: bool = False
-    run_idx: int = 0
-    reverse_ctx_idx: int = 0
-    jsNodeId: str
-    clerp: str = ""
     influence: float | None = None
     activation: float | None = None
     lorsa_pattern: list | None = None
-
-    def __init__(self, **data):
-        if "node_id" in data and "jsNodeId" not in data:
-            data["jsNodeId"] = data["node_id"]
-        super().__init__(**data)
+    qk_tracing_results: QKTracingResults | None = None
 
     @classmethod
-    def feature_node(cls, layer, pos, feat_idx, is_lorsa, influence=None, activation=None, lorsa_pattern=None):
+    def feature_node(
+        cls,
+        layer,
+        pos,
+        feat_idx,
+        is_lorsa,
+        influence=None,
+        activation=None,
+        lorsa_pattern=None,
+        qk_tracing_results=None,
+        sae_name=None,
+    ):
         """Create a feature node."""
 
         def cantor_pairing(x, y):
             return (x + y) * (x + y + 1) // 2 + y
 
-        reverse_ctx_idx = 0
         layer = 2 * layer + int(not is_lorsa)
         return cls(
             node_id=f"{layer}_{feat_idx}_{pos}",
@@ -60,23 +57,22 @@ class Node(BaseModel):
             layer=layer,
             ctx_idx=pos,
             feature_type="lorsa" if is_lorsa else "cross layer transcoder",
-            jsNodeId=f"{layer}_{feat_idx}-{reverse_ctx_idx}",
             influence=influence,
             activation=activation,
             lorsa_pattern=lorsa_pattern.tolist(),
+            qk_tracing_results=qk_tracing_results,
+            sae_name=sae_name,
         )
 
     @classmethod
     def error_node(cls, layer, pos, is_lorsa, influence=None):
         """Create an error node."""
-        reverse_ctx_idx = 0
         return cls(
             node_id=f"{layer}_error_{pos}",
             feature=-1,
             layer=layer,
             ctx_idx=pos,
             feature_type="lorsa error" if is_lorsa else "mlp reconstruction error",
-            jsNodeId=f"{layer}_{pos}-{reverse_ctx_idx}",
             influence=influence,
         )
 
@@ -89,7 +85,6 @@ class Node(BaseModel):
             layer=-1,
             ctx_idx=pos,
             feature_type="embedding",
-            jsNodeId=f"E_{vocab_idx}-{pos}",
             influence=influence,
         )
 
@@ -113,8 +108,6 @@ class Node(BaseModel):
             feature_type="logit",
             token_prob=token_prob,
             is_target_logit=target_logit,
-            jsNodeId=f"L_{vocab_idx}-{pos}",
-            clerp=f'Output "{token}" (p={token_prob:.3f})',
         )
 
 
@@ -143,7 +136,7 @@ def load_graph_data(file_path) -> Graph:
     return graph
 
 
-def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lorsa):
+def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lorsa, clt_names, lorsa_names):
     """Create all nodes for the graph."""
     start_time = time.time()
 
@@ -156,29 +149,33 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
 
     for node_idx in node_mask.nonzero().squeeze().tolist():
         if node_idx in range(n_features):
+            orig_feature_idx = graph.selected_features[node_idx]
             if use_lorsa:
-                orig_feature_idx = graph.selected_features[node_idx]
                 is_lorsa = orig_feature_idx < len(graph.lorsa_active_features)
                 if is_lorsa:
                     layer, pos, feat_idx = graph.lorsa_active_features[orig_feature_idx].tolist()
                     interested_activation = graph.lorsa_activation_values
+                    sae_name = lorsa_names[layer]
                 else:
                     orig_feature_idx = orig_feature_idx - len(graph.lorsa_active_features)
                     layer, pos, feat_idx = graph.clt_active_features[orig_feature_idx].tolist()
                     interested_activation = graph.clt_activation_values
+                    sae_name = clt_names[layer]
             else:
                 is_lorsa = False
-                orig_feature_idx = graph.selected_features[node_idx]
                 layer, pos, feat_idx = graph.clt_active_features[orig_feature_idx].tolist()
                 interested_activation = graph.clt_activation_values
+                sae_name = clt_names[layer]
             nodes[node_idx] = Node.feature_node(
                 layer,
                 pos,
                 feat_idx,
                 is_lorsa=is_lorsa,
+                sae_name=sae_name,
                 influence=cumulative_scores[node_idx],
                 activation=interested_activation[orig_feature_idx],
                 lorsa_pattern=graph.lorsa_pattern[node_idx],
+                qk_tracing_results=graph.qk_tracing_results.get(orig_feature_idx.item(), None),
             )
 
         elif node_idx in range(n_features, error_end_idx):
@@ -249,24 +246,14 @@ def build_model(
     graph: Graph,
     used_nodes,
     used_edges,
-    slug,
-    sae_series,
-    node_threshold,
     tokenizer,
-    lorsa_analysis_name,
-    clt_analysis_name,
 ):
     """Build the full model object."""
     start_time = time.time()
 
     meta = Metadata(
-        slug=slug,
-        sae_series=sae_series,
         prompt_tokens=[process_token(tokenizer.decode(t)) for t in graph.input_tokens],
         prompt=graph.input_string,
-        node_threshold=node_threshold,
-        lorsa_analysis_name=lorsa_analysis_name,
-        clt_analysis_name=clt_analysis_name,
     )
 
     full_model = Model(
@@ -281,58 +268,33 @@ def build_model(
     return full_model
 
 
-def create_graph_files(
+def serialize_graph(
     graph: Graph,
-    slug: str,
-    output_path,
+    *,
     node_threshold=0.8,
     edge_threshold=0.98,
-    sae_series=None,
-    lorsa_analysis_name="",
-    clt_analysis_name="",
     use_lorsa: bool = True,
+    clt_names: list[str],
+    lorsa_names: list[str] | None = None,
 ):
-    total_start_time = time.time()
+    """Serialize the graph to a JSON object."""
+    node_mask, edge_mask, cumulative_scores = prune_graph(graph, node_threshold, edge_threshold)
 
-    if os.path.exists(output_path):
-        assert os.path.isdir(output_path)
-    else:
-        os.makedirs(output_path, exist_ok=True)
-
-    if sae_series is None:
-        if graph.sae_series is None:
-            raise ValueError(
-                "Neither sae_series nor graph.sae_series was set. One must be set to identify "
-                "which transcoders were used when creating the graph."
-            )
-        sae_series = graph.sae_series
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    graph.to(device)
-    node_mask, edge_mask, cumulative_scores = (
-        el.to(device) for el in prune_graph(graph, node_threshold, edge_threshold)
-    )
-
-    print(f"{graph.cfg.tokenizer_name=}")
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
-    nodes = create_nodes(graph, node_mask, tokenizer, cumulative_scores, use_lorsa=use_lorsa)
+    nodes = create_nodes(
+        graph,
+        node_mask,
+        tokenizer,
+        cumulative_scores,
+        use_lorsa=use_lorsa,
+        clt_names=clt_names,
+        lorsa_names=lorsa_names,
+    )
     used_nodes, used_edges = create_used_nodes_and_edges(graph, nodes, edge_mask)
     model = build_model(
         graph,
         used_nodes,
         used_edges,
-        slug,
-        sae_series,
-        node_threshold,
         tokenizer,
-        lorsa_analysis_name,
-        clt_analysis_name,
     )
-
-    # Write the output locally
-    with open(os.path.join(output_path, f"{slug}.json"), "w") as f:
-        f.write(model.model_dump_json(indent=2))
-    logger.info(f"Graph data written to {output_path}")
-
-    total_time_ms = (time.time() - total_start_time) * 1000
-    logger.info(f"Total execution time: {total_time_ms=:.2f} ms")
+    return model.model_dump()

@@ -11,15 +11,43 @@ from torch.distributed.tensor import DTensor, Partial, Shard
 from torch.distributed.tensor.experimental import local_map
 from typing_extensions import override
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder, register_sae_model
 from lm_saes.config import CrossCoderConfig
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.distributed.ops import full_tensor
+from lm_saes.utils.distributed.ops import full_tensor, item
 from lm_saes.utils.distributed.utils import replace_placements
 from lm_saes.utils.misc import get_slice_length
+from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
 
 
+class CrossCoderSpecs(TensorSpecs):
+    """Tensor specs for CrossCoder with n_heads dimension."""
+
+    @staticmethod
+    def feature_acts(tensor: torch.Tensor) -> tuple[str, ...]:
+        if tensor.ndim == 3:
+            return ("batch", "heads", "sae")
+        elif tensor.ndim == 4:
+            return ("batch", "context", "heads", "sae")
+        else:
+            raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
+    @staticmethod
+    def reconstructed(tensor: torch.Tensor) -> tuple[str, ...]:
+        if tensor.ndim == 3:
+            return ("batch", "heads", "model")
+        elif tensor.ndim == 4:
+            return ("batch", "context", "heads", "model")
+        else:
+            raise ValueError(f"Cannot infer tensor specs for tensor with {tensor.ndim} dimensions.")
+
+    @staticmethod
+    def label(tensor: torch.Tensor) -> tuple[str, ...]:
+        return CrossCoderSpecs.reconstructed(tensor)
+
+
+@register_sae_model("crosscoder")
 class CrossCoder(AbstractSparseAutoEncoder):
     """Sparse AutoEncoder model.
 
@@ -27,6 +55,9 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     Can also act as a transcoder model, which learns to compress the input activation tensor into a feature activation tensor, and then reconstruct a label activation tensor from the feature activation tensor.
     """
+
+    specs: type[TensorSpecs] = CrossCoderSpecs
+    """Tensor specs for CrossCoder with n_heads dimension."""
 
     def __init__(self, cfg: CrossCoderConfig, device_mesh: Optional[DeviceMesh] = None):
         super(CrossCoder, self).__init__(cfg, device_mesh)
@@ -280,10 +311,16 @@ class CrossCoder(AbstractSparseAutoEncoder):
         if not isinstance(hidden_pre, DTensor):
             accumulated_hidden_pre = torch.sum(hidden_pre, dim=-2)  # "... n_heads d_sae -> ... d_sae"
         else:
-            accumulated_hidden_pre = local_map(
-                lambda x: torch.sum(x, dim=-2, keepdim=True),
-                list(hidden_pre.placements),
-            )(hidden_pre).sum(dim=-2)  # "... n_heads d_sae -> ... d_sae"
+            accumulated_hidden_pre = cast(
+                DTensor,
+                cast(
+                    DTensor,
+                    local_map(
+                        lambda x: torch.sum(x, dim=-2, keepdim=True),
+                        list(hidden_pre.placements),
+                    )(hidden_pre),
+                ).sum(dim=-2),
+            )  # "... n_heads d_sae -> ... d_sae"
 
             with timer.time("encode_redistribute_tensor_pre_repeat"):
                 accumulated_hidden_pre = DimMap({"data": 0, "model": -1}).redistribute(accumulated_hidden_pre)
@@ -560,46 +597,36 @@ class CrossCoder(AbstractSparseAutoEncoder):
 
     @override
     @torch.no_grad()
-    def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
-        """Compute activation frequency scores for CrossCoder (max over heads)."""
-        act_freq_scores = (feature_acts > 0).float().sum(0)
-        if isinstance(act_freq_scores, DTensor):
-            # Operator aten.amax.default does not have a sharding strategy registered.
-            act_freq_scores = act_freq_scores.full_tensor().amax(dim=0)
-        else:
-            act_freq_scores = act_freq_scores.amax(dim=0)
-        return act_freq_scores
-
-    @override
-    @torch.no_grad()
     def compute_training_metrics(
         self,
+        *,
         feature_acts: torch.Tensor,
-        reconstructed: torch.Tensor,
-        label: torch.Tensor,
         l_rec: torch.Tensor,
         l0: torch.Tensor,
         explained_variance: torch.Tensor,
-        explained_variance_legacy: torch.Tensor,
+        **kwargs,
     ) -> dict[str, float]:
         """Compute per-head training metrics for CrossCoder."""
         assert explained_variance.ndim == 1 and len(explained_variance) == len(self.cfg.hook_points)
+        feature_act_spec = self.specs.feature_acts(feature_acts)
+        l0_spec = tuple(spec for spec in feature_act_spec if spec != "sae")
+        l_rec_spec = tuple(
+            spec for spec in feature_act_spec if spec != "model" and spec != "batch" and spec != "context"
+        )
         metrics = {}
         for i, k in enumerate(self.cfg.hook_points):
             metrics.update(
                 {
-                    f"crosscoder_metrics/{k}/explained_variance": explained_variance[i].mean().item(),
-                    f"crosscoder_metrics/{k}/l0": l0[:, i].mean().item(),
-                    f"crosscoder_metrics/{k}/l_rec": l_rec[:, i].mean().item(),
+                    f"crosscoder_metrics/{k}/explained_variance": item(explained_variance[i].mean()),
+                    f"crosscoder_metrics/{k}/l0": item(l0.select(l0_spec.index("heads"), i).mean()),
+                    f"crosscoder_metrics/{k}/l_rec": item(l_rec.select(l_rec_spec.index("heads"), i).mean()),
                 }
             )
         indices = feature_acts.amax(dim=1).nonzero(as_tuple=True)
         activated_feature_acts = feature_acts.permute(0, 2, 1)[indices].permute(1, 0)
         activated_decoder_norms = full_tensor(self.decoder_norm())[:, indices[1]]
-        mean_decoder_norm_non_activated_in_activated = (
-            activated_decoder_norms[activated_feature_acts == 0].mean().item()
-        )
-        mean_decoder_norm_activated_in_activated = activated_decoder_norms[activated_feature_acts != 0].mean().item()
+        mean_decoder_norm_non_activated_in_activated = item(activated_decoder_norms[activated_feature_acts == 0].mean())
+        mean_decoder_norm_activated_in_activated = item(activated_decoder_norms[activated_feature_acts != 0].mean())
         metrics.update(
             {
                 "crosscoder_metrics/mean_decoder_norm_non_activated_in_activated": mean_decoder_norm_non_activated_in_activated,

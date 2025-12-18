@@ -14,6 +14,7 @@ from tqdm import tqdm
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.utils.discrete import KeyedDiscreteMapper
+from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_logger
 
 # Set up logger for this module
@@ -83,9 +84,9 @@ class PostAnalysisProcessor(ABC):
         results = []
         for i in tqdm(range(len(act_times)), desc="Converting results to final per-feature format"):
             feature_result = {
-                "act_times": act_times[i].item(),
+                "act_times": item(act_times[i]),
                 "n_analyzed_tokens": n_analyzed_tokens,
-                "max_feature_acts": max_feature_acts[i].item(),
+                "max_feature_acts": item(max_feature_acts[i]),
                 **(decoder_info[i] if decoder_info is not None else {}),
                 "samplings": [
                     {

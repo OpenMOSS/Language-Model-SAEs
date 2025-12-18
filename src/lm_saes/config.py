@@ -22,6 +22,16 @@ from .utils.misc import (
     convert_torch_dtype_to_str,
 )
 
+SAE_TYPE_TO_CONFIG_CLASS = {}
+
+
+def register_sae_config(name):
+    def _register(cls):
+        SAE_TYPE_TO_CONFIG_CLASS[name] = cls
+        return cls
+
+    return _register
+
 
 class BaseConfig(BaseModel):
     pass
@@ -54,7 +64,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"]
     d_model: int
-    expansion_factor: int
+    expansion_factor: float
     use_decoder_bias: bool = True
     act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
     norm_activation: str = "dataset-wise"
@@ -65,7 +75,6 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     use_triton_kernel: bool = False
     sparsity_threshold_for_triton_spmm_kernel: float = 0.996
     sparsity_threshold_for_csr: float = 0.05
-    circuit_tracing_mode: bool = False
     # anthropic jumprelu
     jumprelu_threshold_window: float = 2.0
     promote_act_fn_dtype: Annotated[
@@ -82,7 +91,8 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
     @property
     def d_sae(self) -> int:
-        return self.d_model * self.expansion_factor
+        d_sae = int(self.d_model * self.expansion_factor)
+        return d_sae
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
@@ -97,6 +107,9 @@ class BaseSAEConfig(BaseModelConfig, ABC):
             sae_config = json.load(f)
         sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
         sae_config["strict_loading"] = strict_loading
+
+        if cls is BaseSAEConfig:
+            cls = SAE_TYPE_TO_CONFIG_CLASS[sae_config["sae_type"]]
         return cls.model_validate({**sae_config, **kwargs})
 
     def save_hyperparameters(self, sae_path: str | Path, remove_loading_info: bool = True):
@@ -115,6 +128,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
         pass
 
 
+@register_sae_config("sae")
 class SAEConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "sae"
     hook_point_in: str
@@ -126,6 +140,7 @@ class SAEConfig(BaseSAEConfig):
         return [self.hook_point_in, self.hook_point_out]
 
 
+@register_sae_config("lorsa")
 class LorsaConfig(BaseSAEConfig):
     """Configuration for Low Rank Sparse Attention."""
 
@@ -147,9 +162,7 @@ class LorsaConfig(BaseSAEConfig):
     NTK_by_parts_low_freq_factor: float = 1.0
     NTK_by_parts_high_freq_factor: float = 1.0
     old_context_len: int = 2048
-
     n_ctx: int
-    skip_bos: bool = False
 
     # Attention settings
     attn_scale: float | None = None
@@ -182,6 +195,7 @@ class LorsaConfig(BaseSAEConfig):
             self.attn_scale = self.d_qk_head**0.5
 
 
+@register_sae_config("clt")
 class CLTConfig(BaseSAEConfig):
     """Configuration for Cross Layer Transcoder (CLT).
 
@@ -221,6 +235,7 @@ class CLTConfig(BaseSAEConfig):
         )
 
 
+@register_sae_config("molt")
 class MOLTConfig(BaseSAEConfig):
     """Configuration for Mixture of Linear Transforms (MOLT).
 
@@ -268,7 +283,7 @@ class MOLTConfig(BaseSAEConfig):
         assert self.rank_distribution, "rank_distribution cannot be empty"
 
         # Calculate base d_sae
-        base_d_sae = self.d_model * self.expansion_factor
+        base_d_sae = self.d_sae
 
         # For distributed training, use special logic to ensure consistency
         if self.model_parallel_size_training > 1:
@@ -424,6 +439,7 @@ class MOLTConfig(BaseSAEConfig):
         return [self.hook_point_in, self.hook_point_out]
 
 
+@register_sae_config("crosscoder")
 class CrossCoderConfig(BaseSAEConfig):
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "crosscoder"
     hook_points: list[str]
@@ -448,6 +464,7 @@ class InitializerConfig(BaseConfig):
     initialize_W_D_with_active_subspace: bool = False
     d_active_subspace: int | None = None
     initialize_lorsa_with_mhsa: bool | None = None
+    initialize_tc_with_mlp: bool | None = None
     model_layer: int | None = None
     init_encoder_bias_with_mean_hidden_pre: bool = False
 
@@ -478,7 +495,6 @@ class TrainerConfig(BaseConfig):
     k_cold_booting_steps: int | float = 0
     k_schedule_type: Literal["linear", "exponential"] = "linear"
     k_exponential_factor: float = 3.0
-    use_batch_norm_mse: bool = True
     skip_metrics_calculation: bool = False
     gradient_accumulation_steps: int = 1
 
@@ -523,12 +539,7 @@ class TrainerConfig(BaseConfig):
 
 
 class EvalConfig(BaseConfig):
-    feature_sampling_window: int = 1000
     total_eval_tokens: int = 1000000
-    use_cached_activations: bool = False
-    device: str = "cpu"
-    fold_activation_scale: bool = True
-    """Whether to fold the activation scale into the SAE model"""
 
 
 class GraphEvalConfig(BaseConfig):
@@ -639,18 +650,14 @@ class ActivationFactoryConfig(BaseConfig):
     """ The target to produce. """
     hook_points: list[str]
     """ The hook points to capture activations from. """
+    batch_size: int
+    """ The batch size to use for outputting activations. """
     num_workers: int = 4
     """ The number of workers to use for loading the dataset. """
     context_size: int | None = None
     """ The context size to use for generating activations. All tokens will be padded or truncated to this size. If `None`, will not pad or truncate tokens. This may lead to some error when re-batching activations of different context sizes."""
     model_batch_size: int = 1
-    """ The batch size to use for generating activations. """
-    batch_size: int | None = Field(
-        default_factory=lambda validated_model: 64
-        if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
-        else None
-    )
-    """ The batch size to use for outputting `activations-1d`. """
+    """ The batch size to use for model forward pass when generating activations. """
     override_dtype: Optional[
         Annotated[
             torch.dtype,
@@ -665,11 +672,7 @@ class ActivationFactoryConfig(BaseConfig):
         ]
     ] = None
     """ The dtype to use for outputting activations. If `None`, will not override the dtype. """
-    buffer_size: int | None = Field(
-        default_factory=lambda validated_model: 500_000
-        if validated_model["target"] == ActivationFactoryTarget.ACTIVATIONS_1D
-        else None
-    )
+    buffer_size: int | None = None
     """ Buffer size for online shuffling. If `None`, no shuffling will be performed. """
     buffer_shuffle: BufferShuffleConfig | None = None
     """" Manual seed and device of generator for generating randomperm in buffer. """
@@ -686,8 +689,6 @@ class LanguageModelConfig(BaseModelConfig):
     """ Whether to use Flash Attention. """
     cache_dir: str | None = None
     """ The directory of the HuggingFace cache. Should have the same effect as `HF_HOME`. """
-    d_model: int = 768
-    """ The dimension of the model. """
     local_files_only: bool = False
     """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
     max_length: int = 2048
@@ -788,6 +789,8 @@ class WandbConfig(BaseConfig):
     wandb_project: str = "gpt2-sae-training"
     exp_name: str | None = None
     wandb_entity: str | None = None
+    wandb_run_id: str | None = None
+    wandb_resume: Literal["allow", "must", "never", "auto"] = "never"
 
 
 class MongoDBConfig(BaseConfig):

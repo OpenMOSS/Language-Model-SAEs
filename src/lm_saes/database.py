@@ -8,6 +8,7 @@ import pymongo.database
 import pymongo.errors
 from bson import ObjectId
 from pydantic import BaseModel
+from tqdm import tqdm
 
 from lm_saes.config import (
     BaseSAEConfig,
@@ -81,6 +82,12 @@ class SAERecord(BaseModel):
     cfg: SAEConfig  # TODO: add more variants of SAEConfig
 
 
+class SAESetRecord(BaseModel):
+    name: str
+    sae_series: str
+    sae_names: list[str]
+
+
 class BookmarkRecord(BaseModel):
     """Record for bookmarked features.
 
@@ -112,6 +119,7 @@ class MongoClient:
         self.dataset_collection = self.db["datasets"]
         self.model_collection = self.db["models"]
         self.bookmark_collection = self.db["bookmarks"]
+        self.sae_set_collection = self.db["sae_sets"]
         self.sae_collection.create_index([("name", pymongo.ASCENDING), ("series", pymongo.ASCENDING)], unique=True)
         self.sae_collection.create_index([("series", pymongo.ASCENDING)])
         self.analysis_collection.create_index(
@@ -124,6 +132,8 @@ class MongoClient:
         )
         self.dataset_collection.create_index([("name", pymongo.ASCENDING)], unique=True)
         self.model_collection.create_index([("name", pymongo.ASCENDING)], unique=True)
+        self.sae_set_collection.create_index([("name", pymongo.ASCENDING)], unique=True)
+        self.sae_set_collection.create_index([("sae_series", pymongo.ASCENDING)])
         self.bookmark_collection.create_index(
             [("sae_name", pymongo.ASCENDING), ("sae_series", pymongo.ASCENDING), ("feature_index", pymongo.ASCENDING)],
             unique=True,
@@ -190,9 +200,9 @@ class MongoClient:
         if isinstance(data, ObjectId) and self.fs.exists(data):
             self.fs.delete(data)
 
-    def create_sae(self, name: str, series: str, path: str, cfg: BaseSAEConfig):
+    def create_sae(self, name: str, series: str, path: str, cfg: BaseSAEConfig, model_name: str | None = None):
         inserted_id = self.sae_collection.insert_one(
-            {"name": name, "series": series, "path": path, "cfg": cfg.model_dump()}
+            {"name": name, "series": series, "path": path, "cfg": cfg.model_dump(), "model_name": model_name}
         ).inserted_id
         self.feature_collection.insert_many(
             [{"sae_name": name, "sae_series": series, "index": i} for i in range(cfg.d_sae)]
@@ -244,14 +254,15 @@ class MongoClient:
         if self.is_gridfs_enabled():
             feature = self._from_gridfs(feature)
 
-        # print(f'{feature.keys()}')
-        # for k in feature:
-        #     print(f'{k} {type(feature[k])}')
-        #     if k == 'analyses':
-        #         print('feature_acts_indices', feature[k][0]['samplings'][0]['feature_acts_indices'])
-        #         print('feature_acts_indices', feature[k][0]['samplings'][0]['feature_acts_values'])
-
         return FeatureRecord.model_validate(feature)
+
+    def list_features(self, sae_name: str, sae_series: str | None, indices: list[int]) -> list[FeatureRecord]:
+        features = self.feature_collection.find(
+            {"sae_name": sae_name, "sae_series": sae_series, "index": {"$in": indices}}
+        ).sort("index", pymongo.ASCENDING)
+        if self.is_gridfs_enabled():
+            features = [self._from_gridfs(feature) for feature in features]
+        return [FeatureRecord.model_validate(feature) for feature in features]
 
     def get_analysis(self, name: str, sae_name: str, sae_series: str) -> Optional[AnalysisRecord]:
         analysis = self.analysis_collection.find_one({"name": name, "sae_name": sae_name, "sae_series": sae_series})
@@ -363,6 +374,12 @@ class MongoClient:
             return None
         return sae["path"]
 
+    def get_sae_model_name(self, sae_name: str, sae_series: str) -> Optional[str]:
+        sae = self.sae_collection.find_one({"name": sae_name, "series": sae_series})
+        if sae is None:
+            return None
+        return sae["model_name"]
+
     def add_dataset(self, name: str, cfg: DatasetConfig):
         self.dataset_collection.update_one({"name": name}, {"$set": {"cfg": cfg.model_dump()}}, upsert=True)
 
@@ -387,7 +404,7 @@ class MongoClient:
             self.enable_gridfs()
 
         operations = []
-        for i, feature_analysis in enumerate(analysis):
+        for i, feature_analysis in enumerate(tqdm(analysis, desc="Adding feature analyses to MongoDB...")):
             # Convert numpy arrays to GridFS references
             processed_analysis = self._to_gridfs(feature_analysis)
             update_operation = pymongo.UpdateOne(
@@ -452,7 +469,7 @@ class MongoClient:
 
     def update_features(self, sae_name: str, sae_series: str, update_data: list[dict], start_idx: int = 0):
         operations = []
-        for i, feature_update in enumerate(update_data):
+        for i, feature_update in enumerate(tqdm(update_data, desc="Updating features in MongoDB...")):
             update_operation = pymongo.UpdateOne(
                 {"sae_name": sae_name, "sae_series": sae_series, "index": start_idx + i},
                 {"$set": feature_update},
@@ -717,3 +734,15 @@ class MongoClient:
                 match_filter[f"metric.{metric_name}"] = filters
 
         return self.feature_collection.count_documents(match_filter)
+
+    def add_sae_set(self, name: str, sae_series: str, sae_names: list[str]):
+        self.sae_set_collection.insert_one({"name": name, "sae_series": sae_series, "sae_names": sae_names})
+
+    def get_sae_set(self, name: str) -> Optional[SAESetRecord]:
+        sae_set = self.sae_set_collection.find_one({"name": name})
+        if sae_set is None:
+            return None
+        return SAESetRecord.model_validate(sae_set)
+
+    def list_sae_sets(self) -> list[SAESetRecord]:
+        return [SAESetRecord.model_validate(sae_set) for sae_set in self.sae_set_collection.find()]

@@ -1,0 +1,42 @@
+name: UI SSR Checks
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "ui-ssr/**"
+      - ".github/workflows/ui-ssr-checks.yml"
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - "ui-ssr/**"
+      - ".github/workflows/ui-ssr-checks.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui-ssr
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run CI checks
+        run: bun run ci:check

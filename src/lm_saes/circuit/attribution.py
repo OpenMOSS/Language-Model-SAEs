@@ -33,14 +33,26 @@ from tqdm import tqdm
 from transformer_lens.hook_points import HookPoint
 
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.lorsa import LowRankSparseAttention
 
 from ..utils.logging import get_distributed_logger
 from .graph import Graph
 from .replacement_model import ReplacementModel
+from .utils.attn_scores_attribution import compute_attn_scores_attribution
+from .utils.attribution_utils import (
+    compute_partial_influences,
+    compute_salient_logits,
+    ensure_tokenized,
+    select_encoder_rows,
+    select_encoder_rows_lorsa,
+    select_scaled_decoder_vecs_lorsa,
+    select_scaled_decoder_vecs_transcoder,
+)
 from .utils.disk_offload import offload_modules
+from .utils.transcoder_set import TranscoderSet
 
 logger = get_distributed_logger("attribution")
+
+TranscoderType = TranscoderSet | CrossLayerTranscoder
 
 
 class AttributionContext:
@@ -79,10 +91,11 @@ class AttributionContext:
         attn_output_hook: str,
         mlp_output_hook: str,
         use_lorsa: bool = True,
+        use_clt: bool = True,
     ) -> None:
         if use_lorsa:
             assert lorsa_activation_matrix.shape[:-1] == clt_activation_matrix.shape[:-1], (
-                "LORSAs and CLTs must have the same shape"
+                "Lorsas and CLTs must have the same shape"
             )
         n_layers, n_pos, _ = clt_activation_matrix.shape
 
@@ -90,9 +103,6 @@ class AttributionContext:
         # L0Ainput, L0Minput, ... L-1Ainput, L-1Minput, pre_unembed
         if use_lorsa:
             self._resid_activations: List[torch.Tensor | None] = [None] * (2 * n_layers + 1)
-            self._attn_scores: List[torch.Tensor | None] = [None] * n_layers
-            self._lorsa_q: List[torch.Tensor | None] = [None] * n_layers
-            self._lorsa_k: List[torch.Tensor | None] = [None] * n_layers
         else:
             self._resid_activations: List[torch.Tensor | None] = [None] * (n_layers + 1)
 
@@ -111,6 +121,7 @@ class AttributionContext:
             attn_output_hook,
             mlp_output_hook,
             use_lorsa,
+            use_clt,
         )
 
         if use_lorsa:
@@ -133,19 +144,12 @@ class AttributionContext:
             proxy._resid_activations[index] = acts
             return acts
 
-        def _cache_attn_scores(acts: torch.Tensor, hook: HookPoint, *, index: int) -> torch.Tensor:
-            proxy._attn_scores[index], proxy._lorsa_q[index], proxy._lorsa_k[index] = model.lorsas[
-                index
-            ].compute_attn_scores(acts, return_q_k=True)
-            return acts
-
         hooks = []
 
         for layer in range(self.n_layers):
             if self.use_lorsa:
                 hooks.append((f"blocks.{layer}.{attn_input_hook}", partial(_cache, index=layer * 2)))
                 hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer * 2 + 1)))
-                hooks.append((f"blocks.{layer}.{attn_input_hook}", partial(_cache_attn_scores, index=layer)))
             else:
                 hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer)))
         hooks.append(("unembed.hook_pre", partial(_cache, index=2 * self.n_layers)))
@@ -186,25 +190,23 @@ class AttributionContext:
         attn_output_hook: str,
         mlp_output_hook: str,
         use_lorsa: bool = True,
+        use_clt=True,
     ) -> List[Tuple[str, Callable]]:
         """
         Create the complete backward-hook for computing attribution scores.
         """
         _, n_pos, _ = clt_activation_matrix.shape
 
-        if self.use_lorsa:
-            lorsa_error_vectors = error_vectors[: self.n_layers]
-            clt_error_vectors = error_vectors[self.n_layers :]
-        else:
-            clt_error_vectors = error_vectors
-            lorsa_error_vectors = None
+        lorsa_error_vectors = error_vectors[: self.n_layers] if self.use_lorsa else error_vectors
+        clt_error_vectors = error_vectors[self.n_layers :] if self.use_lorsa else None
 
         # Token-embedding nodes
         # lorsa_offset + clt_offset + attn_error_offset + mlp_error_offset
-        if self.use_lorsa:
-            token_offset = lorsa_activation_matrix._nnz() + clt_activation_matrix._nnz() + 2 * self.n_layers * n_pos
-        else:
-            token_offset = clt_activation_matrix._nnz() + self.n_layers * n_pos
+        token_offset = (
+            (lorsa_activation_matrix._nnz() + clt_activation_matrix._nnz() + 2 * self.n_layers * n_pos)
+            if self.use_lorsa
+            else (clt_activation_matrix._nnz() + self.n_layers * n_pos)
+        )
 
         token_hook = [
             self._compute_score_hook(
@@ -214,9 +216,11 @@ class AttributionContext:
             )
         ]
 
+        mlp_hook_fn = self._make_attribution_hooks_clt if use_clt else self._make_attribution_hooks_plt
+
         if use_lorsa:
             out = (
-                self._make_attribution_hooks_clt(
+                mlp_hook_fn(
                     clt_activation_matrix,
                     clt_error_vectors,
                     clt_decoder_vecs,
@@ -234,7 +238,7 @@ class AttributionContext:
             )
         else:
             out = (
-                self._make_attribution_hooks_clt(
+                mlp_hook_fn(
                     clt_activation_matrix,
                     clt_error_vectors,
                     clt_decoder_vecs,
@@ -294,6 +298,66 @@ class AttributionContext:
         error_hooks = [
             self._compute_score_hook(
                 f"blocks.{layer}.{attn_output_hook}",
+                error_vectors[layer],
+                write_index=np.s_[error_offset(layer) : error_offset(layer + 1)],
+            )
+            for layer in range(n_layers)
+        ]
+
+        return feature_hooks + error_hooks
+
+    def _make_attribution_hooks_plt(
+        self,
+        activation_matrix: torch.sparse.Tensor,
+        error_vectors: torch.Tensor,
+        decoder_vecs: torch.Tensor,
+        mlp_output_hook: str,
+        lorsa_offset: int,
+    ) -> List[Tuple[str, Callable]]:
+        """
+        Create the complete backward-hook for computing attribution scores.
+        activation_matrix:
+            size (n_layers, n_pos, n_features)
+            indices: (3, n_active_features)
+            values: (n_active_features,)
+        error_vectors:
+            size (n_layers, n_pos, d_model)
+        token_vectors:
+            size (n_pos, d_model)
+        decoder_vecs:
+            size (n_active_features, d_model)
+        """
+        n_layers, n_pos, _ = activation_matrix.shape
+        nnz_layers, nnz_positions, _ = activation_matrix.indices()
+
+        # Map each layer → slice in flattened active-feature list
+        _, counts = torch.unique_consecutive(nnz_layers, return_counts=True)
+        edges = [0] + counts.cumsum(0).tolist()
+        layer_spans = list(zip(edges[:-1], edges[1:]))
+
+        # Feature nodes
+        feature_hooks = [
+            self._compute_score_hook(
+                f"blocks.{layer}.{mlp_output_hook}",
+                decoder_vecs[start:end],
+                write_index=np.s_[lorsa_offset + start : lorsa_offset + end],
+                read_index=np.s_[:, nnz_positions[start:end]],
+            )
+            for layer, (start, end) in enumerate(layer_spans)
+            if start != end
+        ]
+
+        # Error nodes
+        def error_offset(layer: int) -> int:  # starting row for this layer
+            # lorsa_offset + clt_offset + attn_error_offset + layer_offset
+            if lorsa_offset == 0:
+                return activation_matrix._nnz() + layer * n_pos
+            else:
+                return lorsa_offset + activation_matrix._nnz() + n_layers * n_pos + layer * n_pos
+
+        error_hooks = [
+            self._compute_score_hook(
+                f"blocks.{layer}.{mlp_output_hook}",
                 error_vectors[layer],
                 write_index=np.s_[error_offset(layer) : error_offset(layer + 1)],
             )
@@ -463,230 +527,6 @@ class AttributionContext:
         #     print(buf.T[1].nonzero().shape)
         return buf.T[: len(layers)]
 
-    def compute_attn_scores_attribution(
-        self, model: ReplacementModel, layer: int, pos: int, qk_idx: int
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        k_side_result = torch.zeros([pos + 1, self._row_size + 1], device=self._attn_scores[layer].device)
-        q_side_result = torch.zeros([pos + 1, self._row_size + 1], device=self._attn_scores[layer].device)
-
-        q_pos = pos
-        for k_pos in range(pos + 1):
-            # trace q side
-            self._batch_buffer = torch.zeros(
-                self._row_size,
-                1,  # batch size must be 1
-                dtype=self._attn_scores[layer].dtype,
-                device=self._attn_scores[layer].device,
-            )
-
-            def freeze_k(grads):
-                grads = torch.zeros_like(grads)
-                return grads
-
-            handles = []
-            handles.append(self._lorsa_k[layer].register_hook(freeze_k))
-
-            for param in model._get_requires_grad_bias_params():
-                param[1].grad = None
-
-            try:
-                self._attn_scores[layer][0, qk_idx, q_pos, k_pos].backward(
-                    gradient=torch.ones_like(self._attn_scores[layer][0, qk_idx, q_pos, k_pos]),
-                    retain_graph=True,
-                )
-            finally:
-                for h in handles:
-                    h.remove()
-
-            buf, self._batch_buffer = self._batch_buffer, None
-            q_side_result[k_pos, : self._row_size] = buf.T[0]
-
-            bias_attributions = []
-            for param in model._get_requires_grad_bias_params():
-                try:
-                    attribution = (param[1].data * param[1].grad).sum()
-                    bias_attributions.append(attribution)
-                except TypeError:
-                    pass
-            q_side_result[k_pos, self._row_size] = sum(bias_attributions)
-
-            # trace k side
-            self._batch_buffer = torch.zeros(
-                self._row_size,
-                1,  # batch size must be 1
-                dtype=self._attn_scores[layer].dtype,
-                device=self._attn_scores[layer].device,
-            )
-
-            def freeze_q(grads):
-                grads = torch.zeros_like(grads)
-                return grads
-
-            handles = []
-            handles.append(self._lorsa_q[layer].register_hook(freeze_q))
-
-            for param in model._get_requires_grad_bias_params():
-                param[1].grad = None
-
-            try:
-                self._attn_scores[layer][0, qk_idx, q_pos, k_pos].backward(
-                    gradient=torch.ones_like(self._attn_scores[layer][0, qk_idx, q_pos, k_pos]),
-                    retain_graph=True,
-                )
-            finally:
-                for h in handles:
-                    h.remove()
-
-            buf, self._batch_buffer = self._batch_buffer, None
-            k_side_result[k_pos, : self._row_size] = buf.T[0]
-
-            bias_attributions = []
-            for param in model._get_requires_grad_bias_params():
-                try:
-                    attribution = (param[1].data * param[1].grad).sum()
-                    bias_attributions.append(attribution)
-                except TypeError:
-                    pass
-            k_side_result[k_pos, self._row_size] = sum(bias_attributions)
-
-        return q_side_result, k_side_result
-
-
-@torch.no_grad()
-def compute_salient_logits(
-    logits: torch.Tensor,
-    unembed_proj: torch.Tensor,
-    *,
-    max_n_logits: int = 10,
-    desired_logit_prob: float = 0.95,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Pick the smallest logit set whose cumulative prob >= *desired_logit_prob*.
-
-    Args:
-        logits: ``(d_vocab,)`` vector (single position).
-        unembed_proj: ``(d_model, d_vocab)`` unembedding matrix.
-        max_n_logits: Hard cap *k*.
-        desired_logit_prob: Cumulative probability threshold *p*.
-
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-            * logit_indices - ``(k,)`` vocabulary ids.
-            * logit_probs   - ``(k,)`` softmax probabilities.
-            * demeaned_vecs - ``(k, d_model)`` unembedding columns, demeaned.
-    """
-
-    probs = torch.softmax(logits, dim=-1)
-    top_p, top_idx = torch.topk(probs, max_n_logits)
-    cutoff = int(torch.searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
-    top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
-
-    cols = unembed_proj[:, top_idx]
-    demeaned = cols - unembed_proj.mean(dim=-1, keepdim=True)
-    return top_idx, top_p, demeaned.T
-
-
-@torch.no_grad()
-def select_scaled_decoder_vecs_clt(activations: torch.sparse.Tensor, transcoders: CrossLayerTranscoder) -> torch.Tensor:
-    """Return decoder rows for **active** features only.
-
-    The return value is already scaled by the feature activation, making it
-    suitable as ``inject_values`` during gradient overrides.
-    """
-
-    assert isinstance(transcoders, CrossLayerTranscoder)
-
-    rows: List[torch.Tensor] = []
-    feature_act_rows = [activations[layer_from].coalesce() for layer_from in range(transcoders.cfg.n_layers)]
-    for layer_to in range(transcoders.cfg.n_layers):
-        for layer_from in range(layer_to + 1):
-            _, feat_idx = feature_act_rows[layer_from].indices()
-            rows.append(
-                transcoders.W_D[layer_to][layer_from, feat_idx] * feature_act_rows[layer_from].values()[:, None]
-            )
-    return torch.cat(rows)
-
-
-@torch.no_grad()
-def select_scaled_decoder_vecs_lorsa(
-    activation_matrix: torch.sparse.Tensor, lorsas: LowRankSparseAttention
-) -> torch.Tensor:
-    """Return encoder rows for **active** features only."""
-    rows: List[torch.Tensor] = []
-    for layer, row in enumerate(activation_matrix):
-        _, head_idx = row.coalesce().indices()
-        rows.append(lorsas[layer].W_O[head_idx])
-    return torch.cat(rows) * activation_matrix.values()[:, None]
-
-
-@torch.no_grad()
-def select_encoder_rows_clt(activation_matrix: torch.sparse.Tensor, transcoders: CrossLayerTranscoder) -> torch.Tensor:
-    """Return encoder rows for **active** features only."""
-    rows: List[torch.Tensor] = []
-    for layer, row in enumerate(activation_matrix):
-        _, feat_idx = row.coalesce().indices()
-        rows.append(transcoders.W_E[layer].T[feat_idx])
-    return torch.cat(rows)
-
-
-@torch.no_grad()
-def select_encoder_rows_lorsa(
-    activation_matrix: torch.sparse.Tensor,
-    attention_pattern: torch.Tensor,
-    z_attention_pattern: torch.Tensor,
-    lorsas: LowRankSparseAttention,
-) -> torch.Tensor:
-    """Return encoder rows for **active** features only."""
-    print(f"{attention_pattern.shape=} {z_attention_pattern.shape=}")
-    rows: List[torch.Tensor] = []
-    patterns: List[torch.Tensor] = []
-    z_patterns: List[torch.Tensor] = []
-    for layer, row in enumerate(activation_matrix):
-        qpos, head_idx = row.coalesce().indices()
-
-        qk_idx = head_idx // (lorsas[layer].cfg.n_ov_heads // lorsas[layer].cfg.n_qk_heads)
-        pattern = attention_pattern[layer, qk_idx, qpos]
-        patterns.append(pattern)
-
-        z_pattern = z_attention_pattern[layer, head_idx, qpos]
-        z_patterns.append(z_pattern)
-
-        rows.append(lorsas[layer].W_V[head_idx])
-    return torch.cat(rows), torch.cat(patterns), torch.cat(z_patterns)
-
-
-def compute_partial_influences(edge_matrix, logit_p, row_to_node_index, max_iter=128, device=None):
-    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    normalized_matrix = torch.empty_like(edge_matrix, device=device).copy_(edge_matrix)
-    normalized_matrix = normalized_matrix.abs_()
-    normalized_matrix /= normalized_matrix.sum(dim=1, keepdim=True).clamp(min=1e-8)
-
-    influences = torch.zeros(edge_matrix.shape[1], device=normalized_matrix.device)
-    prod = torch.zeros(edge_matrix.shape[1], device=normalized_matrix.device)
-    prod[-len(logit_p) :] = logit_p
-
-    for _ in range(max_iter):
-        prod = prod[row_to_node_index] @ normalized_matrix
-        if not prod.any():
-            break
-        influences += prod
-    else:
-        raise RuntimeError("Failed to converge")
-
-    return influences
-
-
-def ensure_tokenized(prompt: Union[str, torch.Tensor, List[int]], tokenizer) -> torch.Tensor:
-    """Convert *prompt* → 1-D tensor of token ids (no batch dim)."""
-
-    if isinstance(prompt, str):
-        return tokenizer(prompt, return_tensors="pt").input_ids[0]
-    if isinstance(prompt, torch.Tensor):
-        return prompt.squeeze(0) if prompt.ndim == 2 else prompt
-    if isinstance(prompt, list):
-        return torch.tensor(prompt, dtype=torch.long)
-    raise TypeError(f"Unsupported prompt type: {type(prompt)}")
-
 
 def attribute(
     prompt: Union[str, torch.Tensor, List[int]],
@@ -701,7 +541,7 @@ def attribute(
     slug: str = "untitled",
     sae_series: Optional[Union[str, List[str]]] = None,
     use_lorsa: bool = True,
-    skip_qk_tracing: bool = True,
+    qk_tracing_topk: int = 10,
 ) -> Graph:
     """Compute an attribution graph for *prompt*.
 
@@ -736,7 +576,7 @@ def attribute(
             update_interval=update_interval,
             sae_series=sae_series,
             use_lorsa=use_lorsa,
-            skip_qk_tracing=skip_qk_tracing,
+            qk_tracing_topk=qk_tracing_topk,
         )
     finally:
         for reload_handle in offload_handles:
@@ -755,7 +595,7 @@ def _run_attribution(
     update_interval=4,
     sae_series=None,
     use_lorsa: bool = True,
-    skip_qk_tracing: bool = True,
+    qk_tracing_topk: int = 10,
 ):
     start_time = time.time()
     # Phase 0: precompute
@@ -765,24 +605,25 @@ def _run_attribution(
     (
         logits,
         lorsa_activation_matrix,
+        lorsa_attention_score,
         lorsa_attention_pattern,
         z_attention_pattern,
         clt_activation_matrix,
         error_vecs,
         token_vecs,
     ) = model.setup_attribution(input_ids, sparse=True)
-    print(f"{lorsa_attention_pattern.shape=} {z_attention_pattern.shape=}")
-    if use_lorsa:
-        lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas)
-        lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = select_encoder_rows_lorsa(
-            lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, model.lorsas
-        )
-    else:
-        lorsa_decoder_vecs = None
-        lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = None, None, None
+    # we do not run forward passes in setup_attribution. Just assign some zero-inited tensors and set hooks for them
+    # they only have informative values set in Phase 1: forward pass later
 
-    clt_decoder_vecs = select_scaled_decoder_vecs_clt(clt_activation_matrix, model.transcoders)
-    clt_encoder_rows = select_encoder_rows_clt(clt_activation_matrix, model.transcoders)
+    lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas) if use_lorsa else None
+    lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = (
+        select_encoder_rows_lorsa(lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, model.lorsas)
+        if use_lorsa
+        else (None, None, None)
+    )
+
+    clt_decoder_vecs = select_scaled_decoder_vecs_transcoder(clt_activation_matrix, model.transcoders)
+    clt_encoder_rows = select_encoder_rows(clt_activation_matrix, model.transcoders)
 
     ctx = AttributionContext(
         lorsa_activation_matrix,
@@ -794,6 +635,7 @@ def _run_attribution(
         model.attn_output_hook,
         model.mlp_output_hook,
         use_lorsa=use_lorsa,
+        use_clt=isinstance(model.transcoders, CrossLayerTranscoder),
     )
     logger.info(f"Precomputation completed in {time.time() - phase_start:.2f}s")
     if use_lorsa:
@@ -860,18 +702,11 @@ def _run_attribution(
     phase_start = time.time()
     for i in range(0, len(logit_idx), batch_size):
         batch = logit_vecs[i : i + batch_size]
-        if use_lorsa:
-            rows = ctx.compute_batch(
-                layers=torch.full((batch.shape[0],), 2 * n_layers),
-                positions=torch.full((batch.shape[0],), n_pos - 1),
-                inject_values=batch,
-            )
-        else:
-            rows = ctx.compute_batch(
-                layers=torch.full((batch.shape[0],), n_layers),
-                positions=torch.full((batch.shape[0],), n_pos - 1),
-                inject_values=batch,
-            )
+        rows = ctx.compute_batch(
+            layers=torch.full((batch.shape[0],), 2 * n_layers if use_lorsa else n_layers),
+            positions=torch.full((batch.shape[0],), n_pos - 1),
+            inject_values=batch,
+        )
 
         # '''notations begin'''
         # bias_attributions = []
@@ -901,10 +736,7 @@ def _run_attribution(
     # Phase 4: feature attribution
     logger.info("Phase 4: Computing feature attributions")
 
-    if use_lorsa:
-        lorsa_feat_layer, lorsa_feat_pos = lorsa_activation_matrix.indices()[:2]
-    else:
-        lorsa_feat_layer, lorsa_feat_pos = None, None
+    lorsa_feat_layer, lorsa_feat_pos = lorsa_activation_matrix.indices()[:2] if use_lorsa else (None, None)
     clt_feat_layer, clt_feat_pos = clt_activation_matrix.indices()[:2]
 
     def idx_to_layer(idx: torch.Tensor) -> torch.Tensor:
@@ -943,28 +775,24 @@ def _run_attribution(
     def idx_to_pattern(idx: torch.Tensor) -> torch.Tensor:
         if use_lorsa:
             is_lorsa = idx < len(lorsa_feat_layer)
-            res = torch.where(
+            return torch.where(
                 is_lorsa.to(lorsa_attention_patterns.device)[:, None],
                 lorsa_attention_patterns[idx * is_lorsa],
                 torch.nn.functional.one_hot(clt_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa], num_classes=n_pos),
             )
         else:
-            res = torch.nn.functional.one_hot(clt_feat_pos[idx], num_classes=n_pos)
-
-        return res
+            return torch.nn.functional.one_hot(clt_feat_pos[idx], num_classes=n_pos)
 
     def idx_to_z_pattern(idx: torch.Tensor) -> torch.Tensor:
         if use_lorsa:
             is_lorsa = idx < len(lorsa_feat_layer)
-            res = torch.where(
+            return torch.where(
                 is_lorsa.to(z_attention_patterns.device)[:, None],
                 z_attention_patterns[idx * is_lorsa],
                 torch.nn.functional.one_hot(clt_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa], num_classes=n_pos),
             )
         else:
-            res = torch.nn.functional.one_hot(clt_feat_pos[idx], num_classes=n_pos)
-
-        return res
+            return torch.nn.functional.one_hot(clt_feat_pos[idx], num_classes=n_pos)
 
     # def idx_to_activation_values(idx: torch.Tensor) -> torch.Tensor:
     #     is_lorsa = idx < len(lorsa_feat_layer)
@@ -1001,7 +829,7 @@ def _run_attribution(
                 positions=idx_to_pos(idx_batch),
                 inject_values=idx_to_encoder_rows(idx_batch),
                 attention_patterns=idx_to_pattern(idx_batch),
-                # retain_graph=n_visited < max_feature_nodes, # always retain graph for following QK trace
+                retain_graph=n_visited < max_feature_nodes or qk_tracing_topk > 0,
             )
             # print(f'attention_patterns {idx_batch} {idx_to_pattern(idx_batch)}')
             # bias_attributions = []
@@ -1023,7 +851,6 @@ def _run_attribution(
 
             end = min(st + batch_size, st + rows.shape[0])
             edge_matrix[st:end, :logit_offset] = rows.cpu()
-            # if use_lorsa:
             lorsa_pattern[st:end, :] = idx_to_pattern(idx_batch)
             z_pattern[st:end, :] = idx_to_z_pattern(idx_batch)
             row_to_node_index[st:end] = idx_batch
@@ -1044,13 +871,10 @@ def _run_attribution(
     # ***** New Phase Begin *****
     # Phase 6: attribute attention scores
     # trace attention scores for every visited lorsa feature
-    if not skip_qk_tracing:
-
-        def idx_to_ov_idx(idx: torch.Tensor) -> torch.Tensor:
-            return lorsa_activation_matrix.indices()[2][idx]
+    if qk_tracing_topk > 0:
 
         def idx_to_qk_idx(idx: torch.Tensor) -> torch.Tensor:
-            ov_idx = idx_to_ov_idx(idx)
+            ov_idx = lorsa_activation_matrix.indices()[2][idx]
             ov_group_sizes = torch.tensor(
                 [model.lorsas[i].cfg.ov_group_size for i in range(model.cfg.n_layers)], device=ov_idx.device
             )
@@ -1058,17 +882,34 @@ def _run_attribution(
 
         selected_lorsa_feature = torch.where(visited[: lorsa_activation_matrix._nnz()])[0]
         selected_lorsa_feature_layer = lorsa_activation_matrix.indices()[0][selected_lorsa_feature]
-        selected_lorsa_feature_pos = idx_to_pos(selected_lorsa_feature)
+        selected_lorsa_feature_qpos = idx_to_pos(selected_lorsa_feature)
+        # currently we are only interested in the most prominent z pattern contributor for each lorsa feature
+        # these k_poses are not even necessarily ones with the largest attention pattern due to effect from V
+        # This is not enough for explaining the attention scores as a whole.
+        # For now we only use qk tracing to get some sense of how lorsa attention pattern forms
+        # In practice this should tell us something
+        selected_lorsa_feature_kpos = idx_to_z_pattern(selected_lorsa_feature).argmax(dim=-1)
         selected_lorsa_feature_qk_idx = idx_to_qk_idx(selected_lorsa_feature)
-        q_side_result = [None] * selected_lorsa_feature.size(0)
-        k_side_result = [None] * selected_lorsa_feature.size(0)
-        for i in tqdm(range(selected_lorsa_feature.size(0)), desc="compute attention scores attribution"):
-            q_side_result[i], k_side_result[i] = ctx.compute_attn_scores_attribution(
-                model, selected_lorsa_feature_layer[i], selected_lorsa_feature_pos[i], selected_lorsa_feature_qk_idx[i]
-            )
 
-    # QK trace result remains unprocessed (not include to graph)
-    # No further QK trace has been performed on the Lorsa feature found in the QK trace.
+        qk_tracing_results = {
+            idx.item(): compute_attn_scores_attribution(
+                model,
+                lorsa_activation_matrix,
+                clt_activation_matrix,
+                selected_lorsa_feature_layer[i],
+                selected_lorsa_feature_qpos[i],
+                selected_lorsa_feature_kpos[i],
+                selected_lorsa_feature_qk_idx[i],
+                token_vecs,
+                error_vecs,
+                input_ids,
+                qk_tracing_topk,
+            )
+            for i, idx in enumerate(tqdm(selected_lorsa_feature, desc="Computing attention scores attribution"))
+        }
+    else:
+        qk_tracing_results = None
+
     # ***** New Phase End *****
 
     # sort rows such that features are in order
@@ -1092,6 +933,7 @@ def _run_attribution(
         clt_activation_values=clt_activation_matrix.values(),
         selected_features=selected_features,
         adjacency_matrix=full_edge_matrix,
+        qk_tracing_results=qk_tracing_results,
         cfg=model.cfg,
         sae_series=sae_series,
         use_lorsa=use_lorsa,
@@ -1102,7 +944,4 @@ def _run_attribution(
     total_time = time.time() - start_time
     logger.info(f"Attribution completed in {total_time:.2f}s")
 
-    if skip_qk_tracing:
-        return graph
-    else:
-        return graph, q_side_result, k_side_result
+    return graph

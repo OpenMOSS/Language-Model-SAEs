@@ -168,14 +168,27 @@ def train_sae(settings: TrainSAESettings) -> None:
             entity=settings.wandb.wandb_entity,
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
+            resume=settings.wandb.wandb_resume,
+            id=settings.wandb.wandb_run_id,
         )
         if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
-
     sae = initializer.initialize_sae_from_config(
-        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger
+        settings.sae,
+        activation_stream=activations_stream,
+        device_mesh=device_mesh,
+        wandb_logger=wandb_logger,
+        model=model,
     )
+    if settings.trainer.from_pretrained_path is not None:
+        trainer = Trainer.from_checkpoint(
+            sae,
+            settings.trainer.from_pretrained_path,
+        )
+        trainer.wandb_logger = wandb_logger
+    else:
+        trainer = Trainer(settings.trainer)
 
     logger.info(f"SAE initialized: {type(sae).__name__}")
 
@@ -186,17 +199,24 @@ def train_sae(settings: TrainSAESettings) -> None:
     eval_fn = (lambda x: None) if settings.eval else None
 
     logger.info("Starting training")
-    trainer = Trainer(settings.trainer)
-    sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
-    trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
 
-    logger.info("Training completed, saving model")
-    sae.save_pretrained(
-        save_path=settings.trainer.exp_result_path,
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        mongo_client=mongo_client,
+    sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
+    end_of_stream = trainer.fit(
+        sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger
     )
+    logger.info("Training completed, saving model")
+    if end_of_stream:
+        trainer.save_checkpoint(
+            sae=sae,
+            checkpoint_path=settings.trainer.exp_result_path,
+        )
+    else:
+        sae.save_pretrained(
+            save_path=settings.trainer.exp_result_path,
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            mongo_client=mongo_client,
+        )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -355,6 +375,8 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
             entity=settings.wandb.wandb_entity,
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
+            resume=settings.wandb.wandb_resume,
+            id=settings.wandb.wandb_run_id,
         )
         if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
@@ -367,17 +389,33 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     eval_fn = (lambda x: None) if settings.eval else None
 
     logger.info("Starting CrossCoder training")
-    trainer = Trainer(settings.trainer)
+    if settings.trainer.from_pretrained_path is not None:
+        trainer = Trainer.from_checkpoint(
+            sae,
+            settings.trainer.from_pretrained_path,
+        )
+        trainer.wandb_logger = wandb_logger
+    else:
+        trainer = Trainer(settings.trainer)
+
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
-    trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+    end_of_stream = trainer.fit(
+        sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger
+    )
 
     logger.info("Training completed, saving CrossCoder")
-    sae.save_pretrained(
-        save_path=settings.trainer.exp_result_path,
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        mongo_client=mongo_client,
-    )
+    if end_of_stream:
+        trainer.save_checkpoint(
+            sae=sae,
+            checkpoint_path=settings.trainer.exp_result_path,
+        )
+    else:
+        sae.save_pretrained(
+            save_path=settings.trainer.exp_result_path,
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            mongo_client=mongo_client,
+        )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -433,9 +471,6 @@ class TrainCLTSettings(BaseSettings):
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
-
-    save_trainer_state: bool = False
-    """Whether to save trainer state during training"""
 
 
 def train_clt(settings: TrainCLTSettings) -> None:
@@ -518,6 +553,8 @@ def train_clt(settings: TrainCLTSettings) -> None:
             entity=settings.wandb.wandb_entity,
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
+            resume=settings.wandb.wandb_resume,
+            id=settings.wandb.wandb_run_id,
         )
         if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
@@ -546,6 +583,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
             sae,
             settings.trainer.from_pretrained_path,
         )
+        trainer.wandb_logger = wandb_logger
     else:
         trainer = Trainer(settings.trainer)
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
@@ -553,18 +591,18 @@ def train_clt(settings: TrainCLTSettings) -> None:
         sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger
     )
 
-    if settings.save_trainer_state:
-        logger.info("Training completed, saving CLT model")
+    logger.info("Training completed, saving CLT model")
+    if end_of_stream:
+        trainer.save_checkpoint(
+            sae=sae,
+            checkpoint_path=settings.trainer.exp_result_path,
+        )
+    else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
             sae_name=settings.sae_name,
             sae_series=settings.sae_series,
             mongo_client=mongo_client,
-        )
-    elif end_of_stream:
-        trainer.save_checkpoint(
-            sae=sae,
-            checkpoint_path=settings.trainer.exp_result_path,
         )
 
     if wandb_logger is not None:
@@ -703,6 +741,8 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
             entity=settings.wandb.wandb_entity,
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
+            resume=settings.wandb.wandb_resume,
+            id=settings.wandb.wandb_run_id,
         )
         if settings.wandb is not None and (device_mesh is None or device_mesh.get_rank() == 0)
         else None
@@ -726,17 +766,33 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
     eval_fn = (lambda x: None) if settings.eval else None
 
     logger.info("Starting LORSA training")
-    trainer = Trainer(settings.trainer)
+    if settings.trainer.from_pretrained_path is not None:
+        trainer = Trainer.from_checkpoint(
+            sae,
+            settings.trainer.from_pretrained_path,
+        )
+        trainer.wandb_logger = wandb_logger
+    else:
+        trainer = Trainer(settings.trainer)
+
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
-    trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+    end_of_stream = trainer.fit(
+        sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger
+    )
 
     logger.info("Training completed, saving LORSA model")
-    sae.save_pretrained(
-        save_path=settings.trainer.exp_result_path,
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        mongo_client=mongo_client,
-    )
+    if end_of_stream:
+        trainer.save_checkpoint(
+            sae=sae,
+            checkpoint_path=settings.trainer.exp_result_path,
+        )
+    else:
+        sae.save_pretrained(
+            save_path=settings.trainer.exp_result_path,
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            mongo_client=mongo_client,
+        )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -879,6 +935,8 @@ def train_molt(settings: TrainMOLTSettings) -> None:
             entity=settings.wandb.wandb_entity,
             settings=wandb.Settings(x_disable_stats=True),
             mode=os.getenv("WANDB_MODE", "online"),  # type: ignore
+            resume=settings.wandb.wandb_resume,
+            id=settings.wandb.wandb_run_id,
         )
         if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
@@ -897,17 +955,33 @@ def train_molt(settings: TrainMOLTSettings) -> None:
     eval_fn = (lambda x: None) if settings.eval else None
 
     logger.info("Starting MOLT training")
-    trainer = Trainer(settings.trainer)
+    if settings.trainer.from_pretrained_path is not None:
+        trainer = Trainer.from_checkpoint(
+            sae,
+            settings.trainer.from_pretrained_path,
+        )
+        trainer.wandb_logger = wandb_logger
+    else:
+        trainer = Trainer(settings.trainer)
+
     sae.cfg.save_hyperparameters(settings.trainer.exp_result_path)
-    trainer.fit(sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger)
+    end_of_stream = trainer.fit(
+        sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger
+    )
 
     logger.info("Training completed, saving MOLT model")
-    sae.save_pretrained(
-        save_path=settings.trainer.exp_result_path,
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        mongo_client=mongo_client,
-    )
+    if end_of_stream:
+        trainer.save_checkpoint(
+            sae=sae,
+            checkpoint_path=settings.trainer.exp_result_path,
+        )
+    else:
+        sae.save_pretrained(
+            save_path=settings.trainer.exp_result_path,
+            sae_name=settings.sae_name,
+            sae_series=settings.sae_series,
+            mongo_client=mongo_client,
+        )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -1070,7 +1144,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
 
     logger.info("Initializing SAE on 2D sub-mesh")
     sae = initializer.initialize_sae_from_config(
-        item.sae, activation_stream=activations_stream, device_mesh=sae_device_mesh
+        item.sae, activation_stream=activations_stream, device_mesh=sae_device_mesh, model=model
     )
 
     wandb_logger = (

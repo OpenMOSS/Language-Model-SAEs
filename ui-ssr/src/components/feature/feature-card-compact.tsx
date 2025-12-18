@@ -1,0 +1,48 @@
+import { memo } from 'react'
+import { FeatureActivationSample } from './sample'
+import type { FeatureCompact } from '@/types/feature'
+import { cn } from '@/lib/utils'
+
+type FeatureCardCompactProps = {
+  feature: FeatureCompact
+  className?: string
+}
+
+export const FeatureCardCompact = memo(
+  ({ feature, className }: FeatureCardCompactProps) => {
+    return (
+      <div className={cn('flex flex-col gap-2 p-2', className)}>
+        <div className="flex items-center justify-between gap-1">
+          {!feature.interpretation && (
+            <div className="font-token font-medium text-sm rounded-md w-fit text-neutral-500">
+              N/A
+            </div>
+          )}
+          {feature.interpretation && (
+            <div className="font-token font-medium text-sm rounded-md w-fit">
+              {feature.interpretation.text}
+            </div>
+          )}
+          <div className="text-slate-500 text-xs">#{feature.featureIndex}</div>
+        </div>
+        {feature.actTimes > 0 ? (
+          <FeatureActivationSample
+            sample={feature.samples[0]}
+            maxFeatureAct={feature.maxFeatureAct}
+            visibleRange={5}
+            showHighestActivatingToken={false}
+            showHoverCard={false}
+            className="px-2"
+            sampleTextClassName="text-xs line-clamp-1"
+          />
+        ) : (
+          <div className="flex flex-wrap whitespace-pre-wrap text-xs leading-relaxed font-mono text-slate-400 px-2 overflow-hidden text-ellipsis line-clamp-1">
+            No activation
+          </div>
+        )}
+      </div>
+    )
+  },
+)
+
+FeatureCardCompact.displayName = 'FeatureCardCompact'

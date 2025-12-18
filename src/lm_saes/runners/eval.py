@@ -78,6 +78,9 @@ class EvaluateSAESettings(BaseSettings):
     model_parallel_size: int = 1
     """Size of model parallel (tensor parallel) mesh"""
 
+    fold_activation_scale: bool = False
+    """Whether to fold the activation scale."""
+
     wandb: Optional[WandbConfig] = None
     """Configuration for Weights & Biases logging"""
 
@@ -116,10 +119,11 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
         "clt": CrossLayerTranscoder,
         "lorsa": LowRankSparseAttention,
     }[settings.sae.sae_type]
+
     sae = cls.from_config(
         settings.sae,
         device_mesh=device_mesh,
-        fold_activation_scale=settings.eval.fold_activation_scale,
+        fold_activation_scale=settings.fold_activation_scale,
     )
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
@@ -162,8 +166,8 @@ def eval_graph(settings: EvalGraphSettings) -> None:
             LowRankSparseAttention.from_pretrained(lorsa_cfg, device=settings.device)
             for lorsa_cfg in settings.lorsas_path
         ]
-        for lorsa in lorsas:
-            lorsa.cfg.skip_bos = False
+        # for lorsa in lorsas:
+        #     lorsa.cfg.skip_bos = False
     else:
         lorsas = None
 
