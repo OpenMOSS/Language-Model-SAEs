@@ -1,6 +1,6 @@
 [project]
 name = "lm-saes"
-version = "2.0.0b3"
+version = "2.0.0b4"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
     "transformer-lens",
