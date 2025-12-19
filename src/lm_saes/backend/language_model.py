@@ -354,7 +354,7 @@ class TransformerLensLanguageModel(LanguageModel):
         if n_context is not None:
             offsets = [offset_[:n_context] for offset_ in offsets]
             offsets = [offset_ + [None] * (n_context - len(offset_)) for offset_ in offsets]
-        return [[{"key": "text", "range": offset} for offset in offset_] for offset_ in offsets]
+        return [[{"key": "text", "range": offset.tolist()} for offset in offset_] for offset_ in offsets]
 
     @timer.time("to_activations")
     @torch.no_grad()
@@ -499,7 +499,7 @@ class HuggingFaceLanguageModel(LanguageModel):
         if n_context is not None:
             offsets = [offset_[:n_context] for offset_ in offsets]
             offsets = [offset_ + [None] * (n_context - len(offset_)) for offset_ in offsets]
-        return [[{"key": "text", "range": offset} for offset in offset_] for offset_ in offsets]
+        return [[{"key": "text", "range": offset.tolist()} for offset in offset_] for offset_ in offsets]
 
 
 class LLaDALanguageModel(TransformerLensLanguageModel):

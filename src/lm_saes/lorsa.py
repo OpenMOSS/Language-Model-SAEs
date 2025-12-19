@@ -150,7 +150,15 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def attn_scale(self) -> float:
         assert self.cfg.attn_scale is not None, "attn_scale must be initialized during config post initialization"
         return self.cfg.attn_scale
-
+    
+    @property
+    def W_E(self):
+        return self.W_V.T
+    
+    @property
+    def W_D(self):
+        return self.W_O
+    
     @property
     def b_O(self):
         return self.b_D
