@@ -1,4 +1,4 @@
-import type { CircuitData, Node } from '@/types/circuit'
+import type { Node } from '@/types/circuit'
 
 export function extractLayerAndFeature(
   nodeId: string,

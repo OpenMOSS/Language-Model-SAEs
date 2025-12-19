@@ -138,8 +138,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         ]
       })
 
-      console.log('positionedNodes', positionedNodes)
-
       const positionedEdges: PositionedEdge[] = data.edges
         .map((edge) => {
           const sourceNode = positionedNodes.find(
@@ -329,7 +327,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
 
         <YAxis positionedNodes={positionedNodes} y={y} />
 
-        <Links positionedEdges={positionedEdges} />
+        <Links positionedEdges={positionedEdges} visState={visState} />
 
         <Nodes
           positionedNodes={positionedNodes}

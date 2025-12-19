@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Info } from '@/components/ui/info'
 import { Input } from '@/components/ui/input'
-import { ProgressBar } from '@/components/ui/progress-bar'
 import { cn } from '@/lib/utils'
 
 type InferenceCardProps = {

@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   Feature,
   FeatureSampleCompact,
@@ -10,11 +10,6 @@ import { getAccentStyle } from '@/utils/style'
 import { findHighestActivatingToken, getZPatternForToken } from '@/utils/token'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from '@/components/ui/hover-card'
 import { useSamples } from '@/hooks/useFeatures'
 
 /**
@@ -225,6 +220,14 @@ export const FeatureActivationSample = memo(
     const [hoveredTokenIndex, setHoveredTokenIndex] = useState<number | null>(
       null,
     )
+    const [tooltipState, setTooltipState] = useState<{
+      visible: boolean
+      x: number
+      y: number
+      highlights: { origin: TextTokenOrigin; featureAct: number }[]
+    } | null>(null)
+    const segmentRefs = useRef<Map<number, HTMLSpanElement>>(new Map())
+    const tooltipRef = useRef<HTMLDivElement>(null)
 
     const tokenOffset = sample.tokenOffset ?? 0
     const textOffset = sample.textOffset ?? 0
@@ -443,6 +446,47 @@ export const FeatureActivationSample = memo(
       return null
     }, [highestActivatingTokenText, sample.text, sample.origins, textOffset])
 
+    // Handle tooltip positioning
+    useEffect(() => {
+      if (!tooltipState?.visible || !tooltipRef.current) return
+
+      const tooltip = tooltipRef.current
+      const viewportWidth = window.innerWidth
+      const viewportHeight = window.innerHeight
+      const padding = 8
+
+      // Get tooltip dimensions after render
+      const rect = tooltip.getBoundingClientRect()
+      const tooltipWidth = rect.width
+      const tooltipHeight = rect.height
+
+      let x = tooltipState.x
+      let y = tooltipState.y
+      let transformX = '-50%'
+
+      // Adjust horizontal position if tooltip goes off screen (accounting for -50% transform)
+      const halfWidth = tooltipWidth / 2
+      if (x + halfWidth > viewportWidth - padding) {
+        x = viewportWidth - padding
+        transformX = '-100%'
+      } else if (x - halfWidth < padding) {
+        x = padding
+        transformX = '0%'
+      }
+
+      // Adjust vertical position if tooltip goes off screen
+      if (y + tooltipHeight > viewportHeight - padding) {
+        y = tooltipState.y - tooltipHeight - 4
+      }
+      if (y < padding) {
+        y = padding
+      }
+
+      tooltip.style.left = `${x}px`
+      tooltip.style.top = `${y}px`
+      tooltip.style.transform = `translateX(${transformX})`
+    }, [tooltipState])
+
     return (
       <div className={cn('w-full flex gap-4 items-center', className)}>
         {showHighestActivatingToken && (
@@ -482,74 +526,90 @@ export const FeatureActivationSample = memo(
                   )
                   const { className: segmentClassName, style: segmentStyle } =
                     getSegmentStyle(segment)
-                  if (showHoverCard) {
-                    return (
-                      <span key={index} className="inline-flex items-center">
-                        <HoverCard openDelay={0} closeDelay={0}>
-                          <HoverCardTrigger asChild>
-                            <span
-                              className={cn(
-                                'relative inline-flex items-center',
-                                segmentClassName,
-                              )}
-                              style={segmentStyle}
-                              onMouseEnter={() => {
-                                setHoveredTokenIndex(
-                                  sample.origins.indexOf(
-                                    segment.highlights.reduce((p, c) =>
-                                      c.featureAct > p.featureAct ? c : p,
-                                    ).origin,
-                                  ),
-                                )
-                              }}
-                              onMouseLeave={() => {
-                                setHoveredTokenIndex(null)
-                              }}
-                            >
-                              {segmentText
-                                .replaceAll('\n', '↵')
-                                .replaceAll('\t', '→')}
-                            </span>
-                          </HoverCardTrigger>
-                          <HoverCardContent>
-                            <div className="flex flex-col gap-2">
-                              {segment.highlights.map((highlight, i) => (
-                                <TokenInfo
-                                  key={i}
-                                  text={sample.text!}
-                                  textOffset={textOffset}
-                                  featureAct={highlight.featureAct}
-                                  maxFeatureAct={maxFeatureAct}
-                                  origin={highlight.origin}
-                                />
-                              ))}
-                            </div>
-                          </HoverCardContent>
-                        </HoverCard>
-                      </span>
+
+                  const handleMouseEnter = (
+                    e: React.MouseEvent<HTMLSpanElement>,
+                  ) => {
+                    const target = e.currentTarget
+                    const rect = target.getBoundingClientRect()
+                    const tokenIndex = sample.origins.indexOf(
+                      segment.highlights.reduce((p, c) =>
+                        c.featureAct > p.featureAct ? c : p,
+                      ).origin,
                     )
-                  } else {
-                    return (
-                      <span
-                        key={index}
-                        className={cn(
-                          'inline-flex items-center',
-                          segmentClassName,
-                        )}
-                        style={segmentStyle}
-                      >
-                        {segmentText
-                          .replaceAll('\n', '↵')
-                          .replaceAll('\t', '→')}
-                      </span>
-                    )
+                    setHoveredTokenIndex(tokenIndex)
+
+                    if (showHoverCard) {
+                      setTooltipState({
+                        visible: true,
+                        x: rect.left + rect.width / 2,
+                        y: rect.bottom + 4,
+                        highlights: segment.highlights,
+                      })
+                    }
                   }
+
+                  const handleMouseLeave = () => {
+                    setHoveredTokenIndex(null)
+                    if (showHoverCard) {
+                      setTooltipState(null)
+                    }
+                  }
+
+                  return (
+                    <span
+                      key={index}
+                      ref={(el) => {
+                        if (el) {
+                          segmentRefs.current.set(index, el)
+                        } else {
+                          segmentRefs.current.delete(index)
+                        }
+                      }}
+                      className={cn(
+                        'relative inline-flex items-center',
+                        segmentClassName,
+                      )}
+                      style={segmentStyle}
+                      onMouseEnter={handleMouseEnter}
+                      onMouseLeave={handleMouseLeave}
+                    >
+                      {segmentText.replaceAll('\n', '↵').replaceAll('\t', '→')}
+                    </span>
+                  )
                 })}
               </div>
             </div>
           )}
         </div>
+
+        {/* Manual tooltip */}
+        {showHoverCard && tooltipState?.visible && (
+          <div
+            ref={tooltipRef}
+            className="fixed z-50 w-64 rounded-md border bg-popover p-4 text-popover-foreground shadow-md pointer-events-none"
+            style={{
+              left: tooltipState.x,
+              top: tooltipState.y,
+            }}
+          >
+            <div className="flex flex-col gap-2">
+              {tooltipState.highlights.map((highlight, i) => (
+                <TokenInfo
+                  key={i}
+                  text={sample.text!}
+                  textOffset={textOffset}
+                  featureAct={highlight.featureAct}
+                  maxFeatureAct={maxFeatureAct}
+                  origin={highlight.origin}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     )
   },
 )
+
+FeatureActivationSample.displayName = 'FeatureActivationSample'

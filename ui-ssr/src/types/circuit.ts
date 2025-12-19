@@ -24,6 +24,7 @@ export type ErrorNode = {
   nodeId: string
   layer: number
   ctxIdx: number
+  tokenProb: number
 }
 
 export type LogitNode = {

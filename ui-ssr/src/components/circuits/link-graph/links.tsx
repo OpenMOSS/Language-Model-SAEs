@@ -1,24 +1,42 @@
-import React, { useEffect, useRef } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import * as d3 from 'd3'
-import type { PositionedEdge } from '@/types/circuit'
+import type { PositionedEdge, VisState } from '@/types/circuit'
 import { getEdgeStrokeWidth } from '@/utils/circuit'
 
 interface LinksProps {
   positionedEdges: PositionedEdge[]
+  visState: VisState
 }
 
-export const Links: React.FC<LinksProps> = React.memo(({ positionedEdges }) => {
+export const Links = memo(({ positionedEdges, visState }: LinksProps) => {
   const svgRef = useRef<SVGGElement>(null)
 
+  const isFilteredView = !!visState.clickedId
+
+  const connectedEdges = useMemo(() => {
+    if (!visState.clickedId) return positionedEdges
+    return positionedEdges.filter((edge) => {
+      return (
+        edge.source === visState.clickedId || edge.target === visState.clickedId
+      )
+    })
+  }, [positionedEdges, visState.clickedId])
+
   useEffect(() => {
-    if (!svgRef.current || !positionedEdges.length) return
+    if (!svgRef.current || !connectedEdges.length) return
 
     const svg = d3.select(svgRef.current)
     svg.selectAll('*').remove()
 
+    // Styling based on view mode:
+    // - "All" mode (~5000 edges): subtle, low opacity, thin strokes for density visualization
+    // - "Connected" mode (~100 edges): prominent, color-coded by weight sign
+    const opacity = isFilteredView ? 0.3 : 0.05
+    const strokeWidthScale = isFilteredView ? 0.5 : 0.3
+
     const edgeSel = svg
       .selectAll('path')
-      .data(positionedEdges, (d: any) => `${d.source}-${d.target}`)
+      .data(connectedEdges, (d: any) => `${d.source}-${d.target}`)
 
     const edgeEnter = edgeSel
       .enter()
@@ -33,10 +51,13 @@ export const Links: React.FC<LinksProps> = React.memo(({ positionedEdges }) => {
     edgeSel
       .merge(edgeEnter as any)
       .attr('d', (d: any) => d.pathStr)
-      .attr('stroke', '#666666')
-      .attr('stroke-width', (d: any) => getEdgeStrokeWidth(d.weight))
-      .attr('opacity', 0.03)
-  }, [positionedEdges])
+      .attr('stroke', '#94a3b8')
+      .attr(
+        'stroke-width',
+        (d: any) => getEdgeStrokeWidth(d.weight) * strokeWidthScale,
+      )
+      .attr('opacity', opacity)
+  }, [connectedEdges, isFilteredView])
 
   return <g ref={svgRef} />
 })

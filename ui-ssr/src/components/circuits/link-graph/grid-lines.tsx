@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import * as d3 from 'd3'
 
 interface GridLinesProps {
@@ -14,8 +14,8 @@ interface GridLinesProps {
 
 const BOTTOM_PADDING = 40
 
-export const GridLines: React.FC<GridLinesProps> = React.memo(
-  ({ dimensions, calculatedCtxCounts, x, positionedNodes }) => {
+export const GridLines = memo(
+  ({ dimensions, calculatedCtxCounts, x, positionedNodes }: GridLinesProps) => {
     const svgRef = useRef<SVGGElement>(null)
 
     useEffect(() => {
