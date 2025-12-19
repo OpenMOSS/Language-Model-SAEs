@@ -88,12 +88,18 @@ export type FeatureSampleGroupProps = {
   feature: Feature
   samplingName: string
   totalLength: number
+  className?: string
+  defaultVisibleRange?: number
+  initialSamples?: FeatureSampleCompact[]
 }
 
 export const FeatureSampleGroup = ({
+  className,
   feature,
   samplingName,
   totalLength,
+  initialSamples,
+  defaultVisibleRange = 50,
 }: FeatureSampleGroupProps) => {
   const rangeOptions = [
     { label: 'Stacked', value: 10 },
@@ -101,24 +107,22 @@ export const FeatureSampleGroup = ({
     { label: 'Detail', value: 50 },
     { label: 'Full', value: Infinity },
   ]
-  const [visibleRange, setVisibleRange] = useState<number>(50)
+  const [visibleRange, setVisibleRange] = useState<number>(defaultVisibleRange)
 
   const { data, fetchNextPage, hasNextPage, isFetching } = useSamples({
     dictionary: feature.dictionaryName,
     featureIndex: feature.featureIndex,
     samplingName,
     totalLength,
+    start: initialSamples?.length ?? 0,
     visibleRange: visibleRange === Infinity ? undefined : visibleRange,
   })
 
   const samples = useMemo(
-    () => data?.pages.flatMap((page) => page) ?? [],
-    [data],
+    () =>
+      (initialSamples ?? []).concat(data?.pages.flatMap((page) => page) ?? []),
+    [data, initialSamples],
   )
-
-  if (samplingName === 'top_activations') {
-    console.log(samples[0])
-  }
 
   const samplingNameMap = (samplingName: string) => {
     if (samplingName === 'top_activations') {
@@ -137,7 +141,7 @@ export const FeatureSampleGroup = ({
   const samplingNameDisplay = samplingNameMap(samplingName)
 
   return (
-    <div className="flex flex-col mt-4 -mx-6">
+    <div className={cn('flex flex-col mt-4 -mx-6', className)}>
       <div className="flex items-center justify-between bg-slate-50 py-2 px-6 border-y border-slate-200">
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-muted-foreground uppercase ml-2">

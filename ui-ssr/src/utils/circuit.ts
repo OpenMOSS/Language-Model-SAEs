@@ -1,10 +1,4 @@
-import type {
-  CircuitData,
-  CircuitJsonData,
-  CircuitMetadata,
-  Node,
-  PositionedNode,
-} from '@/types/circuit'
+import type { CircuitData, Node } from '@/types/circuit'
 
 export function extractLayerAndFeature(
   nodeId: string,
@@ -47,46 +41,15 @@ export function getEdgeStrokeWidth(weight: number): number {
   return Math.max(0.5, Math.min(3, Math.abs(weight) * 10))
 }
 
-export function transformCircuitData(jsonData: CircuitJsonData): CircuitData {
-  const nodes: Node[] = jsonData.nodes.map((node) => ({
-    nodeId: node.node_id,
-    feature: node.feature,
-    layer: node.layer,
-    ctxIdx: node.ctx_idx,
-    featureType: node.feature_type,
-    tokenProb: node.token_prob,
-    isTargetLogit: node.is_target_logit,
-    clerp: node.clerp,
-    saeName: node.sae_name,
-  }))
-
-  const edges = (jsonData.links || []).map((edge) => ({
-    source: edge.source,
-    target: edge.target,
-    weight: edge.weight,
-  }))
-
-  return {
-    nodes,
-    edges,
-    metadata: {
-      promptTokens: jsonData.metadata.prompt_tokens,
-    },
-  }
-}
-
-export function formatFeatureId(
-  node: Node | PositionedNode,
-  verbose: boolean = true,
-): string {
+export function formatFeatureId(node: Node, verbose: boolean = true): string {
   const layerIdx = node.layer + 1
   if (node.featureType === 'cross layer transcoder') {
     const mlpLayer = Math.floor(layerIdx / 2) - 1
-    const featureId = node.nodeId.split('_')[1]
+    const featureId = node.feature.featureIndex
     return verbose ? `M${mlpLayer}#${featureId}@${node.ctxIdx}` : `M${mlpLayer}`
   } else if (node.featureType === 'lorsa') {
     const attnLayer = Math.floor(layerIdx / 2)
-    const featureId = node.nodeId.split('_')[1]
+    const featureId = node.feature.featureIndex
     return verbose
       ? `A${attnLayer}#${featureId}@${node.ctxIdx}`
       : `A${attnLayer}`
@@ -96,15 +59,8 @@ export function formatFeatureId(
     return `M${Math.floor(layerIdx / 2) - 1}Error@${node.ctxIdx}`
   } else if (node.featureType === 'lorsa error') {
     return `A${Math.floor(layerIdx / 2)}Error@${node.ctxIdx}`
+  } else if (node.featureType === 'logit') {
+    return `Logit@${node.ctxIdx}`
   }
-  return ' '
-}
-
-export function findEdgeWeight(
-  edges: { source: string; target: string; weight: number }[],
-  source: string,
-  target: string,
-): number | undefined {
-  const edge = edges.find((e) => e.source === source && e.target === target)
-  return edge?.weight
+  return 'Unknown feature type'
 }

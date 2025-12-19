@@ -693,7 +693,49 @@ def trace(sae_set_name: str, request: TraceRequest):
         lorsa_names=list(lorsas.keys()),
     )
 
-    return graph_data
+    def process_feature(feature: FeatureRecord):
+        analysis = next(
+            (a for a in feature.analyses),
+            None,
+        )
+        if analysis is None:
+            return None
+
+        sampling = next(
+            (s for s in analysis.samplings if s.name == "top_activations"),
+            None,
+        )
+
+        samples = extract_samples(sampling, 0, 5, visible_range=50) if sampling is not None else None
+
+        return {
+            "feature_index": feature.index,
+            "logits": feature.logits,
+            "analysis_name": analysis.name,
+            "interpretation": feature.interpretation,
+            "dictionary_name": feature.sae_name,
+            "act_times": analysis.act_times,
+            "max_feature_act": analysis.max_feature_acts,
+            "n_analyzed_tokens": analysis.n_analyzed_tokens,
+            "samples": samples,
+        }
+
+    def concretize_feature(node: dict):
+        if node["sae_name"] is not None:
+            feature = client.get_feature(sae_name=node["sae_name"], sae_series=sae_series, index=node["feature"])
+            assert feature is not None, f"Feature {node['feature']} not found in SAE {node['sae_name']}"
+            feature = process_feature(feature)
+            assert feature is not None, (
+                f"Analysis or sampling not found for feature {node['feature']} in SAE {node['sae_name']}"
+            )
+            return {
+                **node,
+                "feature": feature,
+            }
+        return node
+
+    graph_data["nodes"] = [concretize_feature(node) for node in graph_data["nodes"]]
+    return make_serializable(graph_data)
 
 
 @app.post("/dictionaries/{name}/features/{feature_index}/bookmark")

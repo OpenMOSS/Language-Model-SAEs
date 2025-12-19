@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
-import { transformCircuitData } from '@/utils/circuit'
+import camelcaseKeys from 'camelcase-keys'
+import type { CircuitData } from '@/types/circuit'
 
 export const fetchSaeSets = createServerFn({ method: 'GET' }).handler(
   async () => {
@@ -29,5 +30,15 @@ export const traceCircuit = createServerFn({ method: 'POST' })
     }
 
     const data = await response.json()
-    return transformCircuitData(data)
+
+    // Rename links to edges
+    const transformedData = {
+      ...data,
+      edges: data.links,
+      links: undefined,
+    }
+
+    return camelcaseKeys(transformedData, {
+      deep: true,
+    }) as CircuitData
   })

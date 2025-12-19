@@ -55,8 +55,20 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
         const tooltip = svg.append('g')
 
         const tooltipText =
-          hoveredNode.clerp ||
-          `Feature: ${hoveredNode.feature} (Layer ${hoveredNode.layer})`
+          hoveredNode.featureType === 'cross layer transcoder' ||
+          hoveredNode.featureType === 'lorsa'
+            ? hoveredNode.feature.interpretation
+              ? `${hoveredNode.feature.interpretation.text}`
+              : `Feature ${hoveredNode.feature.featureIndex}@${hoveredNode.saeName}`
+            : hoveredNode.featureType === 'embedding'
+              ? `Embedding@${hoveredNode.ctxIdx}`
+              : hoveredNode.featureType === 'mlp reconstruction error'
+                ? `MLP Reconstruction Error@${hoveredNode.ctxIdx}`
+                : hoveredNode.featureType === 'lorsa error'
+                  ? `Lorsa Error@${hoveredNode.ctxIdx}`
+                  : hoveredNode.featureType === 'logit'
+                    ? `Logit@${hoveredNode.ctxIdx}`
+                    : `Unknown Feature Type@${hoveredNode.ctxIdx}`
 
         const textWidth = tooltipText.length * 6
         const tooltipWidth = Math.max(120, textWidth + 20)
