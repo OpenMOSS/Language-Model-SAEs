@@ -381,14 +381,14 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
 
   // 生成trace_key（与后端保持一致）
   // 后端使用 get_bt4_sae_combo(sae_combo_id)["id"] 来获取normalized_combo_id
-  // 如果sae_combo_id为None或不存在，会回退到默认组合 "k_128_e_128"
+  // 如果sae_combo_id为None或不存在，会回退到默认组合 "k_30_e_16"
   const generateTraceKey = useCallback((fen: string, moveUci: string, saeComboId: string | null | undefined): string => {
     const modelName = 'lc0/BT4-1024x15x32h';
-    // 与后端保持一致：如果saeComboId为空，使用默认组合 "k_128_e_128"
+    // 与后端保持一致：如果saeComboId为空，使用默认组合 "k_30_e_16"
     // 注意：后端会通过get_bt4_sae_combo规范化ID，但前端无法直接调用
     // 所以这里假设前端传递的saeComboId已经是正确的（在BT4_SAE_COMBOS中存在）
     // 如果不存在，后端会回退到默认值，所以前端也应该使用默认值
-    const comboId = saeComboId || 'k_128_e_128'; // 与后端BT4_DEFAULT_SAE_COMBO保持一致
+    const comboId = saeComboId || 'k_30_e_16'; // 与后端BT4_DEFAULT_SAE_COMBO保持一致
     const decodedFen = safeDecodeFen(fen);
     const decodedMove = safeDecodeFen(moveUci);
     return `${modelName}::${comboId}::${decodedFen}::${decodedMove}`;

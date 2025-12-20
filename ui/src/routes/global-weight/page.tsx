@@ -13,6 +13,8 @@ import { ChessBoard } from '@/components/chess/chess-board';
 interface GlobalWeightFeature {
   name: string;
   weight: number;
+  clerp?: string;
+  rank?: number;
 }
 
 interface GlobalWeightResult {
@@ -61,6 +63,8 @@ export const GlobalWeightPage: React.FC = () => {
   const [editingClerp, setEditingClerp] = useState<string>('');
   const [isSavingClerp, setIsSavingClerp] = useState(false);
   const [syncingClerp, setSyncingClerp] = useState(false);
+  const [featuresWithClerp, setFeaturesWithClerp] = useState<Map<string, { clerp: string; rank: number }>>(new Map());
+  const [loadingClerps, setLoadingClerps] = useState(false);
 
   // 当URL参数变化时更新状态
   useEffect(() => {
@@ -254,6 +258,9 @@ export const GlobalWeightPage: React.FC = () => {
       const data = await response.json() as GlobalWeightResult;
       setResult(data);
       
+      // 批量获取所有 features 的 clerp 和计算排名
+      await fetchBatchClerpsAndRanks(data.features_in, data.features_out);
+      
       // 更新URL参数（使用实际使用的 sae_combo_id）
       const newParams = new URLSearchParams({
         feature_type: featureType,
@@ -301,9 +308,6 @@ export const GlobalWeightPage: React.FC = () => {
 
   // 获取字典名（根据层和类型）
   const getDictionaryName = useCallback((layerIdx: number, isLorsa: boolean): string => {
-    // 从 sae_combo_id 推断组合，默认使用 k30_e16
-    const currentSaeComboId = saeComboId || (typeof window !== 'undefined' ? window.localStorage.getItem(LOCAL_STORAGE_KEY) : null) || 'k_30_e_16';
-    
     // 根据组合ID构建字典名
     // 格式: BT4_lorsa_L{layer}A_k30_e16 或 BT4_tc_L{layer}M_k30_e16
     if (isLorsa) {
@@ -311,7 +315,7 @@ export const GlobalWeightPage: React.FC = () => {
     } else {
       return `BT4_tc_L${layerIdx}M_k30_e16`;
     }
-  }, [saeComboId]);
+  }, []);
 
   // 获取 Top Activation 数据
   const fetchTopActivations = useCallback(async (layerIdx: number, featureIdx: number, isLorsa: boolean) => {
@@ -456,12 +460,172 @@ export const GlobalWeightPage: React.FC = () => {
     }
   }, [getDictionaryName]);
 
+  // 批量获取 clerp 并计算排名
+  const fetchBatchClerpsAndRanks = useCallback(async (
+    featuresIn: GlobalWeightFeature[],
+    featuresOut: GlobalWeightFeature[]
+  ) => {
+    setLoadingClerps(true);
+    try {
+      // 解析所有 features，构建 nodes 数组
+      const allFeatures = [...featuresIn, ...featuresOut];
+      const nodes: Array<{
+        node_id: string;
+        feature: number;
+        layer: number;
+        feature_type: string;
+      }> = [];
+      const featureMap = new Map<string, { layerIdx: number; featureIdx: number; featureType: 'tc' | 'lorsa' }>();
+
+      for (const feature of allFeatures) {
+        const parsed = parseFeatureName(feature.name);
+        if (parsed) {
+          const nodeId = `${parsed.layerIdx * 2}_${parsed.featureIdx}_0`;
+          nodes.push({
+            node_id: nodeId,
+            feature: parsed.featureIdx,
+            layer: parsed.layerIdx,
+            feature_type: parsed.featureType
+          });
+          featureMap.set(feature.name, parsed);
+        }
+      }
+
+      // 按 feature_type 分组
+      const lorsaNodes = nodes.filter(n => n.feature_type === 'lorsa');
+      const tcNodes = nodes.filter(n => n.feature_type === 'tc');
+
+      const clerpMap = new Map<string, string>();
+      const rankMap = new Map<string, number>();
+
+      // 批量获取 Lorsa clerps
+      if (lorsaNodes.length > 0) {
+        try {
+          const lorsaResponse = await fetch(
+            `${import.meta.env.VITE_BACKEND_URL}/circuit/sync_interpretations_to_clerps`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                nodes: lorsaNodes,
+                lorsa_analysis_name: 'BT4_lorsa_k30_e16',
+              })
+            }
+          );
+
+          if (lorsaResponse.ok) {
+            const lorsaResult = await lorsaResponse.json();
+            if (lorsaResult.updated_nodes) {
+              for (const node of lorsaResult.updated_nodes) {
+                const featureName = allFeatures.find(f => {
+                  const parsed = parseFeatureName(f.name);
+                  return parsed && `${parsed.layerIdx * 2}_${parsed.featureIdx}_0` === node.node_id;
+                })?.name;
+                if (featureName && node.clerp) {
+                  clerpMap.set(featureName, node.clerp);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('获取 Lorsa clerps 失败:', err);
+        }
+      }
+
+      // 批量获取 TC clerps
+      if (tcNodes.length > 0) {
+        try {
+          const tcResponse = await fetch(
+            `${import.meta.env.VITE_BACKEND_URL}/circuit/sync_interpretations_to_clerps`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                nodes: tcNodes,
+                tc_analysis_name: 'BT4_tc_k30_e16',
+              })
+            }
+          );
+
+          if (tcResponse.ok) {
+            const tcResult = await tcResponse.json();
+            if (tcResult.updated_nodes) {
+              for (const node of tcResult.updated_nodes) {
+                const featureName = allFeatures.find(f => {
+                  const parsed = parseFeatureName(f.name);
+                  return parsed && `${parsed.layerIdx * 2}_${parsed.featureIdx}_0` === node.node_id;
+                })?.name;
+                if (featureName && node.clerp) {
+                  clerpMap.set(featureName, node.clerp);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('获取 TC clerps 失败:', err);
+        }
+      }
+
+      // 计算排名（Lorsa 和 Transcoder 分开）
+      // 对于 features_in 和 features_out 分别计算排名
+      const lorsaFeaturesIn = featuresIn.filter(f => {
+        const parsed = parseFeatureName(f.name);
+        return parsed && parsed.featureType === 'lorsa';
+      }).sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight));
+
+      const tcFeaturesIn = featuresIn.filter(f => {
+        const parsed = parseFeatureName(f.name);
+        return parsed && parsed.featureType === 'tc';
+      }).sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight));
+
+      const lorsaFeaturesOut = featuresOut.filter(f => {
+        const parsed = parseFeatureName(f.name);
+        return parsed && parsed.featureType === 'lorsa';
+      }).sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight));
+
+      const tcFeaturesOut = featuresOut.filter(f => {
+        const parsed = parseFeatureName(f.name);
+        return parsed && parsed.featureType === 'tc';
+      }).sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight));
+
+      // 设置排名
+      lorsaFeaturesIn.forEach((f, idx) => {
+        rankMap.set(f.name, idx + 1);
+      });
+      tcFeaturesIn.forEach((f, idx) => {
+        rankMap.set(f.name, idx + 1);
+      });
+      lorsaFeaturesOut.forEach((f, idx) => {
+        rankMap.set(f.name, idx + 1);
+      });
+      tcFeaturesOut.forEach((f, idx) => {
+        rankMap.set(f.name, idx + 1);
+      });
+
+      // 合并 clerp 和排名信息
+      const combinedMap = new Map<string, { clerp: string; rank: number }>();
+      for (const feature of allFeatures) {
+        const clerp = clerpMap.get(feature.name) || '';
+        const rank = rankMap.get(feature.name) || 0;
+        combinedMap.set(feature.name, { clerp, rank });
+      }
+
+      setFeaturesWithClerp(combinedMap);
+    } catch (error) {
+      console.error('❌ 批量获取 clerp 和排名失败:', error);
+    } finally {
+      setLoadingClerps(false);
+    }
+  }, [parseFeatureName]);
+
   // 获取 clerp 从 MongoDB
   const fetchClerp = useCallback(async (layerIdx: number, featureIdx: number, isLorsa: boolean) => {
     setSyncingClerp(true);
     try {
-      const currentSaeComboId = saeComboId || (typeof window !== 'undefined' ? window.localStorage.getItem(LOCAL_STORAGE_KEY) : null) || 'k_30_e_16';
-      
       // 构建 analysis_name
       const analysisName = isLorsa ? 'BT4_lorsa_k30_e16' : 'BT4_tc_k30_e16';
       
@@ -514,8 +678,6 @@ export const GlobalWeightPage: React.FC = () => {
   const saveClerp = useCallback(async (layerIdx: number, featureIdx: number, isLorsa: boolean, clerpText: string) => {
     setIsSavingClerp(true);
     try {
-      const currentSaeComboId = saeComboId || (typeof window !== 'undefined' ? window.localStorage.getItem(LOCAL_STORAGE_KEY) : null) || 'k_30_e_16';
-      
       const analysisName = isLorsa ? 'BT4_lorsa_k30_e16' : 'BT4_tc_k30_e16';
       
       const node = {
@@ -545,7 +707,27 @@ export const GlobalWeightPage: React.FC = () => {
         throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       }
       
-      const result = await response.json();
+      await response.json();
+      
+      // 更新 featuresWithClerp 状态
+      if (selectedFeatureName) {
+        setFeaturesWithClerp(prev => {
+          const newMap = new Map(prev);
+          const existing = newMap.get(selectedFeatureName);
+          if (existing) {
+            newMap.set(selectedFeatureName, {
+              ...existing,
+              clerp: clerpText
+            });
+          } else {
+            newMap.set(selectedFeatureName, {
+              clerp: clerpText,
+              rank: 0
+            });
+          }
+          return newMap;
+        });
+      }
       
       alert(`✅ Clerp已成功保存到MongoDB！`);
       
@@ -555,7 +737,7 @@ export const GlobalWeightPage: React.FC = () => {
     } finally {
       setIsSavingClerp(false);
     }
-  }, [saeComboId]);
+  }, [saeComboId, selectedFeatureName]);
 
   const handleFeatureClick = (featureName: string) => {
     const parsed = parseFeatureName(featureName);
@@ -696,22 +878,50 @@ export const GlobalWeightPage: React.FC = () => {
                   </p>
                 </CardHeader>
                 <CardContent>
+                  {loadingClerps && (
+                    <div className="text-sm text-muted-foreground mb-2 flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      正在加载 Clerp 和排名...
+                    </div>
+                  )}
                   <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                    {result.features_in.map((feature, idx) => (
-                      <div
-                        key={idx}
-                        className={`flex items-center justify-between p-2 rounded border hover:bg-muted cursor-pointer transition-colors ${
-                          selectedFeatureName === feature.name ? 'bg-blue-100 border-blue-500' : ''
-                        }`}
-                        onClick={() => handleFeatureClick(feature.name)}
-                        title="点击查看该特征的 Top Activation 和编辑 Clerp"
-                      >
-                        <span className="font-mono text-sm flex-1 break-all">{feature.name}</span>
-                        <span className="text-right font-semibold ml-4 whitespace-nowrap">
-                          {feature.weight.toFixed(4)}
-                        </span>
-                      </div>
-                    ))}
+                    {result.features_in.map((feature, idx) => {
+                      const featureInfo = featuresWithClerp.get(feature.name);
+                      const clerp = featureInfo?.clerp || '';
+                      const rank = featureInfo?.rank || 0;
+                      const parsed = parseFeatureName(feature.name);
+                      const featureTypeLabel = parsed?.featureType === 'lorsa' ? 'LoRSA' : 'TC';
+                      
+                      return (
+                        <div
+                          key={idx}
+                          className={`p-2 rounded border hover:bg-muted cursor-pointer transition-colors ${
+                            selectedFeatureName === feature.name ? 'bg-blue-100 border-blue-500' : ''
+                          }`}
+                          onClick={() => handleFeatureClick(feature.name)}
+                          title="点击查看该特征的 Top Activation 和编辑 Clerp"
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-mono text-sm flex-1 break-all">{feature.name}</span>
+                            <div className="flex items-center gap-3 ml-4 whitespace-nowrap">
+                              {rank > 0 && (
+                                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                                  {featureTypeLabel} #{rank}
+                                </span>
+                              )}
+                              <span className="text-right font-semibold">
+                                {feature.weight.toFixed(4)}
+                              </span>
+                            </div>
+                          </div>
+                          {clerp && (
+                            <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                              {clerp}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>
@@ -724,22 +934,50 @@ export const GlobalWeightPage: React.FC = () => {
                   </p>
                 </CardHeader>
                 <CardContent>
+                  {loadingClerps && (
+                    <div className="text-sm text-muted-foreground mb-2 flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      正在加载 Clerp 和排名...
+                    </div>
+                  )}
                   <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                    {result.features_out.map((feature, idx) => (
-                      <div
-                        key={idx}
-                        className={`flex items-center justify-between p-2 rounded border hover:bg-muted cursor-pointer transition-colors ${
-                          selectedFeatureName === feature.name ? 'bg-blue-100 border-blue-500' : ''
-                        }`}
-                        onClick={() => handleFeatureClick(feature.name)}
-                        title="点击查看该特征的 Top Activation 和编辑 Clerp"
-                      >
-                        <span className="font-mono text-sm flex-1 break-all">{feature.name}</span>
-                        <span className="text-right font-semibold ml-4 whitespace-nowrap">
-                          {feature.weight.toFixed(4)}
-                        </span>
-                      </div>
-                    ))}
+                    {result.features_out.map((feature, idx) => {
+                      const featureInfo = featuresWithClerp.get(feature.name);
+                      const clerp = featureInfo?.clerp || '';
+                      const rank = featureInfo?.rank || 0;
+                      const parsed = parseFeatureName(feature.name);
+                      const featureTypeLabel = parsed?.featureType === 'lorsa' ? 'LoRSA' : 'TC';
+                      
+                      return (
+                        <div
+                          key={idx}
+                          className={`p-2 rounded border hover:bg-muted cursor-pointer transition-colors ${
+                            selectedFeatureName === feature.name ? 'bg-blue-100 border-blue-500' : ''
+                          }`}
+                          onClick={() => handleFeatureClick(feature.name)}
+                          title="点击查看该特征的 Top Activation 和编辑 Clerp"
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-mono text-sm flex-1 break-all">{feature.name}</span>
+                            <div className="flex items-center gap-3 ml-4 whitespace-nowrap">
+                              {rank > 0 && (
+                                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                                  {featureTypeLabel} #{rank}
+                                </span>
+                              )}
+                              <span className="text-right font-semibold">
+                                {feature.weight.toFixed(4)}
+                              </span>
+                            </div>
+                          </div>
+                          {clerp && (
+                            <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                              {clerp}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>

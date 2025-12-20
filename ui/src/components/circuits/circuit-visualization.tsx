@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo, Suspense, lazy } from "react";
 import { Link } from "react-router-dom";
 import { useCircuitState } from "@/contexts/AppStateContext";
 import { LinkGraphContainer } from "./link-graph-container";
@@ -8,9 +8,30 @@ import { Node } from "./link-graph/types";
 import { Feature } from "@/types/feature";
 import { FeatureCard } from "@/components/feature/feature-card";
 import { ChessBoard } from "@/components/chess/chess-board";
-import React from "react"; // Added missing import for React
+import React from "react";
 import { SaeComboLoader } from "@/components/common/SaeComboLoader";
 import { useModelLoadingStatus } from "@/components/shared/model-loading-status";
+// 使用 React.lazy 动态导入，避免初始化错误导致整个应用崩溃
+const CircuitInterpretation = lazy(() => {
+  console.log('[CircuitVisualization] Lazy loading CircuitInterpretation...');
+  return import("./circuit-interpretation").then(module => {
+    console.log('[CircuitVisualization] CircuitInterpretation loaded successfully');
+    return { default: module.CircuitInterpretation };
+  }).catch(error => {
+    console.error('[CircuitVisualization] Failed to load CircuitInterpretation:', error);
+    // 返回一个错误占位组件
+    return {
+      default: () => (
+        <div className="fixed inset-0 bg-red-100 bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-4 rounded shadow-lg">
+            <p className="text-red-600">Failed to load Circuit Interpretation component</p>
+            <pre className="text-xs mt-2 overflow-auto max-h-40">{error.message}</pre>
+          </div>
+        </div>
+      )
+    };
+  });
+});
 
 // 定义节点激活数据的类型
 interface NodeActivationData {
@@ -75,8 +96,21 @@ export const CircuitVisualization = () => {
   const [subgraphData, setSubgraphData] = useState<any>(null); // 子图数据
   const [subgraphRootNodeId, setSubgraphRootNodeId] = useState<string | null>(null); // 子图根节点ID
 
+  // Feature 激活显示模式：单个位置 vs 所有位置
+  const [showAllPositions, setShowAllPositions] = useState(false); // 是否显示所有位置的激活
+  const [allPositionsActivationData, setAllPositionsActivationData] = useState<NodeActivationData | null>(null); // 所有位置的合并激活数据
+
   // 多图支持：存放多份原始 JSON 及其文件名
   const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
+
+  // Circuit 标注相关状态
+  const [showCircuitInterpretation, setShowCircuitInterpretation] = useState(false);
+  const [selectedNodeForCircuit, setSelectedNodeForCircuit] = useState<{
+    nodeId: string;
+    layer: number;
+    feature: number;
+    feature_type: string;
+  } | null>(null);
 
   // 为"各自独有"的节点/边分配的颜色表（最多4个图）
   const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // 蓝、橙、绿、红
@@ -371,6 +405,9 @@ export const CircuitVisualization = () => {
       setShowSubgraph(false);
       setSubgraphData(null);
       setSubgraphRootNodeId(null);
+      // 重置激活显示模式
+      setShowAllPositions(false);
+      setAllPositionsActivationData(null);
     } catch (err) {
       console.error('Failed to load circuit data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load circuit data');
@@ -455,6 +492,9 @@ export const CircuitVisualization = () => {
       setShowSubgraph(false);
       setSubgraphData(null);
       setSubgraphRootNodeId(null);
+      // 重置激活显示模式
+      setShowAllPositions(false);
+      setAllPositionsActivationData(null);
     } catch (err) {
       console.error('Failed to load circuit data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load circuit data');
@@ -911,6 +951,54 @@ export const CircuitVisualization = () => {
     return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
   }, []);
  
+  // 辅助函数：获取SAE名称模板（不带层号）
+  const getSaeNameTemplate = useCallback((layerIdx: number, isLorsa: boolean): string => {
+    if (isLorsa) {
+      const lorsaAnalysisName = linkGraphData?.metadata?.lorsa_analysis_name;
+      if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string') {
+        // 如果analysis_name是 "BT4_lorsa"，返回模板 "BT4_lorsa_L{}A"
+        if (lorsaAnalysisName === "BT4_lorsa") {
+          return "BT4_lorsa_L{}A";
+        } else {
+          // 其他组合：BT4_lorsa_k256_e128 -> BT4_lorsa_L{}A_k256_e128
+          const suffix = lorsaAnalysisName.replace("BT4_lorsa_", "");
+          return `BT4_lorsa_L{}A_${suffix}`;
+        }
+      }
+      return "BT4_lorsa_L{}A"; // 默认
+    } else {
+      const tcAnalysisName = (linkGraphData?.metadata as any)?.tc_analysis_name || linkGraphData?.metadata?.clt_analysis_name;
+      if (tcAnalysisName && typeof tcAnalysisName === 'string') {
+        if (tcAnalysisName === "BT4_tc") {
+          return "BT4_tc_L{}M";
+        } else {
+          const suffix = tcAnalysisName.replace("BT4_tc_", "");
+          return `BT4_tc_L{}M_${suffix}`;
+        }
+      }
+      return "BT4_tc_L{}M"; // 默认
+    }
+  }, [linkGraphData?.metadata]);
+
+  // 为 CircuitInterpretation 组件创建 getSaeName 函数
+  const getSaeNameForCircuit = useCallback((layer: number, isLorsa: boolean) => {
+    console.log('[CircuitVisualization] getSaeNameForCircuit called:', { layer, isLorsa });
+    try {
+      console.log('[CircuitVisualization] Calling getSaeNameTemplate...');
+      const template = getSaeNameTemplate(layer, isLorsa);
+      console.log('[CircuitVisualization] Template result:', template);
+      const result = template.replace('{}', layer.toString());
+      console.log('[CircuitVisualization] Final SAE name:', result);
+      return result;
+    } catch (error) {
+      console.error('[CircuitVisualization] Error in getSaeNameForCircuit:', error);
+      // 返回默认值
+      const fallback = isLorsa ? `BT4_lorsa_L${layer}A` : `BT4_tc_L${layer}M`;
+      console.log('[CircuitVisualization] Using fallback:', fallback);
+      return fallback;
+    }
+  }, [getSaeNameTemplate]);
+
   // 辅助函数：根据metadata中的analysis_name（不带层号）确定字典名（带层号）
   const getDictionaryName = useCallback((layerIdx: number, isLorsa: boolean): string => {
     // 已知的BT4 SAE组合analysis_name列表（来自server/constants.py，不带层号）
@@ -990,13 +1078,177 @@ export const CircuitVisualization = () => {
     return dictionary;
   }, [linkGraphData]);
 
+  // 获取该 feature 在所有位置的激活数据
+  const getAllPositionsActivationData = useCallback((nodeId: string | null, jsonData?: any): NodeActivationData | null => {
+    const dataToSearch = jsonData || originalCircuitJson;
+    if (!nodeId || !dataToSearch) {
+      return null;
+    }
+
+    // 解析 node_id -> rawLayer, featureOrHead
+    const parseFromNodeId = (id: string) => {
+      const parts = id.split('_');
+      const rawLayer = Number(parts[0]) || 0;
+      const featureOrHead = Number(parts[1]) || 0;
+      const layerForActivation = Math.floor(rawLayer / 2);
+      return { rawLayer, layerForActivation, featureOrHead };
+    };
+    const parsed = parseFromNodeId(nodeId);
+
+    // 获取节点类型
+    let nodesToSearch: any[] = [];
+    if (dataToSearch.nodes && Array.isArray(dataToSearch.nodes)) {
+      nodesToSearch = dataToSearch.nodes;
+    } else if (Array.isArray(dataToSearch)) {
+      nodesToSearch = dataToSearch;
+    } else {
+      const possibleArrayKeys = ['data', 'features', 'items', 'activations'];
+      for (const key of possibleArrayKeys) {
+        if (Array.isArray((dataToSearch as any)[key])) {
+          nodesToSearch = (dataToSearch as any)[key];
+          break;
+        }
+      }
+    }
+
+    let featureTypeForNode: string | undefined = undefined;
+    if (nodesToSearch.length > 0) {
+      const nodeMeta = nodesToSearch.find(n => n?.node_id === nodeId);
+      featureTypeForNode = nodeMeta?.feature_type;
+    }
+
+    // 构建可扫描的记录集合
+    const candidateRecords: any[] = [];
+    const pushCandidateArrays = (obj: any) => {
+      if (!obj) return;
+      if (Array.isArray(obj)) {
+        for (const item of obj) {
+          if (item && typeof item === 'object') {
+            const hasActivationShape = ('layer' in item) && ('position' in item) && ('activations' in item);
+            const hasZShape = ('zPatternIndices' in item) && ('zPatternValues' in item);
+            const hasIndexKey = ('head_idx' in item) || ('feature_idx' in item);
+            if (hasActivationShape || hasZShape || hasIndexKey) {
+              candidateRecords.push(item);
+            }
+          }
+        }
+      } else if (typeof obj === 'object') {
+        for (const v of Object.values(obj)) pushCandidateArrays(v);
+      }
+    };
+    pushCandidateArrays(dataToSearch);
+
+    // 匹配函数：匹配相同的 layer 和 feature_idx/head_idx，但忽略 position
+    const tryMatchRecord = (rec: any, featureType?: string) => {
+      const recLayer = Number(rec?.layer);
+      const recHead = rec?.head_idx;
+      const recFeatIdx = rec?.feature_idx;
+
+      const layerOk = !Number.isNaN(recLayer) && recLayer === parsed.layerForActivation;
+
+      let indexOk = false;
+      if (featureType) {
+        const t = featureType.toLowerCase();
+        if (t === 'lorsa') indexOk = recHead === parsed.featureOrHead;
+        else if (t === 'cross layer transcoder') indexOk = recFeatIdx === parsed.featureOrHead;
+        else indexOk = (recHead === parsed.featureOrHead) || (recFeatIdx === parsed.featureOrHead);
+      } else {
+        indexOk = (recHead === parsed.featureOrHead) || (recFeatIdx === parsed.featureOrHead);
+      }
+
+      return layerOk && indexOk;
+    };
+
+    // 找到所有匹配的记录（所有位置）
+    const matchedRecords = candidateRecords.filter(rec => tryMatchRecord(rec, featureTypeForNode));
+
+    if (matchedRecords.length === 0) {
+      console.log('❌ 未找到任何匹配的激活记录');
+      return null;
+    }
+
+    console.log(`✅ 找到 ${matchedRecords.length} 个位置的激活记录`);
+
+    // 合并所有位置的激活值
+    // 策略：对于每个棋盘位置，取所有位置中该位置的最大激活值（绝对值）
+    const mergedActivations = new Array(64).fill(0);
+    const mergedZPatternIndices: number[][] = [];
+    const mergedZPatternValues: number[] = [];
+    const zPatternMap = new Map<string, number>(); // 用于合并 zPattern 值
+
+    for (const rec of matchedRecords) {
+      if (rec.activations && Array.isArray(rec.activations) && rec.activations.length === 64) {
+        // 合并激活值：取最大值（绝对值）
+        for (let i = 0; i < 64; i++) {
+          const currentValue = mergedActivations[i];
+          const newValue = rec.activations[i];
+          if (Math.abs(newValue) > Math.abs(currentValue)) {
+            mergedActivations[i] = newValue;
+          }
+        }
+      }
+
+      // 合并 zPattern 数据
+      if (rec.zPatternIndices && rec.zPatternValues && 
+          Array.isArray(rec.zPatternIndices) && Array.isArray(rec.zPatternValues)) {
+        for (let i = 0; i < rec.zPatternIndices.length; i++) {
+          const indices = rec.zPatternIndices[i];
+          const value = rec.zPatternValues[i];
+          if (Array.isArray(indices) && indices.length === 2) {
+            const key = `${indices[0]}_${indices[1]}`;
+            const existingValue = zPatternMap.get(key);
+            if (existingValue === undefined || Math.abs(value) > Math.abs(existingValue)) {
+              zPatternMap.set(key, value);
+            }
+          }
+        }
+      }
+    }
+
+    // 将 zPatternMap 转换回数组格式
+    zPatternMap.forEach((value, key) => {
+      const [qPos, kPos] = key.split('_').map(Number);
+      mergedZPatternIndices.push([qPos, kPos]);
+      mergedZPatternValues.push(value);
+    });
+
+    return {
+      activations: mergedActivations,
+      zPatternIndices: mergedZPatternIndices.length > 0 ? mergedZPatternIndices : undefined,
+      zPatternValues: mergedZPatternValues.length > 0 ? mergedZPatternValues : undefined,
+      nodeType: featureTypeForNode,
+      clerp: (nodesToSearch.find(n => n?.node_id === nodeId) || {}).clerp,
+    };
+  }, [originalCircuitJson]);
+
   // 提取相关数据
   const fen = extractFenFromPrompt();
   const outputMove = extractOutputMove();
   const nodeActivationData = getNodeActivationData(clickedId);
+  
+  // 当切换节点时，重置显示模式为单个位置
+  useEffect(() => {
+    setShowAllPositions(false);
+    setAllPositionsActivationData(null);
+  }, [clickedId]);
+
+  // 当点击节点或切换模式时，更新所有位置的激活数据
+  useEffect(() => {
+    if (clickedId && showAllPositions) {
+      const allPosData = getAllPositionsActivationData(clickedId);
+      setAllPositionsActivationData(allPosData);
+    } else {
+      setAllPositionsActivationData(null);
+    }
+  }, [clickedId, showAllPositions, getAllPositionsActivationData]);
+
+  // 确定要显示的激活数据
+  const displayActivationData = showAllPositions && allPositionsActivationData 
+    ? allPositionsActivationData 
+    : nodeActivationData;
 
   // 修复Hook使用 - 移到组件顶层，避免条件调用
-  React.useEffect(() => {
+  useEffect(() => {
     if (clickedId && nodeActivationData) {
       // 无论clerp是undefined、空字符串还是有内容，都设置到编辑器中
       const clerpValue = nodeActivationData.clerp || '';
@@ -1012,6 +1264,9 @@ export const CircuitVisualization = () => {
       // 没有选中节点时，清空编辑器
       console.log('🔄 清空编辑器状态');
       setEditingClerp('');
+      // 重置所有位置显示模式
+      setShowAllPositions(false);
+      setAllPositionsActivationData(null);
     }
   }, [clickedId, nodeActivationData?.clerp, updateCounter]);
 
@@ -1415,7 +1670,7 @@ export const CircuitVisualization = () => {
   }, [fen, linkGraphData, isSaeLoaded, steeringScale]);
 
   // 当点击节点时获取 Top Activation 数据（Token Predictions 改为手动触发）
-  React.useEffect(() => {
+  useEffect(() => {
     if (clickedId) {
       fetchTopActivations(clickedId);
     } else {
@@ -1762,7 +2017,7 @@ export const CircuitVisualization = () => {
   }, [inactiveNodes]);
 
   // 获取应用了dense和inactive颜色的图数据
-  const displayLinkGraphData = React.useMemo(() => {
+  const displayLinkGraphData = useMemo(() => {
     let data = linkGraphData;
     data = applyDenseNodeColors(data);
     data = applyInactiveNodeColors(data);
@@ -2334,25 +2589,54 @@ export const CircuitVisualization = () => {
       {displayLinkGraphData && (!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
         <div className="flex justify-center mb-6">
           <div className="bg-white rounded-lg border shadow-sm p-4 pb-8">
-            <h3 className="text-lg font-semibold mb-4 text-center">
-              Circuit棋盘状态
-              {clickedId && nodeActivationData && (
-                <span className="text-sm font-normal text-blue-600 ml-2">
-                  (节点: {clickedId}{nodeActivationData.nodeType ? ` - ${nodeActivationData.nodeType.toUpperCase()}` : ''})
-                </span>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-center flex-1">
+                Circuit棋盘状态
+                {clickedId && displayActivationData && (
+                  <span className="text-sm font-normal text-blue-600 ml-2">
+                    (节点: {clickedId}{displayActivationData.nodeType ? ` - ${displayActivationData.nodeType.toUpperCase()}` : ''})
+                  </span>
+                )}
+              </h3>
+              {clickedId && (
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => setShowAllPositions(!showAllPositions)}
+                    className={`px-3 py-1 text-sm rounded transition-colors ${
+                      showAllPositions
+                        ? 'bg-blue-500 text-white hover:bg-blue-600'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                    title={showAllPositions ? '显示单个位置的激活' : '显示所有位置的激活（合并）'}
+                  >
+                    {showAllPositions ? '单位置模式' : '所有位置模式'}
+                  </button>
+                </div>
               )}
-            </h3>
+            </div>
             {outputMove && (
               <div className="text-center mb-2 text-sm text-green-600 font-medium">
                 输出移动: {outputMove} 🎯
               </div>
             )}
-            {clickedId && nodeActivationData && nodeActivationData.activations && (
+            {clickedId && displayActivationData && displayActivationData.activations && (
               <div className="text-center mb-2 text-sm text-purple-600">
-                激活数据: {nodeActivationData.activations.filter((v: number) => v !== 0).length} 个非零激活
-                {nodeActivationData.zPatternIndices && nodeActivationData.zPatternValues && 
-                  `, ${nodeActivationData.zPatternValues.length} 个Z模式连接`
-                }
+                {showAllPositions ? (
+                  <>
+                    所有位置合并激活: {displayActivationData.activations.filter((v: number) => v !== 0).length} 个非零激活
+                    {displayActivationData.zPatternIndices && displayActivationData.zPatternValues && 
+                      `, ${displayActivationData.zPatternValues.length} 个Z模式连接`
+                    }
+                    <span className="text-xs text-gray-500 ml-2">(取每个位置的最大激活值)</span>
+                  </>
+                ) : (
+                  <>
+                    激活数据: {displayActivationData.activations.filter((v: number) => v !== 0).length} 个非零激活
+                    {displayActivationData.zPatternIndices && displayActivationData.zPatternValues && 
+                      `, ${displayActivationData.zPatternValues.length} 个Z模式连接`
+                    }
+                  </>
+                )}
               </div>
             )}
             <ChessBoard
@@ -2360,13 +2644,13 @@ export const CircuitVisualization = () => {
               size="medium"
               showCoordinates={true}
               move={outputMove || undefined}
-              activations={nodeActivationData?.activations}
-              zPatternIndices={nodeActivationData?.zPatternIndices}
-              zPatternValues={nodeActivationData?.zPatternValues}
+              activations={displayActivationData?.activations}
+              zPatternIndices={displayActivationData?.zPatternIndices}
+              zPatternValues={displayActivationData?.zPatternValues}
               flip_activation={Boolean(fen && fen.split(' ')[1] === 'b')}
               autoFlipWhenBlack={true}
               sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
-              analysisName={nodeActivationData?.nodeType || 'Circuit Node'}
+              analysisName={displayActivationData?.nodeType || 'Circuit Node'}
               moveColor={(clickedId ? (displayLinkGraphData.nodes.find(n => n.nodeId === clickedId)?.nodeColor) : undefined) as any}
             />
           </div>
@@ -2417,59 +2701,99 @@ export const CircuitVisualization = () => {
 
       {/* Chess Board Display - 多文件：为每个源文件渲染一个棋盘，并按来源显示激活 */}
       {displayLinkGraphData && displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          {multiOriginalJsons.map((entry, idx) => {
-            const fileFen = extractFenFromCircuitJson(entry.json);
-            if (!fileFen) return null;
-            const fileMove = extractOutputMoveFromCircuitJson(entry.json);
-            // 判断当前选中节点是否属于该文件
-            const currentNode = clickedId ? displayLinkGraphData.nodes.find(n => n.nodeId === clickedId) : null;
-            const belongs = currentNode && (currentNode.sourceIndices?.includes(idx) || currentNode.sourceIndex === idx);
-            const perFileActivation = (clickedId && belongs)
-              ? getNodeActivationDataFromJson(entry.json, clickedId)
-              : { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
-            return (
-              <div key={idx} className="bg-white rounded-lg border shadow-sm p-4 pb-8">
-                <h3 className="text-md font-semibold mb-3 flex items-center justify-center">
-                  <span
-                    className="inline-block rounded-full mr-2"
-                    style={{ width: 10, height: 10, backgroundColor: UNIQUE_GRAPH_COLORS[idx % UNIQUE_GRAPH_COLORS.length] }}
-                    title={entry.fileName}
-                  />
-                  <span className="truncate" title={entry.fileName}>{entry.fileName}</span>
-                  {clickedId && belongs && (
-                    <span className="text-xs font-normal text-blue-600 ml-2">(含该节点)</span>
+        <div className="space-y-4 mb-6">
+          {/* 所有位置模式切换按钮（多文件时） */}
+          {clickedId && (
+            <div className="flex justify-center">
+              <button
+                onClick={() => setShowAllPositions(!showAllPositions)}
+                className={`px-4 py-2 text-sm rounded transition-colors ${
+                  showAllPositions
+                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+                title={showAllPositions ? '显示单个位置的激活' : '显示所有位置的激活（合并）'}
+              >
+                {showAllPositions ? '单位置模式' : '所有位置模式'}
+              </button>
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {multiOriginalJsons.map((entry, idx) => {
+              const fileFen = extractFenFromCircuitJson(entry.json);
+              if (!fileFen) return null;
+              const fileMove = extractOutputMoveFromCircuitJson(entry.json);
+              // 判断当前选中节点是否属于该文件
+              const currentNode = clickedId ? displayLinkGraphData.nodes.find(n => n.nodeId === clickedId) : null;
+              const belongs = currentNode && (currentNode.sourceIndices?.includes(idx) || currentNode.sourceIndex === idx);
+              
+              // 获取该文件的激活数据
+              let perFileActivation: NodeActivationData = { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
+              if (clickedId && belongs) {
+                if (showAllPositions) {
+                  // 获取所有位置的激活数据（使用该文件的 JSON 数据）
+                  const allPosData = getAllPositionsActivationData(clickedId, entry.json);
+                  perFileActivation = allPosData || perFileActivation;
+                } else {
+                  // 获取单个位置的激活数据
+                  perFileActivation = getNodeActivationDataFromJson(entry.json, clickedId);
+                }
+              }
+              
+              return (
+                <div key={idx} className="bg-white rounded-lg border shadow-sm p-4 pb-8">
+                  <h3 className="text-md font-semibold mb-3 flex items-center justify-center">
+                    <span
+                      className="inline-block rounded-full mr-2"
+                      style={{ width: 10, height: 10, backgroundColor: UNIQUE_GRAPH_COLORS[idx % UNIQUE_GRAPH_COLORS.length] }}
+                      title={entry.fileName}
+                    />
+                    <span className="truncate" title={entry.fileName}>{entry.fileName}</span>
+                    {clickedId && belongs && (
+                      <span className="text-xs font-normal text-blue-600 ml-2">(含该节点)</span>
+                    )}
+                  </h3>
+                  {fileMove && (
+                    <div className="text-center mb-2 text-sm text-green-600 font-medium">
+                      输出移动: {fileMove} 🎯
+                    </div>
                   )}
-                </h3>
-                {fileMove && (
-                  <div className="text-center mb-2 text-sm text-green-600 font-medium">
-                    输出移动: {fileMove} 🎯
-                  </div>
-                )}
-                {clickedId && belongs && perFileActivation.activations && (
-                  <div className="text-center mb-2 text-sm text-purple-600">
-                    激活数据: {perFileActivation.activations.filter((v: number) => v !== 0).length} 个非零激活
-                    {perFileActivation.zPatternIndices && perFileActivation.zPatternValues &&
-                      `, ${perFileActivation.zPatternValues.length} 个Z模式连接`}
-                  </div>
-                )}
-                <ChessBoard
-                  fen={fileFen}
-                  size="medium"
-                  showCoordinates={true}
-                  move={fileMove || undefined}
-                  activations={belongs ? perFileActivation.activations : undefined}
-                  zPatternIndices={belongs ? perFileActivation.zPatternIndices : undefined}
-                  zPatternValues={belongs ? perFileActivation.zPatternValues : undefined}
-                  flip_activation={Boolean(fileFen && fileFen.split(' ')[1] === 'b')}
-                  autoFlipWhenBlack={true}
-                  sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
-                  analysisName={(perFileActivation?.nodeType || 'Circuit Node') + ` @${idx+1}`}
-                  moveColor={UNIQUE_GRAPH_COLORS[idx % UNIQUE_GRAPH_COLORS.length]}
-                />
-              </div>
-            );
-          })}
+                  {clickedId && belongs && perFileActivation.activations && (
+                    <div className="text-center mb-2 text-sm text-purple-600">
+                      {showAllPositions ? (
+                        <>
+                          所有位置合并激活: {perFileActivation.activations.filter((v: number) => v !== 0).length} 个非零激活
+                          {perFileActivation.zPatternIndices && perFileActivation.zPatternValues &&
+                            `, ${perFileActivation.zPatternValues.length} 个Z模式连接`}
+                          <span className="text-xs text-gray-500 ml-2">(取每个位置的最大激活值)</span>
+                        </>
+                      ) : (
+                        <>
+                          激活数据: {perFileActivation.activations.filter((v: number) => v !== 0).length} 个非零激活
+                          {perFileActivation.zPatternIndices && perFileActivation.zPatternValues &&
+                            `, ${perFileActivation.zPatternValues.length} 个Z模式连接`}
+                        </>
+                      )}
+                    </div>
+                  )}
+                  <ChessBoard
+                    fen={fileFen}
+                    size="medium"
+                    showCoordinates={true}
+                    move={fileMove || undefined}
+                    activations={belongs ? perFileActivation.activations : undefined}
+                    zPatternIndices={belongs ? perFileActivation.zPatternIndices : undefined}
+                    zPatternValues={belongs ? perFileActivation.zPatternValues : undefined}
+                    flip_activation={Boolean(fileFen && fileFen.split(' ')[1] === 'b')}
+                    autoFlipWhenBlack={true}
+                    sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
+                    analysisName={(perFileActivation?.nodeType || 'Circuit Node') + ` @${idx+1}`}
+                    moveColor={UNIQUE_GRAPH_COLORS[idx % UNIQUE_GRAPH_COLORS.length]}
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -2965,6 +3289,27 @@ export const CircuitVisualization = () => {
                       </span>
                     </div>
                   )}
+                  {/* Circuit 标注按钮 */}
+                  {currentNode && featureIndex !== undefined && (
+                    <button
+                      onClick={() => {
+                        setSelectedNodeForCircuit({
+                          nodeId: currentNode.nodeId,
+                          layer: layerIdx,
+                          feature: featureIndex,
+                          feature_type: currentNode.feature_type || '',
+                        });
+                        setShowCircuitInterpretation(true);
+                      }}
+                      className="inline-flex items-center px-3 py-2 bg-purple-500 text-white text-sm font-medium rounded-md hover:bg-purple-600 transition-colors"
+                      title="查看/管理该feature所属的circuit标注"
+                    >
+                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Circuit 标注
+                    </button>
+                  )}
                   {/* 跳转到Feature页面的链接 */}
                   {currentNode && featureIndex !== undefined && (
                     <Link
@@ -2993,6 +3338,37 @@ export const CircuitVisualization = () => {
           );
         })()}
       </div>
+
+      {/* Circuit Interpretation Modal */}
+      {showCircuitInterpretation && selectedNodeForCircuit && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-4 rounded shadow-lg">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+                <p className="mt-2 text-gray-600">Loading Circuit Interpretation...</p>
+              </div>
+            </div>
+          }
+        >
+          <CircuitInterpretation
+            node={selectedNodeForCircuit}
+            saeComboId={
+              (typeof window !== 'undefined' 
+                ? window.localStorage.getItem("bt4_sae_combo_id") 
+                : null) || 'k_30_e_16'
+            }
+            saeSeries="BT4-exp128"
+            getSaeName={getSaeNameForCircuit}
+            visible={showCircuitInterpretation}
+            onClose={() => {
+              console.log('[CircuitVisualization] CircuitInterpretation onClose called');
+              setShowCircuitInterpretation(false);
+              setSelectedNodeForCircuit(null);
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };
