@@ -322,10 +322,10 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   // 显示棋盘：
   // 1. 先按 flip 在垂直方向（上下）翻转整盘棋
-  // 2. 然后始终对每一行做左右镜像，这样棋盘和激活索引在左右方向上对齐
+  // 2. 只在黑方视角时对每一行做左右镜像，白方视角保持原样
   const displayBoard = useMemo(() => {
     const baseBoard = flip ? [...board].reverse() : board;
-    return baseBoard.map((row) => [...row].reverse());
+    return flip ? baseBoard.map((row) => [...row].reverse()) : baseBoard;
   }, [board, flip]);
 
   // 解析移动信息
@@ -337,17 +337,17 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   const getActualSquareIndex = (displayRow: number, col: number): number => {
     // 先还原垂直方向：displayRow → 实际行
     const actualRow = flip ? (7 - displayRow) : displayRow;
-    // 每一行都做了左右镜像：显示列 0 对应实际列 7，显示列 7 对应实际列 0
-    const actualCol = 7 - col;
+    // 只在黑方视角时做了左右镜像：显示列 0 对应实际列 7，显示列 7 对应实际列 0
+    const actualCol = flip ? (7 - col) : col;
     return getSquareIndex(actualRow, actualCol);
   };
 
   // 激活值索引映射 - 激活值数组按照标准棋盘坐标：a1=0, b1=1, ..., h8=63
   const getActivationIndex = (displayRow: number, col: number): number => {
-    // 先还原到“原始棋盘行”（在是否 flip 之后）
+    // 先还原到"原始棋盘行"（在是否 flip 之后）
     const originalRow = flip ? (7 - displayRow) : displayRow;
-    // 左右镜像：显示列 0 → 实际列 7
-    const actualCol = 7 - col;
+    // 只在黑方视角时做了左右镜像：显示列 0 → 实际列 7
+    const actualCol = flip ? (7 - col) : col;
 
     // 根据 flip_activation 参数决定是否在行方向上再做一次翻转
     if (flip_activation) {
@@ -366,8 +366,8 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     const actualCol = actualSquareIndex % 8;
     // 垂直方向：实际行 → 显示行
     const displayRow = flip ? (7 - actualRow) : actualRow;
-    // 水平方向：左右镜像
-    const displayCol = 7 - actualCol;
+    // 水平方向：只在黑方视角时做左右镜像
+    const displayCol = flip ? (7 - actualCol) : actualCol;
     return { row: displayRow, col: displayCol };
   };
 
