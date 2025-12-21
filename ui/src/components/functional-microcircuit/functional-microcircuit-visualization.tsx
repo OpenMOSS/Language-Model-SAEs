@@ -34,8 +34,32 @@ interface GlobalWeightData {
   feature_type: string;
   layer_idx: number;
   feature_idx: number;
-  features_in: Array<{ name: string; clerp?: string; rank?: number }>;
-  features_out: Array<{ name: string; clerp?: string; rank?: number }>;
+  feature_name: string;
+  features_in: Array<{ name: string; weight: number }>;
+  features_out: Array<{ name: string; weight: number }>;
+}
+
+interface BetweenFeaturesResult {
+  featureA: {
+    name: string;
+    layer: number;
+    featureIndex: number;
+    featureType: string;
+    featuresIn: Array<{ name: string; weight: number }>;
+    featuresOut: Array<{ name: string; weight: number }>;
+  };
+  featureB: {
+    name: string;
+    layer: number;
+    featureIndex: number;
+    featureType: string;
+    featuresIn: Array<{ name: string; weight: number }>;
+    featuresOut: Array<{ name: string; weight: number }>;
+  };
+  rankAInB: number | null; // Feature A 在 Feature B 的 features_in 中的排名
+  rankBInA: number | null; // Feature B 在 Feature A 的 features_out 中的排名
+  weightAInB: number | null; // Feature A 在 Feature B 的 features_in 中的权重
+  weightBInA: number | null; // Feature B 在 Feature A 的 features_out 中的权重
 }
 
 interface TopActivationData {
@@ -63,9 +87,24 @@ type FeatureNodeData = Record<string, unknown> & {
 };
 
 // Custom node component for features
-const FeatureNode = ({ data }: { data: FeatureNodeData }) => {
+const FeatureNode = ({ data, selected }: { 
+  data: FeatureNodeData & { isSecondSelection?: boolean }; 
+  selected?: boolean;
+}) => {
+  const isSecondSelection = data.isSecondSelection || false;
+  const borderColor = isSecondSelection 
+    ? 'border-green-500' 
+    : selected 
+    ? 'border-blue-500' 
+    : 'border-gray-300';
+  const bgColor = isSecondSelection
+    ? 'bg-green-50'
+    : selected
+    ? 'bg-blue-50'
+    : 'bg-white';
+
   return (
-    <div className="px-4 py-3 bg-white border-2 border-gray-300 rounded-lg shadow-md min-w-[200px]">
+    <div className={`px-4 py-3 ${bgColor} border-2 ${borderColor} rounded-lg shadow-md min-w-[200px]`}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center space-x-2">
           <div
@@ -113,11 +152,13 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
   // Interaction state
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeId2, setSelectedNodeId2] = useState<string | null>(null); // Second node for between-features analysis
   const [draggingFrom, setDraggingFrom] = useState<string | null>(null);
 
   // Global Weight state
   const [loadingGlobalWeights, setLoadingGlobalWeights] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
+  const [betweenFeaturesResult, setBetweenFeaturesResult] = useState<BetweenFeaturesResult | null>(null);
 
   // Top Activation state
   const [topActivations, setTopActivations] = useState<TopActivationData[]>([]);
@@ -346,8 +387,17 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
   // Handle node click
   const onNodeClick = useCallback((_event: React.MouseEvent, node: ReactFlowNode<FeatureNodeData>) => {
-    setSelectedNodeId(node.id === selectedNodeId ? null : node.id);
-  }, [selectedNodeId]);
+    // If Ctrl/Cmd is pressed, select as second node
+    if (_event.ctrlKey || _event.metaKey) {
+      setSelectedNodeId2(node.id === selectedNodeId2 ? null : node.id);
+    } else {
+      setSelectedNodeId(node.id === selectedNodeId ? null : node.id);
+      // Clear second selection if clicking first node
+      if (node.id === selectedNodeId) {
+        setSelectedNodeId2(null);
+      }
+    }
+  }, [selectedNodeId, selectedNodeId2]);
 
   // Handle node hover (for future use)
   const onNodeMouseEnter = useCallback((_event: React.MouseEvent, _node: ReactFlowNode<FeatureNodeData>) => {
@@ -451,8 +501,39 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     }
   }, []);
 
-  // Fetch Global Weight for a feature
-  const fetchGlobalWeight = useCallback(async (layer: number, featureIndex: number, featureType: string) => {
+  // Helper function to build feature name
+  const buildFeatureName = useCallback((featureType: string, layer: number, featureIndex: number): string => {
+    const typePrefix = featureType === 'lorsa' ? 'BT4_lorsa' : 'BT4_tc';
+    const layerSuffix = featureType === 'lorsa' ? 'A' : 'M';
+    // For k_30_e_16, add suffix
+    if (saeComboId === 'k_30_e_16') {
+      return `${typePrefix}_L${layer}${layerSuffix}_k30_e16#${featureIndex}`;
+    } else if (saeComboId === 'k_64_e_32') {
+      return `${typePrefix}_L${layer}${layerSuffix}_k64_e32#${featureIndex}`;
+    } else if (saeComboId === 'k_128_e_64') {
+      return `${typePrefix}_L${layer}${layerSuffix}_k128_e64#${featureIndex}`;
+    } else if (saeComboId === 'k_256_e_128') {
+      return `${typePrefix}_L${layer}${layerSuffix}_k256_e128#${featureIndex}`;
+    } else {
+      return `${typePrefix}_L${layer}${layerSuffix}#${featureIndex}`;
+    }
+  }, [saeComboId]);
+
+  // Helper function to find feature rank in a list
+  const findFeatureRank = useCallback((featureName: string, featureList: Array<{ name: string; weight: number }>): { rank: number | null; weight: number | null } => {
+    for (let i = 0; i < featureList.length; i++) {
+      if (featureList[i].name === featureName) {
+        return { rank: i + 1, weight: featureList[i].weight };
+      }
+    }
+    return { rank: null, weight: null };
+  }, []);
+
+  // Fetch Global Weight between two features
+  const fetchGlobalWeightBetweenFeatures = useCallback(async (
+    layerA: number, featureIndexA: number, featureTypeA: string,
+    layerB: number, featureIndexB: number, featureTypeB: string
+  ) => {
     if (!saeComboId) {
       alert('请先选择 SAE 组合');
       return;
@@ -464,59 +545,95 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       // Preload models first
       await preloadModels(saeComboId);
 
-      const params = new URLSearchParams({
+      // Fetch global weight for Feature A
+      setLoadingMessage('正在计算 Feature A 的全局权重...');
+      const paramsA = new URLSearchParams({
         model_name: 'lc0/BT4-1024x15x32h',
-        feature_type: featureType === 'lorsa' ? 'lorsa' : 'tc',
-        layer_idx: layer.toString(),
-        feature_idx: featureIndex.toString(),
+        feature_type: featureTypeA === 'lorsa' ? 'lorsa' : 'tc',
+        layer_idx: layerA.toString(),
+        feature_idx: featureIndexA.toString(),
         k: '100',
         sae_combo_id: saeComboId,
       });
 
-      let response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${params.toString()}`);
-      
-      // If 503 (not loaded), try preloading again
-      if (response.status === 503) {
+      let responseA = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${paramsA.toString()}`);
+      if (responseA.status === 503) {
         setLoadingMessage('模型未加载，正在自动加载...');
         await preloadModels(saeComboId);
-        setLoadingMessage('正在计算全局权重...');
-        response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${params.toString()}`);
+        setLoadingMessage('正在计算 Feature A 的全局权重...');
+        responseA = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${paramsA.toString()}`);
       }
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      if (!responseA.ok) {
+        throw new Error(`Failed to fetch Feature A: HTTP ${responseA.status}`);
       }
+      const dataA: GlobalWeightData = await responseA.json();
 
-      const data: GlobalWeightData = await response.json();
-      
-      // Store global weight for the feature
-      // For now, we'll use a simple metric - could be improved
-      const weight = data.features_in.length + data.features_out.length;
+      // Fetch global weight for Feature B
+      setLoadingMessage('正在计算 Feature B 的全局权重...');
+      const paramsB = new URLSearchParams({
+        model_name: 'lc0/BT4-1024x15x32h',
+        feature_type: featureTypeB === 'lorsa' ? 'lorsa' : 'tc',
+        layer_idx: layerB.toString(),
+        feature_idx: featureIndexB.toString(),
+        k: '100',
+        sae_combo_id: saeComboId,
+      });
 
-      // Update node data with global weight
-      setNodes((nds) => nds.map(node => {
-        const nodeData = node.data;
-        if (nodeData && nodeData.layer === layer && 
-            nodeData.featureIndex === featureIndex &&
-            nodeData.featureType === featureType) {
-          return {
-            ...node,
-            data: {
-              ...nodeData,
-              globalWeight: weight,
-            },
-          };
-        }
-        return node;
-      }));
+      let responseB = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${paramsB.toString()}`);
+      if (responseB.status === 503) {
+        setLoadingMessage('模型未加载，正在自动加载...');
+        await preloadModels(saeComboId);
+        setLoadingMessage('正在计算 Feature B 的全局权重...');
+        responseB = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${paramsB.toString()}`);
+      }
+      if (!responseB.ok) {
+        throw new Error(`Failed to fetch Feature B: HTTP ${responseB.status}`);
+      }
+      const dataB: GlobalWeightData = await responseB.json();
+
+      // Build feature names
+      const featureAName = buildFeatureName(featureTypeA, layerA, featureIndexA);
+      const featureBName = buildFeatureName(featureTypeB, layerB, featureIndexB);
+
+      // Find ranks
+      // Feature A 在 Feature B 的 features_in 中的排名（A 影响 B）
+      const rankAInB = findFeatureRank(featureAName, dataB.features_in);
+      // Feature B 在 Feature A 的 features_out 中的排名（A 影响 B）
+      const rankBInA = findFeatureRank(featureBName, dataA.features_out);
+
+      setBetweenFeaturesResult({
+        featureA: {
+          name: featureAName,
+          layer: layerA,
+          featureIndex: featureIndexA,
+          featureType: featureTypeA,
+          featuresIn: dataA.features_in,
+          featuresOut: dataA.features_out,
+        },
+        featureB: {
+          name: featureBName,
+          layer: layerB,
+          featureIndex: featureIndexB,
+          featureType: featureTypeB,
+          featuresIn: dataB.features_in,
+          featuresOut: dataB.features_out,
+        },
+        rankAInB: rankAInB.rank,
+        rankBInA: rankBInA.rank,
+        weightAInB: rankAInB.weight,
+        weightBInA: rankBInA.weight,
+      });
+
+      setLoadingMessage(null);
     } catch (err) {
-      console.error('Failed to fetch global weight:', err);
-      alert('获取全局权重失败: ' + (err instanceof Error ? err.message : '未知错误'));
+      console.error('Failed to fetch global weight between features:', err);
+      alert('获取两个特征之间的全局权重失败: ' + (err instanceof Error ? err.message : '未知错误'));
+      setBetweenFeaturesResult(null);
     } finally {
       setLoadingGlobalWeights(false);
       setLoadingMessage(null);
     }
-  }, [saeComboId, setNodes, preloadModels]);
+  }, [saeComboId, preloadModels, buildFeatureName, findFeatureRank]);
 
   // Fetch Top Activations for a feature
   const fetchTopActivations = useCallback(async (layer: number, featureIndex: number, featureType: string) => {
@@ -864,11 +981,16 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     }
   }, [editingLevel, levelInput, selectedCircuit, setNodes]);
 
-  // Get selected node
+  // Get selected nodes
   const selectedNode = useMemo(() => {
     if (!selectedNodeId) return null;
     return nodes.find(n => n.id === selectedNodeId);
   }, [selectedNodeId, nodes]);
+
+  const selectedNode2 = useMemo(() => {
+    if (!selectedNodeId2) return null;
+    return nodes.find(n => n.id === selectedNodeId2);
+  }, [selectedNodeId2, nodes]);
 
   return (
     <div className="space-y-6">
@@ -946,7 +1068,14 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
           <CardContent>
             <div className="h-[600px] border rounded-lg">
               <ReactFlow
-                nodes={nodes}
+                nodes={nodes.map(node => ({
+                  ...node,
+                  selected: node.id === selectedNodeId || node.id === selectedNodeId2,
+                  data: {
+                    ...node.data,
+                    isSecondSelection: node.id === selectedNodeId2,
+                  },
+                }))}
                 edges={edges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
@@ -972,51 +1101,118 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       {/* Selected Node Details */}
       {selectedNode && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Global Weight */}
+          {/* Global Weight Between Two Features */}
           <Card>
             <CardHeader>
-              <CardTitle>Global Weight Analysis</CardTitle>
+              <CardTitle>Global Weight Analysis (Between Two Features)</CardTitle>
+              <p className="text-sm text-gray-600 mt-2">
+                点击节点选择第一个特征，按住 Ctrl/Cmd 点击选择第二个特征
+              </p>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                <div className="flex items-center space-x-4">
+                {/* Selected Features Display */}
+                <div className="space-y-2">
+                  <div className="p-2 bg-blue-50 border border-blue-200 rounded">
+                    <p className="text-xs font-medium text-blue-900">Feature A (第一个):</p>
+                    <p className="text-sm text-blue-700">
+                      {selectedNode.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L{selectedNode.data?.layer} #{selectedNode.data?.featureIndex}
+                    </p>
+                  </div>
+                  {selectedNode2 ? (
+                    <div className="p-2 bg-green-50 border border-green-200 rounded">
+                      <p className="text-xs font-medium text-green-900">Feature B (第二个):</p>
+                      <p className="text-sm text-green-700">
+                        {selectedNode2.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L{selectedNode2.data?.layer} #{selectedNode2.data?.featureIndex}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="p-2 bg-gray-50 border border-gray-200 rounded">
+                      <p className="text-xs text-gray-500">按住 Ctrl/Cmd 点击另一个节点选择 Feature B</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Calculate Button */}
                 <Button
                   onClick={() => {
-                    const nodeData = selectedNode.data;
-                    if (nodeData) {
-                      fetchGlobalWeight(
-                        nodeData.layer,
-                        nodeData.featureIndex,
-                        nodeData.featureType
+                    if (!selectedNode2) {
+                      alert('请先选择第二个特征（按住 Ctrl/Cmd 点击节点）');
+                      return;
+                    }
+                    const nodeDataA = selectedNode.data;
+                    const nodeDataB = selectedNode2.data;
+                    if (nodeDataA && nodeDataB) {
+                      fetchGlobalWeightBetweenFeatures(
+                        nodeDataA.layer,
+                        nodeDataA.featureIndex,
+                        nodeDataA.featureType,
+                        nodeDataB.layer,
+                        nodeDataB.featureIndex,
+                        nodeDataB.featureType
                       );
                     }
                   }}
-                  disabled={loadingGlobalWeights}
+                  disabled={loadingGlobalWeights || !selectedNode2}
                   size="sm"
+                  className="w-full"
                 >
                   {loadingGlobalWeights ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      {loadingMessage || 'Loading...'}
+                      {loadingMessage || '计算中...'}
                     </>
                   ) : (
-                    'Load Global Weight'
+                    '计算两个特征之间的全局权重'
                   )}
                 </Button>
-              </div>
-              {loadingMessage && (
-                <div className="p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
-                  {loadingMessage}
-                </div>
-              )}
-              {selectedNode.data?.globalWeight !== undefined && (
-                <div className="p-3 bg-purple-50 border border-purple-200 rounded mt-2">
-                  <p className="text-sm font-medium text-purple-900">Global Weight:</p>
-                  <p className="text-lg font-bold text-purple-700">
-                    {selectedNode.data.globalWeight.toFixed(4)}
-                  </p>
-                </div>
-              )}
+
+                {loadingMessage && (
+                  <div className="p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
+                    {loadingMessage}
+                  </div>
+                )}
+
+                {/* Results Display */}
+                {betweenFeaturesResult && (
+                  <div className="space-y-3 mt-4">
+                    <div className="p-3 bg-purple-50 border border-purple-200 rounded">
+                      <p className="text-sm font-medium text-purple-900 mb-2">分析结果:</p>
+                      <div className="space-y-2 text-sm">
+                        <div>
+                          <span className="font-medium">Feature A → Feature B:</span>
+                          {betweenFeaturesResult.rankBInA !== null ? (
+                            <span className="ml-2">
+                              在 Feature A 的 <strong>features_out</strong> 中排名 <strong className="text-purple-700">#{betweenFeaturesResult.rankBInA}</strong>
+                              {betweenFeaturesResult.weightBInA !== null && (
+                                <span className="ml-2 text-gray-600">
+                                  (权重: {betweenFeaturesResult.weightBInA.toFixed(6)})
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="ml-2 text-gray-500">未在 Top 100 中找到</span>
+                          )}
+                        </div>
+                        <div>
+                          <span className="font-medium">Feature B ← Feature A:</span>
+                          {betweenFeaturesResult.rankAInB !== null ? (
+                            <span className="ml-2">
+                              在 Feature B 的 <strong>features_in</strong> 中排名 <strong className="text-purple-700">#{betweenFeaturesResult.rankAInB}</strong>
+                              {betweenFeaturesResult.weightAInB !== null && (
+                                <span className="ml-2 text-gray-600">
+                                  (权重: {betweenFeaturesResult.weightAInB.toFixed(6)})
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="ml-2 text-gray-500">未在 Top 100 中找到</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

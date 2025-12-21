@@ -10,7 +10,7 @@ import { FeatureCard } from "@/components/feature/feature-card";
 import { ChessBoard } from "@/components/chess/chess-board";
 import React from "react";
 import { SaeComboLoader } from "@/components/common/SaeComboLoader";
-import { useModelLoadingStatus } from "@/components/shared/model-loading-status";
+// import { useModelLoadingStatus } from "@/components/shared/model-loading-status";
 import { CircuitInterpretationCard } from "./circuit-interpretation-card";
 
 // 定义节点激活数据的类型
@@ -40,7 +40,7 @@ export const CircuitVisualization = () => {
     setHiddenIds,
   } = useCircuitState();
 
-  const { isLoaded: isSaeLoaded } = useModelLoadingStatus();
+  // 不再使用全局状态，改为直接检查后端状态（在 fetchTokenPredictions 中）
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
@@ -79,6 +79,7 @@ export const CircuitVisualization = () => {
   // Feature 激活显示模式：单个位置 vs 所有位置
   const [showAllPositions, setShowAllPositions] = useState(false); // 是否显示所有位置的激活
   const [allPositionsActivationData, setAllPositionsActivationData] = useState<NodeActivationData | null>(null); // 所有位置的合并激活数据
+  const [loadingAllPositions, setLoadingAllPositions] = useState(false); // 是否正在从后端加载所有位置数据
 
   // 多图支持：存放多份原始 JSON 及其文件名
   const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
@@ -1050,8 +1051,8 @@ export const CircuitVisualization = () => {
     return dictionary;
   }, [linkGraphData]);
 
-  // 获取该 feature 在所有位置的激活数据
-  const getAllPositionsActivationData = useCallback((nodeId: string | null, jsonData?: any): NodeActivationData | null => {
+  // 同步版本：只从文件中获取所有位置的激活数据（用于多文件模式）
+  const getAllPositionsActivationDataSync = useCallback((nodeId: string | null, jsonData?: any): NodeActivationData | null => {
     const dataToSearch = jsonData || originalCircuitJson;
     if (!nodeId || !dataToSearch) {
       return null;
@@ -1135,22 +1136,17 @@ export const CircuitVisualization = () => {
     const matchedRecords = candidateRecords.filter(rec => tryMatchRecord(rec, featureTypeForNode));
 
     if (matchedRecords.length === 0) {
-      console.log('❌ 未找到任何匹配的激活记录');
       return null;
     }
 
-    console.log(`✅ 找到 ${matchedRecords.length} 个位置的激活记录`);
-
     // 合并所有位置的激活值
-    // 策略：对于每个棋盘位置，取所有位置中该位置的最大激活值（绝对值）
     const mergedActivations = new Array(64).fill(0);
     const mergedZPatternIndices: number[][] = [];
     const mergedZPatternValues: number[] = [];
-    const zPatternMap = new Map<string, number>(); // 用于合并 zPattern 值
+    const zPatternMap = new Map<string, number>();
 
     for (const rec of matchedRecords) {
       if (rec.activations && Array.isArray(rec.activations) && rec.activations.length === 64) {
-        // 合并激活值：取最大值（绝对值）
         for (let i = 0; i < 64; i++) {
           const currentValue = mergedActivations[i];
           const newValue = rec.activations[i];
@@ -1160,7 +1156,6 @@ export const CircuitVisualization = () => {
         }
       }
 
-      // 合并 zPattern 数据
       if (rec.zPatternIndices && rec.zPatternValues && 
           Array.isArray(rec.zPatternIndices) && Array.isArray(rec.zPatternValues)) {
         for (let i = 0; i < rec.zPatternIndices.length; i++) {
@@ -1177,7 +1172,6 @@ export const CircuitVisualization = () => {
       }
     }
 
-    // 将 zPatternMap 转换回数组格式
     zPatternMap.forEach((value, key) => {
       const [qPos, kPos] = key.split('_').map(Number);
       mergedZPatternIndices.push([qPos, kPos]);
@@ -1193,6 +1187,184 @@ export const CircuitVisualization = () => {
     };
   }, [originalCircuitJson]);
 
+  // 从后端获取所有位置的激活数据
+  const fetchAllPositionsFromBackend = useCallback(async (
+    nodeId: string,
+    fen: string,
+    dictionary: string,
+    featureIndex: number
+  ): Promise<NodeActivationData | null> => {
+    try {
+      setLoadingAllPositions(true);
+      console.log('🔍 从后端获取所有位置数据:', { nodeId, fen, dictionary, featureIndex });
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/analyze_fen_all_positions`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ fen: fen.trim() }),
+        }
+      );
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `HTTP ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('✅ 从后端获取到所有位置数据:', data);
+      
+      // 合并所有位置的激活值（取每个格子的最大激活值，不累加）
+      const mergedActivations = new Array(64).fill(0);
+      const mergedZPatternIndices: number[][] = [];
+      const mergedZPatternValues: number[] = [];
+      const zPatternMap = new Map<string, number>();
+      
+      if (data.positions && Array.isArray(data.positions)) {
+        for (const posData of data.positions) {
+          if (posData.activations && Array.isArray(posData.activations) && posData.activations.length === 64) {
+            // 合并激活值：取每个格子的最大激活值（按绝对值，保留符号）
+            for (let i = 0; i < 64; i++) {
+              const newValue = posData.activations[i];
+              if (newValue !== 0) {
+                const currentValue = mergedActivations[i];
+                // 如果当前值为0或新值的绝对值更大，则更新为新值
+                if (currentValue === 0 || Math.abs(newValue) > Math.abs(currentValue)) {
+                  mergedActivations[i] = newValue;
+                }
+              }
+            }
+          }
+          
+          // 合并 zPattern 数据 - 处理所有位置的z_pattern，不管激活值是否为0
+          // 因为z_pattern是基于query位置的attention pattern，即使激活值为0也可能有z_pattern
+          if (posData.z_pattern_indices && posData.z_pattern_values && 
+              Array.isArray(posData.z_pattern_indices) && Array.isArray(posData.z_pattern_values) &&
+              posData.z_pattern_indices.length > 0 && posData.z_pattern_values.length > 0) {
+            for (let i = 0; i < posData.z_pattern_indices.length; i++) {
+              const indices = posData.z_pattern_indices[i];
+              const value = posData.z_pattern_values[i];
+              if (Array.isArray(indices) && indices.length === 2) {
+                const [queryPos, keyPos] = indices;
+                // 确保位置索引在有效范围内
+                if (queryPos >= 0 && queryPos < 64 && keyPos >= 0 && keyPos < 64) {
+                  const key = `${queryPos}_${keyPos}`;
+                  const existingValue = zPatternMap.get(key);
+                  // 对于相同的[query_pos, key_pos]对，保留绝对值最大的值
+                  if (existingValue === undefined || Math.abs(value) > Math.abs(existingValue)) {
+                    zPatternMap.set(key, value);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      console.log('🔍 合并后的z_pattern数据:', {
+        totalZPatterns: zPatternMap.size,
+        sampleKeys: Array.from(zPatternMap.keys()).slice(0, 5),
+        sampleValues: Array.from(zPatternMap.values()).slice(0, 5)
+      });
+      
+      // 将 zPatternMap 转换回数组格式
+      zPatternMap.forEach((value, key) => {
+        const [qPos, kPos] = key.split('_').map(Number);
+        mergedZPatternIndices.push([qPos, kPos]);
+        mergedZPatternValues.push(value);
+      });
+      
+      console.log('✅ 合并完成，z_pattern统计:', {
+        totalZPatterns: mergedZPatternIndices.length,
+        sampleIndices: mergedZPatternIndices.slice(0, 5),
+        sampleValues: mergedZPatternValues.slice(0, 5),
+        hasActivations: mergedActivations.some(v => v !== 0)
+      });
+      
+      // 获取节点类型
+      const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
+      const nodeType = currentNode?.feature_type;
+      
+      const result = {
+        activations: mergedActivations,
+        zPatternIndices: mergedZPatternIndices.length > 0 ? mergedZPatternIndices : undefined,
+        zPatternValues: mergedZPatternValues.length > 0 ? mergedZPatternValues : undefined,
+        nodeType: nodeType,
+        clerp: (currentNode as any)?.clerp,
+      };
+      
+      console.log('📤 返回的NodeActivationData:', {
+        hasActivations: !!result.activations,
+        activationsLength: result.activations?.length,
+        hasZPatternIndices: !!result.zPatternIndices,
+        zPatternIndicesLength: result.zPatternIndices?.length,
+        hasZPatternValues: !!result.zPatternValues,
+        zPatternValuesLength: result.zPatternValues?.length
+      });
+      
+      return result;
+    } catch (error) {
+      console.error('❌ 从后端获取所有位置数据失败:', error);
+      return null;
+    } finally {
+      setLoadingAllPositions(false);
+    }
+  }, [linkGraphData]);
+
+  // 获取该 feature 在所有位置的激活数据
+  // 注意：在所有位置模式下，直接调用后端API获取数据，不从JSON文件读取
+  const getAllPositionsActivationData = useCallback(async (nodeId: string | null, _jsonData?: any): Promise<NodeActivationData | null> => {
+    if (!nodeId) {
+      return null;
+    }
+
+    // 解析 node_id -> rawLayer, featureOrHead
+    const parseFromNodeId = (id: string) => {
+      const parts = id.split('_');
+      const rawLayer = Number(parts[0]) || 0;
+      const featureOrHead = Number(parts[1]) || 0;
+      const layerForActivation = Math.floor(rawLayer / 2);
+      return { rawLayer, layerForActivation, featureOrHead };
+    };
+    const parsed = parseFromNodeId(nodeId);
+
+    // 获取节点类型（用于确定是LoRSA还是Transcoder）
+    const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
+    const featureTypeForNode = currentNode?.feature_type;
+
+    // 直接调用后端API获取所有位置的数据
+    console.log('🔍 所有位置模式：直接从后端API获取数据，跳过JSON文件查找');
+    const fen = extractFenFromPrompt();
+    if (!fen) {
+      console.log('❌ 无法提取FEN，无法从后端获取数据');
+      return null;
+    }
+
+    // 获取字典名称
+    const isLorsa = featureTypeForNode?.toLowerCase() === 'lorsa';
+    const dictionary = getDictionaryName(parsed.layerForActivation, isLorsa);
+    
+    // 从后端获取数据
+    const backendData = await fetchAllPositionsFromBackend(
+      nodeId,
+      fen,
+      dictionary,
+      parsed.featureOrHead
+    );
+    
+    if (backendData) {
+      console.log('✅ 从后端成功获取所有位置数据（包含z_pattern）');
+      return backendData;
+    }
+
+    console.log('❌ 从后端获取所有位置数据失败');
+    return null;
+  }, [linkGraphData, extractFenFromPrompt, getDictionaryName, fetchAllPositionsFromBackend]);
+
   // 提取相关数据
   const fen = extractFenFromPrompt();
   const outputMove = extractOutputMove();
@@ -1207,10 +1379,18 @@ export const CircuitVisualization = () => {
   // 当点击节点或切换模式时，更新所有位置的激活数据
   useEffect(() => {
     if (clickedId && showAllPositions) {
-      const allPosData = getAllPositionsActivationData(clickedId);
-      setAllPositionsActivationData(allPosData);
+      setLoadingAllPositions(true);
+      getAllPositionsActivationData(clickedId).then((allPosData) => {
+        setAllPositionsActivationData(allPosData);
+        setLoadingAllPositions(false);
+      }).catch((error) => {
+        console.error('获取所有位置数据失败:', error);
+        setAllPositionsActivationData(null);
+        setLoadingAllPositions(false);
+      });
     } else {
       setAllPositionsActivationData(null);
+      setLoadingAllPositions(false);
     }
   }, [clickedId, showAllPositions, getAllPositionsActivationData]);
 
@@ -1566,11 +1746,76 @@ export const CircuitVisualization = () => {
     }
   }, [linkGraphData, getDictionaryName]);
 
+  // 检查 SAE 是否已加载（直接检查后端状态）
+  const checkSaeLoaded = useCallback(async (): Promise<boolean> => {
+    try {
+      const saeComboId = typeof window !== 'undefined' 
+        ? window.localStorage.getItem("bt4_sae_combo_id") 
+        : null;
+      
+      if (!saeComboId) {
+        console.warn('未找到 sae_combo_id，请先加载 SAE 组合');
+        return false;
+      }
+      
+      const params = new URLSearchParams({
+        model_name: 'lc0/BT4-1024x15x32h',
+        sae_combo_id: saeComboId,
+      });
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/circuit/loading_logs?${params.toString()}`
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        const logs = data.logs || [];
+        
+        // 如果正在加载，返回 false
+        if (data.is_loading === true) {
+          console.log('SAE 正在加载中...');
+          return false;
+        }
+        
+        // 检查是否有成功加载的日志（包含完成消息）
+        const hasSuccessLog = logs.some((log: { message: string }) => 
+          log.message.includes('✅ 预加载完成') || 
+          log.message.includes('预加载完成') ||
+          log.message.includes('already_loaded') ||
+          log.message.includes('已就绪')
+        );
+        
+        // 如果有成功日志，说明已加载
+        if (hasSuccessLog) {
+          console.log('✅ SAE 已加载（从日志确认）');
+          return true;
+        }
+        
+        // 如果没有日志，说明可能还没有加载过
+        if (logs.length === 0) {
+          console.warn('未找到加载日志，SAE 可能未加载');
+          return false;
+        }
+        
+        // 如果有日志但不在加载中，且没有成功消息，可能是加载失败或正在加载
+        console.warn('SAE 状态不明确，日志存在但无成功消息');
+        return false;
+      }
+      
+      return false;
+    } catch (error) {
+      console.warn('检查 SAE 加载状态失败:', error);
+      return false;
+    }
+  }, []);
+
   // 获取 Token Predictions 数据的函数
   const fetchTokenPredictions = useCallback(async (nodeId: string, currentSteeringScale?: number) => {
     if (!nodeId || !fen) return;
 
-    if (!isSaeLoaded) {
+    // 直接检查后端状态，而不是依赖全局状态
+    const saeLoaded = await checkSaeLoaded();
+    if (!saeLoaded) {
       console.warn("TC/LoRSA 未加载，跳过 steering_analysis 调用");
       alert("请先在上方加载 TC/LoRSA 组合（SaeComboLoader），再使用 steering 功能。");
       setTokenPredictions(null);
@@ -1624,7 +1869,12 @@ export const CircuitVisualization = () => {
       );
       
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+        const errorText = await response.text();
+        // 如果是503错误，说明模型未加载
+        if (response.status === 503) {
+          alert("请先在上方加载 TC/LoRSA 组合（SaeComboLoader），再使用 steering 功能。");
+        }
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
       
       const result = await response.json();
@@ -1639,7 +1889,7 @@ export const CircuitVisualization = () => {
     } finally {
       setLoadingTokenPredictions(false);
     }
-  }, [fen, linkGraphData, isSaeLoaded, steeringScale]);
+  }, [fen, linkGraphData, steeringScale, checkSaeLoaded]);
 
   // 当点击节点时获取 Top Activation 数据（Token Predictions 改为手动触发）
   useEffect(() => {
@@ -2591,6 +2841,14 @@ export const CircuitVisualization = () => {
                 输出移动: {outputMove} 🎯
               </div>
             )}
+            {clickedId && showAllPositions && loadingAllPositions && (
+              <div className="text-center mb-2 text-sm text-blue-600">
+                <div className="flex items-center justify-center space-x-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                  <span>正在从后端加载所有位置的激活数据...</span>
+                </div>
+              </div>
+            )}
             {clickedId && displayActivationData && displayActivationData.activations && (
               <div className="text-center mb-2 text-sm text-purple-600">
                 {showAllPositions ? (
@@ -2599,7 +2857,6 @@ export const CircuitVisualization = () => {
                     {displayActivationData.zPatternIndices && displayActivationData.zPatternValues && 
                       `, ${displayActivationData.zPatternValues.length} 个Z模式连接`
                     }
-                    <span className="text-xs text-gray-500 ml-2">(取每个位置的最大激活值)</span>
                   </>
                 ) : (
                   <>
@@ -2704,7 +2961,9 @@ export const CircuitVisualization = () => {
               if (clickedId && belongs) {
                 if (showAllPositions) {
                   // 获取所有位置的激活数据（使用该文件的 JSON 数据）
-                  const allPosData = getAllPositionsActivationData(clickedId, entry.json);
+                  // 注意：这里使用同步版本的函数，只从文件中查找，不调用后端
+                  // 如果需要完整数据，会在单文件模式下通过 useEffect 异步加载
+                  const allPosData = getAllPositionsActivationDataSync(clickedId, entry.json);
                   perFileActivation = allPosData || perFileActivation;
                 } else {
                   // 获取单个位置的激活数据
@@ -2737,7 +2996,6 @@ export const CircuitVisualization = () => {
                           所有位置合并激活: {perFileActivation.activations.filter((v: number) => v !== 0).length} 个非零激活
                           {perFileActivation.zPatternIndices && perFileActivation.zPatternValues &&
                             `, ${perFileActivation.zPatternValues.length} 个Z模式连接`}
-                          <span className="text-xs text-gray-500 ml-2">(取每个位置的最大激活值)</span>
                         </>
                       ) : (
                         <>

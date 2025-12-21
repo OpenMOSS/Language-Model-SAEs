@@ -22,6 +22,7 @@ interface GlobalWeightResult {
   feature_type: string;
   layer_idx: number;
   feature_idx: number;
+  activation_type?: string;
   feature_name: string;
   features_in: GlobalWeightFeature[];
   features_out: GlobalWeightFeature[];
@@ -46,6 +47,7 @@ export const GlobalWeightPage: React.FC = () => {
   const [featureIdx, setFeatureIdx] = useState<number>(initialFeatureIdx);
   const [saeComboId, setSaeComboId] = useState<string | undefined>(initialSaeComboId);
   const [k, setK] = useState<number>(100);
+  const [activationType, setActivationType] = useState<'max' | 'mean'>('mean');
   
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
@@ -75,6 +77,16 @@ export const GlobalWeightPage: React.FC = () => {
   const [isSavingCurrentFeatureInterpretation, setIsSavingCurrentFeatureInterpretation] = useState(false);
   const [syncingCurrentFeatureInterpretation, setSyncingCurrentFeatureInterpretation] = useState(false);
   
+  // 特征查询相关状态
+  const [searchFeatureType, setSearchFeatureType] = useState<'tc' | 'lorsa'>('tc');
+  const [searchLayerIdx, setSearchLayerIdx] = useState<number>(0);
+  const [searchFeatureIdx, setSearchFeatureIdx] = useState<number>(0);
+  const [searchResult, setSearchResult] = useState<{
+    foundInFeaturesIn: boolean;
+    foundInFeaturesOut: boolean;
+    featuresInInfo: { rank: number; weight: number; name: string } | null;
+    featuresOutInfo: { rank: number; weight: number; name: string } | null;
+  } | null>(null);
 
   // 当URL参数变化时更新状态
   useEffect(() => {
@@ -237,6 +249,7 @@ export const GlobalWeightPage: React.FC = () => {
         layer_idx: layerIdx.toString(),
         feature_idx: featureIdx.toString(),
         k: k.toString(),
+        activation_type: activationType,
       });
       
       params.append('sae_combo_id', currentSaeComboId);
@@ -1120,6 +1133,55 @@ export const GlobalWeightPage: React.FC = () => {
     }
   };
 
+  // 查询特征在 Features In 和 Features Out 中的排名和权重
+  const searchFeature = useCallback(() => {
+    if (!result) {
+      alert('请先计算全局权重');
+      return;
+    }
+
+    // 构建特征名称
+    const featureTypePrefix = searchFeatureType === 'lorsa' ? 'BT4_lorsa' : 'BT4_tc';
+    const layerSuffix = searchFeatureType === 'lorsa' ? 'A' : 'M';
+    const featureName = `${featureTypePrefix}_L${searchLayerIdx}${layerSuffix}_k30_e16#${searchFeatureIdx}`;
+
+    // 在 Features In 中查找
+    const featuresInMatch = result.features_in.find(f => f.name === featureName);
+    const featuresInInfo = featuresInMatch ? {
+      rank: featuresWithClerp.get(featureName)?.rank || 0,
+      weight: featuresInMatch.weight,
+      name: featureName
+    } : null;
+
+    // 在 Features Out 中查找
+    const featuresOutMatch = result.features_out.find(f => f.name === featureName);
+    const featuresOutInfo = featuresOutMatch ? {
+      rank: featuresWithClerp.get(featureName)?.rank || 0,
+      weight: featuresOutMatch.weight,
+      name: featureName
+    } : null;
+
+    setSearchResult({
+      foundInFeaturesIn: !!featuresInMatch,
+      foundInFeaturesOut: !!featuresOutMatch,
+      featuresInInfo,
+      featuresOutInfo
+    });
+
+    // 如果找到了，自动选中该特征
+    if (featuresInMatch || featuresOutMatch) {
+      const parsed = parseFeatureName(featureName);
+      if (parsed) {
+        setSelectedFeatureName(featureName);
+        setSelectedFeatureInfo(parsed);
+        
+        // 获取 Top Activation 和 clerp
+        fetchTopActivations(parsed.layerIdx, parsed.featureIdx, parsed.featureType === 'lorsa');
+        fetchClerp(parsed.layerIdx, parsed.featureIdx, parsed.featureType === 'lorsa');
+      }
+    }
+  }, [result, searchFeatureType, searchLayerIdx, searchFeatureIdx, featuresWithClerp, parseFeatureName, fetchTopActivations, fetchClerp]);
+
   return (
     <div className="min-h-screen bg-background">
       <AppNavbar />
@@ -1144,7 +1206,7 @@ export const GlobalWeightPage: React.FC = () => {
             <CardTitle>参数设置</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="feature_type">特征类型</Label>
                 <Select
@@ -1182,6 +1244,22 @@ export const GlobalWeightPage: React.FC = () => {
                   value={featureIdx}
                   onChange={(e) => setFeatureIdx(parseInt(e.target.value) || 0)}
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="activation_type">激活类型</Label>
+                <Select
+                  value={activationType}
+                  onValueChange={(value) => setActivationType(value as 'max' | 'mean')}
+                >
+                  <SelectTrigger id="activation_type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="max">Max Activation</SelectItem>
+                    <SelectItem value="mean">Mean Activation</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-2">
@@ -1225,6 +1303,128 @@ export const GlobalWeightPage: React.FC = () => {
 
         {result && (
           <div className="space-y-6">
+            {/* 特征查询卡片 */}
+            <Card className="border-blue-200 bg-blue-50/50">
+              <CardHeader>
+                <CardTitle>查询特征排名和权重</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  在 Features In 和 Features Out 中查找指定特征的排名和权重
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="search_feature_type">特征类型</Label>
+                    <Select
+                      value={searchFeatureType}
+                      onValueChange={(value) => setSearchFeatureType(value as 'tc' | 'lorsa')}
+                    >
+                      <SelectTrigger id="search_feature_type">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="tc">TC (Transcoder)</SelectItem>
+                        <SelectItem value="lorsa">LoRSA</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="search_layer_idx">层索引</Label>
+                    <Input
+                      id="search_layer_idx"
+                      type="number"
+                      min="0"
+                      max="14"
+                      value={searchLayerIdx}
+                      onChange={(e) => setSearchLayerIdx(parseInt(e.target.value) || 0)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="search_feature_idx">特征索引</Label>
+                    <Input
+                      id="search_feature_idx"
+                      type="number"
+                      min="0"
+                      value={searchFeatureIdx}
+                      onChange={(e) => setSearchFeatureIdx(parseInt(e.target.value) || 0)}
+                    />
+                  </div>
+
+                  <div className="space-y-2 flex items-end">
+                    <Button onClick={searchFeature} className="w-full">
+                      查询
+                    </Button>
+                  </div>
+                </div>
+
+                {/* 查询结果 */}
+                {searchResult && (
+                  <div className="mt-4 p-4 bg-white rounded-lg border border-blue-200">
+                    <h4 className="font-semibold mb-3 text-blue-900">查询结果</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className={`p-3 rounded ${searchResult.foundInFeaturesIn ? 'bg-green-50 border border-green-300' : 'bg-gray-50 border border-gray-300'}`}>
+                        <div className="font-medium text-sm mb-2">
+                          Features In (输入特征)
+                        </div>
+                        {searchResult.foundInFeaturesIn && searchResult.featuresInInfo ? (
+                          <div className="space-y-1 text-sm">
+                            <div>
+                              <span className="font-medium">特征名称:</span>{' '}
+                              <span className="font-mono text-xs">{searchResult.featuresInInfo.name}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">排名:</span>{' '}
+                              <span className="text-green-700 font-semibold">
+                                #{searchResult.featuresInInfo.rank > 0 ? searchResult.featuresInInfo.rank : '未计算'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="font-medium">权重:</span>{' '}
+                              <span className="text-green-700 font-semibold">
+                                {searchResult.featuresInInfo.weight.toFixed(6)}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-500">未找到该特征</div>
+                        )}
+                      </div>
+
+                      <div className={`p-3 rounded ${searchResult.foundInFeaturesOut ? 'bg-green-50 border border-green-300' : 'bg-gray-50 border border-gray-300'}`}>
+                        <div className="font-medium text-sm mb-2">
+                          Features Out (输出特征)
+                        </div>
+                        {searchResult.foundInFeaturesOut && searchResult.featuresOutInfo ? (
+                          <div className="space-y-1 text-sm">
+                            <div>
+                              <span className="font-medium">特征名称:</span>{' '}
+                              <span className="font-mono text-xs">{searchResult.featuresOutInfo.name}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">排名:</span>{' '}
+                              <span className="text-green-700 font-semibold">
+                                #{searchResult.featuresOutInfo.rank > 0 ? searchResult.featuresOutInfo.rank : '未计算'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="font-medium">权重:</span>{' '}
+                              <span className="text-green-700 font-semibold">
+                                {searchResult.featuresOutInfo.weight.toFixed(6)}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-500">未找到该特征</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -1254,6 +1454,9 @@ export const GlobalWeightPage: React.FC = () => {
                   <p><strong>类型:</strong> {result.feature_type === 'tc' ? 'TC (Transcoder)' : 'LoRSA'}</p>
                   <p><strong>层:</strong> {result.layer_idx}</p>
                   <p><strong>特征索引:</strong> {result.feature_idx}</p>
+                  {result.activation_type && (
+                    <p><strong>激活类型:</strong> {result.activation_type === 'max' ? 'Max Activation' : 'Mean Activation'}</p>
+                  )}
                 </div>
                 
                 {currentFeatureExpanded && (
@@ -1418,11 +1621,18 @@ export const GlobalWeightPage: React.FC = () => {
                       const parsed = parseFeatureName(feature.name);
                       const featureTypeLabel = parsed?.featureType === 'lorsa' ? 'LoRSA' : 'TC';
                       
+                      // 检查是否是查询结果
+                      const isSearchResult = searchResult && (
+                        (searchResult.foundInFeaturesIn && searchResult.featuresInInfo?.name === feature.name)
+                      );
+                      
                       return (
                         <div
                           key={idx}
                           className={`p-2 rounded border hover:bg-muted cursor-pointer transition-colors ${
                             selectedFeatureName === feature.name ? 'bg-blue-100 border-blue-500' : ''
+                          } ${
+                            isSearchResult ? 'bg-green-100 border-green-500 ring-2 ring-green-300' : ''
                           }`}
                           onClick={() => handleFeatureClick(feature.name)}
                           title="点击查看该特征的 Top Activation"
@@ -1474,11 +1684,18 @@ export const GlobalWeightPage: React.FC = () => {
                       const parsed = parseFeatureName(feature.name);
                       const featureTypeLabel = parsed?.featureType === 'lorsa' ? 'LoRSA' : 'TC';
                       
+                      // 检查是否是查询结果
+                      const isSearchResult = searchResult && (
+                        (searchResult.foundInFeaturesOut && searchResult.featuresOutInfo?.name === feature.name)
+                      );
+                      
                       return (
                         <div
                           key={idx}
                           className={`p-2 rounded border hover:bg-muted cursor-pointer transition-colors ${
                             selectedFeatureName === feature.name ? 'bg-blue-100 border-blue-500' : ''
+                          } ${
+                            isSearchResult ? 'bg-green-100 border-green-500 ring-2 ring-green-300' : ''
                           }`}
                           onClick={() => handleFeatureClick(feature.name)}
                           title="点击查看该特征的 Top Activation"

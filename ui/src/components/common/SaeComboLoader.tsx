@@ -27,6 +27,7 @@ interface LoadingLogsResponse {
   sae_combo_id: string;
   logs: { timestamp: number; message: string }[];
   total_count: number;
+  is_loaded?: boolean;  // 新增：后端实际缓存检查结果
 }
 
 const LOCAL_STORAGE_KEY = "bt4_sae_combo_id";
@@ -67,9 +68,8 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
           (backendCombos.length > 0 ? backendCombos[0].id : null);
 
         setSelectedId(initialId);
-        setLoadedId(data.current_id ?? initialId);
         
-        // 立即获取该组合的历史日志（跨页面共享）
+        // 立即获取该组合的历史日志（跨页面共享），并验证是否真的已加载
         if (initialId) {
           try {
             const logParams = new URLSearchParams({
@@ -82,14 +82,39 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
               const allLogs = logData.logs ?? [];
               const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
               setLogs(sliced);
+              
               // 同步加载状态
               if (logData.is_loading) {
                 setIsLoading(true);
+              } else {
+                setIsLoading(false);
               }
+              
+              // 使用后端返回的 is_loaded 字段来判断是否真的已加载（实际缓存检查）
+              // 这是最可靠的判断方式，因为后端会实际检查缓存是否存在
+              if (logData.is_loaded === true && !logData.is_loading) {
+                // 确认已加载，设置 loadedId
+                setLoadedId(initialId);
+                console.log('✅ 确认 SAE 组合已加载（缓存验证）:', initialId);
+              } else {
+                // 未加载或状态不明确，不设置 loadedId
+                setLoadedId(null);
+                console.log('⚠️ SAE 组合未加载或状态不明确:', initialId, {
+                  is_loaded: logData.is_loaded,
+                  is_loading: logData.is_loading
+                });
+              }
+            } else {
+              // 如果获取日志失败，不设置 loadedId
+              setLoadedId(null);
             }
           } catch (logErr) {
             console.warn("Failed to fetch initial loading logs:", logErr);
+            // 获取日志失败时，不设置 loadedId
+            setLoadedId(null);
           }
+        } else {
+          setLoadedId(null);
         }
       } catch (err) {
         console.error("Failed to fetch SAE combos:", err);
@@ -123,6 +148,18 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
             setIsLoading(true);
           } else if (!data.is_loading && isLoading) {
             setIsLoading(false);
+          }
+          // 同步 loadedId 状态（基于实际缓存检查）
+          if (data.is_loaded === true && !data.is_loading) {
+            // 确认已加载，设置 loadedId
+            if (selectedId && selectedId !== loadedId) {
+              setLoadedId(selectedId);
+            }
+          } else if (data.is_loaded === false) {
+            // 如果缓存不存在，且当前选中的组合被认为是已加载的，清除 loadedId
+            if (loadedId === selectedId) {
+              setLoadedId(null);
+            }
           }
         }
       } catch (err) {
@@ -180,11 +217,11 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
       }
     }
     
+    // 每次重新加载前清空本地日志缓存，避免遗留旧组合的日志
+    setLogs([]);
     setIsLoading(true);
+    
     try {
-      // 每次重新加载前清空本地日志缓存，避免遗留旧组合的日志
-      setLogs([]);
-
       const body = {
         model_name: "lc0/BT4-1024x15x32h",
         sae_combo_id: selectedId,
@@ -201,14 +238,21 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
         throw new Error(`HTTP ${res.status}: ${text}`);
       }
       const data: PreloadResponse = await res.json();
-      setLoadedId(data.sae_combo_id);
       setCurrentServerId(data.sae_combo_id);
       window.localStorage.setItem(LOCAL_STORAGE_KEY, data.sae_combo_id);
+      // 注意：不在这里直接设置 loadedId 和 isLoading
+      // 让轮询机制通过检查后端的 is_loading 和 is_loaded 字段来更新状态
+      // 这样可以确保只有在实际缓存存在时才显示"已加载"
     } catch (err) {
       console.error("Failed to preload SAE models:", err);
-    } finally {
+      // 加载失败时，清除状态
       setIsLoading(false);
+      if (loadedId === selectedId) {
+        setLoadedId(null);
+      }
     }
+    // 注意：不在 finally 中设置 isLoading = false
+    // 因为加载是异步的，轮询机制会根据后端的 is_loading 字段来更新状态
   }, [selectedId, loadedId, isLoading, backendBase]);
 
   const canReload = selectedId != null && selectedId !== loadedId && !isLoading;
@@ -254,6 +298,12 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
                     setIsLoading(true);
                   } else {
                     setIsLoading(false);
+                  }
+                  // 同步 loadedId 状态（基于实际缓存检查）
+                  if (data.is_loaded === true && !data.is_loading) {
+                    setLoadedId(value);
+                  } else {
+                    setLoadedId(null);
                   }
                 }
               } catch (err) {
