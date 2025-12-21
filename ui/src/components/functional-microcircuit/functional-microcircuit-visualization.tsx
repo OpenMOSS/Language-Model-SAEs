@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ReactFlow,
   Node as ReactFlowNode,
@@ -117,6 +117,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
   // Global Weight state
   const [loadingGlobalWeights, setLoadingGlobalWeights] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
 
   // Top Activation state
   const [topActivations, setTopActivations] = useState<TopActivationData[]>([]);
@@ -130,13 +131,31 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
   const [editingLevel, setEditingLevel] = useState<{ featureId: string; level: number } | null>(null);
   const [levelInput, setLevelInput] = useState<string>('0');
 
-  // Get SAE combo ID
-  const saeComboId = typeof window !== 'undefined' 
-    ? window.localStorage.getItem('bt4_sae_combo_id') || undefined
-    : undefined;
+  // Get SAE combo ID (use useState to avoid re-reading on every render)
+  const [saeComboId, setSaeComboId] = useState<string | undefined>(() => {
+    if (typeof window !== 'undefined') {
+      return window.localStorage.getItem('bt4_sae_combo_id') || undefined;
+    }
+    return undefined;
+  });
+
+  // Listen for localStorage changes
+  useEffect(() => {
+    const handleStorageChange = () => {
+      if (typeof window !== 'undefined') {
+        const newComboId = window.localStorage.getItem('bt4_sae_combo_id') || undefined;
+        setSaeComboId(newComboId);
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   // Load all circuits
   const loadCircuits = useCallback(async () => {
+    if (!saeComboId) return; // Don't load if no combo ID
+    
     setLoadingCircuits(true);
     setError(null);
     try {
@@ -243,10 +262,21 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     setEdges(graphEdges);
   }, [setNodes, setEdges]);
 
-  // Load circuits on mount
+  // Load circuits on mount (only once)
+  // 使用 ref 来跟踪是否已经加载过，避免重复加载
+  const hasLoadedCircuitsRef = useRef(false);
+  
   useEffect(() => {
-    loadCircuits();
-  }, [loadCircuits]);
+    if (saeComboId && !hasLoadedCircuitsRef.current) {
+      hasLoadedCircuitsRef.current = true;
+      loadCircuits();
+    } else if (!saeComboId) {
+      // 如果 saeComboId 被清空，重置标志
+      hasLoadedCircuitsRef.current = false;
+    }
+    // 只在 saeComboId 变化时重新加载，避免频繁调用
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saeComboId]);
 
   // Convert circuit when selected circuit changes
   useEffect(() => {
@@ -328,12 +358,112 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     // Can be used for hover effects in the future
   }, []);
 
+  // Preload models before fetching global weight
+  const preloadModels = useCallback(async (comboId: string): Promise<void> => {
+    setLoadingMessage('正在检查模型加载状态...');
+    
+    // Check loading status
+    const checkLoadingStatus = async (): Promise<{ isLoading: boolean; logs?: Array<{ timestamp: number; message: string }> }> => {
+      try {
+        const logParams = new URLSearchParams({
+          model_name: 'lc0/BT4-1024x15x32h',
+          sae_combo_id: comboId,
+        });
+        const logRes = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/loading_logs?${logParams.toString()}`);
+        if (logRes.ok) {
+          const logData: { is_loading?: boolean; logs?: Array<{ timestamp: number; message: string }> } = await logRes.json();
+          return { isLoading: logData.is_loading ?? false, logs: logData.logs };
+        }
+      } catch (err) {
+        console.warn('Failed to check loading status:', err);
+      }
+      return { isLoading: false };
+    };
+
+    // If already loading, wait for completion
+    let status = await checkLoadingStatus();
+    if (status.isLoading) {
+      setLoadingMessage('检测到模型正在加载中，等待加载完成...');
+      const maxWaitTime = 300000; // 5 minutes max
+      const startTime = Date.now();
+      let lastLogCount = status.logs?.length ?? 0;
+      while (status.isLoading && Date.now() - startTime < maxWaitTime) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        status = await checkLoadingStatus();
+        if (status.logs && status.logs.length > lastLogCount) {
+          const lastLog = status.logs[status.logs.length - 1];
+          setLoadingMessage(`加载中: ${lastLog.message}`);
+          lastLogCount = status.logs.length;
+        }
+      }
+      if (status.isLoading) {
+        throw new Error('模型加载超时，请稍后重试');
+      }
+      setLoadingMessage('模型加载完成');
+      return;
+    }
+
+    // Call preload endpoint
+    setLoadingMessage('开始预加载模型...');
+    const preloadRes = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/preload_models`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model_name: 'lc0/BT4-1024x15x32h',
+        sae_combo_id: comboId,
+      }),
+    });
+
+    if (!preloadRes.ok) {
+      const errorText = await preloadRes.text();
+      throw new Error(`预加载失败: HTTP ${preloadRes.status}: ${errorText}`);
+    }
+
+    const preloadData = await preloadRes.json();
+    
+    if (preloadData.status === 'already_loaded') {
+      setLoadingMessage('模型已加载');
+      return;
+    }
+
+    if (preloadData.status === 'loaded' || preloadData.status === 'loading') {
+      setLoadingMessage('等待模型加载完成...');
+      const maxWaitTime = 300000;
+      const startTime = Date.now();
+      let lastLogCount = 0;
+      while (Date.now() - startTime < maxWaitTime) {
+        status = await checkLoadingStatus();
+        if (status.logs && status.logs.length > lastLogCount) {
+          const lastLog = status.logs[status.logs.length - 1];
+          setLoadingMessage(`加载中: ${lastLog.message}`);
+          lastLogCount = status.logs.length;
+        }
+        if (!status.isLoading) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          setLoadingMessage('模型加载完成');
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      throw new Error('模型加载超时，请稍后重试');
+    }
+  }, []);
+
   // Fetch Global Weight for a feature
   const fetchGlobalWeight = useCallback(async (layer: number, featureIndex: number, featureType: string) => {
-    if (!saeComboId) return;
+    if (!saeComboId) {
+      alert('请先选择 SAE 组合');
+      return;
+    }
 
     setLoadingGlobalWeights(true);
+    setLoadingMessage(null);
     try {
+      // Preload models first
+      await preloadModels(saeComboId);
+
       const params = new URLSearchParams({
         model_name: 'lc0/BT4-1024x15x32h',
         feature_type: featureType === 'lorsa' ? 'lorsa' : 'tc',
@@ -343,9 +473,18 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         sae_combo_id: saeComboId,
       });
 
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${params.toString()}`);
+      let response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${params.toString()}`);
+      
+      // If 503 (not loaded), try preloading again
+      if (response.status === 503) {
+        setLoadingMessage('模型未加载，正在自动加载...');
+        await preloadModels(saeComboId);
+        setLoadingMessage('正在计算全局权重...');
+        response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${params.toString()}`);
+      }
+
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       }
 
       const data: GlobalWeightData = await response.json();
@@ -372,20 +511,77 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       }));
     } catch (err) {
       console.error('Failed to fetch global weight:', err);
+      alert('获取全局权重失败: ' + (err instanceof Error ? err.message : '未知错误'));
     } finally {
       setLoadingGlobalWeights(false);
+      setLoadingMessage(null);
     }
-  }, [saeComboId, setNodes]);
+  }, [saeComboId, setNodes, preloadModels]);
 
   // Fetch Top Activations for a feature
   const fetchTopActivations = useCallback(async (layer: number, featureIndex: number, featureType: string) => {
+    if (!saeComboId) {
+      alert('请先选择 SAE 组合');
+      return;
+    }
+
     setLoadingTopActivations(true);
+    let dictionary: string = '';
+    
     try {
-      // Determine dictionary name
-      const isLorsa = featureType === 'lorsa';
-      const dictionary = isLorsa 
-        ? `BT4_lorsa_L${layer}A`
-        : `BT4_tc_L${layer}M`;
+      // 优先从 circuit annotation 的 feature 中获取 sae_name
+      let foundDictionary: string | undefined = undefined;
+      
+      if (selectedCircuit) {
+        const feature = selectedCircuit.features.find(
+          f => f.layer === layer && 
+               f.feature_index === featureIndex && 
+               f.feature_type === featureType
+        );
+        if (feature?.sae_name) {
+          foundDictionary = feature.sae_name;
+        }
+      }
+      
+      // 如果从 circuit 中找不到，根据 sae_combo_id 生成
+      if (!foundDictionary) {
+        const isLorsa = featureType === 'lorsa';
+        // 根据 sae_combo_id 生成正确的 dictionary 名称
+        // 对于 k_30_e_16: BT4_tc_L{layer}M_k30_e16 或 BT4_lorsa_L{layer}A_k30_e16
+        // 对于 k_128_e_128 (默认): BT4_tc_L{layer}M 或 BT4_lorsa_L{layer}A
+        if (saeComboId === 'k_30_e_16') {
+          foundDictionary = isLorsa 
+            ? `BT4_lorsa_L${layer}A_k30_e16`
+            : `BT4_tc_L${layer}M_k30_e16`;
+        } else if (saeComboId === 'k_64_e_32') {
+          foundDictionary = isLorsa 
+            ? `BT4_lorsa_L${layer}A_k64_e32`
+            : `BT4_tc_L${layer}M_k64_e32`;
+        } else if (saeComboId === 'k_128_e_64') {
+          foundDictionary = isLorsa 
+            ? `BT4_lorsa_L${layer}A_k128_e64`
+            : `BT4_tc_L${layer}M_k128_e64`;
+        } else if (saeComboId === 'k_256_e_128') {
+          foundDictionary = isLorsa 
+            ? `BT4_lorsa_L${layer}A_k256_e128`
+            : `BT4_tc_L${layer}M_k256_e128`;
+        } else {
+          // 默认组合 k_128_e_128
+          foundDictionary = isLorsa 
+            ? `BT4_lorsa_L${layer}A`
+            : `BT4_tc_L${layer}M`;
+        }
+      }
+      
+      dictionary = foundDictionary;
+      
+      console.log('🔍 获取 Top Activation 数据:', {
+        layer,
+        featureIndex,
+        featureType,
+        saeComboId,
+        dictionary,
+      });
 
       const response = await fetch(
         `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}`,
@@ -396,9 +592,16 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
           },
         }
       );
+      
+      console.log('📡 Top Activation API 请求:', {
+        url: `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}`,
+        status: response.status,
+        statusText: response.statusText,
+      });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
       const arrayBuffer = await response.arrayBuffer();
@@ -434,52 +637,100 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                 const boardRows = boardPart.split('/');
                 
                 if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
-                  let activationsArray: number[] | undefined = undefined;
-                  let maxActivation = 0;
+                  // Validate board format
+                  let isValidBoard = true;
+                  let totalSquares = 0;
                   
-                  if (sample.featureActsIndices && sample.featureActsValues) {
-                    activationsArray = new Array(64).fill(0);
-                    for (let i = 0; i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length); i++) {
-                      const index = sample.featureActsIndices[i];
-                      const value = sample.featureActsValues[i];
-                      if (index >= 0 && index < 64) {
-                        activationsArray[index] = value;
-                        if (Math.abs(value) > Math.abs(maxActivation)) {
-                          maxActivation = value;
+                  for (const row of boardRows) {
+                    if (!/^[rnbqkpRNBQKP1-8]+$/.test(row)) {
+                      isValidBoard = false;
+                      break;
+                    }
+                    
+                    let rowSquares = 0;
+                    for (const char of row) {
+                      if (/\d/.test(char)) {
+                        rowSquares += parseInt(char);
+                      } else {
+                        rowSquares += 1;
+                      }
+                    }
+                    totalSquares += rowSquares;
+                  }
+                  
+                  if (isValidBoard && totalSquares === 64) {
+                    let activationsArray: number[] | undefined = undefined;
+                    let maxActivation = 0;
+                    
+                    if (sample.featureActsIndices && sample.featureActsValues && 
+                        Array.isArray(sample.featureActsIndices) && Array.isArray(sample.featureActsValues)) {
+                      
+                      activationsArray = new Array(64).fill(0);
+                      
+                      for (let i = 0; i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length); i++) {
+                        const index = sample.featureActsIndices[i];
+                        const value = sample.featureActsValues[i];
+                        
+                        if (index >= 0 && index < 64) {
+                          activationsArray[index] = value;
+                          if (Math.abs(value) > Math.abs(maxActivation)) {
+                            maxActivation = value;
+                          }
                         }
                       }
                     }
+                    
+                    chessSamples.push({
+                      fen: trimmed,
+                      activationStrength: maxActivation,
+                      activations: activationsArray,
+                      zPatternIndices: sample.zPatternIndices,
+                      zPatternValues: sample.zPatternValues,
+                      contextId: sample.contextIdx || sample.context_idx,
+                      sampleIndex: sample.sampleIndex || 0,
+                    });
+                    
+                    break; // Found valid FEN, move to next sample
                   }
-                  
-                  chessSamples.push({
-                    fen: trimmed,
-                    activationStrength: maxActivation,
-                    activations: activationsArray,
-                    zPatternIndices: sample.zPatternIndices,
-                    zPatternValues: sample.zPatternValues,
-                    contextId: sample.contextIdx || sample.context_idx,
-                    sampleIndex: sample.sampleIndex || 0,
-                  });
-                  break;
                 }
               }
             }
           }
         }
       }
+      
+      console.log('🔍 Top Activations提取结果:', {
+        totalSamples: allSamples.length,
+        chessSamplesFound: chessSamples.length,
+        dictionary,
+        layer,
+        featureIndex,
+        featureType,
+      });
 
       const topSamples = chessSamples
         .sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength))
         .slice(0, 8);
 
+      console.log('✅ Top Activations最终结果:', {
+        topSamplesCount: topSamples.length,
+        samples: topSamples.map(s => ({
+          fen: s.fen.substring(0, 20) + '...',
+          activationStrength: s.activationStrength,
+          hasActivations: !!s.activations,
+        })),
+      });
+
       setTopActivations(topSamples);
     } catch (err) {
-      console.error('Failed to fetch top activations:', err);
+      console.error('❌ Failed to fetch top activations:', err);
+      const errorMessage = err instanceof Error ? err.message : '未知错误';
+      alert(`获取Top Activations失败: ${errorMessage}\n\n使用的字典名称: ${dictionary || '未确定'}\n请检查字典名称是否正确。`);
       setTopActivations([]);
     } finally {
       setLoadingTopActivations(false);
     }
-  }, []);
+  }, [saeComboId, selectedCircuit]);
 
   // Handle edge click (for editing weight)
   const onEdgeClick = useCallback((_event: React.MouseEvent, edge: ReactFlowEdge) => {
@@ -746,15 +997,20 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                   {loadingGlobalWeights ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      Loading...
+                      {loadingMessage || 'Loading...'}
                     </>
                   ) : (
                     'Load Global Weight'
                   )}
                 </Button>
               </div>
+              {loadingMessage && (
+                <div className="p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
+                  {loadingMessage}
+                </div>
+              )}
               {selectedNode.data?.globalWeight !== undefined && (
-                <div className="p-3 bg-purple-50 border border-purple-200 rounded">
+                <div className="p-3 bg-purple-50 border border-purple-200 rounded mt-2">
                   <p className="text-sm font-medium text-purple-900">Global Weight:</p>
                   <p className="text-lg font-bold text-purple-700">
                     {selectedNode.data.globalWeight.toFixed(4)}
@@ -795,7 +1051,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                     'Load Top Activations'
                   )}
                 </Button>
-                {topActivations.length > 0 && (
+                {topActivations.length > 0 ? (
                   <div className="grid grid-cols-2 gap-4">
                     {topActivations.map((sample, index) => (
                       <div key={index} className="bg-gray-50 rounded-lg p-3 border">
@@ -804,19 +1060,34 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                           <div className="text-xs text-gray-500">
                             Activation: {sample.activationStrength.toFixed(3)}
                           </div>
+                          {sample.fen && (
+                            <div className="text-xs text-gray-400 mt-1 truncate" title={sample.fen}>
+                              {sample.fen.substring(0, 30)}...
+                            </div>
+                          )}
                         </div>
-                        <ChessBoard
-                          fen={sample.fen}
-                          size="small"
-                          showCoordinates={false}
-                          activations={sample.activations}
-                          zPatternIndices={sample.zPatternIndices}
-                          zPatternValues={sample.zPatternValues}
-                          flip_activation={Boolean(sample.fen && sample.fen.split(' ')[1] === 'b')}
-                          autoFlipWhenBlack={true}
-                        />
+                        {sample.fen ? (
+                          <ChessBoard
+                            fen={sample.fen}
+                            size="small"
+                            showCoordinates={false}
+                            activations={sample.activations}
+                            zPatternIndices={sample.zPatternIndices}
+                            zPatternValues={sample.zPatternValues}
+                            flip_activation={Boolean(sample.fen && sample.fen.split(' ')[1] === 'b')}
+                            autoFlipWhenBlack={true}
+                          />
+                        ) : (
+                          <div className="text-center text-gray-400 text-sm py-4">
+                            无效的FEN字符串
+                          </div>
+                        )}
                       </div>
                     ))}
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-500 py-4">
+                    {loadingTopActivations ? '加载中...' : '未找到包含棋盘的激活样本'}
                   </div>
                 )}
               </div>

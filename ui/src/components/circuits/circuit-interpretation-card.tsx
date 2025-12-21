@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   CircuitAnnotation,
   CircuitFeature,
@@ -49,8 +49,10 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
   const [collapsedCircuits, setCollapsedCircuits] = useState<Set<string>>(new Set());
 
   // 加载所有circuits
+  const [loadingAllCircuits, setLoadingAllCircuits] = useState(false);
+  
   const loadAllCircuits = useCallback(async () => {
-    setLoading(true);
+    setLoadingAllCircuits(true);
     setError(null);
 
     try {
@@ -59,8 +61,9 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载所有circuit标注失败');
       console.error('Failed to load all circuits:', err);
+      setAllCircuits([]); // 确保即使出错也设置空数组，避免一直显示加载中
     } finally {
-      setLoading(false);
+      setLoadingAllCircuits(false);
     }
   }, [saeComboId]);
 
@@ -103,15 +106,25 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
     } else {
       setFeatureCircuits([]);
     }
-  }, [node, loadFeatureCircuits]);
+    // 移除 loadFeatureCircuits 从依赖项，避免频繁重新创建导致的循环调用
+    // 只依赖 node 的关键属性，而不是整个 node 对象
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node?.nodeId, node?.layer, node?.feature, node?.feature_type]);
 
   // 当切换到"显示全部"时，自动加载所有circuits
+  // 使用 ref 来跟踪是否已经加载过，避免重复加载
+  const hasLoadedAllCircuitsRef = useRef(false);
+  
   useEffect(() => {
-    if (showAllCircuits && allCircuits.length === 0 && !loading) {
-      // 只有当切换到显示全部模式，且还没有加载过数据时，才自动加载
+    // 只在切换到"显示全部"模式且还没有加载过时，才加载一次
+    if (showAllCircuits && !hasLoadedAllCircuitsRef.current && !loadingAllCircuits) {
+      hasLoadedAllCircuitsRef.current = true;
       loadAllCircuits();
     }
-  }, [showAllCircuits, allCircuits.length, loading, loadAllCircuits]);
+    // 当切换回"仅当前feature"模式时，不重置标志，保留已加载的数据
+    // 移除 loadAllCircuits 从依赖项，避免频繁重新创建导致的循环调用
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAllCircuits]);
 
   // 刷新所有数据
   const refreshAll = useCallback(async () => {
@@ -329,12 +342,8 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
         <div className="flex items-center space-x-2">
           <button
             onClick={() => {
-              const newValue = !showAllCircuits;
-              setShowAllCircuits(newValue);
-              // 如果切换到"显示全部"模式且还没有加载过所有circuits，则自动加载
-              if (newValue && allCircuits.length === 0 && !loading) {
-                loadAllCircuits();
-              }
+              setShowAllCircuits(!showAllCircuits);
+              // useEffect 会自动处理加载逻辑，这里不需要手动调用
             }}
             className={`px-3 py-1 text-sm rounded transition-colors ${
               showAllCircuits
@@ -501,17 +510,18 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
         </div>
       )}
 
-      {/* 空状态 */}
-      {!loading && displayCircuits.length === 0 && (
+      {/* 加载状态 */}
+      {loadingAllCircuits && showAllCircuits && allCircuits.length === 0 && (
+        <div className="text-center py-8 text-gray-500">加载中...</div>
+      )}
+
+      {/* 空状态 - 只在非加载状态且没有数据时显示 */}
+      {!loadingAllCircuits && !loading && displayCircuits.length === 0 && (
         <div className="text-center py-8 text-gray-500">
           {showAllCircuits 
             ? '没有找到任何circuit标注'
             : '该feature还没有属于任何circuit标注'}
         </div>
-      )}
-
-      {loading && displayCircuits.length === 0 && (
-        <div className="text-center py-8 text-gray-500">加载中...</div>
       )}
     </div>
   );
