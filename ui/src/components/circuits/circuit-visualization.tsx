@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, Suspense, lazy } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useCircuitState } from "@/contexts/AppStateContext";
 import { LinkGraphContainer } from "./link-graph-container";
@@ -11,27 +11,7 @@ import { ChessBoard } from "@/components/chess/chess-board";
 import React from "react";
 import { SaeComboLoader } from "@/components/common/SaeComboLoader";
 import { useModelLoadingStatus } from "@/components/shared/model-loading-status";
-// 使用 React.lazy 动态导入，避免初始化错误导致整个应用崩溃
-const CircuitInterpretation = lazy(() => {
-  console.log('[CircuitVisualization] Lazy loading CircuitInterpretation...');
-  return import("./circuit-interpretation").then(module => {
-    console.log('[CircuitVisualization] CircuitInterpretation loaded successfully');
-    return { default: module.CircuitInterpretation };
-  }).catch(error => {
-    console.error('[CircuitVisualization] Failed to load CircuitInterpretation:', error);
-    // 返回一个错误占位组件
-    return {
-      default: () => (
-        <div className="fixed inset-0 bg-red-100 bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-4 rounded shadow-lg">
-            <p className="text-red-600">Failed to load Circuit Interpretation component</p>
-            <pre className="text-xs mt-2 overflow-auto max-h-40">{error.message}</pre>
-          </div>
-        </div>
-      )
-    };
-  });
-});
+import { CircuitInterpretationCard } from "./circuit-interpretation-card";
 
 // 定义节点激活数据的类型
 interface NodeActivationData {
@@ -103,14 +83,6 @@ export const CircuitVisualization = () => {
   // 多图支持：存放多份原始 JSON 及其文件名
   const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
 
-  // Circuit 标注相关状态
-  const [showCircuitInterpretation, setShowCircuitInterpretation] = useState(false);
-  const [selectedNodeForCircuit, setSelectedNodeForCircuit] = useState<{
-    nodeId: string;
-    layer: number;
-    feature: number;
-    feature_type: string;
-  } | null>(null);
 
   // 为"各自独有"的节点/边分配的颜色表（最多4个图）
   const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // 蓝、橙、绿、红
@@ -952,7 +924,7 @@ export const CircuitVisualization = () => {
   }, []);
  
   // 辅助函数：获取SAE名称模板（不带层号）
-  const getSaeNameTemplate = useCallback((layerIdx: number, isLorsa: boolean): string => {
+  const getSaeNameTemplate = useCallback((_layerIdx: number, isLorsa: boolean): string => {
     if (isLorsa) {
       const lorsaAnalysisName = linkGraphData?.metadata?.lorsa_analysis_name;
       if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string') {
@@ -2979,6 +2951,35 @@ export const CircuitVisualization = () => {
           </div>
         )}
 
+        {/* Circuit Interpretation Section */}
+        {clickedId && displayLinkGraphData && (() => {
+          const currentNode = displayLinkGraphData.nodes.find(n => n.nodeId === clickedId);
+          if (!currentNode) return null;
+          
+          const parts = clickedId.split('_');
+          const rawLayer = parseInt(parts[0]) || 0;
+          const featureIndex = parseInt(parts[1]) || 0;
+          const layerIdx = Math.floor(rawLayer / 2);
+          
+          return (
+            <CircuitInterpretationCard
+              node={{
+                nodeId: clickedId,
+                layer: layerIdx,
+                feature: featureIndex,
+                feature_type: currentNode.feature_type || '',
+              }}
+              saeComboId={
+                (typeof window !== 'undefined' 
+                  ? window.localStorage.getItem("bt4_sae_combo_id") 
+                  : null) || 'k_30_e_16'
+              }
+              saeSeries="BT4-exp128"
+              getSaeName={getSaeNameForCircuit}
+            />
+          );
+        })()}
+
         {/* Token Predictions Section (简化版) */}
         {clickedId && (
           <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
@@ -3119,11 +3120,11 @@ export const CircuitVisualization = () => {
           </div>
         )}
 
-        {/* Clerp Editor - New Section */}
+        {/* Feature Interpretation Editor - New Section */}
         {clickedId && nodeActivationData && (
           <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Node Clerp Editor</h3>
+              <h3 className="text-lg font-semibold">Feature Interpretation Editor</h3>
               <div className="flex items-center space-x-2">
                 <span className="text-sm text-gray-600">节点: {clickedId}</span>
                 {nodeActivationData.nodeType && (
@@ -3138,9 +3139,9 @@ export const CircuitVisualization = () => {
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <label className="block text-sm font-medium text-gray-700">
-                  Clerp内容 (可编辑)
+                  Feature Interpretation (可编辑)
                   {nodeActivationData.clerp === undefined && (
-                    <span className="text-xs text-gray-500 ml-2">(节点暂无clerp字段，可新建)</span>
+                    <span className="text-xs text-gray-500 ml-2">(节点暂无interpretation字段，可新建)</span>
                   )}
                   {nodeActivationData.clerp === '' && (
                     <span className="text-xs text-gray-500 ml-2">(当前为空，可编辑)</span>
@@ -3156,8 +3157,8 @@ export const CircuitVisualization = () => {
                 className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
                 placeholder={
                   nodeActivationData.clerp === undefined 
-                    ? "该节点暂无clerp字段，您可以在此输入新的clerp内容..." 
-                    : "输入或编辑节点的clerp内容..."
+                    ? "该节点暂无interpretation字段，您可以在此输入新的interpretation内容..." 
+                    : "输入或编辑节点的interpretation内容..."
                 }
               />
               <div className="flex justify-end space-x-2">
@@ -3196,7 +3197,7 @@ export const CircuitVisualization = () => {
               </div>
               {editingClerp.trim() !== (nodeActivationData.clerp || '') && (
                 <div className="text-xs text-orange-600 bg-orange-50 p-2 rounded">
-                  ⚠️ 内容已修改，请点击"保存到文件"以保存更改
+                  ⚠️ 内容已修改，请点击"保存并下载"以保存更改
                 </div>
               )}
               
@@ -3206,7 +3207,7 @@ export const CircuitVisualization = () => {
                   <span>
                     原始状态: {
                       nodeActivationData.clerp === undefined 
-                        ? '无clerp字段' 
+                        ? '无interpretation字段' 
                         : nodeActivationData.clerp === '' 
                           ? '空字符串' 
                           : `有内容 (${nodeActivationData.clerp.length} 字符)`
@@ -3222,7 +3223,7 @@ export const CircuitVisualization = () => {
               <div className="text-xs text-blue-600 bg-blue-50 p-3 rounded border-l-4 border-blue-200">
                 <div className="font-medium mb-1">💡 文件更新工作流程:</div>
                 <ol className="list-decimal list-inside space-y-1 text-blue-700">
-                  <li>编辑clerp内容后点击"保存并下载"</li>
+                  <li>编辑interpretation内容后点击"保存并下载"</li>
                   <li>更新后的文件会自动下载到Downloads文件夹</li>
                   <li>用新文件替换原文件，或重新拖拽到此页面</li>
                   <li>文件名包含时间戳，避免意外覆盖</li>
@@ -3289,27 +3290,6 @@ export const CircuitVisualization = () => {
                       </span>
                     </div>
                   )}
-                  {/* Circuit 标注按钮 */}
-                  {currentNode && featureIndex !== undefined && (
-                    <button
-                      onClick={() => {
-                        setSelectedNodeForCircuit({
-                          nodeId: currentNode.nodeId,
-                          layer: layerIdx,
-                          feature: featureIndex,
-                          feature_type: currentNode.feature_type || '',
-                        });
-                        setShowCircuitInterpretation(true);
-                      }}
-                      className="inline-flex items-center px-3 py-2 bg-purple-500 text-white text-sm font-medium rounded-md hover:bg-purple-600 transition-colors"
-                      title="查看/管理该feature所属的circuit标注"
-                    >
-                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      Circuit 标注
-                    </button>
-                  )}
                   {/* 跳转到Feature页面的链接 */}
                   {currentNode && featureIndex !== undefined && (
                     <Link
@@ -3339,36 +3319,6 @@ export const CircuitVisualization = () => {
         })()}
       </div>
 
-      {/* Circuit Interpretation Modal */}
-      {showCircuitInterpretation && selectedNodeForCircuit && (
-        <Suspense
-          fallback={
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white p-4 rounded shadow-lg">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
-                <p className="mt-2 text-gray-600">Loading Circuit Interpretation...</p>
-              </div>
-            </div>
-          }
-        >
-          <CircuitInterpretation
-            node={selectedNodeForCircuit}
-            saeComboId={
-              (typeof window !== 'undefined' 
-                ? window.localStorage.getItem("bt4_sae_combo_id") 
-                : null) || 'k_30_e_16'
-            }
-            saeSeries="BT4-exp128"
-            getSaeName={getSaeNameForCircuit}
-            visible={showCircuitInterpretation}
-            onClose={() => {
-              console.log('[CircuitVisualization] CircuitInterpretation onClose called');
-              setShowCircuitInterpretation(false);
-              setSelectedNodeForCircuit(null);
-            }}
-          />
-        </Suspense>
-      )}
     </div>
   );
 };

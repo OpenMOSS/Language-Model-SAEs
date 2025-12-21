@@ -71,6 +71,32 @@ from lm_saes.lc0_mapping.lc0_mapping import (
 from lm_saes.circuit.leela_board import LeelaBoard
 from move_evaluation import evaluate_move_quality  # 引入走法评测
 
+# 导入circuit interpretation服务
+try:
+    from .circuit_interpretation import (
+        create_circuit_annotation as create_circuit_annotation_service,
+        get_circuits_by_feature as get_circuits_by_feature_service,
+        get_circuit_annotation as get_circuit_annotation_service,
+        list_circuit_annotations as list_circuit_annotations_service,
+        update_circuit_interpretation as update_circuit_interpretation_service,
+        add_feature_to_circuit as add_feature_to_circuit_service,
+        remove_feature_from_circuit as remove_feature_from_circuit_service,
+        update_feature_interpretation_in_circuit as update_feature_interpretation_in_circuit_service,
+        delete_circuit_annotation as delete_circuit_annotation_service,
+    )
+except ImportError:
+    from circuit_interpretation import (
+        create_circuit_annotation as create_circuit_annotation_service,
+        get_circuits_by_feature as get_circuits_by_feature_service,
+        get_circuit_annotation as get_circuit_annotation_service,
+        list_circuit_annotations as list_circuit_annotations_service,
+        update_circuit_interpretation as update_circuit_interpretation_service,
+        add_feature_to_circuit as add_feature_to_circuit_service,
+        remove_feature_from_circuit as remove_feature_from_circuit_service,
+        update_feature_interpretation_in_circuit as update_feature_interpretation_in_circuit_service,
+        delete_circuit_annotation as delete_circuit_annotation_service,
+    )
+
 # 导入战术特征分析
 try:
     from tactic_features import analyze_tactic_features, validate_fens
@@ -3858,51 +3884,14 @@ def create_circuit_annotation(request: dict):
         创建的circuit标注信息
     """
     try:
-        circuit_interpretation = request.get("circuit_interpretation", "")
-        sae_combo_id = request.get("sae_combo_id")
-        features = request.get("features", [])
-        metadata = request.get("metadata")
-        
-        if not sae_combo_id:
-            raise HTTPException(status_code=400, detail="sae_combo_id is required")
-        
-        if not isinstance(features, list) or len(features) == 0:
-            raise HTTPException(status_code=400, detail="features must be a non-empty list")
-        
-        # 生成唯一的circuit_id
-        import uuid
-        circuit_id = str(uuid.uuid4())
-        
-        # 添加调试日志
-        print(f"[DEBUG] create_circuit_annotation: circuit_id={circuit_id}, sae_combo_id={sae_combo_id}")
-        print(f"[DEBUG] create_circuit_annotation: features={features}")
-        
-        # 创建circuit标注
-        success = client.create_circuit_annotation(
-            circuit_id=circuit_id,
-            circuit_interpretation=circuit_interpretation,
-            sae_combo_id=sae_combo_id,
-            features=features,
-            metadata=metadata,
+        return create_circuit_annotation_service(
+            client=client,
+            sae_series=sae_series,
+            circuit_interpretation=request.get("circuit_interpretation", ""),
+            sae_combo_id=request.get("sae_combo_id"),
+            features=request.get("features", []),
+            metadata=request.get("metadata"),
         )
-        
-        print(f"[DEBUG] create_circuit_annotation: success={success}")
-        
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to create circuit annotation")
-        
-        # 获取创建的circuit标注
-        circuit = client.get_circuit_annotation(circuit_id)
-        if circuit is None:
-            raise HTTPException(status_code=500, detail="Failed to retrieve created circuit annotation")
-        
-        # 转换为字典格式
-        circuit_dict = circuit.model_dump()
-        circuit_dict["created_at"] = circuit.created_at.isoformat()
-        circuit_dict["updated_at"] = circuit.updated_at.isoformat()
-        
-        return circuit_dict
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -3933,30 +3922,17 @@ def get_circuits_by_feature(
         包含该特征的所有circuit标注列表
     """
     try:
-        sae_series_param = sae_series if sae_series is not None else globals()['sae_series']
-        
-        # 添加调试日志
-        print(f"[DEBUG] get_circuits_by_feature: sae_name={sae_name}, sae_series={sae_series_param}, layer={layer}, feature_index={feature_index}, feature_type={feature_type}")
-        
-        circuits = client.get_circuits_by_feature(
+        return get_circuits_by_feature_service(
+            client=client,
+            sae_series=globals()['sae_series'],  # 全局默认值
             sae_name=sae_name,
-            sae_series=sae_series_param,
             layer=layer,
             feature_index=feature_index,
+            sae_series_param=sae_series,  # 路由参数（可能是None，服务函数会使用默认值）
             feature_type=feature_type,
         )
-        
-        print(f"[DEBUG] get_circuits_by_feature: found {len(circuits)} circuits")
-        
-        circuit_list = []
-        for circuit in circuits:
-            circuit_dict = circuit.model_dump()
-            circuit_dict["created_at"] = circuit.created_at.isoformat()
-            circuit_dict["updated_at"] = circuit.updated_at.isoformat()
-            circuit_list.append(circuit_dict)
-        
-        return {"circuits": circuit_list}
-        
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -3975,16 +3951,10 @@ def get_circuit_annotation(circuit_id: str):
         Circuit标注信息
     """
     try:
-        circuit = client.get_circuit_annotation(circuit_id)
-        if circuit is None:
-            raise HTTPException(status_code=404, detail=f"Circuit annotation {circuit_id} not found")
-        
-        circuit_dict = circuit.model_dump()
-        circuit_dict["created_at"] = circuit.created_at.isoformat()
-        circuit_dict["updated_at"] = circuit.updated_at.isoformat()
-        
-        return circuit_dict
-        
+        return get_circuit_annotation_service(
+            client=client,
+            circuit_id=circuit_id,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -4011,24 +3981,14 @@ def list_circuit_annotations(
         Circuit标注列表
     """
     try:
-        circuits = client.list_circuit_annotations(
+        return list_circuit_annotations_service(
+            client=client,
             sae_combo_id=sae_combo_id,
             limit=limit,
             skip=skip,
         )
-        
-        circuit_list = []
-        for circuit in circuits:
-            circuit_dict = circuit.model_dump()
-            circuit_dict["created_at"] = circuit.created_at.isoformat()
-            circuit_dict["updated_at"] = circuit.updated_at.isoformat()
-            circuit_list.append(circuit_dict)
-        
-        return {
-            "circuits": circuit_list,
-            "total_count": client.get_circuit_annotation_count(sae_combo_id=sae_combo_id),
-        }
-        
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -4048,18 +4008,11 @@ def update_circuit_interpretation(circuit_id: str, request: dict):
         成功消息
     """
     try:
-        circuit_interpretation = request.get("circuit_interpretation", "")
-        
-        success = client.update_circuit_interpretation(
+        return update_circuit_interpretation_service(
+            client=client,
             circuit_id=circuit_id,
-            circuit_interpretation=circuit_interpretation,
+            circuit_interpretation=request.get("circuit_interpretation", ""),
         )
-        
-        if not success:
-            raise HTTPException(status_code=404, detail=f"Circuit annotation {circuit_id} not found")
-        
-        return {"message": "Circuit interpretation updated successfully"}
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -4087,37 +4040,17 @@ def add_feature_to_circuit(circuit_id: str, request: dict):
         成功消息
     """
     try:
-        sae_name = request.get("sae_name")
-        sae_series_param = request.get("sae_series", sae_series)
-        layer = request.get("layer")
-        feature_index = request.get("feature_index")
-        feature_type = request.get("feature_type")
-        interpretation = request.get("interpretation", "")
-        
-        if not all([sae_name, layer is not None, feature_index is not None, feature_type]):
-            raise HTTPException(
-                status_code=400,
-                detail="sae_name, layer, feature_index, and feature_type are required"
-            )
-        
-        success = client.add_feature_to_circuit(
+        return add_feature_to_circuit_service(
+            client=client,
+            sae_series=sae_series,
             circuit_id=circuit_id,
-            sae_name=sae_name,
-            sae_series=sae_series_param,
-            layer=layer,
-            feature_index=feature_index,
-            feature_type=feature_type,
-            interpretation=interpretation,
+            sae_name=request.get("sae_name"),
+            layer=request.get("layer"),
+            feature_index=request.get("feature_index"),
+            feature_type=request.get("feature_type"),
+            sae_series_param=request.get("sae_series"),
+            interpretation=request.get("interpretation", ""),
         )
-        
-        if not success:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Circuit annotation {circuit_id} not found or feature already exists"
-            )
-        
-        return {"message": "Feature added to circuit successfully"}
-        
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
@@ -4146,35 +4079,16 @@ def remove_feature_from_circuit(circuit_id: str, request: dict):
         成功消息
     """
     try:
-        sae_name = request.get("sae_name")
-        sae_series_param = request.get("sae_series", sae_series)
-        layer = request.get("layer")
-        feature_index = request.get("feature_index")
-        feature_type = request.get("feature_type")
-        
-        if not all([sae_name, layer is not None, feature_index is not None, feature_type]):
-            raise HTTPException(
-                status_code=400,
-                detail="sae_name, layer, feature_index, and feature_type are required"
-            )
-        
-        success = client.remove_feature_from_circuit(
+        return remove_feature_from_circuit_service(
+            client=client,
+            sae_series=sae_series,
             circuit_id=circuit_id,
-            sae_name=sae_name,
-            sae_series=sae_series_param,
-            layer=layer,
-            feature_index=feature_index,
-            feature_type=feature_type,
+            sae_name=request.get("sae_name"),
+            layer=request.get("layer"),
+            feature_index=request.get("feature_index"),
+            feature_type=request.get("feature_type"),
+            sae_series_param=request.get("sae_series"),
         )
-        
-        if not success:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Circuit annotation {circuit_id} not found or feature not in circuit"
-            )
-        
-        return {"message": "Feature removed from circuit successfully"}
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -4202,37 +4116,17 @@ def update_feature_interpretation_in_circuit(circuit_id: str, request: dict):
         成功消息
     """
     try:
-        sae_name = request.get("sae_name")
-        sae_series_param = request.get("sae_series", sae_series)
-        layer = request.get("layer")
-        feature_index = request.get("feature_index")
-        feature_type = request.get("feature_type")
-        interpretation = request.get("interpretation", "")
-        
-        if not all([sae_name, layer is not None, feature_index is not None, feature_type]):
-            raise HTTPException(
-                status_code=400,
-                detail="sae_name, layer, feature_index, and feature_type are required"
-            )
-        
-        success = client.update_feature_interpretation_in_circuit(
+        return update_feature_interpretation_in_circuit_service(
+            client=client,
+            sae_series=sae_series,
             circuit_id=circuit_id,
-            sae_name=sae_name,
-            sae_series=sae_series_param,
-            layer=layer,
-            feature_index=feature_index,
-            feature_type=feature_type,
-            interpretation=interpretation,
+            sae_name=request.get("sae_name"),
+            layer=request.get("layer"),
+            feature_index=request.get("feature_index"),
+            feature_type=request.get("feature_type"),
+            interpretation=request.get("interpretation", ""),
+            sae_series_param=request.get("sae_series"),
         )
-        
-        if not success:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Circuit annotation {circuit_id} not found or feature not in circuit"
-            )
-        
-        return {"message": "Feature interpretation updated successfully"}
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -4253,13 +4147,10 @@ def delete_circuit_annotation(circuit_id: str):
         成功消息
     """
     try:
-        success = client.delete_circuit_annotation(circuit_id)
-        
-        if not success:
-            raise HTTPException(status_code=404, detail=f"Circuit annotation {circuit_id} not found")
-        
-        return {"message": "Circuit annotation deleted successfully"}
-        
+        return delete_circuit_annotation_service(
+            client=client,
+            circuit_id=circuit_id,
+        )
     except HTTPException:
         raise
     except Exception as e:

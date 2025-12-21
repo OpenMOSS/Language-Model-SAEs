@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, ArrowLeft } from 'lucide-react';
+import { Loader2, ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 import { ChessBoard } from '@/components/chess/chess-board';
+import { CircuitInterpretationCard } from '@/components/circuits/circuit-interpretation-card';
 
 interface GlobalWeightFeature {
   name: string;
@@ -65,6 +66,15 @@ export const GlobalWeightPage: React.FC = () => {
   const [syncingClerp, setSyncingClerp] = useState(false);
   const [featuresWithClerp, setFeaturesWithClerp] = useState<Map<string, { clerp: string; rank: number }>>(new Map());
   const [loadingClerps, setLoadingClerps] = useState(false);
+  
+  // 当前特征的折叠状态
+  const [currentFeatureExpanded, setCurrentFeatureExpanded] = useState<boolean>(false);
+  const [currentFeatureTopActivations, setCurrentFeatureTopActivations] = useState<any[]>([]);
+  const [loadingCurrentFeatureTopActivations, setLoadingCurrentFeatureTopActivations] = useState(false);
+  const [currentFeatureInterpretation, setCurrentFeatureInterpretation] = useState<string>('');
+  const [isSavingCurrentFeatureInterpretation, setIsSavingCurrentFeatureInterpretation] = useState(false);
+  const [syncingCurrentFeatureInterpretation, setSyncingCurrentFeatureInterpretation] = useState(false);
+  
 
   // 当URL参数变化时更新状态
   useEffect(() => {
@@ -317,7 +327,12 @@ export const GlobalWeightPage: React.FC = () => {
     }
   }, []);
 
-  // 获取 Top Activation 数据
+  // 获取 SAE 名称（用于 Circuit Interpretation）
+  const getSaeNameForCircuit = useCallback((layer: number, isLorsa: boolean): string => {
+    return getDictionaryName(layer, isLorsa);
+  }, [getDictionaryName]);
+
+  // 获取 Top Activation 数据（用于选中的特征）
   const fetchTopActivations = useCallback(async (layerIdx: number, featureIdx: number, isLorsa: boolean) => {
     setLoadingTopActivations(true);
     try {
@@ -460,7 +475,174 @@ export const GlobalWeightPage: React.FC = () => {
     }
   }, [getDictionaryName]);
 
-  // 批量获取 clerp 并计算排名
+  // 获取 Top Activation 数据（用于当前特征或指定特征）
+  const fetchTopActivationsForFeature = useCallback(async (
+    layerIdx: number, 
+    featureIdx: number, 
+    isLorsa: boolean,
+    isCurrentFeature: boolean = false
+  ) => {
+    if (isCurrentFeature) {
+      setLoadingCurrentFeatureTopActivations(true);
+    } else {
+      setLoadingTopActivations(true);
+    }
+    
+    try {
+      const dictionary = getDictionaryName(layerIdx, isLorsa);
+      
+      console.log('🔍 获取 Top Activation 数据:', {
+        layerIdx,
+        featureIdx,
+        dictionary,
+        isLorsa,
+        isCurrentFeature
+      });
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIdx}`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/x-msgpack",
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const decoded = await import("@msgpack/msgpack").then(module => module.decode(new Uint8Array(arrayBuffer)));
+      const camelcaseKeys = await import("camelcase-keys").then(module => module.default);
+      
+      const camelData = camelcaseKeys(decoded as Record<string, unknown>, {
+        deep: true,
+        stopPaths: ["sample_groups.samples.context"],
+      }) as any;
+      
+      const sampleGroups = camelData?.sampleGroups || camelData?.sample_groups || [];
+      const allSamples: any[] = [];
+      
+      for (const group of sampleGroups) {
+        if (group.samples && Array.isArray(group.samples)) {
+          allSamples.push(...group.samples);
+        }
+      }
+      
+      // 查找包含 FEN 的样本并提取激活值
+      const chessSamples: any[] = [];
+      
+      for (const sample of allSamples) {
+        if (sample.text) {
+          const lines = sample.text.split('\n');
+          
+          for (const line of lines) {
+            const trimmed = line.trim();
+            
+            if (trimmed.includes('/')) {
+              const parts = trimmed.split(/\s+/);
+              
+              if (parts.length >= 6) {
+                const [boardPart, activeColor] = parts;
+                const boardRows = boardPart.split('/');
+                
+                if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
+                  let isValidBoard = true;
+                  let totalSquares = 0;
+                  
+                  for (const row of boardRows) {
+                    if (!/^[rnbqkpRNBQKP1-8]+$/.test(row)) {
+                      isValidBoard = false;
+                      break;
+                    }
+                    
+                    let rowSquares = 0;
+                    for (const char of row) {
+                      if (/\d/.test(char)) {
+                        rowSquares += parseInt(char);
+                      } else {
+                        rowSquares += 1;
+                      }
+                    }
+                    totalSquares += rowSquares;
+                  }
+                  
+                  if (isValidBoard && totalSquares === 64) {
+                    let activationsArray: number[] | undefined = undefined;
+                    let maxActivation = 0;
+                    
+                    if (sample.featureActsIndices && sample.featureActsValues && 
+                        Array.isArray(sample.featureActsIndices) && Array.isArray(sample.featureActsValues)) {
+                      
+                      activationsArray = new Array(64).fill(0);
+                      
+                      for (let i = 0; i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length); i++) {
+                        const index = sample.featureActsIndices[i];
+                        const value = sample.featureActsValues[i];
+                        
+                        if (index >= 0 && index < 64) {
+                          activationsArray[index] = value;
+                          if (Math.abs(value) > Math.abs(maxActivation)) {
+                            maxActivation = value;
+                          }
+                        }
+                      }
+                    }
+                    
+                    chessSamples.push({
+                      fen: trimmed,
+                      activationStrength: maxActivation,
+                      activations: activationsArray,
+                      zPatternIndices: sample.zPatternIndices,
+                      zPatternValues: sample.zPatternValues,
+                      contextId: sample.contextIdx || sample.context_idx,
+                      sampleIndex: sample.sampleIndex || 0
+                    });
+                    
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      const topSamples = chessSamples
+        .sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength))
+        .slice(0, 8);
+      
+      console.log('✅ 获取到 Top Activation 数据:', {
+        totalChessSamples: chessSamples.length,
+        topSamplesCount: topSamples.length,
+        isCurrentFeature
+      });
+      
+      if (isCurrentFeature) {
+        setCurrentFeatureTopActivations(topSamples);
+      } else {
+        setTopActivations(topSamples);
+      }
+      
+    } catch (error) {
+      console.error('❌ 获取 Top Activation 数据失败:', error);
+      if (isCurrentFeature) {
+        setCurrentFeatureTopActivations([]);
+      } else {
+        setTopActivations([]);
+      }
+    } finally {
+      if (isCurrentFeature) {
+        setLoadingCurrentFeatureTopActivations(false);
+      } else {
+        setLoadingTopActivations(false);
+      }
+    }
+  }, [getDictionaryName]);
+
+  // 批量获取 interpretation 并计算排名
   const fetchBatchClerpsAndRanks = useCallback(async (
     featuresIn: GlobalWeightFeature[],
     featuresOut: GlobalWeightFeature[]
@@ -622,7 +804,7 @@ export const GlobalWeightPage: React.FC = () => {
     }
   }, [parseFeatureName]);
 
-  // 获取 clerp 从 MongoDB
+  // 获取 Interpretation 从 MongoDB（用于选中的特征）
   const fetchClerp = useCallback(async (layerIdx: number, featureIdx: number, isLorsa: boolean) => {
     setSyncingClerp(true);
     try {
@@ -667,14 +849,86 @@ export const GlobalWeightPage: React.FC = () => {
       }
       
     } catch (error) {
-      console.error('❌ 获取 clerp 失败:', error);
+      console.error('❌ 获取 interpretation 失败:', error);
       setEditingClerp('');
     } finally {
       setSyncingClerp(false);
     }
   }, [saeComboId]);
 
-  // 保存 clerp 到 MongoDB
+  // 获取 Interpretation 从 MongoDB（用于当前特征或选中的特征）
+  const fetchInterpretationForFeature = useCallback(async (
+    layerIdx: number, 
+    featureIdx: number, 
+    isLorsa: boolean,
+    isCurrentFeature: boolean = false
+  ) => {
+    if (isCurrentFeature) {
+      setSyncingCurrentFeatureInterpretation(true);
+    } else {
+      setSyncingClerp(true);
+    }
+    
+    try {
+      // 构建 analysis_name
+      const analysisName = isLorsa ? 'BT4_lorsa_k30_e16' : 'BT4_tc_k30_e16';
+      
+      // 构建节点数据
+      const node = {
+        node_id: `${layerIdx * 2}_${featureIdx}_0`,
+        feature: featureIdx,
+        layer: layerIdx,
+        feature_type: isLorsa ? 'lorsa' : 'tc'
+      };
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/circuit/sync_interpretations_to_clerps`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            nodes: [node],
+            lorsa_analysis_name: isLorsa ? analysisName : undefined,
+            tc_analysis_name: !isLorsa ? analysisName : undefined
+          })
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      
+      const result = await response.json();
+      
+      // 查找对应的 interpretation
+      const updatedNode = result.updated_nodes?.find((n: any) => n.node_id === node.node_id);
+      const interpretation = updatedNode?.clerp || '';
+      
+      if (isCurrentFeature) {
+        setCurrentFeatureInterpretation(interpretation);
+      } else {
+        setEditingClerp(interpretation);
+      }
+      
+    } catch (error) {
+      console.error('❌ 获取 interpretation 失败:', error);
+      if (isCurrentFeature) {
+        setCurrentFeatureInterpretation('');
+      } else {
+        setEditingClerp('');
+      }
+    } finally {
+      if (isCurrentFeature) {
+        setSyncingCurrentFeatureInterpretation(false);
+      } else {
+        setSyncingClerp(false);
+      }
+    }
+  }, [saeComboId]);
+
+  // 保存 Interpretation 到 MongoDB（用于选中的特征）
   const saveClerp = useCallback(async (layerIdx: number, featureIdx: number, isLorsa: boolean, clerpText: string) => {
     setIsSavingClerp(true);
     try {
@@ -729,15 +983,130 @@ export const GlobalWeightPage: React.FC = () => {
         });
       }
       
-      alert(`✅ Clerp已成功保存到MongoDB！`);
+      alert(`✅ Interpretation已成功保存到MongoDB！`);
       
     } catch (error) {
-      console.error('❌ 保存 clerp 失败:', error);
+      console.error('❌ 保存 interpretation 失败:', error);
       alert(`❌ 保存失败: ${error instanceof Error ? error.message : '未知错误'}`);
     } finally {
       setIsSavingClerp(false);
     }
   }, [saeComboId, selectedFeatureName]);
+
+  // 保存 Interpretation 到 MongoDB（用于当前特征或选中的特征）
+  const saveInterpretationForFeature = useCallback(async (
+    layerIdx: number, 
+    featureIdx: number, 
+    isLorsa: boolean, 
+    interpretationText: string,
+    isCurrentFeature: boolean = false
+  ) => {
+    if (isCurrentFeature) {
+      setIsSavingCurrentFeatureInterpretation(true);
+    } else {
+      setIsSavingClerp(true);
+    }
+    
+    try {
+      const analysisName = isLorsa ? 'BT4_lorsa_k30_e16' : 'BT4_tc_k30_e16';
+      
+      const node = {
+        node_id: `${layerIdx * 2}_${featureIdx}_0`,
+        clerp: interpretationText,
+        feature: featureIdx,
+        layer: layerIdx,
+        feature_type: isLorsa ? 'lorsa' : 'tc'
+      };
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/circuit/sync_clerps_to_interpretations`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            nodes: [node],
+            lorsa_analysis_name: isLorsa ? analysisName : undefined,
+            tc_analysis_name: !isLorsa ? analysisName : undefined
+          })
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      
+      await response.json();
+      
+      // 更新 featuresWithClerp 状态（如果当前特征在列表中）
+      if (isCurrentFeature && result) {
+        const allFeatures = [...result.features_in, ...result.features_out];
+        const currentFeatureName = allFeatures.find(f => {
+          const parsed = parseFeatureName(f.name);
+          return parsed && parsed.layerIdx === layerIdx && parsed.featureIdx === featureIdx;
+        })?.name;
+        
+        if (currentFeatureName) {
+          setFeaturesWithClerp(prev => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(currentFeatureName);
+            if (existing) {
+              newMap.set(currentFeatureName, {
+                ...existing,
+                clerp: interpretationText
+              });
+            } else {
+              newMap.set(currentFeatureName, {
+                clerp: interpretationText,
+                rank: 0
+              });
+            }
+            return newMap;
+          });
+        }
+      } else if (selectedFeatureName) {
+        // 更新 featuresWithClerp 状态
+        setFeaturesWithClerp(prev => {
+          const newMap = new Map(prev);
+          const existing = newMap.get(selectedFeatureName);
+          if (existing) {
+            newMap.set(selectedFeatureName, {
+              ...existing,
+              clerp: interpretationText
+            });
+          } else {
+            newMap.set(selectedFeatureName, {
+              clerp: interpretationText,
+              rank: 0
+            });
+          }
+          return newMap;
+        });
+      }
+      
+      alert(`✅ Interpretation已成功保存到MongoDB！`);
+      
+    } catch (error) {
+      console.error('❌ 保存 interpretation 失败:', error);
+      alert(`❌ 保存失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      if (isCurrentFeature) {
+        setIsSavingCurrentFeatureInterpretation(false);
+      } else {
+        setIsSavingClerp(false);
+      }
+    }
+  }, [saeComboId, result, parseFeatureName, selectedFeatureName]);
+
+  // 当 result 更新时，自动加载当前特征的 Top Activation 和 Interpretation
+  useEffect(() => {
+    if (result) {
+      const isLorsa = result.feature_type === 'lorsa';
+      fetchTopActivationsForFeature(result.layer_idx, result.feature_idx, isLorsa, true);
+      fetchInterpretationForFeature(result.layer_idx, result.feature_idx, isLorsa, true);
+    }
+  }, [result, fetchTopActivationsForFeature, fetchInterpretationForFeature]);
 
   const handleFeatureClick = (featureName: string) => {
     const parsed = parseFeatureName(featureName);
@@ -858,7 +1227,27 @@ export const GlobalWeightPage: React.FC = () => {
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>当前特征: {result.feature_name}</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>当前特征: {result.feature_name}</CardTitle>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCurrentFeatureExpanded(!currentFeatureExpanded)}
+                    className="flex items-center gap-2"
+                  >
+                    {currentFeatureExpanded ? (
+                      <>
+                        <ChevronUp className="w-4 h-4" />
+                        折叠
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-4 h-4" />
+                        展开
+                      </>
+                    )}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
@@ -866,6 +1255,143 @@ export const GlobalWeightPage: React.FC = () => {
                   <p><strong>层:</strong> {result.layer_idx}</p>
                   <p><strong>特征索引:</strong> {result.feature_idx}</p>
                 </div>
+                
+                {currentFeatureExpanded && (
+                  <div className="mt-6 space-y-6 pt-6 border-t">
+                    {/* Top Activation 部分 */}
+                    <div>
+                      <h3 className="text-lg font-semibold mb-4">Top Activation 棋盘</h3>
+                      {loadingCurrentFeatureTopActivations ? (
+                        <div className="flex items-center justify-center py-8">
+                          <div className="text-center">
+                            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+                            <p className="text-gray-600">正在获取 Top Activation 数据...</p>
+                          </div>
+                        </div>
+                      ) : currentFeatureTopActivations.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                          {currentFeatureTopActivations.map((sample, index) => (
+                            <div key={index} className="bg-gray-50 rounded-lg p-3 border">
+                              <div className="text-center mb-2">
+                                <div className="text-sm font-medium text-gray-700">
+                                  Top #{index + 1}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  最大激活值: {sample.activationStrength.toFixed(3)}
+                                </div>
+                              </div>
+                              <ChessBoard
+                                fen={sample.fen}
+                                size="small"
+                                showCoordinates={false}
+                                activations={sample.activations}
+                                zPatternIndices={sample.zPatternIndices}
+                                zPatternValues={sample.zPatternValues}
+                                sampleIndex={sample.sampleIndex}
+                                analysisName={`Context ${sample.contextId}`}
+                                flip_activation={Boolean(sample.fen && sample.fen.split(' ')[1] === 'b')}
+                                autoFlipWhenBlack={true}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 text-gray-500">
+                          <p>未找到包含棋盘的激活样本</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Circuit Interpretation 部分 */}
+                    {result && saeComboId && (
+                      <div>
+                        <CircuitInterpretationCard
+                          node={{
+                            nodeId: `${result.layer_idx * 2}_${result.feature_idx}_0`,
+                            layer: result.layer_idx,
+                            feature: result.feature_idx,
+                            feature_type: result.feature_type,
+                          }}
+                          saeComboId={saeComboId}
+                          saeSeries="BT4-exp128"
+                          getSaeName={getSaeNameForCircuit}
+                        />
+                      </div>
+                    )}
+
+                    {/* Interpretation Editor 部分 */}
+                    <div>
+                      <h3 className="text-lg font-semibold mb-4">Interpretation Editor</h3>
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                          <Label htmlFor="current-feature-interpretation">Interpretation 内容</Label>
+                          <div className="text-xs text-gray-500">
+                            字符数: {currentFeatureInterpretation.length}
+                          </div>
+                        </div>
+                        <textarea
+                          id="current-feature-interpretation"
+                          value={currentFeatureInterpretation}
+                          onChange={(e) => setCurrentFeatureInterpretation(e.target.value)}
+                          className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                          placeholder="输入或编辑特征的 interpretation 内容..."
+                        />
+                        <div className="flex justify-end space-x-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              fetchInterpretationForFeature(
+                                result.layer_idx,
+                                result.feature_idx,
+                                result.feature_type === 'lorsa',
+                                true
+                              );
+                            }}
+                            disabled={syncingCurrentFeatureInterpretation}
+                          >
+                            {syncingCurrentFeatureInterpretation ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                同步中...
+                              </>
+                            ) : (
+                              '从 MongoDB 同步'
+                            )}
+                          </Button>
+                          <Button
+                            onClick={() => {
+                              saveInterpretationForFeature(
+                                result.layer_idx,
+                                result.feature_idx,
+                                result.feature_type === 'lorsa',
+                                currentFeatureInterpretation,
+                                true
+                              );
+                            }}
+                            disabled={isSavingCurrentFeatureInterpretation}
+                          >
+                            {isSavingCurrentFeatureInterpretation ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                保存中...
+                              </>
+                            ) : (
+                              '保存到 MongoDB'
+                            )}
+                          </Button>
+                        </div>
+                        <div className="text-xs text-blue-600 bg-blue-50 p-3 rounded border-l-4 border-blue-200">
+                          <div className="font-medium mb-1">💡 使用说明:</div>
+                          <ul className="list-disc list-inside space-y-1 text-blue-700">
+                            <li>编辑 interpretation 内容后点击"保存到 MongoDB"将更改同步到数据库</li>
+                            <li>点击"从 MongoDB 同步"可以从数据库读取最新的 interpretation 内容</li>
+                            <li>Interpretation 会保存到对应特征的 interpretation 字段中</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -881,7 +1407,7 @@ export const GlobalWeightPage: React.FC = () => {
                   {loadingClerps && (
                     <div className="text-sm text-muted-foreground mb-2 flex items-center gap-2">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      正在加载 Clerp 和排名...
+                      正在加载 Interpretation 和排名...
                     </div>
                   )}
                   <div className="space-y-2 max-h-[600px] overflow-y-auto">
@@ -899,7 +1425,7 @@ export const GlobalWeightPage: React.FC = () => {
                             selectedFeatureName === feature.name ? 'bg-blue-100 border-blue-500' : ''
                           }`}
                           onClick={() => handleFeatureClick(feature.name)}
-                          title="点击查看该特征的 Top Activation 和编辑 Clerp"
+                          title="点击查看该特征的 Top Activation"
                         >
                           <div className="flex items-center justify-between mb-1">
                             <span className="font-mono text-sm flex-1 break-all">{feature.name}</span>
@@ -937,7 +1463,7 @@ export const GlobalWeightPage: React.FC = () => {
                   {loadingClerps && (
                     <div className="text-sm text-muted-foreground mb-2 flex items-center gap-2">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      正在加载 Clerp 和排名...
+                      正在加载 Interpretation 和排名...
                     </div>
                   )}
                   <div className="space-y-2 max-h-[600px] overflow-y-auto">
@@ -955,7 +1481,7 @@ export const GlobalWeightPage: React.FC = () => {
                             selectedFeatureName === feature.name ? 'bg-blue-100 border-blue-500' : ''
                           }`}
                           onClick={() => handleFeatureClick(feature.name)}
-                          title="点击查看该特征的 Top Activation 和编辑 Clerp"
+                          title="点击查看该特征的 Top Activation"
                         >
                           <div className="flex items-center justify-between mb-1">
                             <span className="font-mono text-sm flex-1 break-all">{feature.name}</span>
@@ -1040,22 +1566,39 @@ export const GlobalWeightPage: React.FC = () => {
                 )}
               </div>
 
-              {/* Clerp 编辑器部分 */}
+              {/* Circuit Interpretation 部分 */}
+              {selectedFeatureInfo && saeComboId && (
+                <div>
+                  <CircuitInterpretationCard
+                    node={{
+                      nodeId: `${selectedFeatureInfo.layerIdx * 2}_${selectedFeatureInfo.featureIdx}_0`,
+                      layer: selectedFeatureInfo.layerIdx,
+                      feature: selectedFeatureInfo.featureIdx,
+                      feature_type: selectedFeatureInfo.featureType,
+                    }}
+                    saeComboId={saeComboId}
+                    saeSeries="BT4-exp128"
+                    getSaeName={getSaeNameForCircuit}
+                  />
+                </div>
+              )}
+
+              {/* Interpretation Editor 部分 */}
               <div>
-                <h3 className="text-lg font-semibold mb-4">Clerp 编辑器</h3>
+                <h3 className="text-lg font-semibold mb-4">Interpretation Editor</h3>
                 <div className="space-y-4">
                   <div className="flex justify-between items-center">
-                    <Label htmlFor="clerp-editor">Clerp 内容</Label>
+                    <Label htmlFor="interpretation-editor">Interpretation 内容</Label>
                     <div className="text-xs text-gray-500">
                       字符数: {editingClerp.length}
                     </div>
                   </div>
                   <textarea
-                    id="clerp-editor"
+                    id="interpretation-editor"
                     value={editingClerp}
                     onChange={(e) => setEditingClerp(e.target.value)}
                     className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                    placeholder="输入或编辑特征的 clerp 内容..."
+                    placeholder="输入或编辑特征的 interpretation 内容..."
                   />
                   <div className="flex justify-end space-x-2">
                     <Button
@@ -1102,9 +1645,9 @@ export const GlobalWeightPage: React.FC = () => {
                   <div className="text-xs text-blue-600 bg-blue-50 p-3 rounded border-l-4 border-blue-200">
                     <div className="font-medium mb-1">💡 使用说明:</div>
                     <ul className="list-disc list-inside space-y-1 text-blue-700">
-                      <li>编辑 clerp 内容后点击"保存到 MongoDB"将更改同步到数据库</li>
-                      <li>点击"从 MongoDB 同步"可以从数据库读取最新的 clerp 内容</li>
-                      <li>Clerp 会保存到对应特征的 interpretation 字段中</li>
+                      <li>编辑 interpretation 内容后点击"保存到 MongoDB"将更改同步到数据库</li>
+                      <li>点击"从 MongoDB 同步"可以从数据库读取最新的 interpretation 内容</li>
+                      <li>Interpretation 会保存到对应特征的 interpretation 字段中</li>
                     </ul>
                   </div>
                 </div>
