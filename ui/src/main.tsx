@@ -18,6 +18,7 @@ import { PlotGraphPage } from "./routes/plot-graph/page";
 import { LogitLensPage } from "./routes/logit-lens/page";
 import { TacticFeaturesPage } from "./routes/tactic-features/page";
 import { GlobalWeightPage } from "./routes/global-weight/page";
+import { FunctionalMicrocircuitPage } from "./routes/functional-microcircuit/page";
 
 const router = createBrowserRouter([
   {
@@ -71,6 +72,10 @@ const router = createBrowserRouter([
   {
     path: "/global-weight",
     element: <GlobalWeightPage />,
+  },
+  {
+    path: "/functional-microcircuit",
+    element: <FunctionalMicrocircuitPage />,
   },
   {
     path: "/",

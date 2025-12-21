@@ -105,6 +105,14 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
     }
   }, [node, loadFeatureCircuits]);
 
+  // 当切换到"显示全部"时，自动加载所有circuits
+  useEffect(() => {
+    if (showAllCircuits && allCircuits.length === 0 && !loading) {
+      // 只有当切换到显示全部模式，且还没有加载过数据时，才自动加载
+      loadAllCircuits();
+    }
+  }, [showAllCircuits, allCircuits.length, loading, loadAllCircuits]);
+
   // 刷新所有数据
   const refreshAll = useCallback(async () => {
     await Promise.all([loadAllCircuits(), loadFeatureCircuits()]);
@@ -320,7 +328,14 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
         </h3>
         <div className="flex items-center space-x-2">
           <button
-            onClick={() => setShowAllCircuits(!showAllCircuits)}
+            onClick={() => {
+              const newValue = !showAllCircuits;
+              setShowAllCircuits(newValue);
+              // 如果切换到"显示全部"模式且还没有加载过所有circuits，则自动加载
+              if (newValue && allCircuits.length === 0 && !loading) {
+                loadAllCircuits();
+              }
+            }}
             className={`px-3 py-1 text-sm rounded transition-colors ${
               showAllCircuits
                 ? 'bg-blue-500 text-white hover:bg-blue-600'

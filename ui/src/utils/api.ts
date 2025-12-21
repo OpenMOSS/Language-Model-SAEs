@@ -70,6 +70,15 @@ export interface CircuitFeature {
   feature_index: number;
   feature_type: "transcoder" | "lorsa";
   interpretation?: string;
+  level?: number; // Circuit level (independent of layer, for visualization)
+  feature_id?: string; // Unique identifier for this feature in the circuit
+}
+
+export interface CircuitEdge {
+  source_feature_id: string;
+  target_feature_id: string;
+  weight: number;
+  interpretation?: string;
 }
 
 export interface CircuitAnnotation {
@@ -77,6 +86,7 @@ export interface CircuitAnnotation {
   circuit_interpretation: string;
   sae_combo_id: string;
   features: CircuitFeature[];
+  edges?: CircuitEdge[];
   created_at: string;
   updated_at: string;
   metadata?: Record<string, any>;
@@ -88,6 +98,7 @@ export const createCircuitAnnotation = async (
   circuitInterpretation: string,
   saeComboId: string,
   features: CircuitFeature[],
+  edges?: CircuitEdge[],
   metadata?: Record<string, any>
 ): Promise<CircuitAnnotation> => {
   const response = await fetch(`${API_BASE}/circuit_annotations`, {
@@ -99,6 +110,7 @@ export const createCircuitAnnotation = async (
       circuit_interpretation: circuitInterpretation,
       sae_combo_id: saeComboId,
       features,
+      edges,
       metadata,
     }),
   });
@@ -271,4 +283,111 @@ export const deleteCircuitAnnotation = async (circuitId: string): Promise<void> 
     const error = await response.json().catch(() => ({ detail: response.statusText }));
     throw new Error(error.detail || `Failed to delete circuit annotation: ${response.status}`);
   }
+};
+
+// Edge management APIs
+export const addEdgeToCircuit = async (
+  circuitId: string,
+  sourceFeatureId: string,
+  targetFeatureId: string,
+  weight: number = 0.0,
+  interpretation?: string
+): Promise<{ message: string }> => {
+  const response = await fetch(`${API_BASE}/circuit_annotations/${circuitId}/edges`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      source_feature_id: sourceFeatureId,
+      target_feature_id: targetFeatureId,
+      weight,
+      interpretation,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `Failed to add edge: ${response.status}`);
+  }
+
+  return response.json();
+};
+
+export const removeEdgeFromCircuit = async (
+  circuitId: string,
+  sourceFeatureId: string,
+  targetFeatureId: string
+): Promise<{ message: string }> => {
+  const response = await fetch(`${API_BASE}/circuit_annotations/${circuitId}/edges`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      source_feature_id: sourceFeatureId,
+      target_feature_id: targetFeatureId,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `Failed to remove edge: ${response.status}`);
+  }
+
+  return response.json();
+};
+
+export const updateEdgeWeight = async (
+  circuitId: string,
+  sourceFeatureId: string,
+  targetFeatureId: string,
+  weight: number,
+  interpretation?: string
+): Promise<{ message: string }> => {
+  const response = await fetch(`${API_BASE}/circuit_annotations/${circuitId}/edges`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      source_feature_id: sourceFeatureId,
+      target_feature_id: targetFeatureId,
+      weight,
+      interpretation,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `Failed to update edge weight: ${response.status}`);
+  }
+
+  return response.json();
+};
+
+export const setFeatureLevel = async (
+  circuitId: string,
+  featureId: string,
+  level: number
+): Promise<{ message: string }> => {
+  const response = await fetch(
+    `${API_BASE}/circuit_annotations/${circuitId}/features/${featureId}/level`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        level,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `Failed to set feature level: ${response.status}`);
+  }
+
+  return response.json();
 }; 

@@ -109,6 +109,15 @@ export const AppNavbar = () => {
           >
             Global Weight
           </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/functional-microcircuit" && "text-foreground"
+            )}
+            to="/functional-microcircuit"
+          >
+            Functional Microcircuit
+          </Link>
         </div>
       </div>
     </nav>
