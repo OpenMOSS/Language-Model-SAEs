@@ -1,63 +1,59 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
-import type { VisState } from '@/types/circuit'
-import { fetchSaeSets, traceCircuit } from '@/api/circuits'
-import { CreateSaeSetDialog } from '@/components/circuits/create-sae-set-dialog'
+import type { CircuitData, VisState } from '@/types/circuit'
+import {
+  circuitQueryOptions,
+  circuitsQueryOptions,
+  saeSetsQueryOptions,
+} from '@/api/circuits'
+import { dictionariesQueryOptions } from '@/hooks/useFeatures'
+import { GraphSelector } from '@/components/circuits/graph-selector'
+import { NewGraphDialog } from '@/components/circuits/new-graph-dialog'
 import { LinkGraphContainer } from '@/components/circuits/link-graph-container'
 import { NodeConnections } from '@/components/circuits/node-connections'
 import { FeatureCardHorizontal } from '@/components/feature/feature-card-horizontal'
-import { featureQueryOptions } from '@/hooks/useFeatures'
-import { extractLayerAndFeature } from '@/utils/circuit'
-import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { LabeledInput } from '@/components/ui/labeled-input'
-import { LabeledSelect } from '@/components/ui/labeled-select'
 import { Spinner } from '@/components/ui/spinner'
 
 export const Route = createFileRoute('/circuits/')({
   component: CircuitsPage,
-  loader: async () => {
-    const saeSets = await fetchSaeSets()
-    return { saeSets }
+  loader: async ({ context }) => {
+    const [circuits, saeSets, dictionaries] = await Promise.all([
+      context.queryClient.ensureQueryData(circuitsQueryOptions()),
+      context.queryClient.ensureQueryData(saeSetsQueryOptions()),
+      context.queryClient.ensureQueryData(dictionariesQueryOptions()),
+    ])
+    return { circuits, saeSets, dictionaries }
   },
 })
 
 function CircuitsPage() {
-  const { saeSets: initialSaeSets } = Route.useLoaderData()
+  const { dictionaries } = Route.useLoaderData()
   const [clickedId, setClickedId] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [hiddenIds, setHiddenIds] = useState<string[]>([])
+  const [selectedCircuitId, setSelectedCircuitId] = useState<string>('')
 
-  // SAE Sets state (can be updated after creating new ones)
-  const [saeSets, setSaeSets] = useState<string[]>(initialSaeSets)
-  const [selectedSaeSet, setSelectedSaeSet] = useState<string>(
-    initialSaeSets[0] ?? '',
-  )
-  const [text, setText] = useState<string>('')
-
-  const handleSaeSetCreated = (setName: string) => {
-    setSaeSets((prev) => [...prev, setName])
-    setSelectedSaeSet(setName)
-  }
+  const { data: circuits = [] } = useQuery(circuitsQueryOptions())
+  const { data: saeSets = [] } = useQuery(saeSetsQueryOptions())
 
   const {
-    mutate: mutateTraceCircuit,
-    isPending,
-    data: circuit,
-    error,
-  } = useMutation({
-    mutationFn: traceCircuit,
-    onSuccess: () => {
-      setClickedId(null)
-      setHoveredId(null)
-      setHiddenIds([])
-    },
+    data: circuitData,
+    isLoading: isLoadingCircuit,
+    error: circuitError,
+  } = useQuery({
+    ...circuitQueryOptions(selectedCircuitId),
+    enabled: !!selectedCircuitId,
   })
 
-  const handleTrace = () => {
-    if (!text) return
-    mutateTraceCircuit({ data: { saeSetName: selectedSaeSet, text } })
+  const circuit: CircuitData | undefined = circuitData?.graphData
+
+  const handleGraphCreated = (circuitId: string) => {
+    setSelectedCircuitId(circuitId)
+    setClickedId(null)
+    setHoveredId(null)
+    setHiddenIds([])
   }
 
   const visState: VisState = useMemo(
@@ -67,35 +63,6 @@ function CircuitsPage() {
     }),
     [clickedId, hoveredId],
   )
-
-  const featureQueryParams = useMemo(() => {
-    if (!clickedId || !circuit) return null
-
-    const node = circuit.nodes.find((n) => n.nodeId === clickedId)
-    if (
-      !node ||
-      (node.featureType !== 'cross layer transcoder' &&
-        node.featureType !== 'lorsa')
-    )
-      return null
-
-    const layerAndFeature = extractLayerAndFeature(clickedId)
-    if (!layerAndFeature) return null
-
-    const { featureId } = layerAndFeature
-    // Use saeName directly from node data
-    const dictionaryName = node.saeName
-    if (!dictionaryName) return null
-
-    return { dictionary: dictionaryName, featureIndex: featureId }
-  }, [clickedId, circuit])
-
-  const featureQuery = useQuery({
-    ...featureQueryOptions(
-      featureQueryParams ?? { dictionary: '', featureIndex: 0 },
-    ),
-    enabled: featureQueryParams !== null,
-  })
 
   const featureData = useMemo(() => {
     if (!clickedId || !circuit) return null
@@ -109,7 +76,7 @@ function CircuitsPage() {
       return null
 
     return node.feature
-  }, [featureQuery.data])
+  }, [clickedId, circuit])
 
   const handleNodeClick = useCallback((nodeId: string) => {
     setClickedId((prev) => (prev === nodeId ? null : nodeId))
@@ -119,56 +86,44 @@ function CircuitsPage() {
     setHoveredId(nodeId)
   }, [])
 
+  const handleCircuitSelect = (circuitId: string) => {
+    setSelectedCircuitId(circuitId)
+    setClickedId(null)
+    setHoveredId(null)
+    setHiddenIds([])
+  }
+
   return (
     <div className="h-full flex flex-col overflow-hidden bg-slate-50/50">
       <div className="pt-4 pb-6 px-20 flex justify-center items-center">
         <div className="flex justify-center items-center gap-3">
-          <div className="w-[300px]">
-            <LabeledSelect
-              label="SAE Set"
-              placeholder="Select an SAE set"
-              value={selectedSaeSet}
-              onValueChange={setSelectedSaeSet}
-              options={saeSets.map((s) => ({ value: s, label: s }))}
-              triggerClassName="bg-white w-full"
+          <div className="w-[500px]">
+            <GraphSelector
+              circuits={circuits}
+              selectedCircuitId={selectedCircuitId}
+              onSelect={handleCircuitSelect}
             />
           </div>
-          <CreateSaeSetDialog onSaeSetCreated={handleSaeSetCreated} />
-          <div className="w-[600px]">
-            <LabeledInput
-              label="Prompt"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !isPending && text) {
-                  handleTrace()
-                }
-              }}
-              placeholder="Enter your prompt to trace..."
-            />
-          </div>
-          <Button
-            onClick={handleTrace}
-            disabled={!text || !selectedSaeSet || isPending}
-            className="h-12 px-4"
-          >
-            {isPending ? 'Tracing...' : 'Trace'}
-          </Button>
+          <NewGraphDialog
+            saeSets={saeSets}
+            dictionaries={dictionaries}
+            onGraphCreated={handleGraphCreated}
+          />
         </div>
       </div>
 
-      {error ? (
+      {circuitError ? (
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <h3 className="text-lg font-semibold text-red-600 mb-2">
               Failed to load circuit visualization
             </h3>
             <p className="text-gray-600">
-              {error.message || 'Failed to trace circuit'}
+              {circuitError.message || 'Failed to load circuit'}
             </p>
           </div>
         </div>
-      ) : isPending ? (
+      ) : isLoadingCircuit ? (
         <div className="flex flex-col items-center justify-center gap-4 pt-10">
           <Spinner isAnimating={true} />
           <p className="text-gray-600">Loading circuit visualization...</p>
@@ -218,6 +173,12 @@ function CircuitsPage() {
               </Card>
             )}
           </div>
+        </div>
+      ) : !selectedCircuitId ? (
+        <div className="flex flex-col items-center justify-center gap-4 pt-10">
+          <p className="text-gray-600">
+            Select a graph or create a new one to get started.
+          </p>
         </div>
       ) : null}
     </div>

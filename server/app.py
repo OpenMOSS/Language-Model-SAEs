@@ -3,6 +3,7 @@ import os
 import re
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime
 from functools import lru_cache, wraps
 from typing import Any, Callable, Generator, Generic, Optional, ParamSpec, TypeVar
 
@@ -24,7 +25,7 @@ from lm_saes.circuit.replacement_model import ReplacementModel
 from lm_saes.circuit.utils.create_graph_files import serialize_graph
 from lm_saes.circuit.utils.transcoder_set import TranscoderSet, TranscoderSetConfig
 from lm_saes.config import BaseSAEConfig, MongoDBConfig
-from lm_saes.database import FeatureAnalysisSampling, FeatureRecord, MongoClient
+from lm_saes.database import CircuitConfig, FeatureAnalysisSampling, FeatureRecord, MongoClient
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
@@ -664,14 +665,7 @@ class CreateSaeSetRequest(BaseModel):
 
 @app.post("/sae-sets")
 def create_sae_set(request: CreateSaeSetRequest):
-    """Create a new SAE set in the current series.
-
-    Args:
-        request: The SAE set creation request
-
-    Returns:
-        Success message or error
-    """
+    """Create a new SAE set in the current series."""
     try:
         client.add_sae_set(
             name=request.name,
@@ -688,13 +682,65 @@ def create_sae_set(request: CreateSaeSetRequest):
         raise
 
 
-class TraceRequest(BaseModel):
+class GenerateCircuitRequest(BaseModel):
     text: str
+    name: Optional[str] = None
+    desired_logit_prob: float = 0.98
+    max_feature_nodes: int = 256
+    qk_tracing_topk: int = 10
+    node_threshold: float = 0.8
+    edge_threshold: float = 0.98
+    max_n_logits: int = 1
 
 
-@app.post("/circuit/{sae_set_name}")
-def trace(sae_set_name: str, request: TraceRequest):
-    """Trace a given text through a given SAE set."""
+def process_feature_for_circuit(feature: FeatureRecord):
+    """Process a feature record for circuit visualization."""
+    analysis = next(
+        (a for a in feature.analyses),
+        None,
+    )
+    if analysis is None:
+        return None
+
+    sampling = next(
+        (s for s in analysis.samplings if s.name == "top_activations"),
+        None,
+    )
+
+    samples = extract_samples(sampling, 0, 5, visible_range=50) if sampling is not None else None
+
+    return {
+        "feature_index": feature.index,
+        "logits": feature.logits,
+        "analysis_name": analysis.name,
+        "interpretation": feature.interpretation,
+        "dictionary_name": feature.sae_name,
+        "act_times": analysis.act_times,
+        "max_feature_act": analysis.max_feature_acts,
+        "n_analyzed_tokens": analysis.n_analyzed_tokens,
+        "samples": samples,
+    }
+
+
+def concretize_feature_for_circuit(node: dict):
+    """Concretize a node by adding feature data if applicable."""
+    if node["sae_name"] is not None:
+        feature = client.get_feature(sae_name=node["sae_name"], sae_series=sae_series, index=node["feature"])
+        assert feature is not None, f"Feature {node['feature']} not found in SAE {node['sae_name']}"
+        feature = process_feature_for_circuit(feature)
+        assert feature is not None, (
+            f"Analysis or sampling not found for feature {node['feature']} in SAE {node['sae_name']}"
+        )
+        return {
+            **node,
+            "feature": feature,
+        }
+    return node
+
+
+@app.post("/circuits")
+def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
+    """Generate and save a circuit graph for a given prompt and SAE set."""
     text = request.text
     sae_set = client.get_sae_set(name=sae_set_name)
     assert sae_set is not None, f"SAE set {sae_set_name} not found"
@@ -728,65 +774,95 @@ def trace(sae_set_name: str, request: TraceRequest):
     graph = attribute(
         prompt=text,
         model=replacement_model,
-        max_n_logits=1,
-        desired_logit_prob=0.98,
+        max_n_logits=request.max_n_logits,
+        desired_logit_prob=request.desired_logit_prob,
         batch_size=1,
-        max_feature_nodes=256,
+        max_feature_nodes=request.max_feature_nodes,
         sae_series=sae_series,
-        qk_tracing_topk=10,
+        qk_tracing_topk=request.qk_tracing_topk,
     )
     graph.cfg.tokenizer_name = model.cfg.model_from_pretrained_path or model.cfg.model_name
     graph_data = serialize_graph(
         graph=graph,
-        node_threshold=0.8,
-        edge_threshold=0.98,
+        node_threshold=request.node_threshold,
+        edge_threshold=request.edge_threshold,
         clt_names=list(transcoders.keys()),
         lorsa_names=list(lorsas.keys()),
     )
 
-    def process_feature(feature: FeatureRecord):
-        analysis = next(
-            (a for a in feature.analyses),
-            None,
-        )
-        if analysis is None:
-            return None
+    config = CircuitConfig(
+        desired_logit_prob=request.desired_logit_prob,
+        max_feature_nodes=request.max_feature_nodes,
+        qk_tracing_topk=request.qk_tracing_topk,
+        node_threshold=request.node_threshold,
+        edge_threshold=request.edge_threshold,
+        max_n_logits=request.max_n_logits,
+    )
+    circuit_id = client.create_circuit(
+        sae_set_name=sae_set_name,
+        sae_series=sae_series,
+        prompt=text,
+        config=config,
+        graph_data=graph_data,
+        name=request.name,
+    )
 
-        sampling = next(
-            (s for s in analysis.samplings if s.name == "top_activations"),
-            None,
-        )
+    graph_data["nodes"] = [concretize_feature_for_circuit(node) for node in graph_data["nodes"]]
 
-        samples = extract_samples(sampling, 0, 5, visible_range=50) if sampling is not None else None
-
-        return {
-            "feature_index": feature.index,
-            "logits": feature.logits,
-            "analysis_name": analysis.name,
-            "interpretation": feature.interpretation,
-            "dictionary_name": feature.sae_name,
-            "act_times": analysis.act_times,
-            "max_feature_act": analysis.max_feature_acts,
-            "n_analyzed_tokens": analysis.n_analyzed_tokens,
-            "samples": samples,
+    return make_serializable(
+        {
+            "circuit_id": circuit_id,
+            "name": request.name,
+            "sae_set_name": sae_set_name,
+            "prompt": text,
+            "config": config.model_dump(),
+            "graph_data": graph_data,
+            "created_at": datetime.utcnow().isoformat(),
         }
+    )
 
-    def concretize_feature(node: dict):
-        if node["sae_name"] is not None:
-            feature = client.get_feature(sae_name=node["sae_name"], sae_series=sae_series, index=node["feature"])
-            assert feature is not None, f"Feature {node['feature']} not found in SAE {node['sae_name']}"
-            feature = process_feature(feature)
-            assert feature is not None, (
-                f"Analysis or sampling not found for feature {node['feature']} in SAE {node['sae_name']}"
-            )
-            return {
-                **node,
-                "feature": feature,
-            }
-        return node
 
-    graph_data["nodes"] = [concretize_feature(node) for node in graph_data["nodes"]]
-    return make_serializable(graph_data)
+@app.get("/circuits")
+def list_circuits(limit: int = 100, skip: int = 0):
+    """List all circuits for the current SAE series."""
+    circuits = client.list_circuits(sae_series=sae_series, limit=limit, skip=skip)
+
+    circuits = [circuit.model_dump() for circuit in circuits]
+
+    return circuits
+
+
+@app.get("/circuits/{circuit_id}")
+def get_circuit(circuit_id: str):
+    """Get a circuit by its ID with concretized feature data."""
+    circuit = client.get_circuit(circuit_id)
+    if circuit is None:
+        return Response(content=f"Circuit {circuit_id} not found", status_code=404)
+
+    graph_data = circuit.graph_data.copy()
+    graph_data["nodes"] = [concretize_feature_for_circuit(node) for node in graph_data["nodes"]]
+
+    result = {
+        "circuit_id": circuit.id,
+        "name": circuit.name,
+        "sae_set_name": circuit.sae_set_name,
+        "prompt": circuit.prompt,
+        "config": circuit.config.model_dump(),
+        "graph_data": graph_data,
+        "created_at": circuit.created_at.isoformat(),
+    }
+
+    return make_serializable(result)
+
+
+@app.delete("/circuits/{circuit_id}")
+def delete_circuit(circuit_id: str):
+    """Delete a circuit by its ID."""
+    success = client.delete_circuit(circuit_id)
+    if success:
+        return {"message": "Circuit deleted successfully"}
+    else:
+        return Response(content=f"Circuit {circuit_id} not found", status_code=404)
 
 
 @app.post("/dictionaries/{name}/features/{feature_index}/bookmark")
