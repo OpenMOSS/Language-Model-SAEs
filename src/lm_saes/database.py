@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Annotated, Any, Literal, Optional, Union
 
 import gridfs
 import numpy as np
@@ -7,7 +7,7 @@ import pymongo
 import pymongo.database
 import pymongo.errors
 from bson import ObjectId
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from tqdm import tqdm
 
 from lm_saes.config import (
@@ -119,6 +119,19 @@ class CircuitConfig(BaseModel):
     max_n_logits: int = 1
 
 
+class CircuitTextInput(BaseModel):
+    input_type: Literal["plain_text"] = "plain_text"
+    text: str
+
+
+class CircuitChatTemplateInput(BaseModel):
+    input_type: Literal["chat_template"] = "chat_template"
+    messages: list[dict[str, str]]
+
+
+CircuitInput = Annotated[Union[CircuitTextInput, CircuitChatTemplateInput], Field(discriminator="input_type")]
+
+
 class CircuitRecord(BaseModel):
     """Record for a generated circuit graph."""
 
@@ -129,6 +142,7 @@ class CircuitRecord(BaseModel):
     sae_series: str
     prompt: str
     """The prompt used to generate the circuit."""
+    input: CircuitInput
     config: CircuitConfig
     graph_data: dict[str, Any]
     """The serialized graph data."""
@@ -782,6 +796,7 @@ class MongoClient:
         sae_set_name: str,
         sae_series: str,
         prompt: str,
+        input: CircuitInput,
         config: CircuitConfig,
         graph_data: dict[str, Any],
         name: Optional[str] = None,
@@ -792,6 +807,7 @@ class MongoClient:
             "sae_set_name": sae_set_name,
             "sae_series": sae_series,
             "prompt": prompt,
+            "input": input.model_dump(),
             "config": config.model_dump(),
             "graph_data": graph_data,
             "created_at": datetime.utcnow(),
@@ -808,7 +824,6 @@ class MongoClient:
         if circuit is None:
             return None
         circuit["id"] = str(circuit.pop("_id"))
-        circuit["config"] = CircuitConfig.model_validate(circuit["config"])
         return CircuitRecord.model_validate(circuit)
 
     def list_circuits(
@@ -832,7 +847,6 @@ class MongoClient:
         circuits = []
         for circuit in cursor:
             circuit["id"] = str(circuit.pop("_id"))
-            circuit["config"] = CircuitConfig.model_validate(circuit["config"])
             circuits.append(CircuitRecord.model_validate(circuit))
         return circuits
 

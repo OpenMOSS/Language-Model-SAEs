@@ -1,13 +1,28 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronUp, Plus, Search, Settings2 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
-import type { GenerateCircuitParams } from '@/api/circuits'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  ChevronDown,
+  ChevronUp,
+  MessageSquare,
+  Plus,
+  Search,
+  Settings2,
+  Type,
+  X,
+} from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import type {
+  ChatMessage,
+  CircuitInput,
+  GenerateCircuitParams,
+} from '@/api/circuits'
+import {
+  applyChatTemplate,
   circuitQueryOptions,
   createSaeSet,
   generateCircuit,
 } from '@/api/circuits'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -29,6 +44,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { useDebounce } from '@/hooks/use-debounce'
 
 interface NewGraphDialogProps {
   saeSets: string[]
@@ -48,7 +64,12 @@ export function NewGraphDialog({
 
   const [selectedSaeSet, setSelectedSaeSet] = useState<string>('')
   const [customGraphId, setCustomGraphId] = useState('')
+  const [useChatTemplate, setUseChatTemplate] = useState(false)
   const [prompt, setPrompt] = useState('')
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { role: 'user', content: '' },
+    { role: 'assistant', content: '' },
+  ])
 
   const [desiredLogitProb, setDesiredLogitProb] = useState(0.98)
   const [maxNodes, setMaxNodes] = useState(256)
@@ -170,12 +191,65 @@ export function NewGraphDialog({
     }
   }
 
+  const handleAddMessage = () => {
+    const lastRole = chatMessages[chatMessages.length - 1]?.role
+    const nextRole: ChatMessage['role'] =
+      lastRole === 'user' ? 'assistant' : 'user'
+    setChatMessages([...chatMessages, { role: nextRole, content: '' }])
+  }
+
+  const handleRemoveMessage = (index: number) => {
+    if (chatMessages.length <= 1) return
+    setChatMessages(chatMessages.filter((_, i) => i !== index))
+  }
+
+  const handleMessageChange = (index: number, content: string) => {
+    setChatMessages(
+      chatMessages.map((msg, i) => (i === index ? { ...msg, content } : msg)),
+    )
+  }
+
+  const handleMessageRoleChange = (
+    index: number,
+    role: ChatMessage['role'],
+  ) => {
+    setChatMessages(
+      chatMessages.map((msg, i) => (i === index ? { ...msg, role } : msg)),
+    )
+  }
+
+  const hasValidInput = useChatTemplate || prompt.trim()
+
+  const debouncedChatMessages = useDebounce(chatMessages, 500)
+  const debouncedSelectedSaeSet = useDebounce(selectedSaeSet, 500)
+
+  const { data: chatTemplateData, isLoading: isPreviewLoading } = useQuery({
+    queryKey: ['chat-template', debouncedSelectedSaeSet, debouncedChatMessages],
+    queryFn: () =>
+      applyChatTemplate({
+        data: {
+          saeSetName: debouncedSelectedSaeSet,
+          messages: debouncedChatMessages,
+        },
+      }),
+    enabled: useChatTemplate && !!debouncedSelectedSaeSet,
+  })
+
+  const previewPrompt = chatTemplateData?.prompt ?? ''
+
   const handleStartGeneration = () => {
-    if (!selectedSaeSet || !prompt.trim()) return
+    if (!selectedSaeSet || !hasValidInput) return
+
+    const input: CircuitInput = useChatTemplate
+      ? {
+          inputType: 'chat_template',
+          messages: chatMessages,
+        }
+      : { inputType: 'plain_text', text: prompt }
 
     const params: GenerateCircuitParams = {
       saeSetName: selectedSaeSet,
-      text: prompt,
+      input,
       name: customGraphId.trim() || undefined,
       desiredLogitProb,
       maxFeatureNodes: maxNodes,
@@ -190,7 +264,12 @@ export function NewGraphDialog({
 
   const handleReset = () => {
     setCustomGraphId('')
+    setUseChatTemplate(false)
     setPrompt('')
+    setChatMessages([
+      { role: 'user', content: '' },
+      { role: 'assistant', content: '' },
+    ])
     setDesiredLogitProb(0.98)
     setMaxNodes(256)
     setMaxLogits(1)
@@ -214,7 +293,7 @@ export function NewGraphDialog({
     }
   }
 
-  const canGenerate = selectedSaeSet && prompt.trim() && !isGenerating
+  const canGenerate = selectedSaeSet && hasValidInput && !isGenerating
 
   return (
     <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
@@ -228,16 +307,7 @@ export function NewGraphDialog({
         <DialogHeader>
           <DialogTitle className="text-xl">Generate New Graph</DialogTitle>
           <DialogDescription>
-            Generate a new attribution graph for a custom prompt using{' '}
-            <a
-              href="https://github.com/TransformerLensOrg/circuit-tracer"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              circuit-tracer
-            </a>
-            .
+            Generate a new attribution graph for a custom prompt.
           </DialogDescription>
         </DialogHeader>
 
@@ -453,7 +523,7 @@ export function NewGraphDialog({
                     label="QK Tracing Top-K"
                     value={qkTracingTopk}
                     onChange={setQkTracingTopk}
-                    min={1}
+                    min={0}
                     max={50}
                     step={1}
                     showValue={false}
@@ -490,23 +560,145 @@ export function NewGraphDialog({
             </div>
           )}
 
-          {/* Prompt Input */}
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">
-              Prompt to Complete
-            </label>
-            <p className="text-sm text-slate-600 mb-2">
-              In general, you want your prompt to be missing a word at the end,
-              because we want to analyze how the model comes up with the word{' '}
-              <strong>after</strong> your prompt. (Eg &ldquo;The capital of the
-              state containing Dallas is&rdquo;)
-            </p>
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Enter the prompt to visualize..."
-              className="min-h-[100px] bg-white"
-            />
+          {/* Prompt Input Section */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Input
+              </label>
+              {/* Input Mode Tabs */}
+              <div className="flex rounded-lg bg-slate-100 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setUseChatTemplate(false)}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all',
+                    !useChatTemplate
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900',
+                  )}
+                >
+                  <Type className="h-3.5 w-3.5" />
+                  Plain Text
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUseChatTemplate(true)}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all',
+                    useChatTemplate
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900',
+                  )}
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  Chat
+                </button>
+              </div>
+            </div>
+
+            {useChatTemplate ? (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-500">
+                  Build a conversation. The model will predict the next token
+                  after your messages.
+                </p>
+                <div className="space-y-2 rounded-lg border bg-slate-50/50 p-3">
+                  {chatMessages.map((message, index) => {
+                    return (
+                      <div
+                        key={index}
+                        className="relative rounded-lg border bg-white p-3 shadow-sm"
+                      >
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <Select
+                                value={message.role}
+                                onValueChange={(value: ChatMessage['role']) =>
+                                  handleMessageRoleChange(index, value)
+                                }
+                              >
+                                <SelectTrigger className="h-6 w-auto gap-1 border-0 px-2 py-0 text-[10px] font-bold uppercase tracking-wider shadow-none bg-slate-100 text-slate-700">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="user">User</SelectItem>
+                                  <SelectItem value="assistant">
+                                    Assistant
+                                  </SelectItem>
+                                  <SelectItem value="system">System</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <Textarea
+                              value={message.content}
+                              onChange={(e) =>
+                                handleMessageChange(index, e.target.value)
+                              }
+                              placeholder={`What does the ${message.role} say?`}
+                              className="min-h-[50px] resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                            />
+                          </div>
+                          {chatMessages.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMessage(index)}
+                              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                              title="Remove message"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <button
+                    type="button"
+                    onClick={handleAddMessage}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-slate-200 py-2 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300 hover:bg-white/50 hover:text-slate-700"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add{' '}
+                    {chatMessages[chatMessages.length - 1]?.role === 'user'
+                      ? 'Assistant'
+                      : 'User'}{' '}
+                    Message
+                  </button>
+                </div>
+                {previewPrompt && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Formatted Prompt Preview
+                    </label>
+                    <div className="rounded-md border bg-slate-50 p-2.5 font-mono text-xs text-slate-600 break-all whitespace-pre-wrap">
+                      {isPreviewLoading ? (
+                        <div className="flex items-center gap-2 text-slate-400">
+                          <Spinner isAnimating={true} className="h-3 w-3" />
+                          Updating preview...
+                        </div>
+                      ) : (
+                        previewPrompt
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-500">
+                  Enter a prompt ending mid-sentence. We&apos;ll analyze how the
+                  model predicts the next token.
+                </p>
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder='e.g., "The capital of the state containing Dallas is"'
+                  className="min-h-[100px] bg-white"
+                />
+              </div>
+            )}
           </div>
 
           {generateError && (

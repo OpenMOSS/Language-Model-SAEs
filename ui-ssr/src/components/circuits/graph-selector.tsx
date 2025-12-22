@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, Trash2 } from 'lucide-react'
+import { ChevronDown, MessageCircle, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import type { CircuitListItem } from '@/api/circuits'
+import type { CircuitInput, CircuitListItem } from '@/api/circuits'
 import { deleteCircuit } from '@/api/circuits'
 import { cn } from '@/lib/utils'
 
@@ -28,6 +28,44 @@ function formatRelativeTime(dateString: string): string {
   }
 
   return date.toLocaleDateString()
+}
+
+function formatInputDisplay(
+  input: CircuitInput | undefined,
+  prompt: string,
+  maxLength: number,
+): { text: string; isChatTemplate: boolean } {
+  if (!input || input.inputType === 'plain_text') {
+    return {
+      text:
+        prompt.length > maxLength ? `${prompt.slice(0, maxLength)}...` : prompt,
+      isChatTemplate: false,
+    }
+  }
+
+  // For chat template, show a summary of messages
+  const messages = input.messages
+  if (messages.length === 0) {
+    return { text: '(empty chat)', isChatTemplate: true }
+  }
+
+  // Create a compact representation of the conversation
+  const parts = messages.map((m) => {
+    const rolePrefix =
+      m.role === 'user' ? 'U' : m.role === 'assistant' ? 'A' : 'S'
+    const contentPreview =
+      m.content.length > 30 ? `${m.content.slice(0, 30)}...` : m.content
+    return `[${rolePrefix}] ${contentPreview}`
+  })
+
+  const combined = parts.join(' → ')
+  return {
+    text:
+      combined.length > maxLength
+        ? `${combined.slice(0, maxLength)}...`
+        : combined,
+    isChatTemplate: true,
+  }
 }
 
 interface GraphSelectorProps {
@@ -95,11 +133,21 @@ export function GraphSelector({
       >
         {selectedCircuit ? (
           <div className="flex flex-col items-start text-left gap-0.5 overflow-hidden flex-1 mr-2">
-            <span className="text-sm font-medium truncate w-full">
-              {selectedCircuit.prompt.length > 60
-                ? `${selectedCircuit.prompt.slice(0, 60)}...`
-                : selectedCircuit.prompt}
-            </span>
+            {(() => {
+              const display = formatInputDisplay(
+                selectedCircuit.input,
+                selectedCircuit.prompt,
+                60,
+              )
+              return (
+                <span className="text-sm font-medium truncate w-full flex items-center gap-1.5">
+                  {display.isChatTemplate && (
+                    <MessageCircle className="h-3.5 w-3.5 shrink-0 text-primary" />
+                  )}
+                  {display.text}
+                </span>
+              )
+            })()}
             <div className="flex items-center gap-2 text-xs text-slate-500 truncate w-full">
               <span className="truncate">
                 {selectedCircuit.name || selectedCircuit.id}
@@ -141,11 +189,17 @@ export function GraphSelector({
                   onClick={() => handleSelect(c.id)}
                 >
                   <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                    <span className="text-sm font-medium truncate">
-                      {c.prompt.length > 50
-                        ? `${c.prompt.slice(0, 50)}...`
-                        : c.prompt}
-                    </span>
+                    {(() => {
+                      const display = formatInputDisplay(c.input, c.prompt, 50)
+                      return (
+                        <span className="text-sm font-medium truncate flex items-center gap-1.5">
+                          {display.isChatTemplate && (
+                            <MessageCircle className="h-3.5 w-3.5 shrink-0 text-primary" />
+                          )}
+                          {display.text}
+                        </span>
+                      )
+                    })()}
                     <div className="flex items-center gap-2 text-xs text-slate-500">
                       <span className="truncate">{c.name || c.id}</span>
                       <span className="shrink-0">·</span>

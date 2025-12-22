@@ -25,7 +25,7 @@ from lm_saes.circuit.replacement_model import ReplacementModel
 from lm_saes.circuit.utils.create_graph_files import serialize_graph
 from lm_saes.circuit.utils.transcoder_set import TranscoderSet, TranscoderSetConfig
 from lm_saes.config import BaseSAEConfig, MongoDBConfig
-from lm_saes.database import CircuitConfig, FeatureAnalysisSampling, FeatureRecord, MongoClient
+from lm_saes.database import CircuitConfig, CircuitInput, FeatureAnalysisSampling, FeatureRecord, MongoClient
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
@@ -663,6 +663,28 @@ class CreateSaeSetRequest(BaseModel):
     sae_names: list[str]
 
 
+class ApplyChatTemplateRequest(BaseModel):
+    messages: list[dict[str, str]]
+    sae_set_name: str
+
+
+@app.post("/chat-template/apply")
+def apply_chat_template(request: ApplyChatTemplateRequest):
+    """Apply a chat template to a list of messages."""
+    sae_set = client.get_sae_set(name=request.sae_set_name)
+    assert sae_set is not None, f"SAE set {request.sae_set_name} not found"
+    sae_names = sae_set.sae_names
+    model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
+    model = get_model(name=model_name)
+    assert isinstance(model, TransformerLensLanguageModel), (
+        f"Chat template application only supports TransformerLens backend, got {type(model)}"
+    )
+    prompt = model.tokenizer.apply_chat_template(
+        request.messages, tokenize=False, add_generation_prompt=False, continue_final_message=True
+    )
+    return {"prompt": prompt}
+
+
 @app.post("/sae-sets")
 def create_sae_set(request: CreateSaeSetRequest):
     """Create a new SAE set in the current series."""
@@ -683,7 +705,7 @@ def create_sae_set(request: CreateSaeSetRequest):
 
 
 class GenerateCircuitRequest(BaseModel):
-    text: str
+    input: CircuitInput
     name: Optional[str] = None
     desired_logit_prob: float = 0.98
     max_feature_nodes: int = 256
@@ -741,7 +763,7 @@ def concretize_feature_for_circuit(node: dict):
 @app.post("/circuits")
 def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
     """Generate and save a circuit graph for a given prompt and SAE set."""
-    text = request.text
+
     sae_set = client.get_sae_set(name=sae_set_name)
     assert sae_set is not None, f"SAE set {sae_set_name} not found"
     sae_names = sae_set.sae_names
@@ -753,11 +775,17 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         "Circuit tracing only supports exact model of TransformerLens backend"
     )
 
+    if request.input.input_type == "plain_text":
+        prompt = request.input.text
+    elif request.input.input_type == "chat_template":
+        prompt = model.tokenizer.apply_chat_template(
+            request.input.messages, tokenize=False, add_generation_prompt=False, continue_final_message=True
+        )
+    else:
+        raise ValueError(f"Invalid input type: {request.input.input_type}")
+
     lorsas = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, LowRankSparseAttention)}
     transcoders = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, SparseAutoEncoder)}
-    # assert len(lorsas) == len(transcoders) == model.model.cfg.n_layers, (
-    #     "Currently only supports SAE sets with all layers"
-    # )
 
     plt_set = TranscoderSet(
         TranscoderSetConfig(
@@ -769,13 +797,15 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         {i: transcoder for i, transcoder in enumerate(transcoders.values())},
     )
 
-    replacement_model = ReplacementModel.from_pretrained(model.cfg, plt_set, list(lorsas.values()), use_lorsa=len(lorsas)>0)
+    replacement_model = ReplacementModel.from_pretrained(
+        model.cfg, plt_set, list(lorsas.values()), use_lorsa=len(lorsas) > 0
+    )
 
     if len(lorsas) == 0 and request.qk_tracing_topk > 0:
         return Response(content="QK tracing is only supported with Lorsas", status_code=400)
 
     graph = attribute(
-        prompt=text,
+        prompt=prompt,
         model=replacement_model,
         max_n_logits=request.max_n_logits,
         desired_logit_prob=request.desired_logit_prob,
@@ -806,7 +836,8 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
     circuit_id = client.create_circuit(
         sae_set_name=sae_set_name,
         sae_series=sae_series,
-        prompt=text,
+        prompt=prompt,
+        input=request.input,
         config=config,
         graph_data=graph_data,
         name=request.name,
@@ -819,10 +850,11 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
             "circuit_id": circuit_id,
             "name": request.name,
             "sae_set_name": sae_set_name,
-            "prompt": text,
+            "prompt": prompt,
             "config": config.model_dump(),
             "graph_data": graph_data,
-            "created_at": datetime.utcnow().isoformat(),
+            "input": request.input.model_dump(),
+            "created_at": datetime.utcnow().isoformat() + "Z",
         }
     )
 
@@ -832,9 +864,13 @@ def list_circuits(limit: int = 100, skip: int = 0):
     """List all circuits for the current SAE series."""
     circuits = client.list_circuits(sae_series=sae_series, limit=limit, skip=skip)
 
-    circuits = [circuit.model_dump() for circuit in circuits]
+    results = []
+    for circuit in circuits:
+        data = circuit.model_dump()
+        data["created_at"] = circuit.created_at.isoformat() + "Z"
+        results.append(data)
 
-    return circuits
+    return results
 
 
 @app.get("/circuits/{circuit_id}")
@@ -854,7 +890,7 @@ def get_circuit(circuit_id: str):
         "prompt": circuit.prompt,
         "config": circuit.config.model_dump(),
         "graph_data": graph_data,
-        "created_at": circuit.created_at.isoformat(),
+        "created_at": circuit.created_at.isoformat() + "Z",
     }
 
     return make_serializable(result)
@@ -944,7 +980,7 @@ def list_bookmarks(sae_name: Optional[str] = None, sae_series: Optional[str] = N
     for bookmark in bookmarks:
         bookmark_dict = bookmark.model_dump()
         # Convert datetime to ISO string for JSON
-        bookmark_dict["created_at"] = bookmark.created_at.isoformat()
+        bookmark_dict["created_at"] = bookmark.created_at.isoformat() + "Z"
         bookmark_data.append(bookmark_dict)
 
     return {

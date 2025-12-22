@@ -44,7 +44,16 @@ export const YAxis: React.FC<YAxisProps> = React.memo(
           .attr('x', SIDE_PADDING - 12)
           .attr('y', yPos + 4)
           .attr('text-anchor', 'end')
-          .attr('font-size', '12px')
+          .attr(
+            'font-size',
+            yNumTicks > 50
+              ? '7px'
+              : yNumTicks > 40
+                ? '8px'
+                : yNumTicks > 20
+                  ? '10px'
+                  : '12px',
+          )
           .style(
             'font-family',
             "'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Consolas', 'Courier New', monospace",

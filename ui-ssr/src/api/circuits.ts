@@ -13,19 +13,37 @@ export interface CircuitConfig {
   maxNLogits: number
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+}
+
+export interface PlainTextInput {
+  inputType: 'plain_text'
+  text: string
+}
+
+export interface ChatTemplateInput {
+  inputType: 'chat_template'
+  messages: ChatMessage[]
+}
+
+export type CircuitInput = PlainTextInput | ChatTemplateInput
+
 export interface CircuitListItem {
   id: string
   name: string | null
   saeSetName: string
   saeSetSeries: string
   prompt: string
+  input: CircuitInput
   config: CircuitConfig
   createdAt: string
 }
 
 export interface GenerateCircuitParams {
   saeSetName: string
-  text: string
+  input: CircuitInput
   name?: string
   desiredLogitProb?: number
   maxFeatureNodes?: number
@@ -63,6 +81,37 @@ export const createSaeSet = createServerFn({ method: 'POST' })
     }
 
     return await response.json()
+  })
+
+export const applyChatTemplate = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (data: { saeSetName: string; messages: ChatMessage[] }) => data,
+  )
+  .handler(async ({ data: { saeSetName, messages } }) => {
+    const response = await fetch(
+      `${process.env.BACKEND_URL}/chat-template/apply`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sae_set_name: saeSetName,
+          messages: messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        }),
+      },
+    )
+
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(text || 'Failed to apply chat template')
+    }
+
+    const result = await response.json()
+    return result as { prompt: string }
   })
 
 export const fetchCircuits = createServerFn({ method: 'GET' }).handler(
@@ -106,6 +155,7 @@ export const fetchCircuit = createServerFn({ method: 'GET' })
       name: string | null
       saeSetName: string
       prompt: string
+      input: CircuitInput
       config: CircuitConfig
       graphData: CircuitData
       createdAt: string
@@ -119,7 +169,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const {
       saeSetName,
-      text,
+      input,
       name,
       desiredLogitProb,
       maxFeatureNodes,
@@ -129,6 +179,18 @@ export const generateCircuit = createServerFn({ method: 'POST' })
       maxNLogits,
     } = data
 
+    // Convert input to backend format
+    const backendInput =
+      input.inputType === 'plain_text'
+        ? { input_type: 'plain_text', text: input.text }
+        : {
+            input_type: 'chat_template',
+            messages: input.messages.map((m) => ({
+              role: m.role,
+              content: m.content,
+            })),
+          }
+
     const response = await fetch(
       `${process.env.BACKEND_URL}/circuits?sae_set_name=${encodeURIComponent(saeSetName)}`,
       {
@@ -137,7 +199,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          text,
+          input: backendInput,
           name: name || null,
           desired_logit_prob: desiredLogitProb,
           max_feature_nodes: maxFeatureNodes,
@@ -173,6 +235,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
       name: string | null
       saeSetName: string
       prompt: string
+      input: CircuitInput
       config: CircuitConfig
     }
   })
