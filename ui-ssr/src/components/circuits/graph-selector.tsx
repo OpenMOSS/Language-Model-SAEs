@@ -5,6 +5,31 @@ import type { CircuitListItem } from '@/api/circuits'
 import { deleteCircuit } from '@/api/circuits'
 import { cn } from '@/lib/utils'
 
+function formatRelativeTime(dateString: string): string {
+  const date = new Date(dateString)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffSeconds = Math.floor(diffMs / 1000)
+  const diffMinutes = Math.floor(diffSeconds / 60)
+  const diffHours = Math.floor(diffMinutes / 60)
+  const diffDays = Math.floor(diffHours / 24)
+
+  if (diffSeconds < 60) {
+    return 'just now'
+  }
+  if (diffMinutes < 60) {
+    return `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} ago`
+  }
+  if (diffHours < 24) {
+    return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`
+  }
+  if (diffDays < 7) {
+    return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
+  }
+
+  return date.toLocaleDateString()
+}
+
 interface GraphSelectorProps {
   circuits: CircuitListItem[]
   selectedCircuitId: string
@@ -75,9 +100,15 @@ export function GraphSelector({
                 ? `${selectedCircuit.prompt.slice(0, 60)}...`
                 : selectedCircuit.prompt}
             </span>
-            <span className="text-xs text-slate-500 truncate w-full">
-              {selectedCircuit.name || selectedCircuit.id}
-            </span>
+            <div className="flex items-center gap-2 text-xs text-slate-500 truncate w-full">
+              <span className="truncate">
+                {selectedCircuit.name || selectedCircuit.id}
+              </span>
+              <span className="shrink-0">·</span>
+              <span className="shrink-0">
+                {formatRelativeTime(selectedCircuit.createdAt)}
+              </span>
+            </div>
           </div>
         ) : (
           <span className="text-slate-500">Select a graph</span>
@@ -115,9 +146,13 @@ export function GraphSelector({
                         ? `${c.prompt.slice(0, 50)}...`
                         : c.prompt}
                     </span>
-                    <span className="text-xs text-slate-500 truncate">
-                      {c.name || c.id}
-                    </span>
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <span className="truncate">{c.name || c.id}</span>
+                      <span className="shrink-0">·</span>
+                      <span className="shrink-0">
+                        {formatRelativeTime(c.createdAt)}
+                      </span>
+                    </div>
                   </div>
                   <button
                     type="button"
