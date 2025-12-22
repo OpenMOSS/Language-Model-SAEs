@@ -755,9 +755,9 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
 
     lorsas = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, LowRankSparseAttention)}
     transcoders = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, SparseAutoEncoder)}
-    assert len(lorsas) == len(transcoders) == model.model.cfg.n_layers, (
-        "Currently only supports SAE sets with all layers"
-    )
+    # assert len(lorsas) == len(transcoders) == model.model.cfg.n_layers, (
+    #     "Currently only supports SAE sets with all layers"
+    # )
 
     plt_set = TranscoderSet(
         TranscoderSetConfig(
@@ -769,7 +769,10 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         {i: transcoder for i, transcoder in enumerate(transcoders.values())},
     )
 
-    replacement_model = ReplacementModel.from_pretrained(model.cfg, plt_set, list(lorsas.values()))
+    replacement_model = ReplacementModel.from_pretrained(model.cfg, plt_set, list(lorsas.values()), use_lorsa=len(lorsas)>0)
+
+    if len(lorsas) == 0 and request.qk_tracing_topk > 0:
+        return Response(content="QK tracing is only supported with Lorsas", status_code=400)
 
     graph = attribute(
         prompt=text,
@@ -780,6 +783,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         max_feature_nodes=request.max_feature_nodes,
         sae_series=sae_series,
         qk_tracing_topk=request.qk_tracing_topk,
+        use_lorsa=len(lorsas) > 0,
     )
     graph.cfg.tokenizer_name = model.cfg.model_from_pretrained_path or model.cfg.model_name
     graph_data = serialize_graph(
@@ -788,6 +792,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         edge_threshold=request.edge_threshold,
         clt_names=list(transcoders.keys()),
         lorsa_names=list(lorsas.keys()),
+        use_lorsa=len(lorsas) > 0,
     )
 
     config = CircuitConfig(

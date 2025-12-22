@@ -170,7 +170,11 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
                 influence=cumulative_scores[node_idx],
                 activation=interested_activation[orig_feature_idx],
                 lorsa_pattern=graph.lorsa_pattern[node_idx],
-                qk_tracing_results=graph.qk_tracing_results.get(orig_feature_idx.item(), None),
+                qk_tracing_results=(
+                    graph.qk_tracing_results.get(orig_feature_idx.item(), None)
+                    if graph.qk_tracing_results is not None
+                    else None
+                ),
             )
 
         elif node_idx in range(n_features, error_end_idx):
