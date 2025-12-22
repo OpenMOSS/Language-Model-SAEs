@@ -543,7 +543,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         key = k.permute(0, 2, 1, 3)
         value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
         with sdpa_kernel(
-            backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]
+            backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
         ):
             z = F.scaled_dot_product_attention(
                 query, key, value, scale=1 / self.attn_scale, is_causal=True, enable_gqa=True
@@ -606,7 +606,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             key = k.permute(0, 2, 1, 3)
             value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
             with sdpa_kernel(
-                backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]
+                backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
             ):
                 z = F.scaled_dot_product_attention(
                     query, key, value, scale=1 / self.attn_scale, is_causal=True, enable_gqa=True

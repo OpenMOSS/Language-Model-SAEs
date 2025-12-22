@@ -283,7 +283,8 @@ class MOLTConfig(BaseSAEConfig):
         assert self.rank_distribution, "rank_distribution cannot be empty"
 
         # Calculate base d_sae
-        base_d_sae = self.d_sae
+        assert self.expansion_factor.is_integer(), "expansion_factor must be an integer in molt."
+        base_d_sae = int(self.d_model * self.expansion_factor)
 
         # For distributed training, use special logic to ensure consistency
         if self.model_parallel_size_training > 1:

@@ -6,6 +6,8 @@ import shutil
 
 from huggingface_hub import create_repo, snapshot_download, upload_folder
 
+from lm_saes.config import LanguageModelConfig
+
 from .misc import print_once
 
 
@@ -16,12 +18,11 @@ def upload_pretrained_sae_to_hf(sae_path: str, repo_id: str, private: bool = Fal
         sae_path (str): path to the local SAE model
     """
 
-    from lm_saes.config import LanguageModelConfig
     from lm_saes.sae import SparseAutoEncoder
 
     # Load the model
     sae = SparseAutoEncoder.from_pretrained(sae_path)
-    lm_config = LanguageModelConfig.from_pretrained_sae(sae_path)
+    lm_config: LanguageModelConfig = LanguageModelConfig.from_pretrained_sae(sae_path)
 
     # Create local temporary directory for uploading
     folder_name = (
