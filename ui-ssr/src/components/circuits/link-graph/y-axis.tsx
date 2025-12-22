@@ -49,6 +49,7 @@ export const YAxis: React.FC<YAxisProps> = React.memo(
             'font-family',
             "'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Consolas', 'Courier New', monospace",
           )
+          .style('user-select', 'none')
           .attr('fill', textColor)
           .text(label)
       })

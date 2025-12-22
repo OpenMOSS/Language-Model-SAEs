@@ -3,7 +3,7 @@ import * as d3 from 'd3'
 import type { VisState } from '@/types/circuit'
 import type { EdgeIndex } from '@/utils/circuit-index'
 import { getEdgeStrokeWidth } from '@/utils/circuit'
-import { getConnectedEdges } from '@/utils/circuit-index'
+import { getConnectedEdges, getTopEdgesByWeight } from '@/utils/circuit-index'
 
 interface LinksProps {
   edgeIndex: EdgeIndex
@@ -16,8 +16,7 @@ export const Links = memo(({ edgeIndex, visState }: LinksProps) => {
   const isFilteredView = !!visState.clickedId
 
   const connectedEdges = useMemo(() => {
-    const allEdges = Array.from(edgeIndex.bySource.values()).flat()
-    if (!visState.clickedId) return allEdges
+    if (!visState.clickedId) return getTopEdgesByWeight(edgeIndex, 600)
     return getConnectedEdges(edgeIndex, visState.clickedId)
   }, [edgeIndex, visState.clickedId])
 
@@ -28,10 +27,10 @@ export const Links = memo(({ edgeIndex, visState }: LinksProps) => {
     svg.selectAll('*').remove()
 
     // Styling based on view mode:
-    // - "All" mode (~5000 edges): subtle, low opacity, thin strokes for density visualization
+    // - "Overview" mode (top 600 edges by weight): subtle, low opacity
     // - "Connected" mode (~100 edges): prominent, color-coded by weight sign
-    const opacity = isFilteredView ? 0.3 : 0.05
-    const strokeWidthScale = isFilteredView ? 0.5 : 0.3
+    const opacity = isFilteredView ? 0.6 : 0.4
+    const strokeWidthScale = isFilteredView ? 0.5 : 0.35
 
     const edgeSel = svg
       .selectAll('path')

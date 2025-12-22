@@ -108,6 +108,7 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
           .attr('y', tooltipY + 13)
           .attr('fill', 'white')
           .attr('font-size', '10px')
+          .style('user-select', 'none')
           .text(tooltipText)
       }
     }, [positionedNodes, visState.hoveredId, dimensions])

@@ -1,16 +1,79 @@
-import React, { memo, useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { Send } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Info } from '../ui/info'
 import { Button } from '../ui/button'
-import type { CircuitData, Node } from '@/types/circuit'
+import type { Node } from '@/types/circuit'
+import type { RawEdgeIndex, RawNodeIndex } from '@/utils/circuit-index'
 import { cn } from '@/lib/utils'
 import { formatFeatureId } from '@/utils/circuit'
 import { getWeightStyle } from '@/utils/style'
+import { getEdgesBySource, getEdgesByTarget } from '@/utils/circuit-index'
+
+interface FeatureRowProps {
+  node: Node
+  weight: number
+  isHidden: boolean
+  isHovered: boolean
+  isClicked: boolean
+  onNodeClick: (nodeId: string, metaKey: boolean) => void
+  onNodeHover: (nodeId: string | null) => void
+}
+
+const FeatureRow = memo(
+  ({
+    node,
+    weight,
+    isHidden,
+    isHovered,
+    isClicked,
+    onNodeClick,
+    onNodeHover,
+  }: FeatureRowProps) => {
+    const weightStyle = getWeightStyle(weight)
+
+    return (
+      <div
+        className={cn(
+          'py-2 px-2 mx-1 border rounded cursor-pointer transition-colors bg-gray-50 border-gray-200',
+          isHidden && 'opacity-50',
+          isHovered && 'ring-2 ring-blue-300',
+          isClicked && 'ring-2 ring-blue-500',
+        )}
+        style={weightStyle}
+        onClick={() => onNodeClick(node.nodeId, false)}
+        onMouseEnter={() => onNodeHover(node.nodeId)}
+        onMouseLeave={() => onNodeHover(null)}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <span className="text-xs font-mono text-gray-600">
+              {formatFeatureId(node, false)}
+            </span>
+            <span className="text-xs font-medium">
+              {(node.featureType === 'cross layer transcoder' ||
+                node.featureType === 'lorsa') &&
+                node.feature.interpretation?.text}
+            </span>
+          </div>
+          <div className="text-right">
+            <div className="text-xs font-mono">
+              {weight > 0 ? '+' : ''}
+              {weight.toFixed(3)}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  },
+)
+
+FeatureRow.displayName = 'FeatureRow'
 
 interface NodeConnectionsProps {
-  data: CircuitData
+  nodeIndex: RawNodeIndex
+  edgeIndex: RawEdgeIndex
   clickedId: string
   hoveredId: string | null
   hiddenIds: string[]
@@ -21,7 +84,8 @@ interface NodeConnectionsProps {
 
 export const NodeConnections = memo(
   ({
-    data,
+    nodeIndex,
+    edgeIndex,
     clickedId,
     hoveredId,
     hiddenIds,
@@ -30,85 +94,37 @@ export const NodeConnections = memo(
     className,
   }: NodeConnectionsProps) => {
     const clickedNode = useMemo(
-      () => data.nodes.find((node) => node.nodeId === clickedId)!,
-      [data.nodes, clickedId],
+      () => nodeIndex.byId.get(clickedId)!,
+      [nodeIndex, clickedId],
     )
 
     const navigate = useNavigate()
 
-    const inputNodes = useMemo(
-      () =>
-        data.nodes
-          .flatMap((node) => {
-            const edge = data.edges.find(
-              (edge) =>
-                edge.source === node.nodeId &&
-                edge.target === clickedNode.nodeId,
-            )
-            if (!edge) return []
-            return [{ node, weight: edge.weight }]
-          })
-          .sort((a, b) => b.weight - a.weight),
-      [data.nodes, data.edges, clickedNode],
-    )
+    const inputNodes = useMemo(() => {
+      const incomingEdges = getEdgesByTarget(edgeIndex, clickedId)
+      return incomingEdges
+        .map((edge) => {
+          const node = nodeIndex.byId.get(edge.source)
+          if (!node) return null
+          return { node, weight: edge.weight }
+        })
+        .filter((item): item is { node: Node; weight: number } => item !== null)
+        .sort((a, b) => b.weight - a.weight)
+    }, [edgeIndex, nodeIndex, clickedId])
 
-    const outputNodes = useMemo(
-      () =>
-        data.nodes
-          .flatMap((node) => {
-            const edge = data.edges.find(
-              (edge) =>
-                edge.source === clickedNode.nodeId &&
-                edge.target === node.nodeId,
-            )
-            if (!edge) return []
-            return [{ node, weight: edge.weight }]
-          })
-          .sort((a, b) => b.weight - a.weight),
-      [data.nodes, data.edges, clickedNode],
-    )
+    const outputNodes = useMemo(() => {
+      const outgoingEdges = getEdgesBySource(edgeIndex, clickedId)
+      return outgoingEdges
+        .map((edge) => {
+          const node = nodeIndex.byId.get(edge.target)
+          if (!node) return null
+          return { node, weight: edge.weight }
+        })
+        .filter((item): item is { node: Node; weight: number } => item !== null)
+        .sort((a, b) => b.weight - a.weight)
+    }, [edgeIndex, nodeIndex, clickedId])
 
-    const renderFeatureRow = (node: { node: Node; weight: number }) => {
-      const isHidden = hiddenIds.includes(String(node.node.nodeId))
-      const isHovered = node.node.nodeId === hoveredId
-      const isClicked = node.node.nodeId === clickedId
-      const weightStyle = getWeightStyle(node.weight)
-
-      return (
-        <div
-          key={node.node.nodeId}
-          className={cn(
-            'py-2 px-2 mx-1 border rounded cursor-pointer transition-colors bg-gray-50 border-gray-200',
-            isHidden && 'opacity-50',
-            isHovered && 'ring-2 ring-blue-300',
-            isClicked && 'ring-2 ring-blue-500',
-          )}
-          style={weightStyle}
-          onClick={() => onNodeClick(node.node.nodeId, false)}
-          onMouseEnter={() => onNodeHover(node.node.nodeId)}
-          onMouseLeave={() => onNodeHover(null)}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-mono text-gray-600">
-                {formatFeatureId(node.node, false)}
-              </span>
-              <span className="text-xs font-medium">
-                {(node.node.featureType === 'cross layer transcoder' ||
-                  node.node.featureType === 'lorsa') &&
-                  node.node.feature.interpretation?.text}
-              </span>
-            </div>
-            <div className="text-right">
-              <div className="text-xs font-mono">
-                {node.weight > 0 ? '+' : ''}
-                {node.weight.toFixed(3)}
-              </div>
-            </div>
-          </div>
-        </div>
-      )
-    }
+    const hiddenIdsSet = useMemo(() => new Set(hiddenIds), [hiddenIds])
 
     return (
       <Card
@@ -156,7 +172,18 @@ export const NodeConnections = memo(
               </Info>
             </div>
             <div className="flex flex-col gap-2 overflow-y-auto no-scrollbar">
-              {inputNodes.map((node) => renderFeatureRow(node))}
+              {inputNodes.map((item) => (
+                <FeatureRow
+                  key={item.node.nodeId}
+                  node={item.node}
+                  weight={item.weight}
+                  isHidden={hiddenIdsSet.has(item.node.nodeId)}
+                  isHovered={item.node.nodeId === hoveredId}
+                  isClicked={item.node.nodeId === clickedId}
+                  onNodeClick={onNodeClick}
+                  onNodeHover={onNodeHover}
+                />
+              ))}
             </div>
           </div>
           <div className="flex flex-col w-1/2 gap-2 min-h-0">
@@ -167,7 +194,18 @@ export const NodeConnections = memo(
               </Info>
             </div>
             <div className="flex flex-col gap-2 overflow-y-auto no-scrollbar">
-              {outputNodes.map((node) => renderFeatureRow(node))}
+              {outputNodes.map((item) => (
+                <FeatureRow
+                  key={item.node.nodeId}
+                  node={item.node}
+                  weight={item.weight}
+                  isHidden={hiddenIdsSet.has(item.node.nodeId)}
+                  isHovered={item.node.nodeId === hoveredId}
+                  isClicked={item.node.nodeId === clickedId}
+                  onNodeClick={onNodeClick}
+                  onNodeHover={onNodeHover}
+                />
+              ))}
             </div>
           </div>
         </div>

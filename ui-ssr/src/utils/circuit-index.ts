@@ -1,134 +1,122 @@
-import * as d3 from 'd3'
-import type { Edge, PositionedEdge, PositionedNode } from '@/types/circuit'
+import RBush from 'rbush'
+import knn from 'rbush-knn'
+import { MultiMap } from 'mnemonist'
+import type {
+  Edge,
+  Node,
+  PositionedEdge,
+  PositionedNode,
+} from '@/types/circuit'
+
+interface SpatialItem {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+  node: PositionedNode
+}
 
 export interface NodeIndex {
   byId: Map<string, PositionedNode>
-  byCtxIdx: Map<number, PositionedNode[]>
+  byCtxIdx: MultiMap<number, PositionedNode>
+}
+
+export interface RawNodeIndex {
+  byId: Map<string, Node>
 }
 
 export interface EdgeIndex {
-  bySource: Map<string, PositionedEdge[]>
-  byTarget: Map<string, PositionedEdge[]>
-  byNode: Map<string, PositionedEdge[]>
-  connectedNodes: Map<string, Set<string>>
+  bySource: MultiMap<string, PositionedEdge>
+  byTarget: MultiMap<string, PositionedEdge>
+  byNode: MultiMap<string, PositionedEdge>
+  connectedNodes: MultiMap<string, string>
+  sortedByWeight: PositionedEdge[]
+}
+
+export interface RawEdgeIndex {
+  bySource: MultiMap<string, Edge>
+  byTarget: MultiMap<string, Edge>
 }
 
 export function createNodeIndex(nodes: PositionedNode[]): NodeIndex {
   const byId = new Map<string, PositionedNode>()
-  const byCtxIdx = new Map<number, PositionedNode[]>()
+  const byCtxIdx = new MultiMap<number, PositionedNode>()
 
   for (const node of nodes) {
     byId.set(node.nodeId, node)
-
-    const ctxNodes = byCtxIdx.get(node.ctxIdx)
-    if (ctxNodes) {
-      ctxNodes.push(node)
-    } else {
-      byCtxIdx.set(node.ctxIdx, [node])
-    }
+    byCtxIdx.set(node.ctxIdx, node)
   }
 
   return { byId, byCtxIdx }
 }
 
-export function createEdgeIndex(edges: PositionedEdge[]): EdgeIndex {
-  const bySource = new Map<string, PositionedEdge[]>()
-  const byTarget = new Map<string, PositionedEdge[]>()
-  const byNode = new Map<string, PositionedEdge[]>()
-  const connectedNodes = new Map<string, Set<string>>()
-
-  for (const edge of edges) {
-    // Index by source
-    const sourceEdges = bySource.get(edge.source)
-    if (sourceEdges) {
-      sourceEdges.push(edge)
-    } else {
-      bySource.set(edge.source, [edge])
-    }
-
-    // Index by target
-    const targetEdges = byTarget.get(edge.target)
-    if (targetEdges) {
-      targetEdges.push(edge)
-    } else {
-      byTarget.set(edge.target, [edge])
-    }
-
-    // Index by both nodes (for quick lookup of all edges connected to a node)
-    const sourceNodeEdges = byNode.get(edge.source)
-    if (sourceNodeEdges) {
-      sourceNodeEdges.push(edge)
-    } else {
-      byNode.set(edge.source, [edge])
-    }
-
-    const targetNodeEdges = byNode.get(edge.target)
-    if (targetNodeEdges) {
-      targetNodeEdges.push(edge)
-    } else {
-      byNode.set(edge.target, [edge])
-    }
-
-    // Track connected nodes for quick isConnected checks
-    let sourceConnected = connectedNodes.get(edge.source)
-    if (!sourceConnected) {
-      sourceConnected = new Set()
-      connectedNodes.set(edge.source, sourceConnected)
-    }
-    sourceConnected.add(edge.target)
-
-    let targetConnected = connectedNodes.get(edge.target)
-    if (!targetConnected) {
-      targetConnected = new Set()
-      connectedNodes.set(edge.target, targetConnected)
-    }
-    targetConnected.add(edge.source)
+export function createRawNodeIndex(nodes: Node[]): RawNodeIndex {
+  const byId = new Map<string, Node>()
+  for (const node of nodes) {
+    byId.set(node.nodeId, node)
   }
-
-  return { bySource, byTarget, byNode, connectedNodes }
+  return { byId }
 }
 
-export type SpatialIndex = d3.Quadtree<PositionedNode>
+export function createRawEdgeIndex(edges: Edge[]): RawEdgeIndex {
+  const bySource = new MultiMap<string, Edge>()
+  const byTarget = new MultiMap<string, Edge>()
+
+  for (const edge of edges) {
+    bySource.set(edge.source, edge)
+    byTarget.set(edge.target, edge)
+  }
+
+  return { bySource, byTarget }
+}
+
+export function createEdgeIndex(edges: PositionedEdge[]): EdgeIndex {
+  const bySource = new MultiMap<string, PositionedEdge>()
+  const byTarget = new MultiMap<string, PositionedEdge>()
+  const byNode = new MultiMap<string, PositionedEdge>()
+  const connectedNodes = new MultiMap<string, string>()
+
+  for (const edge of edges) {
+    bySource.set(edge.source, edge)
+    byTarget.set(edge.target, edge)
+    byNode.set(edge.source, edge)
+    byNode.set(edge.target, edge)
+    connectedNodes.set(edge.source, edge.target)
+    connectedNodes.set(edge.target, edge.source)
+  }
+
+  const sortedByWeight = [...edges].sort(
+    (a, b) => Math.abs(b.weight) - Math.abs(a.weight),
+  )
+
+  return { bySource, byTarget, byNode, connectedNodes, sortedByWeight }
+}
+
+export type SpatialIndex = RBush<SpatialItem>
 
 export function createSpatialIndex(nodes: PositionedNode[]): SpatialIndex {
-  return d3
-    .quadtree<PositionedNode>()
-    .x((d) => d.pos[0])
-    .y((d) => d.pos[1])
-    .addAll(nodes)
+  const tree = new RBush<SpatialItem>()
+
+  const items: SpatialItem[] = nodes.map((node) => ({
+    minX: node.pos[0],
+    minY: node.pos[1],
+    maxX: node.pos[0],
+    maxY: node.pos[1],
+    node,
+  }))
+
+  tree.load(items)
+  return tree
 }
 
 export function findNearestNode(
-  quadtree: SpatialIndex,
+  tree: SpatialIndex,
   x: number,
   y: number,
   maxDistance: number,
 ): PositionedNode | null {
-  let nearest: PositionedNode | null = null
-  let nearestDistance = maxDistance
-
-  quadtree.visit((quad, x0, y0, x1, y1) => {
-    if (!quad.length) {
-      const node = quad.data
-      if (node) {
-        const dx = x - node.pos[0]
-        const dy = y - node.pos[1]
-        const distance = Math.sqrt(dx * dx + dy * dy)
-        if (distance < nearestDistance) {
-          nearestDistance = distance
-          nearest = node
-        }
-      }
-    }
-    // Skip this quadrant if the closest possible point is farther than current nearest
-    const closestX = Math.max(x0, Math.min(x, x1))
-    const closestY = Math.max(y0, Math.min(y, y1))
-    const dx = x - closestX
-    const dy = y - closestY
-    return Math.sqrt(dx * dx + dy * dy) > nearestDistance
-  })
-
-  return nearest
+  const results = knn(tree, x, y, 1, undefined, maxDistance)
+  return results.length > 0 ? results[0].node : null
 }
 
 export function isNodeConnected(
@@ -137,14 +125,40 @@ export function isNodeConnected(
   nodeId: string,
 ): boolean {
   const connected = edgeIndex.connectedNodes.get(clickedId)
-  return connected?.has(nodeId) ?? false
+  if (!connected) return false
+  if (Array.isArray(connected)) {
+    return connected.includes(nodeId)
+  }
+  return connected === nodeId
 }
 
 export function getConnectedEdges(
   edgeIndex: EdgeIndex,
   nodeId: string,
 ): PositionedEdge[] {
-  return edgeIndex.byNode.get(nodeId) ?? []
+  const edges = edgeIndex.byNode.get(nodeId)
+  if (!edges) return []
+  return Array.isArray(edges) ? edges : [edges]
+}
+
+export function getAllEdges(edgeIndex: EdgeIndex): PositionedEdge[] {
+  return Array.from(edgeIndex.bySource.values())
+}
+
+export function getTopEdgesByWeight(
+  edgeIndex: EdgeIndex,
+  limit: number,
+): PositionedEdge[] {
+  return edgeIndex.sortedByWeight.slice(0, limit)
+}
+
+export function getNodesByCtxIdx(
+  nodeIndex: NodeIndex,
+  ctxIdx: number,
+): PositionedNode[] {
+  const nodes = nodeIndex.byCtxIdx.get(ctxIdx)
+  if (!nodes) return []
+  return Array.isArray(nodes) ? nodes : [nodes]
 }
 
 export function createPositionedEdges(
@@ -168,4 +182,22 @@ export function createPositionedEdges(
   }
 
   return result
+}
+
+export function getEdgesBySource(
+  edgeIndex: RawEdgeIndex,
+  source: string,
+): Edge[] {
+  const edges = edgeIndex.bySource.get(source)
+  if (!edges) return []
+  return Array.isArray(edges) ? edges : [edges]
+}
+
+export function getEdgesByTarget(
+  edgeIndex: RawEdgeIndex,
+  target: string,
+): Edge[] {
+  const edges = edgeIndex.byTarget.get(target)
+  if (!edges) return []
+  return Array.isArray(edges) ? edges : [edges]
 }

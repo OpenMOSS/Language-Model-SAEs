@@ -16,6 +16,7 @@ import {
   createPositionedEdges,
   createSpatialIndex,
   findNearestNode,
+  getNodesByCtxIdx,
 } from '@/utils/circuit-index'
 
 interface LinkGraphProps {
@@ -179,10 +180,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     }
 
     const handleClick = (event: MouseEvent) => {
-      if ((event.target as Element).tagName === 'svg') {
-        return
-      }
-
       const rect = svg.getBoundingClientRect()
       const mouseX = event.clientX - rect.left
       const mouseY = event.clientY - rect.top
@@ -241,7 +238,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     return data.metadata.promptTokens
       .slice(0, maxCtxIdx + 1)
       .map((token: string, index: number) => {
-        const contextNodes = nodeIndex.byCtxIdx.get(index) ?? []
+        const contextNodes = getNodesByCtxIdx(nodeIndex, index)
 
         if (contextNodes.length === 0) {
           return {
@@ -278,11 +275,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         ref={svgRef}
         width={dimensions.width}
         height={dimensions.height}
-        onClick={(event) => {
-          if (event.target === event.currentTarget) {
-            onNodeClick('', false)
-          }
-        }}
         className="relative z-1"
         style={{ pointerEvents: 'auto' }}
       >

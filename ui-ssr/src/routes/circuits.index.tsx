@@ -15,6 +15,7 @@ import { NodeConnections } from '@/components/circuits/node-connections'
 import { FeatureCardHorizontal } from '@/components/feature/feature-card-horizontal'
 import { Card } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
+import { createRawEdgeIndex, createRawNodeIndex } from '@/utils/circuit-index'
 
 export const Route = createFileRoute('/circuits/')({
   component: CircuitsPage,
@@ -48,6 +49,16 @@ function CircuitsPage() {
   })
 
   const circuit: CircuitData | undefined = circuitData?.graphData
+
+  const rawNodeIndex = useMemo(
+    () => (circuit ? createRawNodeIndex(circuit.nodes) : null),
+    [circuit],
+  )
+
+  const rawEdgeIndex = useMemo(
+    () => (circuit ? createRawEdgeIndex(circuit.edges) : null),
+    [circuit],
+  )
 
   const handleGraphCreated = (circuitId: string) => {
     setSelectedCircuitId(circuitId)
@@ -152,9 +163,10 @@ function CircuitsPage() {
               )}
             </div>
 
-            {clickedId && (
+            {clickedId && rawNodeIndex && rawEdgeIndex && (
               <NodeConnections
-                data={circuit}
+                nodeIndex={rawNodeIndex}
+                edgeIndex={rawEdgeIndex}
                 clickedId={clickedId}
                 hoveredId={hoveredId}
                 hiddenIds={hiddenIds}

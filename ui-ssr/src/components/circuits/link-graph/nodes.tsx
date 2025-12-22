@@ -32,9 +32,16 @@ export const Nodes: React.FC<NodesProps> = React.memo(
       const svg = d3.select(svgRef.current)
       svg.selectAll('*').remove()
 
+      const isErrorNode = (d: any) =>
+        d.featureType === 'lorsa error' ||
+        d.featureType === 'mlp reconstruction error'
+
+      const regularNodes = positionedNodes.filter((d) => !isErrorNode(d))
+      const errorNodes = positionedNodes.filter((d) => isErrorNode(d))
+
       svg
         .selectAll('circle.node')
-        .data(positionedNodes, (d: any) => d.nodeId)
+        .data(regularNodes, (d: any) => d.nodeId)
         .enter()
         .append('circle')
         .attr('class', 'node')
@@ -44,12 +51,34 @@ export const Nodes: React.FC<NodesProps> = React.memo(
         .attr('fill', (d: any) => getNodeColor(d.featureType))
         .attr('stroke', (d: any) => {
           if (d.nodeId === visState.clickedId) return '#ef4444'
-          if (isConnected(d.nodeId)) return '#10b981'
           return '#000'
         })
         .attr('stroke-width', (d: any) => {
           if (d.nodeId === visState.clickedId || isConnected(d.nodeId))
-            return '2'
+            return '1.5'
+          return '0.5'
+        })
+        .style('pointer-events', 'none')
+        .style('transition', 'all 0.2s ease')
+
+      svg
+        .selectAll('rect.node')
+        .data(errorNodes, (d: any) => d.nodeId)
+        .enter()
+        .append('rect')
+        .attr('class', 'node')
+        .attr('x', (d: any) => d.pos[0] - 3)
+        .attr('y', (d: any) => d.pos[1] - 3)
+        .attr('width', 6)
+        .attr('height', 6)
+        .attr('fill', (d: any) => getNodeColor(d.featureType))
+        .attr('stroke', (d: any) => {
+          if (d.nodeId === visState.clickedId) return '#ef4444'
+          return '#000'
+        })
+        .attr('stroke-width', (d: any) => {
+          if (d.nodeId === visState.clickedId || isConnected(d.nodeId))
+            return '1.5'
           return '0.5'
         })
         .style('pointer-events', 'none')
@@ -57,13 +86,29 @@ export const Nodes: React.FC<NodesProps> = React.memo(
 
       svg
         .selectAll('circle.hover-indicator')
-        .data(positionedNodes, (d: any) => d.nodeId)
+        .data(regularNodes, (d: any) => d.nodeId)
         .enter()
         .append('circle')
         .attr('class', 'hover-indicator')
         .attr('cx', (d: any) => d.pos[0])
         .attr('cy', (d: any) => d.pos[1])
         .attr('r', 6)
+        .attr('stroke', '#f0f')
+        .attr('stroke-width', 2)
+        .attr('fill', 'none')
+        .style('pointer-events', 'none')
+        .style('opacity', (d: any) => (d.nodeId === visState.hoveredId ? 1 : 0))
+
+      svg
+        .selectAll('rect.hover-indicator')
+        .data(errorNodes, (d: any) => d.nodeId)
+        .enter()
+        .append('rect')
+        .attr('class', 'hover-indicator')
+        .attr('x', (d: any) => d.pos[0] - 6)
+        .attr('y', (d: any) => d.pos[1] - 6)
+        .attr('width', 12)
+        .attr('height', 12)
         .attr('stroke', '#f0f')
         .attr('stroke-width', 2)
         .attr('fill', 'none')

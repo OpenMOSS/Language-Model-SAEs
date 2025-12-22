@@ -35,6 +35,7 @@ export const TokenLabels: React.FC<TokenLabelsProps> = React.memo(
         .style('font-family', "'Courier New', monospace")
         .style('font-size', '11px')
         .style('font-weight', '500')
+        .style('user-select', 'none')
         .style('fill', '#374151')
         .text((d: any) => d.token)
     }, [tokenData, dimensions])
