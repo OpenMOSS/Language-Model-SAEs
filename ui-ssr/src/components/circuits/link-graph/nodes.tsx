@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useRef } from 'react'
 import * as d3 from 'd3'
-import type { PositionedEdge, PositionedNode } from '@/types/circuit'
+import type { PositionedNode } from '@/types/circuit'
+import type { EdgeIndex } from '@/utils/circuit-index'
 import { getNodeColor } from '@/utils/circuit'
+import { isNodeConnected } from '@/utils/circuit-index'
 
 interface NodesProps {
   positionedNodes: PositionedNode[]
-  positionedEdges: PositionedEdge[]
+  edgeIndex: EdgeIndex
   visState: {
     clickedId: string | null
     hoveredId: string | null
@@ -13,19 +15,15 @@ interface NodesProps {
 }
 
 export const Nodes: React.FC<NodesProps> = React.memo(
-  ({ positionedNodes, positionedEdges, visState }) => {
+  ({ positionedNodes, edgeIndex, visState }) => {
     const svgRef = useRef<SVGGElement>(null)
 
     const isConnected = useCallback(
       (nodeId: string) => {
         if (!visState.clickedId) return false
-        return positionedEdges.some(
-          (edge) =>
-            (edge.source === visState.clickedId && edge.target === nodeId) ||
-            (edge.target === visState.clickedId && edge.source === nodeId),
-        )
+        return isNodeConnected(edgeIndex, visState.clickedId, nodeId)
       },
-      [visState.clickedId, positionedEdges],
+      [visState.clickedId, edgeIndex],
     )
 
     useEffect(() => {
@@ -71,7 +69,7 @@ export const Nodes: React.FC<NodesProps> = React.memo(
         .attr('fill', 'none')
         .style('pointer-events', 'none')
         .style('opacity', (d: any) => (d.nodeId === visState.hoveredId ? 1 : 0))
-    }, [positionedNodes, positionedEdges, visState, isConnected])
+    }, [positionedNodes, edgeIndex, visState, isConnected])
 
     return <g ref={svgRef} />
   },

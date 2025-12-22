@@ -1,26 +1,25 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
 import * as d3 from 'd3'
-import type { PositionedEdge, VisState } from '@/types/circuit'
+import type { VisState } from '@/types/circuit'
+import type { EdgeIndex } from '@/utils/circuit-index'
 import { getEdgeStrokeWidth } from '@/utils/circuit'
+import { getConnectedEdges } from '@/utils/circuit-index'
 
 interface LinksProps {
-  positionedEdges: PositionedEdge[]
+  edgeIndex: EdgeIndex
   visState: VisState
 }
 
-export const Links = memo(({ positionedEdges, visState }: LinksProps) => {
+export const Links = memo(({ edgeIndex, visState }: LinksProps) => {
   const svgRef = useRef<SVGGElement>(null)
 
   const isFilteredView = !!visState.clickedId
 
   const connectedEdges = useMemo(() => {
-    if (!visState.clickedId) return positionedEdges
-    return positionedEdges.filter((edge) => {
-      return (
-        edge.source === visState.clickedId || edge.target === visState.clickedId
-      )
-    })
-  }, [positionedEdges, visState.clickedId])
+    const allEdges = Array.from(edgeIndex.bySource.values()).flat()
+    if (!visState.clickedId) return allEdges
+    return getConnectedEdges(edgeIndex, visState.clickedId)
+  }, [edgeIndex, visState.clickedId])
 
   useEffect(() => {
     if (!svgRef.current || !connectedEdges.length) return
