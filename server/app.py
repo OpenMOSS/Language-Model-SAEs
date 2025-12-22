@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import threading
 from contextlib import asynccontextmanager
 from functools import lru_cache, wraps
@@ -176,9 +177,28 @@ async def oom_error_handler(request, exc):
     return Response(content="CUDA Out of memory", status_code=500)
 
 
+def natural_sort_key(name: str) -> list[tuple[int, int | str]]:
+    """Convert a string into a sort key for natural sorting.
+
+    Splits the string into alternating number and string parts, returning
+    a list of tuples where numbers are (0, int) and strings are (1, str).
+    This allows numbers to be sorted numerically and strings alphabetically.
+    """
+    parts = re.split(r"(\d+)", name)
+    key: list[tuple[int, int | str]] = []
+    for part in parts:
+        if part:
+            if part.isdigit():
+                key.append((0, int(part)))
+            else:
+                key.append((1, part.lower()))
+    return key
+
+
 @app.get("/dictionaries")
 def list_dictionaries():
-    return client.list_saes(sae_series=sae_series, has_analyses=True)
+    sae_names = client.list_saes(sae_series=sae_series, has_analyses=True)
+    return sorted(sae_names, key=natural_sort_key)
 
 
 @app.get("/dictionaries/{name}/metrics")
@@ -633,8 +653,39 @@ def infer_feature(name: str, feature_index: int, text: str):
 
 @app.get("/sae-sets")
 def list_sae_sets():
-    """List all available SAE sets."""
-    return [sae_set.name for sae_set in client.list_sae_sets()]
+    """List all available SAE sets for the current series."""
+    return [sae_set.name for sae_set in client.list_sae_sets() if sae_set.sae_series == sae_series]
+
+
+class CreateSaeSetRequest(BaseModel):
+    name: str
+    sae_names: list[str]
+
+
+@app.post("/sae-sets")
+def create_sae_set(request: CreateSaeSetRequest):
+    """Create a new SAE set in the current series.
+
+    Args:
+        request: The SAE set creation request
+
+    Returns:
+        Success message or error
+    """
+    try:
+        client.add_sae_set(
+            name=request.name,
+            sae_series=sae_series,
+            sae_names=request.sae_names,
+        )
+        return {"message": f"SAE set '{request.name}' created successfully"}
+    except Exception as e:
+        if "duplicate key" in str(e).lower():
+            return Response(
+                content=f"SAE set with name '{request.name}' already exists",
+                status_code=409,
+            )
+        raise
 
 
 class TraceRequest(BaseModel):

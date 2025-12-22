@@ -1,19 +1,19 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
-import type { CircuitData, VisState } from '@/types/circuit'
+import type { VisState } from '@/types/circuit'
+import { fetchSaeSets, traceCircuit } from '@/api/circuits'
+import { CreateSaeSetDialog } from '@/components/circuits/create-sae-set-dialog'
 import { LinkGraphContainer } from '@/components/circuits/link-graph-container'
 import { NodeConnections } from '@/components/circuits/node-connections'
-import { FeatureCard } from '@/components/feature/feature-card'
+import { FeatureCardHorizontal } from '@/components/feature/feature-card-horizontal'
 import { featureQueryOptions } from '@/hooks/useFeatures'
 import { extractLayerAndFeature } from '@/utils/circuit'
-import { fetchSaeSets, traceCircuit } from '@/api/circuits'
-import { LabeledSelect } from '@/components/ui/labeled-select'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { LabeledInput } from '@/components/ui/labeled-input'
+import { LabeledSelect } from '@/components/ui/labeled-select'
 import { Spinner } from '@/components/ui/spinner'
-import { Card, CardHeader, CardTitle } from '@/components/ui/card'
-import { FeatureCardHorizontal } from '@/components/feature/feature-card-horizontal'
 
 export const Route = createFileRoute('/circuits/')({
   component: CircuitsPage,
@@ -24,13 +24,22 @@ export const Route = createFileRoute('/circuits/')({
 })
 
 function CircuitsPage() {
-  const { saeSets } = Route.useLoaderData()
+  const { saeSets: initialSaeSets } = Route.useLoaderData()
   const [clickedId, setClickedId] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [hiddenIds, setHiddenIds] = useState<string[]>([])
 
-  const [selectedSaeSet, setSelectedSaeSet] = useState<string>(saeSets[0])
+  // SAE Sets state (can be updated after creating new ones)
+  const [saeSets, setSaeSets] = useState<string[]>(initialSaeSets)
+  const [selectedSaeSet, setSelectedSaeSet] = useState<string>(
+    initialSaeSets[0] ?? '',
+  )
   const [text, setText] = useState<string>('')
+
+  const handleSaeSetCreated = (setName: string) => {
+    setSaeSets((prev) => [...prev, setName])
+    setSelectedSaeSet(setName)
+  }
 
   const {
     mutate: mutateTraceCircuit,
@@ -39,7 +48,7 @@ function CircuitsPage() {
     error,
   } = useMutation({
     mutationFn: traceCircuit,
-    onSuccess: (data) => {
+    onSuccess: () => {
       setClickedId(null)
       setHoveredId(null)
       setHiddenIds([])
@@ -124,6 +133,7 @@ function CircuitsPage() {
               triggerClassName="bg-white w-full"
             />
           </div>
+          <CreateSaeSetDialog onSaeSetCreated={handleSaeSetCreated} />
           <div className="w-[600px]">
             <LabeledInput
               label="Prompt"
@@ -139,7 +149,7 @@ function CircuitsPage() {
           </div>
           <Button
             onClick={handleTrace}
-            disabled={!text || isPending}
+            disabled={!text || !selectedSaeSet || isPending}
             className="h-12 px-4"
           >
             {isPending ? 'Tracing...' : 'Trace'}
