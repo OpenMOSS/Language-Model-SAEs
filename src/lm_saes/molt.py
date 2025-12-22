@@ -805,3 +805,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         feature_acts = self.encode(x, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, original_x=x)
         return reconstructed
+    
+    def hf_folder_name(self) -> str:
+        return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"

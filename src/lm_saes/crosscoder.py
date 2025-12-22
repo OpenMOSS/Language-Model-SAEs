@@ -695,3 +695,9 @@ class CrossCoder(AbstractSparseAutoEncoder):
         cfg = CrossCoderConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
         model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
         return model
+
+    def hf_folder_name(self) -> str:
+        folder_name = self.cfg.sae_type
+        for hook_point in self.cfg.hook_points:
+            folder_name += f"-{hook_point}"
+        return folder_name

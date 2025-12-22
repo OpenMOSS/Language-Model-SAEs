@@ -810,6 +810,11 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 state_dict, device_mesh, f"{prefix}activation_function."
             )
     
+    @abstractmethod
+    def hf_folder_name(self) -> str:
+        """Return the folder name for the SAE in HuggingFace Hub."""
+        raise NotImplementedError("Subclasses must implement this method")
+
     def upload_to_hf(
         self,
         repo_id: str,
@@ -829,21 +834,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             Token: HF token (or rely on local login).
             Private: Whether to create repo as private.
         """
+        # Get the folder name for the SAE in HuggingFace Hub
+        folder_name = self.hf_folder_name()
 
-        if self.cfg.sae_type == "clt":
-            folder_name = "CLT"
-        elif self.cfg.sae_type == "crosscoder":
-            assert hasattr(self.cfg, "hook_points"), "hook_points must be set for crosscoder"
-            folder_name = f"{self.cfg.sae_type}"
-            for head in self.cfg.hook_points:
-                folder_name += f"-{head}"
-        else:
-            assert hasattr(self.cfg, "hook_point_in") and hasattr(self.cfg, "hook_point_out"), "hook_point_in and hook_point_out must be set for non-CLT SAEs"
-            folder_name = (
-                f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"
-            )
-
-        print(folder_name)
+        # Create a temporary folder to save the SAE
         tmp_root = Path(tempfile.mkdtemp(prefix="sae_upload_"))
         local_folder = tmp_root / folder_name
         local_folder.mkdir(parents=True, exist_ok=True)

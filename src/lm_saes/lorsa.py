@@ -878,6 +878,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Prepare label tensor."""
         label = batch[self.cfg.hook_point_out]
         return label
+    
+    def hf_folder_name(self) -> str:
+        return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"
 
 
 class RMSNormPerHead(nn.Module):
