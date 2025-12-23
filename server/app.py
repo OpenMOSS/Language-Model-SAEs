@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import threading
@@ -16,6 +17,7 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
+from tqdm import tqdm
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend import LanguageModel
@@ -29,6 +31,8 @@ from lm_saes.database import CircuitConfig, CircuitInput, FeatureAnalysisSamplin
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.sae import SparseAutoEncoder
+
+logger = logging.getLogger(__name__)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -744,20 +748,30 @@ def process_feature_for_circuit(feature: FeatureRecord):
     }
 
 
-def concretize_feature_for_circuit(node: dict):
-    """Concretize a node by adding feature data if applicable."""
-    if node["sae_name"] is not None:
-        feature = client.get_feature(sae_name=node["sae_name"], sae_series=sae_series, index=node["feature"])
-        assert feature is not None, f"Feature {node['feature']} not found in SAE {node['sae_name']}"
-        feature = process_feature_for_circuit(feature)
-        assert feature is not None, (
-            f"Analysis or sampling not found for feature {node['feature']} in SAE {node['sae_name']}"
+def concretize_graph_data(graph_data: dict[str, Any]):
+    """Concretize a graph data by adding feature data. This will modify the graph data in place."""
+    logger.info("Retrieving feature records for circuit")
+
+    sae_names = list(set(node["sae_name"] for node in graph_data["nodes"] if node["sae_name"] is not None))
+    feature_records = {
+        sae_name: client.list_features(
+            sae_name=sae_name,
+            sae_series=sae_series,
+            indices=[node["feature"] for node in graph_data["nodes"] if node["sae_name"] == sae_name],
         )
-        return {
-            **node,
-            "feature": feature,
-        }
-    return node
+        for sae_name in sae_names
+    }
+    feature_records = {
+        (sae_name, feature_record.index): feature_record
+        for sae_name, feature_records in feature_records.items()
+        for feature_record in feature_records
+    }
+
+    for node in tqdm(graph_data["nodes"], desc="Concretizing features"):
+        if node["sae_name"] is not None:
+            feature_record = feature_records.get((node["sae_name"], node["feature"]))
+            assert feature_record is not None, f"Feature {node['feature']} not found in SAE {node['sae_name']}"
+            node["feature"] = process_feature_for_circuit(feature_record)
 
 
 @app.post("/circuits")
@@ -843,7 +857,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         name=request.name,
     )
 
-    graph_data["nodes"] = [concretize_feature_for_circuit(node) for node in graph_data["nodes"]]
+    concretize_graph_data(graph_data)
 
     return make_serializable(
         {
@@ -880,8 +894,7 @@ def get_circuit(circuit_id: str):
     if circuit is None:
         return Response(content=f"Circuit {circuit_id} not found", status_code=404)
 
-    graph_data = circuit.graph_data.copy()
-    graph_data["nodes"] = [concretize_feature_for_circuit(node) for node in graph_data["nodes"]]
+    concretize_graph_data(circuit.graph_data)
 
     result = {
         "circuit_id": circuit.id,
@@ -889,7 +902,7 @@ def get_circuit(circuit_id: str):
         "sae_set_name": circuit.sae_set_name,
         "prompt": circuit.prompt,
         "config": circuit.config.model_dump(),
-        "graph_data": graph_data,
+        "graph_data": circuit.graph_data,
         "created_at": circuit.created_at.isoformat() + "Z",
     }
 
