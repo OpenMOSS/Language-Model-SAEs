@@ -9,7 +9,12 @@ import {
   Tooltips,
   YAxis,
 } from './index'
-import type { CircuitData, PositionedNode, VisState } from '@/types/circuit'
+import type {
+  CircuitData,
+  Node,
+  PositionedNode,
+  VisState,
+} from '@/types/circuit'
 import {
   createEdgeIndex,
   createNodeIndex,
@@ -28,6 +33,67 @@ interface LinkGraphProps {
 
 const BOTTOM_PADDING = 50
 const SIDE_PADDING = 70
+
+function topologicalSort(
+  nodes: Node[],
+  outgoingEdges: Map<string, Set<string>>,
+): Node[] {
+  const nodeIds = new Set(nodes.map((n) => n.nodeId))
+  const inDegree = new Map<string, number>()
+  const localOutgoing = new Map<string, string[]>()
+
+  for (const node of nodes) {
+    inDegree.set(node.nodeId, 0)
+    localOutgoing.set(node.nodeId, [])
+  }
+
+  for (const node of nodes) {
+    const targets = outgoingEdges.get(node.nodeId)
+    if (targets) {
+      for (const target of targets) {
+        if (nodeIds.has(target)) {
+          localOutgoing.get(node.nodeId)!.push(target)
+          inDegree.set(target, (inDegree.get(target) || 0) + 1)
+        }
+      }
+    }
+  }
+
+  // Kahn's algorithm
+  const queue: Node[] = []
+  const nodeMap = new Map(nodes.map((n) => [n.nodeId, n]))
+
+  for (const node of nodes) {
+    if (inDegree.get(node.nodeId) === 0) {
+      queue.push(node)
+    }
+  }
+
+  const sorted: Node[] = []
+  while (queue.length > 0) {
+    const node = queue.shift()!
+    sorted.push(node)
+
+    for (const targetId of localOutgoing.get(node.nodeId) || []) {
+      const newDegree = (inDegree.get(targetId) || 1) - 1
+      inDegree.set(targetId, newDegree)
+      if (newDegree === 0) {
+        queue.push(nodeMap.get(targetId)!)
+      }
+    }
+  }
+
+  // Handle cycles by adding remaining nodes
+  if (sorted.length < nodes.length) {
+    for (const node of nodes) {
+      if (!sorted.includes(node)) {
+        sorted.push(node)
+      }
+    }
+  }
+
+  return sorted
+}
 
 const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   data,
@@ -49,7 +115,17 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       }
     }
 
-    const { nodes } = data
+    const { nodes, edges } = data
+
+    // Build outgoing edges map for topological sorting
+    const outgoingEdges = new Map<string, Set<string>>()
+    for (const edge of edges) {
+      if (!outgoingEdges.has(edge.source)) {
+        outgoingEdges.set(edge.source, new Set())
+      }
+      outgoingEdges.get(edge.source)!.add(edge.target)
+    }
+
     const earliestCtxWithNodes = d3.min(nodes, (d) => d.ctxIdx) || 0
 
     let cumsum = 0
@@ -115,7 +191,11 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
 
       ctxData.layerGroups.forEach(
         (layerNodes: typeof nodes, _layerIdx: number) => {
-          const sortedNodes = [...layerNodes].sort((a, b) => {
+          // Topological sort first
+          let sortedNodes = topologicalSort(layerNodes, outgoingEdges)
+
+          // Then sort for logits by token probability
+          sortedNodes = sortedNodes.sort((a, b) => {
             if (a.featureType === 'logit' && b.featureType === 'logit') {
               return -(a.tokenProb || 0) + (b.tokenProb || 0)
             }
@@ -140,7 +220,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     })
 
     return { calculatedCtxCounts, x, y, positionedNodes }
-  }, [data.nodes, dimensions.width, dimensions.height])
+  }, [data.nodes, data.edges, dimensions.width, dimensions.height])
 
   const nodeIndex = useMemo(
     () => createNodeIndex(positionedNodes),
