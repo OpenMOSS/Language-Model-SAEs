@@ -495,6 +495,27 @@ class dinov3(LanguageModel):
             
         return {hook_point: activations[hook_point].contiguous() for hook_point in hook_points} | {"tokens": images_token.contiguous()}
     
+    def to_activations_gradient(
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
+    ) -> dict[str, torch.Tensor]:
+        with timer.time("run_with_cache_until"):
+            # print(raw['images'].shape)
+            _, activations = self.model.run_with_cache_until(raw['images'], names_filter=hook_points)
+        # print('image', raw['images'].min(), raw['images'].max())
+        # print(hook_points[0], type(activations[hook_points[0]]))
+        # batch_size, _, H, W = raw["images"].shape
+        # images_token = torch.ones(batch_size,H*W, dtype=torch.long, device=self.cfg.device)
+        # print("dummy_tokens", dummy_tokens.shape)
+        
+        images_token = image_to_token(raw['images_raw'])
+        images_token = rearrange(images_token, "b h w -> b (h w)")
+        for hook_point in hook_points:
+            # b, d, h, w = activations[hook_point].shape
+            # activations[hook_point] = activations[hook_point].reshape(b, d, h*w).permute(0,2,1)
+            activations[hook_point] = rearrange(activations[hook_point], "b d h w -> b (h w) d")
+            
+        return {hook_point: activations[hook_point].contiguous() for hook_point in hook_points} | {"tokens": images_token.contiguous()}
+    
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         return None
 
