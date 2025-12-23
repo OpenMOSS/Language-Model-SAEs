@@ -4,7 +4,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { MessageSquare, Plus, Type, X } from 'lucide-react'
+import { Loader2, MessageSquare, Plus, Type, X } from 'lucide-react'
 import { useState } from 'react'
 import { CreateSaeSetDialog } from './create-sae-set-dialog'
 import type {
@@ -13,9 +13,9 @@ import type {
   GenerateCircuitParams,
 } from '@/api/circuits'
 import {
-  applyChatTemplate,
   circuitQueryOptions,
   generateCircuit,
+  previewInput,
 } from '@/api/circuits'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -117,22 +117,46 @@ export function NewGraphDialog({
   const hasValidInput = useChatTemplate || prompt.trim()
 
   const debouncedChatMessages = useDebounce(chatMessages, 500)
-  const debouncedSelectedSaeSet = useDebounce(selectedSaeSet, 500)
+  const debouncedPrompt = useDebounce(prompt, 500)
 
-  const { data: chatTemplateData, isLoading: isPreviewLoading } = useQuery({
-    queryKey: ['chat-template', debouncedSelectedSaeSet, debouncedChatMessages],
-    queryFn: () =>
-      applyChatTemplate({
+  const { data: previewData, isFetching: isPreviewLoading } = useQuery({
+    queryKey: [
+      'preview-input',
+      selectedSaeSet,
+      debouncedChatMessages,
+      debouncedPrompt,
+      useChatTemplate,
+    ],
+    queryFn: () => {
+      const input: CircuitInput = useChatTemplate
+        ? {
+            inputType: 'chat_template',
+            messages: debouncedChatMessages,
+          }
+        : { inputType: 'plain_text', text: debouncedPrompt }
+
+      return previewInput({
         data: {
-          saeSetName: debouncedSelectedSaeSet,
-          messages: debouncedChatMessages,
+          saeSetName: selectedSaeSet,
+          input,
         },
-      }),
-    enabled: useChatTemplate && !!debouncedSelectedSaeSet,
-    placeholderData: keepPreviousData,
+      })
+    },
+    enabled: !!selectedSaeSet && (useChatTemplate || !!debouncedPrompt),
+    placeholderData: (previousData, previousQuery) => {
+      if (
+        previousQuery?.options.queryKey?.[4] === useChatTemplate &&
+        !!selectedSaeSet &&
+        (useChatTemplate || !!debouncedPrompt)
+      ) {
+        return previousData
+      }
+      return undefined
+    },
   })
 
-  const previewPrompt = chatTemplateData?.prompt ?? ''
+  const previewPrompt = previewData?.prompt ?? ''
+  const nextTokens = previewData?.nextTokens ?? []
 
   const handleStartGeneration = () => {
     if (!selectedSaeSet || !hasValidInput) return
@@ -333,7 +357,7 @@ export function NewGraphDialog({
           </div>
 
           {/* Right Column: Input */}
-          <div className="absolute right-0 top-4 bottom-4 w-[calc(50%-0.75rem)] flex flex-col gap-6 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
+          <div className="absolute right-0 top-4 bottom-4 w-[calc(50%-0.5rem)] flex flex-col gap-6 overflow-y-auto px-1 [scrollbar-gutter:stable]">
             <div className="space-y-3 flex-1 flex flex-col">
               <div className="flex items-center justify-between shrink-0">
                 <label className="text-xs font-semibold uppercase tracking-tight text-slate-500">
@@ -370,7 +394,7 @@ export function NewGraphDialog({
                 </div>
               </div>
 
-              <div className="flex-1 min-h-0 flex flex-col">
+              <div className="min-h-0 flex flex-col">
                 {useChatTemplate ? (
                   <div className="space-y-2 flex-1 flex flex-col min-h-0">
                     <p className="text-xs text-slate-500 shrink-0">
@@ -413,7 +437,7 @@ export function NewGraphDialog({
                                     handleMessageChange(index, e.target.value)
                                   }
                                   placeholder={`What does the ${message.role} say?`}
-                                  className="min-h-[50px] resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                                  className="min-h-[50px] resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 overflow-hidden field-sizing-content"
                                 />
                               </div>
                               {chatMessages.length > 1 && (
@@ -443,26 +467,9 @@ export function NewGraphDialog({
                         Message
                       </button>
                     </div>
-                    {previewPrompt && (
-                      <div className="space-y-1.5 shrink-0">
-                        <label className="text-[10px] font-bold uppercase tracking-tight text-slate-400">
-                          Formatted Prompt Preview
-                        </label>
-                        <div className="rounded-md border bg-slate-50 p-2.5 font-mono text-xs text-slate-600 break-all whitespace-pre-wrap max-h-[150px] overflow-y-auto">
-                          {isPreviewLoading ? (
-                            <div className="flex items-center gap-2 text-slate-400">
-                              <Spinner isAnimating={true} className="h-3 w-3" />
-                              Updating preview...
-                            </div>
-                          ) : (
-                            previewPrompt
-                          )}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 ) : (
-                  <div className="space-y-2 flex-1 flex flex-col min-h-0">
+                  <div className="space-y-2 flex flex-col min-h-0">
                     <p className="text-xs text-slate-500 shrink-0">
                       Enter a prompt ending mid-sentence. We&apos;ll analyze how
                       the model predicts the next token.
@@ -471,11 +478,71 @@ export function NewGraphDialog({
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
                       placeholder='e.g., "The capital of the state containing Dallas is"'
-                      className="flex-1 min-h-[100px] bg-white resize-none"
+                      className="min-h-[150px] resize-none text-sm overflow-hidden field-sizing-content"
                     />
                   </div>
                 )}
               </div>
+
+              {nextTokens.length > 0 && (
+                <div className="space-y-1.5 shrink-0">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold uppercase tracking-tight text-slate-400 flex items-center gap-1.5">
+                      Likely Next Tokens
+                      {isPreviewLoading && (
+                        <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
+                      )}
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-5 gap-2">
+                    {nextTokens.map((token, i) => (
+                      <div
+                        key={i}
+                        className="flex flex-col items-center justify-center gap-1 rounded-md border bg-white p-2 text-center shadow-xs"
+                      >
+                        <div className="font-mono text-xs font-medium text-slate-900 bg-slate-100 px-1.5 py-0.5 rounded-sm w-full truncate">
+                          {token.token.replace(/\n/g, '\\n')}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {(token.prob * 100).toFixed(1)}%
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {previewPrompt && (
+                <div className="space-y-1.5 shrink-0">
+                  <label className="text-[10px] font-bold uppercase tracking-tight text-slate-400 flex items-center gap-1.5">
+                    Formatted Prompt Preview
+                    {isPreviewLoading && (
+                      <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
+                    )}
+                  </label>
+                  <div className="rounded-md border bg-slate-50 p-2.5 font-mono text-xs text-slate-600 break-all whitespace-pre-wrap max-h-[300px] overflow-y-auto">
+                    {previewPrompt.split('\n').map((line, i, arr) => (
+                      <span key={i}>
+                        {line}
+                        {i < arr.length - 1 && (
+                          <>
+                            <span className="select-none text-slate-300">
+                              ↵
+                            </span>
+                            {'\n'}
+                          </>
+                        )}
+                      </span>
+                    ))}
+                    {previewPrompt.endsWith('\n') && (
+                      <>
+                        <span className="select-none text-slate-300">↵</span>
+                        {'\u200B'}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {generateError && (

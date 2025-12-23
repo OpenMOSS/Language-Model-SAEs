@@ -83,35 +83,42 @@ export const createSaeSet = createServerFn({ method: 'POST' })
     return await response.json()
   })
 
-export const applyChatTemplate = createServerFn({ method: 'POST' })
-  .inputValidator(
-    (data: { saeSetName: string; messages: ChatMessage[] }) => data,
-  )
-  .handler(async ({ data: { saeSetName, messages } }) => {
-    const response = await fetch(
-      `${process.env.BACKEND_URL}/chat-template/apply`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sae_set_name: saeSetName,
-          messages: messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-        }),
+export const previewInput = createServerFn({ method: 'POST' })
+  .inputValidator((data: { saeSetName: string; input: CircuitInput }) => data)
+  .handler(async ({ data: { saeSetName, input } }) => {
+    // Convert input to backend format
+    const backendInput =
+      input.inputType === 'plain_text'
+        ? { input_type: 'plain_text', text: input.text }
+        : {
+            input_type: 'chat_template',
+            messages: input.messages.map((m) => ({
+              role: m.role,
+              content: m.content,
+            })),
+          }
+
+    const response = await fetch(`${process.env.BACKEND_URL}/preview`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
-    )
+      body: JSON.stringify({
+        sae_set_name: saeSetName,
+        input: backendInput,
+      }),
+    })
 
     if (!response.ok) {
       const text = await response.text()
-      throw new Error(text || 'Failed to apply chat template')
+      throw new Error(text || 'Failed to preview input')
     }
 
     const result = await response.json()
-    return result as { prompt: string }
+    return camelcaseKeys(result, { deep: true }) as {
+      prompt: string
+      nextTokens: { token: string; prob: number }[]
+    }
   })
 
 export const fetchCircuits = createServerFn({ method: 'GET' }).handler(

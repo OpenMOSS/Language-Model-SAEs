@@ -667,26 +667,44 @@ class CreateSaeSetRequest(BaseModel):
     sae_names: list[str]
 
 
-class ApplyChatTemplateRequest(BaseModel):
-    messages: list[dict[str, str]]
+class PreviewRequest(BaseModel):
+    input: CircuitInput
     sae_set_name: str
 
 
-@app.post("/chat-template/apply")
-def apply_chat_template(request: ApplyChatTemplateRequest):
-    """Apply a chat template to a list of messages."""
+@app.post("/preview")
+def preview(request: PreviewRequest):
+    """Preview the prompt and predicted next tokens."""
     sae_set = client.get_sae_set(name=request.sae_set_name)
     assert sae_set is not None, f"SAE set {request.sae_set_name} not found"
     sae_names = sae_set.sae_names
     model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
     model = get_model(name=model_name)
-    assert isinstance(model, TransformerLensLanguageModel), (
-        f"Chat template application only supports TransformerLens backend, got {type(model)}"
+    assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
+        f"Preview only supports TransformerLens backend, got {type(model)}"
     )
-    prompt = model.tokenizer.apply_chat_template(
-        request.messages, tokenize=False, add_generation_prompt=False, continue_final_message=True
-    )
-    return {"prompt": prompt}
+
+    if request.input.input_type == "plain_text":
+        prompt = request.input.text
+    elif request.input.input_type == "chat_template":
+        prompt = model.tokenizer.apply_chat_template(
+            request.input.messages, tokenize=False, add_generation_prompt=False, continue_final_message=True
+        )
+    else:
+        raise ValueError(f"Invalid input type: {request.input.input_type}")
+
+    # Generate next predicted tokens
+    with torch.no_grad():
+        logits = model.model(prompt)[0, -1, :]
+        probs = torch.softmax(logits, dim=-1)
+        topk = torch.topk(probs, 5)
+
+        next_tokens = []
+        for i, prob in zip(topk.indices.tolist(), topk.values.tolist()):
+            token_str = model.tokenizer.decode([i])
+            next_tokens.append({"token": token_str, "prob": prob})
+
+    return {"prompt": prompt, "next_tokens": next_tokens}
 
 
 @app.post("/sae-sets")
