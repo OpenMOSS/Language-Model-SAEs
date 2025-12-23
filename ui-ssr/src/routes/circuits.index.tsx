@@ -7,7 +7,6 @@ import {
   circuitsQueryOptions,
   saeSetsQueryOptions,
 } from '@/api/circuits'
-import { dictionariesQueryOptions } from '@/hooks/useFeatures'
 import { GraphSelector } from '@/components/circuits/graph-selector'
 import { NewGraphDialog } from '@/components/circuits/new-graph-dialog'
 import { LinkGraphContainer } from '@/components/circuits/link-graph-container'
@@ -20,17 +19,15 @@ import { createRawEdgeIndex, createRawNodeIndex } from '@/utils/circuit-index'
 export const Route = createFileRoute('/circuits/')({
   component: CircuitsPage,
   loader: async ({ context }) => {
-    const [circuits, saeSets, dictionaries] = await Promise.all([
+    const [circuits, saeSets] = await Promise.all([
       context.queryClient.ensureQueryData(circuitsQueryOptions()),
       context.queryClient.ensureQueryData(saeSetsQueryOptions()),
-      context.queryClient.ensureQueryData(dictionariesQueryOptions()),
     ])
-    return { circuits, saeSets, dictionaries }
+    return { circuits, saeSets }
   },
 })
 
 function CircuitsPage() {
-  const { dictionaries } = Route.useLoaderData()
   const [clickedId, setClickedId] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [hiddenIds, setHiddenIds] = useState<string[]>([])
@@ -117,7 +114,6 @@ function CircuitsPage() {
           </div>
           <NewGraphDialog
             saeSets={saeSets}
-            dictionaries={dictionaries}
             onGraphCreated={handleGraphCreated}
           />
         </div>

@@ -54,13 +54,13 @@ export function formatFeatureId(node: Node, verbose: boolean = true): string {
       ? `A${attnLayer}#${featureId}@${node.ctxIdx}`
       : `A${attnLayer}`
   } else if (node.featureType === 'embedding') {
-    return `Emb@${node.ctxIdx}`
+    return `Emb@${node.ctxIdx}: ${node.token}`
   } else if (node.featureType === 'mlp reconstruction error') {
     return `M${Math.floor(layerIdx / 2) - 1}Error@${node.ctxIdx}`
   } else if (node.featureType === 'lorsa error') {
     return `A${Math.floor(layerIdx / 2)}Error@${node.ctxIdx}`
   } else if (node.featureType === 'logit') {
-    return `Logit@${node.ctxIdx}`
+    return `Logit@${node.ctxIdx}: ${node.token} (${(node.tokenProb * 100).toFixed(1)}%)`
   }
   return 'Unknown feature type'
 }

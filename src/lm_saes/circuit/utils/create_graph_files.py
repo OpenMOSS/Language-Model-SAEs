@@ -24,7 +24,8 @@ class Node(BaseModel):
     layer: int
     ctx_idx: int
     feature_type: str
-    token_prob: float = 0.0
+    token: str | None = None
+    token_prob: float | None = None
     sae_name: str | None = None
     is_target_logit: bool = False
     influence: float | None = None
@@ -73,7 +74,7 @@ class Node(BaseModel):
         )
 
     @classmethod
-    def token_node(cls, pos, vocab_idx, influence=None):
+    def token_node(cls, pos, vocab_idx, token, influence=None):
         """Create a token node."""
         return cls(
             node_id=f"E_{vocab_idx}_{pos}",
@@ -81,6 +82,7 @@ class Node(BaseModel):
             ctx_idx=pos,
             feature_type="embedding",
             influence=influence,
+            token=token,
         )
 
     @classmethod
@@ -90,8 +92,8 @@ class Node(BaseModel):
         vocab_idx,
         token,
         num_layers,
-        target_logit=False,
-        token_prob=0.0,
+        target_logit,
+        token_prob,
     ):
         """Create a logit node."""
         layer = 2 * num_layers
@@ -101,6 +103,7 @@ class Node(BaseModel):
             layer=layer,
             ctx_idx=pos,
             feature_type="logit",
+            token=token,
             token_prob=token_prob,
             is_target_logit=target_logit,
         )
@@ -191,7 +194,12 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
             nodes[node_idx] = Node.error_node(layer, pos, is_lorsa, influence=cumulative_scores[node_idx])
         elif node_idx in range(error_end_idx, token_end_idx):
             pos = node_idx - error_end_idx
-            nodes[node_idx] = Node.token_node(pos, graph.input_tokens[pos], influence=cumulative_scores[node_idx])
+            nodes[node_idx] = Node.token_node(
+                pos,
+                graph.input_tokens[pos],
+                token=process_token(tokenizer.decode(graph.input_tokens[pos])),
+                influence=cumulative_scores[node_idx],
+            )
         elif node_idx in range(token_end_idx, len(cumulative_scores)):
             pos = node_idx - token_end_idx
             nodes[node_idx] = Node.logit_node(

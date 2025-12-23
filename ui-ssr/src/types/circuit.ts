@@ -5,7 +5,6 @@ export type FeatureNode = {
   nodeId: string
   layer: number
   ctxIdx: number
-  tokenProb: number
   isTargetLogit: boolean
   saeName: string
   feature: FeatureCompact
@@ -16,7 +15,7 @@ export type TokenNode = {
   nodeId: string
   layer: number
   ctxIdx: number
-  tokenProb: number
+  token: string
 }
 
 export type ErrorNode = {
@@ -24,7 +23,6 @@ export type ErrorNode = {
   nodeId: string
   layer: number
   ctxIdx: number
-  tokenProb: number
 }
 
 export type LogitNode = {
@@ -33,6 +31,7 @@ export type LogitNode = {
   layer: number
   ctxIdx: number
   tokenProb: number
+  token: string
 }
 
 export type Node = FeatureNode | TokenNode | ErrorNode | LogitNode

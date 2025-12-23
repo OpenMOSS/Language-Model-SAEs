@@ -115,9 +115,12 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
 
       ctxData.layerGroups.forEach(
         (layerNodes: typeof nodes, _layerIdx: number) => {
-          const sortedNodes = [...layerNodes].sort(
-            (a, b) => -(a.tokenProb || 0) + (b.tokenProb || 0),
-          )
+          const sortedNodes = [...layerNodes].sort((a, b) => {
+            if (a.featureType === 'logit' && b.featureType === 'logit') {
+              return -(a.tokenProb || 0) + (b.tokenProb || 0)
+            }
+            return 0
+          })
 
           const maxNodesInContext = ctxData.maxCount
           const spacing = ctxWidth / maxNodesInContext

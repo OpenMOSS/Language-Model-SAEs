@@ -61,13 +61,13 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
               ? `${hoveredNode.feature.interpretation.text}`
               : `Feature ${hoveredNode.feature.featureIndex}@${hoveredNode.saeName}`
             : hoveredNode.featureType === 'embedding'
-              ? `Embedding@${hoveredNode.ctxIdx}`
+              ? `Embedding@${hoveredNode.ctxIdx}: ${hoveredNode.token}`
               : hoveredNode.featureType === 'mlp reconstruction error'
                 ? `MLP Reconstruction Error@${hoveredNode.ctxIdx}`
                 : hoveredNode.featureType === 'lorsa error'
                   ? `Lorsa Error@${hoveredNode.ctxIdx}`
                   : hoveredNode.featureType === 'logit'
-                    ? `Logit@${hoveredNode.ctxIdx}`
+                    ? `Logit@${hoveredNode.ctxIdx}: ${hoveredNode.token} (${(hoveredNode.tokenProb * 100).toFixed(1)}%)`
                     : `Unknown Feature Type@${hoveredNode.ctxIdx}`
 
         const textWidth = tooltipText.length * 6
