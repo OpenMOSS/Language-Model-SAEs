@@ -1,5 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react'
-import * as d3 from 'd3'
+import React, { useCallback, useMemo } from 'react'
 import type { PositionedNode } from '@/types/circuit'
 import type { EdgeIndex } from '@/utils/circuit-index'
 import { getNodeColor } from '@/utils/circuit'
@@ -16,8 +15,6 @@ interface NodesProps {
 
 export const Nodes: React.FC<NodesProps> = React.memo(
   ({ positionedNodes, edgeIndex, visState }) => {
-    const svgRef = useRef<SVGGElement>(null)
-
     const isConnected = useCallback(
       (nodeId: string) => {
         if (!visState.clickedId) return false
@@ -26,97 +23,107 @@ export const Nodes: React.FC<NodesProps> = React.memo(
       [visState.clickedId, edgeIndex],
     )
 
-    useEffect(() => {
-      if (!svgRef.current || !positionedNodes.length) return
-
-      const svg = d3.select(svgRef.current)
-      svg.selectAll('*').remove()
-
-      const isErrorNode = (d: any) =>
+    const isErrorNode = useCallback(
+      (d: PositionedNode) =>
         d.featureType === 'lorsa error' ||
-        d.featureType === 'mlp reconstruction error'
+        d.featureType === 'mlp reconstruction error',
+      [],
+    )
 
-      const regularNodes = positionedNodes.filter((d) => !isErrorNode(d))
-      const errorNodes = positionedNodes.filter((d) => isErrorNode(d))
+    const { regularNodes, errorNodes } = useMemo(() => {
+      const regular: PositionedNode[] = []
+      const error: PositionedNode[] = []
+      for (const node of positionedNodes) {
+        if (isErrorNode(node)) {
+          error.push(node)
+        } else {
+          regular.push(node)
+        }
+      }
+      return { regularNodes: regular, errorNodes: error }
+    }, [positionedNodes, isErrorNode])
 
-      svg
-        .selectAll('circle.node')
-        .data(regularNodes, (d: any) => d.nodeId)
-        .enter()
-        .append('circle')
-        .attr('class', 'node')
-        .attr('cx', (d: any) => d.pos[0])
-        .attr('cy', (d: any) => d.pos[1])
-        .attr('r', 3)
-        .attr('fill', (d: any) => getNodeColor(d.featureType))
-        .attr('stroke', (d: any) => {
-          if (d.nodeId === visState.clickedId) return '#ef4444'
-          return '#000'
-        })
-        .attr('stroke-width', (d: any) => {
-          if (d.nodeId === visState.clickedId || isConnected(d.nodeId))
-            return '1.5'
-          return '0.5'
-        })
-        .style('pointer-events', 'none')
-        .style('transition', 'all 0.2s ease')
+    return (
+      <g>
+        {regularNodes.map((d) => (
+          <circle
+            key={d.nodeId}
+            className="node"
+            cx={d.pos[0]}
+            cy={d.pos[1]}
+            r={3}
+            fill={getNodeColor(d.featureType)}
+            stroke={d.nodeId === visState.clickedId ? '#ef4444' : '#000'}
+            strokeWidth={
+              d.nodeId === visState.clickedId || isConnected(d.nodeId)
+                ? '1.5'
+                : '0.5'
+            }
+            style={{
+              pointerEvents: 'none',
+              transition: 'all 0.2s ease',
+            }}
+          />
+        ))}
 
-      svg
-        .selectAll('rect.node')
-        .data(errorNodes, (d: any) => d.nodeId)
-        .enter()
-        .append('rect')
-        .attr('class', 'node')
-        .attr('x', (d: any) => d.pos[0] - 3)
-        .attr('y', (d: any) => d.pos[1] - 3)
-        .attr('width', 6)
-        .attr('height', 6)
-        .attr('fill', (d: any) => getNodeColor(d.featureType))
-        .attr('stroke', (d: any) => {
-          if (d.nodeId === visState.clickedId) return '#ef4444'
-          return '#000'
-        })
-        .attr('stroke-width', (d: any) => {
-          if (d.nodeId === visState.clickedId || isConnected(d.nodeId))
-            return '1.5'
-          return '0.5'
-        })
-        .style('pointer-events', 'none')
-        .style('transition', 'all 0.2s ease')
+        {errorNodes.map((d) => (
+          <rect
+            key={d.nodeId}
+            className="node"
+            x={d.pos[0] - 3}
+            y={d.pos[1] - 3}
+            width={6}
+            height={6}
+            fill={getNodeColor(d.featureType)}
+            stroke={d.nodeId === visState.clickedId ? '#ef4444' : '#000'}
+            strokeWidth={
+              d.nodeId === visState.clickedId || isConnected(d.nodeId)
+                ? '1.5'
+                : '0.5'
+            }
+            style={{
+              pointerEvents: 'none',
+              transition: 'all 0.2s ease',
+            }}
+          />
+        ))}
 
-      svg
-        .selectAll('circle.hover-indicator')
-        .data(regularNodes, (d: any) => d.nodeId)
-        .enter()
-        .append('circle')
-        .attr('class', 'hover-indicator')
-        .attr('cx', (d: any) => d.pos[0])
-        .attr('cy', (d: any) => d.pos[1])
-        .attr('r', 6)
-        .attr('stroke', '#f0f')
-        .attr('stroke-width', 2)
-        .attr('fill', 'none')
-        .style('pointer-events', 'none')
-        .style('opacity', (d: any) => (d.nodeId === visState.hoveredId ? 1 : 0))
+        {regularNodes.map((d) => (
+          <circle
+            key={`hover-${d.nodeId}`}
+            className="hover-indicator"
+            cx={d.pos[0]}
+            cy={d.pos[1]}
+            r={6}
+            stroke="#f0f"
+            strokeWidth={2}
+            fill="none"
+            style={{
+              pointerEvents: 'none',
+              opacity: d.nodeId === visState.hoveredId ? 1 : 0,
+            }}
+          />
+        ))}
 
-      svg
-        .selectAll('rect.hover-indicator')
-        .data(errorNodes, (d: any) => d.nodeId)
-        .enter()
-        .append('rect')
-        .attr('class', 'hover-indicator')
-        .attr('x', (d: any) => d.pos[0] - 6)
-        .attr('y', (d: any) => d.pos[1] - 6)
-        .attr('width', 12)
-        .attr('height', 12)
-        .attr('stroke', '#f0f')
-        .attr('stroke-width', 2)
-        .attr('fill', 'none')
-        .style('pointer-events', 'none')
-        .style('opacity', (d: any) => (d.nodeId === visState.hoveredId ? 1 : 0))
-    }, [positionedNodes, edgeIndex, visState, isConnected])
-
-    return <g ref={svgRef} />
+        {errorNodes.map((d) => (
+          <rect
+            key={`hover-${d.nodeId}`}
+            className="hover-indicator"
+            x={d.pos[0] - 6}
+            y={d.pos[1] - 6}
+            width={12}
+            height={12}
+            stroke="#f0f"
+            strokeWidth={2}
+            fill="none"
+            style={{
+              pointerEvents: 'none',
+              opacity: d.nodeId === visState.hoveredId ? 1 : 0,
+            }}
+          />
+        ))}
+      </g>
+    )
   },
 )
 

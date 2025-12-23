@@ -1,5 +1,4 @@
-import React, { useEffect, useRef } from 'react'
-import * as d3 from 'd3'
+import React from 'react'
 import type { PositionedNode } from '@/types/circuit'
 
 interface TooltipsProps {
@@ -12,108 +11,78 @@ const BOTTOM_PADDING = 40
 
 export const Tooltips: React.FC<TooltipsProps> = React.memo(
   ({ positionedNodes, visState, dimensions }) => {
-    const svgRef = useRef<SVGGElement>(null)
-    const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    if (!visState.hoveredId) {
+      return null
+    }
 
-    useEffect(() => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-        timeoutRef.current = null
-      }
-    }, [visState.hoveredId])
+    const hoveredNode = positionedNodes.find(
+      (d) => d.nodeId === visState.hoveredId,
+    )
 
-    useEffect(() => {
-      if (visState.hoveredId && !timeoutRef.current) {
-        timeoutRef.current = setTimeout(() => {
-          timeoutRef.current = null
-        }, 10000)
-      }
+    if (!hoveredNode) {
+      return null
+    }
 
-      return () => {
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current)
-          timeoutRef.current = null
-        }
-      }
-    }, [visState.hoveredId])
+    const tooltipText =
+      hoveredNode.featureType === 'cross layer transcoder' ||
+      hoveredNode.featureType === 'lorsa'
+        ? hoveredNode.feature.interpretation
+          ? `${hoveredNode.feature.interpretation.text}`
+          : `Feature ${hoveredNode.feature.featureIndex}@${hoveredNode.saeName}`
+        : hoveredNode.featureType === 'embedding'
+          ? `Embedding@${hoveredNode.ctxIdx}: ${hoveredNode.token}`
+          : hoveredNode.featureType === 'mlp reconstruction error'
+            ? `MLP Reconstruction Error@${hoveredNode.ctxIdx}`
+            : hoveredNode.featureType === 'lorsa error'
+              ? `Lorsa Error@${hoveredNode.ctxIdx}`
+              : hoveredNode.featureType === 'logit'
+                ? `Logit@${hoveredNode.ctxIdx}: ${hoveredNode.token} (${(hoveredNode.tokenProb * 100).toFixed(1)}%)`
+                : `Unknown Feature Type@${hoveredNode.ctxIdx}`
 
-    useEffect(() => {
-      if (!svgRef.current) return
+    const textWidth = tooltipText.length * 6
+    const tooltipWidth = Math.max(120, textWidth + 20)
+    const tooltipHeight = 20
+    const padding = 10
 
-      const svg = d3.select(svgRef.current)
-      svg.selectAll('*').remove()
+    let tooltipX = hoveredNode.pos[0] + padding
+    let tooltipY = hoveredNode.pos[1] - 15
 
-      if (!visState.hoveredId) {
-        return
-      }
+    if (tooltipX + tooltipWidth > dimensions.width - padding) {
+      tooltipX = hoveredNode.pos[0] - tooltipWidth - padding
+    }
 
-      const hoveredNode = positionedNodes.find(
-        (d) => d.nodeId === visState.hoveredId,
-      )
+    if (tooltipY < padding) {
+      tooltipY = hoveredNode.pos[1] + padding
+    }
 
-      if (hoveredNode) {
-        const tooltip = svg.append('g')
+    if (
+      tooltipY + tooltipHeight >
+      dimensions.height - BOTTOM_PADDING - padding
+    ) {
+      tooltipY = hoveredNode.pos[1] - tooltipHeight - padding
+    }
 
-        const tooltipText =
-          hoveredNode.featureType === 'cross layer transcoder' ||
-          hoveredNode.featureType === 'lorsa'
-            ? hoveredNode.feature.interpretation
-              ? `${hoveredNode.feature.interpretation.text}`
-              : `Feature ${hoveredNode.feature.featureIndex}@${hoveredNode.saeName}`
-            : hoveredNode.featureType === 'embedding'
-              ? `Embedding@${hoveredNode.ctxIdx}: ${hoveredNode.token}`
-              : hoveredNode.featureType === 'mlp reconstruction error'
-                ? `MLP Reconstruction Error@${hoveredNode.ctxIdx}`
-                : hoveredNode.featureType === 'lorsa error'
-                  ? `Lorsa Error@${hoveredNode.ctxIdx}`
-                  : hoveredNode.featureType === 'logit'
-                    ? `Logit@${hoveredNode.ctxIdx}: ${hoveredNode.token} (${(hoveredNode.tokenProb * 100).toFixed(1)}%)`
-                    : `Unknown Feature Type@${hoveredNode.ctxIdx}`
-
-        const textWidth = tooltipText.length * 6
-        const tooltipWidth = Math.max(120, textWidth + 20)
-        const tooltipHeight = 20
-        const padding = 10
-
-        let tooltipX = hoveredNode.pos[0] + padding
-        let tooltipY = hoveredNode.pos[1] - 15
-
-        if (tooltipX + tooltipWidth > dimensions.width - padding) {
-          tooltipX = hoveredNode.pos[0] - tooltipWidth - padding
-        }
-
-        if (tooltipY < padding) {
-          tooltipY = hoveredNode.pos[1] + padding
-        }
-
-        if (
-          tooltipY + tooltipHeight >
-          dimensions.height - BOTTOM_PADDING - padding
-        ) {
-          tooltipY = hoveredNode.pos[1] - tooltipHeight - padding
-        }
-
-        tooltip
-          .append('rect')
-          .attr('x', tooltipX)
-          .attr('y', tooltipY)
-          .attr('width', tooltipWidth)
-          .attr('height', tooltipHeight)
-          .attr('fill', 'rgba(0, 0, 0, 0.8)')
-          .attr('rx', 2)
-
-        tooltip
-          .append('text')
-          .attr('x', tooltipX + 5)
-          .attr('y', tooltipY + 13)
-          .attr('fill', 'white')
-          .attr('font-size', '10px')
-          .style('user-select', 'none')
-          .text(tooltipText)
-      }
-    }, [positionedNodes, visState.hoveredId, dimensions])
-
-    return <g ref={svgRef} />
+    return (
+      <g>
+        <rect
+          x={tooltipX}
+          y={tooltipY}
+          width={tooltipWidth}
+          height={tooltipHeight}
+          fill="rgba(0, 0, 0, 0.8)"
+          rx={2}
+        />
+        <text
+          x={tooltipX + 5}
+          y={tooltipY + 13}
+          fill="white"
+          fontSize="10px"
+          style={{ userSelect: 'none' }}
+        >
+          {tooltipText}
+        </text>
+      </g>
+    )
   },
 )
 

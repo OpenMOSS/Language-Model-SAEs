@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import {
   GridLines,
@@ -101,7 +101,6 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   onNodeClick,
   onNodeHover,
 }) => {
-  const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
 
@@ -242,14 +241,10 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     [positionedNodes],
   )
 
-  useEffect(() => {
-    if (!svgRef.current || !positionedNodes.length) return
-
-    const svg = svgRef.current
-    const MAGNET_THRESHOLD = 30
-
-    const handleMouseMove = (event: MouseEvent) => {
-      const rect = svg.getBoundingClientRect()
+  const handleMouseMove = useCallback(
+    (event: React.MouseEvent<SVGSVGElement>) => {
+      const MAGNET_THRESHOLD = 30
+      const rect = event.currentTarget.getBoundingClientRect()
       const mouseX = event.clientX - rect.left
       const mouseY = event.clientY - rect.top
 
@@ -260,10 +255,14 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         MAGNET_THRESHOLD,
       )
       onNodeHover(nearestNode?.nodeId ?? null)
-    }
+    },
+    [spatialIndex, onNodeHover],
+  )
 
-    const handleClick = (event: MouseEvent) => {
-      const rect = svg.getBoundingClientRect()
+  const handleClick = useCallback(
+    (event: React.MouseEvent<SVGSVGElement>) => {
+      const MAGNET_THRESHOLD = 30
+      const rect = event.currentTarget.getBoundingClientRect()
       const mouseX = event.clientX - rect.left
       const mouseY = event.clientY - rect.top
 
@@ -275,20 +274,12 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       )
 
       if (nearestNode) {
-        event.stopPropagation()
         const metaKey = event.metaKey || event.ctrlKey
         onNodeClick(nearestNode.nodeId, metaKey)
       }
-    }
-
-    svg.addEventListener('mousemove', handleMouseMove)
-    svg.addEventListener('click', handleClick)
-
-    return () => {
-      svg.removeEventListener('mousemove', handleMouseMove)
-      svg.removeEventListener('click', handleClick)
-    }
-  }, [spatialIndex, positionedNodes.length, onNodeHover, onNodeClick])
+    },
+    [spatialIndex, onNodeClick],
+  )
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -347,7 +338,9 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   if (!positionedNodes.length || !x || !y) {
     return (
       <div ref={containerRef} className="relative w-full h-[400px]">
-        <div>Loading...</div>
+        <div className="flex items-center justify-center h-full text-slate-500">
+          Loading circuit graph...
+        </div>
       </div>
     )
   }
@@ -355,11 +348,12 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   return (
     <div ref={containerRef} className="relative w-full h-[400px]">
       <svg
-        ref={svgRef}
         width={dimensions.width}
         height={dimensions.height}
         className="relative z-1"
         style={{ pointerEvents: 'auto' }}
+        onMouseMove={handleMouseMove}
+        onClick={handleClick}
       >
         <RowBackgrounds
           dimensions={dimensions}
