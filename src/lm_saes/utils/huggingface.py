@@ -79,6 +79,8 @@ def _parse_repo_id(pretrained_name_or_path):
 
 
 def parse_pretrained_name_or_path(pretrained_name_or_path: str):
+    print(pretrained_name_or_path)
+    print(os.path.exists(pretrained_name_or_path))
     if os.path.exists(pretrained_name_or_path):
         return pretrained_name_or_path
     else:
