@@ -106,6 +106,15 @@ flash-attn = [
 # NPU variant of PyTorch (for Huawei Ascend hardware)
 default = ["torch==2.8.0", "torchvision>=0.22.1"]
 
+dps = [
+    # Compatibility extras for `diffusion-posterior-sampling`
+    # Keep `lm-saes` environment as primary; add only the missing core deps.
+    "scipy>=1.9.1",
+    "pillow>=9.2.0",
+    "requests>=2.28.1",
+    "tqdm>=4.64.1",
+]
+
 npu = [
     "torch==2.6.0",
     "torchvision>=0.20.1",

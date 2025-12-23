@@ -202,3 +202,7 @@ pyrightconfig.json
 # uv
 # We ignore uv.lock as conflicting optional dependencies generates non-compatible uv.lock files.
 uv.lock
+
+# DPS
+/diffusion-posterior-sampling/models
+/diffusion-posterior-sampling/results
