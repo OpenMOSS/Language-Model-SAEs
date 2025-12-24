@@ -122,10 +122,9 @@ export const FeatureSampleGroup = ({
   const samplingNameMap = (samplingName: string) => {
     if (samplingName === 'top_activations') {
       return 'TOP ACTIVATIONS'
-    } else if (/^subsample-/.test(samplingName)) {
-      const [, proportion] = samplingName.split('-')
-      const percentage = parseFloat(proportion) * 100
-      return `SUBSAMPLING ${percentage}%`
+    } else if (/^subsampling_/.test(samplingName)) {
+      const [, proportion] = samplingName.split('_')
+      return `SUBSAMPLING ${proportion}`
     } else if (samplingName === 'non_activating') {
       return 'NON ACTIVATING'
     } else {

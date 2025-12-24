@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DictionariesIndexRouteImport } from './routes/dictionaries.index'
 import { Route as CircuitsIndexRouteImport } from './routes/circuits.index'
+import { Route as BookmarksIndexRouteImport } from './routes/bookmarks.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as DictionariesDictionaryNameIndexRouteImport } from './routes/dictionaries.$dictionaryName.index'
 import { Route as DictionariesDictionaryNameFeaturesFeatureIndexRouteImport } from './routes/dictionaries.$dictionaryName.features.$featureIndex'
@@ -29,6 +30,11 @@ const DictionariesIndexRoute = DictionariesIndexRouteImport.update({
 const CircuitsIndexRoute = CircuitsIndexRouteImport.update({
   id: '/circuits/',
   path: '/circuits/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BookmarksIndexRoute = BookmarksIndexRouteImport.update({
+  id: '/bookmarks/',
+  path: '/bookmarks/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
@@ -52,6 +58,7 @@ const DictionariesDictionaryNameFeaturesFeatureIndexRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminIndexRoute
+  '/bookmarks': typeof BookmarksIndexRoute
   '/circuits': typeof CircuitsIndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
@@ -60,6 +67,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminIndexRoute
+  '/bookmarks': typeof BookmarksIndexRoute
   '/circuits': typeof CircuitsIndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
@@ -69,6 +77,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin/': typeof AdminIndexRoute
+  '/bookmarks/': typeof BookmarksIndexRoute
   '/circuits/': typeof CircuitsIndexRoute
   '/dictionaries/': typeof DictionariesIndexRoute
   '/dictionaries/$dictionaryName/': typeof DictionariesDictionaryNameIndexRoute
@@ -79,6 +88,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/admin'
+    | '/bookmarks'
     | '/circuits'
     | '/dictionaries'
     | '/dictionaries/$dictionaryName'
@@ -87,6 +97,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/admin'
+    | '/bookmarks'
     | '/circuits'
     | '/dictionaries'
     | '/dictionaries/$dictionaryName'
@@ -95,6 +106,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/admin/'
+    | '/bookmarks/'
     | '/circuits/'
     | '/dictionaries/'
     | '/dictionaries/$dictionaryName/'
@@ -104,6 +116,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminIndexRoute: typeof AdminIndexRoute
+  BookmarksIndexRoute: typeof BookmarksIndexRoute
   CircuitsIndexRoute: typeof CircuitsIndexRoute
   DictionariesIndexRoute: typeof DictionariesIndexRoute
   DictionariesDictionaryNameIndexRoute: typeof DictionariesDictionaryNameIndexRoute
@@ -133,6 +146,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CircuitsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/bookmarks/': {
+      id: '/bookmarks/'
+      path: '/bookmarks'
+      fullPath: '/bookmarks'
+      preLoaderRoute: typeof BookmarksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/': {
       id: '/admin/'
       path: '/admin'
@@ -160,6 +180,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminIndexRoute: AdminIndexRoute,
+  BookmarksIndexRoute: BookmarksIndexRoute,
   CircuitsIndexRoute: CircuitsIndexRoute,
   DictionariesIndexRoute: DictionariesIndexRoute,
   DictionariesDictionaryNameIndexRoute: DictionariesDictionaryNameIndexRoute,

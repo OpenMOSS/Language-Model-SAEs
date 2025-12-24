@@ -36,6 +36,16 @@ export const AppNavbar = () => {
           >
             Circuits
           </Link>
+          <Link
+            className={cn(
+              'transition-colors hover:text-foreground/80 text-foreground/60',
+              pathname.startsWith('/bookmarks') &&
+                'text-foreground font-medium',
+            )}
+            to="/bookmarks"
+          >
+            Bookmarks
+          </Link>
         </div>
 
         <Link

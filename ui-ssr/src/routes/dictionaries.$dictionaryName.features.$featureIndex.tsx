@@ -177,8 +177,7 @@ function FeaturesPage() {
             </div>
             <FeatureBookmarkButton
               feature={feature}
-              size="icon"
-              className="rounded-full h-12 w-12 absolute right-0"
+              className="rounded-full h-12 w-12 absolute right-0 flex items-center justify-center"
             />
           </div>
 
