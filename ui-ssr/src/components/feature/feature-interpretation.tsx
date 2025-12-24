@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Check, Edit2, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import type { Feature } from '@/types/feature'
 import { updateInterpretation } from '@/api/features'
@@ -22,6 +22,11 @@ export function FeatureInterpretation({
 }: FeatureInterpretationProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editText, setEditText] = useState(feature.interpretation?.text || '')
+
+  useEffect(() => {
+    setEditText(feature.interpretation?.text || '')
+  }, [feature.interpretation?.text])
+
   const queryClient = useQueryClient()
   const router = useRouter()
   const updateMutation = useMutation({

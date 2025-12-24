@@ -1,5 +1,5 @@
 import { memo, useMemo } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { Send } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Info } from '../ui/info'
@@ -98,8 +98,6 @@ export const NodeConnections = memo(
       [nodeIndex, clickedId],
     )
 
-    const navigate = useNavigate()
-
     const inputNodes = useMemo(() => {
       const incomingEdges = getEdgesByTarget(edgeIndex, clickedId)
       return incomingEdges
@@ -140,26 +138,22 @@ export const NodeConnections = memo(
             </span>
             {(clickedNode.featureType === 'cross layer transcoder' ||
               clickedNode.featureType === 'lorsa') && (
-              <Button
-                size="sm"
-                className="h-8 px-4 text-xs"
-                onClick={() =>
-                  navigate({
-                    to: `/dictionaries/$dictionaryName/features/$featureIndex`,
-                    params: {
-                      dictionaryName: clickedNode.saeName,
-                      featureIndex: clickedNode.feature.featureIndex.toString(),
-                    },
-                  })
-                }
+              <Link
+                to="/dictionaries/$dictionaryName/features/$featureIndex"
+                params={{
+                  dictionaryName: clickedNode.saeName,
+                  featureIndex: clickedNode.feature.featureIndex.toString(),
+                }}
               >
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs font-mono text-gray-600">
-                    {formatFeatureId(clickedNode, true)}
-                  </span>
-                  <Send className="w-3.5 h-3.5 text-gray-400" />
-                </div>
-              </Button>
+                <Button size="sm" className="h-8 px-4 text-xs">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-mono text-gray-600">
+                      {formatFeatureId(clickedNode, true)}
+                    </span>
+                    <Send className="w-3.5 h-3.5 text-gray-400" />
+                  </div>
+                </Button>
+              </Link>
             )}
           </div>
         </div>

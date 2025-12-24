@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { Send } from 'lucide-react'
 import { useState } from 'react'
+import { Textarea } from '../ui/textarea'
 import { FeatureActivationSample } from './sample'
 import { submitCustomInput } from '@/api/features'
 import { Button } from '@/components/ui/button'
@@ -8,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Info } from '@/components/ui/info'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { Spinner } from '@/components/ui/spinner'
 
 type InferenceCardProps = {
   dictionaryName: string
@@ -24,6 +26,9 @@ export const InferenceCard = ({
 
   const submitMutation = useMutation({
     mutationFn: submitCustomInput,
+    onSuccess: () => {
+      setCustomInput('')
+    },
   })
 
   return (
@@ -44,23 +49,18 @@ export const InferenceCard = ({
       </CardHeader>
       <CardContent>
         <div className="flex flex-col gap-4">
-          {submitMutation.data && (
-            <FeatureActivationSample
-              className="rounded-lg bg-slate-100 py-3"
-              sample={submitMutation.data}
-              maxFeatureAct={maxFeatureAct}
-            />
-          )}
           <div className="flex items-center space-x-2">
-            <Input
-              placeholder="Enter text to infer feature activations"
+            <Textarea
               value={customInput}
               onChange={(e) => setCustomInput(e.target.value)}
+              placeholder="Enter text to infer feature activations"
+              className="min-h-0 resize-none text-sm overflow-hidden field-sizing-content"
             />
             <Button
               size="icon"
               variant="default"
-              className="rounded-full"
+              className="rounded-full flex items-center justify-center"
+              disabled={submitMutation.isPending}
               onClick={() =>
                 submitMutation.mutate({
                   data: {
@@ -71,9 +71,20 @@ export const InferenceCard = ({
                 })
               }
             >
-              <Send className="h-4 w-4" />
+              {submitMutation.isPending ? (
+                <Spinner isAnimating={true} className="text-white" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
             </Button>
           </div>
+          {submitMutation.data && (
+            <FeatureActivationSample
+              className="rounded-lg bg-slate-100 py-3"
+              sample={submitMutation.data}
+              maxFeatureAct={maxFeatureAct}
+            />
+          )}
         </div>
       </CardContent>
     </Card>

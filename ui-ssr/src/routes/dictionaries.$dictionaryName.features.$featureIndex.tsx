@@ -1,5 +1,5 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 import { z } from 'zod'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -67,19 +67,9 @@ function FeaturesPage() {
     featureIndex.toString(),
   )
 
-  const navigateToFeature = async (
-    dictionaryName: string,
-    featureIndex: number,
-  ) => {
-    await navigate({
-      to: '/dictionaries/$dictionaryName/features/$featureIndex',
-      params: {
-        dictionaryName,
-        featureIndex: featureIndex.toString(),
-      },
-    })
+  useEffect(() => {
     setSelectedFeatureIndex(featureIndex.toString())
-  }
+  }, [featureIndex])
 
   const {
     data: featuresData,
@@ -101,7 +91,15 @@ function FeaturesPage() {
         <FeatureList
           features={features}
           selectedIndex={featureIndex}
-          onSelectFeature={(idx) => navigateToFeature(dictionaryName, idx)}
+          onSelectFeature={async (idx) =>
+            await navigate({
+              to: '/dictionaries/$dictionaryName/features/$featureIndex',
+              params: {
+                dictionaryName: selectedDictionary,
+                featureIndex: idx.toString(),
+              },
+            })
+          }
           onLoadMore={() => fetchNextPage()}
           hasNextPage={hasNextPage}
           onLoadPrevious={() => fetchPreviousPage()}
@@ -116,29 +114,46 @@ function FeaturesPage() {
           <div className="w-full flex justify-center items-center relative h-12">
             <div className="flex justify-center items-center gap-3">
               <div className="flex items-center -space-x-px">
-                <Button
-                  className="h-12 rounded-r-none px-3 relative focus:z-10"
-                  onClick={() =>
-                    navigateToFeature(selectedDictionary, featureIndex - 1)
-                  }
-                  disabled={featureIndex <= 0}
+                {featureIndex > 0 ? (
+                  <Link
+                    to="/dictionaries/$dictionaryName/features/$featureIndex"
+                    params={{
+                      dictionaryName: selectedDictionary,
+                      featureIndex: (featureIndex - 1).toString(),
+                    }}
+                  >
+                    <Button className="h-12 rounded-r-none px-3 relative focus:z-10">
+                      <div className="flex flex-col items-center gap-0.5">
+                        <ChevronLeft className="h-4 w-4" />
+                        <span className="text-[10px] font-bold">PREV</span>
+                      </div>
+                    </Button>
+                  </Link>
+                ) : (
+                  <Button
+                    className="h-12 rounded-r-none px-3 relative focus:z-10"
+                    disabled
+                  >
+                    <div className="flex flex-col items-center gap-0.5">
+                      <ChevronLeft className="h-4 w-4" />
+                      <span className="text-[10px] font-bold">PREV</span>
+                    </div>
+                  </Button>
+                )}
+                <Link
+                  to="/dictionaries/$dictionaryName/features/$featureIndex"
+                  params={{
+                    dictionaryName: selectedDictionary,
+                    featureIndex: (featureIndex + 1).toString(),
+                  }}
                 >
-                  <div className="flex flex-col items-center gap-0.5">
-                    <ChevronLeft className="h-4 w-4" />
-                    <span className="text-[10px] font-bold">PREV</span>
-                  </div>
-                </Button>
-                <Button
-                  className="h-12 rounded-l-none px-3 relative focus:z-10"
-                  onClick={() =>
-                    navigateToFeature(selectedDictionary, featureIndex + 1)
-                  }
-                >
-                  <div className="flex flex-col items-center gap-0.5">
-                    <ChevronRight className="h-4 w-4" />
-                    <span className="text-[10px] font-bold">NEXT</span>
-                  </div>
-                </Button>
+                  <Button className="h-12 rounded-l-none px-3 relative focus:z-10">
+                    <div className="flex flex-col items-center gap-0.5">
+                      <ChevronRight className="h-4 w-4" />
+                      <span className="text-[10px] font-bold">NEXT</span>
+                    </div>
+                  </Button>
+                </Link>
               </div>
               <div className="w-[300px]">
                 <LabeledSelect
@@ -158,21 +173,21 @@ function FeaturesPage() {
                   onChange={(e) => setSelectedFeatureIndex(e.target.value)}
                 />
               </div>
-              <Button
-                onClick={() =>
-                  navigate({
-                    to: '/dictionaries/$dictionaryName/features/$featureIndex',
-                    params: {
-                      dictionaryName: selectedDictionary,
-                      featureIndex: selectedFeatureIndex,
-                    },
-                  })
-                }
-                className="h-12 px-4"
-                disabled={isNaN(Number(selectedFeatureIndex))}
-              >
-                Go
-              </Button>
+              {!isNaN(Number(selectedFeatureIndex)) ? (
+                <Link
+                  to="/dictionaries/$dictionaryName/features/$featureIndex"
+                  params={{
+                    dictionaryName: selectedDictionary,
+                    featureIndex: selectedFeatureIndex,
+                  }}
+                >
+                  <Button className="h-12 px-4">Go</Button>
+                </Link>
+              ) : (
+                <Button className="h-12 px-4" disabled>
+                  Go
+                </Button>
+              )}
             </div>
             <FeatureBookmarkButton
               feature={feature}
