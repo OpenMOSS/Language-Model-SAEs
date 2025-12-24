@@ -33,6 +33,7 @@ interface LinkGraphProps {
 
 const BOTTOM_PADDING = 50
 const SIDE_PADDING = 70
+const MIN_UNIT_WIDTH = 8
 
 function topologicalSort(
   nodes: Node[],
@@ -102,29 +103,18 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   onNodeHover,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
+  const [containerDimensions, setContainerDimensions] = useState({
+    width: 800,
+    height: 600,
+  })
 
-  const { calculatedCtxCounts, x, y, positionedNodes } = useMemo(() => {
+  // 1. Calculate stats about context counts and total units needed
+  const { calculatedCtxCounts, totalUnits } = useMemo(() => {
     if (!data.nodes.length) {
-      return {
-        calculatedCtxCounts: [],
-        x: null,
-        y: null,
-        positionedNodes: [],
-      }
+      return { calculatedCtxCounts: [], totalUnits: 0 }
     }
 
-    const { nodes, edges } = data
-
-    // Build outgoing edges map for topological sorting
-    const outgoingEdges = new Map<string, Set<string>>()
-    for (const edge of edges) {
-      if (!outgoingEdges.has(edge.source)) {
-        outgoingEdges.set(edge.source, new Set())
-      }
-      outgoingEdges.get(edge.source)!.add(edge.target)
-    }
-
+    const { nodes } = data
     const earliestCtxWithNodes = d3.min(nodes, (d) => d.ctxIdx) || 0
 
     let cumsum = 0
@@ -146,13 +136,48 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         return { ctxIdx, maxCount: 0, cumsum, layerGroups: new Map() }
       })
 
-    const xDomain = [-1].concat(calculatedCtxCounts.map((d) => d.ctxIdx))
+    const totalUnits = cumsum + 2 * calculatedCtxCounts.length
+
+    return { calculatedCtxCounts, totalUnits }
+  }, [data.nodes])
+
+  // 2. Calculate graph dimensions based on data density and container size
+  const dimensions = useMemo(() => {
+    const minWidth = totalUnits * MIN_UNIT_WIDTH + SIDE_PADDING
+    return {
+      width: Math.max(containerDimensions.width, minWidth),
+      height: containerDimensions.height,
+    }
+  }, [totalUnits, containerDimensions])
+
+  // 3. Calculate scales and node positions
+  const { x, y, positionedNodes } = useMemo(() => {
+    if (!calculatedCtxCounts.length) {
+      return {
+        x: null,
+        y: null,
+        positionedNodes: [],
+      }
+    }
+
+    const { nodes, edges } = data
+
+    // Build outgoing edges map for topological sorting
+    const outgoingEdges = new Map<string, Set<string>>()
+    for (const edge of edges) {
+      if (!outgoingEdges.has(edge.source)) {
+        outgoingEdges.set(edge.source, new Set())
+      }
+      outgoingEdges.get(edge.source)!.add(edge.target)
+    }
+
+    const xDomain = [-1].concat(calculatedCtxCounts.map((d: any) => d.ctxIdx))
     const xRange = [SIDE_PADDING].concat(
       calculatedCtxCounts.map(
-        (d, i) =>
+        (d: any, i: number) =>
           SIDE_PADDING +
           ((d.cumsum + 2 * (i + 1)) * (dimensions.width - SIDE_PADDING)) /
-            (cumsum + 2 * calculatedCtxCounts.length),
+            totalUnits,
       ),
     )
     const x = d3
@@ -218,8 +243,8 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       d.pos = [x(d.ctxIdx) + xOffset, (y(d.layer + 1) || 0) + y.bandwidth() / 2]
     })
 
-    return { calculatedCtxCounts, x, y, positionedNodes }
-  }, [data.nodes, data.edges, dimensions.width, dimensions.height])
+    return { x, y, positionedNodes }
+  }, [data.nodes, data.edges, dimensions, calculatedCtxCounts, totalUnits])
 
   const nodeIndex = useMemo(
     () => createNodeIndex(positionedNodes),
@@ -285,9 +310,9 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     const updateDimensions = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect()
-        setDimensions({
+        setContainerDimensions({
           width: rect.width,
-          height: rect.height,
+          height: rect.height - 20,
         })
       }
     }
@@ -346,7 +371,10 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   }
 
   return (
-    <div ref={containerRef} className="relative w-full h-[400px]">
+    <div
+      ref={containerRef}
+      className="relative w-full min-h-[420px] h-[420px] overflow-x-auto overflow-y-hidden"
+    >
       <svg
         width={dimensions.width}
         height={dimensions.height}

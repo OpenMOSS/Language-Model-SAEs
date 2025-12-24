@@ -1,4 +1,5 @@
 import { Link, useRouterState } from '@tanstack/react-router'
+import { Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /**
@@ -15,7 +16,7 @@ export const AppNavbar = () => {
           <span className="text-xl font-bold">SAE Visualizer</span>
         </Link>
 
-        <div className="flex gap-4 items-center">
+        <div className="flex gap-4 items-center flex-1">
           <Link
             className={cn(
               'transition-colors hover:text-foreground/80 text-foreground/60',
@@ -36,6 +37,17 @@ export const AppNavbar = () => {
             Circuits
           </Link>
         </div>
+
+        <Link
+          className={cn(
+            'flex items-center gap-1.5 transition-colors hover:text-foreground/80 text-foreground/60',
+            pathname.startsWith('/admin') && 'text-foreground font-medium',
+          )}
+          to="/admin"
+        >
+          <Settings className="h-4 w-4" />
+          Admin
+        </Link>
       </div>
     </nav>
   )

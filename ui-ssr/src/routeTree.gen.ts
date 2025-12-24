@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DictionariesIndexRouteImport } from './routes/dictionaries.index'
 import { Route as CircuitsIndexRouteImport } from './routes/circuits.index'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as DictionariesDictionaryNameIndexRouteImport } from './routes/dictionaries.$dictionaryName.index'
 import { Route as DictionariesDictionaryNameFeaturesFeatureIndexRouteImport } from './routes/dictionaries.$dictionaryName.features.$featureIndex'
 
@@ -30,6 +31,11 @@ const CircuitsIndexRoute = CircuitsIndexRouteImport.update({
   path: '/circuits/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/admin/',
+  path: '/admin/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DictionariesDictionaryNameIndexRoute =
   DictionariesDictionaryNameIndexRouteImport.update({
     id: '/dictionaries/$dictionaryName/',
@@ -45,6 +51,7 @@ const DictionariesDictionaryNameFeaturesFeatureIndexRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminIndexRoute
   '/circuits': typeof CircuitsIndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
@@ -52,6 +59,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admin': typeof AdminIndexRoute
   '/circuits': typeof CircuitsIndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
@@ -60,6 +68,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin/': typeof AdminIndexRoute
   '/circuits/': typeof CircuitsIndexRoute
   '/dictionaries/': typeof DictionariesIndexRoute
   '/dictionaries/$dictionaryName/': typeof DictionariesDictionaryNameIndexRoute
@@ -69,6 +78,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
     | '/circuits'
     | '/dictionaries'
     | '/dictionaries/$dictionaryName'
@@ -76,6 +86,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/admin'
     | '/circuits'
     | '/dictionaries'
     | '/dictionaries/$dictionaryName'
@@ -83,6 +94,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/admin/'
     | '/circuits/'
     | '/dictionaries/'
     | '/dictionaries/$dictionaryName/'
@@ -91,6 +103,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminIndexRoute: typeof AdminIndexRoute
   CircuitsIndexRoute: typeof CircuitsIndexRoute
   DictionariesIndexRoute: typeof DictionariesIndexRoute
   DictionariesDictionaryNameIndexRoute: typeof DictionariesDictionaryNameIndexRoute
@@ -120,6 +133,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CircuitsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/': {
+      id: '/admin/'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dictionaries/$dictionaryName/': {
       id: '/dictionaries/$dictionaryName/'
       path: '/dictionaries/$dictionaryName'
@@ -139,6 +159,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminIndexRoute: AdminIndexRoute,
   CircuitsIndexRoute: CircuitsIndexRoute,
   DictionariesIndexRoute: DictionariesIndexRoute,
   DictionariesDictionaryNameIndexRoute: DictionariesDictionaryNameIndexRoute,
