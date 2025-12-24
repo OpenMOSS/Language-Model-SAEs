@@ -127,7 +127,14 @@ export const fetchSamples = createServerFn({ method: 'GET' })
         visibleRange,
       },
     }) => {
-      const url = `${process.env.BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/sampling/${samplingName}?start=${start}&length=${length}${visibleRange ? `&visible_range=${visibleRange}` : ''}`
+      const params = new URLSearchParams({
+        start: String(start),
+        length: String(length),
+      })
+      if (visibleRange !== undefined) {
+        params.append('visible_range', String(visibleRange))
+      }
+      const url = `${process.env.BACKEND_URL}/dictionaries/${encodeURIComponent(dictionary)}/features/${featureIndex}/sampling/${encodeURIComponent(samplingName)}?${params}`
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -274,4 +281,34 @@ export const toggleBookmark = createServerFn({ method: 'POST' })
     }
 
     return !isBookmarked
+  })
+
+export const updateInterpretation = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (data: { dictionaryName: string; featureIndex: number; text: string }) =>
+      data,
+  )
+  .handler(async ({ data: { dictionaryName, featureIndex, text } }) => {
+    const response = await fetch(
+      `${process.env.BACKEND_URL}/dictionaries/${dictionaryName}/features/${featureIndex}/interpretation`,
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
+      },
+    )
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to update interpretation: ${await response.text()}`,
+      )
+    }
+
+    const data = await response.json()
+    return camelcaseKeys(data, { deep: true }) as {
+      message: string
+      interpretation: { text: string }
+    }
   })

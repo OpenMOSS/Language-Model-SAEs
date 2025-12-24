@@ -1192,15 +1192,7 @@ def delete_circuit(circuit_id: str):
 
 @app.post("/dictionaries/{name}/features/{feature_index}/bookmark")
 def add_bookmark(name: str, feature_index: int):
-    """Add a bookmark for a feature.
-
-    Args:
-        name: Name of the dictionary/SAE
-        feature_index: Index of the feature to bookmark
-
-    Returns:
-        Success response or error
-    """
+    """Add a bookmark for a feature."""
     try:
         success = client.add_bookmark(sae_name=name, sae_series=sae_series, feature_index=feature_index)
         if success:
@@ -1213,15 +1205,7 @@ def add_bookmark(name: str, feature_index: int):
 
 @app.delete("/dictionaries/{name}/features/{feature_index}/bookmark")
 def remove_bookmark(name: str, feature_index: int):
-    """Remove a bookmark for a feature.
-
-    Args:
-        name: Name of the dictionary/SAE
-        feature_index: Index of the feature to remove bookmark from
-
-    Returns:
-        Success response or error
-    """
+    """Remove a bookmark for a feature."""
     success = client.remove_bookmark(sae_name=name, sae_series=sae_series, feature_index=feature_index)
     if success:
         return {"message": "Bookmark removed successfully"}
@@ -1231,15 +1215,7 @@ def remove_bookmark(name: str, feature_index: int):
 
 @app.get("/dictionaries/{name}/features/{feature_index}/bookmark")
 def check_bookmark(name: str, feature_index: int):
-    """Check if a feature is bookmarked.
-
-    Args:
-        name: Name of the dictionary/SAE
-        feature_index: Index of the feature
-
-    Returns:
-        Bookmark status
-    """
+    """Check if a feature is bookmarked."""
     is_bookmarked = client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature_index)
     return {"is_bookmarked": is_bookmarked}
 
@@ -1320,17 +1296,7 @@ def list_bookmarks(
 
 @app.put("/dictionaries/{name}/features/{feature_index}/bookmark")
 def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = None, notes: Optional[str] = None):
-    """Update a bookmark with new tags or notes.
-
-    Args:
-        name: Name of the dictionary/SAE
-        feature_index: Index of the feature
-        tags: Optional new tags for the bookmark
-        notes: Optional new notes for the bookmark
-
-    Returns:
-        Success response or error
-    """
+    """Update a bookmark with new tags or notes."""
     success = client.update_bookmark(
         sae_name=name, sae_series=sae_series, feature_index=feature_index, tags=tags, notes=notes
     )
@@ -1338,6 +1304,25 @@ def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = N
         return {"message": "Bookmark updated successfully"}
     else:
         return Response(content="Bookmark not found", status_code=404)
+
+
+class UpdateInterpretationRequest(BaseModel):
+    text: str
+
+
+@app.put("/dictionaries/{name}/features/{feature_index}/interpretation")
+def update_interpretation(name: str, feature_index: int, request: UpdateInterpretationRequest):
+    """Update a feature's interpretation."""
+    interpretation = {"text": request.text}
+    result = client.update_feature(
+        sae_name=name,
+        sae_series=sae_series,
+        feature_index=feature_index,
+        update_data={"interpretation": interpretation},
+    )
+    if result.matched_count == 0:
+        return Response(content=f"Feature {feature_index} not found in SAE {name}", status_code=404)
+    return {"message": "Interpretation updated successfully", "interpretation": interpretation}
 
 
 app.add_middleware(
