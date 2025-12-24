@@ -1,5 +1,7 @@
 import math
 import os
+import shutil
+import tempfile
 from abc import ABC, abstractmethod
 from importlib.metadata import version
 from pathlib import Path
@@ -18,6 +20,7 @@ import einops
 import safetensors.torch as safe
 import torch
 import torch.distributed.checkpoint as dcp
+from huggingface_hub import create_repo, snapshot_download, upload_folder
 from jaxtyping import Float
 from safetensors import safe_open
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
@@ -806,3 +809,99 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             self.activation_function.load_distributed_state_dict(
                 state_dict, device_mesh, f"{prefix}activation_function."
             )
+    
+    @abstractmethod
+    def hf_folder_name(self) -> str:
+        """Return the folder name for the SAE in HuggingFace Hub."""
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def upload_to_hf(
+        self,
+        repo_id: str,
+        commit_message: str = "Upload pretrained SAE",
+        token: Optional[str] = None,
+        private: bool = False,
+    ) -> None:
+        """Upload the SAE to HuggingFace Hub.
+
+        What gets uploaded (same as `lm_saes/utils/huggingface.py` style):
+        - `sae_weights.*` written by `save_pretrained`
+        - `config.json` written by `cfg.save_hyperparameters`
+
+        Args:
+            repo_id: Hub repo id, e.g. "org/name".
+            Commit_message: Commit message.
+            Token: HF token (or rely on local login).
+            Private: Whether to create repo as private.
+        """
+        # Get the folder name for the SAE in HuggingFace Hub
+        folder_name = self.hf_folder_name()
+
+        # Create a temporary folder to save the SAE
+        tmp_root = Path(tempfile.mkdtemp(prefix="sae_upload_"))
+        local_folder = tmp_root / folder_name
+        local_folder.mkdir(parents=True, exist_ok=True)
+
+        try:
+            create_repo(repo_id=repo_id, private=private, exist_ok=True, token=token)
+
+            # Save locally then upload the whole folder
+            self.save_pretrained(str(local_folder))
+            self.cfg.save_hyperparameters(str(local_folder))
+
+            upload_folder(
+                folder_path=str(local_folder),
+                repo_id=repo_id,
+                path_in_repo=folder_name,
+                commit_message=commit_message,
+                token=token,
+            )
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+    
+    @classmethod
+    def from_hf(
+        cls,
+        repo_id: str,
+        sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"],
+        hook_point_in : str | None = None,
+        hook_point_out: str | None = None,
+        hook_points: list[str] | None = None,
+        *,
+        token: str | None = None, 
+        fold_activation_scale: bool = False,
+        **kwargs,
+    ):
+        """Load the SAE from HuggingFace Hub.
+
+        By default we do NOT fold activation scale (i.e. keep dataset-wise behavior),
+        matching the notebook comment.
+
+        Args:
+            repo_id: Hub repo id, e.g. "org/name".
+            hook_point: Subfolder in the repo that contains the SAE files.
+            token: HF token (or rely on local login).
+            fold_activation_scale: Passed through to `from_pretrained`.
+            **kwargs: Forwarded to `from_pretrained` (e.g. strict_loading).
+        """
+
+        if sae_type == "crosscoder":
+            assert hook_points is not None, "hook_points must be set for crosscoder"
+            folder_name = f"{sae_type}"
+            for head in hook_points:
+                folder_name += f"-{head}"
+        elif sae_type == "clt":
+            folder_name = "CLT"
+        else:
+            assert hook_point_in is not None and hook_point_out is not None, "hook_point_in and hook_point_out must be set for non-CLT SAEs"
+            folder_name = f"{sae_type}-{hook_point_in}-{hook_point_out}"
+            
+        allow_patterns = [f"{folder_name}/*"]
+        snapshot_path = snapshot_download(
+            repo_id=repo_id,
+            allow_patterns=allow_patterns,
+            token=token,
+        )
+        local_path = str(Path(snapshot_path) / folder_name)
+        _cls = SAE_TYPE_TO_MODEL_CLASS[sae_type]
+        return _cls.from_pretrained(local_path, fold_activation_scale=fold_activation_scale, **kwargs)
