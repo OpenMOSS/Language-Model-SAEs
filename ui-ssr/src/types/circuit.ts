@@ -7,7 +7,7 @@ export type FeatureNode = {
   ctxIdx: number
   isTargetLogit: boolean
   saeName: string
-  feature: FeatureCompact
+  feature: Omit<FeatureCompact, 'samples'>
 }
 
 export type TokenNode = {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef } from 'react'
 import * as d3 from 'd3'
 import {
   GridLines,
@@ -23,6 +23,7 @@ import {
   findNearestNode,
   getNodesByCtxIdx,
 } from '@/utils/circuit-index'
+import { useLocalStorage } from '@/hooks/useLocalStorage'
 
 interface LinkGraphProps {
   data: CircuitData
@@ -103,10 +104,13 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   onNodeHover,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [containerDimensions, setContainerDimensions] = useState({
-    width: 800,
-    height: 600,
-  })
+  const [containerDimensions, setContainerDimensions] = useLocalStorage(
+    'linkGraphDimensions',
+    {
+      width: 800,
+      height: 600,
+    },
+  )
 
   // 1. Calculate stats about context counts and total units needed
   const { calculatedCtxCounts, totalUnits } = useMemo(() => {
@@ -327,7 +331,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     return () => {
       resizeObserver.disconnect()
     }
-  }, [])
+  }, [setContainerDimensions])
 
   const tokenData = useMemo(() => {
     if (!data.metadata?.promptTokens || !positionedNodes.length || !x) return []

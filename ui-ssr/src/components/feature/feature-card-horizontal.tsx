@@ -2,21 +2,17 @@ import { memo } from 'react'
 import { Info } from '../ui/info'
 import { FeatureSampleGroup } from './sample'
 import { FeatureLogits } from './feature-logits'
-import type { Feature, FeatureSampleCompact } from '@/types/feature'
+import type { Feature } from '@/types/feature'
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
 type FeatureCardHorizontalProps = {
   feature: Feature
-  sampleGroups: {
-    name: string
-    samples: FeatureSampleCompact[]
-  }[]
   className?: string
 }
 
 export const FeatureCardHorizontal = memo(
-  ({ feature, sampleGroups, className }: FeatureCardHorizontalProps) => {
+  ({ feature, className }: FeatureCardHorizontalProps) => {
     return (
       <Card
         className={cn(
@@ -59,17 +55,13 @@ export const FeatureCardHorizontal = memo(
           </div>
 
           <div className="w-full gap-4 border-l border-slate-200 overflow-y-auto no-scrollbar">
-            {sampleGroups.map(({ name, samples }) => (
-              <FeatureSampleGroup
-                className="mx-0 mt-0"
-                key={name}
-                feature={feature}
-                samplingName={name}
-                totalLength={samples.length}
-                defaultVisibleRange={10}
-                initialSamples={samples}
-              />
-            ))}
+            <FeatureSampleGroup
+              className="mx-0 mt-0"
+              feature={feature}
+              samplingName="top_activations"
+              totalLength={5}
+              defaultVisibleRange={10}
+            />
           </div>
         </div>
       </Card>

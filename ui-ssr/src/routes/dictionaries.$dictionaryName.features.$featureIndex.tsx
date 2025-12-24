@@ -30,23 +30,24 @@ export const Route = createFileRoute(
   validateSearch: searchParamsSchema,
   component: FeaturesPage,
   loader: async ({ context, params }) => {
-    const dictionaries = await context.queryClient.ensureQueryData(
-      dictionariesQueryOptions(),
-    )
-    context.queryClient.prefetchQuery(
-      samplingsQueryOptions({
-        dictionary: params.dictionaryName,
-        featureIndex: Number(params.featureIndex),
-      }),
-    )
-    const feature = await context.queryClient.fetchQuery(
-      featureQueryOptions({
-        dictionary: params.dictionaryName,
-        featureIndex: Number(params.featureIndex),
-      }),
-    )
+    const [dictionaries, samplings, feature] = await Promise.all([
+      await context.queryClient.ensureQueryData(dictionariesQueryOptions()),
+      await context.queryClient.ensureQueryData(
+        samplingsQueryOptions({
+          dictionary: params.dictionaryName,
+          featureIndex: Number(params.featureIndex),
+        }),
+      ),
+      await context.queryClient.ensureQueryData(
+        featureQueryOptions({
+          dictionary: params.dictionaryName,
+          featureIndex: Number(params.featureIndex),
+        }),
+      ),
+    ])
     return {
       dictionaries,
+      samplings,
       feature,
       dictionaryName: params.dictionaryName,
       featureIndex: Number(params.featureIndex),
@@ -87,7 +88,13 @@ function FeaturesPage() {
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-slate-50/50">
-      <div className="w-[350px] shrink-0 border-r border-slate-200 bg-white flex flex-col h-full overflow-hidden">
+      <div
+        className={`shrink-0 border-r border-slate-200 bg-white flex flex-col h-full overflow-hidden transition-all duration-300 ease-in-out ${
+          isFeaturesLoading
+            ? '-translate-x-full opacity-0 w-0 border-r-0'
+            : 'w-[350px] translate-x-0 opacity-100'
+        }`}
+      >
         <FeatureList
           features={features}
           selectedIndex={featureIndex}
@@ -109,7 +116,7 @@ function FeaturesPage() {
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto transition-all duration-300 ease-in-out">
         <div className="pt-4 pb-20 px-20 flex flex-col items-center gap-6">
           <div className="w-full flex justify-center items-center relative h-12">
             <div className="flex justify-center items-center gap-3">

@@ -15,6 +15,7 @@ import { Route as CircuitsIndexRouteImport } from './routes/circuits.index'
 import { Route as BookmarksIndexRouteImport } from './routes/bookmarks.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as DictionariesDictionaryNameIndexRouteImport } from './routes/dictionaries.$dictionaryName.index'
+import { Route as CircuitIdIndexRouteImport } from './routes/circuit.$id.index'
 import { Route as DictionariesDictionaryNameFeaturesFeatureIndexRouteImport } from './routes/dictionaries.$dictionaryName.features.$featureIndex'
 
 const IndexRoute = IndexRouteImport.update({
@@ -48,6 +49,11 @@ const DictionariesDictionaryNameIndexRoute =
     path: '/dictionaries/$dictionaryName/',
     getParentRoute: () => rootRouteImport,
   } as any)
+const CircuitIdIndexRoute = CircuitIdIndexRouteImport.update({
+  id: '/circuit/$id/',
+  path: '/circuit/$id/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DictionariesDictionaryNameFeaturesFeatureIndexRoute =
   DictionariesDictionaryNameFeaturesFeatureIndexRouteImport.update({
     id: '/dictionaries/$dictionaryName/features/$featureIndex',
@@ -61,6 +67,7 @@ export interface FileRoutesByFullPath {
   '/bookmarks': typeof BookmarksIndexRoute
   '/circuits': typeof CircuitsIndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
+  '/circuit/$id': typeof CircuitIdIndexRoute
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
@@ -70,6 +77,7 @@ export interface FileRoutesByTo {
   '/bookmarks': typeof BookmarksIndexRoute
   '/circuits': typeof CircuitsIndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
+  '/circuit/$id': typeof CircuitIdIndexRoute
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
@@ -80,6 +88,7 @@ export interface FileRoutesById {
   '/bookmarks/': typeof BookmarksIndexRoute
   '/circuits/': typeof CircuitsIndexRoute
   '/dictionaries/': typeof DictionariesIndexRoute
+  '/circuit/$id/': typeof CircuitIdIndexRoute
   '/dictionaries/$dictionaryName/': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
@@ -91,6 +100,7 @@ export interface FileRouteTypes {
     | '/bookmarks'
     | '/circuits'
     | '/dictionaries'
+    | '/circuit/$id'
     | '/dictionaries/$dictionaryName'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
   fileRoutesByTo: FileRoutesByTo
@@ -100,6 +110,7 @@ export interface FileRouteTypes {
     | '/bookmarks'
     | '/circuits'
     | '/dictionaries'
+    | '/circuit/$id'
     | '/dictionaries/$dictionaryName'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
   id:
@@ -109,6 +120,7 @@ export interface FileRouteTypes {
     | '/bookmarks/'
     | '/circuits/'
     | '/dictionaries/'
+    | '/circuit/$id/'
     | '/dictionaries/$dictionaryName/'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
   fileRoutesById: FileRoutesById
@@ -119,6 +131,7 @@ export interface RootRouteChildren {
   BookmarksIndexRoute: typeof BookmarksIndexRoute
   CircuitsIndexRoute: typeof CircuitsIndexRoute
   DictionariesIndexRoute: typeof DictionariesIndexRoute
+  CircuitIdIndexRoute: typeof CircuitIdIndexRoute
   DictionariesDictionaryNameIndexRoute: typeof DictionariesDictionaryNameIndexRoute
   DictionariesDictionaryNameFeaturesFeatureIndexRoute: typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
@@ -167,6 +180,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DictionariesDictionaryNameIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/circuit/$id/': {
+      id: '/circuit/$id/'
+      path: '/circuit/$id'
+      fullPath: '/circuit/$id'
+      preLoaderRoute: typeof CircuitIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dictionaries/$dictionaryName/features/$featureIndex': {
       id: '/dictionaries/$dictionaryName/features/$featureIndex'
       path: '/dictionaries/$dictionaryName/features/$featureIndex'
@@ -183,6 +203,7 @@ const rootRouteChildren: RootRouteChildren = {
   BookmarksIndexRoute: BookmarksIndexRoute,
   CircuitsIndexRoute: CircuitsIndexRoute,
   DictionariesIndexRoute: DictionariesIndexRoute,
+  CircuitIdIndexRoute: CircuitIdIndexRoute,
   DictionariesDictionaryNameIndexRoute: DictionariesDictionaryNameIndexRoute,
   DictionariesDictionaryNameFeaturesFeatureIndexRoute:
     DictionariesDictionaryNameFeaturesFeatureIndexRoute,

@@ -179,27 +179,21 @@ def admin_delete_sae_set(name: str):
 @router.get("/circuits")
 def admin_list_circuits(limit: int = 100, skip: int = 0):
     """List all circuits with full details for admin."""
-    circuits = client.list_circuits(sae_series=sae_series, limit=limit, skip=skip)
-
-    results = []
-    for circuit in circuits:
-        data = {
-            "id": circuit.id,
-            "name": circuit.name,
-            "sae_set_name": circuit.sae_set_name,
-            "sae_series": circuit.sae_series,
-            "prompt": circuit.prompt[:100] + "..." if len(circuit.prompt) > 100 else circuit.prompt,
-            "full_prompt": circuit.prompt,
-            "config": circuit.config.model_dump(),
-            "created_at": circuit.created_at.isoformat() + "Z",
-            "node_count": len(circuit.graph_data.get("nodes", [])),
-            "edge_count": len(circuit.graph_data.get("links", [])),
-        }
-        results.append(data)
+    circuits = client.list_circuits(sae_series=sae_series, limit=limit, skip=skip, with_graph_data=True)
 
     total_count = client.circuit_collection.count_documents({"sae_series": sae_series})
 
-    return {"circuits": results, "total_count": total_count}
+    circuits = [
+        circuit
+        | {
+            "node_count": len(circuit["graph_data"]["nodes"]),
+            "edge_count": len(circuit["graph_data"]["links"]),
+            "graph_data": None,
+        }
+        for circuit in circuits
+    ]
+
+    return {"circuits": circuits, "total_count": total_count}
 
 
 class UpdateCircuitRequest(BaseModel):

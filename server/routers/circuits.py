@@ -5,7 +5,6 @@ from typing import Any, Optional
 import torch
 from fastapi import APIRouter, Response
 from pydantic import BaseModel
-from tqdm import tqdm
 
 from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.circuit.attribution import attribute
@@ -17,7 +16,6 @@ from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sae import SparseAutoEncoder
 from server.config import client, sae_series
 from server.logic.loaders import get_model, get_sae
-from server.logic.samples import extract_samples
 from server.utils.common import make_serializable
 
 logger = logging.getLogger(__name__)
@@ -115,13 +113,6 @@ def process_feature_for_circuit(feature: FeatureRecord):
     if analysis is None:
         return None
 
-    sampling = next(
-        (s for s in analysis.samplings if s.name == "top_activations"),
-        None,
-    )
-
-    samples = extract_samples(sampling, 0, 5, visible_range=10) if sampling is not None else None
-
     return {
         "feature_index": feature.index,
         "logits": feature.logits,
@@ -131,7 +122,6 @@ def process_feature_for_circuit(feature: FeatureRecord):
         "act_times": analysis.act_times,
         "max_feature_act": analysis.max_feature_acts,
         "n_analyzed_tokens": analysis.n_analyzed_tokens,
-        "samples": samples,
     }
 
 
@@ -145,6 +135,7 @@ def concretize_graph_data(graph_data: dict[str, Any]):
             sae_name=sae_name,
             sae_series=sae_series,
             indices=[node["feature"] for node in graph_data["nodes"] if node["sae_name"] == sae_name],
+            with_samplings=False,
         )
         for sae_name in sae_names
     }
@@ -154,7 +145,7 @@ def concretize_graph_data(graph_data: dict[str, Any]):
         for feature_record in feature_records
     }
 
-    for node in tqdm(graph_data["nodes"], desc="Concretizing features"):
+    for node in graph_data["nodes"]:
         if node["sae_name"] is not None:
             feature_record = feature_records.get((node["sae_name"], node["feature"]))
             assert feature_record is not None, f"Feature {node['feature']} not found in SAE {node['sae_name']}"
@@ -267,9 +258,8 @@ def list_circuits(limit: int = 100, skip: int = 0):
 
     results = []
     for circuit in circuits:
-        data = circuit.model_dump()
-        data["created_at"] = circuit.created_at.isoformat() + "Z"
-        results.append(data)
+        circuit["created_at"] = circuit["created_at"].isoformat() + "Z"
+        results.append(circuit)
 
     return results
 

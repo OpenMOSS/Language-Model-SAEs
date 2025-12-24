@@ -51,7 +51,7 @@ class FeatureAnalysis(BaseModel):
     n_analyzed_tokens: Optional[int] = None
     act_times_modalities: Optional[dict[str, float]] = None
     max_feature_acts_modalities: Optional[dict[str, float]] = None
-    samplings: list[FeatureAnalysisSampling]
+    samplings: list[FeatureAnalysisSampling] = []
 
 
 class FeatureRecord(BaseModel):
@@ -300,12 +300,18 @@ class MongoClient:
 
         return FeatureRecord.model_validate(feature)
 
-    def list_features(self, sae_name: str, sae_series: str | None, indices: list[int]) -> list[FeatureRecord]:
+    def list_features(
+        self, sae_name: str, sae_series: str | None, indices: list[int], with_samplings: bool = True
+    ) -> list[FeatureRecord]:
+        projection = {"analyses.samplings": 0} if not with_samplings else None
+
         features = self.feature_collection.find(
-            {"sae_name": sae_name, "sae_series": sae_series, "index": {"$in": indices}}
+            {"sae_name": sae_name, "sae_series": sae_series, "index": {"$in": indices}}, projection=projection
         ).sort("index", pymongo.ASCENDING)
+
         if self.is_gridfs_enabled():
             features = [self._from_gridfs(feature) for feature in features]
+
         return [FeatureRecord.model_validate(feature) for feature in features]
 
     def get_analysis(self, name: str, sae_name: str, sae_series: str) -> Optional[AnalysisRecord]:
@@ -831,13 +837,16 @@ class MongoClient:
         sae_series: Optional[str] = None,
         limit: Optional[int] = None,
         skip: int = 0,
-    ) -> list[CircuitRecord]:
+        with_graph_data: bool = False,
+    ) -> list[dict[str, Any]]:
         """List circuits with optional filtering."""
         query: dict[str, Any] = {}
         if sae_series is not None:
             query["sae_series"] = sae_series
 
-        cursor = self.circuit_collection.find(query).sort("created_at", pymongo.DESCENDING)
+        projection = {"graph_data": 0} if not with_graph_data else None
+
+        cursor = self.circuit_collection.find(query, projection=projection).sort("created_at", pymongo.DESCENDING)
 
         if skip > 0:
             cursor = cursor.skip(skip)
@@ -847,7 +856,7 @@ class MongoClient:
         circuits = []
         for circuit in cursor:
             circuit["id"] = str(circuit.pop("_id"))
-            circuits.append(CircuitRecord.model_validate(circuit))
+            circuits.append(circuit)
         return circuits
 
     def delete_circuit(self, circuit_id: str) -> bool:
