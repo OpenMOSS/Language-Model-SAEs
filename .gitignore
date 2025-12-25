@@ -207,3 +207,4 @@ uv.lock
 /diffusion-posterior-sampling/models
 /diffusion-posterior-sampling/results
 /diffusion-posterior-sampling/_nb_results
+/CEP-energy-guided-diffusion
