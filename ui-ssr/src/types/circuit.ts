@@ -1,66 +1,99 @@
-import type { FeatureCompact } from './feature'
+import { z } from 'zod'
+import { FeatureCompactSchema } from './feature'
 
-export type FeatureNode = {
-  featureType: 'lorsa' | 'cross layer transcoder'
-  nodeId: string
-  layer: number
-  ctxIdx: number
-  isTargetLogit: boolean
-  saeName: string
-  feature: Omit<FeatureCompact, 'samples'>
-}
+export const FeatureNodeSchema = z.object({
+  featureType: z.enum(['lorsa', 'cross layer transcoder']),
+  nodeId: z.string(),
+  layer: z.number(),
+  ctxIdx: z.number(),
+  isTargetLogit: z.boolean(),
+  saeName: z.string(),
+  activation: z.number(),
+  feature: FeatureCompactSchema.omit({ samples: true }),
+})
 
-export type TokenNode = {
-  featureType: 'embedding'
-  nodeId: string
-  layer: number
-  ctxIdx: number
-  token: string
-}
+export type FeatureNode = z.infer<typeof FeatureNodeSchema>
 
-export type ErrorNode = {
-  featureType: 'lorsa error' | 'mlp reconstruction error'
-  nodeId: string
-  layer: number
-  ctxIdx: number
-}
+export const TokenNodeSchema = z.object({
+  featureType: z.literal('embedding'),
+  nodeId: z.string(),
+  layer: z.number(),
+  ctxIdx: z.number(),
+  token: z.string(),
+})
 
-export type LogitNode = {
-  featureType: 'logit'
-  nodeId: string
-  layer: number
-  ctxIdx: number
-  tokenProb: number
-  token: string
-}
+export type TokenNode = z.infer<typeof TokenNodeSchema>
 
-export type Node = FeatureNode | TokenNode | ErrorNode | LogitNode
+export const ErrorNodeSchema = z.object({
+  featureType: z.enum(['lorsa error', 'mlp reconstruction error']),
+  nodeId: z.string(),
+  layer: z.number(),
+  ctxIdx: z.number(),
+})
 
-export type Edge = {
-  source: string
-  target: string
-  weight: number
-}
+export type ErrorNode = z.infer<typeof ErrorNodeSchema>
 
-export type PositionedNode = Node & {
-  pos: [number, number]
-}
+export const LogitNodeSchema = z.object({
+  featureType: z.literal('logit'),
+  nodeId: z.string(),
+  layer: z.number(),
+  ctxIdx: z.number(),
+  tokenProb: z.number(),
+  token: z.string(),
+})
 
-export type PositionedEdge = Edge & {
-  pathStr: string
-}
+export type LogitNode = z.infer<typeof LogitNodeSchema>
 
-export type CircuitData = {
-  nodes: Node[]
-  edges: Edge[]
-  metadata: CircuitMetadata
-}
+export const NodeSchema = z.union([
+  FeatureNodeSchema,
+  TokenNodeSchema,
+  ErrorNodeSchema,
+  LogitNodeSchema,
+])
 
-export type CircuitMetadata = {
-  promptTokens: string[]
-}
+export type Node = z.infer<typeof NodeSchema>
 
-export type VisState = {
-  clickedId: string | null
-  hoveredId: string | null
-}
+export const EdgeSchema = z.object({
+  source: z.string(),
+  target: z.string(),
+  weight: z.number(),
+})
+
+export type Edge = z.infer<typeof EdgeSchema>
+
+export const PositionedNodeSchema = NodeSchema.and(
+  z.object({
+    pos: z.tuple([z.number(), z.number()]),
+  }),
+)
+
+export type PositionedNode = z.infer<typeof PositionedNodeSchema>
+
+export const PositionedEdgeSchema = EdgeSchema.and(
+  z.object({
+    pathStr: z.string(),
+  }),
+)
+
+export type PositionedEdge = z.infer<typeof PositionedEdgeSchema>
+
+export const CircuitMetadataSchema = z.object({
+  promptTokens: z.array(z.string()),
+})
+
+export type CircuitMetadata = z.infer<typeof CircuitMetadataSchema>
+
+export const CircuitDataSchema = z.object({
+  nodes: z.array(NodeSchema),
+  edges: z.array(EdgeSchema),
+  metadata: CircuitMetadataSchema,
+})
+
+export type CircuitData = z.infer<typeof CircuitDataSchema>
+
+export const VisStateSchema = z.object({
+  clickedId: z.string().nullable(),
+  hoveredId: z.string().nullable(),
+})
+
+export type VisState = z.infer<typeof VisStateSchema>

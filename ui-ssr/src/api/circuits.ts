@@ -3,6 +3,7 @@ import { createServerFn } from '@tanstack/react-start'
 import camelcaseKeys from 'camelcase-keys'
 import { z } from 'zod'
 import type { CircuitData } from '@/types/circuit'
+import { CircuitDataSchema } from '@/types/circuit'
 
 export interface CircuitConfig {
   desiredLogitProb: number
@@ -168,6 +169,8 @@ export const fetchCircuit = createServerFn({ method: 'GET' })
       createdAt: string
     }
 
+    result.graphData = CircuitDataSchema.parse(result.graphData)
+
     return result
   })
 
@@ -233,7 +236,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
       },
     }
 
-    return camelcaseKeys(transformedData, {
+    const finalResult = camelcaseKeys(transformedData, {
       deep: true,
     }) as {
       circuitId: string
@@ -245,6 +248,10 @@ export const generateCircuit = createServerFn({ method: 'POST' })
       input: CircuitInput
       config: CircuitConfig
     }
+
+    finalResult.graphData = CircuitDataSchema.parse(finalResult.graphData)
+
+    return finalResult
   })
 
 export const deleteCircuit = createServerFn({ method: 'POST' })

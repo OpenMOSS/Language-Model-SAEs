@@ -57,11 +57,19 @@ const FeatureRow = memo(
                 node.feature.interpretation?.text}
             </span>
           </div>
-          <div className="text-right">
-            <div className="text-xs font-mono">
+          <div className="text-right flex flex-col items-end">
+            <div className="text-xs font-mono" title="Edge Weight">
               {weight > 0 ? '+' : ''}
               {weight.toFixed(3)}
             </div>
+            {'activation' in node && (
+              <div
+                className="text-[10px] text-orange-500 font-mono"
+                title="Node Activation"
+              >
+                {node.activation.toFixed(2)}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -134,7 +142,12 @@ export const NodeConnections = memo(
               {clickedNode.featureType === 'cross layer transcoder' ||
               clickedNode.featureType === 'lorsa'
                 ? clickedNode.feature.interpretation?.text
-                : formatFeatureId(clickedNode, true)}
+                : formatFeatureId(clickedNode, true)}{' '}
+              {'activation' in clickedNode && (
+                <span className="text-xs font-mono text-orange-500">
+                  ({clickedNode.activation.toFixed(3)})
+                </span>
+              )}
             </span>
             {(clickedNode.featureType === 'cross layer transcoder' ||
               clickedNode.featureType === 'lorsa') && (

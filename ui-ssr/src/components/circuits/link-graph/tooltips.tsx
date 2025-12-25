@@ -41,7 +41,7 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
 
     const textWidth = tooltipText.length * 6
     const tooltipWidth = Math.max(120, textWidth + 20)
-    const tooltipHeight = 20
+    const tooltipHeight = 20 + ('activation' in hoveredNode ? 13 : 0)
     const padding = 10
 
     let tooltipX = hoveredNode.pos[0] + padding
@@ -81,6 +81,17 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(
         >
           {tooltipText}
         </text>
+        {'activation' in hoveredNode && (
+          <text
+            x={tooltipX + 5}
+            y={tooltipY + 26}
+            fill="orange"
+            fontSize="10px"
+            style={{ userSelect: 'none' }}
+          >
+            {hoveredNode.activation.toFixed(3)}
+          </text>
+        )}
       </g>
     )
   },
