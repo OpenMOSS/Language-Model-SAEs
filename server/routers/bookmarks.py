@@ -19,6 +19,7 @@ def list_bookmarks(
 ):
     """List bookmarks with optional filtering and feature data."""
     bookmarks = client.list_bookmarks(sae_name=sae_name, sae_series=sae_series, limit=limit, skip=skip)
+    count = client.get_bookmark_count(sae_name=sae_name, sae_series=sae_series)
 
     # Group bookmarks by SAE name for efficient feature fetching
     bookmarks_by_sae: dict[str, list[BookmarkRecord]] = {}
@@ -80,5 +81,5 @@ def list_bookmarks(
 
     return {
         "bookmarks": bookmark_data,
-        "total_count": client.get_bookmark_count(sae_name=sae_name, sae_series=sae_series),
+        "total_count": count,
     }

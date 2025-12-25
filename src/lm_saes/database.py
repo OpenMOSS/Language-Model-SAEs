@@ -641,18 +641,7 @@ class MongoClient:
         limit: Optional[int] = None,
         skip: int = 0,
     ) -> list[BookmarkRecord]:
-        """List bookmarks with optional filtering.
-
-        Args:
-            sae_name: Optional SAE name filter
-            sae_series: Optional SAE series filter
-            tags: Optional list of tags to filter by (matches any tag)
-            limit: Optional limit on number of results
-            skip: Number of results to skip (for pagination)
-
-        Returns:
-            list[BookmarkRecord]: List of bookmark records
-        """
+        """List bookmarks with optional filtering."""
         query = {}
 
         if sae_name is not None:
@@ -679,18 +668,7 @@ class MongoClient:
         tags: Optional[list[str]] = None,
         notes: Optional[str] = None,
     ) -> bool:
-        """Update an existing bookmark.
-
-        Args:
-            sae_name: Name of the SAE
-            sae_series: Series of the SAE
-            feature_index: Index of the feature
-            tags: Optional new tags for the bookmark
-            notes: Optional new notes for the bookmark
-
-        Returns:
-            bool: True if bookmark was updated, False if it doesn't exist
-        """
+        """Update an existing bookmark."""
         update_data = {}
         if tags is not None:
             update_data["tags"] = tags
@@ -711,15 +689,7 @@ class MongoClient:
         return result.modified_count > 0
 
     def get_bookmark_count(self, sae_name: Optional[str] = None, sae_series: Optional[str] = None) -> int:
-        """Get the total count of bookmarks with optional filtering.
-
-        Args:
-            sae_name: Optional SAE name filter
-            sae_series: Optional SAE series filter
-
-        Returns:
-            int: Total number of bookmarks matching the criteria
-        """
+        """Get the total count of bookmarks with optional filtering."""
         query = {}
         if sae_name is not None:
             query["sae_name"] = sae_name
