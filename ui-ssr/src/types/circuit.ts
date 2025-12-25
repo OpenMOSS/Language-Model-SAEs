@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { FeatureCompactSchema } from './feature'
+import { FeatureSchema } from './feature'
 
 export const FeatureNodeSchema = z.object({
   featureType: z.enum(['lorsa', 'cross layer transcoder']),
@@ -9,7 +9,7 @@ export const FeatureNodeSchema = z.object({
   isTargetLogit: z.boolean(),
   saeName: z.string(),
   activation: z.number(),
-  feature: FeatureCompactSchema.omit({ samples: true }),
+  feature: FeatureSchema,
 })
 
 export type FeatureNode = z.infer<typeof FeatureNodeSchema>
