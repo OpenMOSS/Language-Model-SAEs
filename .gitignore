@@ -209,3 +209,4 @@ uv.lock
 /diffusion-posterior-sampling/_nb_results
 /diffusion-posterior-sampling/_qt_ckpts
 /CEP-energy-guided-diffusion
+/LLaDA_gen/mapping
