@@ -341,8 +341,8 @@ def get_feature(
             dict: Processed sample data
         """  # Get model and dataset
         print(f"{sparse_feature_acts=}")
-        # model = get_model(model_name)
-        model = None
+        model = get_model(model_name)
+        # model = None
         print("get_data")
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
         print("get_data ok")
@@ -525,7 +525,7 @@ def get_feature(
         "sample_groups": sample_groups,
         "is_bookmarked": client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature.index),
     }
-    print(f"{response_data=}")
+    # print(f"{response_data=}")
     return Response(
         content=msgpack.packb(make_serializable(response_data)),
         media_type="application/x-msgpack",
