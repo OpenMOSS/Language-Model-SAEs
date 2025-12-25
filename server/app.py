@@ -343,10 +343,10 @@ def get_feature(
         print(f"{sparse_feature_acts=}")
         model = get_model(model_name)
         # model = None
-        print("get_data")
+        # print("get_data")
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
-        print("get_data ok")
-        print(f"{data=}")
+        # print("get_data ok")
+        # print(f"{data=}")
 
         (
             feature_acts_indices,
