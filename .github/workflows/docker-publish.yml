@@ -1,0 +1,79 @@
+name: Docker
+
+# This workflow builds Docker images on push to main/dev branches
+# and publishes (pushes) them to GHCR on version tags.
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    tags:
+      - "v*"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        include:
+          - context: .
+            file: server/Dockerfile
+            image: ghcr.io/${{ github.repository }}-backend
+          - context: ui-ssr
+            file: ui-ssr/Dockerfile
+            image: ghcr.io/${{ github.repository }}-frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: "true"
+
+      - name: Log in to the Container registry
+        # Only login if we are going to push
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.image }}
+          tags: |
+            # Tag with the exact git tag
+            type=ref,event=tag
+            # Extract version from tag (stripping 'v' prefix if present)
+            type=match,pattern=v(.*),group=1
+            # Standard semver (if valid)
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # Branch and SHA
+            type=ref,event=branch
+            type=sha
+            # latest tag only for stable releases (no 'a', 'b', 'rc' etc. in the tag name)
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, 'a') && !contains(github.ref_name, 'b') && !contains(github.ref_name, 'rc') }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          # Only push on tags
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
