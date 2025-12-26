@@ -193,7 +193,7 @@ pyrightconfig.json
 /run.py
 /checkpoints
 /wandb
-/exp
+# /exp
 /analysis-results
 /analysis
 /results
