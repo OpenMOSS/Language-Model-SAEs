@@ -38,6 +38,12 @@ jobs:
         with:
           submodules: "true"
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to the Container registry
         # Only login if we are going to push
         if: startsWith(github.ref, 'refs/tags/v')
