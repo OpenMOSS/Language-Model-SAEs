@@ -1,3 +1,5 @@
+import functools
+import itertools
 import logging
 from datetime import datetime
 from typing import Any, Optional
@@ -11,11 +13,12 @@ from lm_saes.circuit.attribution import attribute
 from lm_saes.circuit.replacement_model import ReplacementModel
 from lm_saes.circuit.utils.create_graph_files import serialize_graph
 from lm_saes.circuit.utils.transcoder_set import TranscoderSet, TranscoderSetConfig
-from lm_saes.database import CircuitConfig, CircuitInput, FeatureRecord
+from lm_saes.database import CircuitConfig, CircuitInput
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sae import SparseAutoEncoder
 from server.config import client, sae_series
 from server.logic.loaders import get_model, get_sae
+from server.logic.samples import list_feature_data
 from server.utils.common import make_serializable
 
 logger = logging.getLogger(__name__)
@@ -104,52 +107,29 @@ class GenerateCircuitRequest(BaseModel):
     max_n_logits: int = 1
 
 
-def process_feature_for_circuit(feature: FeatureRecord):
-    """Process a feature record for circuit visualization."""
-    analysis = next(
-        (a for a in feature.analyses),
-        None,
-    )
-    if analysis is None:
-        return None
-
-    return {
-        "feature_index": feature.index,
-        "logits": feature.logits,
-        "analysis_name": analysis.name,
-        "interpretation": feature.interpretation,
-        "dictionary_name": feature.sae_name,
-        "act_times": analysis.act_times,
-        "max_feature_act": analysis.max_feature_acts,
-        "n_analyzed_tokens": analysis.n_analyzed_tokens,
-    }
-
-
 def concretize_graph_data(graph_data: dict[str, Any]):
     """Concretize a graph data by adding feature data. This will modify the graph data in place."""
     logger.info("Retrieving feature records for circuit")
 
-    sae_names = list(set(node["sae_name"] for node in graph_data["nodes"] if node["sae_name"] is not None))
-    feature_records = {
-        sae_name: client.list_features(
-            sae_name=sae_name,
-            sae_series=sae_series,
-            indices=[node["feature"] for node in graph_data["nodes"] if node["sae_name"] == sae_name],
-            with_samplings=False,
-        )
-        for sae_name in sae_names
-    }
-    feature_records = {
-        (sae_name, feature_record.index): feature_record
-        for sae_name, feature_records in feature_records.items()
-        for feature_record in feature_records
-    }
+    features = functools.reduce(
+        lambda acc, x: acc | x,
+        [
+            list_feature_data(sae_name=sae_name, indices=[node["feature"] for node in nodes], with_samplings=False)
+            for sae_name, nodes in itertools.groupby(
+                sorted(filter(lambda x: x["sae_name"] is not None, graph_data["nodes"]), key=lambda x: x["sae_name"]),
+                key=lambda x: x["sae_name"],
+            )
+        ],
+        {},
+    )
 
     for node in graph_data["nodes"]:
         if node["sae_name"] is not None:
-            feature_record = feature_records.get((node["sae_name"], node["feature"]))
-            assert feature_record is not None, f"Feature {node['feature']} not found in SAE {node['sae_name']}"
-            node["feature"] = process_feature_for_circuit(feature_record)
+            if (node["sae_name"], node["feature"]) not in features:
+                return Response(
+                    content=f"Feature {node['feature']} not found in SAE {node['sae_name']}", status_code=404
+                )
+            node["feature"] = features[(node["sae_name"], node["feature"])]
 
 
 @router.post("/circuits")

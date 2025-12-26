@@ -14,6 +14,9 @@ import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/bookmarks/')({
   component: BookmarksPage,
+  staticData: {
+    fullScreen: true,
+  },
 })
 
 function BookmarkFeatureItem({

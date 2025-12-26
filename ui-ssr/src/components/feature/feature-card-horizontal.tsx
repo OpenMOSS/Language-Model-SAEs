@@ -9,10 +9,11 @@ import { cn } from '@/lib/utils'
 type FeatureCardHorizontalProps = {
   feature: Feature
   className?: string
+  hidePlots?: boolean
 }
 
 export const FeatureCardHorizontal = memo(
-  ({ feature, className }: FeatureCardHorizontalProps) => {
+  ({ feature, className, hidePlots }: FeatureCardHorizontalProps) => {
     return (
       <Card
         className={cn(
@@ -43,14 +44,16 @@ export const FeatureCardHorizontal = memo(
                   {feature.nAnalyzedTokens!.toLocaleString()} tokens.
                 </Info>
               </div>
-              <div className="flex items-center gap-4 grow">
-                <div className="h-full flex flex-1 items-center justify-center text-slate-500 text-sm bg-slate-100 rounded-2xl p-3 mb-2 border border-dashed border-slate-200">
-                  Activation histogram is not available.
+              {!hidePlots && (
+                <div className="flex items-center gap-4 grow">
+                  <div className="h-full flex flex-1 items-center justify-center text-slate-500 text-sm bg-slate-100 rounded-2xl p-3 mb-2 border border-dashed border-slate-200">
+                    Activation histogram is not available.
+                  </div>
+                  <div className="h-full flex flex-1 items-center justify-center text-slate-500 text-sm bg-slate-100 rounded-2xl p-3 border border-dashed border-slate-200">
+                    Logits histogram is not available.
+                  </div>
                 </div>
-                <div className="h-full flex flex-1 items-center justify-center text-slate-500 text-sm bg-slate-100 rounded-2xl p-3 border border-dashed border-slate-200">
-                  Logits histogram is not available.
-                </div>
-              </div>
+              )}
             </div>
           </div>
 

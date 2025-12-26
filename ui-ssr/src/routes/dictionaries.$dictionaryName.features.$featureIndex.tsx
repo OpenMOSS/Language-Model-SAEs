@@ -28,6 +28,9 @@ export const Route = createFileRoute(
   '/dictionaries/$dictionaryName/features/$featureIndex',
 )({
   validateSearch: searchParamsSchema,
+  staticData: {
+    fullScreen: true,
+  },
   component: FeaturesPage,
   loader: async ({ context, params }) => {
     const [dictionaries, samplings, feature] = await Promise.all([

@@ -3,6 +3,7 @@ import {
   Outlet,
   Scripts,
   createRootRouteWithContext,
+  useMatches,
 } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
@@ -15,6 +16,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { AppNavbar } from '@/components/app/navbar'
 import { NavigationProgressBar } from '@/components/app/progress-bar'
 import { Toaster } from '@/components/ui/sonner'
+import { cn } from '@/lib/utils'
 
 interface RouterContext {
   queryClient: QueryClient
@@ -54,12 +56,22 @@ function RootComponent() {
 }
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+  const matches = useMatches()
+  const isFullScreen = matches.some(
+    (match) => (match.staticData as { fullScreen?: boolean })?.fullScreen,
+  )
+
   return (
     <html lang="en">
       <head>
         <HeadContent />
       </head>
-      <body className="h-screen bg-background flex flex-col overflow-hidden">
+      <body
+        className={cn(
+          'bg-background flex flex-col',
+          isFullScreen && 'h-screen overflow-hidden',
+        )}
+      >
         <AppNavbar />
         <NavigationProgressBar />
         <main className="flex-1 min-h-0">{children}</main>

@@ -2,11 +2,15 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { dictionariesQueryOptions } from '@/hooks/useFeatures'
 import { DictionaryCard } from '@/components/dictionary/dictionary-card'
+import { DictionaryInference } from '@/components/dictionary/dictionary-inference'
 import { LabeledSelect } from '@/components/ui/labeled-select'
 import { Button } from '@/components/ui/button'
 
 export const Route = createFileRoute('/dictionaries/$dictionaryName/')({
   component: DictionaryIndexPage,
+  staticData: {
+    fullScreen: false,
+  },
   loader: async ({ context, params }) => {
     const dictionaries = await context.queryClient.ensureQueryData(
       dictionariesQueryOptions(),
@@ -49,6 +53,7 @@ function DictionaryIndexPage() {
         </div>
       </div>
       <DictionaryCard dictionaryName={dictionaryName} />
+      {/* <DictionaryInference dictionaryName={dictionaryName} /> */}
     </div>
   )
 }

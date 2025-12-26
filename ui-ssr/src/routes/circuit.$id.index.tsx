@@ -24,6 +24,9 @@ const searchParamsSchema = z.object({
 
 export const Route = createFileRoute('/circuit/$id/')({
   validateSearch: searchParamsSchema,
+  staticData: {
+    fullScreen: true,
+  },
   component: CircuitPage,
   loader: async ({ context, params }) => {
     const [circuits, saeSets] = await Promise.all([

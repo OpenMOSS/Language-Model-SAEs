@@ -51,6 +51,9 @@ import { useDebounce } from '@/hooks/use-debounce'
 
 export const Route = createFileRoute('/admin/')({
   component: AdminPage,
+  staticData: {
+    fullScreen: true,
+  },
   loader: async ({ context }) => {
     const [stats, saes, saeSets, circuits] = await Promise.all([
       context.queryClient.ensureQueryData(adminStatsQueryOptions()),

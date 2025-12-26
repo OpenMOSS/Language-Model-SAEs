@@ -1,16 +1,18 @@
 import json
-from typing import Optional
+from typing import Any, Optional
 
+import einops
 import msgpack
 import numpy as np
 import plotly.graph_objects as go
+import torch
 from fastapi import APIRouter, Response
 from pydantic import BaseModel
 
 from lm_saes.database import FeatureRecord
 from server.config import client, sae_series
 from server.logic.loaders import get_model, get_sae
-from server.logic.samples import extract_samples
+from server.logic.samples import extract_samples, list_feature_data
 from server.utils.common import make_serializable, natural_sort_key
 
 router = APIRouter(prefix="/dictionaries", tags=["dictionaries"])
@@ -369,3 +371,44 @@ def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = N
         return {"message": "Bookmark updated successfully"}
     else:
         return Response(content="Bookmark not found", status_code=404)
+
+
+@router.post("/{name}/inference")
+def inference(name: str, text: str, max_features: int = 10):
+    """Infer given text to find activated features."""
+    model_name = client.get_sae_model_name(name, sae_series)
+    assert model_name is not None, f"SAE {name} not found or no model name is associated with it"
+    model = get_model(name=model_name)
+    sae = get_sae(name=name)
+
+    activations = model.to_activations({"text": [text]}, hook_points=sae.cfg.associated_hook_points)
+    activations = sae.normalize_activations(activations)
+    x, encoder_kwargs, _ = sae.prepare_input(activations)
+    feature_acts = sae.encode(x, **encoder_kwargs)
+
+    weight = einops.reduce(feature_acts, "batch n_context d_sae -> d_sae", "sum")
+    indices = (weight > 0).nonzero().squeeze(-1)[:max_features]
+    weights = weight[indices]
+    weights, sort_indices = torch.sort(weights, descending=True)
+    indices = indices[sort_indices]
+    feature_acts = feature_acts[0, :, indices]
+
+    origins = model.trace({"text": [text]})[0]
+
+    features = list_feature_data(sae_name=name, indices=indices.tolist(), with_samplings=False).values()
+
+    def process_feature(feature: dict[str, Any], feature_acts_i: torch.Tensor):
+        feature_acts_i = feature_acts_i.to_sparse()
+        return {
+            "feature": feature,
+            "inference": {
+                "text": text,
+                "origins": origins,
+                "feature_acts_indices": feature_acts_i.indices()[0],
+                "feature_acts_values": feature_acts_i.values(),
+            },
+        }
+
+    return make_serializable(
+        [process_feature(feature, feature_acts_i) for feature, feature_acts_i in zip(features, feature_acts)]
+    )

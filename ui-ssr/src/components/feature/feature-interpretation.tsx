@@ -8,17 +8,20 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Info } from '@/components/ui/info'
 import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
 
 type FeatureInterpretationProps = {
   feature: Feature
   dictionaryName: string
   featureIndex: number
+  className?: string
 }
 
 export function FeatureInterpretation({
   feature,
   dictionaryName,
   featureIndex,
+  className,
 }: FeatureInterpretationProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editText, setEditText] = useState(feature.interpretation?.text || '')
@@ -58,7 +61,7 @@ export function FeatureInterpretation({
   }
 
   return (
-    <Card className="w-full">
+    <Card className={cn('w-full', className)}>
       <CardHeader>
         <CardTitle className="font-semibold tracking-tight flex justify-center items-center text-sm text-slate-700 gap-1 cursor-default">
           EXPLANATIONS{' '}

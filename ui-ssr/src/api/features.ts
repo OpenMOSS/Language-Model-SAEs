@@ -312,3 +312,43 @@ export const updateInterpretation = createServerFn({ method: 'POST' })
       interpretation: { text: string }
     }
   })
+
+export const dictionaryInference = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (data: { dictionaryName: string; text: string; maxFeatures?: number }) =>
+      data,
+  )
+  .handler(async ({ data: { dictionaryName, text, maxFeatures } }) => {
+    const params = new URLSearchParams({
+      text,
+      max_features: String(maxFeatures ?? 10),
+    })
+    const response = await fetch(
+      `${process.env.BACKEND_URL}/dictionaries/${dictionaryName}/inference?${params}`,
+      {
+        method: 'POST',
+      },
+    )
+
+    if (!response.ok) {
+      throw new Error(`Failed to infer: ${await response.text()}`)
+    }
+
+    const data = await response.json()
+    const camelCased = camelcaseKeys(data, {
+      deep: true,
+      stopPaths: [
+        'inference.feature_acts_indices',
+        'inference.feature_acts_values',
+      ],
+    })
+
+    return z
+      .array(
+        z.object({
+          feature: FeatureSchema,
+          inference: FeatureSampleCompactSchema,
+        }),
+      )
+      .parse(camelCased)
+  })

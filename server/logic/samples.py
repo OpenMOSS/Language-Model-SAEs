@@ -3,6 +3,7 @@ from typing import Any, Generator
 import numpy as np
 
 from lm_saes.database import FeatureAnalysisSampling
+from server.config import client, sae_series
 from server.logic.loaders import get_dataset, get_model
 
 
@@ -137,3 +138,58 @@ def extract_samples(
             sampling.n_shards[start:end] if sampling.n_shards is not None else [1] * (end - start),
         )
     ]
+
+
+def list_feature_data(
+    sae_name: str,
+    indices: list[int],
+    with_samplings: bool = True,
+    sampling_size: int = 1,
+    sampling_visible_range: int = 10,
+    with_logits: bool = True,
+) -> dict[tuple[str, int], dict[str, Any]]:
+    """List features and (optionally) their associated samples."""
+    features = client.list_features(
+        sae_name=sae_name, sae_series=sae_series, indices=indices, with_samplings=with_samplings
+    )
+
+    features_by_key: dict[tuple[str, int], dict[str, Any]] = {}
+    for feature in features:
+        analysis = next(
+            (a for a in feature.analyses if a.name == "default"),
+            None,
+        )
+        if analysis is None:
+            analysis = next((a for a in feature.analyses), None)
+
+        if analysis is None:
+            continue
+
+        data = {
+            "feature_index": feature.index,
+            "analysis_name": analysis.name,
+            "interpretation": feature.interpretation,
+            "dictionary_name": feature.sae_name,
+            "act_times": analysis.act_times,
+            "max_feature_act": analysis.max_feature_acts,
+            "n_analyzed_tokens": analysis.n_analyzed_tokens,
+        }
+
+        if with_logits:
+            data["logits"] = feature.logits
+
+        if with_samplings:
+            sampling = next(
+                (s for s in analysis.samplings if s.name == "top_activations"),
+                None,
+            )
+            samples = (
+                extract_samples(sampling, 0, sampling_size, visible_range=sampling_visible_range)
+                if sampling is not None
+                else []
+            )
+            data["samples"] = samples
+
+        features_by_key[(sae_name, feature.index)] = data
+
+    return features_by_key
