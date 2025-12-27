@@ -346,7 +346,7 @@ export const dictionaryInference = createServerFn({ method: 'POST' })
     return z
       .array(
         z.object({
-          feature: FeatureSchema,
+          feature: FeatureCompactSchema,
           inference: FeatureSampleCompactSchema,
         }),
       )

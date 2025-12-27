@@ -86,6 +86,7 @@ export type FeatureSampleGroupProps = {
   className?: string
   defaultVisibleRange?: number
   initialSamples?: FeatureSampleCompact[]
+  hideTitle?: boolean
 }
 
 export const FeatureSampleGroup = ({
@@ -95,6 +96,7 @@ export const FeatureSampleGroup = ({
   totalLength,
   initialSamples,
   defaultVisibleRange = 50,
+  hideTitle = false,
 }: FeatureSampleGroupProps) => {
   const rangeOptions = [
     { label: 'Stacked', value: 10 },
@@ -135,36 +137,44 @@ export const FeatureSampleGroup = ({
   const samplingNameDisplay = samplingNameMap(samplingName)
 
   return (
-    <div className={cn('flex flex-col mt-4 -mx-6', className)}>
-      <div className="flex items-center justify-between bg-slate-50 py-2 px-6 border-y border-slate-200">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-muted-foreground uppercase ml-2">
-            {samplingNameDisplay.split(' ').slice(0, -1).join(' ')}
-          </span>
-          <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full uppercase shadow-sm">
-            {samplingNameDisplay.split(' ').slice(-1)[0]}
-          </span>
-        </div>
+    <div
+      className={cn(
+        'flex flex-col mt-4 -mx-6',
+        hideTitle && 'border-t border-slate-200',
+        className,
+      )}
+    >
+      {!hideTitle && (
+        <div className="flex items-center justify-between bg-slate-50 py-2 px-6 border-y border-slate-200">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-muted-foreground uppercase ml-2">
+              {samplingNameDisplay.split(' ').slice(0, -1).join(' ')}
+            </span>
+            <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full uppercase shadow-sm">
+              {samplingNameDisplay.split(' ').slice(-1)[0]}
+            </span>
+          </div>
 
-        <div className="flex items-center bg-slate-200/50 rounded-md p-1 gap-1">
-          {rangeOptions.map((option) => (
-            <Button
-              key={option.label}
-              variant="ghost"
-              size="sm"
-              className={cn(
-                'h-7 px-3 text-xs hover:bg-white/50',
-                visibleRange === option.value
-                  ? 'bg-white shadow-sm text-foreground font-bold'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-              onClick={() => setVisibleRange(option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
+          <div className="flex items-center bg-slate-200/50 rounded-md p-1 gap-1">
+            {rangeOptions.map((option) => (
+              <Button
+                key={option.label}
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  'h-7 px-3 text-xs hover:bg-white/50',
+                  visibleRange === option.value
+                    ? 'bg-white shadow-sm text-foreground font-bold'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+                onClick={() => setVisibleRange(option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {samples.map((sample, i) => (
         <FeatureActivationSample

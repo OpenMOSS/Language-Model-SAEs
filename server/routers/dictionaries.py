@@ -395,7 +395,7 @@ def inference(name: str, text: str, max_features: int = 10):
 
     origins = model.trace({"text": [text]})[0]
 
-    features = list_feature_data(sae_name=name, indices=indices.tolist(), with_samplings=False).values()
+    features = list_feature_data(sae_name=name, indices=indices.tolist(), with_samplings=True, sampling_size=5).values()
 
     def process_feature(feature: dict[str, Any], feature_acts_i: torch.Tensor):
         feature_acts_i = feature_acts_i.to_sparse()
