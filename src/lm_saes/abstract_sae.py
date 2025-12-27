@@ -809,7 +809,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             self.activation_function.load_distributed_state_dict(
                 state_dict, device_mesh, f"{prefix}activation_function."
             )
-    
+
     @abstractmethod
     def hf_folder_name(self) -> str:
         """Return the folder name for the SAE in HuggingFace Hub."""
@@ -858,17 +858,17 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             )
         finally:
             shutil.rmtree(tmp_root, ignore_errors=True)
-    
+
     @classmethod
     def from_hf(
         cls,
         repo_id: str,
         sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"],
-        hook_point_in : str | None = None,
+        hook_point_in: str | None = None,
         hook_point_out: str | None = None,
         hook_points: list[str] | None = None,
         *,
-        token: str | None = None, 
+        token: str | None = None,
         fold_activation_scale: bool = False,
         **kwargs,
     ):
@@ -893,9 +893,11 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         elif sae_type == "clt":
             folder_name = "CLT"
         else:
-            assert hook_point_in is not None and hook_point_out is not None, "hook_point_in and hook_point_out must be set for non-CLT SAEs"
+            assert hook_point_in is not None and hook_point_out is not None, (
+                "hook_point_in and hook_point_out must be set for non-CLT SAEs"
+            )
             folder_name = f"{sae_type}-{hook_point_in}-{hook_point_out}"
-            
+
         allow_patterns = [f"{folder_name}/*"]
         snapshot_path = snapshot_download(
             repo_id=repo_id,

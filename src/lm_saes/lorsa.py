@@ -543,7 +543,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         key = k.permute(0, 2, 1, 3)
         value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
         with sdpa_kernel(
-            backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
+            backends=[
+                SDPBackend.FLASH_ATTENTION,
+                SDPBackend.CUDNN_ATTENTION,
+                SDPBackend.EFFICIENT_ATTENTION,
+                SDPBackend.MATH,
+            ]
         ):
             z = F.scaled_dot_product_attention(
                 query, key, value, scale=1 / self.attn_scale, is_causal=True, enable_gqa=True
@@ -606,7 +611,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             key = k.permute(0, 2, 1, 3)
             value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
             with sdpa_kernel(
-                backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
+                backends=[
+                    SDPBackend.FLASH_ATTENTION,
+                    SDPBackend.CUDNN_ATTENTION,
+                    SDPBackend.EFFICIENT_ATTENTION,
+                    SDPBackend.MATH,
+                ]
             ):
                 z = F.scaled_dot_product_attention(
                     query, key, value, scale=1 / self.attn_scale, is_causal=True, enable_gqa=True
@@ -831,6 +841,19 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Set encoder weights to fixed norm."""
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for lorsa")
 
+    @override
+    def load_distributed_state_dict(
+        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
+    ) -> None:
+        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
+        self.device_mesh = device_mesh
+        for name in ["W_Q", "W_K", "W_V", "W_O", "b_Q", "b_K", "b_V", "b_D"]:
+            self.register_parameter(name, nn.Parameter(state_dict[f"{prefix}{name}"].to(getattr(self, name).dtype)))
+
+        if self.cfg.use_post_qk_ln:
+            self.ln_q.register_parameter("w", nn.Parameter(state_dict[f"{prefix}ln_q.w"].to(self.ln_q.w.dtype)))
+            self.ln_k.register_parameter("w", nn.Parameter(state_dict[f"{prefix}ln_k.w"].to(self.ln_k.w.dtype)))
+
     @classmethod
     def from_pretrained(
         cls,
@@ -878,7 +901,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Prepare label tensor."""
         label = batch[self.cfg.hook_point_out]
         return label
-    
+
     def hf_folder_name(self) -> str:
         return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"
 
