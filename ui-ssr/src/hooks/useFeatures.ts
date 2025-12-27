@@ -174,7 +174,7 @@ export const useSamples = (params: {
 
   return useInfiniteQuery({
     queryKey: [
-      'samples',
+      'samplesAll',
       params.dictionary,
       anchor.featureIndex,
       anchor.samplingName,

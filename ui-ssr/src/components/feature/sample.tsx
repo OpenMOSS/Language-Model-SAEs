@@ -137,13 +137,7 @@ export const FeatureSampleGroup = ({
   const samplingNameDisplay = samplingNameMap(samplingName)
 
   return (
-    <div
-      className={cn(
-        'flex flex-col mt-4 -mx-6',
-        hideTitle && 'border-t border-slate-200',
-        className,
-      )}
-    >
+    <div className={cn('flex flex-col mt-4 -mx-6', className)}>
       {!hideTitle && (
         <div className="flex items-center justify-between bg-slate-50 py-2 px-6 border-y border-slate-200">
           <div className="flex items-center gap-2">

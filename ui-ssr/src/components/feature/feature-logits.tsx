@@ -77,3 +77,46 @@ export const FeatureLogits = memo(
   },
 )
 FeatureLogits.displayName = 'FeatureLogits'
+
+export const FeatureLogitsHorizontal = memo(
+  ({ logits }: FeatureLogitsProps) => {
+    return (
+      <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-3 items-center">
+        <span className="font-semibold tracking-tight text-sm text-slate-700 uppercase">
+          Positive
+        </span>
+        <div className="flex flex-wrap gap-2">
+          {logits.topPositive.map((token, index) => (
+            <span
+              key={`positive-${index}`}
+              className="bg-red-200 text-slate-700 text-xs px-2 py-0.5 rounded font-medium whitespace-nowrap overflow-hidden text-ellipsis"
+            >
+              {token.token
+                .replaceAll('\n', '↵')
+                .replaceAll('\t', '→')
+                .replaceAll(' ', '_')}
+            </span>
+          ))}
+        </div>
+
+        <span className="font-semibold tracking-tight text-sm text-slate-700 uppercase">
+          Negative
+        </span>
+        <div className="flex flex-wrap gap-2">
+          {logits.topNegative.map((token, index) => (
+            <span
+              key={`negative-${index}`}
+              className="bg-blue-200 text-slate-700 text-xs px-2 py-0.5 rounded font-medium whitespace-nowrap overflow-hidden text-ellipsis"
+            >
+              {token.token
+                .replaceAll('\n', '↵')
+                .replaceAll('\t', '→')
+                .replaceAll(' ', '_')}
+            </span>
+          ))}
+        </div>
+      </div>
+    )
+  },
+)
+FeatureLogitsHorizontal.displayName = 'FeatureLogitsHorizontal'

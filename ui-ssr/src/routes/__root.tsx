@@ -60,6 +60,23 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   const isFullScreen = matches.some(
     (match) => (match.staticData as { fullScreen?: boolean })?.fullScreen,
   )
+  const isEmbed = matches.some(
+    (match) => (match.staticData as { embed?: boolean })?.embed,
+  )
+
+  if (isEmbed) {
+    return (
+      <html lang="en">
+        <head>
+          <HeadContent />
+        </head>
+        <body className="bg-background">
+          <main>{children}</main>
+          <Scripts />
+        </body>
+      </html>
+    )
+  }
 
   return (
     <html lang="en">

@@ -9,6 +9,7 @@ import { FeatureInterpretation } from '@/components/feature/feature-interpretati
 import { LabeledInput } from '@/components/ui/labeled-input'
 import { LabeledSelect } from '@/components/ui/labeled-select'
 import { InferenceCard } from '@/components/feature/inference-card'
+import { IframeIntegrationCard } from '@/components/feature/iframe-integration-card'
 
 import {
   dictionariesQueryOptions,
@@ -217,6 +218,10 @@ function FeaturesPage() {
                 dictionaryName={dictionaryName}
                 featureIndex={featureIndex}
                 maxFeatureAct={feature.maxFeatureAct}
+              />
+              <IframeIntegrationCard
+                dictionaryName={dictionaryName}
+                featureIndex={featureIndex}
               />
             </div>
             <div className="flex flex-col px-0 sm:basis-1/2 lg:basis-2/3 min-w-0">
