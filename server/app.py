@@ -48,6 +48,11 @@ if DIFF_DIR.exists() and (DIFF_DIR / "cnnsae_feature_max.py").exists():
         
         print(f"Attempting to load diffusion modules from {DIFF_DIR}")
         
+        # Add DIFF_DIR to sys.path so that 'util' and 'motionblur' modules can be found
+        if str(DIFF_DIR) not in sys.path:
+            sys.path.insert(0, str(DIFF_DIR))
+            print(f"  Added {DIFF_DIR} to sys.path")
+        
         # Create package structure for relative imports
         pkg_name = "diffusion_posterior_sampling"
         if pkg_name not in sys.modules:
