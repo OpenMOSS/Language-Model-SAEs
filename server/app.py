@@ -946,6 +946,8 @@ def feature_visualize_generate(
     """
     Generate an image via act_point conditioning (CNNSAE feature point supervision).
     """
+    print(f"{generate_with_point_supervision=}")
+    print(f"{CNNSAEFeatureMaxConfig=}")
     if generate_with_point_supervision is None or CNNSAEFeatureMaxConfig is None:
         return Response(
             content="diffusion feature visualize dependencies not available on server",
