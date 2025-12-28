@@ -157,8 +157,33 @@ def _build_feature_viz_config(
         return None
 
     try:
+        # Load and fix relative paths in config files
+        import yaml
+        import tempfile
+        import os
+        
+        # Load model config and fix model_path if it's relative
+        with open(DEFAULT_FEATURE_VIZ_MODEL_CFG, 'r') as f:
+            model_cfg = yaml.safe_load(f)
+        
+        model_config_path = str(DEFAULT_FEATURE_VIZ_MODEL_CFG)
+        if 'model_path' in model_cfg:
+            model_path = Path(model_cfg['model_path'])
+            if not model_path.is_absolute():
+                # Convert relative path to absolute path relative to DIFF_DIR
+                abs_model_path = DIFF_DIR / model_path
+                if abs_model_path.exists():
+                    model_cfg['model_path'] = str(abs_model_path)
+                    # Create a temporary file with the modified config
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
+                        yaml.dump(model_cfg, tmp, default_flow_style=False)
+                        model_config_path = tmp.name
+                    print(f"  Fixed model_path: {model_path} -> {abs_model_path}")
+                else:
+                    print(f"  WARNING: Model file not found at {abs_model_path}, using original path")
+        
         cfg = CNNSAEFeatureMaxConfig.from_yaml(
-            model_config_path=str(DEFAULT_FEATURE_VIZ_MODEL_CFG),
+            model_config_path=model_config_path,
             diffusion_config_path=str(DEFAULT_FEATURE_VIZ_DIFFUSION_CFG),
             task_config_path=str(DEFAULT_FEATURE_VIZ_TASK_CFG),
             device=device_override or device,
