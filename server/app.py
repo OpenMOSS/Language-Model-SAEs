@@ -46,43 +46,71 @@ if DIFF_DIR.exists() and (DIFF_DIR / "cnnsae_feature_max.py").exists():
         import importlib.util
         import types
         
+        print(f"Attempting to load diffusion modules from {DIFF_DIR}")
+        
         # Create package structure for relative imports
         pkg_name = "diffusion_posterior_sampling"
         if pkg_name not in sys.modules:
             pkg = types.ModuleType(pkg_name)
+            pkg.__path__ = [str(DIFF_DIR)]  # Set __path__ for package recognition
             sys.modules[pkg_name] = pkg
         
         # Load guided_diffusion subpackage
         guided_pkg_name = f"{pkg_name}.guided_diffusion"
         if guided_pkg_name not in sys.modules:
             guided_pkg = types.ModuleType(guided_pkg_name)
+            guided_pkg.__path__ = [str(DIFF_DIR / "guided_diffusion")]
+            setattr(sys.modules[pkg_name], "guided_diffusion", guided_pkg)
             sys.modules[guided_pkg_name] = guided_pkg
         
         # Load required submodules first (for relative imports)
-        submodules = ["condition_methods", "gaussian_diffusion", "measurements", "unet"]
+        # Order matters: load dependencies first
+        submodules = ["unet", "gaussian_diffusion", "condition_methods", "measurements"]
         for submod_name in submodules:
             submod_path = DIFF_DIR / "guided_diffusion" / f"{submod_name}.py"
             if submod_path.exists():
                 full_name = f"{guided_pkg_name}.{submod_name}"
                 if full_name not in sys.modules:
                     spec = importlib.util.spec_from_file_location(full_name, submod_path)
-                    if spec and spec.loader:
+                    if spec is not None and spec.loader is not None:
                         submod = importlib.util.module_from_spec(spec)
+                        submod.__package__ = guided_pkg_name
+                        submod.__name__ = full_name
+                        submod.__file__ = str(submod_path)
                         sys.modules[full_name] = submod
-                        spec.loader.exec_module(submod)
+                        try:
+                            spec.loader.exec_module(submod)
+                            print(f"  ✓ Loaded {submod_name}")
+                        except Exception as e:
+                            print(f"  ✗ Failed to load {submod_name}: {e}")
+                            import traceback
+                            traceback.print_exc()
+            else:
+                print(f"  ⚠ {submod_name}.py not found at {submod_path}")
         
         # Now load the main module
         main_module_path = DIFF_DIR / "cnnsae_feature_max.py"
         main_module_name = f"{pkg_name}.cnnsae_feature_max"
         spec = importlib.util.spec_from_file_location(main_module_name, main_module_path)
-        if spec and spec.loader:
+        if spec is not None and spec.loader is not None:
             main_module = importlib.util.module_from_spec(spec)
+            # Set necessary attributes for relative imports
+            main_module.__package__ = pkg_name
+            main_module.__name__ = main_module_name
+            main_module.__file__ = str(main_module_path)
             sys.modules[main_module_name] = main_module
-            spec.loader.exec_module(main_module)
             
-            CNNSAEFeatureMaxConfig = main_module.CNNSAEFeatureMaxConfig
-            generate_with_point_supervision = main_module.generate_with_point_supervision
-            print("Successfully loaded diffusion feature visualize modules")
+            try:
+                spec.loader.exec_module(main_module)
+                CNNSAEFeatureMaxConfig = main_module.CNNSAEFeatureMaxConfig
+                generate_with_point_supervision = main_module.generate_with_point_supervision
+                print("✓ Successfully loaded diffusion feature visualize modules")
+            except Exception as e:
+                print(f"✗ Failed to execute cnnsae_feature_max module: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"✗ Failed to create module spec for cnnsae_feature_max")
     except Exception as e:  # pragma: no cover - optional dependency
         print(f"WARNING: failed to import diffusion feature visualize modules: {e}")
         import traceback
