@@ -33,24 +33,69 @@ from torchvision.transforms import v2
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # --- Feature Visualize (CNNSAE + diffusion posterior sampling) support ---
+# Note: These are optional dependencies and may not be available on all servers
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DIFF_DIR = ROOT_DIR / "diffusion-posterior-sampling"
-if DIFF_DIR.exists() and str(DIFF_DIR) not in sys.path:
-    sys.path.append(str(DIFF_DIR))
 
-try:
-    from cnnsae_feature_max import (
-        CNNSAEFeatureMaxConfig,
-        generate_with_point_supervision,
-    )
-except Exception as e:  # pragma: no cover - optional dependency
-    CNNSAEFeatureMaxConfig = None
-    generate_with_point_supervision = None
-    print(f"WARNING: failed to import diffusion feature visualize modules: {e}")
+CNNSAEFeatureMaxConfig = None
+generate_with_point_supervision = None
 
-DEFAULT_FEATURE_VIZ_TASK_CFG = DIFF_DIR / "configs" / "cnnsae_feature_max_config.yaml"
-DEFAULT_FEATURE_VIZ_MODEL_CFG = DIFF_DIR / "configs" / "imagenet_model_config.yaml"
-DEFAULT_FEATURE_VIZ_DIFFUSION_CFG = DIFF_DIR / "configs" / "diffusion_config.yaml"
+if DIFF_DIR.exists() and (DIFF_DIR / "cnnsae_feature_max.py").exists():
+    try:
+        # Use importlib to load the module with proper package structure
+        import importlib.util
+        import types
+        
+        # Create package structure for relative imports
+        pkg_name = "diffusion_posterior_sampling"
+        if pkg_name not in sys.modules:
+            pkg = types.ModuleType(pkg_name)
+            sys.modules[pkg_name] = pkg
+        
+        # Load guided_diffusion subpackage
+        guided_pkg_name = f"{pkg_name}.guided_diffusion"
+        if guided_pkg_name not in sys.modules:
+            guided_pkg = types.ModuleType(guided_pkg_name)
+            sys.modules[guided_pkg_name] = guided_pkg
+        
+        # Load required submodules first (for relative imports)
+        submodules = ["condition_methods", "gaussian_diffusion", "measurements", "unet"]
+        for submod_name in submodules:
+            submod_path = DIFF_DIR / "guided_diffusion" / f"{submod_name}.py"
+            if submod_path.exists():
+                full_name = f"{guided_pkg_name}.{submod_name}"
+                if full_name not in sys.modules:
+                    spec = importlib.util.spec_from_file_location(full_name, submod_path)
+                    if spec and spec.loader:
+                        submod = importlib.util.module_from_spec(spec)
+                        sys.modules[full_name] = submod
+                        spec.loader.exec_module(submod)
+        
+        # Now load the main module
+        main_module_path = DIFF_DIR / "cnnsae_feature_max.py"
+        main_module_name = f"{pkg_name}.cnnsae_feature_max"
+        spec = importlib.util.spec_from_file_location(main_module_name, main_module_path)
+        if spec and spec.loader:
+            main_module = importlib.util.module_from_spec(spec)
+            sys.modules[main_module_name] = main_module
+            spec.loader.exec_module(main_module)
+            
+            CNNSAEFeatureMaxConfig = main_module.CNNSAEFeatureMaxConfig
+            generate_with_point_supervision = main_module.generate_with_point_supervision
+            print("Successfully loaded diffusion feature visualize modules")
+    except Exception as e:  # pragma: no cover - optional dependency
+        print(f"WARNING: failed to import diffusion feature visualize modules: {e}")
+        import traceback
+        traceback.print_exc()
+else:
+    if not DIFF_DIR.exists():
+        print(f"WARNING: diffusion-posterior-sampling directory not found at {DIFF_DIR}")
+    else:
+        print(f"WARNING: cnnsae_feature_max.py not found in {DIFF_DIR}")
+
+DEFAULT_FEATURE_VIZ_TASK_CFG = DIFF_DIR / "configs" / "cnnsae_feature_max_config.yaml" if DIFF_DIR.exists() else None
+DEFAULT_FEATURE_VIZ_MODEL_CFG = DIFF_DIR / "configs" / "imagenet_model_config.yaml" if DIFF_DIR.exists() else None
+DEFAULT_FEATURE_VIZ_DIFFUSION_CFG = DIFF_DIR / "configs" / "diffusion_config.yaml" if DIFF_DIR.exists() else None
 
 
 def _build_feature_viz_config(
@@ -65,19 +110,37 @@ def _build_feature_viz_config(
     """
     if CNNSAEFeatureMaxConfig is None:
         return None
+    
+    # Check if config files exist
+    if (
+        DEFAULT_FEATURE_VIZ_TASK_CFG is None
+        or DEFAULT_FEATURE_VIZ_MODEL_CFG is None
+        or DEFAULT_FEATURE_VIZ_DIFFUSION_CFG is None
+        or not DEFAULT_FEATURE_VIZ_TASK_CFG.exists()
+        or not DEFAULT_FEATURE_VIZ_MODEL_CFG.exists()
+        or not DEFAULT_FEATURE_VIZ_DIFFUSION_CFG.exists()
+    ):
+        print("WARNING: Feature visualize config files not found")
+        return None
 
-    cfg = CNNSAEFeatureMaxConfig.from_yaml(
-        model_config_path=str(DEFAULT_FEATURE_VIZ_MODEL_CFG),
-        diffusion_config_path=str(DEFAULT_FEATURE_VIZ_DIFFUSION_CFG),
-        task_config_path=str(DEFAULT_FEATURE_VIZ_TASK_CFG),
-        device=device_override or device,
-        seed=seed,
-    )
-    # override dynamic fields (dataclass is frozen -> use replace)
-    cfg = replace(cfg, batch_size=batch_size)
-    if image_size is not None:
-        cfg = replace(cfg, image_size=int(image_size))
-    return cfg
+    try:
+        cfg = CNNSAEFeatureMaxConfig.from_yaml(
+            model_config_path=str(DEFAULT_FEATURE_VIZ_MODEL_CFG),
+            diffusion_config_path=str(DEFAULT_FEATURE_VIZ_DIFFUSION_CFG),
+            task_config_path=str(DEFAULT_FEATURE_VIZ_TASK_CFG),
+            device=device_override or device,
+            seed=seed,
+        )
+        # override dynamic fields (dataclass is frozen -> use replace)
+        cfg = replace(cfg, batch_size=batch_size)
+        if image_size is not None:
+            cfg = replace(cfg, image_size=int(image_size))
+        return cfg
+    except Exception as e:
+        print(f"WARNING: Failed to build feature visualize config: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def _tensor_to_base64_image(img: torch.Tensor) -> str:
