@@ -1,7 +1,11 @@
+import base64
 import io
 import json
 import os
+import sys
+from dataclasses import replace
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Generator, Optional
 
 import msgpack
@@ -9,7 +13,7 @@ import numpy as np
 import plotly.graph_objects as go
 import torch
 from datasets import Dataset
-from fastapi import FastAPI, Response
+from fastapi import Body, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
@@ -27,6 +31,69 @@ from lm_saes.sae import SparseAutoEncoder
 from torchvision.transforms import v2
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# --- Feature Visualize (CNNSAE + diffusion posterior sampling) support ---
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DIFF_DIR = ROOT_DIR / "diffusion-posterior-sampling"
+if DIFF_DIR.exists() and str(DIFF_DIR) not in sys.path:
+    sys.path.append(str(DIFF_DIR))
+
+try:
+    from cnnsae_feature_max import (
+        CNNSAEFeatureMaxConfig,
+        generate_with_point_supervision,
+    )
+except Exception as e:  # pragma: no cover - optional dependency
+    CNNSAEFeatureMaxConfig = None
+    generate_with_point_supervision = None
+    print(f"WARNING: failed to import diffusion feature visualize modules: {e}")
+
+DEFAULT_FEATURE_VIZ_TASK_CFG = DIFF_DIR / "configs" / "cnnsae_feature_max_config.yaml"
+DEFAULT_FEATURE_VIZ_MODEL_CFG = DIFF_DIR / "configs" / "imagenet_model_config.yaml"
+DEFAULT_FEATURE_VIZ_DIFFUSION_CFG = DIFF_DIR / "configs" / "diffusion_config.yaml"
+
+
+def _build_feature_viz_config(
+    *,
+    seed: Optional[int] = None,
+    image_size: Optional[int] = None,
+    batch_size: int = 1,
+    device_override: Optional[str] = None,
+) -> Optional["CNNSAEFeatureMaxConfig"]:
+    """
+    Create a CNNSAEFeatureMaxConfig using the default yaml files bundled in diffusion-posterior-sampling.
+    """
+    if CNNSAEFeatureMaxConfig is None:
+        return None
+
+    cfg = CNNSAEFeatureMaxConfig.from_yaml(
+        model_config_path=str(DEFAULT_FEATURE_VIZ_MODEL_CFG),
+        diffusion_config_path=str(DEFAULT_FEATURE_VIZ_DIFFUSION_CFG),
+        task_config_path=str(DEFAULT_FEATURE_VIZ_TASK_CFG),
+        device=device_override or device,
+        seed=seed,
+    )
+    # override dynamic fields (dataclass is frozen -> use replace)
+    cfg = replace(cfg, batch_size=batch_size)
+    if image_size is not None:
+        cfg = replace(cfg, image_size=int(image_size))
+    return cfg
+
+
+def _tensor_to_base64_image(img: torch.Tensor) -> str:
+    """
+    Convert a tensor in [-1,1] range with shape [3,H,W] to PNG base64 string.
+    """
+    img = img.detach().cpu().clamp(-1, 1)
+    img = (img + 1) * 0.5  # [0,1]
+    img = (img * 255).byte()
+    img = img.permute(1, 2, 0).numpy()  # HWC
+    from PIL import Image
+
+    pil = Image.fromarray(img)
+    buf = io.BytesIO()
+    pil.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 app = FastAPI()
 
@@ -768,6 +835,60 @@ def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = N
         return {"message": "Bookmark updated successfully"}
     else:
         return Response(content="Bookmark not found", status_code=404)
+
+
+@app.post("/feature_visualize/generate")
+def feature_visualize_generate(
+    payload: dict = Body(
+        ...,
+        example={
+            "supervisions": [
+                {"feature_id": 123, "pos": [[0, 0], [12, 18]], "cap_value": 15},
+                {"feature_id": 456, "pos": [[3, 4]], "objective": "max"},
+            ],
+            "seed": 42,
+            "image_size": 256,
+            "batch_size": 1,
+        },
+    )
+):
+    """
+    Generate an image via act_point conditioning (CNNSAE feature point supervision).
+    """
+    if generate_with_point_supervision is None or CNNSAEFeatureMaxConfig is None:
+        return Response(
+            content="diffusion feature visualize dependencies not available on server",
+            status_code=500,
+        )
+
+    supervisions = payload.get("supervisions", None)
+    if not isinstance(supervisions, list) or len(supervisions) == 0:
+        return Response(content="`supervisions` must be a non-empty list", status_code=400)
+
+    seed = payload.get("seed", None)
+    image_size = payload.get("image_size", None)
+    batch_size = int(payload.get("batch_size", 1) or 1)
+
+    cfg = _build_feature_viz_config(seed=seed, image_size=image_size, batch_size=batch_size)
+    if cfg is None:
+        return Response(
+            content="feature visualize config could not be constructed (missing dependencies)",
+            status_code=500,
+        )
+
+    try:
+        sample, _fmap = generate_with_point_supervision(cfg, supervisions, return_feature_maps=False)
+        # only return first image
+        img_base64 = _tensor_to_base64_image(sample[0])
+        return {
+            "image_base64": img_base64,
+            "width": int(sample.shape[-1]),
+            "height": int(sample.shape[-2]),
+            "supervisions": supervisions,
+        }
+    except Exception as e:
+        print(f"[feature_visualize_generate] failed: {e}")
+        return Response(content=str(e), status_code=500)
 
 
 app.add_middleware(
