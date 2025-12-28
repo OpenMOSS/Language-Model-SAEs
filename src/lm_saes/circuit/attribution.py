@@ -197,8 +197,8 @@ class AttributionContext:
         """
         _, n_pos, _ = clt_activation_matrix.shape
 
-        lorsa_error_vectors = error_vectors[: self.n_layers] if self.use_lorsa else error_vectors
-        clt_error_vectors = error_vectors[self.n_layers :] if self.use_lorsa else None
+        lorsa_error_vectors = error_vectors[: self.n_layers] if self.use_lorsa else None
+        clt_error_vectors = error_vectors[self.n_layers :] if self.use_lorsa else error_vectors
 
         # Token-embedding nodes
         # lorsa_offset + clt_offset + attn_error_offset + mlp_error_offset
@@ -614,7 +614,7 @@ def _run_attribution(
     ) = model.setup_attribution(input_ids, sparse=True)
     # we do not run forward passes in setup_attribution. Just assign some zero-inited tensors and set hooks for them
     # they only have informative values set in Phase 1: forward pass later
-
+    print(logits[0, -1].softmax(-1).argmax(), logits[0, -1].softmax(-1).max())
     lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas) if use_lorsa else None
     lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = (
         select_encoder_rows_lorsa(lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, model.lorsas)

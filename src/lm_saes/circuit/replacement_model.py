@@ -131,7 +131,7 @@ class ReplacementModel(HookedTransformer):
         cls,
         model_cfg: LanguageModelConfig,
         transcoders: TranscoderType,
-        lorsas: List[LowRankSparseAttention],
+        lorsas: List[LowRankSparseAttention] | None = None,
         mlp_input_hook: str = "mlp.hook_in",
         mlp_output_hook: str = "mlp.hook_out",
         attn_input_hook: str = "attn.hook_in",
@@ -217,7 +217,7 @@ class ReplacementModel(HookedTransformer):
         cls,
         model_cfg: LanguageModelConfig,
         transcoders: TranscoderType,
-        lorsas: List[LowRankSparseAttention],
+        lorsas: List[LowRankSparseAttention] | None = None,
         mlp_input_hook: str = "mlp.hook_in",
         mlp_output_hook: str = "mlp.hook_out",
         attn_input_hook: str = "attn.hook_in",
@@ -659,6 +659,7 @@ class ReplacementModel(HookedTransformer):
             )
         else:
             logits = self.run_with_hooks(tokens, fwd_hooks=(activation_hooks + mlp_out_caching_hooks))
+            print(logits[0, -1].softmax(-1).argmax(), logits[0, -1].softmax(-1).max())
 
         if self.use_lorsa:
             lorsa_activation_matrix = activation_matrix[: self.cfg.n_layers]

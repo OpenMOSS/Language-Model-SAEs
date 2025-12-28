@@ -1,65 +1,14 @@
 from functools import partial
+from torch._tensor import Tensor
 from typing import Callable, List, Tuple, Union
-
 import torch
 from jaxtyping import Float
 from tqdm import tqdm
 
 from lm_saes.circuit.replacement_model import ReplacementModel
 from lm_saes import CrossLayerTranscoder
+from lm_saes.analysis.global_weights.batched_features import BatchedFeatures, ConnectedFeatures
 
-
-@torch.no_grad()
-def put_activation_to_diag(tensor, value_set_to_one=False):
-    tensor = tensor.coalesce()
-    assert tensor.ndim == 1
-    return torch.sparse_coo_tensor(
-        indices = torch.stack([tensor.indices()[0], tensor.indices()[0]], dim=0),
-        values = torch.ones_like(tensor.values()) if value_set_to_one else tensor.values(),
-        size = (tensor.size(0), tensor.size(0)),
-        device=tensor.device
-    )
-
-@torch.no_grad()
-def select_top_k_virtual_weights(
-    feature_feature_virtual_weights0: Float[torch.sparse.Tensor, "n_layers d_sae d_sae"],
-    feature_feature_virtual_weights1: Float[torch.sparse.Tensor, "n_layers d_sae d_sae"],
-    token_feature_virtual_weights: Float[torch.Tensor, "d_vocab d_sae"],
-    topk: int = 64
-) -> Float[torch.Tensor, "d_sae d_sae"]:
-
-    def filter_coo_tensor_with_threshold(
-        tensor: torch.sparse.Tensor,
-        top_threshold: float,
-        bottom_threshold: float,
-    ):
-        tensor = tensor.coalesce()
-        mask = torch.logical_or(
-            tensor.values() > top_threshold,
-            tensor.values() < bottom_threshold,
-        )
-        return torch.sparse_coo_tensor(
-            indices=tensor.indices()[:, mask],
-            values=tensor.values()[mask],
-            size=tensor.size(),
-            device=tensor.device,
-        ).coalesce()
-
-    all_values = torch.cat(
-        [
-            feature_feature_virtual_weights0.coalesce().values(),
-            feature_feature_virtual_weights1.coalesce().values(),
-            token_feature_virtual_weights.coalesce().values()
-        ],
-        dim=0
-    )
-    top_threshold = torch.kthvalue(all_values, all_values.numel() - topk).values
-    bottom_threshold = torch.kthvalue(all_values, topk).values
-    return (
-        filter_coo_tensor_with_threshold(feature_feature_virtual_weights0, top_threshold, bottom_threshold),
-        filter_coo_tensor_with_threshold(feature_feature_virtual_weights1, top_threshold, bottom_threshold),
-        filter_coo_tensor_with_threshold(token_feature_virtual_weights, top_threshold, bottom_threshold),
-    )
 
 def init_empty_coo_tensor(size, device):
     return torch.sparse_coo_tensor(
@@ -69,44 +18,6 @@ def init_empty_coo_tensor(size, device):
 
 
 class ForwardOnlyReplacementModel(ReplacementModel):
-    @classmethod
-    def from_pretrained(
-        cls,
-        *args, **kwargs,
-    ) -> "ForwardOnlyReplacementModel":
-        assert "max_feature_acts" in kwargs, "max_feature_acts must be provided"
-        model = super().from_pretrained(*args, **kwargs)
-        model.max_feature_acts = kwargs.pop("max_feature_acts")
-        
-        assert model.use_lorsa
-
-        # virtual weights
-        model.token_lorsa_virtual_weights = [None] * model.cfg.n_layers
-        model.token_transcoder_virtual_weights = [None] * model.cfg.n_layers
-        
-        model.lorsa_transcoder_virtual_weights = [[] for _ in range(model.cfg.n_layers)]
-        model.transcoder_transcoder_virtual_weights = [[] for _ in range(model.cfg.n_layers)]
-        model.lorsa_lorsa_virtual_weights = [[] for _ in range(model.cfg.n_layers)]
-        model.transcoder_lorsa_virtual_weights = [[] for _ in range(model.cfg.n_layers)]
-        
-        # expected residual attributions
-        d_sae = kwargs["plt_set"][0].cfg.d_sae
-        d_vocab = model.cfg.d_vocab
-        model.token_lorsa_era = [init_empty_coo_tensor((d_vocab, d_sae), model.cfg.device)] * model.cfg.n_layers
-        model.token_transcoder_era = [init_empty_coo_tensor((d_vocab, d_sae), model.cfg.device)] * model.cfg.n_layers
-        
-        model.lorsa_transcoder_era = [[init_empty_coo_tensor((d_sae, d_sae), model.cfg.device) for source in range(target)] for target in range(model.cfg.n_layers)]
-        model.transcoder_transcoder_era = [[init_empty_coo_tensor((d_sae, d_sae), model.cfg.device) for source in range(target)] for target in range(model.cfg.n_layers)]
-        model.lorsa_lorsa_era = [[init_empty_coo_tensor((d_sae, d_sae), model.cfg.device) for source in range(target)] for target in range(model.cfg.n_layers)]
-        model.transcoder_lorsa_era = [[init_empty_coo_tensor((d_sae, d_sae), model.cfg.device) for source in range(target)] for target in range(model.cfg.n_layers)]
-        
-        
-        
-        
-        model._prepare_virtual_weights(kwargs.get("topk", 64))
-        
-        return model
-
     def _configure_gradient_flow(self):
         pass
 
@@ -124,6 +35,7 @@ class ForwardOnlyReplacementModel(ReplacementModel):
             assert isinstance(inputs, str), "Inputs must be a string"
             tokenized = self.tokenizer(inputs, return_tensors="pt").input_ids.to(self.cfg.device)
             tokens = tokenized.squeeze(0)
+        tokens = tokens[:self.cfg.n_ctx]
 
         special_tokens = []
         for special_token in self.tokenizer.special_tokens_map.values():
@@ -136,11 +48,17 @@ class ForwardOnlyReplacementModel(ReplacementModel):
         zero_bos = zero_bos and tokens[0].cpu().item() in special_token_ids  # == self.tokenizer.bos_token_id
 
         # cache activations and MLP in
-        (activation_matrix, lorsa_attention_pattern, activation_hooks) = (
+        (
+            activation_matrix,
+            lorsa_attention_pattern,
+            activation_hooks,
+            attn_hook_scales,
+            mlp_hook_scales,
+        ) = (
             self._get_activation_caching_hooks(sparse=sparse, zero_bos=zero_bos)
         )
 
-        logits = self.run_with_hooks(tokens, fwd_hooks=activation_hooks)
+        self.run_with_hooks(tokens, fwd_hooks=activation_hooks)
 
         if self.use_lorsa:
             lorsa_activation_matrix = activation_matrix[: self.cfg.n_layers]
@@ -152,18 +70,20 @@ class ForwardOnlyReplacementModel(ReplacementModel):
         if self.use_lorsa:
             lorsa_activation_matrix = torch.stack(lorsa_activation_matrix)
             lorsa_attention_pattern = torch.stack(lorsa_attention_pattern)
+            attn_hook_scales = torch.stack(attn_hook_scales)
         clt_activation_matrix = torch.stack(clt_activation_matrix)
+        mlp_hook_scales = torch.stack(mlp_hook_scales)
         if sparse:
             if self.use_lorsa:
                 lorsa_activation_matrix = lorsa_activation_matrix.coalesce()
             clt_activation_matrix = clt_activation_matrix.coalesce()
 
-        token_vectors = self.W_E[tokens].detach()  # (n_pos, d_model)
         return (
             lorsa_activation_matrix,
             lorsa_attention_pattern,
             clt_activation_matrix,
-            token_vectors,
+            attn_hook_scales,
+            mlp_hook_scales,
         )
     
     def _get_activation_caching_hooks(
@@ -172,230 +92,425 @@ class ForwardOnlyReplacementModel(ReplacementModel):
         sparse: bool = False,
         apply_activation_function: bool = True,
     ) -> Tuple[List, List[Tuple[str, Callable]]]:
-        if self.use_lorsa:
-            activation_matrix = [None] * self.cfg.n_layers * 2
-            lorsa_attention_pattern = [None] * self.cfg.n_layers
-        else:
-            activation_matrix = [None] * self.cfg.n_layers
+        activation_matrix = [None] * self.cfg.n_layers * 2
+        lorsa_attention_pattern = [None] * self.cfg.n_layers
+        attn_hook_scales = [None] * self.cfg.n_layers
+        mlp_hook_scales = [None] * self.cfg.n_layers
+        
         activation_hooks = []
 
-        if self.use_lorsa:
-            def cache_activations_attn(acts, hook, layer, zero_bos):
-                encode_result = self.lorsas[layer].encode(
-                    acts,
-                    return_hidden_pre=not apply_activation_function,
-                    return_attention_pattern=True,
-                    return_attention_score=True,
-                )
-
-                if not apply_activation_function:
-                    lorsa_acts = encode_result[1].detach().squeeze(0)
-                    pattern = encode_result[2].detach().squeeze(0)
-                else:
-                    lorsa_acts = encode_result[0].detach().squeeze(0)
-                    pattern = encode_result[1].detach().squeeze(0)
-
-                if zero_bos:
-                    lorsa_acts[0] = 0
-                if sparse:
-                    lorsa_acts = lorsa_acts.to_sparse()
-
-                activation_matrix[layer] = lorsa_acts
-                lorsa_attention_pattern[layer] = pattern
-
-            activation_hooks.extend(
-                [
-                    (
-                        f"blocks.{layer}.{self.attn_input_hook}",
-                        partial(cache_activations_attn, layer=layer, zero_bos=zero_bos),
-                    )
-                    for layer in range(self.cfg.n_layers)
-                ]
+        def cache_activations_attn(acts, hook, layer, zero_bos):
+            encode_result = self.lorsas[layer].encode(
+                acts,
+                return_hidden_pre=not apply_activation_function,
+                return_attention_pattern=True,
+                return_attention_score=True,
             )
 
-            def cache_activations_mlp(acts, hook, layer, zero_bos):
-                # Use unified encode_layer interface for both TranscoderSet and CrossLayerTranscoder
-                transcoder_acts = self.transcoders.encode_layer(
-                    acts, layer, apply_activation_function=apply_activation_function
+            if not apply_activation_function:
+                lorsa_acts = encode_result[1].detach().squeeze(0)
+                pattern = encode_result[2].detach().squeeze(0)
+            else:
+                lorsa_acts = encode_result[0].detach().squeeze(0)
+                pattern = encode_result[1].detach().squeeze(0)
+
+            if zero_bos:
+                lorsa_acts[0] = 0
+            if sparse:
+                lorsa_acts = lorsa_acts.to_sparse()
+
+            activation_matrix[layer] = lorsa_acts
+            lorsa_attention_pattern[layer] = pattern
+
+        activation_hooks.extend(
+            [
+                (
+                    f"blocks.{layer}.{self.attn_input_hook}",
+                    partial(cache_activations_attn, layer=layer, zero_bos=zero_bos),
                 )
+                for layer in range(self.cfg.n_layers)
+            ]
+        )
 
-                # Handle tuple return (feature_acts, hidden_pre) - extract the appropriate one
-                if isinstance(transcoder_acts, tuple):
-                    transcoder_acts = transcoder_acts[1 if not apply_activation_function else 0]
-
-                transcoder_acts = transcoder_acts.detach().squeeze(0)
-
-                if zero_bos:
-                    transcoder_acts[0] = 0
-                if sparse:
-                    transcoder_acts = transcoder_acts.to_sparse()
-
-                def mlp_offset(layer):
-                    return self.cfg.n_layers + layer
-
-                activation_matrix[mlp_offset(layer)] = transcoder_acts
-
-            activation_hooks.extend(
-                [
-                    (
-                        f"blocks.{layer}.{self.mlp_input_hook}",
-                        partial(cache_activations_mlp, layer=layer, zero_bos=zero_bos),
-                    )
-                    for layer in range(self.cfg.n_layers)
-                ]
+        def cache_activations_mlp(acts, hook, layer, zero_bos):
+            # Use unified encode_layer interface for both TranscoderSet and CrossLayerTranscoder
+            transcoder_acts = self.transcoders.encode_layer(
+                acts, layer, apply_activation_function=apply_activation_function
             )
-        else:
-            lorsa_attention_pattern = None
 
-            def cache_activations_mlp(acts, hook, layer, zero_bos):
-                # Use unified encode_layer interface for both TranscoderSet and CrossLayerTranscoder
-                transcoder_acts = self.transcoders.encode_layer(
-                    acts, layer, apply_activation_function=apply_activation_function
+            # Handle tuple return (feature_acts, hidden_pre) - extract the appropriate one
+            if isinstance(transcoder_acts, tuple):
+                transcoder_acts = transcoder_acts[1 if not apply_activation_function else 0]
+
+            transcoder_acts = transcoder_acts.detach().squeeze(0)
+
+            if zero_bos:
+                transcoder_acts[0] = 0
+            if sparse:
+                transcoder_acts = transcoder_acts.to_sparse()
+
+            def mlp_offset(layer):
+                return self.cfg.n_layers + layer
+
+            activation_matrix[mlp_offset(layer)] = transcoder_acts
+
+        activation_hooks.extend(
+            [
+                (
+                    f"blocks.{layer}.{self.mlp_input_hook}",
+                    partial(cache_activations_mlp, layer=layer, zero_bos=zero_bos),
                 )
-
-                # Handle tuple return (feature_acts, hidden_pre) - extract the appropriate one
-                if isinstance(transcoder_acts, tuple):
-                    transcoder_acts = transcoder_acts[1 if not apply_activation_function else 0]
-
-                transcoder_acts = transcoder_acts.detach().squeeze(0)
-
-                if zero_bos:
-                    transcoder_acts[0] = 0
-                if sparse:
-                    transcoder_acts = transcoder_acts.to_sparse()
-
-                def mlp_offset(layer):
-                    return layer
-
-                activation_matrix[mlp_offset(layer)] = transcoder_acts
-
-            activation_hooks.extend(
-                [
-                    (
-                        f"blocks.{layer}.{self.mlp_input_hook}",
-                        partial(cache_activations_mlp, layer=layer, zero_bos=zero_bos),
-                    )
-                    for layer in range(self.cfg.n_layers)
-                ]
-            )
+                for layer in range(self.cfg.n_layers)
+            ]
+        )
+        
+        def cache_activations_attn_ln_scales(acts, hook, layer):
+            attn_hook_scales[layer] = acts.squeeze(0, -1)
+        
+        def cache_activations_mlp_ln_scales(acts, hook, layer):
+            mlp_hook_scales[layer] = acts.squeeze(0, -1)
+        
+        activation_hooks.extend(
+            [
+                (
+                    f"blocks.{layer}.ln1.hook_scale",
+                    partial(cache_activations_attn_ln_scales, layer=layer),
+                )
+                for layer in range(self.cfg.n_layers)
+            ]
+        )
+        
+        activation_hooks.extend(
+            [
+                (
+                    f"blocks.{layer}.ln2.hook_scale",
+                    partial(cache_activations_mlp_ln_scales, layer=layer),
+                )
+                for layer in range(self.cfg.n_layers)
+            ]
+        )
 
         return (
             activation_matrix,
             lorsa_attention_pattern,
             activation_hooks,
+            attn_hook_scales,
+            mlp_hook_scales,
         )
 
     @torch.no_grad()
-    def _prepare_virtual_weights(self, topk=64):
+    def prepare_virtual_weights(self, interested_features):
         # With lorsa added to circuit tracing framework, a good property is that we can now
-        # understand attention-mediated interactions in the form of residual only virtual weights.
+        # understand attention-mediated interactions only in the form of residual-only virtual weights.
 
-        # We start from transcoders as target, which is easier
         if isinstance(self.transcoders, CrossLayerTranscoder):
             raise NotImplementedError("CrossLayerTranscoder is not supported yet")
         
-        # we maintain a virtual weight subset for all <upstream decoder, downstream encoder> pairs
-        # recording every feature-feature pair would be intractable so we have to do pruning at
-        # virtual weight stage.
-        def get_decoder_encoder_virtual_weights(
-            upstream_max_activation: Float[torch.Tensor, "d_sae"],
-            W_E: Float[torch.Tensor, "d_model d_sae"],
-            W_D: Float[torch.Tensor, "d_sae d_model"],
-        ) -> Union[
-            Float[torch.Tensor, "d_sae d_sae"],
-            Float[torch.sparse.Tensor, "d_sae d_sae"],
-        ]:  
-            vw = W_D @ W_E
-            vw_scaled = upstream_max_activation[:, None] * vw
-            vw_scaled = vw_scaled.squeeze(0)  # [source, target]
-            vw = torch.where(
-                torch.logical_or(
-                    vw_scaled > torch.kthvalue(vw_scaled, vw_scaled.size(0) - topk, dim=0).values,
-                    vw_scaled < torch.kthvalue(vw_scaled, topk, dim=0).values
-                ),
-                vw,
-                0,
-            ).to_sparse().coalesce()
-            return vw
-
-
-        for target_layer in tqdm(range(self.cfg.n_layers), desc="preparing top virtual weights"):
-            self.token_lorsa_virtual_weights[target_layer] = get_decoder_encoder_virtual_weights(
-                upstream_max_activation=torch.ones(self.cfg.d_vocab, device=self.cfg.device),
-                W_E=self.lorsas[target_layer].W_E,
-                W_D=self.W_E,
-            )
-            self.token_transcoder_virtual_weights[target_layer] = get_decoder_encoder_virtual_weights(
-                upstream_max_activation=torch.ones(self.cfg.d_vocab, device=self.cfg.device),
-                W_E=self.transcoders[target_layer].W_E,
-                W_D=self.W_E,
-            )
-
-            self.lorsa_transcoder_virtual_weights[target_layer] = torch.stack([
-                get_decoder_encoder_virtual_weights(
-                    upstream_max_activation=self.max_feature_acts['lorsa'][source_lorsa_layer],
-                    W_E=self.transcoders.W_E[target_layer],
-                    W_D=self.lorsas[source_lorsa_layer].W_D,
-                )
-                for source_lorsa_layer in range(target_layer + 1)
-            ])
-
-            self.transcoder_transcoder_virtual_weights[target_layer] = torch.stack([
-                get_decoder_encoder_virtual_weights(
-                    upstream_max_activation=self.max_feature_acts['transcoder'][source_transcoder_layer],
-                    W_E=self.transcoders.W_E[target_layer],
-                    W_D=self.transcoders.W_D[source_transcoder_layer],
-                )
-                for source_transcoder_layer in range(target_layer + 1)
-            ])
+        self.interested_features = interested_features
         
-            if target_layer == 0:
-                # for target layer 0, we do not have any lorsa_lorsa_virtual_weights and transcoder_lorsa_virtual_weights
-                self.lorsa_lorsa_virtual_weights[target_layer] = torch.sparse_coo_tensor(
-                    size=(0, self.lorsas[target_layer].cfg.d_sae, self.lorsas[target_layer].cfg.d_sae)
-                )
-                self.transcoder_lorsa_virtual_weights[target_layer] = torch.sparse_coo_tensor(
-                    size=(0, self.transcoders[target_layer].cfg.d_sae, self.transcoders[target_layer].cfg.d_sae)
-                )
-                continue
+        lorsa_encoders = torch.stack([
+            self.lorsas[layer].W_E * self.blocks[layer].ln1.w[:, None] for layer in range(self.cfg.n_layers)
+        ])  # n_layers, d_model, d_sae
+        
+        lorsa_decoders = torch.stack([
+            self.lorsas[layer].W_D for layer in range(self.cfg.n_layers)
+        ])  # n_layers, d_sae, d_model
+        
+        transcoder_encoders = torch.stack([
+            self.transcoders[layer].W_E * self.blocks[layer].ln2.w[:, None] for layer in range(self.cfg.n_layers)
+        ])  # n_layers, d_model, d_sae
+        
+        transcoder_decoders = self.transcoders.W_D  # n_layers, d_model, d_sae
+        
+        # pythia-only
+        lorsa_decoders -= lorsa_decoders.mean(dim=1, keepdim=True)
+        transcoder_decoders -= transcoder_decoders.mean(dim=1, keepdim=True)
 
-            self.lorsa_lorsa_virtual_weights[target_layer] = torch.stack([
-                get_decoder_encoder_virtual_weights(
-                    upstream_max_activation=self.max_feature_acts['lorsa'][source_lorsa_layer],
-                    W_E=self.lorsas[target_layer].W_E,
-                    W_D=self.lorsas[source_lorsa_layer].W_D,
-                )
-                for source_lorsa_layer in range(target_layer)
-            ])
+        interested_encoders = torch.where(
+            interested_features.is_lorsa[:, None],
+            lorsa_encoders[interested_features.layer, :, interested_features.index],
+            transcoder_encoders[interested_features.layer, :, interested_features.index]
+        )  # batch_size d_model
+        
+        interested_decoders = torch.where(
+            interested_features.is_lorsa[:, None],
+            lorsa_decoders[interested_features.layer, interested_features.index],
+            transcoder_decoders[interested_features.layer, interested_features.index]
+        )  # batch_size d_model
 
-            self.transcoder_lorsa_virtual_weights[target_layer] = torch.stack([
-                get_decoder_encoder_virtual_weights(
-                    upstream_max_activation=self.max_feature_acts['transcoder'][source_transcoder_layer],
-                    W_E=self.lorsas[target_layer].W_E,
-                    W_D=self.transcoders.W_D[source_transcoder_layer],
-                )
-                for source_transcoder_layer in range(target_layer)
-            ])
+        # pythia-only
+        self.upstream_lorsa_vw = torch.where(
+            # interested_features.sublayer_index()[:, None, None] > torch.arange(self.cfg.n_layers, device=interested_features.layer.device)[None, :, None],
+            interested_features.layer[:, None, None] > torch.arange(self.cfg.n_layers, device=interested_features.layer.device)[None, :, None],
+            torch.einsum("lsd,bd->bls", lorsa_decoders, interested_encoders),
+            0,
+        )  # batch n_layer d_sae
+
+        self.upstream_transcoder_vw = torch.where(
+            interested_features.layer[:, None, None] > torch.arange(self.cfg.n_layers, device=interested_features.layer.device)[None, :, None],
+            torch.einsum("lsd,bd->bls", transcoder_decoders, interested_encoders),
+            0,
+        )  # batch n_layer d_sae
+
+        self.downstream_lorsa_vw = torch.where(
+            interested_features.layer[:, None, None] < torch.arange(self.cfg.n_layers, device=interested_features.layer.device)[None, :, None],
+            torch.einsum("lds,bd->bls", lorsa_encoders, interested_decoders),
+            0,
+        )  # batch n_layer d_sae
+
+        self.downstream_transcoder_vw = torch.where(
+            # interested_features.sublayer_index()[:, None, None] <= torch.arange(self.cfg.n_layers, device=interested_features.layer.device)[None, :, None],
+            interested_features.layer[:, None, None] < torch.arange(self.cfg.n_layers, device=interested_features.layer.device)[None, :, None],
+            torch.einsum("lds,bd->bls", transcoder_encoders, interested_decoders),
+            0,
+        )  # batch n_layer d_sae
+        
+        
+        batch_size = len(interested_features)
+        self.upstream_lorsa_attribution = torch.zeros(
+            batch_size,
+            self.cfg.n_layers,
+            self.lorsas[0].cfg.d_sae,
+            device=self.cfg.device
+        )
+        self.upstream_transcoder_attribution = torch.zeros(
+            batch_size,
+            self.cfg.n_layers,
+            self.transcoders[0].cfg.d_sae,
+            device=self.cfg.device
+        )
+        self.downstream_lorsa_attribution = torch.zeros(
+            batch_size,
+            self.cfg.n_layers,
+            self.lorsas[0].cfg.d_sae,
+            device=self.cfg.device
+        )
+        self.downstream_transcoder_attribution = torch.zeros(
+            batch_size,
+            self.cfg.n_layers,
+            self.transcoders[0].cfg.d_sae,
+            device=self.cfg.device
+        )
+        
+        self.accumulated_lorsa_acts = torch.zeros(
+            self.cfg.n_layers,
+            self.lorsas[0].cfg.d_sae,
+            device=self.cfg.device
+        )
+        
+        self.accumulated_transcoder_acts = torch.zeros(
+            self.cfg.n_layers,
+            self.transcoders[0].cfg.d_sae,
+            device=self.cfg.device
+        )
+    
+    @torch.no_grad()
+    def parse_global_weight_results(self, top_k=10):
+        connected_features: List[ConnectedFeatures] = []
+        for i in range(len(self.interested_features)):
+            upstream_lorsa_twera_values, upstream_lorsa_twera_indices = (self.upstream_lorsa_attribution[i] / self.accumulated_lorsa_acts).nan_to_num(0).flatten().topk(top_k)
+            upstream_transcoder_twera_values, upstream_transcoder_twera_indices = (self.upstream_transcoder_attribution[i] / self.accumulated_transcoder_acts).nan_to_num(0).flatten().topk(top_k)
+            downstream_lorsa_twera_values, downstream_lorsa_twera_indices = (self.downstream_lorsa_attribution[i] / self.accumulated_lorsa_acts).nan_to_num(0).flatten().topk(top_k)
+            downstream_transcoder_twera_values, downstream_transcoder_twera_indices = (self.downstream_transcoder_attribution[i] / self.accumulated_transcoder_acts).nan_to_num(0).flatten().topk(top_k)
+
+            def tensor_divmod(tensor, divisor):
+                return torch.stack([tensor // divisor, tensor % divisor])
+            
+            upstream_lorsa_twera_indices = tensor_divmod(upstream_lorsa_twera_indices, self.lorsas[0].cfg.d_sae)
+            upstream_transcoder_twera_indices = tensor_divmod(upstream_transcoder_twera_indices, self.transcoders[0].cfg.d_sae)
+            downstream_lorsa_twera_indices = tensor_divmod(downstream_lorsa_twera_indices, self.lorsas[0].cfg.d_sae)
+            downstream_transcoder_twera_indices = tensor_divmod(downstream_transcoder_twera_indices, self.transcoders[0].cfg.d_sae)
+
+            # pythia-only
+            upstream_features = BatchedFeatures(
+                layer=torch.cat([upstream_lorsa_twera_indices[0], upstream_transcoder_twera_indices[0]]),
+                index=torch.cat([upstream_lorsa_twera_indices[1], upstream_transcoder_twera_indices[1]]),
+                is_lorsa=torch.cat([torch.ones_like(upstream_lorsa_twera_indices[0], dtype=torch.bool), torch.zeros_like(upstream_transcoder_twera_indices[0], dtype=torch.bool)]),
+            ) if self.interested_features.layer[i] > 0 else BatchedFeatures.empty()
+
+            downstream_features = BatchedFeatures(
+                layer=torch.cat([downstream_lorsa_twera_indices[0], downstream_transcoder_twera_indices[0]]),
+                index=torch.cat([downstream_lorsa_twera_indices[1], downstream_transcoder_twera_indices[1]]),
+                is_lorsa=torch.cat([torch.ones_like(downstream_lorsa_twera_indices[0], dtype=torch.bool), torch.zeros_like(downstream_transcoder_twera_indices[0], dtype=torch.bool)]),
+            ) if self.interested_features.layer[i] < self.cfg.n_layers else BatchedFeatures.empty()
+
+            upstream_values = torch.cat(
+                [upstream_lorsa_twera_values, upstream_transcoder_twera_values]
+            ) if self.interested_features.layer[i] > 0 else torch.tensor(
+                [], device=self.cfg.device
+            )
+
+            downstream_values = torch.cat(
+                [downstream_lorsa_twera_values, downstream_transcoder_twera_values]
+            ) if self.interested_features.layer[i] < self.cfg.n_layers else torch.tensor(
+                [], device=self.cfg.device
+            )
+
+            assert len(upstream_features) == len(upstream_values)
+            assert len(downstream_features) == len(downstream_values)
+
+            connected_features.append(
+                ConnectedFeatures(
+                    upstream_features=upstream_features,
+                    downstream_features=downstream_features,
+                    upstream_values=upstream_values,
+                    downstream_values=downstream_values,
+                ).sort()
+            )
+            
+        return connected_features
+
 
     @torch.no_grad()
     def record_activation_matrix(
         self,
-        input_ids: Float[torch.Tensor, "n_pos"],
+        inputs: Union[str, torch.Tensor],
         lorsa_activation_matrix: Float[torch.sparse.Tensor, "n_layers n_pos d_sae"],
         clt_activation_matrix: Float[torch.sparse.Tensor, "n_layers n_pos d_sae"],
-        attention_pattern: Float[torch.sparse.Tensor, "n_layers n_qk_heads n_pos n_pos"]
+        attention_pattern: Float[torch.sparse.Tensor, "n_layers n_qk_heads n_pos n_pos"],
+        attn_hook_scales: Float[torch.Tensor, "n_layers pos"],
+        mlp_hook_scales: Float[torch.Tensor, "n_layers pos"]
     ):
-        # we do target=transcoders first which is easier.
-        n_layer, n_pos, d_sae = lorsa_activation_matrix.size()
-        for pos in range(1, n_pos):
-            for target_layer in range(n_layer):
-                target_activation_matrix = clt_activation_matrix[target_layer, pos]
-                
-                token_transcoder_era = torch.sparse.mm(
-                    self.token_transcoder_virtual_weights[n_layer][input_ids[pos]],  # d_sae in coo
-                    put_activation_to_diag(target_activation_matrix, value_set_to_one=True)
+        if isinstance(inputs, torch.Tensor):
+            input_ids = inputs.squeeze(0)
+            assert input_ids.ndim == 1, "Tokens must be a 1D tensor"
+        else:
+            assert isinstance(inputs, str), "Inputs must be a string"
+            tokenized = self.tokenizer(inputs, return_tensors="pt").input_ids.to(self.cfg.device)
+            input_ids = tokenized.squeeze(0)
+        input_ids = input_ids[:self.cfg.n_ctx]
+        n_ctx = input_ids.size(0)
+
+        # first we record all : Tensoractivations
+        # bos_removed_pattern = attention_pattern[..., 1:].sum(-1).repeat_interleave(self.lorsas[0].qk_exp_factor, dim=1).permute(0, 2, 1)
+        self.accumulated_lorsa_acts += lorsa_activation_matrix.sum(1).to_dense()
+        self.accumulated_transcoder_acts += clt_activation_matrix.sum(1).to_dense()
+
+        # We can think of transcoder features as self-attending so each feature has an attention pattern
+        
+        # interested act: [batch pos] coo -> dense
+        # vw: [batch n_layer d_sae] dense
+        # other acts: [n_layer pos d_sae] coo
+        # pattern: [batch qpos kpos] dense
+        
+        # 1. get activation matrix of interested features
+        acts = []
+        for i in range(len(self.interested_features)):
+            if self.interested_features.is_lorsa[i]:
+                acts.append(
+                    lorsa_activation_matrix[
+                        self.interested_features.layer[i],
+                        :,
+                        self.interested_features.index[i]
+                    ]
                 )
+            else:
+                acts.append(
+                    clt_activation_matrix[
+                        self.interested_features.layer[i],
+                        :,
+                        self.interested_features.index[i]
+                    ]
+                )
+        acts = torch.stack(acts).to_dense()  # batch pos
+        if acts.eq(0).all():
+            # this should have no effect on either downstream or upstream attribution
+            return
+        
+        # 2. get attn pattern of interested features
+        patterns = []
+        for i in range(len(self.interested_features)):
+            if self.interested_features.is_lorsa[i]:
+                patterns.append(
+                    attention_pattern[
+                        self.interested_features.layer[i],
+                        self.interested_features.index[i] // self.lorsas[0].qk_exp_factor,
+                    ]
+                )
+            else:
+                patterns.append(
+                    torch.eye(n_ctx).to(self.cfg.device)
+                )
+        patterns = torch.stack(patterns)  # batch qpos kpos
+        
+        hook_scales = []
+        for i in range(len(self.interested_features)):
+            if self.interested_features.is_lorsa[i]:
+                hook_scales.append(
+                    attn_hook_scales[self.interested_features.layer[i]]
+                )
+            else:
+                hook_scales.append(
+                    mlp_hook_scales[self.interested_features.layer[i]]
+                )
+        hook_scales = torch.stack(hook_scales)  # batch kpos
+        
+        
+        # upstream connections
+        # 1. we compute aij first to get rid of pos dim
+        attribution_to_kpos = torch.einsum("bq,bqk->bk", acts, patterns)
+        
+        # conceptually hook scales should divide all upstream features
+        # we do this to target features since it is easier to handle
+        # this should only happen in computing aij and should not count to E[aj]
+        attribution_to_kpos = attribution_to_kpos / hook_scales
+        
+        def compute_aij(
+            act_matrix: Float[torch.sparse.Tensor, "n_layer pos d_sae"],
+        ):
+            assert act_matrix.ndim == 3
+            return torch.stack([
+                torch.sparse.mm(  # we use sparse mm to sum over pos dim - aij should be summed over token positions
+                    attribution_to_kpos,
+                    act_matrix[layer]
+                )  # batch d_sae
+                for layer in range(self.cfg.n_layers)
+            ], dim=1).to_dense()  # batch n_layer d_sae
+            
+        upstream_lorsa_aij = compute_aij(lorsa_activation_matrix)
+        upstream_transcoder_aij = compute_aij(clt_activation_matrix)
                 
-                for source_layer in range(target_layer):
-                    
-                    
+        # 2. multiply by Vij
+        self.upstream_lorsa_attribution += upstream_lorsa_aij * self.upstream_lorsa_vw
+        self.upstream_transcoder_attribution += upstream_transcoder_aij * self.upstream_transcoder_vw
+
+
+        # downstream connections
+        # we first expand every downstream lorsa feature to attention form ie q_pos k_pos
+        # then we sum over q_pos to get contribution from k_pos, regardless which q_pos this feature is contributing to
+        # these two steps can be done with sparse mm
+        # then we use the same trick above to remove k_pos dim so we can easily do in dense format
+        
+        # 1. downstream lorsa features
+        downstream_lorsa_aij = []
+        for layer in range(self.cfg.n_layers):
+            lorsa_k_pos_contribution = torch.einsum(
+                "qs,sqk->sk",
+                lorsa_activation_matrix[layer].to_dense(),
+                attention_pattern[layer].repeat_interleave(self.lorsas[layer].qk_exp_factor, dim=0)
+            )
+            # same as above. we divide attn_hook_scale here
+            lorsa_k_pos_contribution = lorsa_k_pos_contribution / attn_hook_scales[layer][None, :]
+            
+            
+            downstream_lorsa_aij.append(
+                torch.einsum(
+                    "sk,bk->bs",
+                    lorsa_k_pos_contribution,
+                    acts
+                )
+            )
+            
+        downstream_lorsa_aij = torch.stack(downstream_lorsa_aij, dim=1)  # batch n_layer d_sae
+        self.downstream_lorsa_attribution += downstream_lorsa_aij * self.downstream_lorsa_vw
+        
+        # 2. downstream transcoders
+        downstream_transcoder_aij = torch.stack([
+            torch.sparse.mm(
+                acts / mlp_hook_scales[layer],  # this is normal handling of hook scale
+                clt_activation_matrix[layer]
+            )
+            for layer in range(self.cfg.n_layers)
+        ], dim=1)  # batch n_layer d_sae
+        
+        self.downstream_transcoder_attribution += downstream_transcoder_aij * self.downstream_transcoder_vw
