@@ -470,8 +470,8 @@ def get_feature(
         Returns:
             dict: Processed sample data
         """  # Get model and dataset
-        print(f"{sparse_feature_acts=}")
-        model = get_model(model_name)
+        # print(f"{sparse_feature_acts=}")
+        # model = get_model(model_name)
         # model = None
         # print("get_data")
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
@@ -484,7 +484,7 @@ def get_feature(
             z_pattern_indices,
             z_pattern_values,
         ) = sparse_feature_acts
-        print(f"{type(feature_acts_indices)=}")
+        # print(f"{type(feature_acts_indices)=}")
         # Process image data if present
         if dataset_name != "imagenet":
             # Get origins for the features
@@ -585,7 +585,7 @@ def get_feature(
             if z_pattern_sample_ranges is not None
             else [(None, None)] * len(feature_acts_sample_ranges)
         )
-        print(f"{z_pattern_sample_ranges=} {feature_acts_counts=}")
+        # print(f"{z_pattern_sample_ranges=} {feature_acts_counts=}")
         # if z_pattern_sample_ranges[0][0] is not None:
         #     assert len(feature_acts_sample_ranges) == len(z_pattern_sample_ranges), (
         #         "Feature acts and z pattern must have the same number of samples"
