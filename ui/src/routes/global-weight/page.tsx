@@ -48,6 +48,8 @@ export const GlobalWeightPage: React.FC = () => {
   const [saeComboId, setSaeComboId] = useState<string | undefined>(initialSaeComboId);
   const [k, setK] = useState<number>(100);
   const [activationType, setActivationType] = useState<'max' | 'mean'>('mean');
+  const [featuresInLayerFilter, setFeaturesInLayerFilter] = useState<string>('');
+  const [featuresOutLayerFilter, setFeaturesOutLayerFilter] = useState<string>('');
   
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
@@ -94,10 +96,14 @@ export const GlobalWeightPage: React.FC = () => {
     const layerIdxParam = searchParams.get('layer_idx');
     const featureIdxParam = searchParams.get('feature_idx');
     const saeComboIdParam = searchParams.get('sae_combo_id');
-    
+    const featuresInLayerFilterParam = searchParams.get('features_in_layer_filter');
+    const featuresOutLayerFilterParam = searchParams.get('features_out_layer_filter');
+
     if (featureTypeParam) setFeatureType(featureTypeParam as 'tc' | 'lorsa');
     if (layerIdxParam) setLayerIdx(parseInt(layerIdxParam));
     if (featureIdxParam) setFeatureIdx(parseInt(featureIdxParam));
+    if (featuresInLayerFilterParam) setFeaturesInLayerFilter(featuresInLayerFilterParam);
+    if (featuresOutLayerFilterParam) setFeaturesOutLayerFilter(featuresOutLayerFilterParam);
     if (saeComboIdParam) {
       setSaeComboId(saeComboIdParam);
     } else {
@@ -251,7 +257,15 @@ export const GlobalWeightPage: React.FC = () => {
         k: k.toString(),
         activation_type: activationType,
       });
-      
+
+      // 添加层过滤器参数
+      if (featuresInLayerFilter.trim()) {
+        params.append('features_in_layer_filter', featuresInLayerFilter.trim());
+      }
+      if (featuresOutLayerFilter.trim()) {
+        params.append('features_out_layer_filter', featuresOutLayerFilter.trim());
+      }
+
       params.append('sae_combo_id', currentSaeComboId);
       
       let response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${params.toString()}`);
@@ -290,6 +304,15 @@ export const GlobalWeightPage: React.FC = () => {
         layer_idx: layerIdx.toString(),
         feature_idx: featureIdx.toString(),
       });
+
+      // 添加层过滤器到URL参数
+      if (featuresInLayerFilter.trim()) {
+        newParams.append('features_in_layer_filter', featuresInLayerFilter.trim());
+      }
+      if (featuresOutLayerFilter.trim()) {
+        newParams.append('features_out_layer_filter', featuresOutLayerFilter.trim());
+      }
+
       newParams.append('sae_combo_id', currentSaeComboId);
       // 同步更新状态
       setSaeComboId(currentSaeComboId);
@@ -327,6 +350,39 @@ export const GlobalWeightPage: React.FC = () => {
       };
     }
     return null;
+  }, []);
+
+  // 解析层过滤器字符串 (例如: "4,5,8-9" -> [4,5,8,9])
+  const parseLayerFilter = useCallback((filterStr: string): number[] | null => {
+    if (!filterStr.trim()) {
+      return null; // 空字符串表示不过滤
+    }
+
+    const layers: number[] = [];
+    const parts = filterStr.split(',').map(s => s.trim());
+
+    for (const part of parts) {
+      if (part.includes('-')) {
+        // 处理范围 (例如: "8-9")
+        const [start, end] = part.split('-').map(s => parseInt(s.trim()));
+        if (isNaN(start) || isNaN(end) || start > end) {
+          return null; // 无效格式
+        }
+        for (let i = start; i <= end; i++) {
+          layers.push(i);
+        }
+      } else {
+        // 处理单个数字 (例如: "4")
+        const layer = parseInt(part);
+        if (isNaN(layer)) {
+          return null; // 无效格式
+        }
+        layers.push(layer);
+      }
+    }
+
+    // 去重并排序
+    return [...new Set(layers)].sort((a, b) => a - b);
   }, []);
 
   // 获取字典名（根据层和类型）
@@ -1271,6 +1327,40 @@ export const GlobalWeightPage: React.FC = () => {
                   max="500"
                   value={k}
                   onChange={(e) => setK(parseInt(e.target.value) || 100)}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="features_in_layer_filter">
+                  Features In 层过滤器
+                  <span className="text-xs text-muted-foreground ml-2">
+                    (例如: 4,5,8-9 表示层4、5、8、9)
+                  </span>
+                </Label>
+                <Input
+                  id="features_in_layer_filter"
+                  type="text"
+                  placeholder="留空表示不过滤"
+                  value={featuresInLayerFilter}
+                  onChange={(e) => setFeaturesInLayerFilter(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="features_out_layer_filter">
+                  Features Out 层过滤器
+                  <span className="text-xs text-muted-foreground ml-2">
+                    (例如: 4,5,8-9 表示层4、5、8、9)
+                  </span>
+                </Label>
+                <Input
+                  id="features_out_layer_filter"
+                  type="text"
+                  placeholder="留空表示不过滤"
+                  value={featuresOutLayerFilter}
+                  onChange={(e) => setFeaturesOutLayerFilter(e.target.value)}
                 />
               </div>
             </div>

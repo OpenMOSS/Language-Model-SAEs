@@ -14,6 +14,7 @@ import { z } from "zod";
 
 const FeatureCard = lazy(() => import("@/components/feature/feature-card").then(module => ({ default: module.FeatureCard })));
 import { ChessBoard } from "@/components/chess/chess-board";
+import { CustomFenInput } from "@/components/feature/custom-fen-input";
 
 // 全局计数器确保唯一ID
 let boardCounter = 0;
@@ -30,17 +31,6 @@ export const FeaturesPage = () => {
   const [featureLoading, setFeatureLoading] = useState<boolean>(false);
   const [featureError, setFeatureError] = useState<string | null>(null);
   const [modelLoaded, setModelLoaded] = useState<boolean>(false);
-
-  // 自定义FEN分析相关状态
-  const [customFen, setCustomFen] = useState<string>("");
-  const [fenAnalysisLoading, setFenAnalysisLoading] = useState<boolean>(false);
-  const [fenAnalysisError, setFenAnalysisError] = useState<string | null>(null);
-  const [fenAnalysisResult, setFenAnalysisResult] = useState<{
-    fen: string;
-    activations?: number[];
-    zPatternIndices?: number[][];
-    zPatternValues?: number[];
-  } | null>(null);
 
   // 预加载HookedTransformer模型
   const preloadModel = useCallback(async () => {
@@ -166,80 +156,6 @@ export const FeaturesPage = () => {
     }
   );
 
-  // 分析自定义FEN的函数
-  const analyzeCustomFen = useAsyncFn(async (fen: string, dictionary: string | null, featureIndex: number) => {
-    if (!fen || !fen.trim()) {
-      setFenAnalysisError("请输入有效的FEN字符串");
-      return;
-    }
-    
-    if (!dictionary) {
-      setFenAnalysisError("请先选择一个字典");
-      return;
-    }
-
-    setFenAnalysisLoading(true);
-    setFenAnalysisError(null);
-    setFenAnalysisResult(null);
-
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/analyze_fen`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({ fen: fen.trim() }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // 解析返回的数据，构建激活值数组
-      let activations: number[] | undefined = undefined;
-      if (data.feature_acts_indices && data.feature_acts_values) {
-        activations = new Array(64).fill(0);
-        const indices = data.feature_acts_indices;
-        const values = data.feature_acts_values;
-        
-        for (let i = 0; i < Math.min(indices.length, values.length); i++) {
-          const index = indices[i];
-          const value = values[i];
-          if (index >= 0 && index < 64) {
-            activations[index] = value;
-          }
-        }
-      }
-
-      // 处理 z pattern 数据
-      let zPatternIndices: number[][] | undefined = undefined;
-      let zPatternValues: number[] | undefined = undefined;
-      if (data.z_pattern_indices && data.z_pattern_values) {
-        const zpIdxRaw = data.z_pattern_indices;
-        zPatternIndices = Array.isArray(zpIdxRaw) && Array.isArray(zpIdxRaw[0]) ? zpIdxRaw : [zpIdxRaw];
-        zPatternValues = data.z_pattern_values;
-      }
-
-      setFenAnalysisResult({
-        fen: fen.trim(),
-        activations,
-        zPatternIndices,
-        zPatternValues,
-      });
-    } catch (error) {
-      setFenAnalysisError(error instanceof Error ? error.message : "分析FEN时出错");
-      console.error("分析FEN错误:", error);
-    } finally {
-      setFenAnalysisLoading(false);
-    }
-  }, []);
 
   useMount(async () => {
     // 预加载模型
@@ -285,6 +201,7 @@ export const FeaturesPage = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDictionary]);
+
 
   // Memoize dictionary options for Combobox
   const dictionaryOptions = useMemo(() => {
@@ -410,59 +327,13 @@ export const FeaturesPage = () => {
                     </div>
 
         {/* 自定义FEN分析区域 */}
-        <div className="container grid grid-cols-[auto_600px_auto] justify-center items-center gap-4">
-          <span className="font-bold justify-self-end">分析自定义FEN:</span>
-          <Input
-            disabled={dictionariesState.loading || selectedDictionary === null || featureLoading || fenAnalysisLoading}
-            className="bg-white"
-            type="text"
-            placeholder="输入FEN字符串，例如: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-            value={customFen}
-            onChange={(e) => setCustomFen(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                if (customFen.trim() && selectedDictionary && !fenAnalysisLoading) {
-                  analyzeCustomFen[1](customFen.trim(), selectedDictionary, featureIndex);
-                }
-              }
-            }}
+        <div className="container w-full max-w-6xl mx-auto mb-8">
+          <CustomFenInput
+            dictionary={selectedDictionary}
+            featureIndex={featureIndex}
+            disabled={dictionariesState.loading || selectedDictionary === null || featureLoading}
           />
-          <Button
-            disabled={dictionariesState.loading || selectedDictionary === null || featureLoading || fenAnalysisLoading || !customFen.trim()}
-            onClick={async () => {
-              await analyzeCustomFen[1](customFen.trim(), selectedDictionary, featureIndex);
-            }}
-          >
-            {fenAnalysisLoading ? "分析中..." : "分析"}
-          </Button>
         </div>
-        
-        {fenAnalysisError && (
-          <div className="text-red-500 font-bold text-center">FEN分析错误: {fenAnalysisError}</div>
-        )}
-        
-        {fenAnalysisResult && (
-          <div className="w-full max-w-6xl mx-auto mb-8">
-            <div className="text-center mb-6">
-              <h3 className="text-xl font-bold mb-2">自定义FEN分析结果</h3>
-              <div className="text-sm text-gray-600 mb-4">
-                FEN: <code className="bg-gray-100 px-2 py-1 rounded">{fenAnalysisResult.fen}</code>
-              </div>
-            </div>
-            <div className="flex justify-center">
-              <ChessBoard
-                fen={fenAnalysisResult.fen}
-                activations={fenAnalysisResult.activations}
-                zPatternIndices={fenAnalysisResult.zPatternIndices}
-                zPatternValues={fenAnalysisResult.zPatternValues}
-                autoFlipWhenBlack={true}
-                flip_activation={fenAnalysisResult.fen.includes(' b ')}
-                showSelfPlay={true}
-              />
-            </div>
-          </div>
-        )}
 
         {featureLoading && !loadingRandomFeature && (
           <div>

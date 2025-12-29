@@ -73,15 +73,6 @@ export const CircuitVisualization = () => {
   const [diffingLogs, setDiffingLogs] = useState<Array<{timestamp: number; message: string}>>([]); // 比较日志
   const [showDiffingLogs, setShowDiffingLogs] = useState(false); // 是否显示日志
 
-  // ===== Position 映射高亮（多图模式）=====
-  const [enablePositionMapping, setEnablePositionMapping] = useState(false);
-  // 每个 source graph 选择一个 position（0-63）。key=graphIndex
-  const [positionMappingSelections, setPositionMappingSelections] = useState<Record<number, number>>({});
-  // 输入框草稿态：用户编辑时先写入这里，点“应用”后才真正生效
-  const [draftPositionMappingSelections, setDraftPositionMappingSelections] = useState<Record<number, number>>({});
-  // 用于强制刷新图（某些情况下 D3 渲染不会让用户立刻感知到变化）
-  const [positionMappingApplyNonce, setPositionMappingApplyNonce] = useState(0);
-
   // 子图功能相关状态
   const [showSubgraph, setShowSubgraph] = useState(false); // 是否显示子图模式
   const [subgraphData, setSubgraphData] = useState<any>(null); // 子图数据
@@ -91,13 +82,6 @@ export const CircuitVisualization = () => {
   const [showAllPositions, setShowAllPositions] = useState(false); // 是否显示所有位置的激活
   const [allPositionsActivationData, setAllPositionsActivationData] = useState<NodeActivationData | null>(null); // 所有位置的合并激活数据
   const [loadingAllPositions, setLoadingAllPositions] = useState(false); // 是否正在从后端加载所有位置数据
-
-  // 点击节点时，从后端实时计算/获取 z_pattern（不再信任 JSON 内保存的 z_pattern）
-  // 仅用于“单位置模式”（showAllPositions=false）且 LoRSA 节点才会有 z_pattern
-  const [loadingBackendZPattern, setLoadingBackendZPattern] = useState(false);
-  const [backendZPatternByNode, setBackendZPatternByNode] = useState<
-    { nodeId: string; zPatternIndices?: number[][]; zPatternValues?: number[] } | null
-  >(null);
 
   // PosFeatureCard 相关状态
   const [posFeatureLayer, setPosFeatureLayer] = useState<number>(0); // 层号
@@ -134,130 +118,11 @@ export const CircuitVisualization = () => {
 
   // 为"各自独有"的节点/边分配的颜色表（最多4个图）
   const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // 蓝、橙、绿、红
-  const POSITION_MAPPING_HIGHLIGHT_COLOR = "#8E44AD"; // 紫色：position映射高亮
-
-  // 解析 nodeId（格式通常为: rawLayer_featureOrHead_ctxIdx）
-  const parseNodeIdParts = useCallback((nodeId: string) => {
-    const parts = nodeId.split("_");
-    const rawLayer = Number(parts[0]) || 0;
-    const featureOrHead = Number(parts[1]) || 0;
-    const ctxIdx = Number(parts[2]) || 0;
-    return { rawLayer, featureOrHead, ctxIdx };
-  }, []);
 
   // 将多个图的 JSON 合并为一个 LinkGraphData（节点按 node_id 合并，边按(source,target)合并）
   const mergeGraphs = useCallback((jsons: CircuitJsonData[], fileNames?: string[]) => {
     // 先将每个 JSON 转换为 LinkGraphData
     const graphs = jsons.map(j => transformCircuitData(j));
-    const totalSources = graphs.length;
-
-    const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
-      const h = hex.trim().replace("#", "");
-      if (h.length !== 6) return null;
-      const r = parseInt(h.slice(0, 2), 16);
-      const g = parseInt(h.slice(2, 4), 16);
-      const b = parseInt(h.slice(4, 6), 16);
-      if ([r, g, b].some((v) => Number.isNaN(v))) return null;
-      return { r, g, b };
-    };
-
-    const rgbToHex = (rgb: { r: number; g: number; b: number }): string => {
-      const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
-      const to2 = (v: number) => clamp(v).toString(16).padStart(2, "0");
-      return `#${to2(rgb.r)}${to2(rgb.g)}${to2(rgb.b)}`.toUpperCase();
-    };
-
-    const rgbToHsl = (rgb: { r: number; g: number; b: number }): { h: number; s: number; l: number } => {
-      const r = rgb.r / 255;
-      const g = rgb.g / 255;
-      const b = rgb.b / 255;
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const d = max - min;
-      const l = (max + min) / 2;
-      let h = 0;
-      let s = 0;
-      if (d !== 0) {
-        s = d / (1 - Math.abs(2 * l - 1));
-        switch (max) {
-          case r:
-            h = ((g - b) / d) % 6;
-            break;
-          case g:
-            h = (b - r) / d + 2;
-            break;
-          case b:
-            h = (r - g) / d + 4;
-            break;
-        }
-        h *= 60;
-        if (h < 0) h += 360;
-      }
-      return { h, s, l };
-    };
-
-    const hslToRgb = (hsl: { h: number; s: number; l: number }): { r: number; g: number; b: number } => {
-      const h = ((hsl.h % 360) + 360) % 360;
-      const s = Math.max(0, Math.min(1, hsl.s));
-      const l = Math.max(0, Math.min(1, hsl.l));
-      const c = (1 - Math.abs(2 * l - 1)) * s;
-      const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-      const m = l - c / 2;
-      let rp = 0;
-      let gp = 0;
-      let bp = 0;
-      if (0 <= h && h < 60) [rp, gp, bp] = [c, x, 0];
-      else if (60 <= h && h < 120) [rp, gp, bp] = [x, c, 0];
-      else if (120 <= h && h < 180) [rp, gp, bp] = [0, c, x];
-      else if (180 <= h && h < 240) [rp, gp, bp] = [0, x, c];
-      else if (240 <= h && h < 300) [rp, gp, bp] = [x, 0, c];
-      else [rp, gp, bp] = [c, 0, x];
-      return { r: (rp + m) * 255, g: (gp + m) * 255, b: (bp + m) * 255 };
-    };
-
-    // 更“鲜艳”的混色：用 HSL 圆周平均 hue，s/l 做可视化增强，避免 RGB 均值变灰
-    const mixHexColorsVivid = (hexColors: string[]): string | null => {
-      const rgbs = hexColors.map(hexToRgb).filter(Boolean) as { r: number; g: number; b: number }[];
-      if (rgbs.length === 0) return null;
-      const hsls = rgbs.map(rgbToHsl);
-
-      // hue 是圆周角度：用向量平均避免 350°/10° 这种跨 0 的问题
-      let x = 0;
-      let y = 0;
-      for (const hsl of hsls) {
-        const rad = (hsl.h * Math.PI) / 180;
-        x += Math.cos(rad);
-        y += Math.sin(rad);
-      }
-      let hue = 0;
-      if (x !== 0 || y !== 0) {
-        hue = (Math.atan2(y, x) * 180) / Math.PI;
-        if (hue < 0) hue += 360;
-      }
-
-      const sAvg = hsls.reduce((acc, v) => acc + v.s, 0) / hsls.length;
-      const lAvg = hsls.reduce((acc, v) => acc + v.l, 0) / hsls.length;
-
-      // 经验参数：提高饱和度，控制亮度在中间段，保证在白底上不“发灰”
-      const s = Math.max(0.65, Math.min(0.95, sAvg));
-      const l = Math.max(0.42, Math.min(0.62, lAvg));
-
-      return rgbToHex(hslToRgb({ h: hue, s, l }));
-    };
-
-    // 对“部分共有子集”做稳定配色：比如 3 个文件会有 0-1 / 0-2 / 1-2 三种不同混色
-    // key 使用排序后的 sourceIndex 组合，避免 0-1 和 1-0 因遍历顺序不同导致不稳定
-    const subsetColorCache = new Map<string, string>();
-    const getSubsetColor = (sourceIndices: number[]): string | null => {
-      const sorted = [...sourceIndices].sort((a, b) => a - b);
-      const key = sorted.join("-");
-      const cached = subsetColorCache.get(key);
-      if (cached) return cached;
-      const mix = mixHexColorsVivid(sorted.map((i) => UNIQUE_GRAPH_COLORS[i % UNIQUE_GRAPH_COLORS.length]));
-      if (!mix) return null;
-      subsetColorCache.set(key, mix);
-      return mix;
-    };
 
     // 合并 metadata（简单策略：拼接 prompt_tokens 并标注来源数量）
     const mergedMetadata: any = {
@@ -290,28 +155,16 @@ export const CircuitVisualization = () => {
       });
     });
 
-    // 为节点设置颜色（多文件对比）：
-    // - 若 presentIn.length === totalSources（所有图共有）：使用 transformCircuitData 原有的 feature_type 颜色（acc.base.nodeColor）
-    // - 若 presentIn.length === 1（仅单图）：使用 UNIQUE_GRAPH_COLORS[sourceIndex]
-    // - 若 1 < presentIn.length < totalSources（部分共有）：使用这些 source 对应 UNIQUE_GRAPH_COLORS 的均值混色
+    // 为节点设置颜色：
+    // - 若 presentIn.length > 1（多个图共有）：使用 transformCircuitData 原有的 feature_type 颜色（acc.base.nodeColor）
+    // - 若仅在某个单图中：覆盖为 UNIQUE_GRAPH_COLORS[graphIndex]
     let mergedNodes: any[] = [];
     nodeMap.forEach(({ base, presentIn }) => {
-      const isAllShared = presentIn.length === totalSources;
-      const isPartiallyShared = presentIn.length > 1 && presentIn.length < totalSources;
+      const isShared = presentIn.length > 1;
       const isError = typeof base.feature_type === 'string' && base.feature_type.toLowerCase().includes('error');
-      let nodeColor: string;
-      if (isError) {
-        nodeColor = '#95a5a6';
-      } else if (isAllShared) {
-        nodeColor = base.nodeColor;
-      } else if (isPartiallyShared) {
-        // 关键：对 12/13/23 等“子集共有”情况，使用子集对应的稳定混色
-        nodeColor =
-          getSubsetColor(presentIn) ??
-          UNIQUE_GRAPH_COLORS[presentIn[0] % UNIQUE_GRAPH_COLORS.length];
-      } else {
-        nodeColor = UNIQUE_GRAPH_COLORS[presentIn[0] % UNIQUE_GRAPH_COLORS.length];
-      }
+      const nodeColor = isError
+        ? '#95a5a6'
+        : (isShared ? base.nodeColor : UNIQUE_GRAPH_COLORS[presentIn[0] % UNIQUE_GRAPH_COLORS.length]);
       const sourceIndices = presentIn.slice();
       const sourceFiles = (fileNames && fileNames.length)
         ? sourceIndices.map(i => fileNames[i]).filter(Boolean)
@@ -411,38 +264,6 @@ export const CircuitVisualization = () => {
 
     return mergedData;
   }, []);
-
-  // 当多图文件列表变化时，初始化 position 选择（默认 0）
-  useEffect(() => {
-    const names = (linkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
-    if (!names || names.length <= 1) return;
-    setPositionMappingSelections((prev) => {
-      const next: Record<number, number> = { ...prev };
-      for (let i = 0; i < names.length; i++) {
-        if (typeof next[i] !== "number" || !Number.isFinite(next[i])) {
-          next[i] = 0;
-        }
-      }
-      return next;
-    });
-  }, [linkGraphData]);
-
-  // 同步草稿态：当多图变化或首次进入时，让草稿默认等于已应用的选择
-  useEffect(() => {
-    const names = (linkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
-    if (!names || names.length <= 1) return;
-    setDraftPositionMappingSelections((prev) => {
-      const next: Record<number, number> = { ...prev };
-      for (let i = 0; i < names.length; i++) {
-        const applied = positionMappingSelections[i];
-        const v = (typeof applied === "number" && Number.isFinite(applied)) ? applied : 0;
-        if (typeof next[i] !== "number" || !Number.isFinite(next[i])) {
-          next[i] = v;
-        }
-      }
-      return next;
-    });
-  }, [linkGraphData, positionMappingSelections]);
 
   const handleFeatureClick = useCallback((node: Node, isMetaKey: boolean) => {
     if (isMetaKey) {
@@ -1348,8 +1169,9 @@ export const CircuitVisualization = () => {
 
     // 合并所有位置的激活值
     const mergedActivations = new Array(64).fill(0);
-    // ⚠️ 注意：z_pattern 语义上是“某个 query position 的 attention pattern”
-    // 在“所有位置模式”下如果跨 position 聚合 z_pattern 会产生误导，因此这里明确不聚合/不展示 z_pattern
+    const mergedZPatternIndices: number[][] = [];
+    const mergedZPatternValues: number[] = [];
+    const zPatternMap = new Map<string, number>();
 
     for (const rec of matchedRecords) {
       if (rec.activations && Array.isArray(rec.activations) && rec.activations.length === 64) {
@@ -1361,12 +1183,33 @@ export const CircuitVisualization = () => {
           }
         }
       }
+
+      const { zPatternIndices, zPatternValues } = normalizeZPattern(rec.zPatternIndices, rec.zPatternValues);
+      if (zPatternIndices && zPatternValues) {
+        for (let i = 0; i < zPatternIndices.length; i++) {
+          const indices = zPatternIndices[i];
+          const value = zPatternValues[i];
+          if (Array.isArray(indices) && indices.length === 2) {
+            const key = `${indices[0]}_${indices[1]}`;
+            const existingValue = zPatternMap.get(key);
+            if (existingValue === undefined || Math.abs(value) > Math.abs(existingValue)) {
+              zPatternMap.set(key, value);
+            }
+          }
+        }
+      }
     }
+
+    zPatternMap.forEach((value, key) => {
+      const [qPos, kPos] = key.split('_').map(Number);
+      mergedZPatternIndices.push([qPos, kPos]);
+      mergedZPatternValues.push(value);
+    });
 
     return {
       activations: mergedActivations,
-      zPatternIndices: undefined,
-      zPatternValues: undefined,
+      zPatternIndices: mergedZPatternIndices.length > 0 ? mergedZPatternIndices : undefined,
+      zPatternValues: mergedZPatternValues.length > 0 ? mergedZPatternValues : undefined,
       nodeType: featureTypeForNode,
       clerp: (nodesToSearch.find(n => n?.node_id === nodeId) || {}).clerp,
     };
@@ -1405,8 +1248,9 @@ export const CircuitVisualization = () => {
       
       // 合并所有位置的激活值（取每个格子的最大激活值，不累加）
       const mergedActivations = new Array(64).fill(0);
-      // ⚠️ 注意：z_pattern 语义上是“某个 query position 的 attention pattern”
-      // “所有位置模式”下如果跨 position 聚合 z_pattern 会误导，因此这里不聚合/不返回 z_pattern
+      const mergedZPatternIndices: number[][] = [];
+      const mergedZPatternValues: number[] = [];
+      const zPatternMap = new Map<string, number>();
       
       if (data.positions && Array.isArray(data.positions)) {
         for (const posData of data.positions) {
@@ -1424,9 +1268,50 @@ export const CircuitVisualization = () => {
             }
           }
           
+          // 合并 zPattern 数据 - 处理所有位置的z_pattern，不管激活值是否为0
+          // 因为z_pattern是基于query位置的attention pattern，即使激活值为0也可能有z_pattern
+          const { zPatternIndices, zPatternValues } = normalizeZPattern(
+            posData.z_pattern_indices,
+            posData.z_pattern_values
+          );
+          if (zPatternIndices && zPatternValues && zPatternIndices.length > 0 && zPatternValues.length > 0) {
+            for (let i = 0; i < zPatternIndices.length; i++) {
+              const indices = zPatternIndices[i];
+              const value = zPatternValues[i];
+              if (Array.isArray(indices) && indices.length === 2) {
+                const [queryPos, keyPos] = indices;
+                // 确保位置索引在有效范围内
+                if (queryPos >= 0 && queryPos < 64 && keyPos >= 0 && keyPos < 64) {
+                  const key = `${queryPos}_${keyPos}`;
+                  const existingValue = zPatternMap.get(key);
+                  // 对于相同的[query_pos, key_pos]对，保留绝对值最大的值
+                  if (existingValue === undefined || Math.abs(value) > Math.abs(existingValue)) {
+                    zPatternMap.set(key, value);
+                  }
+                }
+              }
+            }
+          }
         }
       }
-      console.log('✅ 合并完成（所有位置模式）:', {
+      
+      console.log('🔍 合并后的z_pattern数据:', {
+        totalZPatterns: zPatternMap.size,
+        sampleKeys: Array.from(zPatternMap.keys()).slice(0, 5),
+        sampleValues: Array.from(zPatternMap.values()).slice(0, 5)
+      });
+      
+      // 将 zPatternMap 转换回数组格式
+      zPatternMap.forEach((value, key) => {
+        const [qPos, kPos] = key.split('_').map(Number);
+        mergedZPatternIndices.push([qPos, kPos]);
+        mergedZPatternValues.push(value);
+      });
+      
+      console.log('✅ 合并完成，z_pattern统计:', {
+        totalZPatterns: mergedZPatternIndices.length,
+        sampleIndices: mergedZPatternIndices.slice(0, 5),
+        sampleValues: mergedZPatternValues.slice(0, 5),
         hasActivations: mergedActivations.some(v => v !== 0)
       });
       
@@ -1436,8 +1321,8 @@ export const CircuitVisualization = () => {
       
       const result = {
         activations: mergedActivations,
-        zPatternIndices: undefined,
-        zPatternValues: undefined,
+        zPatternIndices: mergedZPatternIndices.length > 0 ? mergedZPatternIndices : undefined,
+        zPatternValues: mergedZPatternValues.length > 0 ? mergedZPatternValues : undefined,
         nodeType: nodeType,
         clerp: (currentNode as any)?.clerp,
       };
@@ -1446,7 +1331,9 @@ export const CircuitVisualization = () => {
         hasActivations: !!result.activations,
         activationsLength: result.activations?.length,
         hasZPatternIndices: !!result.zPatternIndices,
-        hasZPatternValues: !!result.zPatternValues
+        zPatternIndicesLength: result.zPatternIndices?.length,
+        hasZPatternValues: !!result.zPatternValues,
+        zPatternValuesLength: result.zPatternValues?.length
       });
       
       return result;
@@ -1458,114 +1345,8 @@ export const CircuitVisualization = () => {
     }
   }, [linkGraphData, normalizeZPattern]);
 
-  // 与 CustomFenInput 保持一致：调用 analyze_fen 获取“全局(所有位置)激活 + z_pattern(若有)”
-  // - activations: feature_acts_indices/values -> 64维稠密数组
-  // - z_pattern: z_pattern_indices/values（LoRSA 才有）
-  const fetchAnalyzeFenFromBackend = useCallback(async (
-    dictionary: string,
-    featureIndex: number,
-    fen: string,
-    signal?: AbortSignal
-  ): Promise<NodeActivationData | null> => {
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/analyze_fen`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({ fen: fen.trim() }),
-          signal,
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      // 解析 activations（稀疏 -> 64稠密）
-      let activations: number[] | undefined = undefined;
-      if (data.feature_acts_indices && data.feature_acts_values) {
-        activations = new Array(64).fill(0);
-        const indices = data.feature_acts_indices as number[];
-        const values = data.feature_acts_values as number[];
-        for (let i = 0; i < Math.min(indices.length, values.length); i++) {
-          const idx = indices[i];
-          const v = values[i];
-          if (typeof idx === "number" && idx >= 0 && idx < 64) activations[idx] = v;
-        }
-      }
-
-      // 解析 z_pattern（后端 snake_case）
-      const { zPatternIndices, zPatternValues } = normalizeZPattern(
-        (data as any).z_pattern_indices,
-        (data as any).z_pattern_values
-      );
-
-      return { activations, zPatternIndices, zPatternValues };
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return null;
-      console.error("❌ analyze_fen 失败:", error);
-      return null;
-    }
-  }, [normalizeZPattern]);
-
-  // 从后端获取某个 LoRSA feature 在某个 query position 的 z_pattern（单位置展示用）
-  const fetchZPatternForPosFromBackend = useCallback(async (
-    dictionary: string,
-    featureIndex: number,
-    fen: string,
-    queryPos: number,
-    signal?: AbortSignal
-  ): Promise<{ zPatternIndices?: number[][]; zPatternValues?: number[] } | null> => {
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/analyze_fen_all_positions`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({ fen: fen.trim() }),
-          signal,
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      const positions = data?.positions;
-      if (!Array.isArray(positions)) return null;
-
-      const posData = positions.find((p: any) => Number(p?.position) === queryPos);
-      if (!posData) return null;
-
-      // 后端返回 snake_case：z_pattern_indices / z_pattern_values
-      const { zPatternIndices, zPatternValues } = normalizeZPattern(
-        (posData as any).z_pattern_indices,
-        (posData as any).z_pattern_values
-      );
-
-      return { zPatternIndices, zPatternValues };
-    } catch (error) {
-      // fetch 被 AbortController 取消时不用报错
-      if (error instanceof DOMException && error.name === "AbortError") return null;
-      console.error("❌ 从后端获取 z_pattern 失败:", error);
-      return null;
-    }
-  }, [normalizeZPattern]);
-
   // 获取该 feature 在所有位置的激活数据
-  // 注意：在所有位置模式下，逻辑与 CustomFenInput 一致：调用 analyze_fen（不再信任 JSON）
+  // 注意：在所有位置模式下，直接调用后端API获取数据，不从JSON文件读取
   const getAllPositionsActivationData = useCallback(async (nodeId: string | null, _jsonData?: any): Promise<NodeActivationData | null> => {
     if (!nodeId) {
       return null;
@@ -1585,28 +1366,34 @@ export const CircuitVisualization = () => {
     const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
     const featureTypeForNode = currentNode?.feature_type;
 
-    // 直接调用后端 analyze_fen 获取“所有位置激活 + z_pattern(若有)”
-    console.log('🔍 所有位置模式：调用 analyze_fen（与 CustomFenInput 一致）');
+    // 直接调用后端API获取所有位置的数据
+    console.log('🔍 所有位置模式：直接从后端API获取数据，跳过JSON文件查找');
     const fen = extractFenFromPrompt();
     if (!fen) {
       console.log('❌ 无法提取FEN，无法从后端获取数据');
       return null;
     }
 
+    // 获取字典名称
     const isLorsa = featureTypeForNode?.toLowerCase() === 'lorsa';
     const dictionary = getDictionaryName(parsed.layerForActivation, isLorsa);
+    
+    // 从后端获取数据
+    const backendData = await fetchAllPositionsFromBackend(
+      nodeId,
+      fen,
+      dictionary,
+      parsed.featureOrHead
+    );
+    
+    if (backendData) {
+      console.log('✅ 从后端成功获取所有位置数据（包含z_pattern）');
+      return backendData;
+    }
 
-    // 使用 AbortController，避免快速切换节点时竞态覆盖
-    const controller = new AbortController();
-    const result = await fetchAnalyzeFenFromBackend(dictionary, parsed.featureOrHead, fen, controller.signal);
-    if (!result) return null;
-
-    return {
-      ...result,
-      nodeType: featureTypeForNode,
-      clerp: (currentNode as any)?.clerp,
-    };
-  }, [linkGraphData, extractFenFromPrompt, getDictionaryName, fetchAnalyzeFenFromBackend]);
+    console.log('❌ 从后端获取所有位置数据失败');
+    return null;
+  }, [linkGraphData, extractFenFromPrompt, getDictionaryName, fetchAllPositionsFromBackend]);
 
   // 提取相关数据
   const fen = extractFenFromPrompt();
@@ -1618,61 +1405,6 @@ export const CircuitVisualization = () => {
     setShowAllPositions(false);
     setAllPositionsActivationData(null);
   }, [clickedId]);
-
-  // 点击节点时：实时从后端拉取该节点的 z_pattern（LoRSA + 单位置模式 + 单文件场景）
-  useEffect(() => {
-    // 清空旧的 z_pattern（避免切换节点时短暂显示上一个节点的 pattern）
-    setBackendZPatternByNode(null);
-
-    if (!clickedId) return;
-    if (showAllPositions) return; // 所有位置模式不展示/不聚合 z_pattern
-
-    const names = (linkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
-    const isMultiFile = !!(names && names.length > 1);
-    if (isMultiFile) return; // 多文件模式下先保持原逻辑（避免每文件/每点击多次重算导致很慢）
-
-    const currentNode = (linkGraphData?.nodes || []).find((n: any) => n?.nodeId === clickedId);
-    const featureType = typeof currentNode?.feature_type === "string" ? currentNode.feature_type.toLowerCase() : "";
-    const isLorsa = featureType === "lorsa";
-    if (!isLorsa) return; // Transcoder 没有 z_pattern
-
-    const fenLocal = extractFenFromPrompt();
-    if (!fenLocal) return;
-
-    const parts = clickedId.split("_");
-    const rawLayer = Number(parts[0]) || 0;
-    const featureIndex = Number(parts[1]) || 0;
-    const pos = Number(parts[2]) || 0;
-    const layerIdx = Math.floor(rawLayer / 2);
-    const dictionary = getDictionaryName(layerIdx, true);
-
-    const controller = new AbortController();
-    setLoadingBackendZPattern(true);
-
-    fetchZPatternForPosFromBackend(dictionary, featureIndex, fenLocal, pos, controller.signal)
-      .then((zp) => {
-        if (!zp) return;
-        setBackendZPatternByNode({
-          nodeId: clickedId,
-          zPatternIndices: zp.zPatternIndices,
-          zPatternValues: zp.zPatternValues,
-        });
-      })
-      .finally(() => {
-        setLoadingBackendZPattern(false);
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [
-    clickedId,
-    showAllPositions,
-    linkGraphData,
-    extractFenFromPrompt,
-    getDictionaryName,
-    fetchZPatternForPosFromBackend,
-  ]);
 
   // 当点击节点或切换模式时，更新所有位置的激活数据
   useEffect(() => {
@@ -1693,22 +1425,9 @@ export const CircuitVisualization = () => {
   }, [clickedId, showAllPositions, getAllPositionsActivationData]);
 
   // 确定要显示的激活数据
-  // - activations：沿用现有逻辑（JSON/后端 all-positions 聚合）
-  // - z_pattern：在“单位置模式”下用后端实时计算结果覆盖（避免 JSON 内 z_pattern 偶发错误）
-  const displayActivationData = useMemo(() => {
-    const base = (showAllPositions && allPositionsActivationData)
-      ? allPositionsActivationData
-      : nodeActivationData;
-
-    if (!showAllPositions && clickedId && backendZPatternByNode?.nodeId === clickedId) {
-      return {
-        ...base,
-        zPatternIndices: backendZPatternByNode.zPatternIndices,
-        zPatternValues: backendZPatternByNode.zPatternValues,
-      };
-    }
-    return base;
-  }, [showAllPositions, allPositionsActivationData, nodeActivationData, clickedId, backendZPatternByNode]);
+  const displayActivationData = showAllPositions && allPositionsActivationData 
+    ? allPositionsActivationData 
+    : nodeActivationData;
 
   // 修复Hook使用 - 移到组件顶层，避免条件调用
   useEffect(() => {
@@ -2548,88 +2267,13 @@ export const CircuitVisualization = () => {
     };
   }, [inactiveNodes]);
 
-  // 应用 position 映射高亮覆盖
-  const applyPositionMappingHighlights = useCallback((data: any) => {
-    if (!enablePositionMapping) return data;
-    if (!data || !data.nodes || !data.metadata?.sourceFileNames || data.metadata.sourceFileNames.length <= 1) {
-      return data;
-    }
-
-    // 仅对“每个文件所选 position”上的 feature 节点做跨文件对齐：
-    // key = (rawLayer, featureOrHead, feature_type_norm)
-    // 若同 key 在 >=2 个 source 中出现，则这些节点都高亮
-    type Hit = { nodeId: string; sourceIdx: number };
-    const buckets = new Map<string, Hit[]>();
-
-    for (const node of data.nodes as any[]) {
-      const nodeId = String(node.nodeId);
-      const { rawLayer, featureOrHead, ctxIdx } = parseNodeIdParts(nodeId);
-
-      // 仅针对 feature 节点：排除 embedding/logit/error
-      const ftRaw = typeof node.feature_type === "string" ? node.feature_type : "";
-      const ft = ftRaw.toLowerCase();
-      if (ft.includes("embedding") || ft.includes("logit") || ft.includes("error")) continue;
-
-      const srcs: number[] = Array.isArray(node.sourceIndices)
-        ? node.sourceIndices
-        : (typeof node.sourceIndex === "number" ? [node.sourceIndex] : []);
-
-      for (const s of srcs) {
-        const sel = positionMappingSelections[s];
-        if (typeof sel !== "number") continue;
-        if (ctxIdx !== sel) continue;
-        const typeNorm = ft.includes("lorsa") ? "lorsa" : "tc";
-        const key = `${rawLayer}_${featureOrHead}_${typeNorm}`;
-        const arr = buckets.get(key) || [];
-        arr.push({ nodeId, sourceIdx: s });
-        buckets.set(key, arr);
-      }
-    }
-
-    const highlightNodeIds = new Set<string>();
-    buckets.forEach((hits) => {
-      const uniqSources = new Set(hits.map((h) => h.sourceIdx));
-      if (uniqSources.size >= 2) {
-        for (const h of hits) highlightNodeIds.add(h.nodeId);
-      }
-    });
-
-    if (highlightNodeIds.size === 0) return data;
-
-    return {
-      ...data,
-      nodes: (data.nodes as any[]).map((node) => {
-        // Dense 节点优先级最高：保持黑色，不允许被 position 映射高亮覆盖
-        if ((node as any)?.isDense === true) {
-          return node;
-        }
-        if (highlightNodeIds.has(String(node.nodeId))) {
-          return {
-            ...node,
-            nodeColor: POSITION_MAPPING_HIGHLIGHT_COLOR,
-            isPositionMapped: true,
-          };
-        }
-        return node;
-      }),
-    };
-  }, [enablePositionMapping, parseNodeIdParts, positionMappingSelections, POSITION_MAPPING_HIGHLIGHT_COLOR]);
-
   // 获取应用了dense和inactive颜色的图数据
   const displayLinkGraphData = useMemo(() => {
     let data = linkGraphData;
     data = applyDenseNodeColors(data);
     data = applyInactiveNodeColors(data);
-    data = applyPositionMappingHighlights(data);
     return data;
-  }, [linkGraphData, applyDenseNodeColors, applyInactiveNodeColors, applyPositionMappingHighlights]);
-
-  // 统计当前高亮命中的节点数（用于给用户反馈“有没有生效”）
-  const positionMappedCount = useMemo(() => {
-    const names = (displayLinkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
-    if (!enablePositionMapping || !names || names.length <= 1) return 0;
-    return (displayLinkGraphData?.nodes || []).filter((n: any) => (n as any)?.isPositionMapped === true).length;
-  }, [displayLinkGraphData, enablePositionMapping]);
+  }, [linkGraphData, applyDenseNodeColors, applyInactiveNodeColors]);
 
   // 比较FEN激活差异
   const compareFenActivations = useCallback(async () => {
@@ -3157,28 +2801,6 @@ export const CircuitVisualization = () => {
               ))}
             </div>
           )}
-
-          {/* Position 映射高亮开关（多文件时显示） */}
-          {displayLinkGraphData && displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
-            <div className="flex flex-wrap items-center gap-2 px-3 py-1 bg-purple-50 rounded-md border border-purple-200">
-              <label className="text-sm text-purple-800 font-medium flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={enablePositionMapping}
-                  onChange={(e) => setEnablePositionMapping(e.target.checked)}
-                />
-                Position 映射高亮
-              </label>
-              <span className="text-xs text-purple-700">
-                为每个文件选一个 pos（0-63），高亮“不同文件的不同 pos 上但同一 (layer, feature) 的节点”
-              </span>
-              {enablePositionMapping && (
-                <span className="text-xs text-purple-700">
-                  当前命中：<span className="font-semibold">{positionMappedCount}</span> 个节点
-                </span>
-              )}
-            </div>
-          )}
           {hasUnsavedChanges && (
             <div className="flex items-center space-x-2 px-3 py-1 bg-orange-100 text-orange-800 rounded-md text-sm">
               <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
@@ -3257,19 +2879,14 @@ export const CircuitVisualization = () => {
                 </div>
               </div>
             )}
-            {clickedId && !showAllPositions && loadingBackendZPattern && (
-              <div className="text-center mb-2 text-sm text-blue-600">
-                <div className="flex items-center justify-center space-x-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                  <span>正在从后端计算 z_pattern...</span>
-                </div>
-              </div>
-            )}
             {clickedId && displayActivationData && displayActivationData.activations && (
               <div className="text-center mb-2 text-sm text-purple-600">
                 {showAllPositions ? (
                   <>
                     所有位置合并激活: {displayActivationData.activations.filter((v: number) => v !== 0).length} 个非零激活
+                    {displayActivationData.zPatternIndices && displayActivationData.zPatternValues && 
+                      `, ${displayActivationData.zPatternValues.length} 个Z模式连接`
+                    }
                   </>
                 ) : (
                   <>
@@ -3433,96 +3050,6 @@ export const CircuitVisualization = () => {
       {/* Chess Board Display - 多文件：为每个源文件渲染一个棋盘，并按来源显示激活 */}
       {displayLinkGraphData && displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
         <div className="space-y-4 mb-6">
-          {/* 多文件：position 映射选择器 */}
-          {enablePositionMapping && (
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="text-sm font-medium text-purple-900">Position 映射选择（每文件一个）</div>
-                <div className="text-xs text-purple-700">
-                  说明：先在下方输入 pos（草稿），再点击“应用映射”才会生效并刷新图（不会改变节点合并规则）
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => {
-                    // 应用：将草稿写入真正的选择，并强制刷新一次图
-                    setPositionMappingSelections(() => {
-                      const next: Record<number, number> = {};
-                      const names = displayLinkGraphData?.metadata?.sourceFileNames || [];
-                      for (let i = 0; i < names.length; i++) {
-                        const v = draftPositionMappingSelections[i];
-                        next[i] = (typeof v === "number" && Number.isFinite(v)) ? Math.max(0, Math.min(63, v)) : 0;
-                      }
-                      return next;
-                    });
-                    setPositionMappingApplyNonce((x) => x + 1);
-                  }}
-                  className="px-3 py-1 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors"
-                  title="将当前输入的 pos 应用到高亮逻辑，并刷新图"
-                >
-                  应用映射
-                </button>
-                <button
-                  onClick={() => {
-                    // 重置草稿为已应用值
-                    setDraftPositionMappingSelections((prev) => {
-                      const names = displayLinkGraphData?.metadata?.sourceFileNames || [];
-                      const next: Record<number, number> = { ...prev };
-                      for (let i = 0; i < names.length; i++) {
-                        const applied = positionMappingSelections[i];
-                        next[i] = (typeof applied === "number" && Number.isFinite(applied)) ? applied : 0;
-                      }
-                      return next;
-                    });
-                  }}
-                  className="px-3 py-1 text-sm bg-white text-purple-800 border border-purple-300 rounded hover:bg-purple-100 transition-colors"
-                  title="撤销未应用的修改"
-                >
-                  撤销输入
-                </button>
-                <span className="text-xs text-purple-700">
-                  已应用命中：<span className="font-semibold">{positionMappedCount}</span>
-                </span>
-              </div>
-              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                {displayLinkGraphData.metadata.sourceFileNames.map((name: string, idx: number) => (
-                  <div key={`pos-map-${idx}`} className="flex items-center gap-3 bg-white border rounded p-2">
-                    <span
-                      className="inline-block rounded-full"
-                      style={{ width: 10, height: 10, backgroundColor: UNIQUE_GRAPH_COLORS[idx % UNIQUE_GRAPH_COLORS.length] }}
-                      title={name}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs text-gray-600 truncate" title={name}>{name}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-gray-700">pos</label>
-                      <input
-                        type="number"
-                        min={0}
-                        max={63}
-                        className="w-20 px-2 py-1 text-sm border rounded"
-                        value={draftPositionMappingSelections[idx] ?? positionMappingSelections[idx] ?? 0}
-                        onChange={(e) => {
-                          const v = parseInt(e.target.value);
-                          setDraftPositionMappingSelections((prev) => ({
-                            ...prev,
-                            [idx]: Number.isFinite(v) ? Math.max(0, Math.min(63, v)) : 0,
-                          }));
-                        }}
-                        title="选择该文件用于对齐/高亮的 position（0-63）"
-                      />
-                      <span className="text-xs text-purple-700">↦ 高亮</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-2 text-xs text-purple-700">
-                高亮颜色：<span className="font-mono">{POSITION_MAPPING_HIGHLIGHT_COLOR}</span>
-              </div>
-            </div>
-          )}
-
           {/* 所有位置模式切换按钮（多文件时） */}
           {clickedId && (
             <div className="flex justify-center">
@@ -3586,6 +3113,8 @@ export const CircuitVisualization = () => {
                       {showAllPositions ? (
                         <>
                           所有位置合并激活: {perFileActivation.activations.filter((v: number) => v !== 0).length} 个非零激活
+                          {perFileActivation.zPatternIndices && perFileActivation.zPatternValues &&
+                            `, ${perFileActivation.zPatternValues.length} 个Z模式连接`}
                         </>
                       ) : (
                         <>
@@ -3711,7 +3240,6 @@ export const CircuitVisualization = () => {
             <div className="w-full h-full overflow-hidden relative">
               {(showSubgraph ? subgraphData : displayLinkGraphData) && (
                 <LinkGraphContainer 
-                  key={`${showSubgraph ? "sub" : "full"}-${positionMappingApplyNonce}`}
                   data={showSubgraph ? subgraphData : displayLinkGraphData} 
                   onNodeClick={handleFeatureClick}
                   onNodeHover={handleFeatureHover}

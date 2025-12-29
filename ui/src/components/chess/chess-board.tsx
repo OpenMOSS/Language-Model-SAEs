@@ -209,6 +209,11 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   const [currentSelfPlayStep, setCurrentSelfPlayStep] = useState(0);
   const [showSelfPlayPanel, setShowSelfPlayPanel] = useState(false);
 
+  // 前向推理相关状态
+  const [forwardInferenceData, setForwardInferenceData] = useState<any>(null);
+  const [forwardInferenceLoading, setForwardInferenceLoading] = useState(false);
+  const [forwardInferenceError, setForwardInferenceError] = useState<string | null>(null);
+
   // 修改handleAnalyze函数，移除JSON.stringify中对象的尾随逗号
   const handleAnalyze = async () => {
     try {
@@ -231,11 +236,45 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     handleAnalyze();
   }, [fen]);
 
+  // 前向推理函数
+  const handleForwardInference = useCallback(async () => {
+    setForwardInferenceLoading(true);
+    setForwardInferenceError(null);
+
+    try {
+      console.log(`[CB#${sampleIndex ?? 'NA'}] 开始前向推理: ${fen.substring(0, 50)}...`);
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/forward_inference`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fen: fen,
+          top_k: 5  // 获取前5名移动
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+
+      const result = await response.json();
+      console.log(`[CB#${sampleIndex ?? 'NA'}] 前向推理完成:`, result);
+      setForwardInferenceData(result);
+
+    } catch (err) {
+      console.error(`[CB#${sampleIndex ?? 'NA'}] 前向推理失败:`, err);
+      setForwardInferenceError(err instanceof Error ? err.message : '前向推理失败');
+    } finally {
+      setForwardInferenceLoading(false);
+    }
+  }, [fen, sampleIndex]);
+
   // 自对弈函数
   const handleSelfPlay = useCallback(async () => {
     setSelfPlayLoading(true);
     setSelfPlayError(null);
-    
+
     try {
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/self_play`, {
         method: 'POST',
@@ -257,7 +296,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       setSelfPlayData(result);
       setCurrentSelfPlayStep(0);
       setShowSelfPlayPanel(true);
-      
+
     } catch (err) {
       console.error('自对弈失败:', err);
       setSelfPlayError(err instanceof Error ? err.message : '自对弈失败');
@@ -467,6 +506,22 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   // 获取当前hover格子的Z模式目标
   const zPatternTargets = hoveredSquare !== null ? getZPatternTargets(hoveredSquare, zPatternIndices, zPatternValues) : [];
 
+  // 处理前向推理结果
+  const forwardMoves = useMemo(() => {
+    if (!forwardInferenceData || !forwardInferenceData.moves) return [];
+
+    return forwardInferenceData.moves.map((moveData: any) => {
+      const parsedMove = parseMove(moveData.move);
+      if (!parsedMove) return null;
+
+      return {
+        ...parsedMove,
+        logit: moveData.logit,
+        probability: moveData.probability
+      };
+    }).filter(Boolean);
+  }, [forwardInferenceData]);
+
   return (
     <div className="flex flex-col items-center space-y-2">
       {/* 棋盘信息 */}
@@ -645,43 +700,77 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
           )}
         
         {/* 移动箭头覆盖层 */}
-        {parsedMove && (
-          <svg
-            className="absolute inset-0 pointer-events-none"
-            width={boardPx}
-            height={boardPx}
-            viewBox={`0 0 ${boardPx} ${boardPx}`}
-            style={{ zIndex: 10 }}
-          >
-            <defs>
-              <marker id="arrow-head" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L0,6 L6,3 z" fill={moveColor || '#4b5563'} />
-              </marker>
-            </defs>
-            {(() => {
-              // 使用棋盘朝向映射，保证箭头与格子渲染一致
-              const fromPos = getBoardDisplayPosition(parsedMove.from.index);
-              const toPos = getBoardDisplayPosition(parsedMove.to.index);
-              const sq = squareSizePxMap[size];
-              const fromX = fromPos.col * sq + sq / 2;
-              const fromY = fromPos.row * sq + sq / 2;
-              const toX = toPos.col * sq + sq / 2;
-              const toY = toPos.row * sq + sq / 2;
-              return (
-                <line
-                  x1={fromX}
-                  y1={fromY}
-                  x2={toX}
-                  y2={toY}
-                  stroke={moveColor || '#4b5563'}
-                  strokeWidth={4}
-                  strokeOpacity={0.9}
-                  markerEnd="url(#arrow-head)"
-                />
-              );
-            })()}
-          </svg>
-        )}
+        <svg
+          className="absolute inset-0 pointer-events-none"
+          width={boardPx}
+          height={boardPx}
+          viewBox={`0 0 ${boardPx} ${boardPx}`}
+          style={{ zIndex: 10 }}
+        >
+          <defs>
+            <marker id="arrow-head" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L6,3 z" fill={moveColor || '#4b5563'} />
+            </marker>
+            <marker id="forward-arrow-head" markerWidth="6" markerHeight="6" refX="5" refY="2.5" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,5 L5,2.5 z" fill="#10b981" />
+            </marker>
+          </defs>
+
+          {/* 原始移动箭头 */}
+          {parsedMove && (() => {
+            // 使用棋盘朝向映射，保证箭头与格子渲染一致
+            const fromPos = getBoardDisplayPosition(parsedMove.from.index);
+            const toPos = getBoardDisplayPosition(parsedMove.to.index);
+            const sq = squareSizePxMap[size];
+            const fromX = fromPos.col * sq + sq / 2;
+            const fromY = fromPos.row * sq + sq / 2;
+            const toX = toPos.col * sq + sq / 2;
+            const toY = toPos.row * sq + sq / 2;
+            return (
+              <line
+                x1={fromX}
+                y1={fromY}
+                x2={toX}
+                y2={toY}
+                stroke={moveColor || '#4b5563'}
+                strokeWidth={4}
+                strokeOpacity={0.9}
+                markerEnd="url(#arrow-head)"
+              />
+            );
+          })()}
+
+          {/* 前向推理移动箭头 */}
+          {forwardMoves.map((moveData: any, index: number) => {
+            const fromPos = getBoardDisplayPosition(moveData.from.index);
+            const toPos = getBoardDisplayPosition(moveData.to.index);
+            const sq = squareSizePxMap[size];
+            const fromX = fromPos.col * sq + sq / 2;
+            const fromY = fromPos.row * sq + sq / 2;
+            const toX = toPos.col * sq + sq / 2;
+            const toY = toPos.row * sq + sq / 2;
+
+            // 根据logit值计算箭头粗细 (logit越大，箭头越粗)
+            const minLogit = Math.min(...forwardMoves.map((m: any) => m.logit));
+            const maxLogit = Math.max(...forwardMoves.map((m: any) => m.logit));
+            const normalizedLogit = (moveData.logit - minLogit) / (maxLogit - minLogit);
+            const strokeWidth = 2 + normalizedLogit * 4; // 2-6px
+
+            return (
+              <line
+                key={`forward-${index}`}
+                x1={fromX}
+                y1={fromY}
+                x2={toX}
+                y2={toY}
+                stroke="#10b981"
+                strokeWidth={strokeWidth}
+                strokeOpacity={0.8}
+                markerEnd="url(#forward-arrow-head)"
+              />
+            );
+          })}
+        </svg>
       </div>
 
               {/* FEN字符串和移动信息显示 */}
@@ -760,27 +849,67 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         );
       })()}
 
-      {/* 自对弈功能 */}
-      {showSelfPlay && (
-        <div className="mt-6 space-y-4">
-          {/* 自对弈控制按钮 */}
-          <div className="flex justify-center space-x-4">
-            <button
-              onClick={handleSelfPlay}
-              disabled={selfPlayLoading}
-              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-            >
-              {selfPlayLoading ? '进行中...' : '开始自对弈 (5步)'}
-            </button>
-            {selfPlayData && (
+      {/* 前向推理和自对弈功能 */}
+      <div className="mt-6 space-y-4">
+        {/* 推理控制按钮 */}
+        <div className="flex justify-center space-x-4">
+          <button
+            onClick={handleForwardInference}
+            disabled={forwardInferenceLoading}
+            className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {forwardInferenceLoading ? '推理中...' : 'Run forward'}
+          </button>
+          {showSelfPlay && (
+            <>
               <button
-                onClick={() => setShowSelfPlayPanel(!showSelfPlayPanel)}
-                className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
+                onClick={handleSelfPlay}
+                disabled={selfPlayLoading}
+                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
               >
-                {showSelfPlayPanel ? '隐藏结果' : '显示结果'}
+                {selfPlayLoading ? '进行中...' : '开始自对弈 (5步)'}
               </button>
-            )}
+              {selfPlayData && (
+                <button
+                  onClick={() => setShowSelfPlayPanel(!showSelfPlayPanel)}
+                  className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
+                >
+                  {showSelfPlayPanel ? '隐藏结果' : '显示结果'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* 前向推理错误显示 */}
+        {forwardInferenceError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-red-700 text-sm">{forwardInferenceError}</p>
           </div>
+        )}
+
+        {/* 前向推理结果显示 */}
+        {forwardInferenceData && forwardInferenceData.moves && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <h4 className="text-sm font-semibold text-green-800 mb-2">前向推理结果 (Top 5 移动)</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-2">
+              {forwardInferenceData.moves.map((moveData: any, index: number) => (
+                <div key={index} className="bg-white rounded p-2 text-center border">
+                  <div className="font-mono text-sm font-medium">{moveData.move}</div>
+                  <div className="text-xs text-gray-600">
+                    {(moveData.probability * 100).toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    logit: {moveData.logit?.toFixed(3)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 自对弈功能 */}
+        {showSelfPlay && (
 
           {/* 错误显示 */}
           {selfPlayError && (
@@ -1089,7 +1218,6 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             </div>
           )}
         </div>
-      )}
     </div>
   );
 };

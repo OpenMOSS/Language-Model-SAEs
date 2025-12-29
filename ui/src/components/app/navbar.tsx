@@ -118,6 +118,15 @@ export const AppNavbar = () => {
           >
             Functional Microcircuit
           </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/position-feature" && "text-foreground"
+            )}
+            to="/position-feature"
+          >
+            Position Feature
+          </Link>
         </div>
       </div>
     </nav>

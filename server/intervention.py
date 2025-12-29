@@ -17,6 +17,12 @@ except ImportError:
     LeelaBoard = None
     chess = None
 
+try:
+    # 统一“合法走法概率”的口径：复用 src/chess/move.py 的实现
+    from src.chess import get_move_from_policy_output_with_prob
+except Exception:
+    get_move_from_policy_output_with_prob = None
+
 # 全局 BT4 配置常量（兼容脚本运行和 package 导入）
 try:
     from .constants import BT4_MODEL_NAME, BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH, get_bt4_sae_combo
@@ -42,26 +48,34 @@ class PatchingAnalyzer:
             self.tc_WDs[layer] = transcoders[layer].W_D
             self.lorsa_WDs[layer] = lorsas[layer].W_O
     
-    def get_activations(self, fen: str) -> Tuple[List, List]:
-        """获取给定FEN的激活值"""
-        output, cache = self.model.run_with_cache(fen, prepend_bos=False)
-        
-        lorsa_activations, tc_activations = [], []
-        
-        for layer in range(15):
-            # LoRSA激活
-            lorsa_input = cache[f'blocks.{layer}.hook_attn_in']
-            lorsa_dense_activation = self.lorsas[layer].encode(lorsa_input)
-            lorsa_sparse_activation = lorsa_dense_activation.to_sparse_coo()
-            lorsa_activations.append(lorsa_sparse_activation)
-            
-            # TC激活
-            tc_input = cache[f'blocks.{layer}.resid_mid_after_ln']
-            tc_dense_activation = self.transcoders[layer].encode(tc_input)
-            tc_sparse_activation = tc_dense_activation.to_sparse_coo()
-            tc_activations.append(tc_sparse_activation)
-        
-        return lorsa_activations, tc_activations
+    def _get_cache(self, fen: str) -> dict:
+        """运行模型并返回 cache。"""
+        _, cache = self.model.run_with_cache(fen, prepend_bos=False)
+        return cache
+
+    def _get_lorsa_sparse_acts(self, cache: dict, layer: int) -> torch.Tensor:
+        """获取指定层的 LoRSA sparse activations: [batch,pos,feature] 的 sparse_coo 形式。"""
+        lorsa_hook = f"blocks.{layer}.hook_attn_in"
+        if lorsa_hook not in cache:
+            available_hooks = [k for k in cache.keys() if f"blocks.{layer}" in str(k)]
+            raise KeyError(
+                f"Missing hook '{lorsa_hook}' in cache. Available (sample): {available_hooks[:20]}"
+            )
+        lorsa_input = cache[lorsa_hook]
+        lorsa_dense_activation = self.lorsas[layer].encode(lorsa_input)
+        return lorsa_dense_activation.to_sparse_coo()
+
+    def _get_tc_sparse_acts(self, cache: dict, layer: int) -> torch.Tensor:
+        """获取指定层的 Transcoder sparse activations: [batch,pos,feature] 的 sparse_coo 形式。"""
+        tc_hook = f"blocks.{layer}.resid_mid_after_ln"
+        if tc_hook not in cache:
+            available_hooks = [k for k in cache.keys() if f"blocks.{layer}" in str(k)]
+            raise KeyError(
+                f"Missing hook '{tc_hook}' in cache. Available (sample): {available_hooks[:20]}"
+            )
+        tc_input = cache[tc_hook]
+        tc_dense_activation = self.transcoders[layer].encode(tc_input)
+        return tc_dense_activation.to_sparse_coo()
     
     def steering_analysis(self, feature_type: str, layer: int, 
                                    pos: int, feature: int, steering_scale: int, 
@@ -74,14 +88,13 @@ class PatchingAnalyzer:
         except Exception:
             pass
         
-        # 获取激活值
-        lorsa_activations, tc_activations = self.get_activations(fen)
-        
+        # 获取激活值：只计算当前 feature_type + 当前 layer，避免访问无关 hook
+        cache = self._get_cache(fen)
         if feature_type == 'transcoder':
-            activations = tc_activations[layer]
+            activations = self._get_tc_sparse_acts(cache, layer)
             WDs = self.tc_WDs[layer]
         elif feature_type == 'lorsa':
-            activations = lorsa_activations[layer]
+            activations = self._get_lorsa_sparse_acts(cache, layer)
             WDs = self.lorsa_WDs[layer]
         else:
             raise ValueError("feature_type必须是'transcoder'或'lorsa'")
@@ -145,6 +158,130 @@ class PatchingAnalyzer:
             'logit_diff': logit_diff.detach().cpu().numpy().tolist(),
             'hook_name': hook_name
         }
+
+    def multi_steering_analysis(
+        self,
+        fen: str,
+        feature_type: str,
+        layer: int,
+        nodes: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        # 确保无残留hook
+        try:
+            self.model.reset_hooks()
+        except Exception:
+            pass
+
+        # 参数校验与规范化
+        if not isinstance(nodes, list) or len(nodes) == 0:
+            raise ValueError("nodes must be a non-empty list")
+        normalized_nodes: List[Dict[str, Any]] = []
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            pos = node.get("pos")
+            feature = node.get("feature")
+            steering_scale = node.get("steering_scale", 1)
+            if not isinstance(pos, int) or not isinstance(feature, int):
+                continue
+            if not isinstance(steering_scale, (int, float)):
+                steering_scale = 1
+            normalized_nodes.append(
+                {"pos": pos, "feature": feature, "steering_scale": float(steering_scale)}
+            )
+        if len(normalized_nodes) == 0:
+            raise ValueError("nodes is empty after validation")
+
+        # 获取激活值：只计算当前 feature_type + 当前 layer，避免访问无关 hook
+        cache = self._get_cache(fen)
+        if feature_type == "transcoder":
+            activations = self._get_tc_sparse_acts(cache, layer)
+            WDs = self.tc_WDs[layer]
+            hook_name = f"blocks.{layer}.hook_mlp_out"
+        elif feature_type == "lorsa":
+            activations = self._get_lorsa_sparse_acts(cache, layer)
+            WDs = self.lorsa_WDs[layer]
+            hook_name = f"blocks.{layer}.hook_attn_out"
+        else:
+            raise ValueError("feature_type必须是'transcoder'或'lorsa'")
+
+        # 将需要的 (pos, feature) 做成集合，用一次遍历 sparse idx/value 查找激活值
+        targets = {(n["pos"], n["feature"]) for n in normalized_nodes}
+        found_acts: Dict[Tuple[int, int], float] = {}
+        try:
+            idx = activations.indices()  # [3, nnz]
+            val = activations.values()
+            # idx[0] = batch index, idx[1] = pos, idx[2] = feature
+            for j in range(idx.shape[1]):
+                if int(idx[0, j].item()) != 0:
+                    continue
+                key = (int(idx[1, j].item()), int(idx[2, j].item()))
+                if key in targets:
+                    found_acts[key] = float(val[j].item())
+        except Exception:
+            # 如果 sparse 结构不符合预期，直接失败
+            raise ValueError("failed to parse sparse activations")
+
+        # 要求每个 node 都能在对应 pos 取到激活值，否则返回 None（与单 feature 行为一致）
+        missing = [(p, f) for (p, f) in targets if (p, f) not in found_acts]
+        if missing:
+            print(f"该位置没有激活值，无法进行多 feature steering: missing={missing}")
+            return None
+
+        # 计算每个 pos 的总 delta（多个 feature 可能落在同一个 pos）
+        pos_to_delta: Dict[int, torch.Tensor] = {}
+        node_details: List[Dict[str, Any]] = []
+        for n in normalized_nodes:
+            pos = n["pos"]
+            feature = n["feature"]
+            scale = n["steering_scale"]
+            activation_value = found_acts[(pos, feature)]
+            feature_contribution = activation_value * WDs[feature]  # [d_model]
+            delta = (scale - 1.0) * feature_contribution
+            if pos not in pos_to_delta:
+                pos_to_delta[pos] = delta
+            else:
+                pos_to_delta[pos] = pos_to_delta[pos] + delta
+            node_details.append(
+                {
+                    "pos": pos,
+                    "feature": feature,
+                    "steering_scale": scale,
+                    "activation_value": activation_value,
+                }
+            )
+
+        # 原始输出（无修改）
+        try:
+            self.model.reset_hooks()
+        except Exception:
+            pass
+        original_output, _ = self.model.run_with_cache(fen, prepend_bos=False)
+
+        # Hook：在指定 pos 上加上 delta
+        def modify_hook(tensor, hook):
+            modified_activation = tensor.clone()
+            for pos, delta in pos_to_delta.items():
+                modified_activation[0, pos] = modified_activation[0, pos] + delta
+            return modified_activation
+
+        self.model.add_hook(hook_name, modify_hook)
+        modified_output, _ = self.model.run_with_cache(fen, prepend_bos=False)
+        try:
+            self.model.reset_hooks()
+        except Exception:
+            pass
+
+        logit_diff = original_output[0] - modified_output[0]
+        return {
+            "feature_type": feature_type,
+            "layer": layer,
+            "nodes": node_details,
+            "original_output": original_output[0].detach().cpu().numpy().tolist(),
+            "modified_output": modified_output[0].detach().cpu().numpy().tolist(),
+            "logit_diff": logit_diff.detach().cpu().numpy().tolist(),
+            "hook_name": hook_name,
+        }
     
     def analyze_steering_results(self, ablation_result: Dict[str, Any], 
                                fen: str) -> Dict[str, Any]:
@@ -164,81 +301,105 @@ class PatchingAnalyzer:
         chess_board = chess.Board(fen)
         legal_uci_set = set(move.uci() for move in chess_board.legal_moves)
         
-        # 收集所有合法移动的索引和logit值
-        legal_indices = []
-        legal_original_logits = []
-        legal_modified_logits = []
-        
+        # 收集所有合法移动的 idx / uci / logit
+        legal_moves: list[dict[str, Any]] = []
         for idx in range(1858):
             try:
                 uci = lboard.idx2uci(idx)
-                if uci in legal_uci_set:
-                    legal_indices.append(idx)
-                    legal_original_logits.append(original_output[0, idx].item())
-                    legal_modified_logits.append(modified_output[0, idx].item())
             except Exception:
                 continue
-        
-        # 计算原始和修改后的概率（对合法移动的logit做softmax）
-        if legal_indices and legal_original_logits and legal_modified_logits:
-            # 确保是float tensor并放到同一device
-            device = original_output.device if hasattr(original_output, 'device') else torch.device('cpu')
-            
-            # 直接从original_output和modified_output中提取合法移动的logit
-            legal_indices_tensor = torch.tensor(legal_indices, device=device)
-            orig_logits_legals = original_output[0, legal_indices_tensor].to(device).float()
-            mod_logits_legals = modified_output[0, legal_indices_tensor].to(device).float()
-            
-            # Softmax归一化（对所有合法移动）
-            original_probs = torch.softmax(orig_logits_legals, dim=0)
-            modified_probs = torch.softmax(mod_logits_legals, dim=0)
-            
-            # 计算概率差异（修改后 - 原始）
-            prob_diff = modified_probs - original_probs
-        else:
-            original_probs = torch.tensor([])
-            modified_probs = torch.tensor([])
-            prob_diff = torch.tensor([])
+            if uci not in legal_uci_set:
+                continue
+            legal_moves.append(
+                {
+                    "idx": idx,
+                    "uci": uci,
+                    "original_logit": float(original_output[0, idx].item()),
+                    "modified_logit": float(modified_output[0, idx].item()),
+                }
+            )
+
+        # 统一概率口径：全部通过 src/chess/move.py 的 get_move_from_policy_output_with_prob 获取 all-legal softmax 概率
+        original_prob_by_uci: dict[str, float] = {}
+        modified_prob_by_uci: dict[str, float] = {}
+        if get_move_from_policy_output_with_prob is not None:
+            try:
+                orig_logits_last = original_output[0, :].detach().cpu()
+                mod_logits_last = modified_output[0, :].detach().cpu()
+                orig_all = get_move_from_policy_output_with_prob(orig_logits_last.unsqueeze(0), fen, return_list=True)
+                mod_all = get_move_from_policy_output_with_prob(mod_logits_last.unsqueeze(0), fen, return_list=True)
+                if isinstance(orig_all, list):
+                    original_prob_by_uci = {uci: float(prob) for (uci, _logit, prob) in orig_all}
+                if isinstance(mod_all, list):
+                    modified_prob_by_uci = {uci: float(prob) for (uci, _logit, prob) in mod_all}
+            except Exception:
+                original_prob_by_uci = {}
+                modified_prob_by_uci = {}
         
         # 获取所有合法移动的logit差异和概率差异
-        legal_moves_with_diff = []
-        for i, idx in enumerate(legal_indices):
-            try:
-                uci = lboard.idx2uci(idx)
-                logit_diff_value = logit_diff[0, idx].item()
-                original_logit = legal_original_logits[i]
-                modified_logit = legal_modified_logits[i]
-                
-                # 获取概率差异
-                prob_diff_value = prob_diff[i].item() if i < len(prob_diff) else 0.0
-                original_prob = original_probs[i].item() if i < len(original_probs) else 0.0
-                modified_prob = modified_probs[i].item() if i < len(modified_probs) else 0.0
-                
-                legal_moves_with_diff.append({
-                    'uci': uci,
-                    'diff': logit_diff_value,
-                    'original_logit': original_logit,
-                    'modified_logit': modified_logit,
-                    'prob_diff': prob_diff_value,
-                    'original_prob': original_prob,
-                    'modified_prob': modified_prob,
-                    'idx': idx
-                })
-            except Exception:
-                continue
+        # 计算 top-k 展示口径：在 all-legal softmax 概率上取 top-k 再归一化（仅用于“Top Moves”展示）
+        topk = 5
+        def _topk_renorm(prob_by_uci: dict[str, float], k: int) -> dict[str, float]:
+            if not prob_by_uci:
+                return {}
+            items = sorted(prob_by_uci.items(), key=lambda x: x[1], reverse=True)[: max(1, int(k))]
+            s = sum(p for _, p in items)
+            if s <= 0:
+                return {uci: 0.0 for uci, _ in items}
+            return {uci: float(p / s) for uci, p in items}
+
+        original_prob_topk_by_uci = _topk_renorm(original_prob_by_uci, topk)
+        modified_prob_topk_by_uci = _topk_renorm(modified_prob_by_uci, topk)
+
+        legal_moves_with_diff: list[dict[str, Any]] = []
+        for m in legal_moves:
+            uci = m["uci"]
+            idx = m["idx"]
+            original_prob = float(original_prob_by_uci.get(uci, 0.0))
+            modified_prob = float(modified_prob_by_uci.get(uci, 0.0))
+            original_prob_topk = float(original_prob_topk_by_uci.get(uci, 0.0))
+            modified_prob_topk = float(modified_prob_topk_by_uci.get(uci, 0.0))
+            legal_moves_with_diff.append(
+                {
+                    "uci": uci,
+                    "diff": float(logit_diff[0, idx].item()),
+                    "original_logit": m["original_logit"],
+                    "modified_logit": m["modified_logit"],
+                    "prob_diff": float(modified_prob - original_prob),
+                    "original_prob": original_prob,
+                    "modified_prob": modified_prob,
+                    "prob_diff_topk": float(modified_prob_topk - original_prob_topk),
+                    "original_prob_topk": original_prob_topk,
+                    "modified_prob_topk": modified_prob_topk,
+                    "idx": idx,
+                }
+            )
         
-        # 生成按概率差异排序的列表（降序）
-        sorted_by_prob = sorted(
+        # 注意：这里区分三种排序口径，避免“Top Moves by Prob”语义混乱
+        # 1) prob_diff 排序：找“概率提升/下降最多”的走法（更适合 promoting/inhibiting）
+        sorted_by_prob_diff = sorted(
             legal_moves_with_diff,
-            key=lambda x: x['modified_prob'] - x['original_prob'],
-            reverse=True
+            key=lambda x: x.get("prob_diff", 0.0),
+            reverse=True,
+        )
+        # 2) prob 排序：找“修改后概率最高”的走法（更适合 top moves by prob）
+        sorted_by_modified_prob = sorted(
+            legal_moves_with_diff,
+            key=lambda x: x.get("modified_prob", 0.0),
+            reverse=True,
+        )
+        # 3) top-k prob 排序：匹配 logit-lens 的展示口径
+        sorted_by_modified_prob_topk = sorted(
+            legal_moves_with_diff,
+            key=lambda x: x.get("modified_prob_topk", 0.0),
+            reverse=True,
         )
         # 仍保留logit差异排序以备需要
         sorted_by_logit = sorted(legal_moves_with_diff, key=lambda x: x['diff'], reverse=True)
         
         # 基于概率差异的前后5个（正向促进=概率提升最多；抑制=概率下降最多）
-        promoting_moves = sorted_by_prob[:5]
-        inhibiting_moves = list(reversed(sorted_by_prob[-5:]))
+        promoting_moves = sorted_by_prob_diff[:5]
+        inhibiting_moves = list(reversed(sorted_by_prob_diff[-5:]))
         
         # 统计信息
         total_legal_moves = len(legal_moves_with_diff)
@@ -272,15 +433,22 @@ class PatchingAnalyzer:
                 'min_prob_diff': min_prob_diff
             },
             'ablation_info': {
-                'feature_type': ablation_result['feature_type'],
-                'layer': ablation_result['layer'],
-                'pos': ablation_result['pos'],
-                'feature': ablation_result['feature'],
-                'activation_value': ablation_result['activation_value'],
-                'hook_name': ablation_result['hook_name']
+                'feature_type': ablation_result.get('feature_type'),
+                'layer': ablation_result.get('layer'),
+                # 单 feature 时这些字段存在；多 feature 时用 nodes 替代
+                'pos': ablation_result.get('pos'),
+                'feature': ablation_result.get('feature'),
+                'activation_value': ablation_result.get('activation_value'),
+                'nodes': ablation_result.get('nodes'),
+                'hook_name': ablation_result.get('hook_name')
             },
-            # 返回按概率差异排序的前10个结果，便于前端直接展示
-            'top_moves_by_prob': sorted_by_prob[:10]
+            # 返回两套“Top moves”：
+            # - top_moves_by_prob: 按修改后概率（all-legal softmax）排序
+            # - top_moves_by_prob_topk: 按修改后概率（top-k legal softmax，匹配 logit-lens）排序
+            'top_moves_by_prob': sorted_by_modified_prob[:10],
+            'top_moves_by_prob_topk': sorted_by_modified_prob_topk[:10],
+            # 保留：按 prob_diff 排序的前10个（用于诊断/对齐）
+            'top_moves_by_prob_diff': sorted_by_prob_diff[:10],
         }
 
 
@@ -315,6 +483,12 @@ def get_patching_analyzer(metadata: Optional[Dict[str, Any]] = None, combo_id: O
     """
     global _patching_analyzers, _current_combo_id
     
+    # 优先从 metadata 中获取组合ID（前端会传 sae_combo_id）
+    if combo_id is None and isinstance(metadata, dict):
+        meta_combo_id = metadata.get("sae_combo_id")
+        if isinstance(meta_combo_id, str) and meta_combo_id.strip():
+            combo_id = meta_combo_id.strip()
+
     # 获取当前组合ID
     if combo_id is None:
         try:
@@ -409,3 +583,35 @@ def run_feature_steering_analysis(fen: str, feature_type: str, layer: int,
     analysis_result = analyzer.analyze_steering_results(ablation_result, fen)
     
     return analysis_result
+
+
+def run_multi_feature_steering_analysis(
+    fen: str,
+    feature_type: str,
+    layer: int,
+    nodes: List[Dict[str, Any]],
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    运行多 feature steering 分析（每个 feature 对应一个 position）并返回结果。
+
+    Args:
+        fen: FEN 字符串
+        feature_type: 'transcoder' 或 'lorsa'
+        layer: 层号
+        nodes: node 列表，每个元素至少包含 pos/feature/steering_scale
+        metadata: 保留参数以保证兼容性（目前不使用）
+
+    Returns:
+        与 run_feature_steering_analysis 同结构的分析结果。
+    """
+    analyzer = get_patching_analyzer(metadata)
+    ablation_result = analyzer.multi_steering_analysis(
+        fen=fen,
+        feature_type=feature_type,
+        layer=layer,
+        nodes=nodes,
+    )
+    if ablation_result is None:
+        return {"error": "至少有一个 node 在对应 pos 上没有激活值，无法进行 steering"}
+    return analyzer.analyze_steering_results(ablation_result, fen)

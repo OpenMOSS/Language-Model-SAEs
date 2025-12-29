@@ -19,6 +19,7 @@ import { LogitLensPage } from "./routes/logit-lens/page";
 import { TacticFeaturesPage } from "./routes/tactic-features/page";
 import { GlobalWeightPage } from "./routes/global-weight/page";
 import { FunctionalMicrocircuitPage } from "./routes/functional-microcircuit/page";
+import { PositionFeaturePage } from "./routes/position-feature/page";
 
 const router = createBrowserRouter([
   {
@@ -76,6 +77,10 @@ const router = createBrowserRouter([
   {
     path: "/functional-microcircuit",
     element: <FunctionalMicrocircuitPage />,
+  },
+  {
+    path: "/position-feature",
+    element: <PositionFeaturePage />,
   },
   {
     path: "/",
