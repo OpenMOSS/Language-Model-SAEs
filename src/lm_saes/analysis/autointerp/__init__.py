@@ -6,13 +6,12 @@ process, organized by purpose:
 - evaluation_prompts: Prompts for evaluating feature explanations
 """
 
+from lm_saes.analysis.samples import Segment, TokenizedSample, process_token
+
 from .autointerp_base import (
     AutoInterpConfig,
     ExplainerType,
     ScorerType,
-    Segment,
-    TokenizedSample,
-    process_token,
 )
 from .evaluation_prompts import (
     generate_detection_prompt,

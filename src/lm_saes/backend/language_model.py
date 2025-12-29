@@ -344,7 +344,7 @@ class TransformerLensLanguageModel(LanguageModel):
             max_length=self.cfg.max_length,
             return_offsets_mapping=True,
         )
-        offsets = encoding["offset_mapping"]
+        offsets = encoding["offset_mapping"].tolist()
         tokens = encoding["input_ids"]
         has_bos_prepended = torch.all(tokens[:, 0] == self.bos_token_id)
         if self.cfg.prepend_bos and not has_bos_prepended:
@@ -354,7 +354,10 @@ class TransformerLensLanguageModel(LanguageModel):
         if n_context is not None:
             offsets = [offset_[:n_context] for offset_ in offsets]
             offsets = [offset_ + [None] * (n_context - len(offset_)) for offset_ in offsets]
-        return [[{"key": "text", "range": offset} for offset in offset_] for offset_ in offsets]
+        return [
+            [{"key": "text", "range": offset} if offset is not None else None for offset in offset_]
+            for offset_ in offsets
+        ]
 
     @timer.time("to_activations")
     @torch.no_grad()

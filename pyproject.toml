@@ -22,7 +22,8 @@ dependencies = [
     "jaxtyping>=0.2.34",
     "safetensors>=0.4.5",
     "pydantic>=2.10.6",
-    "argparse>=1.4.0",
+    "typer>=0.15.0",
+    "rich>=13.0.0",
     "pyyaml>=6.0.2",
     "tomlkit>=0.13.2",
     "torch==2.9.0",
@@ -63,7 +64,7 @@ email = "junxuanwang21@m.fudan.edu.cn"
 text = "MIT"
 
 [project.scripts]
-lm-saes = "lm_saes.entrypoint:entrypoint"
+lm-saes = "lm_saes.cli:entrypoint"
 
 [build-system]
 requires = ["uv_build>=0.9.6,<0.10.0"]
@@ -72,6 +73,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "transformer-lens",
+    "argparse>=1.4.0",
     "jupyter>=1.1.1",
     "ipywidgets>=8.1.5",
     "pytest>=8.3.3",
