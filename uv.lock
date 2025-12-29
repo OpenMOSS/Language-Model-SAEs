@@ -1483,7 +1483,6 @@ name = "lm-saes"
 version = "2.0.0b4"
 source = { editable = "." }
 dependencies = [
-    { name = "argparse" },
     { name = "datasets" },
     { name = "einops" },
     { name = "fastapi" },
@@ -1501,6 +1500,7 @@ dependencies = [
     { name = "pymongo" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "rich" },
     { name = "safetensors" },
     { name = "tiktoken" },
     { name = "tomlkit" },
@@ -1508,6 +1508,7 @@ dependencies = [
     { name = "torchvision" },
     { name = "transformer-lens" },
     { name = "transformers" },
+    { name = "typer" },
     { name = "typing-extensions" },
     { name = "uvicorn" },
     { name = "wandb" },
@@ -1528,6 +1529,7 @@ triton = [
 [package.dev-dependencies]
 dev = [
     { name = "apscheduler" },
+    { name = "argparse" },
     { name = "basedpyright" },
     { name = "gradio" },
     { name = "ipykernel" },
@@ -1564,7 +1566,6 @@ flash-attn = [
 
 [package.metadata]
 requires-dist = [
-    { name = "argparse", specifier = ">=1.4.0" },
     { name = "datasets", specifier = ">=3.0.2" },
     { name = "einops", specifier = ">=0.8.0" },
     { name = "fastapi", specifier = ">=0.115.4" },
@@ -1582,6 +1583,7 @@ requires-dist = [
     { name = "pymongo", specifier = ">=4.10.1" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "rich", specifier = ">=13.0.0" },
     { name = "sae-lens", marker = "extra == 'sae-lens'", specifier = ">=6.22.3" },
     { name = "safetensors", specifier = ">=0.4.5" },
     { name = "tiktoken", specifier = ">=0.8.0" },
@@ -1592,6 +1594,7 @@ requires-dist = [
     { name = "transformer-lens", editable = "TransformerLens" },
     { name = "transformers", specifier = ">=4.57.1" },
     { name = "triton", marker = "extra == 'triton'" },
+    { name = "typer", specifier = ">=0.15.0" },
     { name = "typing-extensions", specifier = ">=4.13.2" },
     { name = "uvicorn", specifier = ">=0.32.0" },
     { name = "wandb", specifier = ">=0.18.5" },
@@ -1601,6 +1604,7 @@ provides-extras = ["npu", "triton", "sae-lens"]
 [package.metadata.requires-dev]
 dev = [
     { name = "apscheduler", specifier = ">=3.11.1" },
+    { name = "argparse", specifier = ">=1.4.0" },
     { name = "basedpyright", specifier = ">=1.21.0" },
     { name = "gradio", specifier = ">=5.34.0" },
     { name = "ipykernel", specifier = ">=6.29.5" },

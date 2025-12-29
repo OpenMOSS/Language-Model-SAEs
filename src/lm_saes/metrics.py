@@ -66,7 +66,7 @@ class Metric(ABC):
         return {}
 
     def compute(self) -> dict[str, Number]:
-        """Compute the metric.
+        """Compute the metric. This should also reset the metric's internal state.
 
         Returns:
             Dictionary of metric names to values."""
