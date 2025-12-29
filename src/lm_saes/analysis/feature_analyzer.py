@@ -111,7 +111,10 @@ class FeatureAnalyzer:
             )
             sample_result_cur = {
                 k: v[
-                    : min(self.cfg.subsamples[name]["n_samples"], item((sample_result_cur["elt"] != -torch.inf).sum()))
+                    : min(
+                        self.cfg.subsamples[name]["n_samples"],
+                        item(to_local((sample_result_cur["elt"] != -torch.inf).sum())),
+                    )
                 ]
                 for k, v in sample_result_cur.items()
             }
