@@ -1062,9 +1062,11 @@ def list_sae_configs():
             import yaml
             with open(config_file, 'r') as f:
                 cfg = yaml.safe_load(f)
+            sae_name = cfg.get("sae_name", config_file.stem)
             configs.append({
-                "name": cfg.get("sae_name", config_file.stem),
+                "name": sae_name,
                 "file": config_file.name,
+                "sae_name": sae_name,  # Include sae_name for exact matching
             })
         except Exception as e:
             print(f"Error reading {config_file}: {e}")
