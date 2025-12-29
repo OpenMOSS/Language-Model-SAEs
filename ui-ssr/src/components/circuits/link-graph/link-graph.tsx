@@ -314,9 +314,20 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     const updateDimensions = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect()
-        setContainerDimensions({
-          width: rect.width,
-          height: rect.height - 20,
+        const newWidth = rect.width
+        const newHeight = rect.height - 20
+
+        setContainerDimensions((prev) => {
+          if (
+            Math.abs(prev.width - newWidth) < 1 &&
+            Math.abs(prev.height - newHeight) < 1
+          ) {
+            return prev
+          }
+          return {
+            width: newWidth,
+            height: newHeight,
+          }
         })
       }
     }
