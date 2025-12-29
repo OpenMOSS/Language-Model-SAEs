@@ -1,0 +1,2 @@
+diffusion_name: ddpm_imagenet
+path: diffusion-posterior-sampling/models/imagenet256.pt

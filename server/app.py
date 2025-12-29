@@ -130,6 +130,11 @@ DEFAULT_FEATURE_VIZ_TASK_CFG = DIFF_DIR / "configs" / "cnnsae_feature_max_config
 DEFAULT_FEATURE_VIZ_MODEL_CFG = DIFF_DIR / "configs" / "imagenet_model_config.yaml" if DIFF_DIR.exists() else None
 DEFAULT_FEATURE_VIZ_DIFFUSION_CFG = DIFF_DIR / "configs" / "diffusion_config.yaml" if DIFF_DIR.exists() else None
 
+# Feature visualize config directories
+FEATURE_VIZ_CONFIG_DIR = ROOT_DIR / "feature_visualize_config"
+FEATURE_VIZ_DIFFUSION_DIR = FEATURE_VIZ_CONFIG_DIR / "Diffusion" if FEATURE_VIZ_CONFIG_DIR.exists() else None
+FEATURE_VIZ_SAE_DIR = FEATURE_VIZ_CONFIG_DIR / "SAE" if FEATURE_VIZ_CONFIG_DIR.exists() else None
+
 
 def _build_feature_viz_config(
     *,
@@ -137,55 +142,119 @@ def _build_feature_viz_config(
     image_size: Optional[int] = None,
     batch_size: int = 1,
     device_override: Optional[str] = None,
+    diffusion_config: Optional[str] = None,
+    sae_config: Optional[str] = None,
 ) -> Optional["CNNSAEFeatureMaxConfig"]:
     """
-    Create a CNNSAEFeatureMaxConfig using the default yaml files bundled in diffusion-posterior-sampling.
+    Create a CNNSAEFeatureMaxConfig using config files.
+    If diffusion_config and sae_config are provided, use them from feature_visualize_config.
+    Otherwise, use default configs from diffusion-posterior-sampling.
     """
     if CNNSAEFeatureMaxConfig is None:
         return None
     
-    # Check if config files exist
-    if (
-        DEFAULT_FEATURE_VIZ_TASK_CFG is None
-        or DEFAULT_FEATURE_VIZ_MODEL_CFG is None
-        or DEFAULT_FEATURE_VIZ_DIFFUSION_CFG is None
-        or not DEFAULT_FEATURE_VIZ_TASK_CFG.exists()
-        or not DEFAULT_FEATURE_VIZ_MODEL_CFG.exists()
-        or not DEFAULT_FEATURE_VIZ_DIFFUSION_CFG.exists()
-    ):
-        print("WARNING: Feature visualize config files not found")
-        return None
-
     try:
-        # Load and fix relative paths in config files
         import yaml
         import tempfile
-        import os
         
-        # Load model config and fix model_path if it's relative
-        with open(DEFAULT_FEATURE_VIZ_MODEL_CFG, 'r') as f:
-            model_cfg = yaml.safe_load(f)
-        
-        model_config_path = str(DEFAULT_FEATURE_VIZ_MODEL_CFG)
-        if 'model_path' in model_cfg:
-            model_path = Path(model_cfg['model_path'])
-            if not model_path.is_absolute():
-                # Convert relative path to absolute path relative to DIFF_DIR
-                abs_model_path = DIFF_DIR / model_path
-                if abs_model_path.exists():
-                    model_cfg['model_path'] = str(abs_model_path)
-                    # Create a temporary file with the modified config
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
-                        yaml.dump(model_cfg, tmp, default_flow_style=False)
-                        model_config_path = tmp.name
-                    print(f"  Fixed model_path: {model_path} -> {abs_model_path}")
-                else:
-                    print(f"  WARNING: Model file not found at {abs_model_path}, using original path")
+        # Determine which configs to use
+        if diffusion_config and sae_config and FEATURE_VIZ_DIFFUSION_DIR and FEATURE_VIZ_SAE_DIR:
+            # Use custom configs from feature_visualize_config
+            diffusion_config_path = FEATURE_VIZ_DIFFUSION_DIR / diffusion_config
+            sae_config_path = FEATURE_VIZ_SAE_DIR / sae_config
+            
+            if not diffusion_config_path.exists():
+                print(f"WARNING: Diffusion config not found: {diffusion_config_path}")
+                return None
+            if not sae_config_path.exists():
+                print(f"WARNING: SAE config not found: {sae_config_path}")
+                return None
+            
+            # Load diffusion config to get model path
+            with open(diffusion_config_path, 'r') as f:
+                diffusion_cfg = yaml.safe_load(f)
+            model_path = diffusion_cfg.get("path", "")
+            if not model_path:
+                print(f"WARNING: No model path in diffusion config")
+                return None
+            
+            # Convert relative path to absolute if needed
+            model_path_obj = Path(model_path)
+            if not model_path_obj.is_absolute():
+                # Try relative to DIFF_DIR first
+                abs_model_path = DIFF_DIR / model_path_obj
+                if not abs_model_path.exists():
+                    # Try relative to ROOT_DIR
+                    abs_model_path = ROOT_DIR / model_path_obj
+                model_path = str(abs_model_path) if abs_model_path.exists() else model_path
+            
+            # Create a temporary model config file
+            model_cfg = {
+                "image_size": image_size or 256,
+                "num_channels": 256,
+                "num_res_blocks": 2,
+                "channel_mult": "",
+                "learn_sigma": True,
+                "class_cond": False,
+                "use_checkpoint": False,
+                "attention_resolutions": "32,16,8",
+                "num_heads": 4,
+                "num_head_channels": 64,
+                "num_heads_upsample": -1,
+                "use_scale_shift_norm": True,
+                "dropout": 0.0,
+                "resblock_updown": True,
+                "use_fp16": False,
+                "use_new_attention_order": False,
+                "model_path": model_path,
+            }
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
+                yaml.dump(model_cfg, tmp, default_flow_style=False)
+                model_config_path = tmp.name
+            
+            # Use default diffusion config (sampling parameters)
+            diffusion_config_path = str(DEFAULT_FEATURE_VIZ_DIFFUSION_CFG) if DEFAULT_FEATURE_VIZ_DIFFUSION_CFG and DEFAULT_FEATURE_VIZ_DIFFUSION_CFG.exists() else str(DIFF_DIR / "configs" / "diffusion_config.yaml")
+            task_config_path = str(sae_config_path)
+        else:
+            # Use default configs
+            if (
+                DEFAULT_FEATURE_VIZ_TASK_CFG is None
+                or DEFAULT_FEATURE_VIZ_MODEL_CFG is None
+                or DEFAULT_FEATURE_VIZ_DIFFUSION_CFG is None
+                or not DEFAULT_FEATURE_VIZ_TASK_CFG.exists()
+                or not DEFAULT_FEATURE_VIZ_MODEL_CFG.exists()
+                or not DEFAULT_FEATURE_VIZ_DIFFUSION_CFG.exists()
+            ):
+                print("WARNING: Feature visualize config files not found")
+                return None
+            
+            # Load model config and fix model_path if it's relative
+            with open(DEFAULT_FEATURE_VIZ_MODEL_CFG, 'r') as f:
+                model_cfg = yaml.safe_load(f)
+            
+            model_config_path = str(DEFAULT_FEATURE_VIZ_MODEL_CFG)
+            if 'model_path' in model_cfg:
+                model_path = Path(model_cfg['model_path'])
+                if not model_path.is_absolute():
+                    # Convert relative path to absolute path relative to DIFF_DIR
+                    abs_model_path = DIFF_DIR / model_path
+                    if abs_model_path.exists():
+                        model_cfg['model_path'] = str(abs_model_path)
+                        # Create a temporary file with the modified config
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
+                            yaml.dump(model_cfg, tmp, default_flow_style=False)
+                            model_config_path = tmp.name
+                        print(f"  Fixed model_path: {model_path} -> {abs_model_path}")
+                    else:
+                        print(f"  WARNING: Model file not found at {abs_model_path}, using original path")
+            
+            diffusion_config_path = str(DEFAULT_FEATURE_VIZ_DIFFUSION_CFG)
+            task_config_path = str(DEFAULT_FEATURE_VIZ_TASK_CFG)
         
         cfg = CNNSAEFeatureMaxConfig.from_yaml(
             model_config_path=model_config_path,
-            diffusion_config_path=str(DEFAULT_FEATURE_VIZ_DIFFUSION_CFG),
-            task_config_path=str(DEFAULT_FEATURE_VIZ_TASK_CFG),
+            diffusion_config_path=diffusion_config_path,
+            task_config_path=task_config_path,
             device=device_override or device,
             seed=seed,
         )
@@ -958,6 +1027,51 @@ def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = N
         return Response(content="Bookmark not found", status_code=404)
 
 
+@app.get("/feature_visualize/configs/diffusion")
+def list_diffusion_configs():
+    """List available diffusion model configurations."""
+    if FEATURE_VIZ_DIFFUSION_DIR is None or not FEATURE_VIZ_DIFFUSION_DIR.exists():
+        return {"configs": []}
+    
+    configs = []
+    for config_file in sorted(FEATURE_VIZ_DIFFUSION_DIR.glob("*.yaml")):
+        try:
+            import yaml
+            with open(config_file, 'r') as f:
+                cfg = yaml.safe_load(f)
+            configs.append({
+                "name": cfg.get("diffusion_name", config_file.stem),
+                "file": config_file.name,
+                "path": cfg.get("path", ""),
+            })
+        except Exception as e:
+            print(f"Error reading {config_file}: {e}")
+    
+    return {"configs": configs}
+
+
+@app.get("/feature_visualize/configs/sae")
+def list_sae_configs():
+    """List available SAE configurations."""
+    if FEATURE_VIZ_SAE_DIR is None or not FEATURE_VIZ_SAE_DIR.exists():
+        return {"configs": []}
+    
+    configs = []
+    for config_file in sorted(FEATURE_VIZ_SAE_DIR.glob("*.yaml")):
+        try:
+            import yaml
+            with open(config_file, 'r') as f:
+                cfg = yaml.safe_load(f)
+            configs.append({
+                "name": cfg.get("sae_name", config_file.stem),
+                "file": config_file.name,
+            })
+        except Exception as e:
+            print(f"Error reading {config_file}: {e}")
+    
+    return {"configs": configs}
+
+
 @app.post("/feature_visualize/generate")
 def feature_visualize_generate(
     payload: dict = Body(
@@ -970,6 +1084,8 @@ def feature_visualize_generate(
             "seed": 42,
             "image_size": 256,
             "batch_size": 1,
+            "diffusion_config": "ddpm_imagenet.yaml",
+            "sae_config": "layer20.yaml",
         },
     )
 ):
@@ -992,7 +1108,16 @@ def feature_visualize_generate(
     image_size = payload.get("image_size", None)
     batch_size = int(payload.get("batch_size", 1) or 1)
 
-    cfg = _build_feature_viz_config(seed=seed, image_size=image_size, batch_size=batch_size)
+    diffusion_config = payload.get("diffusion_config", None)
+    sae_config = payload.get("sae_config", None)
+    
+    cfg = _build_feature_viz_config(
+        seed=seed,
+        image_size=image_size,
+        batch_size=batch_size,
+        diffusion_config=diffusion_config,
+        sae_config=sae_config,
+    )
     if cfg is None:
         return Response(
             content="feature visualize config could not be constructed (missing dependencies)",

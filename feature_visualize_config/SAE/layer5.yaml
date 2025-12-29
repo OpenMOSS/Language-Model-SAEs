@@ -1,0 +1,75 @@
+sae_name: CNNsae_layer5_auxFalse
+
+conditioning:
+  # 无 GT：直接最大化 operator.forward(x_0_hat)
+  method: act_max
+  params:
+    scale: 1.0
+
+    # 目标模式（可选）：
+    # - objective: max    -> 越大越好（默认）
+    # - objective: capped -> 有上限（cap_value）；超过上限后不再追求更大/或惩罚回落
+    # - objective: target -> 目标值（把激活推到 cap_value 附近）
+    objective: capped
+    cap_value: 15.
+    # capped 的实现方式：
+    # - cap_mode: clip  -> 超过 cap 后梯度为 0（自然停止继续增大）
+    # - cap_mode: hinge -> 超过 cap 会惩罚（更强地压回 cap 附近）
+    cap_mode: clip
+    cap_penalty: 2
+
+    # 可选：让 conditioning 强度随扩散轮次衰减（监督越来越弱）
+    # 若设置 scale_start/scale_end，则每步按 schedule 计算有效 scale
+    scale_start: 1.0
+    scale_end: 0.5
+    scale_hold_frac: 0.2     # 前多少比例保持 start（例如 0.2）
+    scale_schedule: exp   # linear | cosine | exp
+    # 最后若干步直接不加额外监督（hard off）
+    # disable_last_steps: 100   # 最后 20 步强制 scale=0
+    disable_last_frac: 0.05  # 或最后 5% 步强制 scale=0（若同时设置 steps，steps 优先）
+
+data:
+  # 该任务不依赖 data/measurement（只需要生成图像的形状）；保留字段以兼容原结构
+  name: none
+  root: ./data/samples/
+
+measurement:
+  operator:
+    name: cnnsae_feature
+    # 按你的环境修改为实际路径
+    dino_ckpt_path: /inspire/hdd/global_user/hezhengfu-240208120186/gc_project/cnn_project/dino_weight/dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth
+    sae_path: /inspire/hdd/global_user/hezhengfu-240208120186/gc_project/cnn_project/result/huge/cnnsae_layer5_ef16_k64_lr0.0001_auxFalse_img2000000
+    hook_point: stages.2.5.hook_resid_pre
+    target_feature_idx: 9863
+    # reduce:
+    # - max: 只追求峰值
+    # - mean: 只追求整体
+    # - mix: 方案A：alpha * max + (1-alpha) * mean(ReLU)
+    # - lse: 方案B：T * logsumexp(ReLU / T)（软max）
+    reduce: mix
+    # 方案A超参（reduce=mix 时生效）
+    mix_alpha: 0.7
+    # 方案A（可选）alpha 调度：实现“早期 mean 重要，后期 max 重要”
+    # - 设置 start/end 后启用；前 mix_hold_frac 比例保持 start，后续线性过渡到 end
+    mix_alpha_start: 0.25
+    mix_alpha_end: 0.5
+    mix_hold_frac: 0.5
+    # 方案B超参（reduce=lse 时生效）
+    lse_temperature: 0.2
+    lse_use_relu: true
+    # 方案B（可选）温度调度：实现“先大后小”
+    # - 设置 start/end 后启用；前 lse_hold_frac 比例保持 start，后续线性退火到 end
+    # 例如：前 30% step 用 0.5，后面逐步降到 0.1
+    lse_temperature_start: 0.5
+    lse_temperature_end: 0.1
+    lse_hold_frac: 0.3
+    # centert
+    center_frac: 0.5
+    center_mode: crop
+
+  # measurement 不会被使用，但 p_sample_loop 仍会对它做 q_sample，因此给一个 clean noiser
+  noise:
+    name: clean
+  # noise:
+  #   name: gaussian
+  #   sigma: 0.05
