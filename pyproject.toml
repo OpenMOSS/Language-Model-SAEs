@@ -95,6 +95,7 @@ dev = [
     "gradio>=5.34.0",
     "sqlalchemy>=2.0.44",
     "apscheduler>=3.11.1",
+    "commitizen>=4.11.0",
 ]
 docs = [
     "mkdocs-gen-files>=0.5.0",
@@ -199,3 +200,10 @@ requires-dist = ["torch", "einops"]
 [tool.uv.sources.transformer-lens]
 path = "./TransformerLens"
 editable = true
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "pep440"
+version_provider = "uv"
+update_changelog_on_bump = true
