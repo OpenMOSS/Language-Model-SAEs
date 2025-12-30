@@ -842,6 +842,34 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for lorsa")
 
     @override
+    def load_full_state_dict(self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh | None = None) -> None:
+        # Extract and set dataset_average_activation_norm if present
+        norm_keys = [k for k in state_dict.keys() if k.startswith("dataset_average_activation_norm.")]
+        if norm_keys:
+            dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
+            self.set_dataset_average_activation_norm(dataset_norm)
+            state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
+        ckpt_n_qk_heads = state_dict["W_Q"].size(0)
+        if self.cfg.n_qk_heads != ckpt_n_qk_heads:
+            assert self.cfg.n_qk_heads % ckpt_n_qk_heads == 0
+            qk_exp_factor = self.cfg.n_qk_heads // ckpt_n_qk_heads
+            for k in ["W_Q", "W_K", "b_Q", "b_K"]:
+                state_dict[k] = torch.repeat_interleave(state_dict[k], qk_exp_factor, dim=0)
+            if self.cfg.use_post_qk_ln:
+                for k in ["ln_q.w", "ln_k.w"]:
+                    state_dict[k] = torch.repeat_interleave(state_dict[k], qk_exp_factor, dim=0)
+        if device_mesh is None:
+            # Non-distributed checkpoint or DCP checkpoint
+            # Load the state dict through torch API
+            self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
+        else:
+            for k, v in state_dict.items():
+                if not isinstance(v, DTensor):
+                    state_dict[k] = DimMap({}).distribute(v, device_mesh)
+            # Full checkpoint (in .safetensors or .pt format) to be loaded distributedly
+            self.load_distributed_state_dict(state_dict, device_mesh)
+
+    @override
     def load_distributed_state_dict(
         self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
     ) -> None:
