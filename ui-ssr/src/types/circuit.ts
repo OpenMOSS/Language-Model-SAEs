@@ -1,79 +1,99 @@
-// Base types from JSON data (after camelCase transformation)
-export interface Node {
-  nodeId: string
-  feature: number
-  layer: number
-  ctxIdx: number
-  featureType: string
-  tokenProb: number
-  isTargetLogit: boolean
-  clerp: string
-  saeName?: string
-}
+import { z } from 'zod'
+import { FeatureSchema } from './feature'
 
-export interface Edge {
-  source: string
-  target: string
-  weight: number
-}
+export const FeatureNodeSchema = z.object({
+  featureType: z.enum(['lorsa', 'cross layer transcoder']),
+  nodeId: z.string(),
+  layer: z.number(),
+  ctxIdx: z.number(),
+  isTargetLogit: z.boolean(),
+  saeName: z.string(),
+  activation: z.number(),
+  feature: FeatureSchema,
+})
 
-// Positioned types for visualization
-export interface PositionedNode extends Node {
-  pos: [number, number]
-}
+export type FeatureNode = z.infer<typeof FeatureNodeSchema>
 
-export interface PositionedEdge extends Edge {
-  pathStr: string
-}
+export const TokenNodeSchema = z.object({
+  featureType: z.literal('embedding'),
+  nodeId: z.string(),
+  layer: z.number(),
+  ctxIdx: z.number(),
+  token: z.string(),
+})
 
-// Circuit data container
-export interface CircuitData {
-  nodes: Node[]
-  edges: Edge[]
-  metadata: CircuitMetadata
-}
+export type TokenNode = z.infer<typeof TokenNodeSchema>
 
-export interface CircuitMetadata {
-  promptTokens: string[]
-}
+export const ErrorNodeSchema = z.object({
+  featureType: z.enum(['lorsa error', 'mlp reconstruction error']),
+  nodeId: z.string(),
+  layer: z.number(),
+  ctxIdx: z.number(),
+})
 
-export interface VisState {
-  clickedId: string | null
-  hoveredId: string | null
-}
+export type ErrorNode = z.infer<typeof ErrorNodeSchema>
 
-// Raw JSON data structure
-export interface CircuitJsonData {
-  metadata: {
-    slug: string
-    scan: string
-    prompt_tokens: string[]
-    prompt: string
-  }
-  qParams: {
-    linkType: string
-    pinnedIds: string[]
-    clickedId: string
-    supernodes: string[][]
-    sg_pos: string
-  }
-  nodes: {
-    node_id: string
-    feature: number
-    layer: number
-    ctx_idx: number
-    feature_type: string
-    token_prob: number
-    is_target_logit: boolean
-    run_idx: number
-    reverse_ctx_idx: number
-    jsNodeId: string
-    clerp: string
-    sae_name?: string
-  }[]
-  links?: {
-    source: string
-    target: string
-    weight: number
-  }[]
-}
+export const LogitNodeSchema = z.object({
+  featureType: z.literal('logit'),
+  nodeId: z.string(),
+  layer: z.number(),
+  ctxIdx: z.number(),
+  tokenProb: z.number(),
+  token: z.string(),
+})
+
+export type LogitNode = z.infer<typeof LogitNodeSchema>
+
+export const NodeSchema = z.union([
+  FeatureNodeSchema,
+  TokenNodeSchema,
+  ErrorNodeSchema,
+  LogitNodeSchema,
+])
+
+export type Node = z.infer<typeof NodeSchema>
+
+export const EdgeSchema = z.object({
+  source: z.string(),
+  target: z.string(),
+  weight: z.number(),
+})
+
+export type Edge = z.infer<typeof EdgeSchema>
+
+export const PositionedNodeSchema = NodeSchema.and(
+  z.object({
+    pos: z.tuple([z.number(), z.number()]),
+  }),
+)
+
+export type PositionedNode = z.infer<typeof PositionedNodeSchema>
+
+export const PositionedEdgeSchema = EdgeSchema.and(
+  z.object({
+    pathStr: z.string(),
+  }),
+)
+
+export type PositionedEdge = z.infer<typeof PositionedEdgeSchema>
+
+export const CircuitMetadataSchema = z.object({
+  promptTokens: z.array(z.string()),
+})
+
+export type CircuitMetadata = z.infer<typeof CircuitMetadataSchema>
+
+export const CircuitDataSchema = z.object({
+  nodes: z.array(NodeSchema),
+  edges: z.array(EdgeSchema),
+  metadata: CircuitMetadataSchema,
+})
+
+export type CircuitData = z.infer<typeof CircuitDataSchema>
+
+export const VisStateSchema = z.object({
+  clickedId: z.string().nullable(),
+  hoveredId: z.string().nullable(),
+})
+
+export type VisState = z.infer<typeof VisStateSchema>

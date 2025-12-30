@@ -96,6 +96,8 @@ export const useFeatures = (params: {
       start: queryStart,
       end: queryEnd,
     },
+    refetchOnWindowFocus: false,
+    staleTime: 60 * 60 * 1000, // 1 hour
   })
 
   const features = query.data?.pages.flatMap((page) => page) ?? []
@@ -141,6 +143,7 @@ export const useSamples = (params: {
   featureIndex: number
   samplingName: string
   totalLength: number
+  start?: number
   visibleRange?: number
 }) => {
   const [anchor, setAnchor] = useState({
@@ -148,6 +151,7 @@ export const useSamples = (params: {
     featureIndex: params.featureIndex,
     samplingName: params.samplingName,
     visibleRange: params.visibleRange,
+    start: params.start,
   })
 
   if (
@@ -164,31 +168,38 @@ export const useSamples = (params: {
       featureIndex: params.featureIndex,
       samplingName: params.samplingName,
       visibleRange: params.visibleRange,
+      start: params.start,
     })
   }
 
   return useInfiniteQuery({
     queryKey: [
-      'samples',
+      'samplesAll',
       params.dictionary,
       anchor.featureIndex,
       anchor.samplingName,
       anchor.visibleRange,
+      anchor.start,
     ],
-    queryFn: ({ pageParam = 0 }) =>
-      fetchSamples({
+    queryFn: ({ pageParam }) => {
+      if (params.totalLength <= pageParam) return []
+      return fetchSamples({
         data: {
           ...params,
           start: pageParam,
-          length: 5,
+          length: Math.min(5, params.totalLength - pageParam),
           visibleRange: anchor.visibleRange,
         },
-      }),
+      })
+    },
     getNextPageParam: (_, allPages) =>
-      allPages.reduce((acc, page) => acc + page.length, 0) < params.totalLength
-        ? allPages.reduce((acc, page) => acc + page.length, 0)
+      allPages.reduce((acc, page) => acc + page.length, 0) +
+        (params.start ?? 0) <
+      params.totalLength
+        ? allPages.reduce((acc, page) => acc + page.length, 0) +
+          (params.start ?? 0)
         : undefined,
-    initialPageParam: 0,
+    initialPageParam: params.start ?? 0,
   })
 }
 

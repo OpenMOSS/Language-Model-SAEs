@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Annotated, Any, Literal, Optional, Union
 
 import gridfs
 import numpy as np
@@ -7,7 +7,7 @@ import pymongo
 import pymongo.database
 import pymongo.errors
 from bson import ObjectId
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from tqdm import tqdm
 
 from lm_saes.config import (
@@ -51,7 +51,7 @@ class FeatureAnalysis(BaseModel):
     n_analyzed_tokens: Optional[int] = None
     act_times_modalities: Optional[dict[str, float]] = None
     max_feature_acts_modalities: Optional[dict[str, float]] = None
-    samplings: list[FeatureAnalysisSampling]
+    samplings: list[FeatureAnalysisSampling] = []
 
 
 class FeatureRecord(BaseModel):
@@ -108,6 +108,47 @@ class BookmarkRecord(BaseModel):
     notes: Optional[str] = None
 
 
+class CircuitConfig(BaseModel):
+    """Configuration used to generate a circuit graph."""
+
+    desired_logit_prob: float = 0.98
+    max_feature_nodes: int = 256
+    qk_tracing_topk: int = 10
+    node_threshold: float = 0.8
+    edge_threshold: float = 0.98
+    max_n_logits: int = 1
+
+
+class CircuitTextInput(BaseModel):
+    input_type: Literal["plain_text"] = "plain_text"
+    text: str
+
+
+class CircuitChatTemplateInput(BaseModel):
+    input_type: Literal["chat_template"] = "chat_template"
+    messages: list[dict[str, str]]
+
+
+CircuitInput = Annotated[Union[CircuitTextInput, CircuitChatTemplateInput], Field(discriminator="input_type")]
+
+
+class CircuitRecord(BaseModel):
+    """Record for a generated circuit graph."""
+
+    id: str
+    name: Optional[str] = None
+    """Optional custom name/ID for the circuit."""
+    sae_set_name: str
+    sae_series: str
+    prompt: str
+    """The prompt used to generate the circuit."""
+    input: CircuitInput
+    config: CircuitConfig
+    graph_data: dict[str, Any]
+    """The serialized graph data."""
+    created_at: datetime
+
+
 class MongoClient:
     def __init__(self, cfg: MongoDBConfig):
         self.client: pymongo.MongoClient = pymongo.MongoClient(cfg.mongo_uri)
@@ -120,6 +161,7 @@ class MongoClient:
         self.model_collection = self.db["models"]
         self.bookmark_collection = self.db["bookmarks"]
         self.sae_set_collection = self.db["sae_sets"]
+        self.circuit_collection = self.db["circuits"]
         self.sae_collection.create_index([("name", pymongo.ASCENDING), ("series", pymongo.ASCENDING)], unique=True)
         self.sae_collection.create_index([("series", pymongo.ASCENDING)])
         self.analysis_collection.create_index(
@@ -139,6 +181,8 @@ class MongoClient:
             unique=True,
         )
         self.bookmark_collection.create_index([("created_at", pymongo.DESCENDING)])
+        self.circuit_collection.create_index([("sae_series", pymongo.ASCENDING)])
+        self.circuit_collection.create_index([("created_at", pymongo.DESCENDING)])
 
         # Initialize GridFS by default
         self._init_fs()
@@ -256,12 +300,18 @@ class MongoClient:
 
         return FeatureRecord.model_validate(feature)
 
-    def list_features(self, sae_name: str, sae_series: str | None, indices: list[int]) -> list[FeatureRecord]:
+    def list_features(
+        self, sae_name: str, sae_series: str | None, indices: list[int], with_samplings: bool = True
+    ) -> list[FeatureRecord]:
+        projection = {"analyses.samplings": 0} if not with_samplings else None
+
         features = self.feature_collection.find(
-            {"sae_name": sae_name, "sae_series": sae_series, "index": {"$in": indices}}
+            {"sae_name": sae_name, "sae_series": sae_series, "index": {"$in": indices}}, projection=projection
         ).sort("index", pymongo.ASCENDING)
+
         if self.is_gridfs_enabled():
             features = [self._from_gridfs(feature) for feature in features]
+
         return [FeatureRecord.model_validate(feature) for feature in features]
 
     def get_analysis(self, name: str, sae_name: str, sae_series: str) -> Optional[AnalysisRecord]:
@@ -591,18 +641,7 @@ class MongoClient:
         limit: Optional[int] = None,
         skip: int = 0,
     ) -> list[BookmarkRecord]:
-        """List bookmarks with optional filtering.
-
-        Args:
-            sae_name: Optional SAE name filter
-            sae_series: Optional SAE series filter
-            tags: Optional list of tags to filter by (matches any tag)
-            limit: Optional limit on number of results
-            skip: Number of results to skip (for pagination)
-
-        Returns:
-            list[BookmarkRecord]: List of bookmark records
-        """
+        """List bookmarks with optional filtering."""
         query = {}
 
         if sae_name is not None:
@@ -629,18 +668,7 @@ class MongoClient:
         tags: Optional[list[str]] = None,
         notes: Optional[str] = None,
     ) -> bool:
-        """Update an existing bookmark.
-
-        Args:
-            sae_name: Name of the SAE
-            sae_series: Series of the SAE
-            feature_index: Index of the feature
-            tags: Optional new tags for the bookmark
-            notes: Optional new notes for the bookmark
-
-        Returns:
-            bool: True if bookmark was updated, False if it doesn't exist
-        """
+        """Update an existing bookmark."""
         update_data = {}
         if tags is not None:
             update_data["tags"] = tags
@@ -661,15 +689,7 @@ class MongoClient:
         return result.modified_count > 0
 
     def get_bookmark_count(self, sae_name: Optional[str] = None, sae_series: Optional[str] = None) -> int:
-        """Get the total count of bookmarks with optional filtering.
-
-        Args:
-            sae_name: Optional SAE name filter
-            sae_series: Optional SAE series filter
-
-        Returns:
-            int: Total number of bookmarks matching the criteria
-        """
+        """Get the total count of bookmarks with optional filtering."""
         query = {}
         if sae_name is not None:
             query["sae_name"] = sae_name
@@ -746,3 +766,73 @@ class MongoClient:
 
     def list_sae_sets(self) -> list[SAESetRecord]:
         return [SAESetRecord.model_validate(sae_set) for sae_set in self.sae_set_collection.find()]
+
+    def create_circuit(
+        self,
+        sae_set_name: str,
+        sae_series: str,
+        prompt: str,
+        input: CircuitInput,
+        config: CircuitConfig,
+        graph_data: dict[str, Any],
+        name: Optional[str] = None,
+    ) -> str:
+        """Create a new circuit graph record."""
+        circuit_data = {
+            "name": name,
+            "sae_set_name": sae_set_name,
+            "sae_series": sae_series,
+            "prompt": prompt,
+            "input": input.model_dump(),
+            "config": config.model_dump(),
+            "graph_data": graph_data,
+            "created_at": datetime.utcnow(),
+        }
+        result = self.circuit_collection.insert_one(circuit_data)
+        return str(result.inserted_id)
+
+    def get_circuit(self, circuit_id: str) -> Optional[CircuitRecord]:
+        """Get a circuit by its ID."""
+        try:
+            circuit = self.circuit_collection.find_one({"_id": ObjectId(circuit_id)})
+        except Exception:
+            return None
+        if circuit is None:
+            return None
+        circuit["id"] = str(circuit.pop("_id"))
+        return CircuitRecord.model_validate(circuit)
+
+    def list_circuits(
+        self,
+        sae_series: Optional[str] = None,
+        limit: Optional[int] = None,
+        skip: int = 0,
+        with_graph_data: bool = False,
+    ) -> list[dict[str, Any]]:
+        """List circuits with optional filtering."""
+        query: dict[str, Any] = {}
+        if sae_series is not None:
+            query["sae_series"] = sae_series
+
+        projection = {"graph_data": 0} if not with_graph_data else None
+
+        cursor = self.circuit_collection.find(query, projection=projection).sort("created_at", pymongo.DESCENDING)
+
+        if skip > 0:
+            cursor = cursor.skip(skip)
+        if limit is not None:
+            cursor = cursor.limit(limit)
+
+        circuits = []
+        for circuit in cursor:
+            circuit["id"] = str(circuit.pop("_id"))
+            circuits.append(circuit)
+        return circuits
+
+    def delete_circuit(self, circuit_id: str) -> bool:
+        """Delete a circuit by its ID."""
+        try:
+            result = self.circuit_collection.delete_one({"_id": ObjectId(circuit_id)})
+        except Exception:
+            return False
+        return result.deleted_count > 0

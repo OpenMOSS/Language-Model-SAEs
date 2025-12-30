@@ -683,6 +683,21 @@ class CrossCoder(AbstractSparseAutoEncoder):
         return inner_product_matrices / decoder_norm_products
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str,
+        strict_loading: bool = True,
+        fold_activation_scale: bool = True,
+        device_mesh: DeviceMesh | None = None,
+        **kwargs,
+    ):
+        """Load pretrained model."""
         cfg = CrossCoderConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        return cls.from_config(cfg)
+        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
+        return model
+
+    def hf_folder_name(self) -> str:
+        folder_name = self.cfg.sae_type
+        for hook_point in self.cfg.hook_points:
+            folder_name += f"-{hook_point}"
+        return folder_name

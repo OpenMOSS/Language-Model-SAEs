@@ -1155,3 +1155,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             device_mesh=device_mesh,
         )
         return model
+    
+    def hf_folder_name(self) -> str:
+        return "CLT"

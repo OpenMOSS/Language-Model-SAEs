@@ -6,7 +6,8 @@ explanations, including detection and fuzzing evaluation methods.
 
 from typing import Any
 
-from lm_saes.analysis.autointerp.autointerp_base import AutoInterpConfig, TokenizedSample
+from lm_saes.analysis.autointerp.autointerp_base import AutoInterpConfig
+from lm_saes.analysis.samples import TokenizedSample
 
 
 def generate_detection_prompt(

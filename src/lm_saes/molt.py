@@ -593,6 +593,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         return reconstruction
 
     @override
+    @torch.no_grad()
     @timer.time("init_parameters")
     def init_parameters(self, **kwargs) -> None:
         super().init_parameters(**kwargs)
@@ -765,7 +766,45 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             else:
                 self.b_D = nn.Parameter(b_D_global)
 
+    # @classmethod
+    # def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+    #     cfg = MOLTConfig.from_pretrained(pretrained_name_or_path, fold_activation_scale=fold_activation_scale, strict_loading=strict_loading, **kwargs)
+    #     return cls.from_config(cfg)
+
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str,
+        strict_loading: bool = True,
+        fold_activation_scale: bool = True,
+        device_mesh: DeviceMesh | None = None,
+        **kwargs,
+    ):
+        """Load pretrained model."""
         cfg = MOLTConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        return cls.from_config(cfg)
+        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
+        return model
+    
+    @override
+    @timer.time("forward")
+    def forward(
+        self,
+        x: Union[
+            Float[torch.Tensor, "batch d_model"],
+            Float[torch.Tensor, "batch seq_len d_model"],
+        ],
+        encoder_kwargs: dict[str, Any] = {},
+        decoder_kwargs: dict[str, Any] = {},
+    ) -> Union[
+        Float[torch.Tensor, "batch d_model"],
+        Float[torch.Tensor, "batch seq_len d_model"],
+    ]:
+        """Forward pass through the autoencoder.
+        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
+        """
+        feature_acts = self.encode(x, **encoder_kwargs)
+        reconstructed = self.decode(feature_acts, original_x=x)
+        return reconstructed
+    
+    def hf_folder_name(self) -> str:
+        return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"

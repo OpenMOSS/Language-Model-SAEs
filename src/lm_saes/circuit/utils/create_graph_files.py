@@ -20,11 +20,12 @@ class Metadata(BaseModel):
 
 class Node(BaseModel):
     node_id: str
-    feature: int
+    feature: int | None = None
     layer: int
     ctx_idx: int
     feature_type: str
-    token_prob: float = 0.0
+    token: str | None = None
+    token_prob: float | None = None
     sae_name: str | None = None
     is_target_logit: bool = False
     influence: float | None = None
@@ -47,13 +48,10 @@ class Node(BaseModel):
     ):
         """Create a feature node."""
 
-        def cantor_pairing(x, y):
-            return (x + y) * (x + y + 1) // 2 + y
-
         layer = 2 * layer + int(not is_lorsa)
         return cls(
             node_id=f"{layer}_{feat_idx}_{pos}",
-            feature=cantor_pairing(layer, feat_idx),
+            feature=feat_idx,
             layer=layer,
             ctx_idx=pos,
             feature_type="lorsa" if is_lorsa else "cross layer transcoder",
@@ -69,7 +67,6 @@ class Node(BaseModel):
         """Create an error node."""
         return cls(
             node_id=f"{layer}_error_{pos}",
-            feature=-1,
             layer=layer,
             ctx_idx=pos,
             feature_type="lorsa error" if is_lorsa else "mlp reconstruction error",
@@ -77,15 +74,15 @@ class Node(BaseModel):
         )
 
     @classmethod
-    def token_node(cls, pos, vocab_idx, influence=None):
+    def token_node(cls, pos, vocab_idx, token, influence=None):
         """Create a token node."""
         return cls(
             node_id=f"E_{vocab_idx}_{pos}",
-            feature=pos,
             layer=-1,
             ctx_idx=pos,
             feature_type="embedding",
             influence=influence,
+            token=token,
         )
 
     @classmethod
@@ -95,8 +92,8 @@ class Node(BaseModel):
         vocab_idx,
         token,
         num_layers,
-        target_logit=False,
-        token_prob=0.0,
+        target_logit,
+        token_prob,
     ):
         """Create a logit node."""
         layer = 2 * num_layers
@@ -106,6 +103,7 @@ class Node(BaseModel):
             layer=layer,
             ctx_idx=pos,
             feature_type="logit",
+            token=token,
             token_prob=token_prob,
             is_target_logit=target_logit,
         )
@@ -175,7 +173,11 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
                 influence=cumulative_scores[node_idx],
                 activation=interested_activation[orig_feature_idx],
                 lorsa_pattern=graph.lorsa_pattern[node_idx],
-                qk_tracing_results=graph.qk_tracing_results.get(orig_feature_idx.item(), None),
+                qk_tracing_results=(
+                    graph.qk_tracing_results.get(orig_feature_idx.item(), None)
+                    if graph.qk_tracing_results is not None
+                    else None
+                ),
             )
 
         elif node_idx in range(n_features, error_end_idx):
@@ -192,7 +194,12 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
             nodes[node_idx] = Node.error_node(layer, pos, is_lorsa, influence=cumulative_scores[node_idx])
         elif node_idx in range(error_end_idx, token_end_idx):
             pos = node_idx - error_end_idx
-            nodes[node_idx] = Node.token_node(pos, graph.input_tokens[pos], influence=cumulative_scores[node_idx])
+            nodes[node_idx] = Node.token_node(
+                pos,
+                graph.input_tokens[pos],
+                token=process_token(tokenizer.decode(graph.input_tokens[pos])),
+                influence=cumulative_scores[node_idx],
+            )
         elif node_idx in range(token_end_idx, len(cumulative_scores)):
             pos = node_idx - token_end_idx
             nodes[node_idx] = Node.logit_node(

@@ -12,8 +12,12 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DictionariesIndexRouteImport } from './routes/dictionaries.index'
 import { Route as CircuitsIndexRouteImport } from './routes/circuits.index'
+import { Route as BookmarksIndexRouteImport } from './routes/bookmarks.index'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as DictionariesDictionaryNameIndexRouteImport } from './routes/dictionaries.$dictionaryName.index'
+import { Route as CircuitIdIndexRouteImport } from './routes/circuit.$id.index'
 import { Route as DictionariesDictionaryNameFeaturesFeatureIndexRouteImport } from './routes/dictionaries.$dictionaryName.features.$featureIndex'
+import { Route as EmbedDictionariesDictionaryNameFeaturesFeatureIndexRouteImport } from './routes/embed.dictionaries.$dictionaryName.features.$featureIndex'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -30,71 +34,120 @@ const CircuitsIndexRoute = CircuitsIndexRouteImport.update({
   path: '/circuits/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BookmarksIndexRoute = BookmarksIndexRouteImport.update({
+  id: '/bookmarks/',
+  path: '/bookmarks/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/admin/',
+  path: '/admin/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DictionariesDictionaryNameIndexRoute =
   DictionariesDictionaryNameIndexRouteImport.update({
     id: '/dictionaries/$dictionaryName/',
     path: '/dictionaries/$dictionaryName/',
     getParentRoute: () => rootRouteImport,
   } as any)
+const CircuitIdIndexRoute = CircuitIdIndexRouteImport.update({
+  id: '/circuit/$id/',
+  path: '/circuit/$id/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DictionariesDictionaryNameFeaturesFeatureIndexRoute =
   DictionariesDictionaryNameFeaturesFeatureIndexRouteImport.update({
     id: '/dictionaries/$dictionaryName/features/$featureIndex',
     path: '/dictionaries/$dictionaryName/features/$featureIndex',
     getParentRoute: () => rootRouteImport,
   } as any)
+const EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute =
+  EmbedDictionariesDictionaryNameFeaturesFeatureIndexRouteImport.update({
+    id: '/embed/dictionaries/$dictionaryName/features/$featureIndex',
+    path: '/embed/dictionaries/$dictionaryName/features/$featureIndex',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminIndexRoute
+  '/bookmarks': typeof BookmarksIndexRoute
   '/circuits': typeof CircuitsIndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
+  '/circuit/$id': typeof CircuitIdIndexRoute
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
+  '/embed/dictionaries/$dictionaryName/features/$featureIndex': typeof EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admin': typeof AdminIndexRoute
+  '/bookmarks': typeof BookmarksIndexRoute
   '/circuits': typeof CircuitsIndexRoute
   '/dictionaries': typeof DictionariesIndexRoute
+  '/circuit/$id': typeof CircuitIdIndexRoute
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
+  '/embed/dictionaries/$dictionaryName/features/$featureIndex': typeof EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin/': typeof AdminIndexRoute
+  '/bookmarks/': typeof BookmarksIndexRoute
   '/circuits/': typeof CircuitsIndexRoute
   '/dictionaries/': typeof DictionariesIndexRoute
+  '/circuit/$id/': typeof CircuitIdIndexRoute
   '/dictionaries/$dictionaryName/': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
+  '/embed/dictionaries/$dictionaryName/features/$featureIndex': typeof EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
+    | '/bookmarks'
     | '/circuits'
     | '/dictionaries'
+    | '/circuit/$id'
     | '/dictionaries/$dictionaryName'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
+    | '/embed/dictionaries/$dictionaryName/features/$featureIndex'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/admin'
+    | '/bookmarks'
     | '/circuits'
     | '/dictionaries'
+    | '/circuit/$id'
     | '/dictionaries/$dictionaryName'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
+    | '/embed/dictionaries/$dictionaryName/features/$featureIndex'
   id:
     | '__root__'
     | '/'
+    | '/admin/'
+    | '/bookmarks/'
     | '/circuits/'
     | '/dictionaries/'
+    | '/circuit/$id/'
     | '/dictionaries/$dictionaryName/'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
+    | '/embed/dictionaries/$dictionaryName/features/$featureIndex'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+  BookmarksIndexRoute: typeof BookmarksIndexRoute
   CircuitsIndexRoute: typeof CircuitsIndexRoute
   DictionariesIndexRoute: typeof DictionariesIndexRoute
+  CircuitIdIndexRoute: typeof CircuitIdIndexRoute
   DictionariesDictionaryNameIndexRoute: typeof DictionariesDictionaryNameIndexRoute
   DictionariesDictionaryNameFeaturesFeatureIndexRoute: typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
+  EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute: typeof EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -120,11 +173,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CircuitsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/bookmarks/': {
+      id: '/bookmarks/'
+      path: '/bookmarks'
+      fullPath: '/bookmarks'
+      preLoaderRoute: typeof BookmarksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/': {
+      id: '/admin/'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dictionaries/$dictionaryName/': {
       id: '/dictionaries/$dictionaryName/'
       path: '/dictionaries/$dictionaryName'
       fullPath: '/dictionaries/$dictionaryName'
       preLoaderRoute: typeof DictionariesDictionaryNameIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/circuit/$id/': {
+      id: '/circuit/$id/'
+      path: '/circuit/$id'
+      fullPath: '/circuit/$id'
+      preLoaderRoute: typeof CircuitIdIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dictionaries/$dictionaryName/features/$featureIndex': {
@@ -134,16 +208,28 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DictionariesDictionaryNameFeaturesFeatureIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/embed/dictionaries/$dictionaryName/features/$featureIndex': {
+      id: '/embed/dictionaries/$dictionaryName/features/$featureIndex'
+      path: '/embed/dictionaries/$dictionaryName/features/$featureIndex'
+      fullPath: '/embed/dictionaries/$dictionaryName/features/$featureIndex'
+      preLoaderRoute: typeof EmbedDictionariesDictionaryNameFeaturesFeatureIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminIndexRoute: AdminIndexRoute,
+  BookmarksIndexRoute: BookmarksIndexRoute,
   CircuitsIndexRoute: CircuitsIndexRoute,
   DictionariesIndexRoute: DictionariesIndexRoute,
+  CircuitIdIndexRoute: CircuitIdIndexRoute,
   DictionariesDictionaryNameIndexRoute: DictionariesDictionaryNameIndexRoute,
   DictionariesDictionaryNameFeaturesFeatureIndexRoute:
     DictionariesDictionaryNameFeaturesFeatureIndexRoute,
+  EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute:
+    EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

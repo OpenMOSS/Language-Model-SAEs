@@ -625,3 +625,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             model.threshold.copy_(self.activation_function.log_jumprelu_threshold.exp())
 
         return model
+
+    def hf_folder_name(self) -> str:
+        return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"
