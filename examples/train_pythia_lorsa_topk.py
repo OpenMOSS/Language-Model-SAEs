@@ -47,6 +47,7 @@ if __name__ == "__main__":
             encoder_uniform_bound=1 / math.sqrt(768 * 8),
         ),
         trainer=TrainerConfig(
+            amp_dtype=torch.float32,
             lr=2e-4,
             initial_k=64,
             k_warmup_steps=0.1,

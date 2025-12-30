@@ -36,6 +36,7 @@ if __name__ == "__main__":
             init_encoder_with_decoder_transpose=False,
         ),
         trainer=TrainerConfig(
+            amp_dtype=torch.float32,
             initial_k=768 * 12 * 8 // 2,
             k_warmup_steps=1.0,
             k_schedule_type="exponential",
