@@ -35,6 +35,7 @@ if __name__ == "__main__":
             grid_search_init_norm=True,
         ),
         trainer=TrainerConfig(
+            amp_dtype=torch.float32,
             lr=1e-4,
             initial_k=50,
             k_warmup_steps=0.1,

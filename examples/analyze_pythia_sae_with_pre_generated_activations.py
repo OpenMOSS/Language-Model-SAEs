@@ -35,7 +35,7 @@ if __name__ == "__main__":
             activation_factory=ActivationFactoryConfig(
                 sources=[
                     ActivationFactoryActivationsSource(
-                        path=str(args.activation_path),
+                        path=os.path.expanduser(args.activation_path),
                         name="pythia-160m-2d",
                         device="cuda",
                         dtype=torch.float16,
