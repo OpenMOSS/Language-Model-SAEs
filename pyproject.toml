@@ -208,6 +208,6 @@ version_scheme = "pep440"
 version_provider = "uv"
 update_changelog_on_bump = true
 version_files = [
-    "README.md:pip install lm-saes=={version}",
-    "README.md:uv add lm-saes=={version}",
+    "README.md:pip install lm-saes==",
+    "README.md:uv add lm-saes==",
 ]
