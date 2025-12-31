@@ -3,10 +3,12 @@
 from typing import cast
 
 import torch
+import torch.sparse
 import triton
 import triton.language as tl
 
 from lm_saes.utils.logging import get_logger
+from lm_saes.utils.sparse import build_sparse_csr_from_topk, sort_topk_result
 
 logger = get_logger("kernels")
 
@@ -564,3 +566,318 @@ class TritonDecoderAutogradTopK(torch.autograd.Function):
 
         # decoder is contiguous when transposed so this is a matching layout
         return None, feature_acts_grad, decoder_grad
+
+
+@triton.jit
+def masked_matmul_kernel(
+    # ptr
+    output_ptr,  # [batch_size, k]
+    a_ptr,  # [batch_size, d_model]
+    b_ptr,  # [n_cols, d_model]  (e.g. W_D: [d_sae, d_model])
+    indices_ptr,  # [batch_size, k]
+    # shape
+    batch_size,
+    k,
+    d_model,
+    n_cols,
+    # strides
+    stride_a_batch,
+    stride_a_d,
+    stride_b_row,
+    stride_b_d,
+    stride_idx_batch,
+    stride_idx_k,
+    stride_out_batch,
+    stride_out_k,
+    # block size
+    BLOCK_SIZE_D: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    batch_id = pid // k
+    k_idx = pid % k
+
+    if batch_id >= batch_size:
+        return
+
+    col_idx = tl.load(indices_ptr + batch_id * stride_idx_batch + k_idx * stride_idx_k)
+
+    accumulator = 0.0
+
+    for d_start in range(0, d_model, BLOCK_SIZE_D):
+        d_offsets = d_start + tl.arange(0, BLOCK_SIZE_D)
+        mask = d_offsets < d_model
+
+        a_vals = tl.load(
+            a_ptr + batch_id * stride_a_batch + d_offsets * stride_a_d,
+            mask=mask,
+            other=0.0,
+        )
+
+        b_vals = tl.load(
+            b_ptr + col_idx * stride_b_row + d_offsets * stride_b_d,
+            mask=mask,
+            other=0.0,
+        )
+
+        accumulator += tl.sum(a_vals * b_vals)
+
+    tl.store(output_ptr + batch_id * stride_out_batch + k_idx * stride_out_k, accumulator)
+
+
+def masked_matmul(a: torch.Tensor, b: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+    assert a.is_cuda, f"a must be on CUDA, got {a.device}"
+    assert b.is_cuda, f"b must be on CUDA, got {b.device}"
+    assert indices.is_cuda, f"indices must be on CUDA, got {indices.device}"
+    assert a.dim() == 2 and b.dim() == 2 and indices.dim() == 2
+    assert a.shape[0] == indices.shape[0]
+    assert a.shape[1] == b.shape[1]
+
+    batch_size, d_model = a.shape
+    n_cols = b.shape[0]
+    k = indices.shape[1]
+
+    a = a.contiguous()
+    b = b.contiguous()
+    indices = indices.contiguous().to(torch.int64)
+
+    output = torch.empty((batch_size, k), device=a.device, dtype=a.dtype)
+
+    BLOCK_SIZE_D = triton.next_power_of_2(min(d_model, 1024))
+
+    grid = (batch_size * k,)
+
+    masked_matmul_kernel[grid](
+        output,
+        a,
+        b,
+        indices,
+        batch_size,
+        k,
+        d_model,
+        n_cols,
+        a.stride(0),
+        a.stride(1),
+        b.stride(0),
+        b.stride(1),
+        indices.stride(0),
+        indices.stride(1),
+        output.stride(0),
+        output.stride(1),
+        BLOCK_SIZE_D=BLOCK_SIZE_D,
+    )
+
+    return output
+
+
+@triton.jit
+def masked_matmul_with_col_sum_kernel(
+    # ptr
+    output_ptr,  # [batch_size, k]
+    col_sum_ptr,  # [n_cols]
+    a_ptr,  # [batch_size, d_model]
+    b_ptr,  # [n_cols, d_model]
+    indices_ptr,  # [batch_size, k]
+    # shape
+    batch_size,
+    k,
+    d_model,
+    n_cols,
+    # strides
+    stride_a_batch,
+    stride_a_d,
+    stride_b_row,
+    stride_b_d,
+    stride_idx_batch,
+    stride_idx_k,
+    stride_out_batch,
+    stride_out_k,
+    # block size
+    BLOCK_SIZE_D: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    batch_id = pid // k
+    k_idx = pid % k
+
+    if batch_id >= batch_size:
+        return
+
+    col_idx = tl.load(indices_ptr + batch_id * stride_idx_batch + k_idx * stride_idx_k)
+
+    accumulator = 0.0
+
+    for d_start in range(0, d_model, BLOCK_SIZE_D):
+        d_offsets = d_start + tl.arange(0, BLOCK_SIZE_D)
+        mask = d_offsets < d_model
+
+        a_vals = tl.load(
+            a_ptr + batch_id * stride_a_batch + d_offsets * stride_a_d,
+            mask=mask,
+            other=0.0,
+        )
+
+        b_vals = tl.load(
+            b_ptr + col_idx * stride_b_row + d_offsets * stride_b_d,
+            mask=mask,
+            other=0.0,
+        )
+
+        accumulator += tl.sum(a_vals * b_vals)
+
+    # 写入 output
+    tl.store(output_ptr + batch_id * stride_out_batch + k_idx * stride_out_k, accumulator)
+
+    # 用 atomic add 累加到 col_sum[col_idx]
+    tl.atomic_add(col_sum_ptr + col_idx, accumulator)
+
+
+def masked_matmul_with_col_sum(
+    a: torch.Tensor, b: torch.Tensor, indices: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    assert a.is_cuda, f"a must be on CUDA, got {a.device}"
+    assert b.is_cuda, f"b must be on CUDA, got {b.device}"
+    assert indices.is_cuda, f"indices must be on CUDA, got {indices.device}"
+    assert a.dim() == 2 and b.dim() == 2 and indices.dim() == 2
+    assert a.shape[0] == indices.shape[0]
+    assert a.shape[1] == b.shape[1]
+
+    batch_size, d_model = a.shape
+    n_cols = b.shape[0]
+    k = indices.shape[1]
+
+    a = a.contiguous()
+    b = b.contiguous()
+    indices = indices.contiguous().to(torch.int64)
+
+    output = torch.empty((batch_size, k), device=a.device, dtype=a.dtype)
+    col_sum = torch.zeros(n_cols, device=a.device, dtype=a.dtype)
+
+    BLOCK_SIZE_D = triton.next_power_of_2(min(d_model, 1024))
+
+    grid = (batch_size * k,)
+
+    masked_matmul_with_col_sum_kernel[grid](
+        output,
+        col_sum,
+        a,
+        b,
+        indices,
+        batch_size,
+        k,
+        d_model,
+        n_cols,
+        a.stride(0),
+        a.stride(1),
+        b.stride(0),
+        b.stride(1),
+        indices.stride(0),
+        indices.stride(1),
+        output.stride(0),
+        output.stride(1),
+        BLOCK_SIZE_D=BLOCK_SIZE_D,
+    )
+
+    return output, col_sum
+
+
+class TopKSparseFusedSAE(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx,
+        x: torch.Tensor,
+        W_E: torch.Tensor,
+        b_E: torch.Tensor,
+        W_D: torch.Tensor,
+        b_D: torch.Tensor,
+        k: int,
+        sparsity_include_decoder_norm: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        d_sae = W_E.shape[1]
+
+        hidden_pre = x @ W_E + b_E
+
+        if sparsity_include_decoder_norm:
+            _, topk_indices = torch.topk(hidden_pre * W_D.norm(dim=-1, keepdim=True), k=k, dim=-1, sorted=False)
+            topk_values = torch.gather(hidden_pre, dim=1, index=topk_indices)
+        else:
+            topk_values, topk_indices = torch.topk(hidden_pre, k=k, dim=-1, sorted=False)
+
+        # build feature acts, only for log
+        feature_acts = torch.zeros_like(hidden_pre)
+        feature_acts.scatter_(dim=1, index=topk_indices, src=topk_values)
+
+        # build sparse feature acts
+        topk_indices_sorted, topk_values_sorted = sort_topk_result(topk_indices, topk_values)
+        feature_acts_sparse = build_sparse_csr_from_topk(topk_indices_sorted, topk_values_sorted, d_sae)
+
+        # decode
+        reconstructed = torch.sparse.mm(feature_acts_sparse, W_D) + b_D
+
+        ctx.save_for_backward(
+            x,
+            W_E,
+            b_E,
+            W_D,
+            b_D,
+            feature_acts_sparse,
+            topk_indices_sorted,
+            topk_values_sorted,
+        )
+        ctx.k = k
+
+        return reconstructed, feature_acts, hidden_pre
+
+    @staticmethod
+    def backward(
+        ctx,
+        grad_output: torch.Tensor,
+        grad_feature_acts: torch.Tensor | None = None,
+        grad_hidden_pre: torch.Tensor | None = None,
+    ) -> tuple[None, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, None, None]:
+        (
+            x,
+            W_E,
+            b_E,
+            W_D,
+            b_D,
+            feature_acts_sparse,
+            topk_indices_sorted,
+            topk_values_sorted,
+        ) = ctx.saved_tensors
+        k = ctx.k
+
+        batch_size, d_model = x.shape
+        d_sae = W_E.shape[1]
+
+        grad_W_E = grad_b_E = grad_W_D = grad_b_D = None
+
+        # grad_b_D
+        grad_b_D = grad_output.sum(dim=0)
+
+        # grad_W_D
+        feature_acts_sparse_T = feature_acts_sparse.to_sparse_coo().T
+        feature_acts_sparse_T = feature_acts_sparse_T.to_sparse_csr()
+        grad_W_D = feature_acts_sparse_T @ grad_output
+
+        grad_topk_values, grad_b_E = masked_matmul_with_col_sum(grad_output, W_D, topk_indices_sorted)
+
+        crow_indices = torch.arange(
+            0,
+            (batch_size + 1) * k,
+            k,
+            device=grad_topk_values.device,
+            dtype=torch.int32,
+        )
+        col_indices = topk_indices_sorted.reshape(-1).to(torch.int32)
+        grad_hidden_pre = torch.sparse_csr_tensor(
+            crow_indices,
+            col_indices,
+            grad_topk_values.reshape(-1),
+            size=(batch_size, d_sae),
+        )
+
+        # grad_W_E
+        grad_hidden_pre_T = grad_hidden_pre.to_sparse_coo().T
+        grad_hidden_pre_T = grad_hidden_pre_T.to_sparse_csr()
+        grad_W_E = torch.sparse.mm(grad_hidden_pre_T, x.to(grad_hidden_pre_T.dtype)).T
+
+        return None, grad_W_E, grad_b_E, grad_W_D, grad_b_D, None, None

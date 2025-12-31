@@ -185,7 +185,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         assert "mask" in data, f"Loading cached activation {chunk.path} error: missing 'mask' field"
         assert "attention_mask" in data, f"Loading cached activation {chunk.path} error: missing 'attention_mask' field"
 
-        return {
+        return_dict: dict[str, Any] = {
             "hook_point": hook_point,
             "activation": data["activation"],
             "mask": data["mask"],
@@ -194,6 +194,8 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             "meta": data.get("meta"),
             "chunk_idx": chunk_idx,
         }
+        return_dict = move_dict_of_tensor_to_device(return_dict, device=self.device)
+        return return_dict
 
     def _get_sorted_chunks(self, hook_point: str) -> list[ChunkInfo]:
         """Get sorted list of chunk files for a hook point.
@@ -286,7 +288,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             shuffle=False,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
-            pin_memory=True,
+            # pin_memory=True,
             collate_fn=first_data_collate_fn,
             sampler=DistributedSampler(
                 cached_activation_dataset,
@@ -304,7 +306,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             disable=not is_master(),
         ):
             # Use all_gather_dict to gather chunk dicts from all ranks
-            data = move_dict_of_tensor_to_device(data, device=self.device)
+            # data = move_dict_of_tensor_to_device(data, device=self.device)
             if self.device_mesh is not None:
                 gathered = all_gather_dict(data, group=self.device_mesh.get_group("model"))
                 if mesh_dim_size(self.device_mesh, "sweep") > 1:

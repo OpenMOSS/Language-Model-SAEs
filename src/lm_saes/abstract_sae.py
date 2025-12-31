@@ -32,6 +32,7 @@ from transformer_lens.hook_points import HookedRootModule
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.config import BaseSAEConfig
 from lm_saes.database import MongoClient
+from lm_saes.kernels.entrypoints import topk_sae_sparse_fused
 from lm_saes.utils.distributed import DimMap, distributed_topk, item, mesh_dim_size
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
@@ -667,10 +668,25 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
         label = self.prepare_label(batch, **kwargs)
 
-        with timer.time("encode"):
-            feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
-        with timer.time("decode"):
-            reconstructed = self.decode(feature_acts, **decoder_kwargs)
+        if (
+            self.cfg.sae_type in ["sae", "transcoder"]
+            and self.cfg.act_fn.lower() == "topk"
+            and (self.device_mesh is None or mesh_dim_size(self.device_mesh, "model") == 1)
+        ):
+            reconstructed, feature_acts, hidden_pre = topk_sae_sparse_fused(
+                x,
+                self.W_E,
+                self.b_E,
+                self.W_D,
+                self.b_D,
+                self.current_k,
+                self.cfg.sparsity_include_decoder_norm,
+            )
+        else:
+            with timer.time("encode"):
+                feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
+            with timer.time("decode"):
+                reconstructed = self.decode(feature_acts, **decoder_kwargs)
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2).sum(dim=-1)

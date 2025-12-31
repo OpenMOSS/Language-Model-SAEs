@@ -2,10 +2,16 @@ from typing import Union
 
 import torch
 from jaxtyping import Float
+from torch.distributed.tensor import DTensor
 
 from lm_saes.utils.logging import get_logger
 
-from .kernels import TritonDecoderAutogradTopK, TritonEncoderAutogradDynamicK, get_sparse_representation
+from .kernels import (
+    TopKSparseFusedSAE,
+    TritonDecoderAutogradTopK,
+    TritonEncoderAutogradDynamicK,
+    get_sparse_representation,
+)
 
 logger = get_logger("kernels")
 
@@ -84,6 +90,34 @@ def encode_with_triton_spmm_kernel(
         output[:, layer_idx, :] = layer_output
 
     return output
+
+
+def topk_sae_sparse_fused(
+    x: torch.Tensor,
+    W_E: torch.Tensor,
+    b_E: torch.Tensor,
+    W_D: torch.Tensor,
+    b_D: torch.Tensor,
+    k: int,
+    sparsity_include_decoder_norm: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if isinstance(x, DTensor):
+        reconstructed, feature_acts, hidden_pre = TopKSparseFusedSAE.apply(
+            x.to_local(),
+            W_E.to_local(),
+            b_E.to_local(),
+            W_D.to_local(),
+            b_D.to_local(),
+            k,
+            sparsity_include_decoder_norm,
+        )  # type: ignore[return-value]
+        return (
+            DTensor.from_local(reconstructed, device_mesh=x.device_mesh, placements=x.placements),
+            DTensor.from_local(feature_acts, device_mesh=x.device_mesh, placements=x.placements),
+            DTensor.from_local(hidden_pre, device_mesh=x.device_mesh, placements=x.placements),
+        )
+    else:
+        return TopKSparseFusedSAE.apply(x, W_E, b_E, W_D, b_D, k, sparsity_include_decoder_norm)  # type: ignore[return-value]
 
 
 if __name__ == "__main__":
