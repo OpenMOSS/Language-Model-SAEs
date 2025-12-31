@@ -39,6 +39,7 @@ permissions:
 
 jobs:
   type-checks:
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
     name: Type Checks
     runs-on: ubuntu-latest
     steps:
@@ -59,10 +60,8 @@ jobs:
       - name: Type check
         run: uv run basedpyright .
 
-      # - name: Unit tests
-      #   run: uv run pytest tests
-
   ruff:
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
