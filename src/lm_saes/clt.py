@@ -1110,31 +1110,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
 
         return base_maps | clt_maps
 
-    @override
-    def load_distributed_state_dict(
-        self, state_dict: "dict[str, torch.Tensor]", device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        """Load distributed state dict."""
-        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
-        self.device_mesh = device_mesh
-
-        # Load encoder parameters
-        for param_name in ["W_E", "b_E"]:
-            self.register_parameter(
-                param_name,
-                nn.Parameter(state_dict[f"{prefix}{param_name}"].to(getattr(self, param_name).dtype)),
-            )
-
-        # Load W_D ModuleList parameters
-        for layer_to in range(self.cfg.n_layers):
-            param_name = f"W_D.{layer_to}"
-            self.W_D[layer_to] = nn.Parameter(state_dict[f"{prefix}{param_name}"].to(self.W_D[layer_to].dtype))
-
-        # Load b_D parameters
-        for layer_to in range(self.cfg.n_layers):
-            param_name = f"b_D.{layer_to}"
-            self.b_D[layer_to] = nn.Parameter(state_dict[f"{prefix}{param_name}"].to(self.b_D[layer_to].dtype))
-
     @classmethod
     def from_pretrained(
         cls,
@@ -1155,6 +1130,6 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             device_mesh=device_mesh,
         )
         return model
-    
+
     def hf_folder_name(self) -> str:
         return "CLT"

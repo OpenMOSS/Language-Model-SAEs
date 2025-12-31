@@ -6,7 +6,6 @@ including JumpReLU and its associated STEFunction.
 
 import torch
 import torch.distributed.tensor
-import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
 from typing_extensions import cast
 
@@ -124,15 +123,6 @@ class JumpReLU(torch.nn.Module):
 
     def get_jumprelu_threshold(self) -> torch.Tensor:
         return self.log_jumprelu_threshold.exp()
-
-    def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        self.device_mesh = device_mesh
-        self.register_parameter(
-            "log_jumprelu_threshold",
-            nn.Parameter(state_dict[f"{prefix}log_jumprelu_threshold"].to(self.log_jumprelu_threshold.dtype)),
-        )
 
     def dim_maps(self) -> dict[str, DimMap]:
         return {

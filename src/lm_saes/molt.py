@@ -716,61 +716,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         metrics["molt_metrics/total_rank_sum"] = total_rank_sum
         return metrics
 
-    @override
-    def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        """Load distributed state dict.
-
-        CRITICAL: This method needs to properly handle DTensor loading.
-        The state_dict contains global tensors that need to be distributed
-        according to our sharding strategy.
-        """
-        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
-        self.device_mesh = device_mesh
-
-        # Load encoder parameters with proper distribution
-        for param_name in ["W_E", "b_E"]:
-            global_tensor = state_dict[f"{prefix}{param_name}"].to(getattr(self, param_name).dtype)
-            if device_mesh is not None:
-                # Distribute global tensor according to dim_maps
-                distributed_tensor = self.dim_maps()[param_name].distribute(global_tensor, device_mesh)
-                self.register_parameter(param_name, nn.Parameter(distributed_tensor))
-            else:
-                self.register_parameter(param_name, nn.Parameter(global_tensor))
-
-        # Load U and V matrices for each rank group with proper distribution
-        for rank_str in self.U_matrices.keys():
-            U_param_name = f"U_matrices.{rank_str}"
-            V_param_name = f"V_matrices.{rank_str}"
-
-            U_global_tensor = state_dict[f"{prefix}{U_param_name}"].to(self.U_matrices[rank_str].dtype)
-            V_global_tensor = state_dict[f"{prefix}{V_param_name}"].to(self.V_matrices[rank_str].dtype)
-
-            if device_mesh is not None:
-                # Distribute according to U/V matrices sharding strategy
-                U_distributed = self.dim_maps()["U_matrices"].distribute(U_global_tensor, device_mesh)
-                V_distributed = self.dim_maps()["V_matrices"].distribute(V_global_tensor, device_mesh)
-                self.U_matrices[rank_str] = nn.Parameter(U_distributed)
-                self.V_matrices[rank_str] = nn.Parameter(V_distributed)
-            else:
-                self.U_matrices[rank_str] = nn.Parameter(U_global_tensor)
-                self.V_matrices[rank_str] = nn.Parameter(V_global_tensor)
-
-        # Load decoder bias with proper distribution
-        if self.cfg.use_decoder_bias:
-            b_D_global = state_dict[f"{prefix}b_D"].to(self.b_D.dtype)
-            if device_mesh is not None:
-                b_D_distributed = self.dim_maps()["b_D"].distribute(b_D_global, device_mesh)
-                self.b_D = nn.Parameter(b_D_distributed)
-            else:
-                self.b_D = nn.Parameter(b_D_global)
-
-    # @classmethod
-    # def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
-    #     cfg = MOLTConfig.from_pretrained(pretrained_name_or_path, fold_activation_scale=fold_activation_scale, strict_loading=strict_loading, **kwargs)
-    #     return cls.from_config(cfg)
-
     @classmethod
     def from_pretrained(
         cls,
@@ -784,7 +729,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         cfg = MOLTConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
         model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
         return model
-    
+
     @override
     @timer.time("forward")
     def forward(
@@ -805,6 +750,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         feature_acts = self.encode(x, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, original_x=x)
         return reconstructed
-    
+
     def hf_folder_name(self) -> str:
         return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"

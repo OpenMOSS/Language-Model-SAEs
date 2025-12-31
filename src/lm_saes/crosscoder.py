@@ -655,18 +655,6 @@ class CrossCoder(AbstractSparseAutoEncoder):
         }
         return parent_maps | crosscoder_maps
 
-    @override
-    @timer.time("load_distributed_state_dict")
-    def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
-        for name in ["W_E", "W_D", "b_E", "b_D"]:
-            self.register_parameter(
-                name,
-                nn.Parameter(state_dict[f"{prefix}{name}"].to(getattr(self, name).dtype)),
-            )
-
     @torch.no_grad()
     @timer.time("decoder_inner_product_matrices")
     def decoder_inner_product_matrices(self) -> Float[torch.Tensor, "d_sae n_head n_head"]:

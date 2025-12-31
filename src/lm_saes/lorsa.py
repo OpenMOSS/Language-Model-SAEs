@@ -841,19 +841,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Set encoder weights to fixed norm."""
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for lorsa")
 
-    @override
-    def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
-        self.device_mesh = device_mesh
-        for name in ["W_Q", "W_K", "W_V", "W_O", "b_Q", "b_K", "b_V", "b_D"]:
-            self.register_parameter(name, nn.Parameter(state_dict[f"{prefix}{name}"].to(getattr(self, name).dtype)))
-
-        if self.cfg.use_post_qk_ln:
-            self.ln_q.register_parameter("w", nn.Parameter(state_dict[f"{prefix}ln_q.w"].to(self.ln_q.w.dtype)))
-            self.ln_k.register_parameter("w", nn.Parameter(state_dict[f"{prefix}ln_k.w"].to(self.ln_k.w.dtype)))
-
     @classmethod
     def from_pretrained(
         cls,

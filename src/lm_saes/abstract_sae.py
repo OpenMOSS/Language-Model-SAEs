@@ -390,16 +390,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
             self.set_dataset_average_activation_norm(dataset_norm)
             state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
-        if device_mesh is None:
-            # Non-distributed checkpoint or DCP checkpoint
-            # Load the state dict through torch API
-            self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
-        else:
-            for k, v in state_dict.items():
-                if not isinstance(v, DTensor):
-                    state_dict[k] = DimMap({}).distribute(v, device_mesh)
-            # Full checkpoint (in .safetensors or .pt format) to be loaded distributedly
-            self.load_distributed_state_dict(state_dict, device_mesh)
+        self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
 
     @classmethod
     def from_config(
@@ -797,18 +788,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         if isinstance(self.activation_function, JumpReLU):
             return {f"activation_function.{k}": v for k, v in self.activation_function.override_dtypes().items()}
         return {}
-
-    def load_distributed_state_dict(
-        self,
-        state_dict: dict[str, torch.Tensor],
-        device_mesh: DeviceMesh,
-        prefix: str = "",
-    ) -> None:
-        self.device_mesh = device_mesh
-        if isinstance(self.activation_function, JumpReLU):
-            self.activation_function.load_distributed_state_dict(
-                state_dict, device_mesh, f"{prefix}activation_function."
-            )
 
     @abstractmethod
     def hf_folder_name(self) -> str:
