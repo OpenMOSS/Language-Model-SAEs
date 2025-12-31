@@ -86,17 +86,17 @@ interface MultiSteeringResult {
   };
 }
 
-interface AnalyzeAllPositionsResponse {
-  positions?: Array<{
-    position: number;
-    activations: number[] | number;
-    z_pattern_indices?: number[][] | null;
-    z_pattern_values?: number[] | null;
-  }>;
-  total_positions?: number;
-  feature_index?: number;
-  layer?: number;
-  sae_type?: string;
+interface AnalyzeFenResponse {
+  feature_acts_indices?: number[];
+  feature_acts_values?: number[];
+  z_pattern_indices?: number[] | number[][];
+  z_pattern_values?: number[];
+}
+
+interface FenActivationData {
+  activations?: number[];
+  zPatternIndices?: number[][];
+  zPatternValues?: number[];
 }
 
 export const PosFeatureCard = ({
@@ -111,6 +111,7 @@ export const PosFeatureCard = ({
   const [selectedFeatureIndex, setSelectedFeatureIndex] = useState<number | null>(null);
   const [topActivations, setTopActivations] = useState<TopActivationSample[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
+  const [selectedFeaturePos, setSelectedFeaturePos] = useState<number | null>(null);
   const [steeringNodes, setSteeringNodes] = useState<SteeringNode[]>([]);
   const [defaultSteeringScale, setDefaultSteeringScale] = useState<number>(2.0);
   const [autoSteerThreshold, setAutoSteerThreshold] = useState<number>(1e-6);
@@ -177,6 +178,33 @@ export const PosFeatureCard = ({
   }, [fen, layer, positions, componentType, modelName, saeComboId]);
 
   const backendFeatureType = componentType === "attn" ? "lorsa" : "transcoder";
+
+  const parseAnalyzeFen = useCallback((data: AnalyzeFenResponse): FenActivationData => {
+    // 与 CustomFenInput 保持一致：稀疏 indices/values -> 64 维稠密激活
+    let activations: number[] | undefined = undefined;
+    if (Array.isArray(data.feature_acts_indices) && Array.isArray(data.feature_acts_values)) {
+      activations = new Array(64).fill(0);
+      const indices = data.feature_acts_indices;
+      const values = data.feature_acts_values;
+      for (let i = 0; i < Math.min(indices.length, values.length); i++) {
+        const idx = indices[i];
+        const v = values[i];
+        if (typeof idx === "number" && idx >= 0 && idx < 64 && typeof v === "number") {
+          activations[idx] = v;
+        }
+      }
+    }
+
+    let zPatternIndices: number[][] | undefined = undefined;
+    let zPatternValues: number[] | undefined = undefined;
+    if (data.z_pattern_indices && data.z_pattern_values) {
+      const raw = data.z_pattern_indices;
+      zPatternIndices = Array.isArray(raw) && Array.isArray(raw[0]) ? (raw as number[][]) : [raw as number[]];
+      zPatternValues = data.z_pattern_values;
+    }
+
+    return { activations, zPatternIndices, zPatternValues };
+  }, []);
 
   const addSteeringNode = useCallback(
     (pos: number, feature: number) => {
@@ -276,18 +304,18 @@ export const PosFeatureCard = ({
     return baseDict;
   }, [componentType, layer, saeComboId]);
 
-  // 一键：选择某个 feature 后，把“所有激活该 feature 的位置”都加入 steeringNodes，并统一赋值 steering_scale
-  const [autoSteerState, runAutoSteerAllPositions] = useAsyncFn(async () => {
+  // 与 CustomFenInput 对齐：查看“当前 FEN 下，该 feature 在 64 个棋盘格上的激活值”
+  const [fenActivationState, fetchFenActivationForSelectedFeature] = useAsyncFn(async () => {
     if (!fen?.trim()) {
       throw new Error("FEN 不能为空");
     }
     if (selectedFeatureIndex === null) {
-      throw new Error("请先在上方列表里选择一个 feature");
+      return null;
     }
 
     const dictionary = getDictionaryName();
     const response = await fetch(
-      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${selectedFeatureIndex}/analyze_fen_all_positions`,
+      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${selectedFeatureIndex}/analyze_fen`,
       {
         method: "POST",
         headers: {
@@ -303,28 +331,46 @@ export const PosFeatureCard = ({
       throw new Error(errorText || `HTTP ${response.status}`);
     }
 
-    const data = (await response.json()) as AnalyzeAllPositionsResponse;
-    const positionsArr = data.positions && Array.isArray(data.positions) ? data.positions : [];
+    const data = (await response.json()) as AnalyzeFenResponse;
+    return parseAnalyzeFen(data);
+  }, [fen, selectedFeatureIndex, getDictionaryName, parseAnalyzeFen]);
+
+  // 一键：选择某个 feature 后，把“所有激活该 feature 的位置”都加入 steeringNodes，并统一赋值 steering_scale
+  const [autoSteerState, runAutoSteerAllPositions] = useAsyncFn(async () => {
+    if (!fen?.trim()) {
+      throw new Error("FEN 不能为空");
+    }
+    if (selectedFeatureIndex === null) {
+      throw new Error("请先在上方列表里选择一个 feature");
+    }
+
+    const dictionary = getDictionaryName();
+    const response = await fetch(
+      // 与 CustomFenInput 保持一致：统一用 analyze_fen（稀疏 indices/values -> 64格激活）
+      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${selectedFeatureIndex}/analyze_fen`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ fen: fen.trim() }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || `HTTP ${response.status}`);
+    }
+
+    const data = (await response.json()) as AnalyzeFenResponse;
+    const parsed = parseAnalyzeFen(data);
+    const dense = parsed.activations ?? new Array(64).fill(0);
 
     const activePositions: number[] = [];
-    for (const posData of positionsArr) {
-      const pos = posData.position;
-      if (pos < 0 || pos >= 64) continue;
-
-      let scalar = 0;
-      if (Array.isArray(posData.activations)) {
-        if (posData.activations.length === 64) {
-          scalar = posData.activations[pos] ?? 0;
-        } else {
-          scalar = posData.activations[0] ?? 0;
-        }
-      } else if (typeof posData.activations === "number") {
-        scalar = posData.activations;
-      }
-
-      if (Math.abs(scalar) > autoSteerThreshold) {
-        activePositions.push(pos);
-      }
+    for (let pos = 0; pos < 64; pos++) {
+      const v = dense[pos] ?? 0;
+      if (Math.abs(v) > autoSteerThreshold) activePositions.push(pos);
     }
 
     // 直接“按 feature 的激活位置”生成 nodes，统一用当前 defaultSteeringScale（允许负数）
@@ -338,7 +384,7 @@ export const PosFeatureCard = ({
     setSteeringNodes(nodes);
 
     return { activePositions, count: nodes.length };
-  }, [fen, selectedFeatureIndex, autoSteerThreshold, defaultSteeringScale, getDictionaryName]);
+  }, [fen, selectedFeatureIndex, autoSteerThreshold, defaultSteeringScale, getDictionaryName, parseAnalyzeFen]);
 
   // UI 渲染时做一次前端排序，避免依赖后端返回顺序
   const sortedPromotingMoves = useMemo(() => {
@@ -548,6 +594,14 @@ export const PosFeatureCard = ({
     }
   }, [selectedFeatureIndex, fetchTopActivationsForFeature, componentType]);
 
+  // 当选择的 feature 或 FEN 改变时，拉取该 feature 在当前 FEN 的 64格激活（与 CustomFenInput 一致）
+  useEffect(() => {
+    if (selectedFeatureIndex !== null) {
+      fetchFenActivationForSelectedFeature();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFeatureIndex, fen, fetchFenActivationForSelectedFeature]);
+
   return (
     <Card className="w-full">
       <CardHeader>
@@ -619,6 +673,7 @@ export const PosFeatureCard = ({
                             const next =
                               selectedFeatureIndex === feature.feature_index ? null : feature.feature_index;
                             setSelectedFeatureIndex(next);
+                            setSelectedFeaturePos(next === null ? null : posFeatures.position);
                             if (onFeatureSelect) {
                               onFeatureSelect(
                                 next === null ? null : { featureIndex: next, position: posFeatures.position }
@@ -909,10 +964,44 @@ export const PosFeatureCard = ({
 
           {/* Top Activation 显示 */}
           {selectedFeatureIndex !== null && (
-            <Tabs defaultValue="top-activations" className="w-full">
+            <Tabs defaultValue="fen-activations" className="w-full">
               <TabsList>
+                <TabsTrigger value="fen-activations">当前 FEN（64格激活）</TabsTrigger>
                 <TabsTrigger value="top-activations">Top Activations</TabsTrigger>
               </TabsList>
+              <TabsContent value="fen-activations" className="space-y-4">
+                {fenActivationState.error && (
+                  <div className="text-red-500 font-bold text-center p-4 bg-red-50 rounded">
+                    错误:{" "}
+                    {fenActivationState.error instanceof Error
+                      ? fenActivationState.error.message
+                      : String(fenActivationState.error)}
+                  </div>
+                )}
+                {fenActivationState.loading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                      <p className="text-gray-600">正在获取当前 FEN 的 64 格激活...</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex justify-center">
+                    <ChessBoard
+                      fen={fen}
+                      size="medium"
+                      showCoordinates={true}
+                      activations={fenActivationState.value?.activations}
+                      zPatternIndices={fenActivationState.value?.zPatternIndices}
+                      zPatternValues={fenActivationState.value?.zPatternValues}
+                      analysisName={`Feature #${selectedFeatureIndex}${selectedFeaturePos !== null ? ` | pos ${selectedFeaturePos}` : ""}`}
+                      autoFlipWhenBlack={true}
+                      flip_activation={fen.includes(" b ")}
+                      showSelfPlay={true}
+                    />
+                  </div>
+                )}
+              </TabsContent>
               <TabsContent value="top-activations" className="space-y-4">
                 {loadingTopActivations ? (
                   <div className="flex items-center justify-center py-8">

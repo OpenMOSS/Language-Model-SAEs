@@ -88,7 +88,8 @@ export const PositionFeaturePage = () => {
       try {
         const dictionary = getDictionaryName();
         const response = await fetch(
-          `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/analyze_fen_all_positions`,
+          // 与 CustomFenInput / circuit-visualization 保持一致：统一用 analyze_fen
+          `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/analyze_fen`,
           {
             method: "POST",
             headers: {
@@ -105,76 +106,46 @@ export const PositionFeaturePage = () => {
         }
 
         const data = (await response.json()) as {
-          positions?: Array<{
-            position: number;
-            // 后端历史上返回过两种口径：
-            // - `activations`: number[64]（只在 activations[position] 非零）
-            // - 或者直接给标量（某些版本/接口可能这样）
-            activations: number[] | number;
-            z_pattern_indices?: number[][] | null;
-            z_pattern_values?: number[] | null;
-          }>;
+          feature_acts_indices?: number[];
+          feature_acts_values?: number[];
+          z_pattern_indices?: number[] | number[][];
+          z_pattern_values?: number[];
         };
 
-        // 关键修正：
-        // “全位置激活”不应跨 position 做 max-abs merge。
-        // 正确做法是：对每个 position 取该 position 的标量激活值，并填回 64 格。
-        const mergedActivations = new Array(64).fill(0);
-
-        const positionsArr = data.positions && Array.isArray(data.positions) ? data.positions : [];
-        for (const posData of positionsArr) {
-          const pos = posData.position;
-          if (pos < 0 || pos >= 64) continue;
-
-          if (Array.isArray(posData.activations)) {
-            // 借鉴 FeaturesPage 的逻辑：把返回的 64 格数组里“非零项”直接填回对应格子
-            // （不依赖 pos 字段做任何聚合/平均；更鲁棒）
-            if (posData.activations.length === 64) {
-              for (let i = 0; i < 64; i++) {
-                const v = posData.activations[i] ?? 0;
-                if (v !== 0) {
-                  if (mergedActivations[i] !== 0 && mergedActivations[i] !== v) {
-                    // 理论上同一个格子不应从不同 posData 得到不同值；若发生，提示但不做 max/avg
-                    console.warn("conflicting activation value for square", { i, prev: mergedActivations[i], next: v });
-                  }
-                  mergedActivations[i] = v;
-                }
-              }
-            } else {
-              // 兜底：如果返回不是 64 长，就取第一个元素当标量回填到 position
-              const scalar = posData.activations[0] ?? 0;
-              mergedActivations[pos] = scalar;
+        // activations: 稀疏 -> 64 稠密
+        let activations: number[] | undefined = undefined;
+        if (Array.isArray(data.feature_acts_indices) && Array.isArray(data.feature_acts_values)) {
+          activations = new Array(64).fill(0);
+          const indices = data.feature_acts_indices;
+          const values = data.feature_acts_values;
+          for (let i = 0; i < Math.min(indices.length, values.length); i++) {
+            const idx = indices[i];
+            const v = values[i];
+            if (typeof idx === "number" && idx >= 0 && idx < 64 && typeof v === "number") {
+              activations[idx] = v;
             }
-          } else if (typeof posData.activations === "number") {
-            // 标量口径：直接填回 position
-            mergedActivations[pos] = posData.activations;
           }
         }
 
-        // Z-Pattern：更合理的展示是“选中 position”对应的 query->key 模式，
-        // 而不是跨 position 合并（合并会混淆多个 query 位置）。
-        const selectedPos = selectedFeature?.position;
-        const selectedPosData =
-          selectedPos !== undefined ? positionsArr.find((p) => p.position === selectedPos) : undefined;
+        // z_pattern: 兼容 1D/2D
+        let zPatternIndices: number[][] | undefined = undefined;
+        let zPatternValues: number[] | undefined = undefined;
+        if (data.z_pattern_indices && data.z_pattern_values) {
+          const raw = data.z_pattern_indices;
+          zPatternIndices = Array.isArray(raw) && Array.isArray(raw[0]) ? (raw as number[][]) : [raw as number[]];
+          zPatternValues = data.z_pattern_values;
+        }
 
-        setAllPosActivation(mergedActivations);
-        setAllPosZPatternIndices(
-          selectedPosData?.z_pattern_indices && Array.isArray(selectedPosData.z_pattern_indices)
-            ? selectedPosData.z_pattern_indices
-            : undefined
-        );
-        setAllPosZPatternValues(
-          selectedPosData?.z_pattern_values && Array.isArray(selectedPosData.z_pattern_values)
-            ? selectedPosData.z_pattern_values
-            : undefined
-        );
+        setAllPosActivation(activations);
+        setAllPosZPatternIndices(zPatternIndices);
+        setAllPosZPatternValues(zPatternValues);
       } catch (e) {
         setAllPosError(e instanceof Error ? e.message : String(e));
       } finally {
         setLoadingAllPos(false);
       }
     },
-    [fen, getDictionaryName, selectedFeature?.position]
+    [fen, getDictionaryName]
   );
 
   useEffect(() => {
