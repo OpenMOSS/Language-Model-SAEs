@@ -85,7 +85,7 @@ jobs:
         run: uv sync --dev
 
       - name: Run unit tests
-        run: uv run pytest tests
+        run: uv run pytest tests/unit
 
   distributed-tests:
     if: "!startsWith(github.event.head_commit.message, 'bump:')"

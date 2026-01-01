@@ -15,7 +15,8 @@ from lm_saes import (
     SparseAutoEncoder,
 )
 from lm_saes.utils.distributed.dimmap import DimMap
-from tests.distributed.lib import distributed_test
+
+from .lib import distributed_test
 
 
 def run_load_test(model: Module, device_mesh: DeviceMesh, sharded: bool = True) -> None:
