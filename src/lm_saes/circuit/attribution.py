@@ -33,8 +33,8 @@ from tqdm import tqdm
 from transformer_lens.hook_points import HookPoint
 
 from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.utils.logging import get_distributed_logger
 
-from ..utils.logging import get_distributed_logger
 from .graph import Graph
 from .replacement_model import ReplacementModel
 from .utils.attn_scores_attribution import compute_attn_scores_attribution

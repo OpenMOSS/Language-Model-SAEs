@@ -2,8 +2,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from lm_saes.config import MongoDBConfig
-from lm_saes.database import FeatureRecord, MongoClient
+from lm_saes.database import FeatureRecord, MongoClient, MongoDBConfig
 
 
 def augment_graph_with_feature_data(

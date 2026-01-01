@@ -1,20 +1,21 @@
-from lm_saes.analysis.autointerp import (
+from .autointerp import (
     AutoInterpConfig,
     ExplainerType,
     FeatureInterpreter,
     ScorerType,
 )
-from lm_saes.analysis.samples import TokenizedSample
-
-from .direct_logit_attributor import DirectLogitAttributor
-from .feature_analyzer import FeatureAnalyzer
+from .direct_logit_attributor import DirectLogitAttributor, DirectLogitAttributorConfig
+from .feature_analyzer import FeatureAnalyzer, FeatureAnalyzerConfig
+from .samples import TokenizedSample
 
 __all__ = [
     "FeatureAnalyzer",
+    "FeatureAnalyzerConfig",
     "FeatureInterpreter",
     "AutoInterpConfig",
     "TokenizedSample",
     "ExplainerType",
     "ScorerType",
     "DirectLogitAttributor",
+    "DirectLogitAttributorConfig",
 ]

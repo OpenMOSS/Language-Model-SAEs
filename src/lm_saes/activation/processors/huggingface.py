@@ -6,7 +6,7 @@ from datasets import Dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from lm_saes.activation.processors.core import BaseActivationProcessor
+from .core import BaseActivationProcessor
 
 
 def identity_collate_fn(x):

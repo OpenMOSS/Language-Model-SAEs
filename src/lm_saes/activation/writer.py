@@ -1,7 +1,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, Literal, Optional, Sequence
 
 import more_itertools
 import torch
@@ -9,11 +9,25 @@ from safetensors.torch import save_file
 from torch.distributed.device_mesh import DeviceMesh
 from tqdm import tqdm
 
-from lm_saes.config import ActivationWriterConfig
+from lm_saes.config import BaseConfig
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger(__name__)
+
+
+class ActivationWriterConfig(BaseConfig):
+    hook_points: list[str]
+    """ The hook points to capture activations from. """
+    total_generating_tokens: int | None = None
+    """ The total number of tokens to generate. If `None`, will write all activations to disk. """
+    n_samples_per_chunk: int | None = None
+    """ The number of samples to write to disk per chunk. If `None`, will not further batch the activations. """
+    cache_dir: str = "activations"
+    """ The directory to save the activations. """
+    format: Literal["pt", "safetensors"] = "safetensors"
+    num_workers: int | None = None
+    """ The number of workers to use for writing the activations. If `None`, will not use multi-threaded writing. """
 
 
 class ActivationWriter:

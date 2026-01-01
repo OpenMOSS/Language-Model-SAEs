@@ -21,12 +21,71 @@ from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
-from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
-from .config import LorsaConfig
-from .utils.distributed import DimMap, masked_fill, mesh_dim_size
-from .utils.logging import get_distributed_logger
+from lm_saes.abstract_sae import (
+    AbstractSparseAutoEncoder,
+    BaseSAEConfig,
+    register_sae_config,
+    register_sae_model,
+)
+from lm_saes.utils.distributed import DimMap, masked_fill, mesh_dim_size
+from lm_saes.utils.logging import get_distributed_logger
 
 logger = get_distributed_logger("lorsa")
+
+
+@register_sae_config("lorsa")
+class LorsaConfig(BaseSAEConfig):
+    """Configuration for Low Rank Sparse Attention."""
+
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "lorsa"
+
+    hook_point_in: str
+    hook_point_out: str
+
+    # Attention dimensions
+    n_qk_heads: int
+    d_qk_head: int
+    positional_embedding_type: Literal["rotary", "none"] = "rotary"
+    rotary_dim: int
+    rotary_base: int = 10000
+    rotary_adjacent_pairs: bool = True
+    rotary_scale: int = 1
+    use_NTK_by_parts_rope: bool = False
+    NTK_by_parts_factor: float = 1.0
+    NTK_by_parts_low_freq_factor: float = 1.0
+    NTK_by_parts_high_freq_factor: float = 1.0
+    old_context_len: int = 2048
+    n_ctx: int
+
+    # Attention settings
+    attn_scale: float | None = None
+    use_post_qk_ln: bool = False
+    normalization_type: Literal["LN", "RMS"] | None = None
+    eps: float = 1e-6
+
+    @property
+    def n_ov_heads(self) -> int:
+        return self.d_sae
+
+    @property
+    def ov_group_size(self) -> int:
+        return self.n_ov_heads // self.n_qk_heads
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        """All hook points used by Lorsa."""
+        return [self.hook_point_in, self.hook_point_out]
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        assert self.hook_point_in is not None and self.hook_point_out is not None, (
+            "hook_point_in and hook_point_out must be set"
+        )
+        assert self.hook_point_in != self.hook_point_out, "hook_point_in and hook_point_out must be different"
+        assert self.n_ov_heads % self.n_qk_heads == 0, "n_ov_heads must be divisible by n_qk_heads"
+
+        if self.attn_scale is None:
+            self.attn_scale = self.d_qk_head**0.5
 
 
 @register_sae_model("lorsa")

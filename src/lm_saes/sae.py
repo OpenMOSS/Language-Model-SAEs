@@ -11,14 +11,26 @@ from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
+from lm_saes.abstract_sae import (
+    AbstractSparseAutoEncoder,
+    BaseSAEConfig,
+    register_sae_config,
+    register_sae_model,
+)
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.logging import get_distributed_logger
 
-from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
-from .config import SAEConfig
 
-logger = get_distributed_logger("sae")
+@register_sae_config("sae")
+class SAEConfig(BaseSAEConfig):
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "sae"
+    hook_point_in: str
+    hook_point_out: str
+    use_glu_encoder: bool = False
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return [self.hook_point_in, self.hook_point_out]
 
 
 @register_sae_model("sae")
@@ -172,7 +184,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     @override
     @torch.no_grad()
     def transform_to_unit_decoder_norm(self):
-        self.W_D.mul_(1 / self.decoder_norm(keepdim=False))
+        self.W_D.mul_(1 / self.decoder_norm(keepdim=True))
 
     @torch.no_grad()
     def standardize_parameters_of_dataset_norm(self):  # should be overridden by subclasses due to side effects
@@ -321,7 +333,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         if (
             self.cfg.use_triton_kernel and 0 < max_l0_in_batch < sparsity_threshold
         ):  # triton kernel cannot handle empty feature_acts
-            from .kernels import decode_with_triton_spmm_kernel
+            from lm_saes.kernels import decode_with_triton_spmm_kernel
 
             reconstructed = decode_with_triton_spmm_kernel(feature_acts, self.W_D.T.contiguous())
         else:

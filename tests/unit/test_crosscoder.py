@@ -3,7 +3,7 @@ import math
 import pytest
 import torch
 
-from lm_saes.config import CrossCoderConfig
+from lm_saes import CrossCoderConfig
 from lm_saes.crosscoder import CrossCoder
 
 

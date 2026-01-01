@@ -11,8 +11,12 @@ from torch.distributed.tensor import DTensor, Partial, Shard
 from torch.distributed.tensor.experimental import local_map
 from typing_extensions import override
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder, register_sae_model
-from lm_saes.config import CrossCoderConfig
+from lm_saes.abstract_sae import (
+    AbstractSparseAutoEncoder,
+    BaseSAEConfig,
+    register_sae_config,
+    register_sae_model,
+)
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.distributed.ops import full_tensor, item
 from lm_saes.utils.distributed.utils import replace_placements
@@ -45,6 +49,20 @@ class CrossCoderSpecs(TensorSpecs):
     @staticmethod
     def label(tensor: torch.Tensor) -> tuple[str, ...]:
         return CrossCoderSpecs.reconstructed(tensor)
+
+
+@register_sae_config("crosscoder")
+class CrossCoderConfig(BaseSAEConfig):
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "crosscoder"
+    hook_points: list[str]
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return self.hook_points
+
+    @property
+    def n_heads(self) -> int:
+        return len(self.hook_points)
 
 
 @register_sae_model("crosscoder")

@@ -1,4 +1,4 @@
-from typing import Dict, Iterable, List, cast
+from typing import Dict, Iterable, List, Literal, cast
 
 import torch
 from torch import Tensor
@@ -8,10 +8,10 @@ from transformer_lens.components import Attention, GroupedQueryAttention, Transf
 from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder, BaseSAEConfig
 from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.config import BaseSAEConfig, InitializerConfig
+from lm_saes.config import BaseConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.molt import MixtureOfLinearTransform
@@ -21,6 +21,22 @@ from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
 
 logger = get_distributed_logger("initializer")
+
+
+class InitializerConfig(BaseConfig):
+    bias_init_method: Literal["all_zero", "geometric_median"] = "all_zero"
+    decoder_uniform_bound: float = 1.0
+    encoder_uniform_bound: float = 1.0
+    init_encoder_with_decoder_transpose: bool = True
+    init_encoder_with_decoder_transpose_factor: float = 1.0
+    init_log_jumprelu_threshold_value: float | None = None
+    grid_search_init_norm: bool = False
+    initialize_W_D_with_active_subspace: bool = False
+    d_active_subspace: int | None = None
+    initialize_lorsa_with_mhsa: bool | None = None
+    initialize_tc_with_mlp: bool | None = None
+    model_layer: int | None = None
+    init_encoder_bias_with_mean_hidden_pre: bool = False
 
 
 class Initializer:

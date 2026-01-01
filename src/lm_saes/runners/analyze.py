@@ -9,33 +9,23 @@ import torch
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor
-from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
-from lm_saes.backend.language_model import TransformerLensLanguageModel
-from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.config import (
-    ActivationFactoryConfig,
-    BaseSAEConfig,
-    CLTConfig,
-    CrossCoderConfig,
-    DatasetConfig,
-    DirectLogitAttributorConfig,
-    FeatureAnalyzerConfig,
-    LanguageModelConfig,
-    LorsaConfig,
-    MongoDBConfig,
-    SAEConfig,
-)
-from lm_saes.crosscoder import CrossCoder
-from lm_saes.database import MongoClient
-from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.abstract_sae import BaseSAEConfig
+from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
+from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor, DirectLogitAttributorConfig
+from lm_saes.analysis.feature_analyzer import FeatureAnalyzer, FeatureAnalyzerConfig
+from lm_saes.backend.language_model import LanguageModelConfig, TransformerLensLanguageModel
+from lm_saes.clt import CLTConfig, CrossLayerTranscoder
+from lm_saes.config import DatasetConfig
+from lm_saes.crosscoder import CrossCoder, CrossCoderConfig
+from lm_saes.database import MongoClient, MongoDBConfig
+from lm_saes.lorsa import LorsaConfig, LowRankSparseAttention
 from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.runners.utils import load_config
-from lm_saes.sae import SparseAutoEncoder
+from lm_saes.sae import SAEConfig, SparseAutoEncoder
 from lm_saes.utils.distributed.utils import broadcast_object
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
+
+from .utils import load_config
 
 logger = get_distributed_logger("runners.analyze")
 

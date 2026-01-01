@@ -1,6 +1,7 @@
 """Module for sweeping SAE experiments."""
 
 import os
+from pathlib import Path
 from typing import Optional
 
 import torch
@@ -9,29 +10,23 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.config import (
-    ActivationFactoryConfig,
-    BaseSAEConfig,
-    CLTConfig,
-    CrossCoderConfig,
-    DatasetConfig,
-    InitializerConfig,
-    LanguageModelConfig,
-    LorsaConfig,
-    MOLTConfig,
-    MongoDBConfig,
-    TrainerConfig,
-    WandbConfig,
-)
-from lm_saes.database import MongoClient
-from lm_saes.initializer import Initializer
+from lm_saes.abstract_sae import BaseSAEConfig
+from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.clt import CLTConfig
+from lm_saes.config import DatasetConfig
+from lm_saes.crosscoder import CrossCoderConfig
+from lm_saes.database import MongoClient, MongoDBConfig
+from lm_saes.initializer import Initializer, InitializerConfig
+from lm_saes.lorsa import LorsaConfig
+from lm_saes.molt import MOLTConfig
 from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.runners.utils import load_config
-from lm_saes.trainer import Trainer
+from lm_saes.trainer import Trainer, TrainerConfig, WandbConfig
 from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from lm_saes.utils.misc import is_primary_rank
+
+from .utils import load_config
 
 logger = get_distributed_logger("runners.train")
 
@@ -213,10 +208,17 @@ def train_sae(settings: TrainSAESettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
         )
+        if is_primary_rank(device_mesh) and mongo_client is not None:
+            assert settings.sae_name is not None and settings.sae_series is not None, (
+                "sae_name and sae_series must be provided when saving to MongoDB"
+            )
+            mongo_client.create_sae(
+                name=settings.sae_name,
+                series=settings.sae_series,
+                path=str(Path(settings.trainer.exp_result_path).absolute()),
+                cfg=settings.sae,
+            )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -412,10 +414,17 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
         )
+        if is_primary_rank(device_mesh) and mongo_client is not None:
+            assert settings.sae_name is not None and settings.sae_series is not None, (
+                "sae_name and sae_series must be provided when saving to MongoDB"
+            )
+            mongo_client.create_sae(
+                name=settings.sae_name,
+                series=settings.sae_series,
+                path=str(Path(settings.trainer.exp_result_path).absolute()),
+                cfg=settings.sae,
+            )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -600,10 +609,17 @@ def train_clt(settings: TrainCLTSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
         )
+        if is_primary_rank(device_mesh) and mongo_client is not None:
+            assert settings.sae_name is not None and settings.sae_series is not None, (
+                "sae_name and sae_series must be provided when saving to MongoDB"
+            )
+            mongo_client.create_sae(
+                name=settings.sae_name,
+                series=settings.sae_series,
+                path=str(Path(settings.trainer.exp_result_path).absolute()),
+                cfg=settings.sae,
+            )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -789,10 +805,17 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
         )
+        if is_primary_rank(device_mesh) and mongo_client is not None:
+            assert settings.sae_name is not None and settings.sae_series is not None, (
+                "sae_name and sae_series must be provided when saving to MongoDB"
+            )
+            mongo_client.create_sae(
+                name=settings.sae_name,
+                series=settings.sae_series,
+                path=str(Path(settings.trainer.exp_result_path).absolute()),
+                cfg=settings.sae,
+            )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -978,10 +1001,17 @@ def train_molt(settings: TrainMOLTSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
         )
+        if is_primary_rank(device_mesh) and mongo_client is not None:
+            assert settings.sae_name is not None and settings.sae_series is not None, (
+                "sae_name and sae_series must be provided when saving to MongoDB"
+            )
+            mongo_client.create_sae(
+                name=settings.sae_name,
+                series=settings.sae_series,
+                path=str(Path(settings.trainer.exp_result_path).absolute()),
+                cfg=settings.sae,
+            )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -1170,10 +1200,17 @@ def sweep_sae(settings: SweepSAESettings) -> None:
     logger.info("Training completed, saving sweep item")
     sae.save_pretrained(
         save_path=item.trainer.exp_result_path,
-        sae_name=item.sae_name,
-        sae_series=item.sae_series,
-        mongo_client=mongo_client,
     )
+    if is_primary_rank(device_mesh) and mongo_client is not None:
+        assert item.sae_name is not None and item.sae_series is not None, (
+            "sae_name and sae_series must be provided when saving to MongoDB"
+        )
+        mongo_client.create_sae(
+            name=item.sae_name,
+            series=item.sae_series,
+            path=str(Path(item.trainer.exp_result_path).absolute()),
+            cfg=item.sae,
+        )
 
     if wandb_logger is not None:
         wandb_logger.finish()

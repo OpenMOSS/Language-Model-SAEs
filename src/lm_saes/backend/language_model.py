@@ -1,9 +1,11 @@
+import json
+import os
 import re
 import warnings
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from itertools import accumulate
-from typing import Any, Callable, Optional, Union, cast
+from typing import Any, Callable, Literal, Optional, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -20,9 +22,12 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from lm_saes.config import LanguageModelConfig, LLaDAConfig
+from lm_saes.config import BaseModelConfig
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.misc import pad_and_truncate_tokens
+from lm_saes.utils.huggingface import parse_pretrained_name_or_path
+from lm_saes.utils.misc import (
+    pad_and_truncate_tokens,
+)
 from lm_saes.utils.timer import timer
 
 
@@ -102,6 +107,61 @@ def _get_layer_indices_from_hook_points(hook_points: list[str]) -> list[int]:
     assert all(match is not None for match in matches), "hook_points must be residual stream hook points"
     layer_indices = [int(cast(re.Match[str], match).group(1)) for match in matches]
     return layer_indices
+
+
+class LanguageModelConfig(BaseModelConfig):
+    model_name: str = "gpt2"
+    """ The name of the model to use. """
+    model_from_pretrained_path: str | None = None
+    """ The path to the pretrained model. If `None`, will use the model from HuggingFace. """
+    use_flash_attn: bool = False
+    """ Whether to use Flash Attention. """
+    cache_dir: str | None = None
+    """ The directory of the HuggingFace cache. Should have the same effect as `HF_HOME`. """
+    local_files_only: bool = False
+    """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
+    max_length: int = 2048
+    """ The maximum length of the input. """
+    backend: Literal["huggingface", "transformer_lens", "auto"] = "auto"
+    """ The backend to use for the language model. """
+    load_ckpt: bool = True
+    tokenizer_only: bool = False
+    """ Whether to only load the tokenizer. """
+    prepend_bos: bool = True
+    """ Whether to prepend the BOS token to the input. """
+    bos_token_id: int | None = None
+    """ The ID of the BOS token. If `None`, will use the default BOS token. """
+    eos_token_id: int | None = None
+    """ The ID of the EOS token. If `None`, will use the default EOS token. """
+    pad_token_id: int | None = None
+    """ The ID of the padding token. If `None`, will use the default padding token. """
+
+    @staticmethod
+    def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
+        """Load the LanguageModelConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/lm_config.json.
+
+        Args:
+            sae_path (str): The path to the pretrained SAE.
+            **kwargs: Additional keyword arguments to pass to the LanguageModelConfig constructor.
+        """
+        path = parse_pretrained_name_or_path(pretrained_name_or_path)
+        with open(os.path.join(path, "lm_config.json"), "r") as f:
+            lm_config = json.load(f)
+        return LanguageModelConfig.model_validate(lm_config, **kwargs)
+
+    def save_lm_config(self, sae_path: str):
+        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save LanguageModelConfig."
+
+        d = self.model_dump()
+        with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
+            json.dump(d, f, indent=4)
+
+
+class LLaDAConfig(LanguageModelConfig):
+    mask_ratio: float = 0.0
+    mdm_mask_token_id: int = 126336
+    prepend_bos: bool = False
+    calculate_logits: bool = False
 
 
 class LanguageModel(ABC):

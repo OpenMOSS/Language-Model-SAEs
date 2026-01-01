@@ -5,7 +5,8 @@ from typing import List
 from pydantic import BaseModel
 from transformers import AutoTokenizer
 
-from ..graph import Graph, prune_graph
+from lm_saes.circuit.graph import Graph, prune_graph
+
 from .attn_scores_attribution import QKTracingResults
 
 logger = logging.getLogger(__name__)

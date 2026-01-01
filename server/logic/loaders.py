@@ -2,9 +2,9 @@ from functools import lru_cache
 
 from datasets import Dataset
 
+from lm_saes import BaseSAEConfig
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend import LanguageModel
-from lm_saes.config import BaseSAEConfig
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from server.config import client, device, sae_series, tokenizer_only
 from server.utils.common import synchronized

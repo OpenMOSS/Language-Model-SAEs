@@ -2,7 +2,7 @@ import pytest
 import torch
 from pytest_mock import MockerFixture
 
-from lm_saes.config import InitializerConfig, SAEConfig
+from lm_saes import InitializerConfig, SAEConfig
 from lm_saes.initializer import Initializer
 
 

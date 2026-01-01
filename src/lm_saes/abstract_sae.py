@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import shutil
@@ -6,6 +7,7 @@ from abc import ABC, abstractmethod
 from importlib.metadata import version
 from pathlib import Path
 from typing import (
+    Annotated,
     Any,
     Callable,
     Literal,
@@ -22,6 +24,12 @@ import torch
 import torch.distributed.checkpoint as dcp
 from huggingface_hub import create_repo, snapshot_download, upload_folder
 from jaxtyping import Float
+from pydantic import (
+    BeforeValidator,
+    Field,
+    PlainSerializer,
+    WithJsonSchema,
+)
 from safetensors import safe_open
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.distributed.device_mesh import DeviceMesh
@@ -30,19 +38,104 @@ from torch.distributed.tensor.experimental import local_map
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.activation_functions import JumpReLU
-from lm_saes.config import BaseSAEConfig
-from lm_saes.database import MongoClient
+from lm_saes.config import BaseModelConfig
 from lm_saes.utils.distributed import DimMap, distributed_topk, item, mesh_dim_size
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.math import topk
-from lm_saes.utils.misc import is_primary_rank
-from lm_saes.utils.tensor_specs import TensorSpecs
+from lm_saes.utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
+    is_primary_rank,
+)
+from lm_saes.utils.tensor_specs import TensorSpecs, apply_token_mask
 from lm_saes.utils.timer import timer
 
-from .utils.tensor_specs import apply_token_mask
-
 logger = get_distributed_logger("abstract_sae")
+
+
+SAE_TYPE_TO_CONFIG_CLASS = {}
+
+
+def register_sae_config(name):
+    def _register(cls):
+        SAE_TYPE_TO_CONFIG_CLASS[name] = cls
+        return cls
+
+    return _register
+
+
+class BaseSAEConfig(BaseModelConfig, ABC):
+    """
+    Base class for SAE configs.
+    Initializer will initialize SAE based on config type.
+    So this class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
+    """
+
+    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"]
+    d_model: int
+    expansion_factor: float
+    use_decoder_bias: bool = True
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
+    norm_activation: str = "dataset-wise"
+    sparsity_include_decoder_norm: bool = True
+    top_k: int = 50
+    sae_pretrained_name_or_path: str | None = None
+    strict_loading: bool = True
+    use_triton_kernel: bool = False
+    sparsity_threshold_for_triton_spmm_kernel: float = 0.996
+    sparsity_threshold_for_csr: float = 0.05
+    # anthropic jumprelu
+    jumprelu_threshold_window: float = 2.0
+    promote_act_fn_dtype: Annotated[
+        torch.dtype | None,
+        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+        PlainSerializer(convert_torch_dtype_to_str),
+        WithJsonSchema(
+            {
+                "type": ["string", "null"],
+            },
+            mode="serialization",
+        ),
+    ] = Field(default=None, exclude=True, validate_default=False)
+
+    @property
+    def d_sae(self) -> int:
+        d_sae = int(self.d_model * self.expansion_factor)
+        return d_sae
+
+    @classmethod
+    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+        """Load the SAEConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/hyperparams.json.
+
+        Args:
+            sae_path (str): The path to the pretrained SAE.
+            **kwargs: Additional keyword arguments to pass to the SAEConfig constructor.
+        """
+        path = parse_pretrained_name_or_path(pretrained_name_or_path)
+        with open(os.path.join(path, "config.json"), "r") as f:
+            sae_config = json.load(f)
+        sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
+        sae_config["strict_loading"] = strict_loading
+
+        if cls is BaseSAEConfig:
+            cls = SAE_TYPE_TO_CONFIG_CLASS[sae_config["sae_type"]]
+        return cls.model_validate({**sae_config, **kwargs})
+
+    def save_hyperparameters(self, sae_path: str | Path, remove_loading_info: bool = True):
+        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
+        d = self.model_dump()
+        if remove_loading_info:
+            d.pop("sae_pretrained_name_or_path", None)
+            d.pop("strict_loading", None)
+
+        with open(os.path.join(sae_path, "config.json"), "w") as f:
+            json.dump(d, f, indent=4)
+
+    @property
+    @abstractmethod
+    def associated_hook_points(self) -> list[str]:
+        pass
 
 
 SAE_TYPE_TO_MODEL_CLASS = {}
@@ -176,9 +269,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def save_pretrained(
         self,
         save_path: Path | str,
-        sae_name: str | None = None,
-        sae_series: str | None = None,
-        mongo_client: MongoClient | None = None,
     ) -> None:
         os.makedirs(Path(save_path), exist_ok=True)
 
@@ -186,17 +276,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             self.save_checkpoint(Path(save_path) / "sae_weights.safetensors")
         else:
             self.save_checkpoint(Path(save_path) / "sae_weights.dcp")
-        if is_primary_rank(self.device_mesh):
-            if mongo_client is not None:
-                assert sae_name is not None and sae_series is not None, (
-                    "sae_name and sae_series must be provided when saving to MongoDB"
-                )
-                mongo_client.create_sae(
-                    name=sae_name,
-                    series=sae_series,
-                    path=str(Path(save_path).absolute()),
-                    cfg=self.cfg,
-                )
 
     @overload
     def encode(

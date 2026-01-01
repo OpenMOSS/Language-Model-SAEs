@@ -223,7 +223,7 @@ def test_activation_batchler(mocker: MockerFixture):
     assert torch.allclose(result[0]["tokens"], torch.tensor([[1, 2, 3], [1, 2, 3]]))
 
     # Test with buffer_shuffle_config
-    from lm_saes.config import BufferShuffleConfig
+    from lm_saes import BufferShuffleConfig
 
     buffer_shuffle_config = BufferShuffleConfig(enabled=True, method="full", perm_seed=42, generator_device="cpu")
 

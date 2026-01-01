@@ -1,6 +1,6 @@
 import functools
 import json
-from typing import Iterable
+from typing import Iterable, Literal
 
 import torch
 import torch.distributed.tensor
@@ -12,7 +12,7 @@ from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.circuit.attribution import attribute
 from lm_saes.circuit.graph import Graph, compute_influence, normalize_matrix
 from lm_saes.circuit.replacement_model import ReplacementModel
-from lm_saes.config import EvalConfig, GraphEvalConfig
+from lm_saes.config import BaseConfig
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.metrics import (
     DownstreamMetric,
@@ -31,6 +31,29 @@ from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("evaluator")
+
+
+class EvalConfig(BaseConfig):
+    total_eval_tokens: int = 1000000
+
+
+class GraphEvalConfig(BaseConfig):
+    max_n_logits: int = 2
+    # How many logits to attribute from, max. We attribute to min(max_n_logits, n_logits_to_reach_desired_log_prob); see below for the latter
+
+    desired_logit_prob: float = 0.95
+    # Attribution will attribute from the minimum number of logits needed to reach this probability mass (or max_n_logits, whichever is lower)
+
+    max_feature_nodes: int = 1024
+    # Only attribute from this number of feature nodes, max. Lower is faster, but you will lose more of the graph. None means no limit.
+
+    batch_size: int = 2
+    # Batch size when attributing
+
+    offload: Literal[None, "disk", "cpu"] = None
+    # Offload various parts of the model during attribution to save memory. Can be 'disk', 'cpu', or None (keep on GPU)
+
+    start_from: int = 0
 
 
 class Evaluator:

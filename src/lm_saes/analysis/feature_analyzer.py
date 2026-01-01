@@ -5,21 +5,51 @@ from typing import Any, Mapping, Optional, cast
 import torch
 import torch.distributed.tensor
 from einops import rearrange, repeat
+from pydantic import ConfigDict, Field
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation.factory import ActivationFactory
-from lm_saes.analysis.post_analysis import get_post_analysis_processor
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.config import FeatureAnalyzerConfig
+from lm_saes.config import BaseConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap, masked_fill, to_local
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
+
+from .post_analysis import get_post_analysis_processor
+
+
+class FeatureAnalyzerConfig(BaseConfig):
+    model_config = ConfigDict(arbitrary_types_allowed=True)  # allow parsing torch.dtype
+    total_analyzing_tokens: int
+    """ Total number of tokens to analyze """
+
+    ignore_token_ids: list[int] | None = None
+    """ Tokens to ignore in the activations. """
+
+    subsamples: dict[str, dict[str, int | float]] = Field(
+        default_factory=lambda: {
+            "top_activations": {"proportion": 1.0, "n_samples": 10},
+            "non_activating": {
+                "proportion": 0.3,
+                "n_samples": 20,
+                "max_length": 50,
+            },
+        }
+    )
+    """ Dictionary mapping subsample names to their parameters:
+        - `proportion`: Proportion of max activation to consider
+        - `n_samples`: Number of samples to keep
+        - `max_length`: Maximum length of the sample
+    """
+
+    clt_layer: int | None = None
+    """ Layer to analyze for CLT. Provided iff analyzing CLT. """
 
 
 class FeatureAnalyzer:
