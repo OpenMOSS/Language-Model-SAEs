@@ -13,7 +13,7 @@ pytest tests/distributed/
 You can also run a specific test file:
 
 ```bash
-pytest tests/distributed/test_crosscoder_load.py
+pytest tests/distributed/test_load_state_dict.py
 ```
 
 ## How it works
@@ -33,7 +33,7 @@ If any child process fails (raises an assertion or error), the parent process (p
 To create a new distributed test, use the `@distributed_test` decorator:
 
 ```python
-from tests.distributed.lib import distributed_test
+from lm_saes.testing import distributed_test
 import torch.distributed as dist
 
 @distributed_test(nproc_per_node=2, backend="gloo")

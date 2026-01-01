@@ -23,14 +23,16 @@ def _test_wrapper(rank, world_size, backend, func_name, module_path, *args, **kw
     # Initialize process group
     if torch.cuda.is_available() and backend == "nccl":
         torch.cuda.set_device(rank)
-        dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
-    else:
-        dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+    dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
 
     try:
         # Re-import the module to get the function
         module_name = os.path.splitext(os.path.basename(module_path))[0]
         spec = importlib.util.spec_from_file_location(module_name, module_path)
+        if spec is None:
+            raise RuntimeError(f"Could not find module {module_path}")
+        if spec.loader is None:
+            raise RuntimeError(f"Could not find loader for module {module_path}")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
@@ -59,7 +61,7 @@ def distributed_test(nproc_per_node=1, backend="gloo"):
             else:
                 # We are in the parent process (pytest), spawn children
                 module = inspect.getmodule(func)
-                if module is None or not hasattr(module, "__file__"):
+                if module is None or module.__file__ is None:
                     raise RuntimeError("Could not determine module path for distributed test")
 
                 module_path = os.path.abspath(module.__file__)
@@ -74,9 +76,9 @@ def distributed_test(nproc_per_node=1, backend="gloo"):
                     join=True,
                 )
 
-        wrapper.is_distributed_test = True
-        wrapper.nproc_per_node = nproc_per_node
-        wrapper.backend = backend
+        setattr(wrapper, "is_distributed_test", True)
+        setattr(wrapper, "nproc_per_node", nproc_per_node)
+        setattr(wrapper, "backend", backend)
         return wrapper
 
     return decorator
