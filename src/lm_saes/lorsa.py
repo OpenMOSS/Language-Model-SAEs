@@ -829,7 +829,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         return torch.where(mask, scores, ignore_value)  # type: ignore
 
     @override
+    @torch.no_grad()
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
+        """Set decoder weights to a fixed norm."""
         if force_exact:
             self.W_O.mul_(value / self.decoder_norm(keepdim=True).mean())
         else:

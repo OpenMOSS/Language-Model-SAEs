@@ -137,7 +137,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             )
 
     @override
+    @torch.no_grad()
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
+        """Set the decoder weights to a fixed norm."""
         if force_exact:
             self.W_D.mul_(value / self.decoder_norm(keepdim=True))
         else:
@@ -145,6 +147,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @torch.no_grad()
     def set_encoder_to_fixed_norm(self, value: float):
+        """Set the encoder weights to a fixed norm."""
         self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
     def dim_maps(self) -> dict[str, DimMap]:

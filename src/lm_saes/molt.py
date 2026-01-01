@@ -279,6 +279,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
     @override
     @timer.time("set_decoder_to_fixed_norm")
+    @torch.no_grad()
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool) -> None:
         # Scale all U and V matrices proportionally
         for rank_str in self.U_matrices.keys():
@@ -301,10 +302,12 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     @torch.no_grad()
     @timer.time("set_encoder_to_fixed_norm")
     def set_encoder_to_fixed_norm(self, value: float) -> None:
+        """Set encoder weights to a fixed norm."""
         self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
     @override
     @timer.time("transform_to_unit_decoder_norm")
+    @torch.no_grad()
     def transform_to_unit_decoder_norm(self) -> None:
         # Set each transform to unit norm
         for rank_str in self.U_matrices.keys():
@@ -317,8 +320,8 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
             # Scale to unit norm (split equally between U and V)
             scale_factors = (1.0 / current_norms) ** 0.5
-            U.data.mul_(scale_factors.view(-1, 1, 1))
-            V.data.mul_(scale_factors.view(-1, 1, 1))
+            U.mul_(scale_factors.view(-1, 1, 1))
+            V.mul_(scale_factors.view(-1, 1, 1))
 
     @override
     @timer.time("standardize_parameters_of_dataset_norm")
