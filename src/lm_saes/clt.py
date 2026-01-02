@@ -71,15 +71,23 @@ class CLTConfig(BaseSAEConfig):
     reads from the residual stream at that layer and can decode to layers L through L-1.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "clt"
+    sae_type: str = "clt"
+
     act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
+
     init_cross_layer_decoder_all_zero: bool = False
+
     hook_points_in: list[str]
     """List of hook points to capture input activations from, one for each layer."""
+
     hook_points_out: list[str]
     """List of hook points to capture output activations from, one for each layer."""
+
     decode_with_csr: bool = False
     """Whether to decode with CSR matrices. If `True`, will use CSR matrices for decoding. If `False`, will use dense matrices for decoding."""
+
+    sparsity_threshold_for_csr: float = 0.05
+    """The sparsity threshold for the CSR matrices. If the sparsity of the feature activations reaches this threshold, the CSR matrices will be used for decoding. The current conditioning for sparsity is dependent on usage of TopK family of activation functions, so this will not work with other activation functions like `relu` or `jumprelu`."""
 
     @property
     def n_layers(self) -> int:
@@ -230,7 +238,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 ),
                 dims_to_keep_in_bwd=(-2, -1),
                 device=self.cfg.device,
-                dtype=self.cfg.dtype if self.cfg.promote_act_fn_dtype is None else self.cfg.promote_act_fn_dtype,
+                dtype=self.cfg.dtype,
                 device_mesh=device_mesh,
             )
 
