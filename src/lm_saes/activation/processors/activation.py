@@ -8,10 +8,18 @@ from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
 from tqdm import tqdm
 
-from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.backend.language_model import LanguageModel
-from lm_saes.config import BufferShuffleConfig
+from lm_saes.config import BaseConfig
 from lm_saes.utils.distributed import DimMap, mesh_dim_size
+
+from .core import BaseActivationProcessor
+
+
+class BufferShuffleConfig(BaseConfig):
+    perm_seed: int = 42
+    """ Perm seed for aligned permutation for generating activations. If `None`, will not use manual seed for Generator. """
+    generator_device: str | None = None
+    """ The device to be assigned for the torch.Generator. If 'None', generator will be initialized on cpu as pytorch default. """
 
 
 @dataclass

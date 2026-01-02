@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
@@ -10,15 +11,16 @@ from bson import ObjectId
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
-from lm_saes.config import (
-    BaseSAEConfig,
-    DatasetConfig,
-    LanguageModelConfig,
-    MongoDBConfig,
-    SAEConfig,
-)
+from lm_saes.abstract_sae import BaseSAEConfig
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.config import DatasetConfig
+from lm_saes.sae import SAEConfig
+from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
 
-from .utils.bytes import bytes_to_np, np_to_bytes
+
+class MongoDBConfig(BaseModel):
+    mongo_uri: str = Field(default_factory=lambda: os.environ.get("MONGO_URI", "mongodb://localhost:27017/"))
+    mongo_db: str = Field(default_factory=lambda: os.environ.get("MONGO_DB", "mechinterp"))
 
 
 class DatasetRecord(BaseModel):

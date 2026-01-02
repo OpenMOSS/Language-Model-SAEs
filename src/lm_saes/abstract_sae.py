@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import shutil
@@ -30,19 +31,126 @@ from torch.distributed.tensor.experimental import local_map
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.activation_functions import JumpReLU
-from lm_saes.config import BaseSAEConfig
-from lm_saes.database import MongoClient
+from lm_saes.config import BaseModelConfig
 from lm_saes.utils.distributed import DimMap, distributed_topk, item, mesh_dim_size
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.math import topk
-from lm_saes.utils.misc import is_primary_rank
-from lm_saes.utils.tensor_specs import TensorSpecs
+from lm_saes.utils.misc import (
+    is_primary_rank,
+)
+from lm_saes.utils.tensor_specs import TensorSpecs, apply_token_mask
 from lm_saes.utils.timer import timer
 
-from .utils.tensor_specs import apply_token_mask
-
 logger = get_distributed_logger("abstract_sae")
+
+
+SAE_TYPE_TO_CONFIG_CLASS = {}
+
+
+def register_sae_config(name):
+    def _register(cls):
+        SAE_TYPE_TO_CONFIG_CLASS[name] = cls
+        return cls
+
+    return _register
+
+
+class BaseSAEConfig(BaseModelConfig, ABC):
+    """
+    Base class for SAE configs with common settings that are able to apply to various SAE variants. This class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
+    """
+
+    sae_type: str
+    """The type of the sparse dictionary. Must be one of the registered SAE types."""
+
+    d_model: int
+    """The dimension of the input/label activation space. In common settings where activations come from a transformer, this is the dimension of the model (may also known as hidden_size)."""
+
+    expansion_factor: float
+    """The expansion factor of the sparse dictionary. The hidden dimension of the sparse dictionary `d_sae` is `d_model * expansion_factor`."""
+
+    use_decoder_bias: bool = True
+    """Whether to use a bias term in the decoder. Including bias term may make it easier to train a better sparse dictionary, in exchange for increased architectural complexity."""
+
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
+    """The activation function to use for the sparse dictionary. Currently supported activation functions are `relu`, `jumprelu`, `topk`, `batchtopk`, `batchlayertopk`, and `layertopk`.
+    
+    - `relu`: ReLU activation function. Used in the most vanilla SAE settings.
+    - `jumprelu`: JumpReLU activation function, adding a trainable element-wise threshold that pre-activations must pass to be activated, which is formally defined as :math:`f(x) = \\max(0, x - \\theta)` where :math:`\\theta` is the threshold. Proposed in [Jumping Ahead: Improving Reconstruction Fidelity with JumpReLU Sparse Autoencoders](https://arxiv.org/abs/2407.14435).
+    - `topk`: TopK activation function. Retains the top K activations per sample, zeroing out the rest. Proposed in [Scaling and evaluating sparse autoencoders](https://openreview.net/forum?id=tcsZt9ZNKD).
+    - `batchtopk`: BatchTopK activation function. Batch TopK relaxes TopK function to batch-level, ing the top `k * batch_size` activations per batch and zeroing out the rest. This allows more adaptive allocation of latents on each sample. Proposed in [BatchTopK Sparse Autoencoders](https://arxiv.org/abs/2412.06410).
+    - `batchlayertopk`: (For CrossLayerTranscoder only) Extension of BatchTopK to layer-and-batch-aware, retaining the top `k * batch_size * n_layers` activations per batch and layer and zeroing out the rest.
+    - `layertopk`: (For CrossLayerTranscoder only) Extension of BatchTopK to layer-aware, retaining the top `k * n_layers` activations per layer and zeroing out the rest. Note that this activation function does not take batch dimension into account.
+    """
+
+    norm_activation: Literal["token-wise", "batch-wise", "dataset-wise", "inference"] = "dataset-wise"
+    """The activation normalization strategy to use for the input/label activations. During call of `normalize_activations` (which will be called by the Trainer during training), the input/label activations will be normalized to an average norm of :math:`\\sqrt{d_{model}}`. This allows easier hyperparameter (mostly learning rate) transfer between different scale of model activations, since the MSE loss without normalization is proportional to the square of the activation norm.
+    
+    Different activation normalization strategy determines in what view the norm is *averaged*, with the following options:
+    - `token-wise`: Norm is directly computed for activation from each token. No averaging is performed.
+    - `batch-wise`: Norm is computed for each batch, then averaged over the batch dimension.
+    - `dataset-wise`: Norm is computed from several samples from the activation. Compared to `batch-wise`, `dataset-wise` gives a fixed value of average norm for all activations, preserving the linearity of pre-activation encoding and decoding.
+    - `inference`: No normalization is performed. A inference mode is produced after calling `standardize_parameters_of_dataset_norm` method, which folds the dataset-wise average norm into the weights and biases of the model. Switching to `inference` mode doesn't affect the encoding and decoding as a whole, that is, the reconstructed activations keep the same as the denormalized reconstructed activations in `dataset-wise` mode. However, the feature activations will reflect the activation scale. This allows real magnitude of feature activations to present during inference.
+    """
+
+    sparsity_include_decoder_norm: bool = True
+    """Whether to include the decoder norm term in feature activation gating. If true, the pre-activation hidden states will be scaled by the decoder norm before applying the activation function, and then scale back after the activation function. Formally, considering activation function :math:`f(x)`, an activation gating function :math:`g(x)` is defined as :math:`g(x) = f(x) / x` (element-wise division). When `sparsity_include_decoder_norm` is True, we replace :math:`f(x)` with :math:`x * g(x * || W_\text{dec} ||)`. This effectively suppresses the training dynamics that model tries to increase the decoder norm in exchange of a smaller feature activation magnitude, resulting in lower sparsity loss (L1 norm)."""
+
+    top_k: int = 50
+    """The k value to use for the topk family of activation functions. For vanilla TopK, the L0 norm of the feature activations will be exactly equal to `top_k`."""
+
+    sae_pretrained_name_or_path: str | None = None
+    strict_loading: bool = True
+
+    use_triton_kernel: bool = False
+    """Whether to use the Triton SpMM kernel for the sparse matrix multiplication. Currently only supported for vanilla SAE."""
+
+    sparsity_threshold_for_triton_spmm_kernel: float = 0.996
+    """The sparsity threshold for the Triton SpMM kernel. Only when feature activation sparsity reaches this threshold, the Triton SpMM kernel will be used for the sparse matrix multiplication. This is useful for JumpReLU or TopK with a k annealing schedule, where the sparsity is not guaranteed throughout the training."""
+
+    jumprelu_threshold_window: float = 2.0
+    """The window size for the JumpReLU threshold. When pre-activations are element-wise in the window-neighborhood of the threshold, the threshold will begin to receive gradient. See [Anthropic's Circuits Update - January 2025](https://transformer-circuits.pub/2025/january-update/index.html#DL) for more details on how JumpReLU is optimized (where they refer to this window as :math:`\\epsilon`)."""
+
+    @property
+    def d_sae(self) -> int:
+        """The hidden dimension of the sparse dictionary. Calculated as `d_model * expansion_factor`."""
+        d_sae = int(self.d_model * self.expansion_factor)
+        return d_sae
+
+    @classmethod
+    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
+        """Load the SAEConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/hyperparams.json.
+
+        Args:
+            sae_path (str): The path to the pretrained SAE.
+            **kwargs: Additional keyword arguments to pass to the SAEConfig constructor.
+        """
+        path = parse_pretrained_name_or_path(pretrained_name_or_path)
+        with open(os.path.join(path, "config.json"), "r") as f:
+            sae_config = json.load(f)
+        sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
+        sae_config["strict_loading"] = strict_loading
+
+        if cls is BaseSAEConfig:
+            cls = SAE_TYPE_TO_CONFIG_CLASS[sae_config["sae_type"]]
+        return cls.model_validate({**sae_config, **kwargs})
+
+    def save_hyperparameters(self, sae_path: str | Path, remove_loading_info: bool = True):
+        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
+        d = self.model_dump()
+        if remove_loading_info:
+            d.pop("sae_pretrained_name_or_path", None)
+            d.pop("strict_loading", None)
+
+        with open(os.path.join(sae_path, "config.json"), "w") as f:
+            json.dump(d, f, indent=4)
+
+    @property
+    @abstractmethod
+    def associated_hook_points(self) -> list[str]:
+        """List of hook points used by the SAE, including all input and label hook points. This is used to retrieve useful data from the input activation source."""
+        raise NotImplementedError("Subclasses must implement this method")
 
 
 SAE_TYPE_TO_MODEL_CLASS = {}
@@ -57,7 +165,7 @@ def register_sae_model(name):
 
 
 class AbstractSparseAutoEncoder(HookedRootModule, ABC):
-    """Abstract base class for sparse autoencoder models.
+    """Abstract base class for all sparse dictionary models.
 
     This class defines the public interface for all sparse autoencoder implementations.
     Concrete implementations should inherit from this class and implement the required methods.
@@ -176,9 +284,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def save_pretrained(
         self,
         save_path: Path | str,
-        sae_name: str | None = None,
-        sae_series: str | None = None,
-        mongo_client: MongoClient | None = None,
     ) -> None:
         os.makedirs(Path(save_path), exist_ok=True)
 
@@ -186,17 +291,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             self.save_checkpoint(Path(save_path) / "sae_weights.safetensors")
         else:
             self.save_checkpoint(Path(save_path) / "sae_weights.dcp")
-        if is_primary_rank(self.device_mesh):
-            if mongo_client is not None:
-                assert sae_name is not None and sae_series is not None, (
-                    "sae_name and sae_series must be provided when saving to MongoDB"
-                )
-                mongo_client.create_sae(
-                    name=sae_name,
-                    series=sae_series,
-                    path=str(Path(save_path).absolute()),
-                    cfg=self.cfg,
-                )
 
     @overload
     def encode(
@@ -527,7 +621,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 self.cfg.jumprelu_threshold_window,
                 shape=(self.cfg.d_sae,),
                 device=self.cfg.device,
-                dtype=self.cfg.dtype if self.cfg.promote_act_fn_dtype is None else self.cfg.promote_act_fn_dtype,
+                dtype=self.cfg.dtype,
                 device_mesh=device_mesh,
             )
 

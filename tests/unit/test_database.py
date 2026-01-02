@@ -1,7 +1,7 @@
 import mongomock
 import pytest
 
-from lm_saes.config import MongoDBConfig, SAEConfig
+from lm_saes import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient, SAERecord
 
 

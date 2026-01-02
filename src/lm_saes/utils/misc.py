@@ -7,9 +7,8 @@ import torch.distributed as dist
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
 
-from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.distributed.ops import item
-
+from .distributed import DimMap
+from .distributed.ops import item
 from .logging import get_distributed_logger
 
 logger = get_distributed_logger("utils.misc")

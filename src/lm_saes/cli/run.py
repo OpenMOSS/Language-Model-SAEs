@@ -3,7 +3,6 @@ from typing import Annotated
 
 import typer
 
-from lm_saes.cli.utils import load_config
 from lm_saes.runners import (
     AnalyzeSAESettings,
     GenerateActivationsSettings,
@@ -18,6 +17,8 @@ from lm_saes.runners import (
 from lm_saes.runners import (
     train_sae as run_train,
 )
+
+from .utils import load_config
 
 app = typer.Typer()
 

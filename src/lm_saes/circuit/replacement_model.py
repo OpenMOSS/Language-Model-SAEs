@@ -9,8 +9,8 @@ from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.config import LanguageModelConfig
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_model
 

@@ -8,23 +8,22 @@ import torch
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.activation.processors.cached_activation import CachedActivationLoader
-from lm_saes.activation.writer import ActivationWriter
-from lm_saes.config import (
+from lm_saes.activation.factory import (
+    ActivationFactory,
     ActivationFactoryConfig,
     ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
-    ActivationWriterConfig,
     BufferShuffleConfig,
-    DatasetConfig,
-    LanguageModelConfig,
-    MongoDBConfig,
 )
-from lm_saes.database import MongoClient
+from lm_saes.activation.processors.cached_activation import CachedActivationLoader
+from lm_saes.activation.writer import ActivationWriter, ActivationWriterConfig
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.config import DatasetConfig
+from lm_saes.database import MongoClient, MongoDBConfig
 from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.runners.utils import load_config
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
+
+from .utils import load_config
 
 logger = get_distributed_logger("runners.generate")
 

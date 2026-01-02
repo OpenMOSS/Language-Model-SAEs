@@ -2,8 +2,8 @@ import datasets
 import torch
 import typer
 
-from lm_saes.cli import create, remove, run, show
-from lm_saes.cli.common import (
+from . import create, remove, run, show
+from .common import (
     DEFAULT_MONGO_DB,
     DEFAULT_MONGO_URI,
     DEFAULT_SAE_SERIES,
@@ -12,7 +12,7 @@ from lm_saes.cli.common import (
     SAESeriesOption,
     console,
 )
-from lm_saes.cli.utils import load_config
+from .utils import load_config
 
 app = typer.Typer(
     name="lm-saes",

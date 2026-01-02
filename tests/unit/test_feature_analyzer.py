@@ -3,9 +3,9 @@ import torch
 from einops import repeat
 from pytest_mock import MockerFixture
 
+from lm_saes import FeatureAnalyzerConfig, SAEConfig
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
-from lm_saes.config import FeatureAnalyzerConfig, SAEConfig
 from lm_saes.sae import SparseAutoEncoder
 
 

@@ -10,7 +10,10 @@ from rich.panel import Panel
 from rich.text import Text
 
 from lm_saes.analysis.samples import TokenizedSample
-from lm_saes.cli.common import (
+from lm_saes.database import FeatureAnalysisSampling, MongoClient, MongoDBConfig
+from lm_saes.resource_loaders import LanguageModel, load_dataset_shard, load_model
+
+from .common import (
     DEFAULT_MONGO_DB,
     DEFAULT_MONGO_URI,
     DEFAULT_SAE_SERIES,
@@ -19,9 +22,6 @@ from lm_saes.cli.common import (
     SAESeriesOption,
     console,
 )
-from lm_saes.config import MongoDBConfig
-from lm_saes.database import FeatureAnalysisSampling, MongoClient
-from lm_saes.resource_loaders import LanguageModel, load_dataset_shard, load_model
 
 app = typer.Typer(help="Display feature activation samples and statistics.")
 

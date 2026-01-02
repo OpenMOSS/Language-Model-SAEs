@@ -21,9 +21,13 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder, register_sae_model
+from lm_saes.abstract_sae import (
+    AbstractSparseAutoEncoder,
+    BaseSAEConfig,
+    register_sae_config,
+    register_sae_model,
+)
 from lm_saes.activation_functions import JumpReLU
-from lm_saes.config import CLTConfig
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
@@ -57,6 +61,54 @@ class CrossLayerTranscoderSpecs(TensorSpecs):
     @staticmethod
     def label(tensor: torch.Tensor) -> tuple[str, ...]:
         return CrossLayerTranscoderSpecs.reconstructed(tensor)
+
+
+@register_sae_config("clt")
+class CLTConfig(BaseSAEConfig):
+    """Configuration for Cross Layer Transcoder (CLT).
+
+    A CLT consists of L encoders and L(L+1)/2 decoders where each encoder at layer L
+    reads from the residual stream at that layer and can decode to layers L through L-1.
+    """
+
+    sae_type: str = "clt"
+
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
+
+    init_cross_layer_decoder_all_zero: bool = False
+
+    hook_points_in: list[str]
+    """List of hook points to capture input activations from, one for each layer."""
+
+    hook_points_out: list[str]
+    """List of hook points to capture output activations from, one for each layer."""
+
+    decode_with_csr: bool = False
+    """Whether to decode with CSR matrices. If `True`, will use CSR matrices for decoding. If `False`, will use dense matrices for decoding."""
+
+    sparsity_threshold_for_csr: float = 0.05
+    """The sparsity threshold for the CSR matrices. If the sparsity of the feature activations reaches this threshold, the CSR matrices will be used for decoding. The current conditioning for sparsity is dependent on usage of TopK family of activation functions, so this will not work with other activation functions like `relu` or `jumprelu`."""
+
+    @property
+    def n_layers(self) -> int:
+        """Number of layers in the CLT."""
+        return len(self.hook_points_in)
+
+    @property
+    def n_decoders(self) -> int:
+        """Number of decoders in the CLT."""
+        return self.n_layers * (self.n_layers + 1) // 2
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        """All hook points used by the CLT."""
+        return self.hook_points_in + self.hook_points_out
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        assert len(self.hook_points_in) == len(self.hook_points_out), (
+            "Number of input and output hook points must match"
+        )
 
 
 @register_sae_model("clt")
@@ -186,7 +238,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 ),
                 dims_to_keep_in_bwd=(-2, -1),
                 device=self.cfg.device,
-                dtype=self.cfg.dtype if self.cfg.promote_act_fn_dtype is None else self.cfg.promote_act_fn_dtype,
+                dtype=self.cfg.dtype,
                 device_mesh=device_mesh,
             )
 

@@ -3,7 +3,7 @@ import math
 import pytest
 import torch
 
-from lm_saes.config import SAEConfig
+from lm_saes import SAEConfig
 from lm_saes.sae import SparseAutoEncoder
 
 
@@ -113,7 +113,6 @@ def test_sae_activate_fn(sae_config: SAEConfig, sae: SparseAutoEncoder):
     assert torch.allclose(output, expected, atol=1e-4, rtol=1e-5)
 
 
-@pytest.mark.xfail(reason="Source code bug: transform_to_unit_decoder_norm uses keepdim=False causing broadcast error")
 def test_transform_to_unit_decoder_norm(sae_config: SAEConfig, sae: SparseAutoEncoder):
     sae.transform_to_unit_decoder_norm()
     assert torch.allclose(

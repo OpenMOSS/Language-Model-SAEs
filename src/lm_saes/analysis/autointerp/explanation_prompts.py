@@ -6,8 +6,9 @@ including both neuronpedia-style and OpenAI-style explanation prompts.
 
 from typing import Any
 
-from lm_saes.analysis.autointerp.autointerp_base import AutoInterpConfig
 from lm_saes.analysis.samples import TokenizedSample, process_token
+
+from .autointerp_base import AutoInterpConfig
 
 NEURONPEDIA_SYSTEM_PROMPT_VANILLA = """You are explaining the behavior of a neuron in a neural network. Your final response should be a very concise explanation (1-6 words) that captures what the neuron detects or predicts by finding patterns in lists.\n\n
 To determine the explanation, you are given four lists:\n\n

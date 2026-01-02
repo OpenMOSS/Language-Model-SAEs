@@ -1,25 +1,23 @@
 """Module for sweeping SAE experiments."""
 
+from pathlib import Path
 from typing import Optional
 
 import torch
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.config import (
-    ActivationFactoryConfig,
-    CLTConfig,
-    DatasetConfig,
-    LanguageModelConfig,
-    MongoDBConfig,
-)
-from lm_saes.database import MongoClient
+from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.clt import CLTConfig, CrossLayerTranscoder
+from lm_saes.config import DatasetConfig
+from lm_saes.database import MongoClient, MongoDBConfig
 from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.runners.utils import load_config
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
+from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.topk_to_jumprelu_conversion import topk_to_jumprelu_conversion
+
+from .utils import load_config
 
 logger = get_distributed_logger("runners.topk_to_jumprelu_conversion")
 
@@ -153,10 +151,17 @@ def convert_clt(settings: ConvertCLTSettings) -> None:
     logger.info("Conversion completed, saving CLT model")
     sae.save_pretrained(
         save_path=settings.exp_result_path,
-        sae_name=settings.sae_name,
-        sae_series=settings.sae_series,
-        mongo_client=mongo_client,
     )
+    if is_primary_rank(device_mesh) and mongo_client is not None:
+        assert settings.sae_name is not None and settings.sae_series is not None, (
+            "sae_name and sae_series must be provided when saving to MongoDB"
+        )
+        mongo_client.create_sae(
+            name=settings.sae_name,
+            series=settings.sae_series,
+            path=str(Path(settings.exp_result_path).absolute()),
+            cfg=settings.sae,
+        )
     sae.cfg.save_hyperparameters(settings.exp_result_path)
 
     logger.info("CLT conversion completed successfully")
