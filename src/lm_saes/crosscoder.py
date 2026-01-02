@@ -53,7 +53,7 @@ class CrossCoderSpecs(TensorSpecs):
 
 @register_sae_config("crosscoder")
 class CrossCoderConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "crosscoder"
+    sae_type: str = "crosscoder"
     hook_points: list[str]
 
     @property

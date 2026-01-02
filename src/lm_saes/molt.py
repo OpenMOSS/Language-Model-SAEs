@@ -32,7 +32,7 @@ class MOLTConfig(BaseSAEConfig):
     interpretable linear transforms.
     """
 
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "molt"
+    sae_type: str = "molt"
     hook_point_in: str
     """Hook point to capture input activations from."""
     hook_point_out: str

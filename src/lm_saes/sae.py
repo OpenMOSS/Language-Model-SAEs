@@ -23,7 +23,7 @@ from lm_saes.utils.distributed import DimMap
 
 @register_sae_config("sae")
 class SAEConfig(BaseSAEConfig):
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "sae"
+    sae_type: str = "sae"
     hook_point_in: str
     hook_point_out: str
     use_glu_encoder: bool = False

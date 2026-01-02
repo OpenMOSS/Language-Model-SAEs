@@ -37,7 +37,7 @@ logger = get_distributed_logger("lorsa")
 class LorsaConfig(BaseSAEConfig):
     """Configuration for Low Rank Sparse Attention."""
 
-    sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "lorsa"
+    sae_type: str = "lorsa"
 
     hook_point_in: str
     hook_point_out: str
