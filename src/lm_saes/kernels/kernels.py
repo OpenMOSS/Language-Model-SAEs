@@ -796,7 +796,7 @@ class TopKSparseFusedSAE(torch.autograd.Function):
         hidden_pre = x @ W_E + b_E
 
         if sparsity_include_decoder_norm:
-            _, topk_indices = torch.topk(hidden_pre * W_D.norm(dim=-1, keepdim=True), k=k, dim=-1, sorted=False)
+            _, topk_indices = torch.topk(hidden_pre * W_D.norm(dim=-1), k=k, dim=-1, sorted=False)
             topk_values = torch.gather(hidden_pre, dim=1, index=topk_indices)
         else:
             topk_values, topk_indices = torch.topk(hidden_pre, k=k, dim=-1, sorted=False)
@@ -830,8 +830,8 @@ class TopKSparseFusedSAE(torch.autograd.Function):
     def backward(
         ctx,
         grad_output: torch.Tensor,
-        grad_feature_acts: torch.Tensor | None = None,
-        grad_hidden_pre: torch.Tensor | None = None,
+        grad_feature_acts_none: torch.Tensor | None = None,
+        grad_hidden_pre_none: torch.Tensor | None = None,
     ) -> tuple[None, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, None, None]:
         (
             x,
