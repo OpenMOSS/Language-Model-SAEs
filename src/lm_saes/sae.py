@@ -489,7 +489,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @classmethod
     @torch.no_grad()
-    def from_saelens(cls, sae_saelens):
+    def from_saelens(cls, sae_saelens, **kwargs):
         from sae_lens import JumpReLUSAE, StandardSAE, TopKSAE
 
         # Check Configuration
@@ -542,6 +542,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             top_k=k,
             expansion_factor=d_sae / d_model,
             sparsity_include_decoder_norm=rescale_acts_by_decoder_norm,
+            **kwargs,
         )
 
         model = cls.from_config(cfg, None)

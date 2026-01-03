@@ -536,10 +536,11 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         device_mesh: DeviceMesh | None = None,
         strict_loading: bool = True,
         fold_activation_scale: bool = False,
+        **kwargs,
     ):
         """Load a pretrained sparse dictionary from a local directory."""
 
-        cfg = BaseSAEConfig.from_pretrained(path)
+        cfg = BaseSAEConfig.from_pretrained(path, **kwargs)
         model = cls.from_config(cfg, device_mesh=device_mesh)
 
         if path.endswith(".pt") or path.endswith(".safetensors") or path.endswith(".dcp"):
