@@ -10,7 +10,7 @@ from lm_saes import (
     AnalyzeSAESettings,
     FeatureAnalyzerConfig,
     MongoDBConfig,
-    SAEConfig,
+    PretrainedSAE,
     analyze_sae,
 )
 
@@ -26,10 +26,13 @@ if __name__ == "__main__":
     torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
     args = parse_args()
 
-    sae_cfg = SAEConfig.from_pretrained(os.path.expanduser(args.sae_path), device="cuda", dtype=torch.float16)
     analyze_sae(
         AnalyzeSAESettings(
-            sae=sae_cfg,
+            sae=PretrainedSAE(
+                pretrained_name_or_path=os.path.expanduser(args.sae_path),
+                device="cuda",
+                dtype=torch.float16,
+            ),
             sae_name="pythia-160m-sae",
             sae_series="pythia-sae",
             activation_factory=ActivationFactoryConfig(

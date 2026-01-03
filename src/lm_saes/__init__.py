@@ -36,6 +36,7 @@ from .runners import (
     EvaluateCrossCoderSettings,
     EvaluateSAESettings,
     GenerateActivationsSettings,
+    PretrainedSAE,
     SweepingItem,
     SweepSAESettings,
     TrainCLTSettings,
@@ -129,4 +130,5 @@ __all__ = [
     "train_molt",
     "TrainMOLTSettings",
     "DirectLogitAttributorConfig",
+    "PretrainedSAE",
 ]
