@@ -784,6 +784,7 @@ def masked_matmul_with_col_sum(
 
 class TopKSparseFusedSAE(torch.autograd.Function):
     @staticmethod
+    @torch.amp.custom_fwd(device_type="cuda")
     def forward(
         ctx,
         x: torch.Tensor,
@@ -830,6 +831,7 @@ class TopKSparseFusedSAE(torch.autograd.Function):
         return reconstructed, feature_acts, hidden_pre
 
     @staticmethod
+    @torch.amp.custom_bwd(device_type="cuda")
     def backward(
         ctx,
         grad_output: torch.Tensor,
@@ -906,6 +908,7 @@ class TopKSparseFusedSAE(torch.autograd.Function):
 
 class DPTopKSparseFusedSAE(torch.autograd.Function):
     @staticmethod
+    @torch.amp.custom_fwd(device_type="cuda")
     def forward(
         ctx,
         x: torch.Tensor,
@@ -968,6 +971,7 @@ class DPTopKSparseFusedSAE(torch.autograd.Function):
         return reconstructed, feature_acts, hidden_pre
 
     @staticmethod
+    @torch.amp.custom_bwd(device_type="cuda")
     def backward(
         ctx,
         grad_output: torch.Tensor,
