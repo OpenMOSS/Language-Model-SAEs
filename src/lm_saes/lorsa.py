@@ -902,20 +902,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Set encoder weights to fixed norm."""
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for lorsa")
 
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str,
-        strict_loading: bool = True,
-        fold_activation_scale: bool = True,
-        device_mesh: DeviceMesh | None = None,
-        **kwargs,
-    ):
-        """Load pretrained model."""
-        cfg = LorsaConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
-        return model
-
     @override
     def dim_maps(self) -> dict[str, DimMap]:
         """Return a dictionary mapping parameter names to dimension maps.
@@ -949,9 +935,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Prepare label tensor."""
         label = batch[self.cfg.hook_point_out]
         return label
-
-    def hf_folder_name(self) -> str:
-        return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"
 
 
 class RMSNormPerHead(nn.Module):

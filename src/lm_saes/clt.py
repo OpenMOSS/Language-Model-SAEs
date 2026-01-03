@@ -1161,27 +1161,3 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         }
 
         return base_maps | clt_maps
-
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str,
-        strict_loading: bool = True,
-        fold_activation_scale: bool = True,
-        device_mesh: DeviceMesh | None = None,
-        **kwargs,
-    ):
-        cfg = CLTConfig.from_pretrained(
-            pretrained_name_or_path,
-            strict_loading=strict_loading,
-            **kwargs,
-        )
-        model = cls.from_config(
-            cfg,
-            fold_activation_scale=fold_activation_scale,
-            device_mesh=device_mesh,
-        )
-        return model
-
-    def hf_folder_name(self) -> str:
-        return "CLT"

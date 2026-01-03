@@ -359,13 +359,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             reconstructed = reconstructed + self.b_D
         return reconstructed
 
-    @classmethod
-    def from_pretrained(
-        cls, pretrained_name_or_path: str, strict_loading: bool = True, fold_activation_scale: bool = True, **kwargs
-    ):
-        cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        return cls.from_config(cfg, fold_activation_scale=fold_activation_scale)
-
     @torch.no_grad()
     def _init_encoder_with_decoder_transpose(
         self, encoder: torch.nn.Linear, decoder: torch.nn.Linear, factor: float = 1.0
@@ -640,6 +633,3 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             model.threshold.copy_(self.activation_function.log_jumprelu_threshold.exp())
 
         return model
-
-    def hf_folder_name(self) -> str:
-        return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"

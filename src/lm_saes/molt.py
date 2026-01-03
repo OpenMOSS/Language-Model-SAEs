@@ -929,20 +929,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         metrics["molt_metrics/total_rank_sum"] = total_rank_sum
         return metrics
 
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str,
-        strict_loading: bool = True,
-        fold_activation_scale: bool = True,
-        device_mesh: DeviceMesh | None = None,
-        **kwargs,
-    ):
-        """Load pretrained model."""
-        cfg = MOLTConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
-        return model
-
     @override
     @timer.time("forward")
     def forward(
@@ -963,6 +949,3 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         feature_acts = self.encode(x, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, original_x=x)
         return reconstructed
-
-    def hf_folder_name(self) -> str:
-        return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"
