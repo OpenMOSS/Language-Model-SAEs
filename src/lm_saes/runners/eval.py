@@ -20,6 +20,8 @@ from lm_saes.trainer import WandbConfig
 from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 
+from .utils import PretrainedSAE
+
 logger = get_distributed_logger("runners.eval")
 
 
@@ -50,7 +52,7 @@ class EvalGraphSettings(BaseSettings):
 class EvaluateSAESettings(BaseSettings):
     """Settings for evaluating a Sparse Autoencoder."""
 
-    sae: str
+    sae: PretrainedSAE
     """Path to a pretrained SAE model"""
 
     sae_name: str
@@ -107,9 +109,12 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
     logger.info("Loading SAE model")
 
     sae = AbstractSparseAutoEncoder.from_pretrained(
-        settings.sae,
+        settings.sae.pretrained_name_or_path,
         device_mesh=device_mesh,
         fold_activation_scale=settings.fold_activation_scale,
+        device=settings.sae.device,
+        dtype=settings.sae.dtype,
+        strict_loading=settings.sae.strict_loading,
     )
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
@@ -177,7 +182,7 @@ def eval_graph(settings: EvalGraphSettings) -> None:
 class EvaluateCrossCoderSettings(BaseSettings):
     """Settings for evaluating a CrossCoder model."""
 
-    sae: str
+    sae: PretrainedSAE
     """Path to a pretrained CrossCoder model"""
 
     sae_name: str
@@ -225,7 +230,14 @@ def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
     activation_factory = ActivationFactory(settings.activation_factories[device_mesh.get_local_rank("head")])
 
     logger.info("Loading CrossCoder model")
-    sae = CrossCoder.from_pretrained(settings.sae, device_mesh=device_mesh)
+    sae = CrossCoder.from_pretrained(
+        settings.sae.pretrained_name_or_path,
+        device_mesh=device_mesh,
+        device=settings.sae.device,
+        dtype=settings.sae.dtype,
+        fold_activation_scale=settings.sae.fold_activation_scale,
+        strict_loading=settings.sae.strict_loading,
+    )
 
     assert len(settings.activation_factories) * len(settings.activation_factories[0].hook_points) == sae.cfg.n_heads, (
         "Total number of hook points must match the number of heads in the CrossCoder"

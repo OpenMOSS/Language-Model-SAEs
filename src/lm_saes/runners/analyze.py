@@ -21,7 +21,7 @@ from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.utils.distributed.utils import broadcast_object
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 
-from .utils import load_config
+from .utils import PretrainedSAE, load_config
 
 logger = get_distributed_logger("runners.analyze")
 
@@ -94,7 +94,7 @@ def save_analysis_to_file(
 class AnalyzeSAESettings(BaseSettings):
     """Settings for analyzing a Sparse Autoencoder."""
 
-    sae: str
+    sae: PretrainedSAE
     """Configuration for the SAE model architecture and parameters"""
 
     sae_name: str
@@ -201,7 +201,14 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
 
     activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
-    sae = AbstractSparseAutoEncoder.from_pretrained(settings.sae, device_mesh=device_mesh)
+    sae = AbstractSparseAutoEncoder.from_pretrained(
+        settings.sae.pretrained_name_or_path,
+        device_mesh=device_mesh,
+        device=settings.sae.device,
+        dtype=settings.sae.dtype,
+        fold_activation_scale=settings.sae.fold_activation_scale,
+        strict_loading=settings.sae.strict_loading,
+    )
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
 
@@ -254,7 +261,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
 class AnalyzeCrossCoderSettings(BaseSettings):
     """Settings for analyzing a CrossCoder model."""
 
-    sae: str
+    sae: PretrainedSAE
     """Configuration for the CrossCoder model architecture and parameters"""
 
     sae_name: str
@@ -325,7 +332,14 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
     activation_factory = ActivationFactory(settings.activation_factories[crosscoder_device_mesh.get_local_rank("head")])
 
     logger.info("Loading CrossCoder model")
-    sae = CrossCoder.from_pretrained(settings.sae, device_mesh=crosscoder_device_mesh)
+    sae = CrossCoder.from_pretrained(
+        settings.sae.pretrained_name_or_path,
+        device_mesh=crosscoder_device_mesh,
+        device=settings.sae.device,
+        dtype=settings.sae.dtype,
+        fold_activation_scale=settings.sae.fold_activation_scale,
+        strict_loading=settings.sae.strict_loading,
+    )
 
     assert len(settings.activation_factories) * len(settings.activation_factories[0].hook_points) == sae.cfg.n_heads, (
         "Total number of hook points must match the number of heads in the CrossCoder"
@@ -373,7 +387,7 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
 class DirectLogitAttributeSettings(BaseSettings):
     """Settings for analyzing a CrossCoder model."""
 
-    sae: str
+    sae: PretrainedSAE
     """Configuration for the SAE model architecture and parameters"""
 
     sae_name: str
@@ -445,7 +459,13 @@ def direct_logit_attribute(settings: DirectLogitAttributeSettings) -> None:
         logger.info(f"Analysis results to be updated: {settings.analysis_file}")
 
     logger.info("Loading SAE model")
-    sae = AbstractSparseAutoEncoder.from_pretrained(settings.sae)
+    sae = AbstractSparseAutoEncoder.from_pretrained(
+        settings.sae.pretrained_name_or_path,
+        device=settings.sae.device,
+        dtype=settings.sae.dtype,
+        fold_activation_scale=settings.sae.fold_activation_scale,
+        strict_loading=settings.sae.strict_loading,
+    )
 
     # Load configurations
     model_cfg = load_config(

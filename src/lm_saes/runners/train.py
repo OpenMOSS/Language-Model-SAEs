@@ -26,7 +26,7 @@ from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from lm_saes.utils.misc import is_primary_rank
 
-from .utils import load_config
+from .utils import PretrainedSAE, load_config
 
 logger = get_distributed_logger("runners.train")
 
@@ -34,7 +34,7 @@ logger = get_distributed_logger("runners.train")
 class TrainSAESettings(BaseSettings):
     """Settings for training a Sparse Autoencoder (SAE)."""
 
-    sae: BaseSAEConfig | str
+    sae: BaseSAEConfig | PretrainedSAE
     """Configuration for the SAE model architecture and parameters, or the path to a pretrained SAE."""
 
     sae_name: str
@@ -172,8 +172,15 @@ def train_sae(settings: TrainSAESettings) -> None:
     assert settings.initializer is None or not isinstance(settings.initializer, str), (
         "Cannot use an initializer for a pretrained SAE"
     )
-    if isinstance(settings.sae, str):
-        sae = AbstractSparseAutoEncoder.from_pretrained(settings.sae, device_mesh=device_mesh)
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+        )
     elif settings.initializer is not None:
         initializer = Initializer(settings.initializer)
         sae = initializer.initialize_sae_from_config(
@@ -240,7 +247,7 @@ def train_sae(settings: TrainSAESettings) -> None:
 class TrainCrossCoderSettings(BaseSettings):
     """Settings for training a CrossCoder. The main difference to TrainSAESettings is that the activation factory is a list of ActivationFactoryConfig, one for each head."""
 
-    sae: CrossCoderConfig | str
+    sae: CrossCoderConfig | PretrainedSAE
     """Configuration for the CrossCoder model architecture and parameters, or the path to a pretrained CrossCoder."""
 
     sae_name: str
@@ -392,8 +399,15 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     assert settings.initializer is None or not isinstance(settings.initializer, str), (
         "Cannot use an initializer for a pretrained CrossCoder"
     )
-    if isinstance(settings.sae, str):
-        sae = AbstractSparseAutoEncoder.from_pretrained(settings.sae, device_mesh=device_mesh)
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+        )
     elif settings.initializer is not None:
         initializer = Initializer(settings.initializer)
         sae = initializer.initialize_sae_from_config(
@@ -457,7 +471,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
 class TrainCLTSettings(BaseSettings):
     """Settings for training a Cross Layer Transcoder (CLT). CLT works with multiple layers and their corresponding hook points."""
 
-    sae: CLTConfig | str
+    sae: CLTConfig | PretrainedSAE
     """Configuration for the CLT model architecture and parameters, or the path to a pretrained CLT."""
 
     sae_name: str
@@ -591,8 +605,15 @@ def train_clt(settings: TrainCLTSettings) -> None:
     assert settings.initializer is None or not isinstance(settings.initializer, str), (
         "Cannot use an initializer for a pretrained CLT"
     )
-    if isinstance(settings.sae, str):
-        sae = AbstractSparseAutoEncoder.from_pretrained(settings.sae, device_mesh=device_mesh)
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+        )
     elif settings.initializer is not None:
         initializer = Initializer(settings.initializer)
         sae = initializer.initialize_sae_from_config(
@@ -659,7 +680,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
 class TrainLorsaSettings(BaseSettings):
     """Settings for training a Lorsa (Low-Rank Sparse Autoencoder) model."""
 
-    sae: LorsaConfig | str
+    sae: LorsaConfig | PretrainedSAE
     """Configuration for the Lorsa model architecture and parameters, or the path to a pretrained Lorsa."""
 
     sae_name: str
@@ -794,8 +815,15 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
     assert settings.initializer is None or not isinstance(settings.initializer, str), (
         "Cannot use an initializer for a pretrained Lorsa"
     )
-    if isinstance(settings.sae, str):
-        sae = AbstractSparseAutoEncoder.from_pretrained(settings.sae, device_mesh=device_mesh)
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+        )
     elif settings.initializer is not None:
         initializer = Initializer(settings.initializer)
         sae = initializer.initialize_sae_from_config(
@@ -863,7 +891,7 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
 class TrainMOLTSettings(BaseSettings):
     """Settings for training a Mixture of Linear Transforms (MOLT). MOLT is a more efficient alternative to transcoders that sparsely replaces MLP computation in transformers."""
 
-    sae: MOLTConfig
+    sae: MOLTConfig | PretrainedSAE
     """Configuration for the MOLT model architecture and parameters"""
 
     sae_name: str
@@ -943,9 +971,10 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         required=False,
     )
 
-    assert settings.model_parallel_size == settings.sae.model_parallel_size_training, (
-        "model_parallel_size_training config and model_parallel_size for training are not aligned"
-    )
+    if not isinstance(settings.sae, PretrainedSAE):
+        assert settings.model_parallel_size == settings.sae.model_parallel_size_training, (
+            "model_parallel_size_training config and model_parallel_size for training are not aligned"
+        )
     # model_parallel_size_training is needed for getting the shape of molt
 
     dataset_cfgs = (
@@ -1003,8 +1032,15 @@ def train_molt(settings: TrainMOLTSettings) -> None:
     assert settings.initializer is None or not isinstance(settings.initializer, str), (
         "Cannot use an initializer for a pretrained MOLT"
     )
-    if isinstance(settings.sae, str):
-        sae = AbstractSparseAutoEncoder.from_pretrained(settings.sae, device_mesh=device_mesh)
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+        )
     elif settings.initializer is not None:
         initializer = Initializer(settings.initializer)
         sae = initializer.initialize_sae_from_config(
@@ -1071,7 +1107,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
 class SweepingItem(BaseModel):
     """A single item in a sweeping configuration."""
 
-    sae: BaseSAEConfig | str
+    sae: BaseSAEConfig | PretrainedSAE
     """Configuration for the SAE model architecture and parameters, or the path to a pretrained SAE."""
 
     sae_name: str
@@ -1223,8 +1259,15 @@ def sweep_sae(settings: SweepSAESettings) -> None:
     assert item.initializer is None or not isinstance(item.initializer, str), (
         "Cannot use an initializer for a pretrained SAE"
     )
-    if isinstance(item.sae, str):
-        sae = AbstractSparseAutoEncoder.from_pretrained(item.sae, device_mesh=sae_device_mesh)
+    if isinstance(item.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            item.sae.pretrained_name_or_path,
+            device_mesh=sae_device_mesh,
+            fold_activation_scale=item.sae.fold_activation_scale,
+            strict_loading=item.sae.strict_loading,
+            device=item.sae.device,
+            dtype=item.sae.dtype,
+        )
     elif item.initializer is not None:
         initializer = Initializer(item.initializer)
         sae = initializer.initialize_sae_from_config(

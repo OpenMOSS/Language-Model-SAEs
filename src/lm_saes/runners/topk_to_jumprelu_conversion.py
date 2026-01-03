@@ -17,7 +17,7 @@ from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.topk_to_jumprelu_conversion import topk_to_jumprelu_conversion
 
-from .utils import load_config
+from .utils import PretrainedSAE, load_config
 
 logger = get_distributed_logger("runners.topk_to_jumprelu_conversion")
 
@@ -25,7 +25,7 @@ logger = get_distributed_logger("runners.topk_to_jumprelu_conversion")
 class ConvertCLTSettings(BaseSettings):
     """Settings for converting a CLT model from topk to jumprelu."""
 
-    sae: str
+    sae: PretrainedSAE
     """Path to a pretrained CLT model"""
 
     sae_name: str
@@ -134,9 +134,12 @@ def convert_clt(settings: ConvertCLTSettings) -> None:
 
     logger.info("Loading CLT")
     sae = CrossLayerTranscoder.from_pretrained(
-        settings.sae,
+        settings.sae.pretrained_name_or_path,
         device_mesh=device_mesh,
         fold_activation_scale=False,
+        device=settings.sae.device,
+        dtype=settings.sae.dtype,
+        strict_loading=settings.sae.strict_loading,
     )
 
     logger.info(f"CLT loaded from {settings.sae}")
