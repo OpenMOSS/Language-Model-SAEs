@@ -61,7 +61,8 @@ def test_from_local_single_device(temp_sae_dir):
     assert torch.allclose(model.b_D, torch.full_like(model.b_D, 4.0))
 
 
-@distributed_test(nproc_per_node=2, backend="gloo")
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@distributed_test(nproc_per_node=2, backend="nccl")
 def test_from_local_distributed(temp_sae_dir):
     # This test receives temp_sae_dir from the parent process via distributed_test wrapper.
     # Note: temp_sae_dir must be picklable. Path string is picklable.
