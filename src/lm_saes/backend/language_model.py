@@ -10,6 +10,7 @@ from typing import Any, Callable, Literal, Optional, Union, cast
 import torch
 import torch.distributed as dist
 import torch.utils._pytree as pytree
+from huggingface_hub import hf_hub_download
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
@@ -23,8 +24,8 @@ from transformers import (
 )
 
 from lm_saes.config import BaseModelConfig
+from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.misc import (
     pad_and_truncate_tokens,
 )
@@ -138,13 +139,30 @@ class LanguageModelConfig(BaseModelConfig):
 
     @staticmethod
     def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
-        """Load the LanguageModelConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/lm_config.json.
+        """Load the LanguageModelConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/lm_config.json (for local storage), <repo_id>/<name>/lm_config.json (for HuggingFace Hub), or constructed from model name (for SAELens).
 
         Args:
-            sae_path (str): The path to the pretrained SAE.
+            pretrained_name_or_path (str): The path to the pretrained SAE.
             **kwargs: Additional keyword arguments to pass to the LanguageModelConfig constructor.
         """
-        path = parse_pretrained_name_or_path(pretrained_name_or_path)
+        sae_type = auto_infer_pretrained_sae_type(pretrained_name_or_path.split(":")[0])
+        if sae_type == PretrainedSAEType.LOCAL:
+            path = os.path.join(os.path.dirname(pretrained_name_or_path), "lm_config.json")
+        elif sae_type == PretrainedSAEType.HUGGINGFACE:
+            repo_id, name = pretrained_name_or_path.split(":")
+            path = hf_hub_download(repo_id=repo_id, filename=f"{name}/lm_config.json")
+        elif sae_type == PretrainedSAEType.SAELENS:
+            from sae_lens.loading.pretrained_saes_directory import get_pretrained_saes_directory
+
+            repo_id, name = pretrained_name_or_path.split(":")
+            lookups = get_pretrained_saes_directory()
+            assert lookups.get(repo_id) is not None and lookups[repo_id].saes_map.get(name) is not None, (
+                f"Pretrained SAE {pretrained_name_or_path} not found in SAELens. This might indicate bugs in `auto_infer_pretrained_sae_type`."
+            )
+            model_name = lookups[repo_id].model
+            return LanguageModelConfig(model_name=model_name, **kwargs)
+        else:
+            raise ValueError(f"Unsupported pretrained type: {sae_type}")
         with open(os.path.join(path, "lm_config.json"), "r") as f:
             lm_config = json.load(f)
         return LanguageModelConfig.model_validate(lm_config, **kwargs)

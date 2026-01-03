@@ -8,7 +8,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 
 
-def _test_wrapper(rank, world_size, backend, func_name, module_path, *args, **kwargs):
+def _test_wrapper(rank, world_size, backend, func_name, module_path, args, kwargs):
     """
     Internal wrapper that runs on each spawned process.
     Handles distributed initialization and teardown.
@@ -71,7 +71,7 @@ def distributed_test(nproc_per_node=1, backend="gloo"):
                 # which pytest will catch as a test failure.
                 mp.spawn(
                     _test_wrapper,
-                    args=(nproc_per_node, backend, func_name, module_path),
+                    args=(nproc_per_node, backend, func_name, module_path, args, kwargs),
                     nprocs=nproc_per_node,
                     join=True,
                 )

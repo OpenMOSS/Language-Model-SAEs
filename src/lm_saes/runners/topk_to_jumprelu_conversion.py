@@ -9,7 +9,7 @@ from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.clt import CLTConfig, CrossLayerTranscoder
+from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import DatasetConfig
 from lm_saes.database import MongoClient, MongoDBConfig
 from lm_saes.resource_loaders import load_dataset, load_model
@@ -25,8 +25,8 @@ logger = get_distributed_logger("runners.topk_to_jumprelu_conversion")
 class ConvertCLTSettings(BaseSettings):
     """Settings for converting a CLT model from topk to jumprelu."""
 
-    sae: CLTConfig
-    """Configuration for the CLT model architecture and parameters"""
+    sae: str
+    """Path to a pretrained CLT model"""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -133,13 +133,13 @@ def convert_clt(settings: ConvertCLTSettings) -> None:
     )
 
     logger.info("Loading CLT")
-    sae = CrossLayerTranscoder.from_config(
+    sae = CrossLayerTranscoder.from_pretrained(
         settings.sae,
         device_mesh=device_mesh,
         fold_activation_scale=False,
     )
 
-    logger.info(f"CLT loaded from {settings.sae.sae_pretrained_name_or_path}")
+    logger.info(f"CLT loaded from {settings.sae}")
     logger.info("Starting CLT conversion")
 
     sae = topk_to_jumprelu_conversion(
@@ -160,7 +160,7 @@ def convert_clt(settings: ConvertCLTSettings) -> None:
             name=settings.sae_name,
             series=settings.sae_series,
             path=str(Path(settings.exp_result_path).absolute()),
-            cfg=settings.sae,
+            cfg=sae.cfg,
         )
     sae.cfg.save_hyperparameters(settings.exp_result_path)
 
