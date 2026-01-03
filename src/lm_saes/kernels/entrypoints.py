@@ -2,18 +2,20 @@ from typing import Union
 
 import torch
 from jaxtyping import Float
+from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 
-from lm_saes.utils.logging import get_logger
+from lm_saes.utils.logging import get_distributed_logger
 
 from .kernels import (
+    DPTopKSparseFusedSAE,
     TopKSparseFusedSAE,
     TritonDecoderAutogradTopK,
     TritonEncoderAutogradDynamicK,
     get_sparse_representation,
 )
 
-logger = get_logger("kernels")
+logger = get_distributed_logger("kernels")
 
 
 def decode_with_triton_spmm_kernel(
@@ -100,22 +102,24 @@ def topk_sae_sparse_fused(
     b_D: torch.Tensor,
     k: int,
     sparsity_include_decoder_norm: bool,
+    device_mesh: DeviceMesh | None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if isinstance(x, DTensor):
-        reconstructed, feature_acts, hidden_pre = TopKSparseFusedSAE.apply(
-            x.to_local(),
-            W_E.to_local(),
-            b_E.to_local(),
-            W_D.to_local(),
-            b_D.to_local(),
-            k,
-            sparsity_include_decoder_norm,
-        )  # type: ignore[return-value]
-        return (
-            DTensor.from_local(reconstructed, device_mesh=x.device_mesh, placements=x.placements),
-            DTensor.from_local(feature_acts, device_mesh=x.device_mesh, placements=x.placements),
-            DTensor.from_local(hidden_pre, device_mesh=x.device_mesh, placements=x.placements),
-        )
+        # reconstructed, feature_acts, hidden_pre = TopKSparseFusedSAE.apply(
+        #     x.to_local(),
+        #     W_E.to_local(grad_placements=replace_placements(W_E.placements, W_E.device_mesh, "data", Partial("sum"))),
+        #     b_E.to_local(grad_placements=replace_placements(b_E.placements, b_E.device_mesh, "data", Partial("sum"))),
+        #     W_D.to_local(grad_placements=replace_placements(W_D.placements, W_D.device_mesh, "data", Partial("sum"))),
+        #     b_D.to_local(grad_placements=replace_placements(b_D.placements, b_D.device_mesh, "data", Partial("sum"))),
+        #     k,
+        #     sparsity_include_decoder_norm,
+        # )  # type: ignore[return-value]
+        # return (
+        #     DTensor.from_local(reconstructed, device_mesh=x.device_mesh, placements=x.placements),
+        #     DTensor.from_local(feature_acts, device_mesh=x.device_mesh, placements=x.placements),
+        #     DTensor.from_local(hidden_pre, device_mesh=x.device_mesh, placements=x.placements),
+        # )
+        return DPTopKSparseFusedSAE.apply(x, W_E, b_E, W_D, b_D, k, sparsity_include_decoder_norm, device_mesh)  # type: ignore[return-value]
     else:
         return TopKSparseFusedSAE.apply(x, W_E, b_E, W_D, b_D, k, sparsity_include_decoder_norm)  # type: ignore[return-value]
 

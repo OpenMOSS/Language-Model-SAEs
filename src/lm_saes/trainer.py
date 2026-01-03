@@ -464,6 +464,31 @@ class Trainer:
                     with timer.time("backward"):
                         ctx["loss"].backward()
 
+                    # from torch.distributed.tensor import DTensor
+
+                    # if isinstance(sae.b_D.grad, DTensor):
+                    #     if os.environ.get("LOCAL_RANK") == "0":
+                    #         print("sae.b_D.grad:", sae.b_D.grad.placements, sae.b_D.grad)
+                    #         print("sae.W_D.grad:", sae.W_D.grad.placements, sae.W_D.grad)
+                    #         print("sae.W_E.grad:", sae.W_E.grad.placements, sae.W_E.grad)
+                    #         print("sae.b_E.grad:", sae.b_E.grad.placements, sae.b_E.grad)
+                    #     import time
+
+                    #     time.sleep(5)
+                    #     if os.environ.get("LOCAL_RANK") == "1":
+                    #         print("sae.b_D.grad:", sae.b_D.grad.placements, sae.b_D.grad)
+                    #         print("sae.W_D.grad:", sae.W_D.grad.placements, sae.W_D.grad)
+                    #         print("sae.W_E.grad:", sae.W_E.grad.placements, sae.W_E.grad)
+                    #         print("sae.b_E.grad:", sae.b_E.grad.placements, sae.b_E.grad)
+                    #     time.sleep(5)
+                    #     exit()
+                    # else:
+                    #     print("sae.b_D.grad:", sae.b_D.grad)
+                    #     print("sae.W_D.grad:", sae.W_D.grad)
+                    #     print("sae.W_E.grad:", sae.W_E.grad)
+                    #     print("sae.b_E.grad:", sae.b_E.grad)
+                    #     exit()
+
                     with timer.time("clip_grad_norm"):
                         # exclude the grad of the jumprelu threshold
                         ctx["grad_norm_before_clipping"] = clip_grad_norm(

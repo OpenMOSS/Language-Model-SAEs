@@ -6,7 +6,10 @@ import torch
 import torch.sparse
 import triton
 import triton.language as tl
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 
+from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.logging import get_logger
 from lm_saes.utils.sparse import build_sparse_csr_from_topk, sort_topk_result
 
@@ -880,4 +883,197 @@ class TopKSparseFusedSAE(torch.autograd.Function):
         grad_hidden_pre_T = grad_hidden_pre_T.to_sparse_csr()
         grad_W_E = torch.sparse.mm(grad_hidden_pre_T, x.to(grad_hidden_pre_T.dtype)).T
 
+        # import os
+
+        # if os.environ.get("LOCAL_RANK") == "0":
+        #     print("grad_b_D:", grad_b_D)
+        #     print("grad_W_D:", grad_W_D)
+        #     print("grad_W_E:", grad_W_E)
+        #     print("grad_b_E:", grad_b_E)
+        # import time
+
+        # time.sleep(5)
+        # if os.environ.get("LOCAL_RANK") == "1":
+        #     print("grad_b_D:", grad_b_D)
+        #     print("grad_W_D:", grad_W_D)
+        #     print("grad_W_E:", grad_W_E)
+        #     print("grad_b_E:", grad_b_E)
+        # time.sleep(5)
+        # exit()
+
         return None, grad_W_E, grad_b_E, grad_W_D, grad_b_D, None, None
+
+
+class DPTopKSparseFusedSAE(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx,
+        x: torch.Tensor,
+        W_E: torch.Tensor,
+        b_E: torch.Tensor,
+        W_D: torch.Tensor,
+        b_D: torch.Tensor,
+        k: int,
+        sparsity_include_decoder_norm: bool,
+        device_mesh: DeviceMesh,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        x_local, W_E_local, b_E_local, W_D_local, b_D_local = (
+            x.to_local(),
+            W_E.to_local(),
+            b_E.to_local(),
+            W_D.to_local(),
+            b_D.to_local(),
+        )
+
+        d_sae = W_E_local.shape[1]
+
+        hidden_pre_local = x_local @ W_E_local + b_E_local
+
+        if sparsity_include_decoder_norm:
+            _, topk_indices_local = torch.topk(hidden_pre_local * W_D_local.norm(dim=-1), k=k, dim=-1, sorted=False)
+            topk_values_local = torch.gather(hidden_pre_local, dim=1, index=topk_indices_local)
+        else:
+            topk_values_local, topk_indices_local = torch.topk(hidden_pre_local, k=k, dim=-1, sorted=False)
+
+        # build feature acts, only for log
+        feature_acts_local = torch.zeros_like(hidden_pre_local)
+        feature_acts_local.scatter_(dim=1, index=topk_indices_local, src=topk_values_local)
+
+        # build sparse feature acts
+        topk_indices_sorted_local, topk_values_sorted_local = sort_topk_result(topk_indices_local, topk_values_local)
+        feature_acts_sparse_local = build_sparse_csr_from_topk(
+            topk_indices_sorted_local, topk_values_sorted_local, d_sae
+        )
+
+        # decode
+        reconstructed_local = torch.sparse.mm(feature_acts_sparse_local, W_D_local) + b_D_local
+
+        reconstructed = DTensor.from_local(reconstructed_local, device_mesh=device_mesh, placements=x.placements)
+        feature_acts = DTensor.from_local(feature_acts_local, device_mesh=device_mesh, placements=x.placements)
+        hidden_pre = DTensor.from_local(hidden_pre_local, device_mesh=device_mesh, placements=x.placements)
+
+        ctx.save_for_backward(
+            x,
+            W_E,
+            b_E,
+            W_D,
+            b_D,
+            feature_acts_sparse_local,
+            topk_indices_sorted_local,
+            topk_values_sorted_local,
+        )
+        ctx.k = k
+        ctx.device_mesh = device_mesh
+
+        return reconstructed, feature_acts, hidden_pre
+
+    @staticmethod
+    def backward(
+        ctx,
+        grad_output: torch.Tensor,
+        grad_feature_acts_none: torch.Tensor | None = None,
+        grad_hidden_pre_none: torch.Tensor | None = None,
+    ) -> tuple[None, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, None, None, None]:
+        (
+            x,
+            W_E,
+            b_E,
+            W_D,
+            b_D,
+            feature_acts_sparse_local,
+            topk_indices_sorted_local,
+            topk_values_sorted_local,
+        ) = ctx.saved_tensors
+        k = ctx.k
+        device_mesh = ctx.device_mesh
+        x_local, W_E_local, W_D_local, grad_output_local = (
+            x.to_local(),
+            W_E.to_local(),
+            W_D.to_local(),
+            grad_output.to_local(),
+        )
+
+        batch_size_local, d_model = x_local.shape
+        d_sae = W_E_local.shape[1]
+
+        grad_W_E_local = grad_b_E_local = grad_W_D_local = grad_b_D_local = None
+
+        # grad_b_D
+        grad_b_D_local = grad_output_local.sum(dim=0)
+
+        # grad_W_D
+        feature_acts_sparse_T_local = feature_acts_sparse_local.to_sparse_coo().T
+        feature_acts_sparse_T_local = feature_acts_sparse_T_local.to_sparse_csr()
+        grad_W_D_local = feature_acts_sparse_T_local @ grad_output_local
+
+        grad_topk_values_local, grad_b_E_local = masked_matmul_with_col_sum(
+            grad_output_local, W_D_local, topk_indices_sorted_local
+        )
+
+        crow_indices = torch.arange(
+            0,
+            (batch_size_local + 1) * k,
+            k,
+            device=grad_topk_values_local.device,
+            dtype=torch.int32,
+        )
+        col_indices = topk_indices_sorted_local.reshape(-1).to(torch.int32)
+        grad_hidden_pre_local = torch.sparse_csr_tensor(
+            crow_indices,
+            col_indices,
+            grad_topk_values_local.reshape(-1),
+            size=(batch_size_local, d_sae),
+        )
+
+        # grad_W_E
+        grad_hidden_pre_T_local = grad_hidden_pre_local.to_sparse_coo().T
+        grad_hidden_pre_T_local = grad_hidden_pre_T_local.to_sparse_csr()
+        grad_W_E_local = torch.sparse.mm(grad_hidden_pre_T_local, x_local.to(grad_hidden_pre_T_local.dtype)).T
+
+        grad_b_D = DTensor.from_local(
+            grad_b_D_local.unsqueeze(-1),
+            device_mesh=device_mesh,
+            placements=DimMap({"data": 1}).placements(device_mesh),
+        )
+        grad_b_D = grad_b_D.sum(dim=1)
+
+        grad_W_D = DTensor.from_local(
+            grad_W_D_local.unsqueeze(-1),
+            device_mesh=device_mesh,
+            placements=DimMap({"data": 2, "model": 0}).placements(device_mesh),
+        )
+        grad_W_D = grad_W_D.sum(dim=2)
+
+        grad_W_E = DTensor.from_local(
+            grad_W_E_local.unsqueeze(-1),
+            device_mesh=device_mesh,
+            placements=DimMap({"data": 2, "model": 1}).placements(device_mesh),
+        )
+        grad_W_E = grad_W_E.sum(dim=2)
+
+        grad_b_E = DTensor.from_local(
+            grad_b_E_local.unsqueeze(-1),
+            device_mesh=device_mesh,
+            placements=DimMap({"data": 1, "model": 0}).placements(device_mesh),
+        )
+        grad_b_E = grad_b_E.sum(dim=1)
+
+        # import os
+
+        # if os.environ.get("LOCAL_RANK") == "0":
+        #     print("grad_b_D:", grad_b_D)
+        #     print("grad_W_D:", grad_W_D)
+        #     print("grad_W_E:", grad_W_E)
+        #     print("grad_b_E:", grad_b_E)
+        # import time
+
+        # time.sleep(5)
+        # if os.environ.get("LOCAL_RANK") == "1":
+        #     print("grad_b_D:", grad_b_D)
+        #     print("grad_W_D:", grad_W_D)
+        #     print("grad_W_E:", grad_W_E)
+        #     print("grad_b_E:", grad_b_E)
+        # time.sleep(5)
+        # exit()
+
+        return None, grad_W_E, grad_b_E, grad_W_D, grad_b_D, None, None, None

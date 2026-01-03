@@ -681,6 +681,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 self.b_D,
                 self.current_k,
                 self.cfg.sparsity_include_decoder_norm,
+                self.device_mesh,
             )
         else:
             with timer.time("encode"):
