@@ -30,7 +30,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     - Decoder: Σᵢ fᵢ · (Uᵢ @ Vᵢ @ x) where fᵢ are feature activations
     - Decoder norm: ||UᵢVᵢ||_F for each transform i
 
-    The rank of each transform is determined by the rank_distribution configuration,
+    The rank of each transform is determined by the rank_counts configuration,
     allowing for adaptive model capacity allocation.
     """
 
@@ -40,24 +40,20 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
         # Generate rank assignment for each linear transform
         if device_mesh is not None:
-            # In distributed training, get local rank assignments
+            # In distributed training/inference, get local rank assignments
             # Use model dimension for tensor parallelism
             mesh_dim_names = device_mesh.mesh_dim_names
             if mesh_dim_names is None:
                 model_dim_index = 0
             else:
                 model_dim_index = mesh_dim_names.index("model") if "model" in mesh_dim_names else 0
-            local_rank = device_mesh.get_local_rank(mesh_dim=model_dim_index)
-            model_parallel_size_running = device_mesh.size(mesh_dim=model_dim_index)
+            local_rank = device_mesh.get_local_rank(mesh_dim=model_dim_index) # this rank stands for device rank of this process
+            model_parallel_size = device_mesh.size(mesh_dim=model_dim_index)
 
-            self.rank_assignments = cfg.get_local_rank_assignments(local_rank, model_parallel_size_running)
+            self.rank_assignments = cfg.get_local_rank_assignments(model_parallel_size)
 
-            global_assignments = cfg.generate_rank_assignments()
-            self._global_rank_count_map = {r: global_assignments.count(r) for r in cfg.available_ranks}
-            for k, v in self._global_rank_count_map.items():
-                print(f"rank {k} has {v} local ranks")
-            # Turn the rank assignments list into a map of rank values to their integer counts. For example: [1, 1, 1, 1, 2, 2, 4] -> {1: 4, 2: 2, 4: 1}
-
+            for k, v in cfg.rank_counts.items():
+                logger.info(f"Rank {k} has {v} global transforms, device rank {local_rank} has {self.rank_assignments.count(k)} transforms")
         else:
             # Non-distributed case
             self.rank_assignments = cfg.generate_rank_assignments()
@@ -115,15 +111,13 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             self.V_matrices = nn.ParameterDict()
 
             for rank in cfg.available_ranks:
-                global_count = self._global_rank_count_map[rank]
                 local_count = sum(1 for r in self.rank_assignments if r == rank)
-
                 assert local_count > 0, f"Rank {rank} has local_count=0, sharding logic error"
 
                 # Create DTensor with GLOBAL shape
                 self.U_matrices[str(rank)] = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        global_count,
+                        self.cfg.rank_counts[rank],   # GLOBAL count
                         cfg.d_model,
                         rank,
                         dtype=cfg.dtype,
@@ -134,7 +128,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
                 self.V_matrices[str(rank)] = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        global_count,
+                        self.cfg.rank_counts[rank],   # GLOBAL count
                         rank,
                         cfg.d_model,
                         dtype=cfg.dtype,
@@ -688,29 +682,20 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         for rank in self.cfg.available_ranks:
             rank_str = str(rank)
             if rank_str in self.U_matrices:
-                # Get global count for this rank group
-                if hasattr(self, "_global_rank_count_map"):
-                    # In distributed case, use global count
-                    global_count = self._global_rank_count_map[rank]
-                else:
-                    # Non-distributed case
-                    global_count = self.U_matrices[rank_str].shape[0]
+                # Extract features for this rank group
+                end_idx = feature_idx + self.cfg.rank_counts[rank] # rank_counts[rank] is the GLOBAL count of this rank group
+                rank_features = feature_acts[..., feature_idx:end_idx]
 
-                if global_count > 0:
-                    # Extract features for this rank group
-                    end_idx = feature_idx + global_count
-                    rank_features = feature_acts[..., feature_idx:end_idx]
+                # Count active transforms (l0) for this rank group
+                rank_l0 = (rank_features > 0).float().sum(-1)
+                rank_l0_mean = item(rank_l0.mean())
 
-                    # Count active transforms (l0) for this rank group
-                    rank_l0 = (rank_features > 0).float().sum(-1)
-                    rank_l0_mean = item(rank_l0.mean())
+                # Record metrics
+                metrics[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean
+                metrics[f"molt_metrics/l0_rank{rank}_ratio"] = rank_l0_mean / self.cfg.rank_counts[rank]
+                total_rank_sum += rank_l0_mean * rank
 
-                    # Record metrics
-                    metrics[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean
-                    metrics[f"molt_metrics/l0_rank{rank}_ratio"] = rank_l0_mean / global_count
-                    total_rank_sum += rank_l0_mean * rank
-
-                    feature_idx += global_count
+                feature_idx += self.cfg.rank_counts[rank]
 
         # Record total rank sum
         metrics["molt_metrics/total_rank_sum"] = total_rank_sum
