@@ -2,6 +2,7 @@ import warnings
 from functools import partial
 from typing import Any, Mapping, Optional, cast
 
+import json
 import torch
 import torch.distributed.tensor
 from einops import rearrange, repeat
@@ -354,12 +355,27 @@ class FeatureAnalyzer:
             # Apply discrete mapper encoding only to string metadata, keep others as-is
             discrete_meta = {}
             for k, v in meta.items():
+                # 1) Pure string meta -> discrete encode
                 if all(isinstance(item, str) for item in v):
-                    # Apply discrete mapper encoding to string metadata
                     discrete_meta[k] = torch.tensor(mapper.encode(k, v), device=sae.cfg.device, dtype=torch.int32)
-                else:
-                    # Keep non-string metadata as-is (assuming they are already tensors or can be converted)
+                    continue
+
+                # 2) Pure numeric / bool meta -> tensorize
+                if all(isinstance(item, (int, float, bool)) for item in v):
                     discrete_meta[k] = torch.tensor(v, device=sae.cfg.device)
+                    continue
+
+                # 3) Fallback: complex meta (dict/list/None/objects) -> json string encode
+                def to_str(x: Any) -> str:
+                    if isinstance(x, str):
+                        return x
+                    try:
+                        return json.dumps(x, sort_keys=True, ensure_ascii=False, default=str)
+                    except Exception:
+                        return str(x)
+
+                v_str = [to_str(item) for item in v]
+                discrete_meta[k] = torch.tensor(mapper.encode(k, v_str), device=sae.cfg.device, dtype=torch.int32)
             if device_mesh is not None:
                 discrete_meta = {
                     k: DTensor.from_local(
