@@ -5,7 +5,6 @@ import torch
 import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
-from pydantic import Field
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
@@ -37,27 +36,24 @@ class MOLTConfig(BaseSAEConfig):
     """Hook point to capture input activations from."""
     hook_point_out: str
     """Hook point to output activations to."""
-    rank_distribution: dict[int, int] = Field(default_factory=lambda: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16})
-    """Dictionary mapping rank values to their integer ratios. 
-    Keys are rank values, values are integer ratios that will be automatically normalized to proportions.
-    Example: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16} means ratio 1:2:4:8:16 which means a proportion of 1/32, 2/32, 4/32, 8/32, 16/32, 
-    which will be normalized to proportions automatically."""
-    model_parallel_size_training: int = 1
-    """Number of model parallel devices for distributed training. Distinct from model_parallel_size_running which is the number of model parallel devices in both training and inference."""
+    rank_counts: dict[int, int]
+    """Dictionary mapping rank values to their integer counts.
+    Example: {4: 128, 8: 256, 16: 128} means 128 transforms of rank 4, 256 transforms of rank 8, and 128 transforms of rank 16.
+    """
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
-        # Validate ratios
-        assert self.rank_distribution, "rank_distribution cannot be empty"
+        # Validate counts
+        assert self.rank_counts, "rank_counts cannot be empty"
 
-        total_ratio = sum(self.rank_distribution.values())
-        assert total_ratio > 0, f"Total ratio must be positive, got {total_ratio}"
+        for rank, count in self.rank_counts.items():
+            assert rank > 0, f"Rank must be positive, got {rank}"
+            assert count > 0, f"Count for rank {rank} must be positive, got {count}"
 
-        for rank, ratio in self.rank_distribution.items():
-            assert ratio > 0, f"Ratio for rank {rank} must be positive, got {ratio}"
-
-        # Store normalized proportions for internal use
-        self._normalized_proportions = {rank: ratio / total_ratio for rank, ratio in self.rank_distribution.items()}
+        # Workaround: expansion_factor is not used in MOLT, but we keep it for consistency with other SAE variants.
+        assert abs(self.expansion_factor - self.d_sae / self.d_model) < 0.1, (
+            f"Expansion factor {self.expansion_factor} is not close to d_sae / d_model {self.d_sae / self.d_model}"
+        )
 
     def generate_rank_assignments(self) -> list[int]:
         """Generate rank assignment for each of the d_sae linear transforms.
@@ -65,142 +61,37 @@ class MOLTConfig(BaseSAEConfig):
         Returns:
             List of rank assignments for each transform.
             For example: [1, 1, 1, 1, 2, 2, 4].
-            For distributed case, this method ensures that each rank type is divisible by model_parallel_size_training.
-        """
-        # Validate rank distribution
-        assert self.rank_distribution, "rank_distribution cannot be empty"
-
-        # Calculate base d_sae
-        assert self.expansion_factor.is_integer(), "expansion_factor must be an integer in molt."
-        base_d_sae = int(self.d_model * self.expansion_factor)
-
-        # For distributed training, use special logic to ensure consistency
-        if self.model_parallel_size_training > 1:
-            return self._generate_distributed_rank_assignments(base_d_sae)
-        else:
-            return self._generate_rank_assignments_single_gpu(base_d_sae)
-
-    def _generate_rank_assignments_single_gpu(self, base_d_sae: int) -> list[int]:
-        """Generate rank assignments for single GPU training.
-
-        Args:
-            base_d_sae: Target number of total transforms
-
-        Returns:
-            List of rank assignments for each transform.
         """
         assignments = []
-
-        # Distribute transforms based on normalized proportions
-        for rank, proportion in sorted(self._normalized_proportions.items()):
-            count = int(base_d_sae * proportion)
-            assignments.extend([rank] * count)
-
-        # Handle any remaining transforms due to rounding
-        while len(assignments) < base_d_sae:
-            # Assign remaining to the most common rank (by original ratio)
-            most_common_rank = max(self.rank_distribution.keys(), key=lambda k: self.rank_distribution[k])
-            assignments.append(most_common_rank)
-
-        # Truncate if we have too many (shouldn't happen with proper proportions)
-        assignments = assignments[:base_d_sae]
-
-        # Verify we have exactly base_d_sae assignments
-        assert len(assignments) == base_d_sae, f"Expected {base_d_sae} assignments, got {len(assignments)}"
-
+        for rank in sorted(self.rank_counts.keys()):
+            assignments.extend([rank] * self.rank_counts[rank])
         return assignments
 
-    def _generate_distributed_rank_assignments(self, base_d_sae: int) -> list[int]:
-        """Generate rank assignments optimized for distributed training.
-
-        Ensures each rank type has count divisible by model_parallel_size_training.
-
-        Args:
-            base_d_sae: Target number of total transforms
-
-        Returns:
-            List of rank assignments for each transform.
-        """
-        assignments = []
-        total_ratio = sum(self.rank_distribution.values())
-
-        # Ensure minimum requirement: each rank gets at least model_parallel_size_training
-        # transforms
-        min_total_needed = len(self.rank_distribution) * self.model_parallel_size_training
-        assert base_d_sae >= min_total_needed, (
-            f"base_d_sae ({base_d_sae}) must be >= min_total_needed "
-            f"({min_total_needed}) for distributed training with "
-            f"{len(self.rank_distribution)} rank types"
-        )
-
-        # Calculate proportional distribution
-        for rank in sorted(self.rank_distribution.keys()):
-            rank_ratio = self.rank_distribution[rank]
-            raw_count = int(base_d_sae * rank_ratio / total_ratio)
-
-            # Ensure count is divisible by model_parallel_size_training
-            count = max(
-                self.model_parallel_size_training,  # minimum requirement
-                (raw_count // self.model_parallel_size_training) * self.model_parallel_size_training,
-            )
-            assignments.extend([rank] * count)
-
-        # Handle any remaining transforms due to rounding
-        while len(assignments) < base_d_sae:
-            # Assign remaining to the most common rank (by original ratio)
-            most_common_rank = max(self.rank_distribution.keys(), key=lambda k: self.rank_distribution[k])
-            # Add model_parallel_size_training transforms at a time for divisibility
-            remaining = base_d_sae - len(assignments)
-            to_add = min(self.model_parallel_size_training, remaining)
-            assignments.extend([most_common_rank] * to_add)
-
-        # Truncate if we have too many (shouldn't happen normally)
-        assignments = assignments[:base_d_sae]
-
-        # Verify divisibility constraint
-        rank_counts = {}
-        for rank in assignments:
-            rank_counts[rank] = rank_counts.get(rank, 0) + 1
-
-        for rank, count in rank_counts.items():
-            assert count % self.model_parallel_size_training == 0, (
-                f"Rank {rank} count {count} not divisible by "
-                f"model_parallel_size_training {self.model_parallel_size_training}"
-            )
-
-        return assignments
-
-    def get_local_rank_assignments(self, local_rank: int, model_parallel_size_running: int) -> list[int]:
-        """Get rank assignments for a specific local device in distributed running (both training and inference).
+    def get_local_rank_assignments(self, model_parallel_size: int) -> list[int]:
+        """Get rank assignments for a specific local device in distributed running.
 
         Each device gets all rank groups, with each group evenly divided across devices.
         This ensures consistent encoder/decoder sharding without feature_acts redistribution.
 
         Args:
-            local_rank: The local rank of this process
-            model_parallel_size_running: Number of model parallel devices in running (training and inference)
+            model_parallel_size: Number of model parallel devices for training and inference.
 
         Returns:
             List of rank assignments for this local device
             For example:
-            global_rank_assignments = [1, 1, 2, 2], model_parallel_size_running = 2 -> local_rank_assignments = [1, 2]
+            global_rank_assignments = [1, 1, 2, 2], model_parallel_size = 2 -> local_rank_assignments = [1, 2]
         """
-        global_rank_counts = {rank: self.generate_rank_assignments().count(rank) for rank in self.available_ranks}
-
-        # Each device gets count/model_parallel_size_running transforms of each rank type
         local_assignments = []
-        for rank in sorted(self.rank_distribution.keys()):
-            global_count = global_rank_counts[rank]
+        for rank in sorted(self.rank_counts.keys()):
+            global_count = self.rank_counts[rank]
 
-            # Verify even division (should be guaranteed by _generate_distributed_rank_assignments)
-            assert global_count % model_parallel_size_running == 0, (
-                f"Rank {rank} global count {global_count} not divisible by "
-                f"model_parallel_size_running {model_parallel_size_running}"
+            # Verify even division
+            assert global_count % model_parallel_size == 0, (
+                f"Transform rank {rank} global count {global_count} not divisible by "
+                f"model_parallel_size {model_parallel_size}"
             )
 
-            local_count = global_count // model_parallel_size_running
-
-            # Add local_count transforms of this rank type
+            local_count = global_count // model_parallel_size
             local_assignments.extend([rank] * local_count)
 
         return local_assignments
@@ -208,20 +99,18 @@ class MOLTConfig(BaseSAEConfig):
     @property
     @override
     def d_sae(self) -> int:
-        """Calculate d_sae based on rank assignments with padding for distributed training."""
-        # Generate rank assignments and return the length
-        rank_assignments = self.generate_rank_assignments()
-        return len(rank_assignments)
+        """Calculate d_sae based on total rank counts."""
+        return sum(self.rank_counts.values())
 
     @property
     def available_ranks(self) -> list[int]:
         """Get sorted list of available ranks."""
-        return sorted(self.rank_distribution.keys())
+        return sorted(self.rank_counts.keys())
 
     @property
     def num_rank_types(self) -> int:
         """Number of different rank types."""
-        return len(self.rank_distribution)
+        return len(self.rank_counts)
 
     @property
     def associated_hook_points(self) -> list[str]:
@@ -240,7 +129,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     - Decoder: Σᵢ fᵢ · (Uᵢ @ Vᵢ @ x) where fᵢ are feature activations
     - Decoder norm: ||UᵢVᵢ||_F for each transform i
 
-    The rank of each transform is determined by the rank_distribution configuration,
+    The rank of each transform is determined by the rank_counts configuration,
     allowing for adaptive model capacity allocation.
     """
 
@@ -250,24 +139,20 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
         # Generate rank assignment for each linear transform
         if device_mesh is not None:
-            # In distributed training, get local rank assignments
+            # In distributed training/inference, get local rank assignments
             # Use model dimension for tensor parallelism
             mesh_dim_names = device_mesh.mesh_dim_names
             if mesh_dim_names is None:
                 model_dim_index = 0
             else:
                 model_dim_index = mesh_dim_names.index("model") if "model" in mesh_dim_names else 0
-            local_rank = device_mesh.get_local_rank(mesh_dim=model_dim_index)
-            model_parallel_size_running = device_mesh.size(mesh_dim=model_dim_index)
+            local_rank = device_mesh.get_local_rank(mesh_dim=model_dim_index) # this rank stands for device rank of this process
+            model_parallel_size = device_mesh.size(mesh_dim=model_dim_index)
 
-            self.rank_assignments = cfg.get_local_rank_assignments(local_rank, model_parallel_size_running)
+            self.rank_assignments = cfg.get_local_rank_assignments(model_parallel_size)
 
-            global_assignments = cfg.generate_rank_assignments()
-            self._global_rank_count_map = {r: global_assignments.count(r) for r in cfg.available_ranks}
-            for k, v in self._global_rank_count_map.items():
-                print(f"rank {k} has {v} local ranks")
-            # Turn the rank assignments list into a map of rank values to their integer counts. For example: [1, 1, 1, 1, 2, 2, 4] -> {1: 4, 2: 2, 4: 1}
-
+            for k, v in cfg.rank_counts.items():
+                logger.info(f"Rank {k} has {v} global transforms, device rank {local_rank} has {self.rank_assignments.count(k)} transforms")
         else:
             # Non-distributed case
             self.rank_assignments = cfg.generate_rank_assignments()
@@ -325,15 +210,13 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             self.V_matrices = nn.ParameterDict()
 
             for rank in cfg.available_ranks:
-                global_count = self._global_rank_count_map[rank]
                 local_count = sum(1 for r in self.rank_assignments if r == rank)
-
                 assert local_count > 0, f"Rank {rank} has local_count=0, sharding logic error"
 
                 # Create DTensor with GLOBAL shape
                 self.U_matrices[str(rank)] = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        global_count,
+                        self.cfg.rank_counts[rank],   # GLOBAL count
                         cfg.d_model,
                         rank,
                         dtype=cfg.dtype,
@@ -344,7 +227,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
                 self.V_matrices[str(rank)] = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        global_count,
+                        self.cfg.rank_counts[rank],   # GLOBAL count
                         rank,
                         cfg.d_model,
                         dtype=cfg.dtype,
@@ -901,29 +784,20 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         for rank in self.cfg.available_ranks:
             rank_str = str(rank)
             if rank_str in self.U_matrices:
-                # Get global count for this rank group
-                if hasattr(self, "_global_rank_count_map"):
-                    # In distributed case, use global count
-                    global_count = self._global_rank_count_map[rank]
-                else:
-                    # Non-distributed case
-                    global_count = self.U_matrices[rank_str].shape[0]
+                # Extract features for this rank group
+                end_idx = feature_idx + self.cfg.rank_counts[rank] # rank_counts[rank] is the GLOBAL count of this rank group
+                rank_features = feature_acts[..., feature_idx:end_idx]
 
-                if global_count > 0:
-                    # Extract features for this rank group
-                    end_idx = feature_idx + global_count
-                    rank_features = feature_acts[..., feature_idx:end_idx]
+                # Count active transforms (l0) for this rank group
+                rank_l0 = (rank_features > 0).float().sum(-1)
+                rank_l0_mean = item(rank_l0.mean())
 
-                    # Count active transforms (l0) for this rank group
-                    rank_l0 = (rank_features > 0).float().sum(-1)
-                    rank_l0_mean = item(rank_l0.mean())
+                # Record metrics
+                metrics[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean
+                metrics[f"molt_metrics/l0_rank{rank}_ratio"] = rank_l0_mean / self.cfg.rank_counts[rank]
+                total_rank_sum += rank_l0_mean * rank
 
-                    # Record metrics
-                    metrics[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean
-                    metrics[f"molt_metrics/l0_rank{rank}_ratio"] = rank_l0_mean / global_count
-                    total_rank_sum += rank_l0_mean * rank
-
-                    feature_idx += global_count
+                feature_idx += self.cfg.rank_counts[rank]
 
         # Record total rank sum
         metrics["molt_metrics/total_rank_sum"] = total_rank_sum
