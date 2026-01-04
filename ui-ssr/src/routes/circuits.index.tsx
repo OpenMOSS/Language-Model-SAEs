@@ -1,16 +1,18 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
-import type { CircuitData, VisState } from '@/types/circuit'
+import type { VisState } from '@/types/circuit'
+import { fetchSaeSets, traceCircuit } from '@/api/circuits'
+import { CreateSaeSetDialog } from '@/components/circuits/create-sae-set-dialog'
 import { LinkGraphContainer } from '@/components/circuits/link-graph-container'
 import { NodeConnections } from '@/components/circuits/node-connections'
-import { FeatureCard } from '@/components/feature/feature-card'
+import { FeatureCardHorizontal } from '@/components/feature/feature-card-horizontal'
 import { featureQueryOptions } from '@/hooks/useFeatures'
 import { extractLayerAndFeature } from '@/utils/circuit'
-import { fetchSaeSets, traceCircuit } from '@/api/circuits'
-import { LabeledSelect } from '@/components/ui/labeled-select'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { LabeledInput } from '@/components/ui/labeled-input'
+import { LabeledSelect } from '@/components/ui/labeled-select'
 import { Spinner } from '@/components/ui/spinner'
 
 export const Route = createFileRoute('/circuits/')({
@@ -22,13 +24,22 @@ export const Route = createFileRoute('/circuits/')({
 })
 
 function CircuitsPage() {
-  const { saeSets } = Route.useLoaderData()
+  const { saeSets: initialSaeSets } = Route.useLoaderData()
   const [clickedId, setClickedId] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [hiddenIds, setHiddenIds] = useState<string[]>([])
 
-  const [selectedSaeSet, setSelectedSaeSet] = useState<string>(saeSets[0])
+  // SAE Sets state (can be updated after creating new ones)
+  const [saeSets, setSaeSets] = useState<string[]>(initialSaeSets)
+  const [selectedSaeSet, setSelectedSaeSet] = useState<string>(
+    initialSaeSets[0] ?? '',
+  )
   const [text, setText] = useState<string>('')
+
+  const handleSaeSetCreated = (setName: string) => {
+    setSaeSets((prev) => [...prev, setName])
+    setSelectedSaeSet(setName)
+  }
 
   const {
     mutate: mutateTraceCircuit,
@@ -37,7 +48,7 @@ function CircuitsPage() {
     error,
   } = useMutation({
     mutationFn: traceCircuit,
-    onSuccess: (data) => {
+    onSuccess: () => {
       setClickedId(null)
       setHoveredId(null)
       setHiddenIds([])
@@ -86,6 +97,20 @@ function CircuitsPage() {
     enabled: featureQueryParams !== null,
   })
 
+  const featureData = useMemo(() => {
+    if (!clickedId || !circuit) return null
+
+    const node = circuit.nodes.find((n) => n.nodeId === clickedId)
+    if (
+      !node ||
+      (node.featureType !== 'cross layer transcoder' &&
+        node.featureType !== 'lorsa')
+    )
+      return null
+
+    return node.feature
+  }, [featureQuery.data])
+
   const handleNodeClick = useCallback((nodeId: string) => {
     setClickedId((prev) => (prev === nodeId ? null : nodeId))
   }, [])
@@ -108,6 +133,7 @@ function CircuitsPage() {
               triggerClassName="bg-white w-full"
             />
           </div>
+          <CreateSaeSetDialog onSaeSetCreated={handleSaeSetCreated} />
           <div className="w-[600px]">
             <LabeledInput
               label="Prompt"
@@ -123,7 +149,7 @@ function CircuitsPage() {
           </div>
           <Button
             onClick={handleTrace}
-            disabled={!text || isPending}
+            disabled={!text || !selectedSaeSet || isPending}
             className="h-12 px-4"
           >
             {isPending ? 'Tracing...' : 'Trace'}
@@ -150,14 +176,28 @@ function CircuitsPage() {
       ) : circuit ? (
         <div className="flex-1 flex flex-col overflow-hidden px-20 pb-20">
           <div className="flex gap-6 flex-1 overflow-hidden">
-            <LinkGraphContainer
-              data={circuit}
-              visState={visState}
-              onNodeClick={handleNodeClick}
-              onNodeHover={handleNodeHover}
-            />
+            <div className="flex flex-col gap-6 min-w-0 w-3/4 shrink-0">
+              <LinkGraphContainer
+                data={circuit}
+                visState={visState}
+                onNodeClick={handleNodeClick}
+                onNodeHover={handleNodeHover}
+              />
+              {featureData && (
+                <FeatureCardHorizontal
+                  className="grow"
+                  feature={featureData}
+                  sampleGroups={[
+                    {
+                      name: 'top_activations',
+                      samples: featureData?.samples ?? [],
+                    },
+                  ]}
+                />
+              )}
+            </div>
 
-            <div className="w-[500px] shrink-0 border border-slate-200 bg-white overflow-hidden">
+            {clickedId && (
               <NodeConnections
                 data={circuit}
                 clickedId={clickedId}
@@ -166,34 +206,18 @@ function CircuitsPage() {
                 onNodeClick={handleNodeClick}
                 onNodeHover={handleNodeHover}
               />
-            </div>
+            )}
+            {!clickedId && (
+              <Card className="flex flex-col basis-1/2 min-w-10 gap-4 p-6 items-center justify-center text-slate-500 text-xl">
+                <div className="flex flex-col items-center justify-center">
+                  <span>No node selected</span>
+                  <span className="text-sm text-slate-500">
+                    Click a node on the left to see its connections
+                  </span>
+                </div>
+              </Card>
+            )}
           </div>
-
-          {/* {clickedId && (
-            <div className="mt-6 border border-slate-200 bg-white p-6">
-              <h3 className="text-lg font-semibold mb-4">
-                Selected Feature Details
-              </h3>
-              {featureQuery.isPending && featureQueryParams ? (
-                <div className="flex items-center justify-center p-8">
-                  <div className="text-center">
-                    <Spinner isAnimating={true} />
-                    <p className="text-gray-600">Loading feature...</p>
-                  </div>
-                </div>
-              ) : featureQuery.data ? (
-                <FeatureCard feature={featureQuery.data} />
-              ) : (
-                <div className="flex items-center justify-center p-8">
-                  <div className="text-center">
-                    <p className="text-gray-600">
-                      No feature is available for this node
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          )} */}
         </div>
       ) : null}
     </div>

@@ -20,7 +20,7 @@ class Metadata(BaseModel):
 
 class Node(BaseModel):
     node_id: str
-    feature: int
+    feature: int | None = None
     layer: int
     ctx_idx: int
     feature_type: str
@@ -47,13 +47,10 @@ class Node(BaseModel):
     ):
         """Create a feature node."""
 
-        def cantor_pairing(x, y):
-            return (x + y) * (x + y + 1) // 2 + y
-
         layer = 2 * layer + int(not is_lorsa)
         return cls(
             node_id=f"{layer}_{feat_idx}_{pos}",
-            feature=cantor_pairing(layer, feat_idx),
+            feature=feat_idx,
             layer=layer,
             ctx_idx=pos,
             feature_type="lorsa" if is_lorsa else "cross layer transcoder",
@@ -69,7 +66,6 @@ class Node(BaseModel):
         """Create an error node."""
         return cls(
             node_id=f"{layer}_error_{pos}",
-            feature=-1,
             layer=layer,
             ctx_idx=pos,
             feature_type="lorsa error" if is_lorsa else "mlp reconstruction error",
@@ -81,7 +77,6 @@ class Node(BaseModel):
         """Create a token node."""
         return cls(
             node_id=f"E_{vocab_idx}_{pos}",
-            feature=pos,
             layer=-1,
             ctx_idx=pos,
             feature_type="embedding",

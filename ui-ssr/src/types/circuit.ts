@@ -1,79 +1,67 @@
-// Base types from JSON data (after camelCase transformation)
-export interface Node {
+import type { FeatureCompact } from './feature'
+
+export type FeatureNode = {
+  featureType: 'lorsa' | 'cross layer transcoder'
   nodeId: string
-  feature: number
   layer: number
   ctxIdx: number
-  featureType: string
   tokenProb: number
   isTargetLogit: boolean
-  clerp: string
-  saeName?: string
+  saeName: string
+  feature: FeatureCompact
 }
 
-export interface Edge {
+export type TokenNode = {
+  featureType: 'embedding'
+  nodeId: string
+  layer: number
+  ctxIdx: number
+  tokenProb: number
+}
+
+export type ErrorNode = {
+  featureType: 'lorsa error' | 'mlp reconstruction error'
+  nodeId: string
+  layer: number
+  ctxIdx: number
+  tokenProb: number
+}
+
+export type LogitNode = {
+  featureType: 'logit'
+  nodeId: string
+  layer: number
+  ctxIdx: number
+  tokenProb: number
+}
+
+export type Node = FeatureNode | TokenNode | ErrorNode | LogitNode
+
+export type Edge = {
   source: string
   target: string
   weight: number
 }
 
-// Positioned types for visualization
-export interface PositionedNode extends Node {
+export type PositionedNode = Node & {
   pos: [number, number]
 }
 
-export interface PositionedEdge extends Edge {
+export type PositionedEdge = Edge & {
   pathStr: string
 }
 
-// Circuit data container
-export interface CircuitData {
+export type CircuitData = {
   nodes: Node[]
   edges: Edge[]
   metadata: CircuitMetadata
 }
 
-export interface CircuitMetadata {
+export type CircuitMetadata = {
   promptTokens: string[]
 }
 
-export interface VisState {
+export type VisState = {
   clickedId: string | null
   hoveredId: string | null
-}
-
-// Raw JSON data structure
-export interface CircuitJsonData {
-  metadata: {
-    slug: string
-    scan: string
-    prompt_tokens: string[]
-    prompt: string
-  }
-  qParams: {
-    linkType: string
-    pinnedIds: string[]
-    clickedId: string
-    supernodes: string[][]
-    sg_pos: string
-  }
-  nodes: {
-    node_id: string
-    feature: number
-    layer: number
-    ctx_idx: number
-    feature_type: string
-    token_prob: number
-    is_target_logit: boolean
-    run_idx: number
-    reverse_ctx_idx: number
-    jsNodeId: string
-    clerp: string
-    sae_name?: string
-  }[]
-  links?: {
-    source: string
-    target: string
-    weight: number
-  }[]
 }
