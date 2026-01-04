@@ -29,6 +29,7 @@ class GenericPostAnalysisProcessor(PostAnalysisProcessor):
         act_times: torch.Tensor,
         n_analyzed_tokens: int,
         max_feature_acts: torch.Tensor,
+        sum_feature_acts: torch.Tensor,
         sample_result: dict[str, dict[str, torch.Tensor]],
         mapper: KeyedDiscreteMapper,
         device_mesh: DeviceMesh | None = None,

@@ -287,9 +287,16 @@ class FeatureAnalyzer:
                 device_mesh=device_mesh,
                 placements=DimMap({"model": 0}).placements(device_mesh),
             )
+            sum_feature_acts = torch.distributed.tensor.zeros(
+                (sae.cfg.d_sae,),
+                dtype=sae.cfg.dtype,
+                device_mesh=device_mesh,
+                placements=DimMap({"model": 0}).placements(device_mesh),
+            )
         else:
             act_times = torch.zeros((d_sae_local,), dtype=torch.long, device=sae.cfg.device)
             max_feature_acts = torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
+            sum_feature_acts = torch.zeros((d_sae_local,), dtype=sae.cfg.dtype, device=sae.cfg.device)
         mapper = KeyedDiscreteMapper()
 
         # TODO: Make a wrapper for CLT
@@ -342,6 +349,7 @@ class FeatureAnalyzer:
             active_feature_count = feature_acts.gt(0.0).sum(dim=[0, 1])
             act_times += active_feature_count
             max_feature_acts = torch.max(max_feature_acts, feature_acts.max(dim=0).values.max(dim=0).values)
+            sum_feature_acts += feature_acts.clamp(min=0.0).sum(dim=[0, 1])
 
             # Apply discrete mapper encoding only to string metadata, keep others as-is
             discrete_meta = {}
@@ -394,6 +402,7 @@ class FeatureAnalyzer:
             act_times=to_local(act_times),
             n_analyzed_tokens=n_analyzed_tokens,
             max_feature_acts=to_local(max_feature_acts),
+            sum_feature_acts=to_local(sum_feature_acts),
             sample_result=sample_result,
             mapper=mapper,
             device_mesh=device_mesh,

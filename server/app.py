@@ -781,12 +781,60 @@ def get_feature(
         "n_analyzed_tokens": analysis.n_analyzed_tokens,
         "sample_groups": sample_groups,
         "is_bookmarked": client.is_bookmarked(sae_name=name, sae_series=sae_series, feature_index=feature.index),
+        "reliance_protocol": getattr(feature, "reliance_protocol", None),
     }
     # print(f"{response_data=}")
     return Response(
         content=msgpack.packb(make_serializable(response_data)),
         media_type="application/x-msgpack",
     )
+
+
+@app.get("/dictionaries/{name}/reliance_summary")
+def get_reliance_summary(name: str):
+    """
+    Aggregate feature-level reliance probabilities for a dictionary.
+
+    We sum per-feature probabilities:
+      prob_shape = p_shape / (p_shape+p_texture+p_color)
+    and return the sums and simple normalized proportions.
+    """
+    pipeline = [
+        {
+            "$match": {
+                "sae_name": name,
+                "sae_series": sae_series,
+                "reliance_protocol.probabilities": {"$exists": True},
+            }
+        },
+        {
+            "$group": {
+                "_id": None,
+                "n_features": {"$sum": 1},
+                "shape": {"$sum": {"$ifNull": ["$reliance_protocol.probabilities.shape", 0.0]}},
+                "texture": {"$sum": {"$ifNull": ["$reliance_protocol.probabilities.texture", 0.0]}},
+                "color": {"$sum": {"$ifNull": ["$reliance_protocol.probabilities.color", 0.0]}},
+            }
+        },
+    ]
+
+    res = list(client.feature_collection.aggregate(pipeline, allowDiskUse=True))
+    if not res:
+        return {"n_features": 0, "prob_sums": {"shape": 0.0, "texture": 0.0, "color": 0.0}, "proportions": None}
+
+    row = res[0]
+    n = int(row.get("n_features", 0) or 0)
+    sums = {
+        "shape": float(row.get("shape", 0.0) or 0.0),
+        "texture": float(row.get("texture", 0.0) or 0.0),
+        "color": float(row.get("color", 0.0) or 0.0),
+    }
+    denom = sums["shape"] + sums["texture"] + sums["color"]
+    proportions = None
+    if denom > 0:
+        proportions = {k: v / denom for k, v in sums.items()}
+
+    return {"n_features": n, "prob_sums": sums, "proportions": proportions}
 
 
 # @app.post("/dictionaries/{name}/cache_features")

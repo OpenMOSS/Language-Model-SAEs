@@ -44,6 +44,7 @@ class FeatureAnalysis(BaseModel):
     name: str
     act_times: int
     max_feature_acts: float
+    sum_feature_acts: float | None = None
     decoder_norms: Optional[list[float]] = None
     decoder_similarity_matrices: Optional[list[list[float]]] = None
     decoder_inner_product_matrices: Optional[list[list[float]]] = None
@@ -61,6 +62,7 @@ class FeatureRecord(BaseModel):
     logits: Optional[dict[str, list[dict[str, Any]]]] = None
     interpretation: Optional[dict[str, Any]] = None
     metric: Optional[dict[str, float]] = None
+    reliance_protocol: Optional[dict[str, Any]] = None
 
 
 class AnalysisRecord(BaseModel):

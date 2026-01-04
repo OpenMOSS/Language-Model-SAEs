@@ -455,22 +455,105 @@ class dinov3(LanguageModel):
     
     @torch.no_grad()
     def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
-        
+        """
+        Expected raw format from ActivationGenerator:
+        - raw["image"]: list[PIL.Image.Image]
+        - raw.get("meta"): list[dict] (from HuggingFaceDatasetLoader), may include reliance_suppression config
+        """
+        from PIL import Image, ImageFilter
+        import random
+
+        def apply_patch_shuffle(img: "Image.Image", grid_size: int, *, seed: int) -> "Image.Image":
+            if grid_size <= 1:
+                return img
+            w, h = img.size
+            patch_w = w // grid_size
+            patch_h = h // grid_size
+            if patch_w <= 0 or patch_h <= 0:
+                return img
+
+            region_w = patch_w * grid_size
+            region_h = patch_h * grid_size
+            base = img.crop((0, 0, region_w, region_h))
+
+            patches: list[Image.Image] = []
+            for gy in range(grid_size):
+                for gx in range(grid_size):
+                    left = gx * patch_w
+                    top = gy * patch_h
+                    patches.append(base.crop((left, top, left + patch_w, top + patch_h)))
+
+            rng = random.Random(seed)
+            rng.shuffle(patches)
+
+            out = Image.new("RGB", (region_w, region_h))
+            idx = 0
+            for gy in range(grid_size):
+                for gx in range(grid_size):
+                    out.paste(patches[idx], (gx * patch_w, gy * patch_h))
+                    idx += 1
+
+            if (region_w, region_h) != (w, h):
+                out = out.resize((w, h), resample=Image.BILINEAR)
+            return out
+
+        def apply_reliance_suppression(img: "Image.Image", meta_i: dict[str, Any] | None) -> "Image.Image":
+            if not meta_i:
+                return img
+            cfg = meta_i.get("reliance_suppression")
+            if not isinstance(cfg, dict):
+                return img
+            kind = cfg.get("kind", None)
+            if kind is None or kind == "none":
+                return img
+
+            # Deterministic per-sample seed if provided
+            ctx = meta_i.get("context_idx", 0)
+            try:
+                ctx_int = int(ctx)
+            except Exception:
+                ctx_int = 0
+            seed_offset = int(cfg.get("seed_offset", 0))
+            seed = ctx_int + seed_offset
+
+            if kind == "shape":
+                grid_size = int(cfg.get("grid_size", 8))
+                return apply_patch_shuffle(img, grid_size=grid_size, seed=seed)
+            if kind == "texture":
+                radius = float(cfg.get("gaussian_radius", 2.0))
+                return img.filter(ImageFilter.GaussianBlur(radius=radius))
+            if kind == "color":
+                return img.convert("L").convert("RGB")
+
+            return img
+
         images = []
         images_raw = []
-        for image in raw['image']:
-            if image.mode == 'CMYK':
-                image = image.convert('RGB')
+        metas = raw.get("meta")
+        meta_list: list[dict[str, Any] | None]
+        if isinstance(metas, list):
+            meta_list = metas
+        else:
+            meta_list = [None] * len(raw["image"])
+
+        for i, image in enumerate(raw["image"]):
+            if image.mode == "CMYK":
+                image = image.convert("RGB")
+            elif image.mode != "RGB":
+                image = image.convert("RGB")
+
+            image = apply_reliance_suppression(image, meta_list[i] if i < len(meta_list) else None)
+
             images.append(self.transform(image))
             images_raw.append(self.to_tensor(image))
-        
+
         images = torch.stack(images, dim=0)
         images_raw = torch.stack(images_raw, dim=0)
-        raw['images'] = images.to(self.cfg.device)
-        raw['images_raw'] = images_raw.to(self.cfg.device)
-        raw['text'] = str(raw['label'])
-        raw['tokens'] = raw['images']
-        
+        raw["images"] = images.to(self.cfg.device)
+        raw["images_raw"] = images_raw.to(self.cfg.device)
+        raw["text"] = str(raw.get("label", ""))
+        raw["tokens"] = raw["images"]
+
         return raw
     
     @torch.no_grad()
