@@ -38,6 +38,10 @@ class FeatureAnalysisSampling(BaseModel):
     n_shards: np.ndarray | None = None
     context_idx: np.ndarray
     model_name: list[str]
+    # Optional per-sample (image-level) reliance info aligned with samples
+    sample_reliance_relative_changes: dict[str, list[float]] | None = None
+    sample_reliance_probabilities: dict[str, list[float]] | None = None
+    sample_reliance_label: list[str] | None = None
 
 
 class FeatureAnalysis(BaseModel):

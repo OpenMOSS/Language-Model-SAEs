@@ -581,6 +581,7 @@ def get_feature(
         model_name,
         shard_idx=None,
         n_shards=None,
+        reliance=None,
     ):
         """Process a sample to extract and format feature data.
 
@@ -654,6 +655,7 @@ def get_feature(
                 "feature_acts_values": feature_acts_values,
                 "z_pattern_indices": z_pattern_indices,
                 "z_pattern_values": z_pattern_values,
+                **({"reliance": reliance} if reliance is not None else {}),
             }
         else:
             image_urls = [
@@ -675,6 +677,7 @@ def get_feature(
                 "feature_acts_values": feature_acts_values,
                 "z_pattern_indices": z_pattern_indices,
                 "z_pattern_values": z_pattern_values,
+                **({"reliance": reliance} if reliance is not None else {}),
             }
 
     def process_sparse_feature_acts(
@@ -735,16 +738,12 @@ def get_feature(
     sample_groups = []
     for sampling in analysis.samplings:
         # Using zip to process correlated data instead of indexing
-        samples = [
-            process_sample(
-                sparse_feature_acts=sparse_feature_acts,
-                context_idx=context_idx,
-                dataset_name=dataset_name,
-                model_name=model_name,
-                shard_idx=shard_idx,
-                n_shards=n_shards,
-            )
-            for sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards in zip(
+        shard_iter = sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts_indices)
+        nshard_iter = sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts_indices)
+
+        samples = []
+        for sample_i, (sparse_feature_acts, context_idx, dataset_name, model_name, shard_idx, n_shards) in enumerate(
+            zip(
                 process_sparse_feature_acts(
                     sampling.feature_acts_indices,
                     sampling.feature_acts_values,
@@ -754,10 +753,43 @@ def get_feature(
                 sampling.context_idx,
                 sampling.dataset_name,
                 sampling.model_name,
-                sampling.shard_idx if sampling.shard_idx is not None else [0] * len(sampling.feature_acts_indices),
-                sampling.n_shards if sampling.n_shards is not None else [1] * len(sampling.feature_acts_indices),
+                shard_iter,
+                nshard_iter,
             )
-        ]
+        ):
+            reliance = None
+            if (
+                sampling.sample_reliance_label is not None
+                and sampling.sample_reliance_relative_changes is not None
+                and sampling.sample_reliance_probabilities is not None
+                and sample_i < len(sampling.sample_reliance_label)
+            ):
+                try:
+                    reliance = {
+                        "label": sampling.sample_reliance_label[sample_i],
+                        "relative_changes": {
+                            k: sampling.sample_reliance_relative_changes.get(k, [0.0])[sample_i]
+                            for k in ["shape", "texture", "color"]
+                        },
+                        "probabilities": {
+                            k: sampling.sample_reliance_probabilities.get(k, [0.0])[sample_i]
+                            for k in ["shape", "texture", "color"]
+                        },
+                    }
+                except Exception:
+                    reliance = None
+
+            samples.append(
+                process_sample(
+                    sparse_feature_acts=sparse_feature_acts,
+                    context_idx=context_idx,
+                    dataset_name=dataset_name,
+                    model_name=model_name,
+                    shard_idx=shard_idx,
+                    n_shards=n_shards,
+                    reliance=reliance,
+                )
+            )
 
         sample_groups.append(
             {
