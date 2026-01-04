@@ -885,16 +885,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             **kwargs: Forwarded to `from_pretrained` (e.g. strict_loading).
         """
 
-        if sae_type == "crosscoder":
-            assert hook_points is not None, "hook_points must be set for crosscoder"
-            folder_name = f"{sae_type}"
-            for head in hook_points:
-                folder_name += f"-{head}"
-        elif sae_type == "clt":
-            folder_name = "CLT"
-        else:
-            assert hook_point_in is not None and hook_point_out is not None, "hook_point_in and hook_point_out must be set for non-CLT SAEs"
-            folder_name = f"{sae_type}-{hook_point_in}-{hook_point_out}"
+        folder_name = SAE_TYPE_TO_MODEL_CLASS[sae_type].hf_folder_name()
             
         allow_patterns = [f"{folder_name}/*"]
         snapshot_path = snapshot_download(
