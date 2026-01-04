@@ -5,7 +5,6 @@ import torch
 import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
-from pydantic import Field
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
