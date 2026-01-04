@@ -22,20 +22,24 @@ import torch
 from datasets import Dataset
 from pydantic import BaseModel
 
-from lm_saes.analysis.autointerp import (
-    AutoInterpConfig,
-    ExplainerType,
-    ScorerType,
-    Segment,
-    TokenizedSample,
-    generate_detection_prompt,
-    generate_explanation_prompt,
-    generate_explanation_prompt_neuronpedia,
-    generate_fuzzing_prompt,
-)
+from lm_saes.analysis.samples import Segment, TokenizedSample
 from lm_saes.backend.language_model import LanguageModel
 from lm_saes.database import FeatureAnalysis, FeatureRecord, MongoClient
 from lm_saes.utils.logging import get_logger
+
+from .autointerp_base import (
+    AutoInterpConfig,
+    ExplainerType,
+    ScorerType,
+)
+from .evaluation_prompts import (
+    generate_detection_prompt,
+    generate_fuzzing_prompt,
+)
+from .explanation_prompts import (
+    generate_explanation_prompt,
+    generate_explanation_prompt_neuronpedia,
+)
 
 logger = get_logger("analysis.feature_interpreter")
 

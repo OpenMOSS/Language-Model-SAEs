@@ -1,18 +1,20 @@
 import mongomock
 import pytest
 
-from lm_saes.config import MongoDBConfig, SAEConfig
+from lm_saes import MongoDBConfig, SAEConfig
 from lm_saes.database import MongoClient, SAERecord
 
 
 @pytest.fixture
-def mongo_client() -> MongoClient:
+def mongo_client(mocker) -> MongoClient:
     """
     Creates a MongoClient instance with an in-memory MongoDB.
 
     Returns:
         MongoClient: A configured MongoClient instance for testing
     """
+    mock_gridfs = mocker.patch("gridfs.GridFS")
+    mock_gridfs.return_value.exists.return_value = False
     with mongomock.patch(servers=(("fake", 27017),)):
         client = MongoClient(MongoDBConfig(mongo_uri="mongodb://fake", mongo_db="test_db"))
         yield client
@@ -28,7 +30,13 @@ def test_create_and_get_sae(mongo_client: MongoClient) -> None:
     name = "test_sae"
     series = "test_series"
     path = "test_path"
-    cfg = SAEConfig(hook_point_in="test_hook_point_in", d_sae=10, d_model=10, expansion_factor=1)
+    cfg = SAEConfig(
+        hook_point_in="test_hook_point_in",
+        hook_point_out="test_hook_point_out",
+        d_sae=10,
+        d_model=10,
+        expansion_factor=1,
+    )
 
     # Act
     mongo_client.create_sae(name, series, path, cfg)
@@ -45,7 +53,13 @@ def test_create_and_get_sae(mongo_client: MongoClient) -> None:
 def test_list_saes(mongo_client: MongoClient) -> None:
     """Test listing SAE records."""
     # Arrange
-    cfg = SAEConfig(hook_point_in="test_hook_point_in", d_sae=10, d_model=10, expansion_factor=1)
+    cfg = SAEConfig(
+        hook_point_in="test_hook_point_in",
+        hook_point_out="test_hook_point_out",
+        d_sae=10,
+        d_model=10,
+        expansion_factor=1,
+    )
     print(mongo_client.sae_collection.find_one())
     mongo_client.create_sae("sae1", "series1", "test_path", cfg)
     mongo_client.create_sae("sae2", "series1", "test_path", cfg)
@@ -63,7 +77,13 @@ def test_remove_sae(mongo_client: MongoClient) -> None:
     name = "test_sae"
     series = "test_series"
     path = "test_path"
-    cfg = SAEConfig(hook_point_in="test_hook_point_in", d_sae=10, d_model=10, expansion_factor=1)
+    cfg = SAEConfig(
+        hook_point_in="test_hook_point_in",
+        hook_point_out="test_hook_point_out",
+        d_sae=10,
+        d_model=10,
+        expansion_factor=1,
+    )
     mongo_client.create_sae(name, series, path, cfg)
 
     # Act
@@ -77,7 +97,13 @@ def test_remove_sae(mongo_client: MongoClient) -> None:
 def test_create_and_get_analysis(mongo_client: MongoClient) -> None:
     """Test creating and retrieving analysis records."""
     # Arrange
-    cfg = SAEConfig(hook_point_in="test_hook_point_in", d_sae=10, d_model=10, expansion_factor=1)
+    cfg = SAEConfig(
+        hook_point_in="test_hook_point_in",
+        hook_point_out="test_hook_point_out",
+        d_sae=10,
+        d_model=10,
+        expansion_factor=1,
+    )
     mongo_client.create_sae("test_sae", "test_series", "test_path", cfg)
 
     # Act
@@ -96,7 +122,9 @@ def test_get_nonexistent_sae(mongo_client: MongoClient) -> None:
 def test_get_feature(mongo_client: MongoClient) -> None:
     """Test retrieving feature records."""
     # Arrange
-    cfg = SAEConfig(hook_point_in="test_hook_point_in", d_sae=2, d_model=2, expansion_factor=1)
+    cfg = SAEConfig(
+        hook_point_in="test_hook_point_in", hook_point_out="test_hook_point_out", d_sae=2, d_model=2, expansion_factor=1
+    )
     mongo_client.create_sae("test_sae", "test_series", "test_path", cfg)
 
     # Act

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef } from 'react'
 import * as d3 from 'd3'
 import {
   GridLines,
@@ -11,10 +11,19 @@ import {
 } from './index'
 import type {
   CircuitData,
-  PositionedEdge,
+  Node,
   PositionedNode,
   VisState,
 } from '@/types/circuit'
+import {
+  createEdgeIndex,
+  createNodeIndex,
+  createPositionedEdges,
+  createSpatialIndex,
+  findNearestNode,
+  getNodesByCtxIdx,
+} from '@/utils/circuit-index'
+import { useLocalStorage } from '@/hooks/useLocalStorage'
 
 interface LinkGraphProps {
   data: CircuitData
@@ -25,6 +34,68 @@ interface LinkGraphProps {
 
 const BOTTOM_PADDING = 50
 const SIDE_PADDING = 70
+const MIN_UNIT_WIDTH = 8
+
+function topologicalSort(
+  nodes: Node[],
+  outgoingEdges: Map<string, Set<string>>,
+): Node[] {
+  const nodeIds = new Set(nodes.map((n) => n.nodeId))
+  const inDegree = new Map<string, number>()
+  const localOutgoing = new Map<string, string[]>()
+
+  for (const node of nodes) {
+    inDegree.set(node.nodeId, 0)
+    localOutgoing.set(node.nodeId, [])
+  }
+
+  for (const node of nodes) {
+    const targets = outgoingEdges.get(node.nodeId)
+    if (targets) {
+      for (const target of targets) {
+        if (nodeIds.has(target)) {
+          localOutgoing.get(node.nodeId)!.push(target)
+          inDegree.set(target, (inDegree.get(target) || 0) + 1)
+        }
+      }
+    }
+  }
+
+  // Kahn's algorithm
+  const queue: Node[] = []
+  const nodeMap = new Map(nodes.map((n) => [n.nodeId, n]))
+
+  for (const node of nodes) {
+    if (inDegree.get(node.nodeId) === 0) {
+      queue.push(node)
+    }
+  }
+
+  const sorted: Node[] = []
+  while (queue.length > 0) {
+    const node = queue.shift()!
+    sorted.push(node)
+
+    for (const targetId of localOutgoing.get(node.nodeId) || []) {
+      const newDegree = (inDegree.get(targetId) || 1) - 1
+      inDegree.set(targetId, newDegree)
+      if (newDegree === 0) {
+        queue.push(nodeMap.get(targetId)!)
+      }
+    }
+  }
+
+  // Handle cycles by adding remaining nodes
+  if (sorted.length < nodes.length) {
+    for (const node of nodes) {
+      if (!sorted.includes(node)) {
+        sorted.push(node)
+      }
+    }
+  }
+
+  return sorted
+}
 
 const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   data,
@@ -32,219 +103,231 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   onNodeClick,
   onNodeHover,
 }) => {
-  const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
+  const [containerDimensions, setContainerDimensions] = useLocalStorage(
+    'linkGraphDimensions',
+    {
+      width: 800,
+      height: 600,
+    },
+  )
 
-  const { calculatedCtxCounts, x, y, positionedNodes, positionedEdges } =
-    useMemo(() => {
-      if (!data.nodes.length) {
-        return {
-          calculatedCtxCounts: [],
-          x: null,
-          y: null,
-          positionedNodes: [],
-          positionedEdges: [],
+  // 1. Calculate stats about context counts and total units needed
+  const { calculatedCtxCounts, totalUnits } = useMemo(() => {
+    if (!data.nodes.length) {
+      return { calculatedCtxCounts: [], totalUnits: 0 }
+    }
+
+    const { nodes } = data
+    const earliestCtxWithNodes = d3.min(nodes, (d) => d.ctxIdx) || 0
+
+    let cumsum = 0
+    const calculatedCtxCounts = d3
+      .range((d3.max(nodes, (d) => d.ctxIdx) || 0) + 1)
+      .map((ctxIdx: number) => {
+        if (ctxIdx >= earliestCtxWithNodes) {
+          const group = nodes.filter((d) => d.ctxIdx === ctxIdx)
+          const layerGroups = d3.group(group, (d) => d.layer)
+          const maxNodesPerLayer =
+            d3.max(
+              Array.from(layerGroups.values()),
+              (layerNodes) => layerNodes.length,
+            ) || 1
+          const maxCount = Math.max(1, maxNodesPerLayer)
+          cumsum += maxCount
+          return { ctxIdx, maxCount, cumsum, layerGroups }
         }
+        return { ctxIdx, maxCount: 0, cumsum, layerGroups: new Map() }
+      })
+
+    const totalUnits = cumsum + 2 * calculatedCtxCounts.length
+
+    return { calculatedCtxCounts, totalUnits }
+  }, [data.nodes])
+
+  // 2. Calculate graph dimensions based on data density and container size
+  const dimensions = useMemo(() => {
+    const minWidth = totalUnits * MIN_UNIT_WIDTH + SIDE_PADDING
+    return {
+      width: Math.max(containerDimensions.width, minWidth),
+      height: containerDimensions.height,
+    }
+  }, [totalUnits, containerDimensions])
+
+  // 3. Calculate scales and node positions
+  const { x, y, positionedNodes } = useMemo(() => {
+    if (!calculatedCtxCounts.length) {
+      return {
+        x: null,
+        y: null,
+        positionedNodes: [],
       }
+    }
 
-      const { nodes } = data
-      const earliestCtxWithNodes = d3.min(nodes, (d) => d.ctxIdx) || 0
+    const { nodes, edges } = data
 
-      let cumsum = 0
-      const calculatedCtxCounts = d3
-        .range((d3.max(nodes, (d) => d.ctxIdx) || 0) + 1)
-        .map((ctxIdx: number) => {
-          if (ctxIdx >= earliestCtxWithNodes) {
-            const group = nodes.filter((d) => d.ctxIdx === ctxIdx)
-            const layerGroups = d3.group(group, (d) => d.layer)
-            const maxNodesPerLayer =
-              d3.max(
-                Array.from(layerGroups.values()),
-                (layerNodes) => layerNodes.length,
-              ) || 1
-            const maxCount = Math.max(1, maxNodesPerLayer)
-            cumsum += maxCount
-            return { ctxIdx, maxCount, cumsum, layerGroups }
-          }
-          return { ctxIdx, maxCount: 0, cumsum, layerGroups: new Map() }
-        })
+    // Build outgoing edges map for topological sorting
+    const outgoingEdges = new Map<string, Set<string>>()
+    for (const edge of edges) {
+      if (!outgoingEdges.has(edge.source)) {
+        outgoingEdges.set(edge.source, new Set())
+      }
+      outgoingEdges.get(edge.source)!.add(edge.target)
+    }
 
-      const xDomain = [-1].concat(calculatedCtxCounts.map((d) => d.ctxIdx))
-      const xRange = [SIDE_PADDING].concat(
-        calculatedCtxCounts.map(
-          (d, i) =>
-            SIDE_PADDING +
-            ((d.cumsum + 2 * (i + 1)) * (dimensions.width - SIDE_PADDING)) /
-              (cumsum + 2 * calculatedCtxCounts.length),
-        ),
-      )
-      const x = d3
-        .scaleLinear()
-        .domain(xDomain.map((d) => d + 1))
-        .range(xRange)
+    const xDomain = [-1].concat(calculatedCtxCounts.map((d: any) => d.ctxIdx))
+    const xRange = [SIDE_PADDING].concat(
+      calculatedCtxCounts.map(
+        (d: any, i: number) =>
+          SIDE_PADDING +
+          ((d.cumsum + 2 * (i + 1)) * (dimensions.width - SIDE_PADDING)) /
+            totalUnits,
+      ),
+    )
+    const x = d3
+      .scaleLinear()
+      .domain(xDomain.map((d) => d + 1))
+      .range(xRange)
 
-      const yNumTicks = (d3.max(nodes, (d) => d.layer) || 0) + 2
-      const y = d3.scaleBand<number>(d3.range(yNumTicks), [
-        dimensions.height - BOTTOM_PADDING,
-        0,
-      ])
+    const yNumTicks = (d3.max(nodes, (d) => d.layer) || 0) + 2
+    const y = d3.scaleBand<number>(d3.range(yNumTicks), [
+      dimensions.height - BOTTOM_PADDING,
+      0,
+    ])
 
-      calculatedCtxCounts.forEach((d: any) => {
-        d.width = x(d.ctxIdx + 1) - x(d.ctxIdx)
-      })
+    calculatedCtxCounts.forEach((d: any) => {
+      d.width = x(d.ctxIdx + 1) - x(d.ctxIdx)
+    })
 
-      const padR =
-        Math.min(
-          8,
-          d3.min(calculatedCtxCounts.slice(1), (d: any) => d.width / 2) || 8,
-        ) + 0
+    const padR =
+      Math.min(
+        8,
+        d3.min(calculatedCtxCounts.slice(1), (d: any) => d.width / 2) || 8,
+      ) + 0
 
-      const positionedNodes: PositionedNode[] = nodes.map((node) => ({
-        ...node,
-        pos: [0, 0] as [number, number],
-      }))
+    const positionedNodes: PositionedNode[] = nodes.map((node) => ({
+      ...node,
+      pos: [0, 0] as [number, number],
+    }))
 
-      const xOffsets = new Map<string, number>()
+    const xOffsets = new Map<string, number>()
 
-      calculatedCtxCounts.forEach((ctxData: any) => {
-        if (ctxData.layerGroups.size === 0) return
+    calculatedCtxCounts.forEach((ctxData: any) => {
+      if (ctxData.layerGroups.size === 0) return
 
-        const ctxWidth = x(ctxData.ctxIdx + 1) - x(ctxData.ctxIdx) - padR
+      const ctxWidth = x(ctxData.ctxIdx + 1) - x(ctxData.ctxIdx) - padR
 
-        ctxData.layerGroups.forEach(
-          (layerNodes: typeof nodes, _layerIdx: number) => {
-            const sortedNodes = [...layerNodes].sort(
-              (a, b) => -(a.tokenProb || 0) + (b.tokenProb || 0),
-            )
+      ctxData.layerGroups.forEach(
+        (layerNodes: typeof nodes, _layerIdx: number) => {
+          // Topological sort first
+          let sortedNodes = topologicalSort(layerNodes, outgoingEdges)
 
-            const maxNodesInContext = ctxData.maxCount
-            const spacing = ctxWidth / maxNodesInContext
-
-            sortedNodes.forEach((node, i) => {
-              const totalWidth = (sortedNodes.length - 1) * spacing
-              const startX = ctxWidth - totalWidth
-              xOffsets.set(node.nodeId, startX + i * spacing)
-            })
-          },
-        )
-      })
-
-      positionedNodes.forEach((d) => {
-        const xOffset = xOffsets.get(d.nodeId) || 0
-        d.pos = [
-          x(d.ctxIdx) + xOffset,
-          (y(d.layer + 1) || 0) + y.bandwidth() / 2,
-        ]
-      })
-
-      const positionedEdges: PositionedEdge[] = data.edges
-        .map((edge) => {
-          const sourceNode = positionedNodes.find(
-            (n) => n.nodeId === edge.source,
-          )
-          const targetNode = positionedNodes.find(
-            (n) => n.nodeId === edge.target,
-          )
-          if (sourceNode && targetNode) {
-            const [x1, y1] = sourceNode.pos
-            const [x2, y2] = targetNode.pos
-            return {
-              ...edge,
-              pathStr: `M${x1},${y1}L${x2},${y2}`,
+          // Then sort for logits by token probability
+          sortedNodes = sortedNodes.sort((a, b) => {
+            if (a.featureType === 'logit' && b.featureType === 'logit') {
+              return -(a.tokenProb || 0) + (b.tokenProb || 0)
             }
-          }
-          return null
-        })
-        .filter((edge): edge is PositionedEdge => edge !== null)
+            return 0
+          })
 
-      return { calculatedCtxCounts, x, y, positionedNodes, positionedEdges }
-    }, [data.nodes, data.edges, dimensions.width, dimensions.height])
+          const maxNodesInContext = ctxData.maxCount
+          const spacing = ctxWidth / maxNodesInContext
 
-  // Hover and click nearest node when mouse is close
-  useEffect(() => {
-    if (!svgRef.current || !positionedNodes.length) return
+          sortedNodes.forEach((node, i) => {
+            const totalWidth = (sortedNodes.length - 1) * spacing
+            const startX = ctxWidth - totalWidth
+            xOffsets.set(node.nodeId, startX + i * spacing)
+          })
+        },
+      )
+    })
 
-    const svg = svgRef.current
-    const MAGNET_THRESHOLD = 30
+    positionedNodes.forEach((d) => {
+      const xOffset = xOffsets.get(d.nodeId) || 0
+      d.pos = [x(d.ctxIdx) + xOffset, (y(d.layer + 1) || 0) + y.bandwidth() / 2]
+    })
 
-    const findNearestNode = (
-      mouseX: number,
-      mouseY: number,
-    ): { node: PositionedNode | null; distance: number } => {
-      let nearestNode: PositionedNode | null = null
-      let minDistance = Infinity
+    return { x, y, positionedNodes }
+  }, [data.nodes, data.edges, dimensions, calculatedCtxCounts, totalUnits])
 
-      for (const node of positionedNodes) {
-        const [nodeX, nodeY] = node.pos
-        const dx = mouseX - nodeX
-        const dy = mouseY - nodeY
-        const distance = Math.sqrt(dx * dx + dy * dy)
+  const nodeIndex = useMemo(
+    () => createNodeIndex(positionedNodes),
+    [positionedNodes],
+  )
 
-        if (distance < minDistance) {
-          minDistance = distance
-          nearestNode = node
-        }
-      }
+  const positionedEdges = useMemo(
+    () => createPositionedEdges(data.edges, nodeIndex),
+    [data.edges, nodeIndex],
+  )
 
-      return { node: nearestNode, distance: minDistance }
-    }
+  const edgeIndex = useMemo(
+    () => createEdgeIndex(positionedEdges),
+    [positionedEdges],
+  )
 
-    const handleMouseMove = (event: MouseEvent) => {
-      const rect = svg.getBoundingClientRect()
+  const spatialIndex = useMemo(
+    () => createSpatialIndex(positionedNodes),
+    [positionedNodes],
+  )
+
+  const handleMouseMove = useCallback(
+    (event: React.MouseEvent<SVGSVGElement>) => {
+      const MAGNET_THRESHOLD = 30
+      const rect = event.currentTarget.getBoundingClientRect()
       const mouseX = event.clientX - rect.left
       const mouseY = event.clientY - rect.top
 
-      const { node: nearestNode, distance } = findNearestNode(mouseX, mouseY)
+      const nearestNode = findNearestNode(
+        spatialIndex,
+        mouseX,
+        mouseY,
+        MAGNET_THRESHOLD,
+      )
+      onNodeHover(nearestNode?.nodeId ?? null)
+    },
+    [spatialIndex, onNodeHover],
+  )
 
-      if (nearestNode && distance <= MAGNET_THRESHOLD) {
-        onNodeHover(nearestNode.nodeId)
-      } else {
-        onNodeHover(null)
-      }
-    }
-
-    const handleClick = (event: MouseEvent) => {
-      // Don't handle clicks on the SVG background (let the existing handler do that)
-      if ((event.target as Element).tagName === 'svg') {
-        return
-      }
-
-      const rect = svg.getBoundingClientRect()
+  const handleClick = useCallback(
+    (event: React.MouseEvent<SVGSVGElement>) => {
+      const MAGNET_THRESHOLD = 30
+      const rect = event.currentTarget.getBoundingClientRect()
       const mouseX = event.clientX - rect.left
       const mouseY = event.clientY - rect.top
 
-      const { node: nearestNode, distance } = findNearestNode(mouseX, mouseY)
+      const nearestNode = findNearestNode(
+        spatialIndex,
+        mouseX,
+        mouseY,
+        MAGNET_THRESHOLD,
+      )
 
-      if (nearestNode && distance <= MAGNET_THRESHOLD) {
-        event.stopPropagation()
+      if (nearestNode) {
         const metaKey = event.metaKey || event.ctrlKey
         onNodeClick(nearestNode.nodeId, metaKey)
       }
-    }
-
-    svg.addEventListener('mousemove', handleMouseMove)
-    svg.addEventListener('click', handleClick)
-
-    return () => {
-      svg.removeEventListener('mousemove', handleMouseMove)
-      svg.removeEventListener('click', handleClick)
-    }
-  }, [
-    positionedNodes,
-    dimensions.width,
-    dimensions.height,
-    onNodeHover,
-    onNodeClick,
-  ])
+    },
+    [spatialIndex, onNodeClick],
+  )
 
   useEffect(() => {
     const updateDimensions = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect()
-        setDimensions({
-          width: rect.width,
-          height: rect.height,
+        const newWidth = rect.width
+        const newHeight = rect.height - 20
+
+        setContainerDimensions((prev) => {
+          if (
+            Math.abs(prev.width - newWidth) < 1 &&
+            Math.abs(prev.height - newHeight) < 1
+          ) {
+            return prev
+          }
+          return {
+            width: newWidth,
+            height: newHeight,
+          }
         })
       }
     }
@@ -259,7 +342,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     return () => {
       resizeObserver.disconnect()
     }
-  }, [])
+  }, [setContainerDimensions])
 
   const tokenData = useMemo(() => {
     if (!data.metadata?.promptTokens || !positionedNodes.length || !x) return []
@@ -269,7 +352,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     return data.metadata.promptTokens
       .slice(0, maxCtxIdx + 1)
       .map((token: string, index: number) => {
-        const contextNodes = positionedNodes.filter((d) => d.ctxIdx === index)
+        const contextNodes = getNodesByCtxIdx(nodeIndex, index)
 
         if (contextNodes.length === 0) {
           return {
@@ -279,8 +362,10 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
           }
         }
 
-        const nodeXPositions = contextNodes.map((d) => d.pos[0])
-        const rightX = Math.max(...nodeXPositions)
+        let rightX = -Infinity
+        for (const node of contextNodes) {
+          if (node.pos[0] > rightX) rightX = node.pos[0]
+        }
 
         return {
           token,
@@ -288,29 +373,30 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
           x: rightX,
         }
       })
-  }, [data.metadata?.promptTokens, positionedNodes, x])
+  }, [data.metadata?.promptTokens, positionedNodes, nodeIndex, x])
 
   if (!positionedNodes.length || !x || !y) {
     return (
       <div ref={containerRef} className="relative w-full h-[400px]">
-        <div>Loading...</div>
+        <div className="flex items-center justify-center h-full text-slate-500">
+          Loading circuit graph...
+        </div>
       </div>
     )
   }
 
   return (
-    <div ref={containerRef} className="relative w-full h-[400px]">
+    <div
+      ref={containerRef}
+      className="relative w-full min-h-[420px] h-[420px] overflow-x-auto overflow-y-hidden"
+    >
       <svg
-        ref={svgRef}
         width={dimensions.width}
         height={dimensions.height}
-        onClick={(event) => {
-          if (event.target === event.currentTarget) {
-            onNodeClick('', false)
-          }
-        }}
         className="relative z-1"
         style={{ pointerEvents: 'auto' }}
+        onMouseMove={handleMouseMove}
+        onClick={handleClick}
       >
         <RowBackgrounds
           dimensions={dimensions}
@@ -327,11 +413,11 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
 
         <YAxis positionedNodes={positionedNodes} y={y} />
 
-        <Links positionedEdges={positionedEdges} visState={visState} />
+        <Links edgeIndex={edgeIndex} visState={visState} />
 
         <Nodes
           positionedNodes={positionedNodes}
-          positionedEdges={positionedEdges}
+          edgeIndex={edgeIndex}
           visState={{
             clickedId: visState.clickedId,
             hoveredId: visState.hoveredId,

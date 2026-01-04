@@ -36,7 +36,7 @@ from .train import (
     train_molt,
     train_sae,
 )
-from .utils import load_config
+from .utils import PretrainedSAE, load_config
 
 __all__ = [
     "DirectLogitAttributeSettings",
@@ -71,4 +71,5 @@ __all__ = [
     "direct_logit_attribute",
     "TrainMOLTSettings",
     "train_molt",
+    "PretrainedSAE",
 ]

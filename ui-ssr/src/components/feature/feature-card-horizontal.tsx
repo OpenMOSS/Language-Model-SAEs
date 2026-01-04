@@ -2,21 +2,18 @@ import { memo } from 'react'
 import { Info } from '../ui/info'
 import { FeatureSampleGroup } from './sample'
 import { FeatureLogits } from './feature-logits'
-import type { Feature, FeatureSampleCompact } from '@/types/feature'
+import type { Feature } from '@/types/feature'
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
 type FeatureCardHorizontalProps = {
   feature: Feature
-  sampleGroups: {
-    name: string
-    samples: FeatureSampleCompact[]
-  }[]
   className?: string
+  hidePlots?: boolean
 }
 
 export const FeatureCardHorizontal = memo(
-  ({ feature, sampleGroups, className }: FeatureCardHorizontalProps) => {
+  ({ feature, className, hidePlots }: FeatureCardHorizontalProps) => {
     return (
       <Card
         className={cn(
@@ -47,29 +44,27 @@ export const FeatureCardHorizontal = memo(
                   {feature.nAnalyzedTokens!.toLocaleString()} tokens.
                 </Info>
               </div>
-              <div className="flex items-center gap-4 grow">
-                <div className="h-full flex flex-1 items-center justify-center text-slate-500 text-sm bg-slate-100 rounded-2xl p-3 mb-2 border border-dashed border-slate-200">
-                  Activation histogram is not available.
+              {!hidePlots && (
+                <div className="flex items-center gap-4 grow">
+                  <div className="h-full flex flex-1 items-center justify-center text-slate-500 text-sm bg-slate-100 rounded-2xl p-3 mb-2 border border-dashed border-slate-200">
+                    Activation histogram is not available.
+                  </div>
+                  <div className="h-full flex flex-1 items-center justify-center text-slate-500 text-sm bg-slate-100 rounded-2xl p-3 border border-dashed border-slate-200">
+                    Logits histogram is not available.
+                  </div>
                 </div>
-                <div className="h-full flex flex-1 items-center justify-center text-slate-500 text-sm bg-slate-100 rounded-2xl p-3 border border-dashed border-slate-200">
-                  Logits histogram is not available.
-                </div>
-              </div>
+              )}
             </div>
           </div>
 
           <div className="w-full gap-4 border-l border-slate-200 overflow-y-auto no-scrollbar">
-            {sampleGroups.map(({ name, samples }) => (
-              <FeatureSampleGroup
-                className="mx-0 mt-0"
-                key={name}
-                feature={feature}
-                samplingName={name}
-                totalLength={samples.length}
-                defaultVisibleRange={10}
-                initialSamples={samples}
-              />
-            ))}
+            <FeatureSampleGroup
+              className="mx-0 mt-0"
+              feature={feature}
+              samplingName="top_activations"
+              totalLength={5}
+              defaultVisibleRange={10}
+            />
           </div>
         </div>
       </Card>

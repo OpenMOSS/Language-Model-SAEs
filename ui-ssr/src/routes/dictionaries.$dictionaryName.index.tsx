@@ -1,12 +1,16 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { dictionariesQueryOptions } from '@/hooks/useFeatures'
 import { DictionaryCard } from '@/components/dictionary/dictionary-card'
+import { DictionaryInference } from '@/components/dictionary/dictionary-inference'
 import { LabeledSelect } from '@/components/ui/labeled-select'
 import { Button } from '@/components/ui/button'
 
 export const Route = createFileRoute('/dictionaries/$dictionaryName/')({
   component: DictionaryIndexPage,
+  staticData: {
+    fullScreen: false,
+  },
   loader: async ({ context, params }) => {
     const dictionaries = await context.queryClient.ensureQueryData(
       dictionariesQueryOptions(),
@@ -16,7 +20,6 @@ export const Route = createFileRoute('/dictionaries/$dictionaryName/')({
 })
 
 function DictionaryIndexPage() {
-  const navigate = useNavigate()
   const { dictionaries, dictionaryName } = Route.useLoaderData()
 
   const [selectedDictionary, setSelectedDictionary] = useState(dictionaryName)
@@ -35,23 +38,22 @@ function DictionaryIndexPage() {
               triggerClassName="bg-white w-full"
             />
           </div>
-          <Button
-            onClick={() =>
-              navigate({
-                to: '/dictionaries/$dictionaryName',
-                params: {
-                  dictionaryName: selectedDictionary,
-                },
-              })
-            }
-            className="h-12 px-4"
-            disabled={!selectedDictionary}
-          >
-            Go
-          </Button>
+          {selectedDictionary ? (
+            <Link
+              to="/dictionaries/$dictionaryName"
+              params={{ dictionaryName: selectedDictionary }}
+            >
+              <Button className="h-12 px-4">Go</Button>
+            </Link>
+          ) : (
+            <Button className="h-12 px-4" disabled>
+              Go
+            </Button>
+          )}
         </div>
       </div>
       <DictionaryCard dictionaryName={dictionaryName} />
+      {/* <DictionaryInference dictionaryName={dictionaryName} /> */}
     </div>
   )
 }

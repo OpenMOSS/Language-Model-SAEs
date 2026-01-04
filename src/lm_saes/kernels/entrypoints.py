@@ -3,9 +3,8 @@ from typing import Union
 import torch
 from jaxtyping import Float
 
+from lm_saes.kernels.kernels import TritonDecoderAutogradTopK, TritonEncoderAutogradDynamicK, get_sparse_representation
 from lm_saes.utils.logging import get_logger
-
-from .kernels import TritonDecoderAutogradTopK, TritonEncoderAutogradDynamicK, get_sparse_representation
 
 logger = get_logger("kernels")
 

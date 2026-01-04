@@ -3,7 +3,7 @@ import math
 import pytest
 import torch
 
-from lm_saes.config import CrossCoderConfig
+from lm_saes import CrossCoderConfig
 from lm_saes.crosscoder import CrossCoder
 
 
@@ -401,40 +401,43 @@ def test_compute_loss(crosscoder: CrossCoder):
     batch = {
         "head0": torch.tensor([[1.0, 2.0]], device=crosscoder.cfg.device, dtype=crosscoder.cfg.dtype),
         "head1": torch.tensor([[2.0, 1.0]], device=crosscoder.cfg.device, dtype=crosscoder.cfg.dtype),
+        "tokens": torch.tensor([[0, 0]], device=crosscoder.cfg.device, dtype=torch.long),
     }
 
     # Compute loss
-    loss, (loss_dict, aux_data) = crosscoder.compute_loss(
+    result = crosscoder.compute_loss(
         batch,
         return_aux_data=True,
         sparsity_loss_type=None,
     )
+    loss = result["loss"]
 
     # Check loss is a scalar
     assert loss.shape == ()
 
-    # Check loss_dict contains reconstruction loss
-    assert "l_rec" in loss_dict
+    # Check result contains reconstruction loss
+    assert "l_rec" in result
 
-    # Check aux_data contains expected keys
-    assert "feature_acts" in aux_data
-    assert "reconstructed" in aux_data
-    assert "hidden_pre" in aux_data
+    # Check result contains expected keys
+    assert "feature_acts" in result
+    assert "reconstructed" in result
+    assert "hidden_pre" in result
 
     # Check reconstruction matches forward pass
     x = crosscoder.prepare_input(batch)[0]
     expected_output = crosscoder.forward(x)
 
-    assert torch.allclose(aux_data["reconstructed"], expected_output, atol=1e-5)
+    assert torch.allclose(result["reconstructed"], expected_output, atol=1e-5)
 
     # Test with sparsity loss
-    loss_with_sparsity, _ = crosscoder.compute_loss(
+    result_with_sparsity = crosscoder.compute_loss(
         batch,
         return_aux_data=True,
         sparsity_loss_type="power",
         p=1,
         l1_coefficient=0.1,
     )
+    loss_with_sparsity = result_with_sparsity["loss"]
 
     # Sparsity loss should make the total loss higher
     assert loss_with_sparsity >= loss
@@ -454,7 +457,7 @@ def test_standardize_parameters_of_dataset_norm(crosscoder: CrossCoder):
     original_b_D = crosscoder.b_D.clone()
 
     # Standardize parameters
-    crosscoder.standardize_parameters_of_dataset_norm(None)
+    crosscoder.standardize_parameters_of_dataset_norm()
 
     # Check that norm_activation is set to "inference"
     assert crosscoder.cfg.norm_activation == "inference"

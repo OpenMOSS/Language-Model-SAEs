@@ -5,17 +5,227 @@ import torch
 import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
+from pydantic import Field
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
-from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
-from .config import MOLTConfig
-from .utils.distributed import DimMap, item
-from .utils.logging import get_distributed_logger
-from .utils.timer import timer
+from lm_saes.abstract_sae import (
+    AbstractSparseAutoEncoder,
+    BaseSAEConfig,
+    register_sae_config,
+    register_sae_model,
+)
+from lm_saes.utils.distributed import DimMap, item
+from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("molt")
+
+
+@register_sae_config("molt")
+class MOLTConfig(BaseSAEConfig):
+    """Configuration for Mixture of Linear Transforms (MOLT).
+
+    MOLT is a more efficient alternative to transcoders that sparsely replaces
+    MLP computation in transformers. It converts dense MLP layers into sparse,
+    interpretable linear transforms.
+    """
+
+    sae_type: str = "molt"
+    hook_point_in: str
+    """Hook point to capture input activations from."""
+    hook_point_out: str
+    """Hook point to output activations to."""
+    rank_distribution: dict[int, int] = Field(default_factory=lambda: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16})
+    """Dictionary mapping rank values to their integer ratios. 
+    Keys are rank values, values are integer ratios that will be automatically normalized to proportions.
+    Example: {4: 1, 8: 2, 16: 4, 32: 8, 64: 16} means ratio 1:2:4:8:16 which means a proportion of 1/32, 2/32, 4/32, 8/32, 16/32, 
+    which will be normalized to proportions automatically."""
+    model_parallel_size_training: int = 1
+    """Number of model parallel devices for distributed training. Distinct from model_parallel_size_running which is the number of model parallel devices in both training and inference."""
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        # Validate ratios
+        assert self.rank_distribution, "rank_distribution cannot be empty"
+
+        total_ratio = sum(self.rank_distribution.values())
+        assert total_ratio > 0, f"Total ratio must be positive, got {total_ratio}"
+
+        for rank, ratio in self.rank_distribution.items():
+            assert ratio > 0, f"Ratio for rank {rank} must be positive, got {ratio}"
+
+        # Store normalized proportions for internal use
+        self._normalized_proportions = {rank: ratio / total_ratio for rank, ratio in self.rank_distribution.items()}
+
+    def generate_rank_assignments(self) -> list[int]:
+        """Generate rank assignment for each of the d_sae linear transforms.
+
+        Returns:
+            List of rank assignments for each transform.
+            For example: [1, 1, 1, 1, 2, 2, 4].
+            For distributed case, this method ensures that each rank type is divisible by model_parallel_size_training.
+        """
+        # Validate rank distribution
+        assert self.rank_distribution, "rank_distribution cannot be empty"
+
+        # Calculate base d_sae
+        assert self.expansion_factor.is_integer(), "expansion_factor must be an integer in molt."
+        base_d_sae = int(self.d_model * self.expansion_factor)
+
+        # For distributed training, use special logic to ensure consistency
+        if self.model_parallel_size_training > 1:
+            return self._generate_distributed_rank_assignments(base_d_sae)
+        else:
+            return self._generate_rank_assignments_single_gpu(base_d_sae)
+
+    def _generate_rank_assignments_single_gpu(self, base_d_sae: int) -> list[int]:
+        """Generate rank assignments for single GPU training.
+
+        Args:
+            base_d_sae: Target number of total transforms
+
+        Returns:
+            List of rank assignments for each transform.
+        """
+        assignments = []
+
+        # Distribute transforms based on normalized proportions
+        for rank, proportion in sorted(self._normalized_proportions.items()):
+            count = int(base_d_sae * proportion)
+            assignments.extend([rank] * count)
+
+        # Handle any remaining transforms due to rounding
+        while len(assignments) < base_d_sae:
+            # Assign remaining to the most common rank (by original ratio)
+            most_common_rank = max(self.rank_distribution.keys(), key=lambda k: self.rank_distribution[k])
+            assignments.append(most_common_rank)
+
+        # Truncate if we have too many (shouldn't happen with proper proportions)
+        assignments = assignments[:base_d_sae]
+
+        # Verify we have exactly base_d_sae assignments
+        assert len(assignments) == base_d_sae, f"Expected {base_d_sae} assignments, got {len(assignments)}"
+
+        return assignments
+
+    def _generate_distributed_rank_assignments(self, base_d_sae: int) -> list[int]:
+        """Generate rank assignments optimized for distributed training.
+
+        Ensures each rank type has count divisible by model_parallel_size_training.
+
+        Args:
+            base_d_sae: Target number of total transforms
+
+        Returns:
+            List of rank assignments for each transform.
+        """
+        assignments = []
+        total_ratio = sum(self.rank_distribution.values())
+
+        # Ensure minimum requirement: each rank gets at least model_parallel_size_training
+        # transforms
+        min_total_needed = len(self.rank_distribution) * self.model_parallel_size_training
+        assert base_d_sae >= min_total_needed, (
+            f"base_d_sae ({base_d_sae}) must be >= min_total_needed "
+            f"({min_total_needed}) for distributed training with "
+            f"{len(self.rank_distribution)} rank types"
+        )
+
+        # Calculate proportional distribution
+        for rank in sorted(self.rank_distribution.keys()):
+            rank_ratio = self.rank_distribution[rank]
+            raw_count = int(base_d_sae * rank_ratio / total_ratio)
+
+            # Ensure count is divisible by model_parallel_size_training
+            count = max(
+                self.model_parallel_size_training,  # minimum requirement
+                (raw_count // self.model_parallel_size_training) * self.model_parallel_size_training,
+            )
+            assignments.extend([rank] * count)
+
+        # Handle any remaining transforms due to rounding
+        while len(assignments) < base_d_sae:
+            # Assign remaining to the most common rank (by original ratio)
+            most_common_rank = max(self.rank_distribution.keys(), key=lambda k: self.rank_distribution[k])
+            # Add model_parallel_size_training transforms at a time for divisibility
+            remaining = base_d_sae - len(assignments)
+            to_add = min(self.model_parallel_size_training, remaining)
+            assignments.extend([most_common_rank] * to_add)
+
+        # Truncate if we have too many (shouldn't happen normally)
+        assignments = assignments[:base_d_sae]
+
+        # Verify divisibility constraint
+        rank_counts = {}
+        for rank in assignments:
+            rank_counts[rank] = rank_counts.get(rank, 0) + 1
+
+        for rank, count in rank_counts.items():
+            assert count % self.model_parallel_size_training == 0, (
+                f"Rank {rank} count {count} not divisible by "
+                f"model_parallel_size_training {self.model_parallel_size_training}"
+            )
+
+        return assignments
+
+    def get_local_rank_assignments(self, local_rank: int, model_parallel_size_running: int) -> list[int]:
+        """Get rank assignments for a specific local device in distributed running (both training and inference).
+
+        Each device gets all rank groups, with each group evenly divided across devices.
+        This ensures consistent encoder/decoder sharding without feature_acts redistribution.
+
+        Args:
+            local_rank: The local rank of this process
+            model_parallel_size_running: Number of model parallel devices in running (training and inference)
+
+        Returns:
+            List of rank assignments for this local device
+            For example:
+            global_rank_assignments = [1, 1, 2, 2], model_parallel_size_running = 2 -> local_rank_assignments = [1, 2]
+        """
+        global_rank_counts = {rank: self.generate_rank_assignments().count(rank) for rank in self.available_ranks}
+
+        # Each device gets count/model_parallel_size_running transforms of each rank type
+        local_assignments = []
+        for rank in sorted(self.rank_distribution.keys()):
+            global_count = global_rank_counts[rank]
+
+            # Verify even division (should be guaranteed by _generate_distributed_rank_assignments)
+            assert global_count % model_parallel_size_running == 0, (
+                f"Rank {rank} global count {global_count} not divisible by "
+                f"model_parallel_size_running {model_parallel_size_running}"
+            )
+
+            local_count = global_count // model_parallel_size_running
+
+            # Add local_count transforms of this rank type
+            local_assignments.extend([rank] * local_count)
+
+        return local_assignments
+
+    @property
+    @override
+    def d_sae(self) -> int:
+        """Calculate d_sae based on rank assignments with padding for distributed training."""
+        # Generate rank assignments and return the length
+        rank_assignments = self.generate_rank_assignments()
+        return len(rank_assignments)
+
+    @property
+    def available_ranks(self) -> list[int]:
+        """Get sorted list of available ranks."""
+        return sorted(self.rank_distribution.keys())
+
+    @property
+    def num_rank_types(self) -> int:
+        """Number of different rank types."""
+        return len(self.rank_distribution)
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return [self.hook_point_in, self.hook_point_out]
 
 
 @register_sae_model("molt")
@@ -273,6 +483,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
     @override
     @timer.time("set_decoder_to_fixed_norm")
+    @torch.no_grad()
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool) -> None:
         # Scale all U and V matrices proportionally
         for rank_str in self.U_matrices.keys():
@@ -295,10 +506,12 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     @torch.no_grad()
     @timer.time("set_encoder_to_fixed_norm")
     def set_encoder_to_fixed_norm(self, value: float) -> None:
+        """Set encoder weights to a fixed norm."""
         self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
     @override
     @timer.time("transform_to_unit_decoder_norm")
+    @torch.no_grad()
     def transform_to_unit_decoder_norm(self) -> None:
         # Set each transform to unit norm
         for rank_str in self.U_matrices.keys():
@@ -311,8 +524,8 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
             # Scale to unit norm (split equally between U and V)
             scale_factors = (1.0 / current_norms) ** 0.5
-            U.data.mul_(scale_factors.view(-1, 1, 1))
-            V.data.mul_(scale_factors.view(-1, 1, 1))
+            U.mul_(scale_factors.view(-1, 1, 1))
+            V.mul_(scale_factors.view(-1, 1, 1))
 
     @override
     @timer.time("standardize_parameters_of_dataset_norm")
@@ -702,75 +915,6 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         return metrics
 
     @override
-    def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        """Load distributed state dict.
-
-        CRITICAL: This method needs to properly handle DTensor loading.
-        The state_dict contains global tensors that need to be distributed
-        according to our sharding strategy.
-        """
-        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
-        self.device_mesh = device_mesh
-
-        # Load encoder parameters with proper distribution
-        for param_name in ["W_E", "b_E"]:
-            global_tensor = state_dict[f"{prefix}{param_name}"].to(getattr(self, param_name).dtype)
-            if device_mesh is not None:
-                # Distribute global tensor according to dim_maps
-                distributed_tensor = self.dim_maps()[param_name].distribute(global_tensor, device_mesh)
-                self.register_parameter(param_name, nn.Parameter(distributed_tensor))
-            else:
-                self.register_parameter(param_name, nn.Parameter(global_tensor))
-
-        # Load U and V matrices for each rank group with proper distribution
-        for rank_str in self.U_matrices.keys():
-            U_param_name = f"U_matrices.{rank_str}"
-            V_param_name = f"V_matrices.{rank_str}"
-
-            U_global_tensor = state_dict[f"{prefix}{U_param_name}"].to(self.U_matrices[rank_str].dtype)
-            V_global_tensor = state_dict[f"{prefix}{V_param_name}"].to(self.V_matrices[rank_str].dtype)
-
-            if device_mesh is not None:
-                # Distribute according to U/V matrices sharding strategy
-                U_distributed = self.dim_maps()["U_matrices"].distribute(U_global_tensor, device_mesh)
-                V_distributed = self.dim_maps()["V_matrices"].distribute(V_global_tensor, device_mesh)
-                self.U_matrices[rank_str] = nn.Parameter(U_distributed)
-                self.V_matrices[rank_str] = nn.Parameter(V_distributed)
-            else:
-                self.U_matrices[rank_str] = nn.Parameter(U_global_tensor)
-                self.V_matrices[rank_str] = nn.Parameter(V_global_tensor)
-
-        # Load decoder bias with proper distribution
-        if self.cfg.use_decoder_bias:
-            b_D_global = state_dict[f"{prefix}b_D"].to(self.b_D.dtype)
-            if device_mesh is not None:
-                b_D_distributed = self.dim_maps()["b_D"].distribute(b_D_global, device_mesh)
-                self.b_D = nn.Parameter(b_D_distributed)
-            else:
-                self.b_D = nn.Parameter(b_D_global)
-
-    # @classmethod
-    # def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
-    #     cfg = MOLTConfig.from_pretrained(pretrained_name_or_path, fold_activation_scale=fold_activation_scale, strict_loading=strict_loading, **kwargs)
-    #     return cls.from_config(cfg)
-
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str,
-        strict_loading: bool = True,
-        fold_activation_scale: bool = True,
-        device_mesh: DeviceMesh | None = None,
-        **kwargs,
-    ):
-        """Load pretrained model."""
-        cfg = MOLTConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
-        return model
-    
-    @override
     @timer.time("forward")
     def forward(
         self,
@@ -790,6 +934,3 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         feature_acts = self.encode(x, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, original_x=x)
         return reconstructed
-    
-    def hf_folder_name(self) -> str:
-        return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"

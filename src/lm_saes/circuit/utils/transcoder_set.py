@@ -4,8 +4,8 @@ from typing import Dict, Iterator, List, Tuple, Union
 import torch
 from torch import nn
 
-from ...clt import CrossLayerTranscoder
-from ...sae import SparseAutoEncoder
+from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.sae import SparseAutoEncoder
 
 
 @dataclass

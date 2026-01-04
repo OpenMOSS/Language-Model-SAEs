@@ -1,6 +1,6 @@
 [project]
 name = "lm-saes"
-version = "2.0.0b4"
+version = "2.0.0b6"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
     "transformer-lens",
@@ -22,7 +22,8 @@ dependencies = [
     "jaxtyping>=0.2.34",
     "safetensors>=0.4.5",
     "pydantic>=2.10.6",
-    "argparse>=1.4.0",
+    "typer>=0.15.0",
+    "rich>=13.0.0",
     "pyyaml>=6.0.2",
     "tomlkit>=0.13.2",
     "torch==2.9.0",
@@ -63,7 +64,7 @@ email = "junxuanwang21@m.fudan.edu.cn"
 text = "MIT"
 
 [project.scripts]
-lm-saes = "lm_saes.entrypoint:entrypoint"
+lm-saes = "lm_saes.cli:entrypoint"
 
 [build-system]
 requires = ["uv_build>=0.9.6,<0.10.0"]
@@ -72,6 +73,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "transformer-lens",
+    "argparse>=1.4.0",
     "jupyter>=1.1.1",
     "ipywidgets>=8.1.5",
     "pytest>=8.3.3",
@@ -93,6 +95,7 @@ dev = [
     "gradio>=5.34.0",
     "sqlalchemy>=2.0.44",
     "apscheduler>=3.11.1",
+    "commitizen>=4.11.0",
 ]
 docs = [
     "mkdocs-gen-files>=0.5.0",
@@ -197,3 +200,14 @@ requires-dist = ["torch", "einops"]
 [tool.uv.sources.transformer-lens]
 path = "./TransformerLens"
 editable = true
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "pep440"
+version_provider = "uv"
+update_changelog_on_bump = true
+version_files = [
+    "README.md:pip install lm-saes==",
+    "README.md:uv add lm-saes==",
+]

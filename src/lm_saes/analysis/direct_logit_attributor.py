@@ -7,10 +7,18 @@ from transformer_lens import HookedTransformer
 from lm_saes.backend import LanguageModel
 from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.config import DirectLogitAttributorConfig
+from lm_saes.config import BaseConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sae import SparseAutoEncoder
+
+
+class DirectLogitAttributorConfig(BaseConfig):
+    top_k: int = 10
+    """ The number of top tokens to attribute to. """
+
+    clt_layer: int | None = None
+    """ Layer to analyze for CLT. Provided iff analyzing CLT. """
 
 
 def _compute_logits_from_residual(residual: torch.Tensor, model: HookedTransformer) -> torch.Tensor:

@@ -1,0 +1,40 @@
+services:
+  mongodb:
+    image: mongo:latest
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  backend:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    restart: always
+    ports:
+      - "24577:24577"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/
+      - MONGO_DB=mechinterp
+    depends_on:
+      - mongodb
+    # Mount volumes for models and SAEs if needed, or use environment variables to point to paths
+    # volumes:
+    #   - ./models:/models
+    #   - ./saes:/saes
+
+  frontend:
+    build:
+      context: ui-ssr
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "24576:24576"
+    environment:
+      - BACKEND_URL=http://backend:24577
+    depends_on:
+      - backend
+
+volumes:
+  mongodb_data:

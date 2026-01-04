@@ -9,10 +9,11 @@ from torch.distributed.tensor import DTensor
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.utils.distributed import distributed_topk
-from lm_saes.utils.distributed.ops import item
-from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.math import topk
+
+from .distributed import distributed_topk
+from .distributed.ops import item
+from .logging import get_distributed_logger
+from .math import topk
 
 logger = get_distributed_logger("utils.topk_to_jumprelu_conversion")
 

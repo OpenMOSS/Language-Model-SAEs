@@ -7,11 +7,13 @@ from torch.distributed.device_mesh import DeviceMesh
 from lm_saes.backend.language_model import (
     HuggingFaceLanguageModel,
     LanguageModel,
+    LanguageModelConfig,
+    LLaDAConfig,
     LLaDALanguageModel,
     QwenVLLanguageModel,
     TransformerLensLanguageModel,
 )
-from lm_saes.config import DatasetConfig, LanguageModelConfig, LLaDAConfig
+from lm_saes.config import DatasetConfig
 
 
 def dataset_transform(data):

@@ -1,6 +1,5 @@
 import argparse
 import os
-from pathlib import Path
 
 import torch
 
@@ -64,7 +63,7 @@ if __name__ == "__main__":
         dataset=DatasetConfig(dataset_name_or_path="Hzfinfdu/SlimPajama-3B"),
         dataset_name="SlimPajama-3B",
         hook_points=[f"blocks.{layer}.hook_resid_post" for layer in layers],
-        output_dir=Path(args.activation_path).expanduser(),
+        output_dir=os.path.expanduser(args.activation_path),
         total_tokens=100_000_000,
         context_size=2048,
         model_batch_size=args.model_batch_size,

@@ -1,7 +1,8 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
-import { createSaeSet, fetchAvailableSaes } from '@/api/circuits'
+import { createSaeSet } from '@/api/circuits'
+import { fetchDictionaries } from '@/api/features'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -23,6 +24,7 @@ interface CreateSaeSetDialogProps {
 export function CreateSaeSetDialog({
   onSaeSetCreated,
 }: CreateSaeSetDialogProps) {
+  const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [newSetName, setNewSetName] = useState('')
   const [selectedSaeNames, setSelectedSaeNames] = useState<string[]>([])
@@ -30,8 +32,8 @@ export function CreateSaeSetDialog({
   const lastClickedIndexRef = useRef<number | null>(null)
 
   const { data: availableSaes = [], isLoading: isLoadingSaes } = useQuery({
-    queryKey: ['available-saes'],
-    queryFn: () => fetchAvailableSaes(),
+    queryKey: ['dictionaries'],
+    queryFn: () => fetchDictionaries(),
     enabled: dialogOpen,
   })
 
@@ -56,7 +58,10 @@ export function CreateSaeSetDialog({
     error: createError,
   } = useMutation({
     mutationFn: createSaeSet,
-    onSuccess: () => {
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ['sae-sets'],
+      })
       onSaeSetCreated(newSetName)
       setDialogOpen(false)
       setNewSetName('')
@@ -141,7 +146,12 @@ export function CreateSaeSetDialog({
   return (
     <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="h-12 px-3" title="Add SAE Set">
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-10 w-10 shrink-0"
+          title="Create new SAE set"
+        >
           <Plus className="h-4 w-4" />
         </Button>
       </DialogTrigger>

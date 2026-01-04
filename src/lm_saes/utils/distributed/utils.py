@@ -1,11 +1,13 @@
 import functools
 import operator
-from typing import Any, Optional, cast
+from typing import Any, Callable, Optional, cast
 
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement
+
+from lm_saes.utils.misc import is_primary_rank
 
 
 def all_gather_dict(
@@ -223,3 +225,26 @@ def get_process_group(
         pg = cast(dist.ProcessGroup, dist.new_group(ranks=ranks))
         _process_group_cache[cache_key] = pg
         return pg
+
+
+def get_primary_process_group(device_mesh: DeviceMesh, mesh_dim_name: str) -> dist.ProcessGroup:
+    """Get the process group that divides the device mesh along the given dimension. This should be the complement of `get_process_group` on the given dimension."""
+
+    assert device_mesh.mesh_dim_names is not None, "Device mesh does not have mesh dimension names"
+    mesh_dim_names = [name for name in device_mesh.mesh_dim_names if name != mesh_dim_name]
+    return get_process_group(device_mesh, mesh_dim_names)
+
+
+def execute_and_broadcast(
+    func: Callable[..., Any],
+    device_mesh: DeviceMesh | None,
+    mesh_dim_name: str = "sweep",
+    **kwargs,
+) -> Any:
+    """Execute a function in the primary rank and broadcast the result to all ranks. If the device mesh is None, the function simply executes the function and returns the result."""
+    if device_mesh is None:
+        return func(**kwargs)
+    group = get_primary_process_group(device_mesh, mesh_dim_name)
+    return broadcast_object(
+        func(**kwargs) if is_primary_rank(device_mesh, dim_name=mesh_dim_name) else None, group_src=0, group=group
+    )

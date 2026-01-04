@@ -37,6 +37,7 @@ if __name__ == "__main__":
             init_log_jumprelu_threshold_value=math.log(0.1),
         ),
         trainer=TrainerConfig(
+            amp_dtype=torch.float32,
             lr=5e-5,
             l1_coefficient=0.3,
             total_training_tokens=800_000_000,

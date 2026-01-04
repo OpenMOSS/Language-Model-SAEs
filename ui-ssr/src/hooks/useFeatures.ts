@@ -96,6 +96,8 @@ export const useFeatures = (params: {
       start: queryStart,
       end: queryEnd,
     },
+    refetchOnWindowFocus: false,
+    staleTime: 60 * 60 * 1000, // 1 hour
   })
 
   const features = query.data?.pages.flatMap((page) => page) ?? []
@@ -172,7 +174,7 @@ export const useSamples = (params: {
 
   return useInfiniteQuery({
     queryKey: [
-      'samples',
+      'samplesAll',
       params.dictionary,
       anchor.featureIndex,
       anchor.samplingName,

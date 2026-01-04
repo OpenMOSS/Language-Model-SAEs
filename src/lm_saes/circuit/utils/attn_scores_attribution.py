@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 
 import torch
 
-from ..replacement_model import ReplacementModel
+from lm_saes.circuit.replacement_model import ReplacementModel
+
 from .attribution_utils import (
     select_scaled_decoder_vecs_lorsa,
     select_scaled_decoder_vecs_transcoder,
