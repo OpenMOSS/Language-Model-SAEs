@@ -2,11 +2,18 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Annotated, Any, Callable, Iterable, Literal, Tuple
 
 import torch
 import torch.distributed.checkpoint as dcp
 import torch.optim.lr_scheduler as lr_scheduler
+from pydantic import (
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    WithJsonSchema,
+)
 from torch import Tensor
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.optim import Adam, Optimizer
@@ -14,7 +21,7 @@ from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
-from lm_saes.config import TrainerConfig
+from lm_saes.config import BaseConfig
 from lm_saes.metrics import (
     ExplainedVarianceMetric,
     FrequencyMetric,
@@ -29,10 +36,91 @@ from lm_saes.metrics import (
 from lm_saes.optim import SparseAdam, clip_grad_norm, get_scheduler
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
-from lm_saes.utils.misc import is_primary_rank
+from lm_saes.utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
+    is_primary_rank,
+)
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("trainer")
+
+
+class TrainerConfig(BaseConfig):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    l1_coefficient: float | None = 0.00008
+    l1_coefficient_warmup_steps: int | float = 0.1
+    lp_coefficient: float | None = None
+    amp_dtype: Annotated[
+        torch.dtype | None,
+        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+        PlainSerializer(convert_torch_dtype_to_str),
+        WithJsonSchema(
+            {
+                "type": ["string", "null"],
+            },
+            mode="serialization",
+        ),
+    ] = Field(default=torch.bfloat16, exclude=True, validate_default=False)
+    sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None
+    tanh_stretch_coefficient: float = 4.0
+    frequency_scale: float = 0.01
+    p: int = 1
+    initial_k: int | float | None = None
+    k_warmup_steps: int | float = 0.1
+    k_cold_booting_steps: int | float = 0
+    k_schedule_type: Literal["linear", "exponential"] = "linear"
+    k_exponential_factor: float = 3.0
+    skip_metrics_calculation: bool = False
+    gradient_accumulation_steps: int = 1
+
+    lr: float | dict[str, float] = 0.0004
+    betas: Tuple[float, float] = (0.9, 0.999)
+    optimizer_class: Literal["adam", "sparseadam"] = "adam"
+    optimizer_foreach: bool = True
+    lr_scheduler_name: Literal[
+        "constant",
+        "constantwithwarmup",
+        "linearwarmupdecay",
+        "cosineannealing",
+        "cosineannealingwarmup",
+        "exponentialwarmup",
+    ] = "constantwithwarmup"
+    lr_end_ratio: float = 1 / 32
+    lr_warm_up_steps: int | float = 5000
+    lr_cool_down_steps: int | float = 0.2
+    jumprelu_lr_factor: float = 1.0
+    clip_grad_norm: float = 0.0
+    feature_sampling_window: int = 1000
+    total_training_tokens: int = 300_000_000
+
+    log_frequency: int = 1000
+    eval_frequency: int = 1000
+    n_checkpoints: int = 10
+    check_point_save_mode: Literal["log", "linear"] = "log"
+
+    from_pretrained_path: str | None = None
+    exp_result_path: str = "results"
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        Path(self.exp_result_path).mkdir(parents=True, exist_ok=True)
+        Path(self.exp_result_path, "checkpoints").mkdir(parents=True, exist_ok=True)
+        assert self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
+
+        if self.from_pretrained_path is not None:
+            assert os.path.exists(self.from_pretrained_path), (
+                f"from_pretrained_path {self.from_pretrained_path} does not exist"
+            )
+
+
+class WandbConfig(BaseConfig):
+    wandb_project: str = "gpt2-sae-training"
+    exp_name: str | None = None
+    wandb_entity: str | None = None
+    wandb_run_id: str | None = None
+    wandb_resume: Literal["allow", "must", "never", "auto"] = "never"
 
 
 class Trainer:

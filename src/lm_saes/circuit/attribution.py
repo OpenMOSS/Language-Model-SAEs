@@ -33,8 +33,8 @@ from tqdm import tqdm
 from transformer_lens.hook_points import HookPoint
 
 from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.utils.logging import get_distributed_logger
 
-from ..utils.logging import get_distributed_logger
 from .graph import Graph
 from .replacement_model import ReplacementModel
 from .utils.attn_scores_attribution import compute_attn_scores_attribution
@@ -197,8 +197,8 @@ class AttributionContext:
         """
         _, n_pos, _ = clt_activation_matrix.shape
 
-        lorsa_error_vectors = error_vectors[: self.n_layers] if self.use_lorsa else error_vectors
-        clt_error_vectors = error_vectors[self.n_layers :] if self.use_lorsa else None
+        lorsa_error_vectors = error_vectors[: self.n_layers] if self.use_lorsa else None
+        clt_error_vectors = error_vectors[self.n_layers :] if self.use_lorsa else error_vectors
 
         # Token-embedding nodes
         # lorsa_offset + clt_offset + attn_error_offset + mlp_error_offset

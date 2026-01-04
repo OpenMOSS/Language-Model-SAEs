@@ -46,6 +46,19 @@ export const InterpretationSchema = z.object({
 
 export type Interpretation = z.infer<typeof InterpretationSchema>
 
+export const LogitsSchema = z.object({
+  topPositive: z.array(
+    z.object({
+      logit: z.number(),
+      token: z.string(),
+    }),
+  ),
+  topNegative: z.array(z.object({ logit: z.number(), token: z.string() })),
+  histogram: z.any().nullish(),
+})
+
+export type Logits = z.infer<typeof LogitsSchema>
+
 export const FeatureSchema = z.object({
   featureIndex: z.number(),
   dictionaryName: z.string(),
@@ -57,23 +70,7 @@ export const FeatureSchema = z.object({
   actTimes: z.number(),
   maxFeatureAct: z.number(),
   nAnalyzedTokens: z.number().nullish(),
-  logits: z
-    .object({
-      topPositive: z.array(
-        z.object({
-          logit: z.number(),
-          token: z.string(),
-        }),
-      ),
-      topNegative: z.array(
-        z.object({
-          logit: z.number(),
-          token: z.string(),
-        }),
-      ),
-      histogram: z.any(),
-    })
-    .nullish(),
+  logits: LogitsSchema.nullish(),
   interpretation: InterpretationSchema.nullish(),
   isBookmarked: z.boolean().optional(),
 })
@@ -84,6 +81,7 @@ export const FeatureCompactSchema = z.object({
   featureIndex: z.number(),
   dictionaryName: z.string(),
   analysisName: z.string(),
+  logits: LogitsSchema.nullish(),
   interpretation: InterpretationSchema.nullish(),
   actTimes: z.number(),
   maxFeatureAct: z.number(),

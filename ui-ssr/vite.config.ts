@@ -22,6 +22,9 @@ const config = defineConfig({
       },
     }),
   ],
+  ssr: {
+    noExternal: ['@msgpack/msgpack'],
+  },
 })
 
 export default config

@@ -64,6 +64,7 @@ def test_huggingface_dataset_loader():
 def test_activation_processors(mocker: MockerFixture):
     # Mock LanguageModel
     mock_model = mocker.Mock(spec=LanguageModel)
+    mock_model.preprocess_raw_data.side_effect = lambda x: x
     mock_model.to_activations.return_value = {
         "h0": torch.arange(9).reshape(1, 3, 3),
         "h1": torch.arange(9, 18).reshape(1, 3, 3),
@@ -94,7 +95,7 @@ def test_activation_processors(mocker: MockerFixture):
             "h1": torch.arange(9, 18).reshape(3, 3),
         }
     ]
-    result = list(transformer.process(input_activations, model=mock_model))
+    result = list(transformer.process(input_activations, model=mock_model, ignore_token_ids=[1, 2]))
     assert len(result) == 1
     assert all(h in result[0] for h in hook_points)
     assert torch.allclose(result[0]["h0"], torch.tensor([[3, 4, 5]]))
@@ -222,7 +223,7 @@ def test_activation_batchler(mocker: MockerFixture):
     assert torch.allclose(result[0]["tokens"], torch.tensor([[1, 2, 3], [1, 2, 3]]))
 
     # Test with buffer_shuffle_config
-    from lm_saes.config import BufferShuffleConfig
+    from lm_saes import BufferShuffleConfig
 
     buffer_shuffle_config = BufferShuffleConfig(enabled=True, method="full", perm_seed=42, generator_device="cpu")
 

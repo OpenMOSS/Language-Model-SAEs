@@ -5,8 +5,8 @@ import pytest
 import torch
 from safetensors.torch import load_file
 
+from lm_saes import ActivationWriterConfig
 from lm_saes.activation.writer import ActivationWriter
-from lm_saes.config import ActivationWriterConfig
 
 
 @pytest.fixture

@@ -1,3 +1,4 @@
+import { ClientOnly } from '@tanstack/react-router'
 import { LinkGraph } from './link-graph/link-graph'
 import type { CircuitData, VisState } from '@/types/circuit'
 
@@ -15,11 +16,13 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
   onNodeHover,
 }) => {
   return (
-    <LinkGraph
-      data={data}
-      visState={visState}
-      onNodeClick={onNodeClick}
-      onNodeHover={onNodeHover}
-    />
+    <ClientOnly>
+      <LinkGraph
+        data={data}
+        visState={visState}
+        onNodeClick={onNodeClick}
+        onNodeHover={onNodeHover}
+      />
+    </ClientOnly>
   )
 }

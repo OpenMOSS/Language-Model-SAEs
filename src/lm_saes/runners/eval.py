@@ -8,24 +8,19 @@ import wandb
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes import ReplacementModel
-from lm_saes.activation.factory import ActivationFactory
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.circuit.replacement_model import ReplacementModel
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.config import (
-    ActivationFactoryConfig,
-    BaseSAEConfig,
-    CrossCoderConfig,
-    EvalConfig,
-    GraphEvalConfig,
-    LanguageModelConfig,
-    WandbConfig,
-)
 from lm_saes.crosscoder import CrossCoder
-from lm_saes.evaluator import Evaluator, GraphEval
+from lm_saes.evaluator import EvalConfig, Evaluator, GraphEval, GraphEvalConfig
 from lm_saes.lorsa import LowRankSparseAttention
-from lm_saes.sae import SparseAutoEncoder
+from lm_saes.trainer import WandbConfig
 from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
+
+from .utils import PretrainedSAE
 
 logger = get_distributed_logger("runners.eval")
 
@@ -57,8 +52,8 @@ class EvalGraphSettings(BaseSettings):
 class EvaluateSAESettings(BaseSettings):
     """Settings for evaluating a Sparse Autoencoder."""
 
-    sae: BaseSAEConfig
-    """Configuration for the SAE model architecture and parameters"""
+    sae: PretrainedSAE
+    """Path to a pretrained SAE model"""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -113,17 +108,13 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
 
     logger.info("Loading SAE model")
 
-    cls = {
-        "crosscoder": CrossCoder,
-        "sae": SparseAutoEncoder,
-        "clt": CrossLayerTranscoder,
-        "lorsa": LowRankSparseAttention,
-    }[settings.sae.sae_type]
-
-    sae = cls.from_config(
-        settings.sae,
+    sae = AbstractSparseAutoEncoder.from_pretrained(
+        settings.sae.pretrained_name_or_path,
         device_mesh=device_mesh,
         fold_activation_scale=settings.fold_activation_scale,
+        device=settings.sae.device,
+        dtype=settings.sae.dtype,
+        strict_loading=settings.sae.strict_loading,
     )
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
@@ -174,8 +165,8 @@ def eval_graph(settings: EvalGraphSettings) -> None:
     logger.info("Loading replacement model")
     replacement_model = ReplacementModel.from_pretrained(
         settings.model_cfg,
-        transcoders,
-        lorsas,  # pyright: ignore[reportArgumentType]
+        transcoders,  # type: ignore[reportArgumentType]
+        lorsas,  # type: ignore[reportArgumentType]
         use_lorsa=settings.use_lorsa,
     )
 
@@ -191,8 +182,8 @@ def eval_graph(settings: EvalGraphSettings) -> None:
 class EvaluateCrossCoderSettings(BaseSettings):
     """Settings for evaluating a CrossCoder model."""
 
-    sae: CrossCoderConfig
-    """Configuration for the CrossCoder model architecture and parameters"""
+    sae: PretrainedSAE
+    """Path to a pretrained CrossCoder model"""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -223,13 +214,9 @@ def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
     # Set up logging
     setup_logging(level="INFO")
 
-    assert (
-        len(settings.activation_factories) * len(settings.activation_factories[0].hook_points) == settings.sae.n_heads
-    ), "Total number of hook points must match the number of heads in the CrossCoder"
-
     parallel_size = len(settings.activation_factories)
 
-    logger.info(f"Analyzing CrossCoder with {settings.sae.n_heads} heads, {parallel_size} parallel size")
+    logger.info(f"Analyzing CrossCoder with {parallel_size} parallel size")
 
     device_mesh = init_device_mesh(
         device_type=settings.device_type,
@@ -243,7 +230,18 @@ def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
     activation_factory = ActivationFactory(settings.activation_factories[device_mesh.get_local_rank("head")])
 
     logger.info("Loading CrossCoder model")
-    sae = CrossCoder.from_config(settings.sae, device_mesh=device_mesh)
+    sae = CrossCoder.from_pretrained(
+        settings.sae.pretrained_name_or_path,
+        device_mesh=device_mesh,
+        device=settings.sae.device,
+        dtype=settings.sae.dtype,
+        fold_activation_scale=settings.sae.fold_activation_scale,
+        strict_loading=settings.sae.strict_loading,
+    )
+
+    assert len(settings.activation_factories) * len(settings.activation_factories[0].hook_points) == sae.cfg.n_heads, (
+        "Total number of hook points must match the number of heads in the CrossCoder"
+    )
 
     wandb_logger = (
         wandb.init(

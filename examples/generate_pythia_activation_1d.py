@@ -1,6 +1,5 @@
 import argparse
 import os
-from pathlib import Path
 
 import torch
 
@@ -64,15 +63,15 @@ if __name__ == "__main__":
         dataset=DatasetConfig(dataset_name_or_path="Hzfinfdu/SlimPajama-3B"),
         dataset_name="SlimPajama-3B",
         hook_points=[f"blocks.{layer}.hook_resid_post" for layer in layers],
-        output_dir=Path(args.activation_path).expanduser(),
+        output_dir=os.path.expanduser(args.activation_path),
         total_tokens=800_000_000,
         context_size=2048,
         n_samples_per_chunk=None,
-        model_batch_size=int(32),
+        model_batch_size=32,
         num_workers=None,
         target=ActivationFactoryTarget.ACTIVATIONS_1D,
-        batch_size=int(2048 * 64),
-        buffer_size=int(2048 * 200),
+        batch_size=2048 * 64,
+        buffer_size=2048 * 200,
         buffer_shuffle=BufferShuffleConfig(
             perm_seed=42,
             generator_device="cuda",

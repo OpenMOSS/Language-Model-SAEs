@@ -39,6 +39,7 @@ permissions:
 
 jobs:
   type-checks:
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
     name: Type Checks
     runs-on: ubuntu-latest
     steps:
@@ -48,10 +49,9 @@ jobs:
           submodules: "true"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
 
       - name: Install the project
         run: uv sync --all-extras --dev
@@ -59,11 +59,51 @@ jobs:
       - name: Type check
         run: uv run basedpyright .
 
-      # - name: Unit tests
-      #   run: uv run pytest tests
-
   ruff:
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/ruff-action@v1
+
+  unit-tests:
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: "true"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install the project
+        run: uv sync --dev
+
+      - name: Run unit tests
+        run: uv run pytest tests/unit
+
+  distributed-tests:
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    name: Distributed Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: "true"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install the project
+        run: uv sync --dev
+
+      - name: Run distributed tests
+        run: uv run pytest tests/distributed

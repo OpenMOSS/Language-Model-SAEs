@@ -7,14 +7,14 @@ from datasets import Dataset
 from pytest_mock import MockerFixture
 from safetensors.torch import save_file
 
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.backend.language_model import LanguageModel
-from lm_saes.config import (
+from lm_saes import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
     ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
 )
+from lm_saes.activation.factory import ActivationFactory
+from lm_saes.backend.language_model import LanguageModel
 
 
 @pytest.fixture

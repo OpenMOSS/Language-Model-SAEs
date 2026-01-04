@@ -11,14 +11,26 @@ from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
+from lm_saes.abstract_sae import (
+    AbstractSparseAutoEncoder,
+    BaseSAEConfig,
+    register_sae_config,
+    register_sae_model,
+)
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.logging import get_distributed_logger
 
-from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
-from .config import SAEConfig
 
-logger = get_distributed_logger("sae")
+@register_sae_config("sae")
+class SAEConfig(BaseSAEConfig):
+    sae_type: str = "sae"
+    hook_point_in: str
+    hook_point_out: str
+    use_glu_encoder: bool = False
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return [self.hook_point_in, self.hook_point_out]
 
 
 @register_sae_model("sae")
@@ -137,7 +149,9 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             )
 
     @override
+    @torch.no_grad()
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
+        """Set the decoder weights to a fixed norm."""
         if force_exact:
             self.W_D.mul_(value / self.decoder_norm(keepdim=True))
         else:
@@ -145,6 +159,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @torch.no_grad()
     def set_encoder_to_fixed_norm(self, value: float):
+        """Set the encoder weights to a fixed norm."""
         self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
     def dim_maps(self) -> dict[str, DimMap]:
@@ -169,7 +184,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
     @override
     @torch.no_grad()
     def transform_to_unit_decoder_norm(self):
-        self.W_D.mul_(1 / self.decoder_norm(keepdim=False))
+        self.W_D.mul_(1 / self.decoder_norm(keepdim=True))
 
     @torch.no_grad()
     def standardize_parameters_of_dataset_norm(self):  # should be overridden by subclasses due to side effects
@@ -318,7 +333,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         if (
             self.cfg.use_triton_kernel and 0 < max_l0_in_batch < sparsity_threshold
         ):  # triton kernel cannot handle empty feature_acts
-            from .kernels import decode_with_triton_spmm_kernel
+            from lm_saes.kernels import decode_with_triton_spmm_kernel
 
             reconstructed = decode_with_triton_spmm_kernel(feature_acts, self.W_D.T.contiguous())
         else:
@@ -343,13 +358,6 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         if self.cfg.use_decoder_bias:
             reconstructed = reconstructed + self.b_D
         return reconstructed
-
-    @classmethod
-    def from_pretrained(
-        cls, pretrained_name_or_path: str, strict_loading: bool = True, fold_activation_scale: bool = True, **kwargs
-    ):
-        cfg = SAEConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        return cls.from_config(cfg, fold_activation_scale=fold_activation_scale)
 
     @torch.no_grad()
     def _init_encoder_with_decoder_transpose(
@@ -481,7 +489,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
     @classmethod
     @torch.no_grad()
-    def from_saelens(cls, sae_saelens):
+    def from_saelens(cls, sae_saelens, **kwargs):
         from sae_lens import JumpReLUSAE, StandardSAE, TopKSAE
 
         # Check Configuration
@@ -534,6 +542,7 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
             top_k=k,
             expansion_factor=d_sae / d_model,
             sparsity_include_decoder_norm=rescale_acts_by_decoder_norm,
+            **kwargs,
         )
 
         model = cls.from_config(cfg, None)

@@ -13,10 +13,11 @@ from torch.distributed.tensor import DTensor
 from torch.utils.data import DataLoader, Dataset, Sampler
 from tqdm import tqdm
 
-from lm_saes.activation.processors.core import BaseActivationProcessor
 from lm_saes.utils.distributed import DimMap, all_gather_dict, mesh_dim_rank, mesh_dim_size
 from lm_saes.utils.misc import is_master
 from lm_saes.utils.tensor_dict import move_dict_of_tensor_to_device
+
+from .core import BaseActivationProcessor
 
 
 class DistributedSampler(Sampler[Any]):

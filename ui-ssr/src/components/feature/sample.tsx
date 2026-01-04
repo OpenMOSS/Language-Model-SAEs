@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   Feature,
   FeatureSampleCompact,
@@ -10,11 +10,6 @@ import { getAccentStyle } from '@/utils/style'
 import { findHighestActivatingToken, getZPatternForToken } from '@/utils/token'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from '@/components/ui/hover-card'
 import { useSamples } from '@/hooks/useFeatures'
 
 /**
@@ -88,12 +83,20 @@ export type FeatureSampleGroupProps = {
   feature: Feature
   samplingName: string
   totalLength: number
+  className?: string
+  defaultVisibleRange?: number
+  initialSamples?: FeatureSampleCompact[]
+  hideTitle?: boolean
 }
 
 export const FeatureSampleGroup = ({
+  className,
   feature,
   samplingName,
   totalLength,
+  initialSamples,
+  defaultVisibleRange = 50,
+  hideTitle = false,
 }: FeatureSampleGroupProps) => {
   const rangeOptions = [
     { label: 'Stacked', value: 10 },
@@ -101,32 +104,29 @@ export const FeatureSampleGroup = ({
     { label: 'Detail', value: 50 },
     { label: 'Full', value: Infinity },
   ]
-  const [visibleRange, setVisibleRange] = useState<number>(50)
+  const [visibleRange, setVisibleRange] = useState<number>(defaultVisibleRange)
 
   const { data, fetchNextPage, hasNextPage, isFetching } = useSamples({
     dictionary: feature.dictionaryName,
     featureIndex: feature.featureIndex,
     samplingName,
     totalLength,
+    start: initialSamples?.length ?? 0,
     visibleRange: visibleRange === Infinity ? undefined : visibleRange,
   })
 
   const samples = useMemo(
-    () => data?.pages.flatMap((page) => page) ?? [],
-    [data],
+    () =>
+      (initialSamples ?? []).concat(data?.pages.flatMap((page) => page) ?? []),
+    [data, initialSamples],
   )
-
-  if (samplingName === 'top_activations') {
-    console.log(samples[0])
-  }
 
   const samplingNameMap = (samplingName: string) => {
     if (samplingName === 'top_activations') {
       return 'TOP ACTIVATIONS'
-    } else if (/^subsample-/.test(samplingName)) {
-      const [, proportion] = samplingName.split('-')
-      const percentage = parseFloat(proportion) * 100
-      return `SUBSAMPLING ${percentage}%`
+    } else if (/^subsampling_/.test(samplingName)) {
+      const [, proportion] = samplingName.split('_')
+      return `SUBSAMPLING ${proportion}`
     } else if (samplingName === 'non_activating') {
       return 'NON ACTIVATING'
     } else {
@@ -137,36 +137,38 @@ export const FeatureSampleGroup = ({
   const samplingNameDisplay = samplingNameMap(samplingName)
 
   return (
-    <div className="flex flex-col mt-4 -mx-6">
-      <div className="flex items-center justify-between bg-slate-50 py-2 px-6 border-y border-slate-200">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-muted-foreground uppercase ml-2">
-            {samplingNameDisplay.split(' ').slice(0, -1).join(' ')}
-          </span>
-          <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full uppercase shadow-sm">
-            {samplingNameDisplay.split(' ').slice(-1)[0]}
-          </span>
-        </div>
+    <div className={cn('flex flex-col mt-4 -mx-6', className)}>
+      {!hideTitle && (
+        <div className="flex items-center justify-between bg-slate-50 py-2 px-6 border-y border-slate-200">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-muted-foreground uppercase ml-2">
+              {samplingNameDisplay.split(' ').slice(0, -1).join(' ')}
+            </span>
+            <span className="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full uppercase shadow-sm">
+              {samplingNameDisplay.split(' ').slice(-1)[0]}
+            </span>
+          </div>
 
-        <div className="flex items-center bg-slate-200/50 rounded-md p-1 gap-1">
-          {rangeOptions.map((option) => (
-            <Button
-              key={option.label}
-              variant="ghost"
-              size="sm"
-              className={cn(
-                'h-7 px-3 text-xs hover:bg-white/50',
-                visibleRange === option.value
-                  ? 'bg-white shadow-sm text-foreground font-bold'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-              onClick={() => setVisibleRange(option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
+          <div className="flex items-center bg-slate-200/50 rounded-md p-1 gap-1">
+            {rangeOptions.map((option) => (
+              <Button
+                key={option.label}
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  'h-7 px-3 text-xs hover:bg-white/50',
+                  visibleRange === option.value
+                    ? 'bg-white shadow-sm text-foreground font-bold'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+                onClick={() => setVisibleRange(option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {samples.map((sample, i) => (
         <FeatureActivationSample
@@ -221,6 +223,14 @@ export const FeatureActivationSample = memo(
     const [hoveredTokenIndex, setHoveredTokenIndex] = useState<number | null>(
       null,
     )
+    const [tooltipState, setTooltipState] = useState<{
+      visible: boolean
+      x: number
+      y: number
+      highlights: { origin: TextTokenOrigin; featureAct: number }[]
+    } | null>(null)
+    const segmentRefs = useRef<Map<number, HTMLSpanElement>>(new Map())
+    const tooltipRef = useRef<HTMLDivElement>(null)
 
     const tokenOffset = sample.tokenOffset ?? 0
     const textOffset = sample.textOffset ?? 0
@@ -439,6 +449,47 @@ export const FeatureActivationSample = memo(
       return null
     }, [highestActivatingTokenText, sample.text, sample.origins, textOffset])
 
+    // Handle tooltip positioning
+    useEffect(() => {
+      if (!tooltipState?.visible || !tooltipRef.current) return
+
+      const tooltip = tooltipRef.current
+      const viewportWidth = window.innerWidth
+      const viewportHeight = window.innerHeight
+      const padding = 8
+
+      // Get tooltip dimensions after render
+      const rect = tooltip.getBoundingClientRect()
+      const tooltipWidth = rect.width
+      const tooltipHeight = rect.height
+
+      let x = tooltipState.x
+      let y = tooltipState.y
+      let transformX = '-50%'
+
+      // Adjust horizontal position if tooltip goes off screen (accounting for -50% transform)
+      const halfWidth = tooltipWidth / 2
+      if (x + halfWidth > viewportWidth - padding) {
+        x = viewportWidth - padding
+        transformX = '-100%'
+      } else if (x - halfWidth < padding) {
+        x = padding
+        transformX = '0%'
+      }
+
+      // Adjust vertical position if tooltip goes off screen
+      if (y + tooltipHeight > viewportHeight - padding) {
+        y = tooltipState.y - tooltipHeight - 4
+      }
+      if (y < padding) {
+        y = padding
+      }
+
+      tooltip.style.left = `${x}px`
+      tooltip.style.top = `${y}px`
+      tooltip.style.transform = `translateX(${transformX})`
+    }, [tooltipState])
+
     return (
       <div className={cn('w-full flex gap-4 items-center', className)}>
         {showHighestActivatingToken && (
@@ -478,74 +529,90 @@ export const FeatureActivationSample = memo(
                   )
                   const { className: segmentClassName, style: segmentStyle } =
                     getSegmentStyle(segment)
-                  if (showHoverCard) {
-                    return (
-                      <span key={index} className="inline-flex items-center">
-                        <HoverCard openDelay={0} closeDelay={0}>
-                          <HoverCardTrigger asChild>
-                            <span
-                              className={cn(
-                                'relative inline-flex items-center',
-                                segmentClassName,
-                              )}
-                              style={segmentStyle}
-                              onMouseEnter={() => {
-                                setHoveredTokenIndex(
-                                  sample.origins.indexOf(
-                                    segment.highlights.reduce((p, c) =>
-                                      c.featureAct > p.featureAct ? c : p,
-                                    ).origin,
-                                  ),
-                                )
-                              }}
-                              onMouseLeave={() => {
-                                setHoveredTokenIndex(null)
-                              }}
-                            >
-                              {segmentText
-                                .replaceAll('\n', '↵')
-                                .replaceAll('\t', '→')}
-                            </span>
-                          </HoverCardTrigger>
-                          <HoverCardContent>
-                            <div className="flex flex-col gap-2">
-                              {segment.highlights.map((highlight, i) => (
-                                <TokenInfo
-                                  key={i}
-                                  text={sample.text!}
-                                  textOffset={textOffset}
-                                  featureAct={highlight.featureAct}
-                                  maxFeatureAct={maxFeatureAct}
-                                  origin={highlight.origin}
-                                />
-                              ))}
-                            </div>
-                          </HoverCardContent>
-                        </HoverCard>
-                      </span>
+
+                  const handleMouseEnter = (
+                    e: React.MouseEvent<HTMLSpanElement>,
+                  ) => {
+                    const target = e.currentTarget
+                    const rect = target.getBoundingClientRect()
+                    const tokenIndex = sample.origins.indexOf(
+                      segment.highlights.reduce((p, c) =>
+                        c.featureAct > p.featureAct ? c : p,
+                      ).origin,
                     )
-                  } else {
-                    return (
-                      <span
-                        key={index}
-                        className={cn(
-                          'inline-flex items-center',
-                          segmentClassName,
-                        )}
-                        style={segmentStyle}
-                      >
-                        {segmentText
-                          .replaceAll('\n', '↵')
-                          .replaceAll('\t', '→')}
-                      </span>
-                    )
+                    setHoveredTokenIndex(tokenIndex)
+
+                    if (showHoverCard) {
+                      setTooltipState({
+                        visible: true,
+                        x: rect.left + rect.width / 2,
+                        y: rect.bottom + 4,
+                        highlights: segment.highlights,
+                      })
+                    }
                   }
+
+                  const handleMouseLeave = () => {
+                    setHoveredTokenIndex(null)
+                    if (showHoverCard) {
+                      setTooltipState(null)
+                    }
+                  }
+
+                  return (
+                    <span
+                      key={index}
+                      ref={(el) => {
+                        if (el) {
+                          segmentRefs.current.set(index, el)
+                        } else {
+                          segmentRefs.current.delete(index)
+                        }
+                      }}
+                      className={cn(
+                        'relative inline-flex items-center',
+                        segmentClassName,
+                      )}
+                      style={segmentStyle}
+                      onMouseEnter={handleMouseEnter}
+                      onMouseLeave={handleMouseLeave}
+                    >
+                      {segmentText.replaceAll('\n', '↵').replaceAll('\t', '→')}
+                    </span>
+                  )
                 })}
               </div>
             </div>
           )}
         </div>
+
+        {/* Manual tooltip */}
+        {showHoverCard && tooltipState?.visible && (
+          <div
+            ref={tooltipRef}
+            className="fixed z-50 w-64 rounded-md border bg-popover p-4 text-popover-foreground shadow-md pointer-events-none"
+            style={{
+              left: tooltipState.x,
+              top: tooltipState.y,
+            }}
+          >
+            <div className="flex flex-col gap-2">
+              {tooltipState.highlights.map((highlight, i) => (
+                <TokenInfo
+                  key={i}
+                  text={sample.text!}
+                  textOffset={textOffset}
+                  featureAct={highlight.featureAct}
+                  maxFeatureAct={maxFeatureAct}
+                  origin={highlight.origin}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     )
   },
 )
+
+FeatureActivationSample.displayName = 'FeatureActivationSample'

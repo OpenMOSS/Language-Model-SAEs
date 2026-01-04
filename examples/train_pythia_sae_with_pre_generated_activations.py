@@ -1,7 +1,6 @@
 import argparse
 import math
 import os
-from pathlib import Path
 
 import torch
 
@@ -56,6 +55,7 @@ if __name__ == "__main__":
             init_encoder_with_decoder_transpose_factor=1.0,
         ),
         trainer=TrainerConfig(
+            amp_dtype=torch.float32,
             lr=5e-5,
             l1_coefficient=0.3,
             total_training_tokens=800_000_000,
@@ -74,7 +74,7 @@ if __name__ == "__main__":
         activation_factory=ActivationFactoryConfig(
             sources=[
                 ActivationFactoryActivationsSource(
-                    path=str(Path(args.activation_path).expanduser()),
+                    path=os.path.expanduser(args.activation_path),
                     name="pythia-160m-1d",
                     device="cuda",
                     dtype=torch.float32,

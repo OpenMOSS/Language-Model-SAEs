@@ -1,4 +1,4 @@
-from typing import Dict, Iterable, List, cast
+from typing import Dict, Iterable, List, Literal, cast
 
 import torch
 from torch import Tensor
@@ -8,11 +8,10 @@ from transformer_lens.components import Attention, GroupedQueryAttention, Transf
 from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder, BaseSAEConfig
 from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.config import BaseSAEConfig, InitializerConfig
-from lm_saes.crosscoder import CrossCoder
+from lm_saes.config import BaseConfig
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.molt import MixtureOfLinearTransform
 from lm_saes.sae import SparseAutoEncoder
@@ -21,6 +20,22 @@ from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
 
 logger = get_distributed_logger("initializer")
+
+
+class InitializerConfig(BaseConfig):
+    bias_init_method: Literal["all_zero", "geometric_median"] = "all_zero"
+    decoder_uniform_bound: float = 1.0
+    encoder_uniform_bound: float = 1.0
+    init_encoder_with_decoder_transpose: bool = True
+    init_encoder_with_decoder_transpose_factor: float = 1.0
+    init_log_jumprelu_threshold_value: float | None = None
+    grid_search_init_norm: bool = False
+    initialize_W_D_with_active_subspace: bool = False
+    d_active_subspace: int | None = None
+    initialize_lorsa_with_mhsa: bool | None = None
+    initialize_tc_with_mlp: bool | None = None
+    model_layer: int | None = None
+    init_encoder_bias_with_mean_hidden_pre: bool = False
 
 
 class Initializer:
@@ -120,7 +135,6 @@ class Initializer:
         activation_norm: dict[str, float] | None = None,
         device_mesh: DeviceMesh | None = None,
         wandb_logger: Run | None = None,
-        fold_activation_scale: bool = False,
         model: LanguageModel | None = None,
     ):
         """
@@ -131,107 +145,94 @@ class Initializer:
             activation_norm (dict[str, float] | None): The activation normalization. Used for dataset-wise normalization when self.cfg.norm_activation is "dataset-wise".
             device_mesh (DeviceMesh | None): The device mesh.
         """
-        try:
-            sae_cls = {
-                "sae": SparseAutoEncoder,
-                "crosscoder": CrossCoder,
-                "clt": CrossLayerTranscoder,
-                "lorsa": LowRankSparseAttention,
-                "molt": MixtureOfLinearTransform,
-            }[cfg.sae_type]
-        except KeyError:
-            raise ValueError(f"SAE type {cfg.sae_type} not supported.")
-
-        sae: AbstractSparseAutoEncoder = sae_cls.from_config(
+        sae: AbstractSparseAutoEncoder = AbstractSparseAutoEncoder.from_config(
             cfg,
             device_mesh=device_mesh,
-            fold_activation_scale=fold_activation_scale,
         )
 
-        if cfg.sae_pretrained_name_or_path is None:
-            sae = self.initialize_parameters(sae)
-            if sae.cfg.norm_activation == "dataset-wise":
-                if activation_norm is None:
-                    assert activation_stream is not None, (
-                        "Activation iterator must be provided for dataset-wise normalization"
-                    )
+        sae = self.initialize_parameters(sae)
+        if sae.cfg.norm_activation == "dataset-wise":
+            if activation_norm is None:
+                assert activation_stream is not None, (
+                    "Activation iterator must be provided for dataset-wise normalization"
+                )
 
-                    activation_norm = calculate_activation_norm(
-                        activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
-                    )
-                sae.set_dataset_average_activation_norm(activation_norm)
+                activation_norm = calculate_activation_norm(
+                    activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
+                )
+            sae.set_dataset_average_activation_norm(activation_norm)
 
-            if isinstance(sae, LowRankSparseAttention) and self.cfg.initialize_lorsa_with_mhsa:
+        if isinstance(sae, LowRankSparseAttention) and self.cfg.initialize_lorsa_with_mhsa:
+            assert sae.cfg.norm_activation == "dataset-wise", (
+                "Norm activation must be dataset-wise for Lorsa if use initialize_lorsa_with_mhsa"
+            )
+            assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
+                "Only support TransformerLens backend for initializing Lorsa with Original Multi Head Sparse Attention"
+            )
+            assert self.cfg.model_layer is not None, (
+                "Model layer must be provided for initializing Lorsa with Original Multi Head Sparse Attention"
+            )
+            assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
+            assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), (
+                "Block must be a TransformerBlock"
+            )
+            assert isinstance(model.model.blocks[self.cfg.model_layer].attn, Attention | GroupedQueryAttention), (
+                "Attention must be an Attention or GroupedQueryAttention"
+            )
+            sae.init_lorsa_with_mhsa(
+                cast(
+                    Attention | GroupedQueryAttention,
+                    model.model.blocks[self.cfg.model_layer].attn,
+                )
+            )
+
+        assert activation_stream is not None, "Activation iterator must be provided for initialization search"
+        activation_batch = next(iter(activation_stream))  # type: ignore
+
+        if (
+            isinstance(sae, SparseAutoEncoder)
+            and sae.cfg.hook_point_in != sae.cfg.hook_point_out
+            and self.cfg.initialize_tc_with_mlp
+        ):
+            batch = sae.normalize_activations(activation_batch)
+            assert sae.cfg.norm_activation == "dataset-wise"
+            assert isinstance(model, TransformerLensLanguageModel) and model.model is not None
+            assert self.cfg.model_layer is not None
+            assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
+            assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), (
+                "Block must be a TransformerBlock"
+            )
+            assert isinstance(model.model.blocks[self.cfg.model_layer].mlp, CanBeUsedAsMLP)
+            sae.init_tc_with_mlp(
+                batch=batch,
+                mlp=cast(CanBeUsedAsMLP, model.model.blocks[self.cfg.model_layer].mlp),
+            )
+
+        if self.cfg.initialize_W_D_with_active_subspace:
+            batch = sae.normalize_activations(activation_batch)
+            if isinstance(sae, LowRankSparseAttention):
                 assert sae.cfg.norm_activation == "dataset-wise", (
-                    "Norm activation must be dataset-wise for Lorsa if use initialize_lorsa_with_mhsa"
+                    "Norm activation must be dataset-wise for Lorsa if use initialize_W_D_with_active_subspace"
                 )
                 assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
-                    "Only support TransformerLens backend for initializing Lorsa with Original Multi Head Sparse Attention"
+                    "Only support TransformerLens backend for initializing Lorsa decoder weight with active subspace"
                 )
                 assert self.cfg.model_layer is not None, (
-                    "Model layer must be provided for initializing Lorsa with Original Multi Head Sparse Attention"
+                    "Model layer must be provided for initializing Lorsa decoder weight with active subspace"
                 )
-                assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
-                assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), (
-                    "Block must be a TransformerBlock"
-                )
-                assert isinstance(model.model.blocks[self.cfg.model_layer].attn, Attention | GroupedQueryAttention), (
-                    "Attention must be an Attention or GroupedQueryAttention"
-                )
-                sae.init_lorsa_with_mhsa(
-                    cast(
+                sae.init_W_V_with_active_subspace_per_head(
+                    batch=batch,
+                    mhsa=cast(
                         Attention | GroupedQueryAttention,
                         model.model.blocks[self.cfg.model_layer].attn,
-                    )
+                    ),
                 )
-
-            assert activation_stream is not None, "Activation iterator must be provided for initialization search"
-            activation_batch = next(iter(activation_stream))  # type: ignore
-
-            if (
-                isinstance(sae, SparseAutoEncoder)
-                and sae.cfg.hook_point_in != sae.cfg.hook_point_out
-                and self.cfg.initialize_tc_with_mlp
-            ):
-                batch = sae.normalize_activations(activation_batch)
-                assert sae.cfg.norm_activation == "dataset-wise"
-                assert isinstance(model, TransformerLensLanguageModel) and model.model is not None
-                assert self.cfg.model_layer is not None
-                assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
-                assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), (
-                    "Block must be a TransformerBlock"
+            else:
+                assert self.cfg.d_active_subspace is not None, (
+                    "d_active_subspace must be provided for initializing other SAEs with active subspace"
                 )
-                assert isinstance(model.model.blocks[self.cfg.model_layer].mlp, CanBeUsedAsMLP)
-                sae.init_tc_with_mlp(
-                    batch=batch,
-                    mlp=cast(CanBeUsedAsMLP, model.model.blocks[self.cfg.model_layer].mlp),
-                )
+                sae.init_W_D_with_active_subspace(batch=batch, d_active_subspace=self.cfg.d_active_subspace)
 
-            if self.cfg.initialize_W_D_with_active_subspace:
-                batch = sae.normalize_activations(activation_batch)
-                if isinstance(sae, LowRankSparseAttention):
-                    assert sae.cfg.norm_activation == "dataset-wise", (
-                        "Norm activation must be dataset-wise for Lorsa if use initialize_W_D_with_active_subspace"
-                    )
-                    assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
-                        "Only support TransformerLens backend for initializing Lorsa decoder weight with active subspace"
-                    )
-                    assert self.cfg.model_layer is not None, (
-                        "Model layer must be provided for initializing Lorsa decoder weight with active subspace"
-                    )
-                    sae.init_W_V_with_active_subspace_per_head(
-                        batch=batch,
-                        mhsa=cast(
-                            Attention | GroupedQueryAttention,
-                            model.model.blocks[self.cfg.model_layer].attn,
-                        ),
-                    )
-                else:
-                    assert self.cfg.d_active_subspace is not None, (
-                        "d_active_subspace must be provided for initializing other SAEs with active subspace"
-                    )
-                    sae.init_W_D_with_active_subspace(batch=batch, d_active_subspace=self.cfg.d_active_subspace)
-
-            sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
+        sae = self.initialization_search(sae, activation_batch, wandb_logger=wandb_logger)
 
         return sae
