@@ -87,16 +87,31 @@ class PostAnalysisProcessor(ABC):
         for i in tqdm(range(len(act_times)), desc="Converting results to final per-feature format"):
             samplings = []
             for k, v in sample_result.items():
+                # Filter out non-activating samples for this feature (marked as -inf in elt)
+                mask = None
+                if "elt" in v and isinstance(v["elt"], torch.Tensor) and v["elt"].dim() == 2:
+                    mask = v["elt"][:, i] != -torch.inf
+
+                def _maybe_mask_tensor(t: Any) -> Any:
+                    if mask is None or not isinstance(t, torch.Tensor):
+                        return t
+                    # Only mask tensors whose first dimension matches n_samples
+                    if t.dim() >= 1 and t.shape[0] == mask.shape[0]:
+                        return t[mask]
+                    return t
+
+                v_view = {kk: _maybe_mask_tensor(vv) for kk, vv in v.items()}
+
                 tmp_dict = {}
                 for k2 in mapper.keys():
-                    if len(v[k2].shape)==2:
-                        tmp_dict[k2] = mapper.decode(k2, v[k2][:, i].tolist())
+                    if len(v_view[k2].shape)==2:
+                        tmp_dict[k2] = mapper.decode(k2, v_view[k2][:, i].tolist())
                     else:
-                        tmp_dict[k2] = mapper.decode(k2, v[k2][:].tolist())
+                        tmp_dict[k2] = mapper.decode(k2, v_view[k2][:].tolist())
                 samplings.append({
                     "name": k,
-                    **self._sparsify_feature_acts(v["feature_acts"][:, i]),
-                    **self._extra_info(v, i),
+                    **self._sparsify_feature_acts(v_view["feature_acts"][:, i]),
+                    **self._extra_info(v_view, i),
                     **tmp_dict,
                 })
             feature_result = {

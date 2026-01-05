@@ -19,7 +19,7 @@ from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.cnnsae import CNNSparseAutoEncoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import DimMap, masked_fill, to_local
+from lm_saes.utils.distributed import DimMap, to_local
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
@@ -78,9 +78,12 @@ class FeatureAnalyzer:
         # Process each subsample type (e.g. top activations)
         for name in self.cfg.subsamples.keys():
             elt_cur = elt.clone()
-            # 关闭阈值掩码：不过滤样本，全部参与排序
-            # index = (feature_acts.max(dim=1).values > max_feature_acts.unsqueeze(0) * self.cfg.subsamples[name]["proportion"])
-            # elt_cur = masked_fill(elt_cur, index, -torch.inf)
+            # Filter samples: only keep (feature activation) above a proportion of running max.
+            # This also ensures completely non-activating features (max==0) don't store samples (elt stays -inf).
+            proportion = float(self.cfg.subsamples[name].get("proportion", 1.0))
+            thr = max_feature_acts.unsqueeze(0) * proportion
+            keep = elt_cur > thr
+            elt_cur = elt_cur.masked_fill(~keep, -torch.inf)
 
             sample_result_cur = sample_result[name]
 
@@ -102,6 +105,15 @@ class FeatureAnalyzer:
                 extra_top: dict[str, torch.Tensor] = {}
                 if extra_batch_data:
                     for ek, ev in extra_batch_data.items():
+                        if ev.dim() < 2:
+                            raise ValueError(
+                                f"extra_batch_data[{ek!r}] must have dim>=2 with shape [batch, d_sae, ...], got {tuple(ev.shape)}"
+                            )
+                        if ev.shape[0] != top_idx.shape[0] or ev.shape[1] != top_idx.shape[1]:
+                            raise ValueError(
+                                f"extra_batch_data[{ek!r}] must have shape [batch, d_sae, ...] matching "
+                                f"feature_acts batch/d_sae ({tuple(top_idx.shape)}), got {tuple(ev.shape)}"
+                            )
                         # ev shape: [batch, d_sae, ...] or [batch, d_sae]
                         idx_view = top_idx.view(top_idx.shape + (1,) * (ev.dim() - 2))
                         idx_expand = idx_view.expand(top_idx.shape + ev.shape[2:])
@@ -174,6 +186,16 @@ class FeatureAnalyzer:
                 **discrete_meta,
             }
             if extra_batch_data:
+                for ek, ev in extra_batch_data.items():
+                    if ev.dim() < 2:
+                        raise ValueError(
+                            f"extra_batch_data[{ek!r}] must have dim>=2 with shape [batch, d_sae, ...], got {tuple(ev.shape)}"
+                        )
+                    if ev.shape[0] != elt_cur.shape[0] or ev.shape[1] != elt_cur.shape[1]:
+                        raise ValueError(
+                            f"extra_batch_data[{ek!r}] must have shape [batch, d_sae, ...] matching elt "
+                            f"({tuple(elt_cur.shape)}), got {tuple(ev.shape)}"
+                        )
                 batch_data.update(extra_batch_data)
 
             # Initialize or update sample collection

@@ -154,6 +154,7 @@ def run_joint_reliance(
     hook_point: str,
     analyzer_cfg: FeatureAnalyzerConfig,
     suppression_params: dict[str, Any],
+    top_n_samples_by_cond: Optional[dict[str, int]] = None,
     model_batch_size: int,
     total_analyzing_tokens: int,
     context_size: Optional[int] = None,
@@ -165,18 +166,23 @@ def run_joint_reliance(
       - feature-level image-level reliance p_{shape,texture,color}
       - sample-level reliance injected into top_activations samplings
     """
-    analyzer = FeatureAnalyzer(analyzer_cfg)
+    # Allow per-condition override for top_activations sample count
+    cond_cfgs: dict[str, FeatureAnalyzerConfig] = {}
+    for cond in ["baseline", "shape", "texture", "color"]:
+        cfg = analyzer_cfg.model_copy(deep=True)
+        if top_n_samples_by_cond is not None and "top_activations" in cfg.subsamples:
+            n = top_n_samples_by_cond.get(cond)
+            if n is not None:
+                cfg.subsamples["top_activations"]["n_samples"] = int(n)
+        cond_cfgs[cond] = cfg
+
+    analyzers = {cond: FeatureAnalyzer(cfg) for cond, cfg in cond_cfgs.items()}
 
     loader = HuggingFaceDatasetLoader(batch_size=1, with_info=True, show_progress=True, num_workers=num_workers)
     raw_stream = loader.process(dataset, dataset_name=dataset_name, metadata=dataset_meta)
     batcher = ActivationGenerator(hook_points=[hook_point], batch_size=model_batch_size, n_context=context_size)
 
-    states = {
-        "baseline": _make_state(analyzer_cfg, sae),
-        "shape": _make_state(analyzer_cfg, sae),
-        "texture": _make_state(analyzer_cfg, sae),
-        "color": _make_state(analyzer_cfg, sae),
-    }
+    states = {cond: _make_state(cfg, sae) for cond, cfg in cond_cfgs.items()}
 
     a_sum = torch.zeros((int(sae.cfg.d_sae),), dtype=torch.float64, device=sae.cfg.device)
     c_sum = {
@@ -223,6 +229,7 @@ def run_joint_reliance(
         # analyzer updates per condition
         for cond in ["baseline", "shape", "texture", "color"]:
             st = states[cond]
+            analyzer = analyzers[cond]
             fa = cond_data[cond]["feature_acts"]
             meta = cond_data[cond]["meta"]
 
