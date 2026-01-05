@@ -53,6 +53,7 @@ class FeatureAnalyzer:
         device_mesh: DeviceMesh | None = None,
         *,
         sae_is_cnnsae: bool = False,
+        extra_batch_data: Mapping[str, torch.Tensor] | None = None,
     ) -> Mapping[str, Mapping[str, torch.Tensor] | None]:
         """Process a batch of activations to update sampling results.
 
@@ -97,6 +98,15 @@ class FeatureAnalyzer:
                 idx_expanded = top_idx.unsqueeze(-1).expand(-1, -1, feature_acts_perm.shape[2])  # [k, d_sae, context]
                 feature_acts_top = torch.gather(feature_acts_perm, dim=0, index=idx_expanded)  # [k, d_sae, context]
 
+                # gather extra batch data (e.g., image-level scalars) with the same per-feature top-k
+                extra_top: dict[str, torch.Tensor] = {}
+                if extra_batch_data:
+                    for ek, ev in extra_batch_data.items():
+                        # ev shape: [batch, d_sae, ...] or [batch, d_sae]
+                        idx_view = top_idx.view(top_idx.shape + (1,) * (ev.dim() - 2))
+                        idx_expand = idx_view.expand(top_idx.shape + ev.shape[2:])
+                        extra_top[ek] = ev.gather(0, idx_expand)
+
                 # gather meta: 支持 1D（batch）或 2D（batch, d_sae）形状
                 discrete_meta_top: dict[str, torch.Tensor] = {}
                 for mk, mv in discrete_meta.items():
@@ -132,16 +142,23 @@ class FeatureAnalyzer:
                         meta_cat = torch.cat([sample_result_cur[mk], discrete_meta_top[mk]], dim=0)
                         discrete_meta_top_new[mk] = gather_cat(meta_cat)
 
+                    extra_top_new: dict[str, torch.Tensor] = {}
+                    for ek in extra_top:
+                        extra_cat = torch.cat([sample_result_cur[ek], extra_top[ek]], dim=0)
+                        extra_top_new[ek] = gather_cat(extra_cat)
+
                     sample_result_cur = {
                         "elt": top_vals_new,
                         "feature_acts": feature_acts_new,
                         **discrete_meta_top_new,
+                        **extra_top_new,
                     }
                 else:
                     sample_result_cur = {
                         "elt": top_vals,
                         "feature_acts": feature_acts_top,
                         **discrete_meta_top,
+                        **extra_top,
                     }
 
                 sample_result = {**sample_result, name: sample_result_cur}
@@ -156,6 +173,8 @@ class FeatureAnalyzer:
                 ),
                 **discrete_meta,
             }
+        if extra_batch_data:
+            batch_data.update(extra_batch_data)
 
             # Initialize or update sample collection
             if sample_result_cur is None:

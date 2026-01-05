@@ -1,6 +1,7 @@
 from .activation import ActivationFactory, ActivationWriter
 from .activation_functions import JumpReLU
 from .analysis import DirectLogitAttributor, FeatureAnalyzer
+from .analysis.joint_reliance_analyzer import run_joint_reliance
 from .circuit import ReplacementModel, attribute
 from .clt import CrossLayerTranscoder
 from .cnnsae import CNNSparseAutoEncoder
@@ -86,6 +87,7 @@ __all__ = [
     "load_dataset",
     "load_model",
     "FeatureAnalyzer",
+    "run_joint_reliance",
     "EvaluateCrossCoderSettings",
     "evaluate_crosscoder",
     "EvaluateSAESettings",
