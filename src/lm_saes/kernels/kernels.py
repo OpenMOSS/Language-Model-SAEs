@@ -1,6 +1,7 @@
 """Triton kernels for sparse matrix operations in SAE training."""
 
 from typing import cast
+import math
 
 import torch
 import torch.sparse
@@ -1081,3 +1082,1060 @@ class DPTopKSparseFusedSAE(torch.autograd.Function):
         # exit()
 
         return None, grad_W_E, grad_b_E, grad_W_D, grad_b_D, None, None, None
+
+
+@triton.heuristics(
+    {
+        "EVEN_M": lambda args: args["seqlen_q"] % args["BLOCK_M"] == 0,
+        "EVEN_N": lambda args: args["seqlen_k"] % args["BLOCK_N"] == 0,
+        "EVEN_HEADDIM": lambda args: args["headdim"] == args["BLOCK_HEADDIM"],
+        "EVEN_HEADDIM_V": lambda args: args["headdim_v"] == args["BLOCK_HEADDIM_V"],
+    }
+)
+@triton.jit
+def _fwd_kernel(
+    Q,
+    K,
+    V,
+    Out,
+    Lse,
+    softmax_scale,
+    stride_qb,
+    stride_qh,
+    stride_qm,
+    stride_kb,
+    stride_kh,
+    stride_kn,
+    stride_vb,
+    stride_vh,
+    stride_vn,
+    stride_ob,
+    stride_oh,
+    stride_om,
+    nheads,
+    seqlen_q,
+    seqlen_k,
+    seqlen_q_rounded,
+    headdim,
+    headdim_v,
+    CACHE_KEY_SEQLEN_Q,
+    CACHE_KEY_SEQLEN_K,
+    IS_CAUSAL: tl.constexpr,
+    BLOCK_HEADDIM: tl.constexpr,
+    BLOCK_HEADDIM_V: tl.constexpr,
+    EVEN_M: tl.constexpr,
+    EVEN_N: tl.constexpr,
+    EVEN_HEADDIM: tl.constexpr,
+    EVEN_HEADDIM_V: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    start_m = tl.program_id(0)
+    off_hb = tl.program_id(1)
+    off_b = off_hb // nheads
+    off_h = off_hb % nheads
+    # initialize offsets
+    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_n = tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_HEADDIM)
+    offs_d_v = tl.arange(0, BLOCK_HEADDIM_V)
+    # Initialize pointers to Q, K, V
+    q_ptrs = Q + off_b * stride_qb + off_h * stride_qh + (offs_m[:, None] * stride_qm + offs_d[None, :])
+    k_ptrs = K + off_b * stride_kb + off_h * stride_kh + (offs_n[:, None] * stride_kn + offs_d[None, :])
+    v_ptrs = V + off_b * stride_vb + off_h * stride_vh + (offs_n[:, None] * stride_vn + offs_d_v[None, :])
+    # initialize pointer to m and l
+    lse_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
+    m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
+    acc_o = tl.zeros([BLOCK_M, BLOCK_HEADDIM_V], dtype=tl.float32)
+    # load q: it will stay in SRAM throughout
+    if EVEN_M & EVEN_N:
+        if EVEN_HEADDIM:
+            q = tl.load(q_ptrs)
+        else:
+            q = tl.load(q_ptrs, mask=offs_d[None, :] < headdim, other=0.0)
+    else:
+        if EVEN_HEADDIM:
+            q = tl.load(q_ptrs, mask=offs_m[:, None] < seqlen_q, other=0.0)
+        else:
+            q = tl.load(
+                q_ptrs,
+                mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim),
+                other=0.0,
+            )
+    # loop over k, v and update accumulator
+    end_n = seqlen_k if not IS_CAUSAL else tl.minimum((start_m + 1) * BLOCK_M, seqlen_k)
+    for start_n in range(0, end_n, BLOCK_N):
+        start_n = tl.multiple_of(start_n, BLOCK_N)
+        # -- compute qk ----
+        if EVEN_N & EVEN_M:
+            if EVEN_HEADDIM:
+                k = tl.load(k_ptrs + start_n * stride_kn)
+            else:
+                k = tl.load(
+                    k_ptrs + start_n * stride_kn,
+                    mask=offs_d[None, :] < headdim,
+                    other=0.0,
+                )
+        else:
+            if EVEN_HEADDIM:
+                k = tl.load(
+                    k_ptrs + start_n * stride_kn,
+                    mask=(start_n + offs_n)[:, None] < seqlen_k,
+                    other=0.0,
+                )
+            else:
+                k = tl.load(
+                    k_ptrs + start_n * stride_kn,
+                    mask=((start_n + offs_n)[:, None] < seqlen_k) & (offs_d[None, :] < headdim),
+                    other=0.0,
+                )
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+        qk += tl.dot(q, tl.trans(k), input_precision="tf32x3")
+        # Trying to combine the two masks seem to make the result wrong
+        if not EVEN_N:  # Need to mask out otherwise the softmax is wrong
+            qk += tl.where((start_n + offs_n)[None, :] < seqlen_k, 0, float("-inf"))
+        if IS_CAUSAL:
+            qk += tl.where(offs_m[:, None] >= (start_n + offs_n)[None, :], 0, float("-inf"))
+        m_ij = tl.maximum(tl.max(qk, 1) * softmax_scale, lse_i)
+        p = tl.exp(qk * softmax_scale - m_ij[:, None])
+        l_ij = tl.sum(p, 1)
+
+        # scale acc_o
+        acc_o_scale = tl.exp(m_i - m_ij)
+
+        # -- update output accumulator --
+        acc_o = acc_o * acc_o_scale[:, None]
+        # load v with headdim_v
+        if EVEN_N & EVEN_M:
+            if EVEN_HEADDIM_V:
+                v = tl.load(v_ptrs + start_n * stride_vn)
+            else:
+                v = tl.load(
+                    v_ptrs + start_n * stride_vn,
+                    mask=offs_d_v[None, :] < headdim_v,
+                    other=0.0,
+                )
+        else:
+            if EVEN_HEADDIM_V:
+                v = tl.load(
+                    v_ptrs + start_n * stride_vn,
+                    mask=(start_n + offs_n)[:, None] < seqlen_k,
+                    other=0.0,
+                )
+            else:
+                v = tl.load(
+                    v_ptrs + start_n * stride_vn,
+                    mask=((start_n + offs_n)[:, None] < seqlen_k) & (offs_d_v[None, :] < headdim_v),
+                    other=0.0,
+                )
+        p = p.to(v.dtype)
+        acc_o += tl.dot(p, v, input_precision="tf32x3")
+
+        # -- update statistics
+        m_i = m_ij
+        l_i_new = tl.exp(lse_i - m_ij) + l_ij
+        lse_i = m_ij + tl.log(l_i_new)
+
+    o_scale = tl.exp(m_i - lse_i)
+    acc_o = acc_o * o_scale[:, None]
+    # rematerialize offsets to save registers
+    start_m = tl.program_id(0)
+    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    # write back l and m
+    lse_ptrs = Lse + off_hb * seqlen_q_rounded + offs_m
+    tl.store(lse_ptrs, lse_i)
+    # initialize pointers to output (using headdim_v)
+    offs_d_v = tl.arange(0, BLOCK_HEADDIM_V)
+    out_ptrs = Out + off_b * stride_ob + off_h * stride_oh + (offs_m[:, None] * stride_om + offs_d_v[None, :])
+    if EVEN_M:
+        if EVEN_HEADDIM_V:
+            tl.store(out_ptrs, acc_o)
+        else:
+            tl.store(out_ptrs, acc_o, mask=offs_d_v[None, :] < headdim_v)
+    else:
+        if EVEN_HEADDIM_V:
+            tl.store(out_ptrs, acc_o, mask=offs_m[:, None] < seqlen_q)
+        else:
+            tl.store(
+                out_ptrs,
+                acc_o,
+                mask=(offs_m[:, None] < seqlen_q) & (offs_d_v[None, :] < headdim_v),
+            )
+
+
+@triton.jit
+def _bwd_preprocess_do_o_dot(
+    Out,
+    DO,
+    Delta,
+    stride_ob,
+    stride_oh,
+    stride_om,
+    stride_dob,
+    stride_doh,
+    stride_dom,
+    nheads,
+    seqlen_q,
+    seqlen_q_rounded,
+    headdim_v,
+    BLOCK_M: tl.constexpr,
+    BLOCK_HEADDIM_V: tl.constexpr,
+):
+    start_m = tl.program_id(0)
+    off_hb = tl.program_id(1)
+    off_b = off_hb // nheads
+    off_h = off_hb % nheads
+    # initialize offsets
+    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_d_v = tl.arange(0, BLOCK_HEADDIM_V)
+    # load (o and do have headdim_v dimension)
+    o = tl.load(
+        Out + off_b * stride_ob + off_h * stride_oh + offs_m[:, None] * stride_om + offs_d_v[None, :],
+        mask=(offs_m[:, None] < seqlen_q) & (offs_d_v[None, :] < headdim_v),
+        other=0.0,
+    ).to(tl.float32)
+    do = tl.load(
+        DO + off_b * stride_dob + off_h * stride_doh + offs_m[:, None] * stride_dom + offs_d_v[None, :],
+        mask=(offs_m[:, None] < seqlen_q) & (offs_d_v[None, :] < headdim_v),
+        other=0.0,
+    ).to(tl.float32)
+    delta = tl.sum(o * do, axis=1)
+    # write-back
+    tl.store(Delta + off_hb * seqlen_q_rounded + offs_m, delta)
+
+
+@triton.jit
+def _bwd_store_dk_dv(
+    dk_ptrs,
+    dv_ptrs,
+    dk,
+    dv,
+    offs_n,
+    offs_d,
+    offs_d_v,
+    seqlen_k,
+    headdim,
+    headdim_v,
+    EVEN_M: tl.constexpr,
+    EVEN_N: tl.constexpr,
+    EVEN_HEADDIM: tl.constexpr,
+    EVEN_HEADDIM_V: tl.constexpr,
+):
+    # Store dk (with headdim) and dv (with headdim_v) separately
+    if EVEN_N & EVEN_M:
+        if EVEN_HEADDIM:
+            tl.store(dk_ptrs, dk)
+        else:
+            tl.store(dk_ptrs, dk, mask=offs_d[None, :] < headdim)
+        if EVEN_HEADDIM_V:
+            tl.store(dv_ptrs, dv)
+        else:
+            tl.store(dv_ptrs, dv, mask=offs_d_v[None, :] < headdim_v)
+    else:
+        if EVEN_HEADDIM:
+            tl.store(dk_ptrs, dk, mask=offs_n[:, None] < seqlen_k)
+        else:
+            tl.store(
+                dk_ptrs,
+                dk,
+                mask=(offs_n[:, None] < seqlen_k) & (offs_d[None, :] < headdim),
+            )
+        if EVEN_HEADDIM_V:
+            tl.store(dv_ptrs, dv, mask=offs_n[:, None] < seqlen_k)
+        else:
+            tl.store(
+                dv_ptrs,
+                dv,
+                mask=(offs_n[:, None] < seqlen_k) & (offs_d_v[None, :] < headdim_v),
+            )
+
+
+@triton.jit
+def _bwd_kernel_one_col_block(
+    start_n,
+    Q,
+    K,
+    V,
+    DO,
+    DQ,
+    DK,
+    DV,
+    LSE,
+    D,
+    softmax_scale,
+    stride_qm,
+    stride_kn,
+    stride_vn,
+    stride_dom,
+    stride_dqm,
+    stride_dkn,
+    stride_dvn,
+    seqlen_q,
+    seqlen_k,
+    headdim,
+    headdim_v,
+    ATOMIC_ADD: tl.constexpr,
+    IS_CAUSAL: tl.constexpr,
+    BLOCK_HEADDIM: tl.constexpr,
+    BLOCK_HEADDIM_V: tl.constexpr,
+    EVEN_M: tl.constexpr,
+    EVEN_N: tl.constexpr,
+    EVEN_HEADDIM: tl.constexpr,
+    EVEN_HEADDIM_V: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    # We need to make sure begin_m is a multiple of BLOCK_M (not BLOCK_N)
+    begin_m = 0 if not IS_CAUSAL else ((start_n * BLOCK_N) // BLOCK_M) * BLOCK_M
+    # initialize row/col offsets
+    offs_qm = begin_m + tl.arange(0, BLOCK_M)
+    offs_n = start_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_m = tl.arange(0, BLOCK_M)
+    offs_d = tl.arange(0, BLOCK_HEADDIM)
+    offs_d_v = tl.arange(0, BLOCK_HEADDIM_V)
+    # initialize pointers to value-like data
+    # q, k, dq, dk use headdim; v, do, dv use headdim_v
+    q_ptrs = Q + (offs_qm[:, None] * stride_qm + offs_d[None, :])
+    k_ptrs = K + (offs_n[:, None] * stride_kn + offs_d[None, :])
+    v_ptrs = V + (offs_n[:, None] * stride_vn + offs_d_v[None, :])
+    do_ptrs = DO + (offs_qm[:, None] * stride_dom + offs_d_v[None, :])
+    dq_ptrs = DQ + (offs_qm[:, None] * stride_dqm + offs_d[None, :])
+    # initialize dv (headdim_v) and dk (headdim)
+    dv = tl.zeros([BLOCK_N, BLOCK_HEADDIM_V], dtype=tl.float32)
+    dk = tl.zeros([BLOCK_N, BLOCK_HEADDIM], dtype=tl.float32)
+    if begin_m >= seqlen_q:
+        dv_ptrs = DV + (offs_n[:, None] * stride_dvn + offs_d_v[None, :])
+        dk_ptrs = DK + (offs_n[:, None] * stride_dkn + offs_d[None, :])
+        _bwd_store_dk_dv(
+            dk_ptrs,
+            dv_ptrs,
+            dk,
+            dv,
+            offs_n,
+            offs_d,
+            offs_d_v,
+            seqlen_k,
+            headdim,
+            headdim_v,
+            EVEN_M=EVEN_M,
+            EVEN_N=EVEN_N,
+            EVEN_HEADDIM=EVEN_HEADDIM,
+            EVEN_HEADDIM_V=EVEN_HEADDIM_V,
+        )
+        return
+    # k (headdim) and v (headdim_v) stay in SRAM throughout
+    if EVEN_N & EVEN_M:
+        if EVEN_HEADDIM:
+            k = tl.load(k_ptrs)
+        else:
+            k = tl.load(k_ptrs, mask=offs_d[None, :] < headdim, other=0.0)
+        if EVEN_HEADDIM_V:
+            v = tl.load(v_ptrs)
+        else:
+            v = tl.load(v_ptrs, mask=offs_d_v[None, :] < headdim_v, other=0.0)
+    else:
+        if EVEN_HEADDIM:
+            k = tl.load(k_ptrs, mask=offs_n[:, None] < seqlen_k, other=0.0)
+        else:
+            k = tl.load(
+                k_ptrs,
+                mask=(offs_n[:, None] < seqlen_k) & (offs_d[None, :] < headdim),
+                other=0.0,
+            )
+        if EVEN_HEADDIM_V:
+            v = tl.load(v_ptrs, mask=offs_n[:, None] < seqlen_k, other=0.0)
+        else:
+            v = tl.load(
+                v_ptrs,
+                mask=(offs_n[:, None] < seqlen_k) & (offs_d_v[None, :] < headdim_v),
+                other=0.0,
+            )
+    # loop over rows
+    num_block_m = tl.cdiv(seqlen_q, BLOCK_M)
+    for start_m in range(begin_m, num_block_m * BLOCK_M, BLOCK_M):
+        start_m = tl.multiple_of(start_m, BLOCK_M)
+        offs_m_curr = start_m + offs_m
+        # load q (headdim)
+        if EVEN_M & EVEN_HEADDIM:
+            q = tl.load(q_ptrs)
+        else:
+            if EVEN_HEADDIM:
+                q = tl.load(q_ptrs, mask=offs_m_curr[:, None] < seqlen_q, other=0.0)
+            else:
+                q = tl.load(
+                    q_ptrs,
+                    mask=(offs_m_curr[:, None] < seqlen_q) & (offs_d[None, :] < headdim),
+                    other=0.0,
+                )
+        # recompute p = softmax(qk, dim=-1).T
+        qk = tl.dot(q, tl.trans(k), input_precision="tf32x3")
+        if not EVEN_N:
+            qk = tl.where(offs_n[None, :] < seqlen_k, qk, float("-inf"))
+        if IS_CAUSAL:
+            qk = tl.where(offs_m_curr[:, None] >= (offs_n[None, :]), qk, float("-inf"))
+        if not (EVEN_M & EVEN_HEADDIM):
+            tl.debug_barrier()
+        lse_i = tl.load(LSE + offs_m_curr)
+        p = tl.exp(qk - lse_i[:, None])
+        # load do (headdim_v)
+        if EVEN_M & EVEN_HEADDIM_V:
+            do = tl.load(do_ptrs)
+        else:
+            do = tl.load(
+                do_ptrs,
+                mask=(offs_m_curr[:, None] < seqlen_q) & (offs_d_v[None, :] < headdim_v),
+                other=0.0,
+            )
+        # compute dv = p^T @ do (headdim_v)
+        dv += tl.dot(tl.trans(p).to(do.dtype), do, input_precision="tf32x3")
+        # compute dp = do @ v^T (using headdim_v)
+        if not (EVEN_M & EVEN_HEADDIM_V):
+            tl.debug_barrier()
+        dp = tl.dot(do, tl.trans(v), input_precision="tf32x3")
+        if not EVEN_HEADDIM_V:
+            tl.debug_barrier()
+        # compute ds = p * (dp - delta[:, None])
+        Di = tl.load(D + offs_m_curr)
+        ds = (p * (dp - Di[:, None]) * softmax_scale).to(q.dtype)
+        # compute dk = ds^T @ q (headdim)
+        dk += tl.dot(tl.trans(ds), q, input_precision="tf32x3")
+        # compute dq = ds @ k (headdim)
+        if not ATOMIC_ADD:
+            if EVEN_M & EVEN_HEADDIM:
+                dq = tl.load(dq_ptrs, eviction_policy="evict_last")
+                dq += tl.dot(ds, k, input_precision="tf32x3")
+                tl.store(dq_ptrs, dq, eviction_policy="evict_last")
+            else:
+                if EVEN_HEADDIM:
+                    dq = tl.load(
+                        dq_ptrs,
+                        mask=offs_m_curr[:, None] < seqlen_q,
+                        other=0.0,
+                        eviction_policy="evict_last",
+                    )
+                    dq += tl.dot(ds, k, input_precision="tf32x3")
+                    tl.store(
+                        dq_ptrs,
+                        dq,
+                        mask=offs_m_curr[:, None] < seqlen_q,
+                        eviction_policy="evict_last",
+                    )
+                else:
+                    dq = tl.load(
+                        dq_ptrs,
+                        mask=(offs_m_curr[:, None] < seqlen_q) & (offs_d[None, :] < headdim),
+                        other=0.0,
+                        eviction_policy="evict_last",
+                    )
+                    dq += tl.dot(ds, k, input_precision="tf32x3")
+                    tl.store(
+                        dq_ptrs,
+                        dq,
+                        mask=(offs_m_curr[:, None] < seqlen_q) & (offs_d[None, :] < headdim),
+                        eviction_policy="evict_last",
+                    )
+        else:
+            dq = tl.dot(ds, k, input_precision="tf32x3")
+            if EVEN_M & EVEN_HEADDIM:
+                tl.atomic_add(dq_ptrs, dq)
+            else:
+                if EVEN_HEADDIM:
+                    tl.atomic_add(dq_ptrs, dq, mask=offs_m_curr[:, None] < seqlen_q)
+                else:
+                    tl.atomic_add(
+                        dq_ptrs,
+                        dq,
+                        mask=(offs_m_curr[:, None] < seqlen_q) & (offs_d[None, :] < headdim),
+                    )
+        # increment pointers
+        dq_ptrs += BLOCK_M * stride_dqm
+        q_ptrs += BLOCK_M * stride_qm
+        do_ptrs += BLOCK_M * stride_dom
+    # write-back
+    dv_ptrs = DV + (offs_n[:, None] * stride_dvn + offs_d_v[None, :])
+    dk_ptrs = DK + (offs_n[:, None] * stride_dkn + offs_d[None, :])
+    _bwd_store_dk_dv(
+        dk_ptrs,
+        dv_ptrs,
+        dk,
+        dv,
+        offs_n,
+        offs_d,
+        offs_d_v,
+        seqlen_k,
+        headdim,
+        headdim_v,
+        EVEN_M=EVEN_M,
+        EVEN_N=EVEN_N,
+        EVEN_HEADDIM=EVEN_HEADDIM,
+        EVEN_HEADDIM_V=EVEN_HEADDIM_V,
+    )
+
+
+def init_to_zero(name):
+    return lambda nargs: nargs[name].zero_()
+
+
+@triton.autotune(
+    configs=[
+        triton.Config(
+            {"BLOCK_M": 128, "BLOCK_N": 128, "SEQUENCE_PARALLEL": False},
+            num_warps=8,
+            num_stages=1,
+            pre_hook=init_to_zero("DQ"),
+        ),
+        triton.Config(
+            {"BLOCK_M": 128, "BLOCK_N": 128, "SEQUENCE_PARALLEL": True},
+            num_warps=8,
+            num_stages=1,
+            pre_hook=init_to_zero("DQ"),
+        ),
+        # Other configs seem to give wrong results when seqlen_q % 128 != 0, disabling them for now
+        # # Kernel is buggy (give wrong result) if we set BLOCK_m=128, BLOCK_n=64, num_warps=*4*
+        # triton.Config({"BLOCK_M": 128, "BLOCK_N": 64, "SEQUENCE_PARALLEL": False}, num_warps=8, num_stages=1, pre_hook=init_to_zero('DQ')),
+        # triton.Config({"BLOCK_M": 128, "BLOCK_N": 64, "SEQUENCE_PARALLEL": True}, num_warps=8, num_stages=1, pre_hook=init_to_zero('DQ')),
+        # triton.Config({"BLOCK_M": 64, "BLOCK_N": 64, "SEQUENCE_PARALLEL": False}, num_warps=4, num_stages=1, pre_hook=init_to_zero('DQ')),
+        # triton.Config({"BLOCK_M": 64, "BLOCK_N": 64, "SEQUENCE_PARALLEL": True}, num_warps=4, num_stages=1, pre_hook=init_to_zero('DQ')),
+    ],
+    key=[
+        "CACHE_KEY_SEQLEN_Q",
+        "CACHE_KEY_SEQLEN_K",
+        "IS_CAUSAL",
+        "BLOCK_HEADDIM",
+    ],
+)
+@triton.heuristics(
+    {
+        "EVEN_M": lambda args: args["seqlen_q"] % args["BLOCK_M"] == 0,
+        "EVEN_N": lambda args: args["seqlen_k"] % args["BLOCK_N"] == 0,
+        "EVEN_HEADDIM": lambda args: args["headdim"] == args["BLOCK_HEADDIM"],
+        "EVEN_HEADDIM_V": lambda args: args["headdim_v"] == args["BLOCK_HEADDIM_V"],
+    }
+)
+@triton.jit
+def _bwd_kernel(
+    Q,
+    K,
+    V,
+    DO,
+    DQ,
+    DK,
+    DV,
+    LSE,
+    D,
+    softmax_scale,
+    stride_qb,
+    stride_qh,
+    stride_qm,
+    stride_kb,
+    stride_kh,
+    stride_kn,
+    stride_vb,
+    stride_vh,
+    stride_vn,
+    stride_dob,
+    stride_doh,
+    stride_dom,
+    stride_dqb,
+    stride_dqh,
+    stride_dqm,
+    stride_dkb,
+    stride_dkh,
+    stride_dkn,
+    stride_dvb,
+    stride_dvh,
+    stride_dvn,
+    nheads,
+    seqlen_q,
+    seqlen_k,
+    seqlen_q_rounded,
+    headdim,
+    headdim_v,
+    CACHE_KEY_SEQLEN_Q,
+    CACHE_KEY_SEQLEN_K,
+    IS_CAUSAL: tl.constexpr,
+    BLOCK_HEADDIM: tl.constexpr,
+    BLOCK_HEADDIM_V: tl.constexpr,
+    SEQUENCE_PARALLEL: tl.constexpr,
+    EVEN_M: tl.constexpr,
+    EVEN_N: tl.constexpr,
+    EVEN_HEADDIM: tl.constexpr,
+    EVEN_HEADDIM_V: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    off_hb = tl.program_id(1)
+    off_b = off_hb // nheads
+    off_h = off_hb % nheads
+    # offset pointers for batch/head
+    Q += off_b * stride_qb + off_h * stride_qh
+    K += off_b * stride_kb + off_h * stride_kh
+    V += off_b * stride_vb + off_h * stride_vh
+    DO += off_b * stride_dob + off_h * stride_doh
+    DQ += off_b * stride_dqb + off_h * stride_dqh
+    DK += off_b * stride_dkb + off_h * stride_dkh
+    DV += off_b * stride_dvb + off_h * stride_dvh
+    # pointer to row-wise quantities in value-like data
+    D += off_hb * seqlen_q_rounded
+    LSE += off_hb * seqlen_q_rounded
+    if not SEQUENCE_PARALLEL:
+        num_block_n = tl.cdiv(seqlen_k, BLOCK_N)
+        for start_n in range(0, num_block_n):
+            _bwd_kernel_one_col_block(
+                start_n,
+                Q,
+                K,
+                V,
+                DO,
+                DQ,
+                DK,
+                DV,
+                LSE,
+                D,
+                softmax_scale,
+                stride_qm,
+                stride_kn,
+                stride_vn,
+                stride_dom,
+                stride_dqm,
+                stride_dkn,
+                stride_dvn,
+                seqlen_q,
+                seqlen_k,
+                headdim,
+                headdim_v,
+                ATOMIC_ADD=False,
+                IS_CAUSAL=IS_CAUSAL,
+                BLOCK_HEADDIM=BLOCK_HEADDIM,
+                BLOCK_HEADDIM_V=BLOCK_HEADDIM_V,
+                EVEN_M=EVEN_M,
+                EVEN_N=EVEN_N,
+                EVEN_HEADDIM=EVEN_HEADDIM,
+                EVEN_HEADDIM_V=EVEN_HEADDIM_V,
+                BLOCK_M=BLOCK_M,
+                BLOCK_N=BLOCK_N,
+            )
+    else:
+        start_n = tl.program_id(0)
+        _bwd_kernel_one_col_block(
+            start_n,
+            Q,
+            K,
+            V,
+            DO,
+            DQ,
+            DK,
+            DV,
+            LSE,
+            D,
+            softmax_scale,
+            stride_qm,
+            stride_kn,
+            stride_vn,
+            stride_dom,
+            stride_dqm,
+            stride_dkn,
+            stride_dvn,
+            seqlen_q,
+            seqlen_k,
+            headdim,
+            headdim_v,
+            ATOMIC_ADD=True,
+            IS_CAUSAL=IS_CAUSAL,
+            BLOCK_HEADDIM=BLOCK_HEADDIM,
+            BLOCK_HEADDIM_V=BLOCK_HEADDIM_V,
+            EVEN_M=EVEN_M,
+            EVEN_N=EVEN_N,
+            EVEN_HEADDIM=EVEN_HEADDIM,
+            EVEN_HEADDIM_V=EVEN_HEADDIM_V,
+            BLOCK_M=BLOCK_M,
+            BLOCK_N=BLOCK_N,
+        )
+
+
+def flash_attn_forward(q, k, v, causal=False, softmax_scale=None):
+    # shape constraints
+    # q, k: (batch, seqlen, nheads, d)
+    # v: (batch, seqlen_k, nheads, d_v) where d_v can be different from d
+    batch, seqlen_q, nheads, d = q.shape
+    _, seqlen_k, _, d_v = v.shape
+    assert k.shape == (batch, seqlen_k, nheads, d)
+    assert v.shape[:3] == (batch, seqlen_k, nheads)
+    assert d <= 128, "FlashAttention only support head dimensions up to 128"
+    assert q.dtype == k.dtype == v.dtype, "All tensors must have the same type"
+    assert q.dtype in [torch.float16, torch.bfloat16], "Only support fp16 and bf16"
+    assert q.is_cuda and k.is_cuda and v.is_cuda
+    softmax_scale = softmax_scale or 1.0 / math.sqrt(d)
+
+    seqlen_q_rounded = math.ceil(seqlen_q / 128) * 128
+    lse = torch.empty((batch, nheads, seqlen_q_rounded), device=q.device, dtype=torch.float32)
+    # output has shape (batch, seqlen_q, nheads, d_v)
+    o = torch.empty((batch, seqlen_q, nheads, d_v), device=q.device, dtype=q.dtype)
+
+    BLOCK_HEADDIM = max(triton.next_power_of_2(d), 16)
+    BLOCK_HEADDIM_V = max(triton.next_power_of_2(d_v), 16)
+    BLOCK = 128
+    num_warps = 4 if d <= 64 else 8
+    grid = lambda META: (triton.cdiv(seqlen_q, META["BLOCK_M"]), batch * nheads)
+    _fwd_kernel[grid](
+        q,
+        k,
+        v,
+        o,
+        lse,
+        softmax_scale,
+        q.stride(0),
+        q.stride(2),
+        q.stride(1),
+        k.stride(0),
+        k.stride(2),
+        k.stride(1),
+        v.stride(0),
+        v.stride(2),
+        v.stride(1),
+        o.stride(0),
+        o.stride(2),
+        o.stride(1),
+        nheads,
+        seqlen_q,
+        seqlen_k,
+        seqlen_q_rounded,
+        d,
+        d_v,
+        seqlen_q // 32,
+        seqlen_k // 32,  # key for triton cache (limit number of compilations)
+        causal,
+        BLOCK_HEADDIM,
+        BLOCK_HEADDIM_V,
+        BLOCK_M=BLOCK,
+        BLOCK_N=BLOCK,
+        num_warps=num_warps,
+        num_stages=1,
+    )
+    return o, lse, softmax_scale
+
+
+def flash_attn_backward(do, q, k, v, o, lse, dq, dk, dv, causal=False, softmax_scale=None):
+    # Make sure that the last dimension is contiguous
+    if do.stride(-1) != 1:
+        do = do.contiguous()
+    batch, seqlen_q, nheads, d = q.shape
+    _, seqlen_k, _, d_v = v.shape
+    assert d <= 128
+    seqlen_q_rounded = math.ceil(seqlen_q / 128) * 128
+    assert lse.shape == (batch, nheads, seqlen_q_rounded)
+    assert q.stride(-1) == k.stride(-1) == v.stride(-1) == o.stride(-1) == 1
+    assert dq.stride(-1) == dk.stride(-1) == dv.stride(-1) == 1
+    softmax_scale = softmax_scale or 1.0 / math.sqrt(d)
+    dq_accum = torch.empty_like(q, dtype=torch.float32)
+    delta = torch.empty_like(lse)
+
+    BLOCK_HEADDIM = max(triton.next_power_of_2(d), 16)
+    BLOCK_HEADDIM_V = max(triton.next_power_of_2(d_v), 16)
+    grid = lambda META: (triton.cdiv(seqlen_q, META["BLOCK_M"]), batch * nheads)
+    _bwd_preprocess_do_o_dot[grid](
+        o,
+        do,
+        delta,
+        o.stride(0),
+        o.stride(2),
+        o.stride(1),
+        do.stride(0),
+        do.stride(2),
+        do.stride(1),
+        nheads,
+        seqlen_q,
+        seqlen_q_rounded,
+        d_v,
+        BLOCK_M=128,
+        BLOCK_HEADDIM_V=BLOCK_HEADDIM_V,
+    )
+
+    grid = lambda META: (
+        triton.cdiv(seqlen_k, META["BLOCK_N"]) if META["SEQUENCE_PARALLEL"] else 1,
+        batch * nheads,
+    )
+    _bwd_kernel[grid](
+        q,
+        k,
+        v,
+        do,
+        dq_accum,
+        dk,
+        dv,
+        lse,
+        delta,
+        softmax_scale,
+        q.stride(0),
+        q.stride(2),
+        q.stride(1),
+        k.stride(0),
+        k.stride(2),
+        k.stride(1),
+        v.stride(0),
+        v.stride(2),
+        v.stride(1),
+        do.stride(0),
+        do.stride(2),
+        do.stride(1),
+        dq_accum.stride(0),
+        dq_accum.stride(2),
+        dq_accum.stride(1),
+        dk.stride(0),
+        dk.stride(2),
+        dk.stride(1),
+        dv.stride(0),
+        dv.stride(2),
+        dv.stride(1),
+        nheads,
+        seqlen_q,
+        seqlen_k,
+        seqlen_q_rounded,
+        d,
+        d_v,
+        seqlen_q // 32,
+        seqlen_k // 32,
+        causal,
+        BLOCK_HEADDIM,
+        BLOCK_HEADDIM_V,
+    )
+    dq.copy_(dq_accum)
+
+
+class FlashAttnFunc(torch.autograd.Function):
+    @staticmethod
+    @torch.amp.custom_fwd(device_type="cuda")
+    def forward(ctx, q, k, v, causal=False, softmax_scale=None):
+        """
+        q: (batch_size, seqlen_q, nheads, headdim)
+        k: (batch_size, seqlen_k, nheads, headdim)
+        v: (batch_size, seqlen_k, nheads, headdim_v)  # headdim_v can be different from headdim
+        Returns: (batch_size, seqlen_q, nheads, headdim_v)
+        """
+        # Make sure that the last dimension is contiguous
+        q, k, v = [x if x.stride(-1) == 1 else x.contiguous() for x in [q, k, v]]
+        o, lse, ctx.softmax_scale = flash_attn_forward(q, k, v, causal=causal, softmax_scale=softmax_scale)
+        ctx.save_for_backward(q, k, v, o, lse)
+        ctx.causal = causal
+        return o
+
+    @staticmethod
+    @torch.amp.custom_bwd(device_type="cuda")
+    def backward(ctx, do):
+        q, k, v, o, lse = ctx.saved_tensors
+        # Triton's autotune causes the Tensor._version to change, and so Pytorch autograd
+        # does a memcpy. To avoid this we run in inference_mode, which doesn't track the version.
+        with torch.inference_mode():
+            dq = torch.empty_like(q)
+            dk = torch.empty_like(k)
+            dv = torch.empty_like(v)
+            flash_attn_backward(
+                do,  # [batch_size, seq_len_q, n_heads, headdim_v]
+                q,
+                k,
+                v,
+                o,
+                lse,
+                dq,
+                dk,
+                dv,
+                causal=ctx.causal,
+                softmax_scale=ctx.softmax_scale,
+            )
+        return dq, dk, dv, None, None, None
+
+
+class TopKSparseFusedDecode(torch.autograd.Function):
+    @staticmethod
+    @torch.amp.custom_fwd(device_type="cuda")
+    def forward(
+        ctx,
+        hidden_pre: torch.Tensor,
+        W_D: torch.Tensor,
+        b_D: torch.Tensor,
+        topk: int,
+        sparsity_include_decoder_norm: bool,
+    ) -> torch.Tensor:
+        d_sae = W_D.shape[0]
+
+        if sparsity_include_decoder_norm:
+            _, topk_indices = torch.topk(hidden_pre * W_D.norm(dim=-1), k=topk, dim=-1, sorted=False)
+            topk_values = torch.gather(hidden_pre, dim=1, index=topk_indices)
+        else:
+            topk_values, topk_indices = torch.topk(hidden_pre, k=topk, dim=-1, sorted=False)
+
+        feature_acts = torch.zeros_like(hidden_pre)
+        feature_acts.scatter_(dim=1, index=topk_indices, src=topk_values)
+
+        topk_indices_sorted, topk_values_sorted = sort_topk_result(topk_indices, topk_values)
+
+        feature_acts_sparse = build_sparse_csr_from_topk(topk_indices_sorted, topk_values_sorted, d_sae)
+
+        with torch.amp.autocast(device_type="cuda", enabled=False):
+            feature_acts_sparse = feature_acts_sparse.to(W_D.dtype)
+            output = torch.sparse.mm(feature_acts_sparse, W_D) + b_D
+
+        ctx.save_for_backward(
+            hidden_pre,
+            W_D,
+            b_D,
+            feature_acts_sparse,
+            topk_indices_sorted,
+            topk_values_sorted,
+        )
+
+        return output, feature_acts
+
+    @staticmethod
+    @torch.amp.custom_bwd(device_type="cuda")
+    def backward(
+        ctx,
+        grad_output: torch.Tensor,
+        grad_feature_acts_none: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, None, None]:
+        (
+            hidden_pre,
+            W_D,
+            b_D,
+            feature_acts_sparse,
+            topk_indices_sorted,
+            topk_values_sorted,
+        ) = ctx.saved_tensors
+
+        grad_hidden_pre = grad_W_D = grad_b_D = None
+
+        # grad_b_D
+        grad_b_D = grad_output.sum(dim=0)
+
+        # grad_W_D
+        feature_acts_sparse_T = feature_acts_sparse.to_sparse_coo().T
+
+        feature_acts_sparse_T = feature_acts_sparse_T.to_sparse_csr()
+
+        with torch.amp.autocast(device_type="cuda", enabled=False):
+            grad_W_D = torch.sparse.mm(feature_acts_sparse_T, grad_output)
+
+        grad_topk_values = masked_matmul(grad_output, W_D, topk_indices_sorted)
+
+        grad_hidden_pre = torch.zeros_like(hidden_pre, dtype=grad_topk_values.dtype)
+        grad_hidden_pre.scatter_(dim=1, index=topk_indices_sorted, src=grad_topk_values)
+
+        return grad_hidden_pre, grad_W_D, grad_b_D, None, None
+
+
+class DPTopKSparseFusedDecode(torch.autograd.Function):
+    @staticmethod
+    @torch.amp.custom_fwd(device_type="cuda")
+    def forward(
+        ctx,
+        hidden_pre: torch.Tensor,
+        W_D: torch.Tensor,
+        b_D: torch.Tensor,
+        topk: int,
+        sparsity_include_decoder_norm: bool,
+        device_mesh: DeviceMesh,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        hidden_pre_local, W_D_local, b_D_local = (
+            hidden_pre.to_local(),
+            W_D.to_local(),
+            b_D.to_local(),
+        )
+
+        d_sae = W_D_local.shape[0]
+
+        if sparsity_include_decoder_norm:
+            _, topk_indices_local = torch.topk(hidden_pre_local * W_D_local.norm(dim=-1), k=topk, dim=-1, sorted=False)
+            topk_values_local = torch.gather(hidden_pre_local, dim=1, index=topk_indices_local)
+        else:
+            topk_values_local, topk_indices_local = torch.topk(hidden_pre_local, k=topk, dim=-1, sorted=False)
+
+        feature_acts_local = torch.zeros_like(hidden_pre_local)
+        feature_acts_local.scatter_(dim=1, index=topk_indices_local, src=topk_values_local)
+
+        topk_indices_sorted_local, topk_values_sorted_local = sort_topk_result(topk_indices_local, topk_values_local)
+
+        feature_acts_sparse_local = build_sparse_csr_from_topk(
+            topk_indices_sorted_local, topk_values_sorted_local, d_sae
+        )
+
+        with torch.amp.autocast(device_type="cuda", enabled=False):
+            feature_acts_sparse_local = feature_acts_sparse_local.to(W_D_local.dtype)
+            output_local = torch.sparse.mm(feature_acts_sparse_local, W_D_local) + b_D_local
+
+        output = DTensor.from_local(output_local, device_mesh=device_mesh, placements=hidden_pre.placements)
+        feature_acts = DTensor.from_local(feature_acts_local, device_mesh=device_mesh, placements=hidden_pre.placements)
+
+        ctx.save_for_backward(
+            hidden_pre,
+            W_D,
+            b_D,
+            feature_acts_sparse_local,
+            topk_indices_sorted_local,
+            topk_values_sorted_local,
+        )
+        ctx.device_mesh = device_mesh
+
+        return output, feature_acts
+
+    @staticmethod
+    @torch.amp.custom_bwd(device_type="cuda")
+    def backward(
+        ctx,
+        grad_output: torch.Tensor,
+        grad_feature_acts_none: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, None, None, None]:
+        (
+            hidden_pre,
+            W_D,
+            b_D,
+            feature_acts_sparse_local,
+            topk_indices_sorted_local,
+            topk_values_sorted_local,
+        ) = ctx.saved_tensors
+        device_mesh = ctx.device_mesh
+
+        hidden_pre_local, W_D_local, grad_output_local = (
+            hidden_pre.to_local(),
+            W_D.to_local(),
+            grad_output.to_local(),
+        )
+
+        grad_hidden_pre_local = grad_W_D_local = grad_b_D_local = None
+
+        # grad_b_D
+        grad_b_D_local = grad_output_local.sum(dim=0)
+
+        # grad_W_D
+        feature_acts_sparse_T_local = feature_acts_sparse_local.to_sparse_coo().T
+        feature_acts_sparse_T_local = feature_acts_sparse_T_local.to_sparse_csr()
+
+        with torch.amp.autocast(device_type="cuda", enabled=False):
+            grad_W_D_local = torch.sparse.mm(feature_acts_sparse_T_local, grad_output_local)
+
+        grad_topk_values_local = masked_matmul(grad_output_local, W_D_local, topk_indices_sorted_local)
+
+        grad_hidden_pre_local = torch.zeros_like(hidden_pre_local, dtype=grad_topk_values_local.dtype)
+        grad_hidden_pre_local.scatter_(dim=1, index=topk_indices_sorted_local, src=grad_topk_values_local)
+
+        # Aggregate gradients across data parallel dimension
+        grad_b_D = DTensor.from_local(
+            grad_b_D_local.unsqueeze(-1),
+            device_mesh=device_mesh,
+            placements=DimMap({"data": 1}).placements(device_mesh),
+        )
+        grad_b_D = grad_b_D.sum(dim=1)
+
+        grad_W_D = DTensor.from_local(
+            grad_W_D_local.unsqueeze(-1),
+            device_mesh=device_mesh,
+            placements=DimMap({"data": 2, "model": 0}).placements(device_mesh),
+        )
+        grad_W_D = grad_W_D.sum(dim=2)
+
+        grad_hidden_pre = DTensor.from_local(
+            grad_hidden_pre_local,
+            device_mesh=device_mesh,
+            placements=hidden_pre.placements,
+        )
+
+        return grad_hidden_pre, grad_W_D, grad_b_D, None, None, None

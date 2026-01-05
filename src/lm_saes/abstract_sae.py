@@ -27,12 +27,14 @@ from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
+from torch.nn.attention import SDPBackend, sdpa_kernel
+import torch.nn.functional as F
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.config import BaseSAEConfig
 from lm_saes.database import MongoClient
-from lm_saes.kernels.entrypoints import topk_sae_sparse_fused
+from lm_saes.kernels.entrypoints import topk_sae_sparse_fused, topk_sparse_fused_decode
 from lm_saes.utils.distributed import DimMap, distributed_topk, item, mesh_dim_size
 from lm_saes.utils.huggingface import parse_pretrained_name_or_path
 from lm_saes.utils.logging import get_distributed_logger
@@ -683,6 +685,38 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 self.cfg.sparsity_include_decoder_norm,
                 self.device_mesh,
             )
+        elif (
+            self.cfg.sae_type == "lorsa"
+            and self.cfg.act_fn.lower() == "topk"
+            and (self.device_mesh is None or mesh_dim_size(self.device_mesh, "model") == 1)
+        ):
+            q, k, v = self._compute_qkv(x)
+            query = q.permute(0, 2, 1, 3)
+            key = k.permute(0, 2, 1, 3)
+            value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
+            with sdpa_kernel(
+                backends=[
+                    SDPBackend.FLASH_ATTENTION,
+                    SDPBackend.CUDNN_ATTENTION,
+                    SDPBackend.EFFICIENT_ATTENTION,
+                    SDPBackend.MATH,
+                ]
+            ):
+                z = F.scaled_dot_product_attention(
+                    query, key, value, scale=1 / self.attn_scale, is_causal=True, enable_gqa=True
+                )
+            hidden_pre = z.permute(0, 2, 1, 3).reshape(*v.shape)
+            hidden_pre_flattened = hidden_pre.reshape(-1, hidden_pre.shape[-1])
+            reconstructed_flattened, feature_acts_flattened = topk_sparse_fused_decode(
+                hidden_pre_flattened,
+                self.W_O,
+                self.b_D,
+                self.current_k,
+                self.cfg.sparsity_include_decoder_norm,
+                self.device_mesh,
+            )
+            reconstructed = reconstructed_flattened.reshape(*hidden_pre.shape[:2], -1)
+            feature_acts = feature_acts_flattened.reshape(*hidden_pre.shape[:2], -1)
         else:
             with timer.time("encode"):
                 feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)

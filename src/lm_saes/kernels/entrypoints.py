@@ -8,7 +8,10 @@ from torch.distributed.tensor import DTensor
 from lm_saes.utils.logging import get_distributed_logger
 
 from .kernels import (
+    DPTopKSparseFusedDecode,
     DPTopKSparseFusedSAE,
+    FlashAttnFunc,
+    TopKSparseFusedDecode,
     TopKSparseFusedSAE,
     TritonDecoderAutogradTopK,
     TritonEncoderAutogradDynamicK,
@@ -122,6 +125,51 @@ def topk_sae_sparse_fused(
         return DPTopKSparseFusedSAE.apply(x, W_E, b_E, W_D, b_D, k, sparsity_include_decoder_norm, device_mesh)  # type: ignore[return-value]
     else:
         return TopKSparseFusedSAE.apply(x, W_E, b_E, W_D, b_D, k, sparsity_include_decoder_norm)  # type: ignore[return-value]
+
+
+def topk_sparse_fused_decode(
+    hidden_pre: torch.Tensor,
+    W_D: torch.Tensor,
+    b_D: torch.Tensor,
+    topk: int,
+    sparsity_include_decoder_norm: bool,
+    device_mesh: DeviceMesh | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if device_mesh is None:
+        return TopKSparseFusedDecode.apply(hidden_pre, W_D, b_D, topk, sparsity_include_decoder_norm)
+    else:
+        return DPTopKSparseFusedDecode.apply(hidden_pre, W_D, b_D, topk, sparsity_include_decoder_norm, device_mesh)
+
+
+def topk_flash_attn(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    W_O: torch.Tensor,
+    b_O: torch.Tensor,
+    softmax_scale: float,
+    topk: int,
+    sparsity_include_decoder_norm: bool,
+    device_mesh: DeviceMesh | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    hidden_pre = FlashAttnFunc.apply(q, k, v, True, softmax_scale)
+    hidden_pre = hidden_pre.reshape(*q.shape[:2], -1).to(W_O.dtype)
+    hidden_pre_flattened = hidden_pre.reshape(-1, hidden_pre.shape[-1])
+    output_flattened, feature_acts_flattened = TopKSparseFusedDecode.apply(
+        hidden_pre_flattened, W_O, b_O, topk, sparsity_include_decoder_norm
+    )
+    output = output_flattened.reshape(*q.shape[:2], -1)
+    feature_acts = feature_acts_flattened.reshape(*q.shape[:2], -1)
+    return output, feature_acts, hidden_pre
+
+
+def flash_attn(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    softmax_scale: float,
+) -> torch.Tensor:
+    return FlashAttnFunc.apply(q, k, v, True, softmax_scale)
 
 
 if __name__ == "__main__":
