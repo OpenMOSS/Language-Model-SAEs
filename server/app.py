@@ -965,9 +965,8 @@ def get_dictionary(name: str):
     ).to_plotly_json()
 
     # Get alive feature count
+    # If no analysis exists under the default name, backend returns 0 (don't crash the endpoint).
     alive_feature_count = client.get_alive_feature_count(name, sae_series=sae_series)
-    if alive_feature_count is None:
-        return Response(content=f"SAE {name} not found", status_code=404)
 
     # Prepare and return response
     response_data = {

@@ -341,7 +341,10 @@ class MongoClient:
             },
             {"$count": "count"},
         ]
-        return self.feature_collection.aggregate(pipeline).next()["count"]
+        doc = next(self.feature_collection.aggregate(pipeline), None)
+        if doc is None:
+            return 0
+        return int(doc.get("count", 0))
 
     def get_max_feature_acts(self, sae_name: str, sae_series: str, name: str = "default") -> dict[int, int] | None:
         pipeline = [
