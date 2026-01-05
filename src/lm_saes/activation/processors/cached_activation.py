@@ -185,7 +185,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
         assert "mask" in data, f"Loading cached activation {chunk.path} error: missing 'mask' field"
         assert "attention_mask" in data, f"Loading cached activation {chunk.path} error: missing 'attention_mask' field"
 
-        return {
+        return_dict = {
             "hook_point": hook_point,
             "activation": data["activation"],
             "mask": data["mask"],
@@ -194,6 +194,10 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             "meta": data.get("meta"),
             "chunk_idx": chunk_idx,
         }
+        # 单卡时在 worker 中移动到 GPU；多卡时需要在主进程中移动（NCCL 通信要求）
+        if self.device_mesh is None:
+            return_dict = move_dict_of_tensor_to_device(return_dict, device=self.device)
+        return return_dict
 
     def _get_sorted_chunks(self, hook_point: str) -> list[ChunkInfo]:
         """Get sorted list of chunk files for a hook point.
@@ -286,7 +290,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             shuffle=False,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
-            pin_memory=True,
+            pin_memory=True if self.device_mesh is not None else False,
             collate_fn=first_data_collate_fn,
             sampler=DistributedSampler(
                 cached_activation_dataset,
@@ -303,9 +307,9 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             desc="Processing activation chunks",
             disable=not is_master(),
         ):
-            # Use all_gather_dict to gather chunk dicts from all ranks
-            data = move_dict_of_tensor_to_device(data, device=self.device)
             if self.device_mesh is not None:
+                # 多卡时在主进程中移动到 GPU（NCCL 通信要求张量在主进程中创建）
+                data = move_dict_of_tensor_to_device(data, device=self.device)
                 gathered = all_gather_dict(data, group=self.device_mesh.get_group("model"))
                 if mesh_dim_size(self.device_mesh, "sweep") > 1:
                     yield from (
