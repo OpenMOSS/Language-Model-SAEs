@@ -109,10 +109,11 @@ class FeatureAnalyzer:
                             raise ValueError(
                                 f"extra_batch_data[{ek!r}] must have dim>=2 with shape [batch, d_sae, ...], got {tuple(ev.shape)}"
                             )
-                        if ev.shape[0] != top_idx.shape[0] or ev.shape[1] != top_idx.shape[1]:
+                        # extra data should align with the *input batch* (not the top-k result)
+                        if ev.shape[0] != elt_cur.shape[0] or ev.shape[1] != elt_cur.shape[1]:
                             raise ValueError(
                                 f"extra_batch_data[{ek!r}] must have shape [batch, d_sae, ...] matching "
-                                f"feature_acts batch/d_sae ({tuple(top_idx.shape)}), got {tuple(ev.shape)}"
+                                f"feature_acts batch/d_sae ({tuple(elt_cur.shape)}), got {tuple(ev.shape)}"
                             )
                         # ev shape: [batch, d_sae, ...] or [batch, d_sae]
                         idx_view = top_idx.view(top_idx.shape + (1,) * (ev.dim() - 2))
