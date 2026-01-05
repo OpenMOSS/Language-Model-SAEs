@@ -173,8 +173,8 @@ class FeatureAnalyzer:
                 ),
                 **discrete_meta,
             }
-        if extra_batch_data:
-            batch_data.update(extra_batch_data)
+            if extra_batch_data:
+                batch_data.update(extra_batch_data)
 
             # Initialize or update sample collection
             if sample_result_cur is None:
@@ -191,14 +191,6 @@ class FeatureAnalyzer:
                 continue
 
             # Sort and keep top N samples
-            # print(sample_result_cur.keys())
-            # print(type(sample_result_cur['feature_acts']))
-            # for k in sample_result_cur.keys():
-            #     if isinstance(sample_result_cur[k], torch.Tensor):
-            #         print(f"{k} : {sample_result_cur[k].shape}")
-            #     else:
-            #         print(f"{k} : {sample_result_cur[k]}")
-            # print(sample_result_cur)
             sample_result_cur = sort_dict_of_tensor(
                 sample_result_cur, sort_dim=0, sort_key="elt", descending=True, device_mesh=device_mesh
             )
