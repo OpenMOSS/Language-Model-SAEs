@@ -60,7 +60,7 @@ class ActivationFactory:
         loader = HuggingFaceDatasetLoader(
             batch_size=1,
             with_info=True,
-            show_progress=True,
+            show_progress=False, # 禁用冗余的 Loading dataset 进度条
             num_workers=self.cfg.num_workers,
         )
 
