@@ -213,3 +213,4 @@ uv.lock
 
 mpgd_pytorch/
 dexter/
+core.*
