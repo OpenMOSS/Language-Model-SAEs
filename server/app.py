@@ -18,8 +18,8 @@ from pydantic import BaseModel
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend import LanguageModel
 from lm_saes.backend.language_model import TransformerLensLanguageModel
-from lm_saes.circuit.attribution import attribute
-from lm_saes.circuit.replacement_model import ReplacementModel
+from lm_saes.circuit.tracing.attribution import attribute
+from lm_saes.circuit.tracing.replacement_model import ReplacementModel
 from lm_saes.circuit.utils.create_graph_files import serialize_graph
 from lm_saes.circuit.utils.transcoder_set import TranscoderSet, TranscoderSetConfig
 from lm_saes.config import BaseSAEConfig, MongoDBConfig

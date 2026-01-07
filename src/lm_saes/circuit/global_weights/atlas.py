@@ -1,5 +1,5 @@
 import torch
-from lm_saes.analysis.global_weights.batched_features import BatchedFeatures, ConnectedFeatures
+from lm_saes.circuit.utils.batched_features import BatchedFeatures, ConnectedFeatures
 from dataclasses import dataclass
 from typing import List
 from lm_saes import MongoClient

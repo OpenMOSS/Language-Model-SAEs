@@ -33,12 +33,12 @@ from tqdm import tqdm
 from transformer_lens.hook_points import HookPoint
 
 from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.utils.logging import get_distributed_logger
 
-from ..utils.logging import get_distributed_logger
 from .graph import Graph
 from .replacement_model import ReplacementModel
-from .utils.attn_scores_attribution import compute_attn_scores_attribution
-from .utils.attribution_utils import (
+from ..utils.attn_scores_attribution import compute_attn_scores_attribution
+from ..utils.attribution_utils import (
     compute_partial_influences,
     compute_salient_logits,
     ensure_tokenized,
@@ -47,8 +47,9 @@ from .utils.attribution_utils import (
     select_scaled_decoder_vecs_lorsa,
     select_scaled_decoder_vecs_transcoder,
 )
-from .utils.disk_offload import offload_modules
-from .utils.transcoder_set import TranscoderSet
+from ..utils.disk_offload import offload_modules
+from ..utils.transcoder_set import TranscoderSet
+from ..utils.batched_features import BatchedFeatures
 
 logger = get_distributed_logger("attribution")
 
@@ -293,6 +294,7 @@ class AttributionContext:
 
         # Error nodes
         def error_offset(layer: int) -> int:  # starting row for this layer
+            # Only skip feature activations. Attn error goes right after them.
             return activation_matrix._nnz() + clt_offset + layer * n_pos
 
         error_hooks = [
@@ -542,6 +544,7 @@ def attribute(
     sae_series: Optional[Union[str, List[str]]] = None,
     use_lorsa: bool = True,
     qk_tracing_topk: int = 10,
+    target_features: BatchedFeatures | None = None
 ) -> Graph:
     """Compute an attribution graph for *prompt*.
 
@@ -564,20 +567,35 @@ def attribute(
 
     offload_handles = []
     try:
-        return _run_attribution(
-            model=model,
-            prompt=prompt,
-            max_n_logits=max_n_logits,
-            desired_logit_prob=desired_logit_prob,
-            batch_size=batch_size,
-            max_feature_nodes=max_feature_nodes,
-            offload=offload,
-            offload_handles=offload_handles,
-            update_interval=update_interval,
-            sae_series=sae_series,
-            use_lorsa=use_lorsa,
-            qk_tracing_topk=qk_tracing_topk,
-        )
+        if target_features is None:
+            return _run_attribution(
+                model=model,
+                prompt=prompt,
+                max_n_logits=max_n_logits,
+                desired_logit_prob=desired_logit_prob,
+                batch_size=batch_size,
+                max_feature_nodes=max_feature_nodes,
+                offload=offload,
+                offload_handles=offload_handles,
+                update_interval=update_interval,
+                sae_series=sae_series,
+                use_lorsa=use_lorsa,
+                qk_tracing_topk=qk_tracing_topk,
+            )
+        else:
+            return _run_attribution_target_features(
+                model=model,
+                prompt=prompt,
+                target_features=target_features,
+                batch_size=batch_size,
+                max_feature_nodes=max_feature_nodes,
+                offload=offload,
+                offload_handles=offload_handles,
+                update_interval=update_interval,
+                sae_series=sae_series,
+                use_lorsa=use_lorsa,
+                qk_tracing_topk=qk_tracing_topk,
+            )
     finally:
         for reload_handle in offload_handles:
             reload_handle()
@@ -612,9 +630,7 @@ def _run_attribution(
         error_vecs,
         token_vecs,
     ) = model.setup_attribution(input_ids, sparse=True)
-    # we do not run forward passes in setup_attribution. Just assign some zero-inited tensors and set hooks for them
-    # they only have informative values set in Phase 1: forward pass later
-    print(logits[0, -1].softmax(-1).argmax(), logits[0, -1].softmax(-1).max())
+
     lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas) if use_lorsa else None
     lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = (
         select_encoder_rows_lorsa(lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, model.lorsas)
@@ -688,8 +704,8 @@ def _run_attribution(
     max_feature_nodes = min(max_feature_nodes or total_active_feats, total_active_feats)
     logger.info(f"Will include {max_feature_nodes} of {total_active_feats} feature nodes")
 
-    edge_matrix = torch.zeros(max_feature_nodes + n_logits, total_nodes)
-    # if use_lorsa:
+    edge_matrix = torch.zeros(n_logits + max_feature_nodes, total_nodes)
+
     lorsa_pattern = torch.zeros(max_feature_nodes + n_logits, n_pos)
     z_pattern = torch.zeros(max_feature_nodes + n_logits, n_pos)
     # Maps row indices in edge_matrix to original feature/node indices

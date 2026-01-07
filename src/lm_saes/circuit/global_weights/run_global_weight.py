@@ -7,7 +7,7 @@ import os
 from tqdm import tqdm
 from jaxtyping import Float, Bool
 from exp.global_weights.batch_saver import create_dataloader
-from lm_saes.analysis.global_weights.batched_features import BatchedFeatures
+from lm_saes.circuit.utils.batched_features import BatchedFeatures
 from lm_saes.analysis.global_weights.atlas import Atlas
 import json
 

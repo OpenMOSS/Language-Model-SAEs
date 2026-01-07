@@ -14,7 +14,7 @@ from lm_saes.config import LanguageModelConfig
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_model
 
-from .utils.transcoder_set import TranscoderSet
+from ..utils.transcoder_set import TranscoderSet
 
 # Type definition for transcoders: per-layer (dict) or cross-layer (CLT)
 TranscoderType = TranscoderSet | CrossLayerTranscoder

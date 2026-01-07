@@ -3,8 +3,8 @@ import torch
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 
 from lm_saes import CLTConfig, CrossLayerTranscoder, LorsaConfig, LowRankSparseAttention, ReplacementModel
-from lm_saes.circuit.attribution import attribute
-from lm_saes.circuit.graph import compute_influence, normalize_matrix
+from lm_saes.circuit.tracing.attribution import attribute
+from lm_saes.circuit.tracing.graph import compute_influence, normalize_matrix
 
 
 class TestAttribution:

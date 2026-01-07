@@ -34,10 +34,8 @@ class BatchedFeatures:
     def to_str_nodes(self):
         nodes = []
         for i in range(len(self)):
-            if self.is_lorsa[i]:
-                nodes.append(f"L{self.layer[i].item()}A#{self.index[i].item()}")
-            else:
-                nodes.append(f"L{self.layer[i].item()}M#{self.index[i].item()}")
+            sublayer_tag = "A" if self.is_lorsa[i] else "M"
+            nodes.append(f"L{self.layer[i].item()}{sublayer_tag}#{self.index[i].item()}")
         return nodes
     
     @classmethod
@@ -95,3 +93,4 @@ class ConnectedFeatures:
             upstream_values=self.upstream_values[upstream_indices],
             downstream_values=self.downstream_values[downstream_indices],
         )
+

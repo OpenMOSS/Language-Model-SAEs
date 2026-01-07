@@ -9,9 +9,9 @@ from transformer_lens import HookedTransformer
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
-from lm_saes.circuit.attribution import attribute
-from lm_saes.circuit.graph import Graph, compute_influence, normalize_matrix
-from lm_saes.circuit.replacement_model import ReplacementModel
+from lm_saes.circuit.tracing.attribution import attribute
+from lm_saes.circuit.tracing.graph import Graph, compute_influence, normalize_matrix
+from lm_saes.circuit.tracing.replacement_model import ReplacementModel
 from lm_saes.config import EvalConfig, GraphEvalConfig
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.metrics import (

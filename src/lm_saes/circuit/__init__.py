@@ -1,4 +1,3 @@
-from .attribution import attribute
-from .replacement_model import ReplacementModel
+from .tracing import ReplacementModel, attribute
 
 __all__ = ["ReplacementModel", "attribute"]

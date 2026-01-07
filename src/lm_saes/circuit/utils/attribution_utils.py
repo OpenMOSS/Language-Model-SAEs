@@ -8,6 +8,8 @@ from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.lorsa import LowRankSparseAttention
 
 from .transcoder_set import TranscoderSet
+from .batched_features import BatchedFeatures
+
 
 # Type definition for transcoders: per-layer (dict) or cross-layer (CLT)
 TranscoderType = TranscoderSet | CrossLayerTranscoder
@@ -152,3 +154,43 @@ def ensure_tokenized(prompt: Union[str, torch.Tensor, List[int]], tokenizer) -> 
     if isinstance(prompt, list):
         return torch.tensor(prompt, dtype=torch.long)
     raise TypeError(f"Unsupported prompt type: {type(prompt)}")
+
+
+def get_target_feature_indices(
+    target_features: BatchedFeatures,
+    transcoder_activation_matrix: torch.sparse.Tensor,
+    lorsa_activation_matrix: torch.sparse.Tensor | None = None,
+    is_clt: bool = False,
+) -> torch.Tensor:
+    def _get_layer_spans_for_per_layer_replacement_layers(activation_matrix):
+        n_layers, n_pos, _ = activation_matrix.shape
+        nnz_layers, nnz_positions, _ = activation_matrix.indices()
+
+        # Map each layer → slice in flattened active-feature list
+        _, counts = torch.unique_consecutive(nnz_layers, return_counts=True)
+        edges = [0] + counts.cumsum(0).tolist()
+        layer_spans = list(zip(edges[:-1], edges[1:]))
+        return layer_spans
+    
+    def _get_layer_spans_cross_layer_transcoder(target_features):
+        raise NotImplementedError("Cross-layer transcoder attribution is not implemented yet")
+    
+    if is_clt:
+        transcoder_layer_spans = _get_layer_spans_cross_layer_transcoder(transcoder_activation_matrix)
+    else:
+        transcoder_layer_spans _get_layer_spans_for_per_layer_replacement_layers(transcoder_activation_matrix)
+
+    if lorsa_activation_matrix is not None:
+        lorsa_layer_spans = _get_layer_spans_for_per_layer_replacement_layers(lorsa_activation_matrix)
+    else:
+        lorsa_layer_spans = None
+    
+    for feature in target_features:
+        if feature.is_lorsa:
+            layer_spans = lorsa_layer_spans
+        else:
+            layer_spans = transcoder_layer_spans
+        for layer, (start, end) in enumerate(layer_spans):
+            if start != end:
+                yield layer, start, end
+

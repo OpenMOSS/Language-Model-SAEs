@@ -5,9 +5,9 @@ import torch
 from jaxtyping import Float
 from tqdm import tqdm
 
-from lm_saes.circuit.replacement_model import ReplacementModel
+from lm_saes.circuit.tracing.replacement_model import ReplacementModel
 from lm_saes import CrossLayerTranscoder
-from lm_saes.analysis.global_weights.batched_features import BatchedFeatures, ConnectedFeatures
+from lm_saes.circuit.utils.batched_features import BatchedFeatures, ConnectedFeatures
 
 
 def init_empty_coo_tensor(size, device):

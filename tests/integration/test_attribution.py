@@ -4,8 +4,8 @@ import pytest
 import torch
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 
-from lm_saes.circuit.attribution import AttributionContext, attribute, compute_salient_logits
-from lm_saes.circuit.replacement_model import ReplacementModel
+from lm_saes.circuit.tracing.attribution import AttributionContext, attribute, compute_salient_logits
+from lm_saes.circuit.tracing.replacement_model import ReplacementModel
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import CLTConfig
 

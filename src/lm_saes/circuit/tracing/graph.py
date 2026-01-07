@@ -3,7 +3,7 @@ from typing import List, NamedTuple, Optional, Union
 import torch
 from transformer_lens import HookedTransformerConfig
 
-from .utils.attn_scores_attribution import QKTracingResults
+from ..utils.attn_scores_attribution import QKTracingResults
 
 
 class Graph:
