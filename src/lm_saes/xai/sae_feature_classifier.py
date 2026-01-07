@@ -74,18 +74,18 @@ class SAEFeatureClassifier(nn.Module):
             device=device_str,
             dtype=str(self.dtype),
         )
-        self.dino_lm = dinov3(lm_cfg)
-        self.dino_lm.model.eval()
-        # Do not explicitly set requires_grad_(False) here to avoid issues with some autograd path optimizations
-        # instead we rely on not calling optimizer.step() and input.requires_grad=True.
+        _dino_lm = dinov3(lm_cfg)
+        # Register the actual DINO model as a submodule so pytorch-grad-cam can find its layers
+        self.dino_backbone = _dino_lm.model
+        self.dino_backbone.eval()
 
-        # Load CNNSAE
+        # Load CNNSAE and register as submodule
         sae_cfg = CNNSAEConfig.from_pretrained(sae_path, device=device_str, dtype=self.dtype)
         self.sae = CNNSparseAutoEncoder.from_config(sae_cfg)
         self.sae.eval()
 
         # Hook capture
-        modules = dict(self.dino_lm.model.named_modules())
+        modules = dict(self.dino_backbone.named_modules())
         if hook_point not in modules:
             raise KeyError(f"hook_point not found in DINO model: {hook_point}")
         self._hook_point = hook_point
@@ -210,7 +210,7 @@ class SAEFeatureClassifier(nn.Module):
         with torch.set_grad_enabled(True):
             img_norm = self._preprocess(img_m11)
             self._captured = None
-            _ = self.dino_lm.model(img_norm)
+            _ = self.dino_backbone(img_norm)
             acts_hw = self._captured
             if acts_hw is None:
                 raise RuntimeError(f"failed to capture activation at hook_point={self._hook_point}")
@@ -237,26 +237,42 @@ class SAEFeatureClassifier(nn.Module):
     def list_candidate_layers(self, prefix: str = "") -> List[str]:
         """
         Return names of modules in the DINO model that can be used as CAM target layers.
+        Names are prefixed with 'dino_backbone.' so they match the module hierarchy.
         """
         names = []
-        for name, module in self.dino_lm.model.named_modules():
+        for name, module in self.dino_backbone.named_modules():
             if prefix and not name.startswith(prefix):
                 continue
             # Heuristic: only keep modules with parameters or HookPoints
             if list(module.children()) or any(p.requires_grad for p in module.parameters(recurse=False)):
-                names.append(name)
+                # Return full path for pytorch-grad-cam to find
+                names.append(f"dino_backbone.{name}" if name else "dino_backbone")
         return names
 
     def resolve_target_layers(self, names: Iterable[str]) -> List[nn.Module]:
         """
         Given module names, resolve them to modules for pytorch-grad-cam.
+        Names can be either:
+        - Short names within DINO (e.g. 'stages.2.20.hook_resid_pre')
+        - Full paths in SAEFeatureClassifier (e.g. 'dino_backbone.stages.2.20.hook_resid_pre')
         """
-        name_to_module = dict(self.dino_lm.model.named_modules())
+        # Build lookup from both short (DINO-internal) and full (SAEFeatureClassifier) paths
+        dino_modules = dict(self.dino_backbone.named_modules())
+        full_modules = dict(self.named_modules())
+        
         layers: List[nn.Module] = []
         for n in names:
-            if n not in name_to_module:
-                raise KeyError(f"target layer not found in DINO model: {n}")
-            layers.append(name_to_module[n])
+            n = n.strip()
+            if not n:
+                continue
+            # Try full path first (e.g. 'dino_backbone.stages.2.20')
+            if n in full_modules:
+                layers.append(full_modules[n])
+            # Then try short path (e.g. 'stages.2.20')
+            elif n in dino_modules:
+                layers.append(dino_modules[n])
+            else:
+                raise KeyError(f"target layer not found: {n}. Use --list_layers to see available modules.")
         if not layers:
             raise ValueError("No target layers resolved. Please provide at least one valid module name.")
         return layers
