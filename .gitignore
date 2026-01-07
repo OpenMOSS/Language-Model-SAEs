@@ -216,3 +216,5 @@ dexter/
 core.*
 
 diffexplainer/out_sae_feature
+
+*.png
