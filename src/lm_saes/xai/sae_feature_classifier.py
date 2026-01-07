@@ -76,15 +76,13 @@ class SAEFeatureClassifier(nn.Module):
         )
         self.dino_lm = dinov3(lm_cfg)
         self.dino_lm.model.eval()
-        for p in self.dino_lm.model.parameters():
-            p.requires_grad_(False)
+        # Do not explicitly set requires_grad_(False) here to avoid issues with some autograd path optimizations
+        # instead we rely on not calling optimizer.step() and input.requires_grad=True.
 
         # Load CNNSAE
         sae_cfg = CNNSAEConfig.from_pretrained(sae_path, device=device_str, dtype=self.dtype)
         self.sae = CNNSparseAutoEncoder.from_config(sae_cfg)
         self.sae.eval()
-        for p in self.sae.parameters():
-            p.requires_grad_(False)
 
         # Hook capture
         modules = dict(self.dino_lm.model.named_modules())
@@ -208,24 +206,30 @@ class SAEFeatureClassifier(nn.Module):
         Returns:
             logits: [B, d_sae] SAE feature activations (post spatial reduction).
         """
-        img_norm = self._preprocess(img_m11)
-        self._captured = None
-        _ = self.dino_lm.model(img_norm)
-        acts_hw = self._captured
-        if acts_hw is None:
-            raise RuntimeError(f"failed to capture activation at hook_point={self._hook_point}")
+        # Ensure gradients are enabled for this pass
+        with torch.set_grad_enabled(True):
+            img_norm = self._preprocess(img_m11)
+            self._captured = None
+            _ = self.dino_lm.model(img_norm)
+            acts_hw = self._captured
+            if acts_hw is None:
+                raise RuntimeError(f"failed to capture activation at hook_point={self._hook_point}")
 
-        acts_seq = rearrange(acts_hw, "b d h w -> b (h w) d")
-        batch = {self.sae.cfg.hook_point_in: acts_seq}
-        x_sae, encoder_kwargs, _ = self.sae.prepare_input(batch)
-        _, feature_acts = self.sae.encode(x_sae, return_hidden_pre=True, **encoder_kwargs)  # [B, seq, d_sae]
+            # Check if captured activation has gradients
+            # if not acts_hw.requires_grad:
+            #    print(f"Warning: Activation at {self._hook_point} does not require grad!")
 
-        # reshape to [B, d_sae, h, w]
-        _, _, h, w = acts_hw.shape
-        feats_bdhw = feature_acts.permute(0, 2, 1).contiguous().view(feature_acts.shape[0], feature_acts.shape[2], h, w)
-        mask_hw = self._center_mask(h, w, device=feats_bdhw.device)
-        logits = self._reduce_feats(feats_bdhw, mask_hw, step_idx=step_idx, num_steps=num_steps)
-        return logits
+            acts_seq = rearrange(acts_hw, "b d h w -> b (h w) d")
+            batch = {self.sae.cfg.hook_point_in: acts_seq}
+            x_sae, encoder_kwargs, _ = self.sae.prepare_input(batch)
+            _, feature_acts = self.sae.encode(x_sae, return_hidden_pre=True, **encoder_kwargs)  # [B, seq, d_sae]
+
+            # reshape to [B, d_sae, h, w]
+            _, _, h, w = acts_hw.shape
+            feats_bdhw = feature_acts.permute(0, 2, 1).contiguous().view(feature_acts.shape[0], feature_acts.shape[2], h, w)
+            mask_hw = self._center_mask(h, w, device=feats_bdhw.device)
+            logits = self._reduce_feats(feats_bdhw, mask_hw, step_idx=step_idx, num_steps=num_steps)
+            return logits
 
     # ------------------------------------------------------------------ #
     # Target layer helpers for CAM
