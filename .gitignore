@@ -218,3 +218,5 @@ core.*
 diffexplainer/out_sae_feature
 
 *.png
+
+src/.DS_Store
