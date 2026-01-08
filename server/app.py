@@ -17,6 +17,8 @@ from datasets import Dataset
 from fastapi import Body, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+import sys
+sys.path.append("pytorch-grad-cam")
 
 try:
     from torchvision import transforms
@@ -614,7 +616,7 @@ def get_feature(
             dict: Processed sample data
         """  # Get model and dataset
         # print(f"{sparse_feature_acts=}")
-        # model = get_model(model_name)
+        model = get_model(model_name)
         # model = None
         # print("get_data")
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
