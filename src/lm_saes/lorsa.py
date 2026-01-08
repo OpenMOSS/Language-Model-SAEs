@@ -903,13 +903,15 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for lorsa")
 
     @override
-    def load_full_state_dict(self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh | None = None) -> None:
+    def load_full_state_dict(self, state_dict: dict[str, torch.Tensor], strict: bool = True) -> None:
         # Extract and set dataset_average_activation_norm if present
         norm_keys = [k for k in state_dict.keys() if k.startswith("dataset_average_activation_norm.")]
+
         if norm_keys:
             dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
             self.set_dataset_average_activation_norm(dataset_norm)
             state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
+
         ckpt_n_qk_heads = state_dict["W_Q"].size(0)
         if self.cfg.n_qk_heads != ckpt_n_qk_heads:
             assert self.cfg.n_qk_heads % ckpt_n_qk_heads == 0
@@ -919,29 +921,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             if self.cfg.use_post_qk_ln:
                 for k in ["ln_q.w", "ln_k.w"]:
                     state_dict[k] = torch.repeat_interleave(state_dict[k], qk_exp_factor, dim=0)
-        if device_mesh is None:
-            # Non-distributed checkpoint or DCP checkpoint
-            # Load the state dict through torch API
-            self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
-        else:
-            for k, v in state_dict.items():
-                if not isinstance(v, DTensor):
-                    state_dict[k] = DimMap({}).distribute(v, device_mesh)
-            # Full checkpoint (in .safetensors or .pt format) to be loaded distributedly
-            self.load_distributed_state_dict(state_dict, device_mesh)
 
-    @override
-    def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
-        self.device_mesh = device_mesh
-        for name in ["W_Q", "W_K", "W_V", "W_O", "b_Q", "b_K", "b_V", "b_D"]:
-            self.register_parameter(name, nn.Parameter(state_dict[f"{prefix}{name}"].to(getattr(self, name).dtype)))
-
-        if self.cfg.use_post_qk_ln:
-            self.ln_q.register_parameter("w", nn.Parameter(state_dict[f"{prefix}ln_q.w"].to(self.ln_q.w.dtype)))
-            self.ln_k.register_parameter("w", nn.Parameter(state_dict[f"{prefix}ln_k.w"].to(self.ln_k.w.dtype)))
+        self.load_state_dict(state_dict, strict=strict)
 
     @classmethod
     def from_pretrained(
@@ -1024,9 +1005,7 @@ class RMSNormPerHead(nn.Module):
     def forward(self, x: Float[torch.Tensor, "batch pos length"]) -> Float[torch.Tensor, "batch pos length"]:
         if self.cfg.dtype not in [torch.float32, torch.float64]:
             x = x.to(torch.float32)
-        scale: Float[torch.Tensor, "batch pos 1"] = self.hook_scale(
-            (x.pow(2).mean(-1, keepdim=True) + self.eps).sqrt()
-        )
+        scale: Float[torch.Tensor, "batch pos 1"] = self.hook_scale((x.pow(2).mean(-1, keepdim=True) + self.eps).sqrt())
         x = x / scale * self.w
         x = self.hook_normalized(x.to(self.cfg.dtype))  # [batch, pos, length]
         return x
