@@ -6,6 +6,7 @@ from typing import Annotated, Any, Callable, Iterable, Literal, Tuple
 
 import torch
 import torch.distributed.checkpoint as dcp
+import torch.distributed.tensor
 import torch.optim.lr_scheduler as lr_scheduler
 from pydantic import (
     BeforeValidator,
@@ -73,6 +74,9 @@ class TrainerConfig(BaseConfig):
     k_cold_booting_steps: int | float = 0
     k_schedule_type: Literal["linear", "exponential"] = "linear"
     k_exponential_factor: float = 3.0
+    auxk_coefficient: float = 0.0
+    k_aux: int = 512
+    dead_threshold: float = 10_000_000
     skip_metrics_calculation: bool = False
     gradient_accumulation_steps: int = 1
 
@@ -140,6 +144,9 @@ class Trainer:
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
         self.metrics: list[Metric] = []
+        # Dead statistics for auxk loss
+        self.tokens_since_last_activation: Tensor | None = None
+        self.is_dead: Tensor | None = None
 
     def save_checkpoint(self, sae: AbstractSparseAutoEncoder, checkpoint_path: Path | str) -> None:
         """
@@ -389,6 +396,71 @@ class Trainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
+    def _initialize_dead_statistics(self, sae: AbstractSparseAutoEncoder) -> None:
+        """Initialize the dead statistics tracking variables for auxk loss.
+
+        Args:
+            sae: The sparse autoencoder model to get the d_sae dimension from.
+        """
+        if sae.device_mesh is None:
+            self.tokens_since_last_activation = torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=torch.long)
+            self.is_dead = torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=torch.bool)
+        else:
+            from lm_saes.utils.distributed import DimMap
+
+            self.tokens_since_last_activation = torch.distributed.tensor.zeros(
+                sae.cfg.d_sae,
+                dtype=torch.long,
+                device_mesh=sae.device_mesh,
+                placements=DimMap({"model": 0}).placements(sae.device_mesh),
+            )
+            self.is_dead = torch.distributed.tensor.zeros(
+                sae.cfg.d_sae,
+                dtype=torch.bool,
+                device_mesh=sae.device_mesh,
+                placements=DimMap({"model": 0}).placements(sae.device_mesh),
+            )
+
+    @torch.no_grad()
+    def update_dead_statistics(self, feature_acts: Tensor) -> Tensor:
+        """Update the dead latents tracking based on current feature activations.
+
+        Args:
+            feature_acts: Feature activations tensor of shape (batch, d_sae) or (batch, seq_len, d_sae)
+
+        Returns:
+            is_dead: Boolean tensor indicating which features are dead.
+        """
+        assert self.tokens_since_last_activation is not None, (
+            "tokens_since_last_activation must be initialized before calling update_dead_statistics"
+        )
+        assert self.is_dead is not None, "is_dead must be initialized before calling update_dead_statistics"
+
+        # Calculate batch size (number of tokens in this batch)
+        if feature_acts.dim() == 3:  # (batch, seq_len, d_sae)
+            batch_size = feature_acts.size(0) * feature_acts.size(1)  # batch * seq_len
+        else:  # (batch, d_sae)
+            batch_size = feature_acts.size(0)  # batch
+
+        # Check which features were activated in this batch
+        if feature_acts.dim() == 3:  # (batch, seq_len, d_sae)
+            activated = feature_acts.gt(0).any(dim=(0, 1))  # (d_sae,)
+        else:  # (batch, d_sae)
+            activated = feature_acts.gt(0).any(dim=0)  # (d_sae,)
+
+        # Update tokens since last activation
+        # If a feature was activated, reset to 0; otherwise, add batch_size
+        self.tokens_since_last_activation = torch.where(
+            activated,
+            torch.zeros_like(self.tokens_since_last_activation),
+            self.tokens_since_last_activation + batch_size,
+        )
+
+        # Mark as dead if tokens since last activation exceeds threshold
+        self.is_dead = self.tokens_since_last_activation >= self.cfg.dead_threshold
+
+        return self.is_dead
+
     @timer.time("training_step")
     def _training_step(
         self,
@@ -440,6 +512,8 @@ class Trainer:
             lp_coefficient=lp_coefficient,
             auxk_coefficient=auxk_coefficient,
             frequency_scale=self.cfg.frequency_scale,
+            k_aux=self.cfg.k_aux,
+            update_dead_statistics=self.update_dead_statistics if auxk_coefficient > 0.0 else None,
         )
         return ctx
 
@@ -521,6 +595,10 @@ class Trainer:
             logger.info("Initializing trainer and optimizer")
             self._initialize_trainer(sae, activation_stream, wandb_logger)
             self._initialize_optimizer(sae)
+
+        # Initialize dead statistics for auxk loss
+        if self.cfg.auxk_coefficient is not None and self.cfg.auxk_coefficient > 0.0:
+            self._initialize_dead_statistics(sae)
 
         assert self.optimizer is not None and self.scheduler is not None, (
             "Optimizer and scheduler should be already initialized"

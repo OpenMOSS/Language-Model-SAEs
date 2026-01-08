@@ -24,7 +24,6 @@ import torch.distributed.checkpoint as dcp
 import torch.distributed.tensor
 from huggingface_hub import create_repo, hf_hub_download, snapshot_download, upload_folder
 from jaxtyping import Float
-from pydantic import model_validator
 from safetensors import safe_open
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.distributed.device_mesh import DeviceMesh
@@ -143,30 +142,6 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     jumprelu_threshold_window: float = 2.0
     """The window size for the JumpReLU threshold. When pre-activations are element-wise in the window-neighborhood of the threshold, the threshold will begin to receive gradient. See [Anthropic's Circuits Update - January 2025](https://transformer-circuits.pub/2025/january-update/index.html#DL) for more details on how JumpReLU is optimized (where they refer to this window as :math:`\\epsilon`)."""
 
-    use_auxk: bool = False
-    """Whether to use AuxK auxiliary loss. If True, AuxK will be used if `act_fn` is `topk`."""
-
-    k_aux: int | None = None
-    """The k value to use for the AuxK auxiliary loss."""
-
-    dead_threshold: float | None = None
-
-    @model_validator(mode="after")
-    def validate_auxk_config(self) -> Self:
-        """Validate AuxK configuration.
-
-        Raises:
-            ValueError: If use_auxk is True but act_fn is not 'topk', or if k_aux is None.
-        """
-        if self.use_auxk:
-            if self.act_fn != "topk":
-                raise ValueError(f"use_auxk=True requires act_fn='topk', but got act_fn='{self.act_fn}'")
-            if self.k_aux is None:
-                raise ValueError("use_auxk=True requires k_aux to be set, but got k_aux=None")
-            if self.dead_threshold is None:
-                raise ValueError("use_auxk=True requires dead_threshold to be set, but got dead_threshold=None")
-        return self
-
     @property
     def d_sae(self) -> int:
         """The hidden dimension of the sparse dictionary. Calculated as `d_model * expansion_factor`."""
@@ -240,32 +215,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         self.device_mesh: DeviceMesh | None = device_mesh
 
         self.activation_function: Callable[[torch.Tensor], torch.Tensor] = self.activation_function_factory(device_mesh)
-
-        if self.cfg.use_auxk:
-            if device_mesh is None:
-                self.register_buffer(
-                    "tokens_since_last_activation", torch.zeros(self.cfg.d_sae, device=cfg.device, dtype=torch.long)
-                )
-                self.register_buffer("is_dead", torch.zeros(self.cfg.d_sae, device=cfg.device, dtype=torch.bool))
-            else:
-                self.register_buffer(
-                    "tokens_since_last_activation",
-                    torch.distributed.tensor.zeros(
-                        self.cfg.d_sae,
-                        dtype=torch.long,
-                        device_mesh=device_mesh,
-                        placements=self.dim_maps()["tokens_since_last_activation"].placements(device_mesh),
-                    ),
-                )
-                self.register_buffer(
-                    "is_dead",
-                    torch.distributed.tensor.zeros(
-                        self.cfg.d_sae,
-                        dtype=torch.bool,
-                        device_mesh=device_mesh,
-                        placements=self.dim_maps()["is_dead"].placements(device_mesh),
-                    ),
-                )
 
     @torch.no_grad()
     def set_dataset_average_activation_norm(self, dataset_average_activation_norm: dict[str, float]):
@@ -867,6 +816,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         l1_coefficient: float = 1.0,
         lp_coefficient: float = 0.0,
         auxk_coefficient: float = 0.0,
+        k_aux: int = 512,
+        update_dead_statistics: Callable[[torch.Tensor], torch.Tensor] | None = None,
         return_aux_data: Literal[True] = True,
         **kwargs,
     ) -> dict[str, Any]: ...
@@ -882,6 +833,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         l1_coefficient: float = 1.0,
         lp_coefficient: float = 0.0,
         auxk_coefficient: float = 0.0,
+        k_aux: int = 512,
+        update_dead_statistics: Callable[[torch.Tensor], torch.Tensor] | None = None,
         return_aux_data: Literal[False],
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
@@ -905,6 +858,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         l1_coefficient: float = 1.0,
         lp_coefficient: float = 0.0,
         auxk_coefficient: float = 0.0,
+        k_aux: int = 512,
+        update_dead_statistics: Callable[[torch.Tensor], torch.Tensor] | None = None,
         return_aux_data: bool = True,
         **kwargs,
     ) -> Union[
@@ -922,9 +877,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             feature_acts, hidden_pre = self.encode(x, return_hidden_pre=True, **encoder_kwargs)
         with timer.time("decode"):
             reconstructed = self.decode(feature_acts, **decoder_kwargs)
-
-        if self.cfg.use_auxk:
-            self.update_dead_statistics(feature_acts)
 
         with timer.time("loss_calculation"):
             l_rec = (reconstructed - label).pow(2).sum(dim=-1)
@@ -986,25 +938,29 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 loss_dict["l_p"] = None
 
             # Add AuxK auxiliary loss if enabled
-            if self.cfg.use_auxk:
-                assert self.cfg.k_aux is not None, "k_aux must be set when use_auxk is True"
+            if auxk_coefficient > 0.0:
+                assert update_dead_statistics is not None, (
+                    "update_dead_statistics must be set when auxk_coefficient > 0.0"
+                )
+                is_dead = update_dead_statistics(feature_acts)
+
                 with timer.time("auxk_loss_calculation"):
                     # Get reconstruction error
                     e = label - reconstructed  # (batch, d_model) or (batch, seq_len, d_model)
 
                     # Get the top-k_aux dead latents based on their activation values
                     current_k = self.current_k
-                    if isinstance(self.is_dead, DTensor):
-                        self.current_k = min(self.cfg.k_aux, int(item(self.is_dead.full_tensor().sum())))
+                    if isinstance(is_dead, DTensor):
+                        self.current_k = min(k_aux, int(item(is_dead.full_tensor().sum())))
                     else:
-                        self.current_k = min(self.cfg.k_aux, int(item(self.is_dead.sum())))
+                        self.current_k = min(k_aux, int(item(is_dead.sum())))
 
                     if self.current_k > 0:
                         # Scale feature activations by decoder norm if configured
                         if self.cfg.sparsity_include_decoder_norm:
-                            dead_hidden_pre = hidden_pre * self.is_dead * self.decoder_norm()
+                            dead_hidden_pre = hidden_pre * is_dead * self.decoder_norm()
                         else:
-                            dead_hidden_pre = hidden_pre * self.is_dead
+                            dead_hidden_pre = hidden_pre * is_dead
 
                         dead_feature_acts = self.activation_function(dead_hidden_pre)
 
@@ -1016,7 +972,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         aux_reconstructed = dead_feature_acts @ cast(torch.Tensor, self.W_D)
 
                         if isinstance(aux_reconstructed, DTensor):
-                            aux_reconstructed = DimMap({}).redistribute(aux_reconstructed)
+                            aux_reconstructed = DimMap({"data": 0}).redistribute(aux_reconstructed)
 
                         l_aux = (e - aux_reconstructed).pow(2).sum(dim=-1)
                     else:
@@ -1042,37 +998,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 "lp_coefficient": lp_coefficient,
             }
         return loss
-
-    @torch.no_grad()
-    def update_dead_statistics(self, feature_acts: torch.Tensor):
-        """Update the dead latents tracking based on current feature activations.
-
-        Args:
-            feature_acts: Feature activations tensor of shape (batch, d_sae) or (batch, seq_len, d_sae)
-        """
-        # Calculate batch size (number of tokens in this batch)
-        if feature_acts.dim() == 3:  # (batch, seq_len, d_sae)
-            batch_size = feature_acts.size(0) * feature_acts.size(1)  # batch * seq_len
-        else:  # (batch, d_sae)
-            batch_size = feature_acts.size(0)  # batch
-
-        # Check which features were activated in this batch
-        if feature_acts.dim() == 3:  # (batch, seq_len, d_sae)
-            activated = feature_acts.gt(0).any(dim=(0, 1))  # (d_sae,)
-        else:  # (batch, d_sae)
-            activated = feature_acts.gt(0).any(dim=0)  # (d_sae,)
-
-        # Update tokens since last activation
-        # If a feature was activated, reset to 0; otherwise, add batch_size
-        self.tokens_since_last_activation = torch.where(
-            activated,
-            torch.zeros_like(self.tokens_since_last_activation),
-            self.tokens_since_last_activation + batch_size,
-        )
-
-        # Mark as dead if tokens since last activation exceeds threshold
-        assert self.cfg.dead_threshold is not None, "dead_threshold must be set when use_auxk is True"
-        self.is_dead = self.tokens_since_last_activation >= self.cfg.dead_threshold
 
     @abstractmethod
     def prepare_input(
@@ -1122,13 +1047,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         sae_maps = {}
         if isinstance(self.activation_function, JumpReLU):
             sae_maps.update({f"activation_function.{k}": v for k, v in self.activation_function.dim_maps().items()})
-        if self.cfg.use_auxk:
-            sae_maps.update(
-                {
-                    "tokens_since_last_activation": DimMap({"model": 0}),
-                    "is_dead": DimMap({"model": 0}),
-                }
-            )
         return sae_maps
 
     def override_dtypes(self) -> dict[str, torch.dtype]:
