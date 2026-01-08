@@ -1,0 +1,28 @@
+"""
+Example Grad-CAM config (file-based, no Mongo dependency).
+Copy/rename this file to match your SAE name, e.g.:
+  feature_visualize_config/GradCAM/<sae_name>.yaml
+"""
+
+dino_ckpt_path: "/abs/path/to/dinov3_convnext_large_pretrain.pth"
+hook_point: "stages.2.20.hook_resid_pre"
+target_layers:
+  - "dino_backbone.stages.2.20.hook_resid_pre"
+available_methods:
+  - "gradcam"
+  - "hirescam"
+  - "gradcam++"
+  - "xgradcam"
+  - "layercam"
+  - "scorecam"
+  - "eigencam"
+  - "ablationcam"
+  - "fullgrad"
+img_size: 256
+reduce: "mean"       # one of: max | mean | mix | lse
+center_frac: 1.0     # crop ratio for center weighting
+aug_smooth: false
+eigen_smooth: false
+image_weight: 0.5    # overlay blend ratio for show_cam_on_image
+no_filter_layers: false
+

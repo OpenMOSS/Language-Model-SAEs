@@ -17,6 +17,10 @@ available_methods:
   - "gradcam++"
   - "xgradcam"
   - "layercam"
+  - "scorecam"
+  - "eigencam"
+  - "ablationcam"
+  - "fullgrad"
 img_size: 256
 reduce: "mean"       # one of: max | mean | mix | lse
 center_frac: 1.0     # crop ratio for center weighting
