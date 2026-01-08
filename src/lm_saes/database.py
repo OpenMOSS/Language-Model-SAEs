@@ -85,6 +85,7 @@ class SAERecord(BaseModel):
     series: str
     path: str
     cfg: SAEConfig  # TODO: add more variants of SAEConfig
+    gradcam_config: dict[str, Any] | None = None
 
 
 class BookmarkRecord(BaseModel):
@@ -270,6 +271,31 @@ class MongoClient:
         if sae is None:
             return None
         return SAERecord.model_validate(sae)
+
+    # -------------------------- #
+    # Grad-CAM config helpers
+    # -------------------------- #
+    def set_gradcam_config(self, sae_name: str, sae_series: str, gradcam_config: dict[str, Any]) -> None:
+        """
+        Attach or update a Grad-CAM configuration for a specific SAE.
+        """
+        self.sae_collection.update_one(
+            {"name": sae_name, "series": sae_series},
+            {"$set": {"gradcam_config": gradcam_config}},
+            upsert=False,
+        )
+
+    def get_gradcam_config(self, sae_name: str, sae_series: str) -> Optional[dict[str, Any]]:
+        """
+        Retrieve the stored Grad-CAM configuration for a specific SAE.
+        """
+        sae = self.sae_collection.find_one(
+            {"name": sae_name, "series": sae_series},
+            projection={"gradcam_config": 1},
+        )
+        if sae is None:
+            return None
+        return sae.get("gradcam_config")
 
     def get_random_alive_feature(
         self,
