@@ -50,8 +50,7 @@ def _build_discrete_meta(meta: dict[str, list[Any]], mapper: KeyedDiscreteMapper
     return discrete_meta
 
 
-def _make_state(analyzer_cfg: FeatureAnalyzerConfig, sae: CNNSparseAutoEncoder) -> AnalyzerState:
-    d_sae = int(sae.cfg.d_sae)
+def _make_state(analyzer_cfg: FeatureAnalyzerConfig, d_sae: int, sae: CNNSparseAutoEncoder) -> AnalyzerState:
     return AnalyzerState(
         act_times=torch.zeros((d_sae,), dtype=torch.long, device=sae.cfg.device),
         max_feature_acts=torch.zeros((d_sae,), dtype=sae.cfg.dtype, device=sae.cfg.device),
@@ -159,6 +158,7 @@ def run_joint_reliance(
     total_analyzing_tokens: int,
     context_size: Optional[int] = None,
     num_workers: int = 8,
+    include_error_feature: bool = False,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, np.ndarray]]:
     """
     Single-pass computation of:
@@ -178,17 +178,21 @@ def run_joint_reliance(
 
     analyzers = {cond: FeatureAnalyzer(cfg) for cond, cfg in cond_cfgs.items()}
 
+    # If requested, treat reconstruction error as an extra feature (index d_sae)
+    d_sae_base = int(sae.cfg.d_sae)
+    d_sae_total = d_sae_base + (1 if include_error_feature else 0)
+
     loader = HuggingFaceDatasetLoader(batch_size=1, with_info=True, show_progress=True, num_workers=num_workers)
     raw_stream = loader.process(dataset, dataset_name=dataset_name, metadata=dataset_meta)
     batcher = ActivationGenerator(hook_points=[hook_point], batch_size=model_batch_size, n_context=context_size)
 
-    states = {cond: _make_state(cfg, sae) for cond, cfg in cond_cfgs.items()}
+    states = {cond: _make_state(cfg, d_sae_total, sae) for cond, cfg in cond_cfgs.items()}
 
-    a_sum = torch.zeros((int(sae.cfg.d_sae),), dtype=torch.float64, device=sae.cfg.device)
+    a_sum = torch.zeros((d_sae_total,), dtype=torch.float64, device=sae.cfg.device)
     c_sum = {
-        "shape": torch.zeros((int(sae.cfg.d_sae),), dtype=torch.float64, device=sae.cfg.device),
-        "texture": torch.zeros((int(sae.cfg.d_sae),), dtype=torch.float64, device=sae.cfg.device),
-        "color": torch.zeros((int(sae.cfg.d_sae),), dtype=torch.float64, device=sae.cfg.device),
+        "shape": torch.zeros((d_sae_total,), dtype=torch.float64, device=sae.cfg.device),
+        "texture": torch.zeros((d_sae_total,), dtype=torch.float64, device=sae.cfg.device),
+        "color": torch.zeros((d_sae_total,), dtype=torch.float64, device=sae.cfg.device),
     }
 
     def make_meta_list(meta_list, kind: str):
@@ -214,6 +218,13 @@ def run_joint_reliance(
 
             x, enc_kwargs, _ = sae.prepare_input(cond_batch)
             fa: torch.Tensor = sae.encode(x, **enc_kwargs)
+
+            if include_error_feature:
+                # Reconstruction error per token as an extra feature channel
+                x_hat = sae.decode(fa, **enc_kwargs)
+                err_tok = (x - x_hat).pow(2).sum(dim=-1).sqrt()
+                fa = torch.cat([fa, err_tok.unsqueeze(-1)], dim=-1)
+
             imgs[cond] = fa.clamp(min=0.0).sum(dim=1).to(torch.float64)
             cond_data[cond] = {
                 "feature_acts": fa,
@@ -282,7 +293,6 @@ def run_joint_reliance(
         _inject_sample_reliance(results=res, sample_result_top=top_sr)
         analyses[cond] = res
 
-    a_np = a_sum.detach().cpu().numpy()
     p = {
         k: (c_sum[k] / torch.clamp(a_sum, min=1e-12)).detach().cpu().numpy()
         for k in ["shape", "texture", "color"]
