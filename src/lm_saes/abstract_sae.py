@@ -995,9 +995,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     # Get the top-k_aux dead latents based on their activation values
                     current_k = self.current_k
                     if isinstance(self.is_dead, DTensor):
-                        self.current_k = min(self.cfg.k_aux, self.is_dead.full_tensor().sum().item())
+                        self.current_k = min(self.cfg.k_aux, int(item(self.is_dead.full_tensor().sum())))
                     else:
-                        self.current_k = min(self.cfg.k_aux, self.is_dead.sum().item())
+                        self.current_k = min(self.cfg.k_aux, int(item(self.is_dead.sum())))
 
                     if self.current_k > 0:
                         # Scale feature activations by decoder norm if configured
