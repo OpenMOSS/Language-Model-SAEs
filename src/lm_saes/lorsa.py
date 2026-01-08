@@ -206,6 +206,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             self.register_buffer("rotary_cos", cos)
 
     @property
+    def W_D(self) -> torch.Tensor:
+        return self.W_O
+
+    @property
     def attn_scale(self) -> float:
         assert self.cfg.attn_scale is not None, "attn_scale must be initialized during config post initialization"
         return self.cfg.attn_scale

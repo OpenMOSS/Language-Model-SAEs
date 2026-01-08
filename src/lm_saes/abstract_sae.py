@@ -21,6 +21,7 @@ import einops
 import safetensors.torch as safe
 import torch
 import torch.distributed.checkpoint as dcp
+import torch.distributed.tensor
 from huggingface_hub import create_repo, hf_hub_download, snapshot_download, upload_folder
 from jaxtyping import Float
 from safetensors import safe_open
@@ -814,6 +815,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         p: int = 1,
         l1_coefficient: float = 1.0,
         lp_coefficient: float = 0.0,
+        auxk_coefficient: float = 0.0,
+        k_aux: int = 512,
+        update_dead_statistics: Callable[[torch.Tensor], torch.Tensor] | None = None,
         return_aux_data: Literal[True] = True,
         **kwargs,
     ) -> dict[str, Any]: ...
@@ -828,6 +832,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         p: int = 1,
         l1_coefficient: float = 1.0,
         lp_coefficient: float = 0.0,
+        auxk_coefficient: float = 0.0,
+        k_aux: int = 512,
+        update_dead_statistics: Callable[[torch.Tensor], torch.Tensor] | None = None,
         return_aux_data: Literal[False],
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
@@ -850,6 +857,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         p: int = 1,
         l1_coefficient: float = 1.0,
         lp_coefficient: float = 0.0,
+        auxk_coefficient: float = 0.0,
+        k_aux: int = 512,
+        update_dead_statistics: Callable[[torch.Tensor], torch.Tensor] | None = None,
         return_aux_data: bool = True,
         **kwargs,
     ) -> Union[
@@ -909,6 +919,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
                     l_s = l1_coefficient * l_s
                     loss_dict["l_s"] = l_s
+                    l_s, _ = apply_token_mask(l_s, self.specs.loss(l_s), batch.get("mask"), "mean")
                     loss = loss + l_s.mean()
             else:
                 loss_dict["l_s"] = None
@@ -920,10 +931,58 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     jumprelu_threshold = self.activation_function.get_jumprelu_threshold()
                     l_p = torch.nn.functional.relu(jumprelu_threshold - hidden_pre) * self.decoder_norm()
                     l_p = lp_coefficient * l_p.sum(dim=-1)
+                    l_p, _ = apply_token_mask(l_p, self.specs.loss(l_p), batch.get("mask"), "mean")
                     loss_dict["l_p"] = l_p
                     loss = loss + l_p.mean()
             else:
                 loss_dict["l_p"] = None
+
+            # Add AuxK auxiliary loss if enabled
+            if auxk_coefficient > 0.0:
+                assert update_dead_statistics is not None, (
+                    "update_dead_statistics must be set when auxk_coefficient > 0.0"
+                )
+                is_dead = update_dead_statistics(feature_acts)
+
+                with timer.time("auxk_loss_calculation"):
+                    # Get reconstruction error
+                    e = label - reconstructed  # (batch, d_model) or (batch, seq_len, d_model)
+
+                    # Get the top-k_aux dead latents based on their activation values
+                    current_k = self.current_k
+                    if isinstance(is_dead, DTensor):
+                        self.current_k = min(k_aux, int(item(is_dead.full_tensor().sum())))
+                    else:
+                        self.current_k = min(k_aux, int(item(is_dead.sum())))
+
+                    if self.current_k > 0:
+                        # Scale feature activations by decoder norm if configured
+                        if self.cfg.sparsity_include_decoder_norm:
+                            dead_hidden_pre = hidden_pre * is_dead * self.decoder_norm()
+                        else:
+                            dead_hidden_pre = hidden_pre * is_dead
+
+                        dead_feature_acts = self.activation_function(dead_hidden_pre)
+
+                        if self.cfg.sparsity_include_decoder_norm:
+                            dead_feature_acts = dead_feature_acts / self.decoder_norm()
+                            dead_hidden_pre = dead_hidden_pre / self.decoder_norm()
+
+                        # Decode auxiliary feature activations
+                        aux_reconstructed = dead_feature_acts @ cast(torch.Tensor, self.W_D)
+
+                        if isinstance(aux_reconstructed, DTensor):
+                            aux_reconstructed = DimMap({"data": 0}).redistribute(aux_reconstructed)
+
+                        l_aux = (e - aux_reconstructed).pow(2).sum(dim=-1)
+                    else:
+                        l_aux = torch.zeros_like(l_rec)
+
+                    l_aux, _ = apply_token_mask(l_aux, self.specs.loss(l_aux), batch.get("mask"), "mean")
+                    loss_dict["l_aux"] = l_aux
+                    loss = loss + auxk_coefficient * l_aux.mean()
+
+                    self.current_k = current_k
 
         if return_aux_data:
             return {
@@ -985,9 +1044,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         Returns:
             A dictionary mapping parameter names to DimMap objects.
         """
+        sae_maps = {}
         if isinstance(self.activation_function, JumpReLU):
-            return {f"activation_function.{k}": v for k, v in self.activation_function.dim_maps().items()}
-        return {}
+            sae_maps.update({f"activation_function.{k}": v for k, v in self.activation_function.dim_maps().items()})
+        return sae_maps
 
     def override_dtypes(self) -> dict[str, torch.dtype]:
         if isinstance(self.activation_function, JumpReLU):
