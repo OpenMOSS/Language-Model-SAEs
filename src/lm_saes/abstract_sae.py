@@ -817,7 +817,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         lp_coefficient: float = 0.0,
         auxk_coefficient: float = 0.0,
         k_aux: int = 512,
-        update_dead_statistics: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        update_dead_statistics: Callable[[torch.Tensor, torch.Tensor | None, tuple[str, ...]], torch.Tensor]
+        | None = None,
         return_aux_data: Literal[True] = True,
         **kwargs,
     ) -> dict[str, Any]: ...
@@ -834,7 +835,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         lp_coefficient: float = 0.0,
         auxk_coefficient: float = 0.0,
         k_aux: int = 512,
-        update_dead_statistics: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        update_dead_statistics: Callable[[torch.Tensor, torch.Tensor | None, tuple[str, ...]], torch.Tensor]
+        | None = None,
         return_aux_data: Literal[False],
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
