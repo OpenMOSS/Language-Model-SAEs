@@ -74,7 +74,6 @@ class TrainerConfig(BaseConfig):
     k_cold_booting_steps: int | float = 0
     k_schedule_type: Literal["linear", "exponential"] = "linear"
     k_exponential_factor: float = 3.0
-    auxk_coefficient: float = 0.0
     k_aux: int = 512
     dead_threshold: float = 10_000_000
     skip_metrics_calculation: bool = False
