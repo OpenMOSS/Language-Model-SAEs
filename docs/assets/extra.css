@@ -1,0 +1,20 @@
+.md-tooltip2__inner.md-typeset p:last-child {
+  margin-bottom: 0 !important;
+}
+
+.md-tooltip2__inner.md-typeset .arithmatex,
+.md-tooltip2__inner.md-typeset .katex-display {
+  margin-top: 0.5em !important;
+  margin-bottom: 0.5em !important;
+}
+
+/* Ensure the backref doesn't add extra space at the bottom */
+.md-tooltip2__inner.md-typeset .footnote-backref {
+  display: none; /* Usually not needed in a tooltip */
+}
+
+/* Alternative if we want to keep the backref but remove its block padding */
+.md-tooltip2__inner.md-typeset p:has(.footnote-backref) {
+  margin-bottom: 0 !important;
+  line-height: 0;
+}
