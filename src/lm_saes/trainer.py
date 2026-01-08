@@ -52,6 +52,7 @@ class TrainerConfig(BaseConfig):
     l1_coefficient: float | None = 0.00008
     l1_coefficient_warmup_steps: int | float = 0.1
     lp_coefficient: float | None = None
+    auxk_coefficient: float | None = None
     amp_dtype: Annotated[
         torch.dtype | None,
         BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
@@ -427,6 +428,8 @@ class Trainer:
 
         lp_coefficient = self.cfg.lp_coefficient if self.cfg.lp_coefficient is not None else 0.0
 
+        auxk_coefficient = self.cfg.auxk_coefficient if self.cfg.auxk_coefficient is not None else 0.0
+
         ctx = sae.compute_loss(
             batch,
             sparsity_loss_type=self.cfg.sparsity_loss_type,
@@ -435,6 +438,7 @@ class Trainer:
             return_aux_data=True,
             l1_coefficient=l1_coefficient,
             lp_coefficient=lp_coefficient,
+            auxk_coefficient=auxk_coefficient,
             frequency_scale=self.cfg.frequency_scale,
         )
         return ctx
@@ -476,6 +480,7 @@ class Trainer:
                     "details/n_training_tokens": self.cur_tokens,
                     "details/l1_coefficient": ctx.get("l1_coefficient"),
                     "details/lp_coefficient": ctx.get("lp_coefficient"),
+                    "details/auxk_coefficient": ctx.get("auxk_coefficient"),
                 }
             )
 
