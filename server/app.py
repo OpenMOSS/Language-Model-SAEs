@@ -13,6 +13,7 @@ import msgpack
 import numpy as np
 import plotly.graph_objects as go
 import torch
+import yaml
 from datasets import Dataset
 from fastapi import Body, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -1260,6 +1261,29 @@ CAM_METHODS = {
     "fullgrad": FullGrad,
 }
 
+GRADCAM_CONFIG_DIR = ROOT_DIR / "feature_visualize_config" / "GradCAM"
+
+
+def _load_gradcam_config_from_file(sae_name: str) -> Optional[dict[str, Any]]:
+    """
+    Load Grad-CAM config from a YAML/JSON file located at:
+      feature_visualize_config/GradCAM/{sae_name}.yaml|yml|json
+    """
+    if not GRADCAM_CONFIG_DIR.exists():
+        return None
+    for ext in ["yaml", "yml", "json"]:
+        path = GRADCAM_CONFIG_DIR / f"{sae_name}.{ext}"
+        if path.exists():
+            try:
+                with open(path, "r") as f:
+                    if ext in ("yaml", "yml"):
+                        return yaml.safe_load(f) or {}
+                    return json.load(f)
+            except Exception as e:  # pragma: no cover
+                print(f"[gradcam_config] failed to load {path}: {e}")
+                return None
+    return None
+
 
 def _first_tensor(x):
     if isinstance(x, torch.Tensor):
@@ -1403,7 +1427,7 @@ def _parse_image_url(image_url: str) -> dict[str, Any]:
 
 @app.get("/dictionaries/{name}/gradcam_config")
 def get_gradcam_config(name: str):
-    cfg = client.get_gradcam_config(name, sae_series=sae_series)
+    cfg = _load_gradcam_config_from_file(name)
     return {"gradcam_config": cfg}
 
 
@@ -1429,9 +1453,9 @@ def compute_gradcam(payload: dict = Body(...)):
             return Response(content="sae_name, image_url, and feature_idx are required", status_code=400)
         feature_idx = int(feature_idx)
 
-        gradcam_cfg = client.get_gradcam_config(sae_name, sae_series=sae_series)
+        gradcam_cfg = _load_gradcam_config_from_file(sae_name)
         if gradcam_cfg is None:
-            return Response(content="Grad-CAM config not found for SAE", status_code=404)
+            return Response(content="Grad-CAM config not found for SAE (file-based)", status_code=404)
 
         # Validate cam method
         available_methods = gradcam_cfg.get("available_methods")
