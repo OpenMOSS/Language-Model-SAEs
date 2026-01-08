@@ -859,7 +859,8 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         lp_coefficient: float = 0.0,
         auxk_coefficient: float = 0.0,
         k_aux: int = 512,
-        update_dead_statistics: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        update_dead_statistics: Callable[[torch.Tensor, torch.Tensor | None, tuple[str, ...]], torch.Tensor]
+        | None = None,
         return_aux_data: bool = True,
         **kwargs,
     ) -> Union[
@@ -942,7 +943,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 assert update_dead_statistics is not None, (
                     "update_dead_statistics must be set when auxk_coefficient > 0.0"
                 )
-                is_dead = update_dead_statistics(feature_acts)
+                is_dead = update_dead_statistics(feature_acts, batch.get("mask"), self.specs.loss(feature_acts))
 
                 with timer.time("auxk_loss_calculation"):
                     # Get reconstruction error

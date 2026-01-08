@@ -42,6 +42,7 @@ from lm_saes.utils.misc import (
     convert_torch_dtype_to_str,
     is_primary_rank,
 )
+from lm_saes.utils.tensor_specs import apply_token_mask
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("trainer")
@@ -421,7 +422,7 @@ class Trainer:
             )
 
     @torch.no_grad()
-    def update_dead_statistics(self, feature_acts: Tensor) -> Tensor:
+    def update_dead_statistics(self, feature_acts: Tensor, mask: Tensor | None, specs: tuple[str, ...]) -> Tensor:
         """Update the dead latents tracking based on current feature activations.
 
         Args:
@@ -435,29 +436,17 @@ class Trainer:
         )
         assert self.is_dead is not None, "is_dead must be initialized before calling update_dead_statistics"
 
-        # Calculate batch size (number of tokens in this batch)
-        if feature_acts.dim() == 3:  # (batch, seq_len, d_sae)
-            batch_size = feature_acts.size(0) * feature_acts.size(1)  # batch * seq_len
-        else:  # (batch, d_sae)
-            batch_size = feature_acts.size(0)  # batch
+        valid_tokens = mask.sum() if mask is not None else feature_acts[..., 0].numel()
 
-        # Check which features were activated in this batch
-        if feature_acts.dim() == 3:  # (batch, seq_len, d_sae)
-            activated = feature_acts.gt(0).any(dim=(0, 1))  # (d_sae,)
-        else:  # (batch, d_sae)
-            activated = feature_acts.gt(0).any(dim=0)  # (d_sae,)
+        feature_acts_sum, _ = apply_token_mask(feature_acts, specs, mask, "sum")
+        activated = feature_acts_sum.gt(0)
 
-        # Update tokens since last activation
-        # If a feature was activated, reset to 0; otherwise, add batch_size
         self.tokens_since_last_activation = torch.where(
             activated,
             torch.zeros_like(self.tokens_since_last_activation),
-            self.tokens_since_last_activation + batch_size,
+            self.tokens_since_last_activation + valid_tokens,
         )
-
-        # Mark as dead if tokens since last activation exceeds threshold
         self.is_dead = self.tokens_since_last_activation >= self.cfg.dead_threshold
-
         return self.is_dead
 
     @timer.time("training_step")
