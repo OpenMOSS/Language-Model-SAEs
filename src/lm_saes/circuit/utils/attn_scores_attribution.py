@@ -223,7 +223,7 @@ def get_residual_stream_components(
     )
 
 
-def probe_linear_equivalent_for_ln(components: ResStreamComponents, ln: torch.nn.Module) -> ResStreamComponents:
+def probe_linear_equivalent_for_ln(components: ResStreamComponents, ln: torch.nn.Module, qk_idx: int | None = None) -> ResStreamComponents:
     """Probe the linear equivalent of layer normalization.
 
     We use a small trick to "probe" the linear equivalent of layernorms given a res stream input.
@@ -234,20 +234,25 @@ def probe_linear_equivalent_for_ln(components: ResStreamComponents, ln: torch.nn
     Args:
         components: Residual stream components.
         ln: Layer normalization module.
+        qk_idx: for qk norms, we are only interested in one lorsa head, but qk_ln will give us results of all heads
 
     Returns:
         Updated ResStreamComponents with linearized layer norm applied.
     """
     # a ln is only linear in the sense of fixing the denominator (i.e. hook_scale in TL)
-    # this is already done in replacement model _configure_gradient_flow
+    # this is already done in replacement_model._configure_gradient_flow()
     # we do this so we do not need to care about the actual implementation (i.e. RMS or LN)
     original_input_to_ln = components.sum().detach().clone()
     original_input_to_ln.requires_grad_()
     ln_out = ln(original_input_to_ln)
+    if qk_idx is not None:
+        ln_out = ln_out[qk_idx]
     probe_grads = torch.eye(ln_out.size(-1), device=ln_out.device)
     W_list = []
     for k in range(ln_out.size(-1)):
         b = ln(original_input_to_ln)
+        if qk_idx is not None:
+            b = b[qk_idx]
         b.backward(gradient=probe_grads[k])
         W_list.append(original_input_to_ln.grad)
         original_input_to_ln.grad = None
@@ -311,19 +316,19 @@ def get_single_side_QK_components(
         components = components.append(b_qk, bias_name="b_q" if q_side else "b_k")
         components = components.update_components(components.components / (lorsa.cfg.attn_scale**0.5))
 
-        if lorsa.cfg.use_post_qk_ln:
-            ln = lorsa.ln_q if q_side else lorsa.ln_k
-            components = probe_linear_equivalent_for_ln(components, ln)
+    if lorsa.cfg.use_post_qk_ln:
+        ln = lorsa.ln_q if q_side else lorsa.ln_k
+        components = probe_linear_equivalent_for_ln(components, ln, qk_idx_int)
 
-        # apply_rotary only works in 4-d.
-        # have to expand to 4-d first and put the interested components to the right pos
-        components = components.update_components(
-            lorsa._apply_rotary(
-                components.components[:, None, None, :].expand(-1, pos, -1, -1),
-            )[:, -1, 0, :]
-        )
+    # apply_rotary only works in 4-d.
+    # have to expand to 4-d first and put the interested components to the right pos
+    components = components.update_components(
+        lorsa._apply_rotary(
+            components.components[:, None, None, :].expand(-1, pos, -1, -1),
+        )[:, -1, 0, :]
+    )
 
-        return components
+    return components
 
 
 def extract_QK_tracing_result(
