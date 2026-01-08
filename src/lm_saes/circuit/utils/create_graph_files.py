@@ -303,8 +303,6 @@ def serialize_graph(
     *,
     node_threshold=0.8,
     edge_threshold=0.98,
-    # DEBUGGING
-    tokenizer_path:str = None,
     use_lorsa: bool = True,
     clt_names: list[str],
     lorsa_names: list[str] | None = None,
@@ -312,17 +310,8 @@ def serialize_graph(
     """Serialize the graph to a JSON object."""
     node_mask, edge_mask, cumulative_scores = prune_graph(graph, node_threshold, edge_threshold)
 
+    tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
 
-    # DEBUGGING
-    # tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
-    tokenizer = AutoTokenizer.from_pretrained(
-                tokenizer_path,
-                trust_remote_code=True,
-                use_fast=True,
-                add_bos_token=True,
-                local_files_only=True,
-    )
-    
     nodes = create_nodes(
         graph,
         node_mask,

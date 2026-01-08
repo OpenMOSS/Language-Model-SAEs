@@ -96,16 +96,11 @@ export function transformCircuitData(jsonData: CircuitJsonData): LinkGraphData {
       }
     };
 
-    // Handle null feature values
-    const featureId = node.feature !== null && node.feature !== undefined
-      ? node.feature.toString()
-      : node.node_id; // Use node_id as fallback
-
     // Don't set initial positions - let the component handle positioning
     const transformedNode: Node = {
       id: node.node_id,
       nodeId: node.node_id,
-      featureId: featureId,
+      featureId: node.feature.toString(),
       feature_type: node.feature_type,
       ctx_idx: node.ctx_idx,
       layerIdx: node.layer + 1,
