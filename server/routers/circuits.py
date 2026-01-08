@@ -54,7 +54,7 @@ def preview(request: PreviewRequest):
 
     # Generate next predicted tokens
     with torch.no_grad():
-        logits = model.model(prompt)[0, -1, :]
+        logits = model(prompt)[0, -1, :]
         probs = torch.softmax(logits, dim=-1)
         topk = torch.topk(probs, 5)
 
