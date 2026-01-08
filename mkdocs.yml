@@ -29,6 +29,7 @@ plugins:
 
 nav:
   - Home: index.md
+  - Walkthrough: walkthrough.md
   - Key Concepts: concepts.md
   - Style Guide: style-guide.md
   - Code Reference: reference/

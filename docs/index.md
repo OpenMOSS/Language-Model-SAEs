@@ -73,6 +73,7 @@ settings = TrainSAESettings(
         grid_search_init_norm=True,
     ),
     trainer=TrainerConfig(
+        amp_dtype=torch.float32,
         lr=1e-4,
         initial_k=50,
         k_warmup_steps=0.1,
@@ -135,7 +136,7 @@ If you find this library useful in your research, please cite:
 ```
 @misc{Ge2024OpenMossSAEs,
     title  = {OpenMoss Language Model Sparse Autoencoders},
-    author = {Xuyang Ge, Wentao Shu, Junxuan Wang, Guancheng Zhou, Jiaxing Wu, Fukang Zhu, Lingjie Chen, Zhengfu He},
+    author = {Xuyang Ge and Wentao Shu and Junxuan Wang and Guancheng Zhou and Jiaxing Wu and Fukang Zhu and Lingjie Chen and Zhengfu He},
     url    = {https://github.com/OpenMOSS/Language-Model-SAEs},
     year   = {2024}
 }

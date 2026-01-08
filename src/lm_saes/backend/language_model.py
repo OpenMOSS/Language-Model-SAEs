@@ -320,10 +320,13 @@ class TransformerLensLanguageModel(LanguageModel):
             return local_map(
                 self.model.forward,
                 out_placements=DimMap({"data": 0}).placements(self.device_mesh),
-            )(*args, **kwargs)
+            )(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)  # type: ignore
         else:
             assert not is_distributed, "Input should not contain DTensor when device_mesh is None"
-            return self.model.forward(*args, **kwargs)
+            return self.model.forward(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)
+    
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
 
     def _to_tensor(self, input: torch.Tensor) -> torch.Tensor:
         if isinstance(input, DTensor):

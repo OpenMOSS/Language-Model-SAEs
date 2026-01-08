@@ -16,14 +16,14 @@ from .analysis import (
     FeatureAnalyzer,
     FeatureAnalyzerConfig,
 )
-from .backend.language_model import LanguageModelConfig, LLaDAConfig
+from .backend.language_model import LanguageModelConfig, LLaDAConfig, TransformerLensLanguageModel
 from .circuit import ReplacementModel, attribute
 from .clt import CLTConfig, CrossLayerTranscoder
 from .config import DatasetConfig
 from .crosscoder import CrossCoder, CrossCoderConfig
 from .database import MongoClient, MongoDBConfig
 from .evaluator import EvalConfig, Evaluator
-from .initializer import InitializerConfig
+from .initializer import Initializer, InitializerConfig
 from .lorsa import LorsaConfig, LowRankSparseAttention
 from .molt import MixtureOfLinearTransform, MOLTConfig
 from .resource_loaders import load_dataset, load_model
@@ -60,7 +60,8 @@ from .runners import (
     train_sae,
 )
 from .sae import SAEConfig, SparseAutoEncoder
-from .trainer import TrainerConfig, WandbConfig
+from .trainer import Trainer, TrainerConfig, WandbConfig
+from .utils.logging import setup_logging
 
 __all__ = [
     "ActivationFactory",
@@ -93,10 +94,14 @@ __all__ = [
     "generate_activations",
     "CheckActivationConsistencySettings",
     "check_activation_consistency",
+    "Initializer",
     "InitializerConfig",
     "SAEConfig",
+    "Trainer",
     "TrainerConfig",
+    "TransformerLensLanguageModel",
     "WandbConfig",
+    "setup_logging",
     "train_sae",
     "TrainSAESettings",
     "TrainCLTSettings",
