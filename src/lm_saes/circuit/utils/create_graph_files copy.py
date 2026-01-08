@@ -49,11 +49,6 @@ class Node(BaseModel):
     ):
         """Create a feature node."""
 
-        # Ensure all parameters are scalars
-        layer = int(layer) if not isinstance(layer, int) else layer
-        feat_idx = int(feat_idx) if not isinstance(feat_idx, int) else feat_idx
-        pos = int(pos) if not isinstance(pos, int) else pos
-        is_lorsa = bool(is_lorsa)
         layer = 2 * layer + int(not is_lorsa)
         return cls(
             node_id=f"{layer}_{feat_idx}_{pos}",
@@ -139,6 +134,7 @@ def load_graph_data(file_path) -> Graph:
     logger.info(f"Loading graph data: {time_ms=:.2f} ms")
     return graph
 
+
 def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lorsa, clt_names, lorsa_names):
     """Create all nodes for the graph."""
     start_time = time.time()
@@ -154,22 +150,19 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
         if node_idx in range(n_features):
             orig_feature_idx = graph.selected_features[node_idx]
             if use_lorsa:
-                is_lorsa = bool(orig_feature_idx < len(graph.lorsa_active_features))
+                is_lorsa = orig_feature_idx < len(graph.lorsa_active_features)
                 if is_lorsa:
-                    feature_tensor = graph.lorsa_active_features[orig_feature_idx]
-                    layer, pos, feat_idx = feature_tensor.tolist()
+                    layer, pos, feat_idx = graph.lorsa_active_features[orig_feature_idx].tolist()
                     interested_activation = graph.lorsa_activation_values
                     sae_name = lorsa_names[layer]
                 else:
                     orig_feature_idx = orig_feature_idx - len(graph.lorsa_active_features)
-                    feature_tensor = graph.clt_active_features[orig_feature_idx]
-                    layer, pos, feat_idx = feature_tensor.tolist()
+                    layer, pos, feat_idx = graph.clt_active_features[orig_feature_idx].tolist()
                     interested_activation = graph.clt_activation_values
                     sae_name = clt_names[layer]
             else:
                 is_lorsa = False
-                feature_tensor = graph.clt_active_features[orig_feature_idx]
-                layer, pos, feat_idx = feature_tensor.tolist()
+                layer, pos, feat_idx = graph.clt_active_features[orig_feature_idx].tolist()
                 interested_activation = graph.clt_activation_values
                 sae_name = clt_names[layer]
             nodes[node_idx] = Node.feature_node(
@@ -210,25 +203,10 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
             )
         elif node_idx in range(token_end_idx, len(cumulative_scores)):
             pos = node_idx - token_end_idx
-
-            # Check if this is feature tracing (logit_tokens contains feature info instead of real tokens)
-            logit_token = graph.logit_tokens[pos]
-            is_feature_tracing = (
-                isinstance(logit_token, (tuple, list)) and len(logit_token) == 4 or
-                hasattr(logit_token, 'shape') and len(logit_token) == 4
-            )
-            
-            if is_feature_tracing:
-                # Skip creating logit_node for feature tracing
-                continue
-            
-            # Normal logit case - ensure vocab_idx is an integer
-            vocab_idx = graph.logit_tokens[pos] if isinstance(graph.logit_tokens[pos], int) else graph.logit_tokens[pos].item()
-            logger.info("create a logit node")
             nodes[node_idx] = Node.logit_node(
                 pos=graph.n_pos - 1,
-                vocab_idx=vocab_idx,
-                token=process_token(tokenizer.decode(vocab_idx)),
+                vocab_idx=graph.logit_tokens[pos],
+                token=process_token(tokenizer.decode(graph.logit_tokens[pos])),
                 target_logit=pos == 0,
                 token_prob=graph.logit_probabilities[pos],
                 num_layers=layers,

@@ -326,3 +326,54 @@ class TestAttribution:
             assert torch.allclose(graph1.adjacency_matrix, graph2.adjacency_matrix, atol=1e-6)
             assert torch.equal(graph1.input_tokens, graph2.input_tokens)
             assert torch.equal(graph1.logit_tokens, graph2.logit_tokens)
+
+    def test_attribution_from_features(self, replacement_model, simple_prompt):
+        """Test attribution computation starting from features instead of logits."""
+        with torch.no_grad():
+            # First run normal attribution to get some features
+            normal_graph = attribute(
+                prompt=simple_prompt,
+                model=replacement_model,
+                max_n_logits=2,
+                desired_logit_prob=0.5,
+                batch_size=2,
+                max_feature_nodes=4,
+                verbose=False,
+            )
+
+            # Select some features to trace from
+            features_to_trace = []
+            if normal_graph.lorsa_active_features is not None and len(normal_graph.lorsa_active_features) > 0:
+                # Use first LORSA feature
+                layer, pos, feat_idx = normal_graph.lorsa_active_features[0]
+                features_to_trace.append((int(layer), int(feat_idx), int(pos), True))
+            elif len(normal_graph.clt_active_features) > 0:
+                # Use first CLT feature
+                layer, pos, feat_idx = normal_graph.clt_active_features[0]
+                features_to_trace.append((int(layer), int(feat_idx), int(pos), False))
+
+            if features_to_trace:
+                # Run attribution from features
+                feature_graph = attribute(
+                    prompt=simple_prompt,
+                    model=replacement_model,
+                    max_n_logits=2,
+                    desired_logit_prob=0.5,
+                    batch_size=2,
+                    max_feature_nodes=4,
+                    list_of_features=features_to_trace,
+                    verbose=False,
+                )
+
+                # Verify feature graph properties
+                assert feature_graph.input_tokens.shape == (3,)
+                assert len(feature_graph.logit_probabilities) == len(features_to_trace)
+                assert feature_graph.adjacency_matrix.shape[0] == feature_graph.adjacency_matrix.shape[1]
+                assert feature_graph.cfg.n_layers == 2
+                assert feature_graph.cfg.d_model == 2
+
+                # Check that the feature tracing produces reasonable adjacency matrix
+                adj_matrix = feature_graph.adjacency_matrix
+                assert not torch.isnan(adj_matrix).any(), "Adjacency matrix should not contain NaN"
+                assert not torch.isinf(adj_matrix).any(), "Adjacency matrix should not contain Inf"
+                assert adj_matrix.abs().sum() > 0, "Adjacency matrix should have non-zero entries"
