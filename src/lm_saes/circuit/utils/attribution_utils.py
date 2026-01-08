@@ -142,6 +142,45 @@ def compute_partial_influences(edge_matrix, logit_p, row_to_node_index, max_iter
     return influences
 
 
+@torch.no_grad()
+def select_feature_activations(
+    features_to_trace: List[Tuple[int, int, int, bool]],
+    lorsa_activation_matrix: torch.sparse.Tensor,
+    clt_activation_matrix: torch.sparse.Tensor,
+) -> torch.Tensor:
+    """Return activation values for specified features.
+
+    Args:
+        features_to_trace: List of (layer, feature_idx, pos, is_lorsa) tuples.
+        lorsa_activation_matrix: Sparse tensor for LORSA activations.
+        clt_activation_matrix: Sparse tensor for CLT activations.
+
+    Returns:
+        torch.Tensor: Activation values for the specified features.
+    """
+    activations = []
+    for layer, feature_idx, pos, is_lorsa in features_to_trace:
+        if is_lorsa:
+            # Find activation in lorsa matrix
+            indices = lorsa_activation_matrix.indices()
+            values = lorsa_activation_matrix.values()
+            mask = (indices[0] == layer) & (indices[1] == pos) & (indices[2] == feature_idx)
+            if mask.any():
+                activations.append(values[mask][0])
+            else:
+                activations.append(torch.tensor(0.0, device=values.device, dtype=values.dtype))
+        else:
+            # Find activation in clt matrix
+            indices = clt_activation_matrix.indices()
+            values = clt_activation_matrix.values()
+            mask = (indices[0] == layer) & (indices[1] == pos) & (indices[2] == feature_idx)
+            if mask.any():
+                activations.append(values[mask][0])
+            else:
+                activations.append(torch.tensor(0.0, device=values.device, dtype=values.dtype))
+    return torch.stack(activations)
+
+
 def ensure_tokenized(prompt: Union[str, torch.Tensor, List[int]], tokenizer) -> torch.Tensor:
     """Convert *prompt* → 1-D tensor of token ids (no batch dim)."""
 
