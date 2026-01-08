@@ -432,6 +432,11 @@ async def oom_error_handler(request, exc):
     get_model.cache_clear()
     get_dataset.cache_clear()
     get_sae.cache_clear()
+    # Clear GradCAM model cache
+    _clear_gradcam_cache()
+    # Force CUDA cache cleanup
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     return Response(content="CUDA Out of memory", status_code=500)
 
 
@@ -1263,6 +1268,56 @@ CAM_METHODS = {
 
 GRADCAM_CONFIG_DIR = ROOT_DIR / "feature_visualize_config" / "GradCAM"
 
+# Cache for SAEFeatureClassifier models to avoid reloading on every request
+_gradcam_model_cache: dict[str, SAEFeatureClassifier] = {}
+
+
+def _get_gradcam_model(
+    *,
+    sae_name: str,
+    sae_path: str,
+    dino_ckpt_path: str,
+    hook_point: str,
+    device_override: str,
+    reduce: str = "mean",
+    center_frac: float = 1.0,
+) -> SAEFeatureClassifier:
+    """
+    Get or create a cached SAEFeatureClassifier for GradCAM.
+    Models are cached by sae_name since the same sae_name uses the same SAE and DINO.
+    """
+    cache_key = sae_name
+    
+    if cache_key in _gradcam_model_cache:
+        return _gradcam_model_cache[cache_key]
+    
+    # Create new model
+    model = SAEFeatureClassifier(
+        sae_path=sae_path,
+        dino_ckpt_path=dino_ckpt_path,
+        hook_point=hook_point,
+        device=torch.device(device_override),
+        reduce=reduce,
+        center_frac=center_frac,
+    ).to(device_override)
+    
+    # Cache it
+    _gradcam_model_cache[cache_key] = model
+    print(f"[GradCAM] Cached model for sae_name={sae_name}")
+    
+    return model
+
+
+def _clear_gradcam_cache():
+    """Clear the GradCAM model cache and free GPU memory."""
+    global _gradcam_model_cache
+    for key in list(_gradcam_model_cache.keys()):
+        del _gradcam_model_cache[key]
+    _gradcam_model_cache = {}
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    print("[GradCAM] Cache cleared")
+
 
 def _load_gradcam_config_from_file(sae_name: str) -> Optional[dict[str, Any]]:
     """
@@ -1431,6 +1486,16 @@ def get_gradcam_config(name: str):
     return {"gradcam_config": cfg}
 
 
+@app.post("/gradcam/clear_cache")
+def clear_gradcam_cache():
+    """
+    Manually clear the GradCAM model cache to free GPU memory.
+    Call this endpoint when switching between different SAE models or to free memory.
+    """
+    _clear_gradcam_cache()
+    return {"message": "GradCAM cache cleared successfully"}
+
+
 @app.post("/gradcam/compute")
 def compute_gradcam(payload: dict = Body(...)):
     """
@@ -1444,6 +1509,10 @@ def compute_gradcam(payload: dict = Body(...)):
         "cam_method": "gradcam"
     }
     """
+    img_tensor = None
+    grayscale_cam = None
+    cam_image = None
+    
     try:
         sae_name = payload.get("sae_name") or payload.get("saeName")
         image_url = payload.get("image_url") or payload.get("imageUrl")
@@ -1482,14 +1551,16 @@ def compute_gradcam(payload: dict = Body(...)):
         center_frac = float(gradcam_cfg.get("center_frac", 1.0))
         device_override = gradcam_cfg.get("device") or device
 
-        model = SAEFeatureClassifier(
+        # Use cached model instead of creating new one each time
+        model = _get_gradcam_model(
+            sae_name=sae_name,
             sae_path=sae_path,
             dino_ckpt_path=dino_ckpt_path,
             hook_point=hook_point,
-            device=torch.device(device_override),
+            device_override=device_override,
             reduce=reduce,
             center_frac=center_frac,
-        ).to(device_override)
+        )
 
         try:
             img_info = _parse_image_url(image_url)
@@ -1520,6 +1591,9 @@ def compute_gradcam(payload: dict = Body(...)):
         cam_cls = CAM_METHODS[cam_method]
         targets = [ClassifierOutputTarget(feature_idx)]
 
+        # Clear any accumulated gradients from previous computations
+        model.zero_grad(set_to_none=True)
+
         with torch.set_grad_enabled(True):
             with cam_cls(model=model, target_layers=target_layers) as cam:
                 grayscale_cam = cam(
@@ -1537,12 +1611,28 @@ def compute_gradcam(payload: dict = Body(...)):
             image_weight=float(gradcam_cfg.get("image_weight", 0.5)),
         )
 
-        return {
-            "image_base64": _encode_np_image_to_base64(cam_image),
+        # Encode result before cleanup
+        result_base64 = _encode_np_image_to_base64(cam_image)
+        result = {
+            "image_base64": result_base64,
             "width": cam_image.shape[1],
             "height": cam_image.shape[0],
             "cam_method": cam_method,
         }
+        
+        return result
+        
     except Exception as e:
         print(f"[gradcam/compute] failed: {e}")
         return Response(content=str(e), status_code=500)
+    finally:
+        # Cleanup: delete temporary tensors and clear CUDA cache
+        if img_tensor is not None:
+            del img_tensor
+        if grayscale_cam is not None:
+            del grayscale_cam
+        if cam_image is not None:
+            del cam_image
+        # Clear intermediate gradients from the model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
