@@ -1467,9 +1467,10 @@ def compute_gradcam(payload: dict = Body(...)):
         if cam_method not in CAM_METHODS:
             return Response(content=f"Unknown cam_method {cam_method}", status_code=400)
 
-        sae_path = client.get_sae_path(sae_name, sae_series=sae_series)
+        # Prefer file-based SAE path if provided; otherwise fallback to Mongo
+        sae_path = gradcam_cfg.get("sae_path") or client.get_sae_path(sae_name, sae_series=sae_series)
         if sae_path is None:
-            return Response(content="SAE path not found", status_code=404)
+            return Response(content="SAE path not found (config or Mongo)", status_code=404)
 
         hook_point = gradcam_cfg.get("hook_point")
         dino_ckpt_path = gradcam_cfg.get("dino_ckpt_path")

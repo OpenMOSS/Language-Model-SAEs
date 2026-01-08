@@ -4,6 +4,9 @@ Copy/rename this file to match your SAE name, e.g.:
   feature_visualize_config/GradCAM/<sae_name>.yaml
 """
 
+# SAE checkpoint path (preferred; if omitted, backend falls back to Mongo get_sae_path)
+sae_path: "/abs/path/to/cnnsae_layer20_checkpoint"
+
 dino_ckpt_path: "/abs/path/to/dinov3_convnext_large_pretrain.pth"
 hook_point: "stages.2.20.hook_resid_pre"
 target_layers:
