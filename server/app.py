@@ -623,6 +623,7 @@ def get_feature(
         """  # Get model and dataset
         # print(f"{sparse_feature_acts=}")
         model = get_model(model_name)
+        print(model_name)
         # model = None
         # print("get_data")
         data = get_dataset(dataset_name, shard_idx, n_shards)[context_idx.item()]
