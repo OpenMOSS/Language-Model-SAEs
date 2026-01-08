@@ -2,7 +2,8 @@
 # Copy/rename this file to match your SAE name, e.g.:
 #   feature_visualize_config/GradCAM/<sae_name>.yaml
 
-dino_ckpt_path: "/abs/path/to/dinov3_convnext_large_pretrain.pth"
+sae_path: "/inspire/hdd/global_user/hezhengfu-240208120186/gc_project/cnn_project/result/huge/cnnsae_layer20_ef16_k64_lr0.0001_auxFalse_img2000000"
+dino_ckpt_path: "/inspire/hdd/global_user/hezhengfu-240208120186/gc_project/cnn_project/dino_weight/dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth"
 hook_point: "stages.2.20.hook_resid_pre"
 target_layers:
   - "dino_backbone.stages.2.20.hook_resid_pre"
