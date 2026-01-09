@@ -213,13 +213,14 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
 
             # Check if this is feature tracing (logit_tokens contains feature info instead of real tokens)
             logit_token = graph.logit_tokens[pos]
-            is_feature_tracing = (
-                isinstance(logit_token, (tuple, list)) and len(logit_token) == 4 or
-                hasattr(logit_token, 'shape') and len(logit_token) == 4
-            )
+            if isinstance(logit_token, (tuple, list)):
+                is_feature_tracing = len(logit_token) == 4
+            elif hasattr(logit_token, 'shape'):
+                is_feature_tracing = len(logit_token.shape) > 0 and logit_token.shape[0] == 4
+            else:
+                is_feature_tracing = False
             
             if is_feature_tracing:
-                # Skip creating logit_node for feature tracing
                 continue
             
             # Normal logit case - ensure vocab_idx is an integer
