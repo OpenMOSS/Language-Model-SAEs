@@ -291,7 +291,7 @@ class TransformerLensLanguageModel(LanguageModel):
             if hf_model and not cfg.tokenizer_only
             else None
         )
-
+        
     @property
     def eos_token_id(self) -> int | None:
         return self.tokenizer.eos_token_id
