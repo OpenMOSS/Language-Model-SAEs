@@ -84,6 +84,9 @@ def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_
 
 def load_model(cfg: LanguageModelConfig) -> LanguageModel:
     backend = infer_model_backend(cfg.model_name) if cfg.backend == "auto" else cfg.backend
+    
+    print(f'{cfg.model_name = }')
+    
     if backend == "huggingface":
         if cfg.model_name.startswith("Qwen/Qwen2.5-VL"):
             return QwenVLLanguageModel(cfg)

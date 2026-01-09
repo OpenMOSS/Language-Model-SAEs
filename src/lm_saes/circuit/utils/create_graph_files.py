@@ -213,16 +213,17 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
 
             # Check if this is feature tracing (logit_tokens contains feature info instead of real tokens)
             logit_token = graph.logit_tokens[pos]
-            is_feature_tracing = (
-                isinstance(logit_token, (tuple, list)) and len(logit_token) == 4 or
-                hasattr(logit_token, 'shape') and len(logit_token) == 4
-            )
+            # Feature tracing uses a 4-element tuple/list: (layer, feature_idx, pos, is_lorsa)
+            if isinstance(logit_token, (tuple, list)):
+                is_feature_tracing = len(logit_token) == 4
+            elif hasattr(logit_token, 'shape'):
+                is_feature_tracing = len(logit_token.shape) > 0 and logit_token.shape[0] == 4
+            else:
+                is_feature_tracing = False
             
             if is_feature_tracing:
-                # Skip creating logit_node for feature tracing
                 continue
             
-            # Normal logit case - ensure vocab_idx is an integer
             vocab_idx = graph.logit_tokens[pos] if isinstance(graph.logit_tokens[pos], int) else graph.logit_tokens[pos].item()
             logger.info("create a logit node")
             nodes[node_idx] = Node.logit_node(
@@ -312,6 +313,21 @@ def serialize_graph(
 
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
 
+<<<<<<< Updated upstream
+=======
+    # DEBUGGING
+    # tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
+    tokenizer_path = '/inspire/hdd/global_user/hezhengfu-240208120186/models/pythia-160m'
+    print(f'{tokenizer_path = }')
+    tokenizer = AutoTokenizer.from_pretrained(
+                tokenizer_path,
+                trust_remote_code=True,
+                use_fast=True,
+                add_bos_token=True,
+                local_files_only=True,
+    )
+    
+>>>>>>> Stashed changes
     nodes = create_nodes(
         graph,
         node_mask,
