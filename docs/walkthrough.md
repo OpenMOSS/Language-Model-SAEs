@@ -415,7 +415,7 @@ For a more streamlined experience, `Language-Model-SAEs` also provides a high-le
 
 ## Logging to W&B
 
-Aside from the console logger, we support logging to Weights & Biases for tracking loss and metric changes throughout the training. Training metrics including [explained variance](https://www.lesswrong.com/posts/E3nsbq2tiBv6GLqjB/x-explains-z-of-the-variance-in-y) and $L_0$ norm will be automatically recorded. Below is a screenshot of the W&B logging:
+Aside from the console logger, we support logging to Weights & Biases for tracking loss and metric changes throughout the training. Training metrics including [explained variance](https://www.lesswrong.com/posts/E3nsbq2tiBv6GLqjB/x-explains-z-of-the-variance-in-y) and $L^0$ norm will be automatically recorded. Below is a screenshot of the W&B logging:
 
 ![Screenshot of W&B logging in training our LlamaScope 2 Beta PLTs](assets/images/wandb.png)
 /// caption
@@ -483,7 +483,7 @@ Activation functions are the direct architectural design to enforce a sparse fea
 
 ### ReLU
 
-ReLU is the most classical activation, proposed in initial works (*[Sparse Autoencoders Find Highly Interpretable Features in Language Models](https://arxiv.org/abs/2309.08600)* and *[Towards Monosemanticity: Decomposing Language Models With Dictionary Learning](https://transformer-circuits.pub/2023/monosemantic-features)*) using SAEs to disentangle superposition. Though its performance is found inferior to other activation functions in term of explained variance and $L_0$ norms, it might be a good starting point to understand how SAE works due to its simplicity.
+ReLU is the most classical activation, proposed in initial works (*[Sparse Autoencoders Find Highly Interpretable Features in Language Models](https://arxiv.org/abs/2309.08600)* and *[Towards Monosemanticity: Decomposing Language Models With Dictionary Learning](https://transformer-circuits.pub/2023/monosemantic-features)*) using SAEs to disentangle superposition. Though its performance is found inferior to other activation functions in term of explained variance and $L^0$ norms, it might be a good starting point to understand how SAE works due to its simplicity.
 
 To use ReLU activation function, just set `#!python act_fn = "relu"` in `SAEConfig`.
 
@@ -520,7 +520,7 @@ To use the JumpReLU activation function, set `#!python act_fn = "jumprelu"` in `
 
 ### TopK
 
-TopK is an activation function proposed in [Scaling and evaluating sparse autoencoders](https://arxiv.org/abs/2406.04093). It keeps only the $k$ largest elements, zeroing out the rest, thus directly enforcing strict sparsity on feature activation. To this end, it removes the need for additional sparsity penalties (which are typically basic requirements for ReLU & JumpReLU activations), and enables direct control over the sparsity quantitative ($L_0$) of feature activation.
+TopK is an activation function proposed in [Scaling and evaluating sparse autoencoders](https://arxiv.org/abs/2406.04093). It keeps only the $k$ largest elements, zeroing out the rest, thus directly enforcing strict sparsity on feature activation. To this end, it removes the need for additional sparsity penalties (which are typically basic requirements for ReLU & JumpReLU activations), and enables direct control over the sparsity quantitative ($L^0$) of feature activation.
 
 To use TopK activation function, set `#!python act_fn = "topk"` in `SAEConfig`, and set the `top_k` value to control the final sparsity of feature activation. We also provide some options in `TrainerConfig` to enable scheduling on $k$ value during training:
 
@@ -556,4 +556,85 @@ BatchTopK introduces a dependency between the activations for the samples in a b
 
 ## Sparsity Penalties
 
-WIP
+Activation functions like ReLU and JumpReLU do not strictly enforce sparsity on feature activations. It's the responsibility of the regularization functions to provide dynamics pushing feature activations sparse. `Language-Model-SAEs` supports the following sparsity penalties on feature activations:
+
+### $L^p$-Norm
+
+Sparsity referes to the number of active latents in feature activation. In principle, we may want to directly add $L^0$ norm to the loss term. However, $L^0$ norm is discontinuous and cannot be differentiated,
+
+In practice, $L^1$ norm, as the _best convex approximation_ to $L^0$[^2], is widely used in SAE training for controlling sparsity without lossing convexity of the optimization. `Language-Model-SAEs` implements a more general $L^p$ norm as regularization, which is computed as:
+
+$$L_s = \lambda \| f(x) \cdot \| W_\text{dec} \|_2 \|_p$$
+
+where $f(x)$ is the feature activation, $\| W_\text{dec} \|_2$ is the decoder norm, $p$ is the $L^p$ power, and $\lambda$ is the coefficient for the sparsity loss term.
+
+[^2]: See more discussion on $L^0$ approximate functions in [Comparing Measures of Sparsity](https://arxiv.org/abs/0811.4706) and [Why $\ell_1$ Is a Good Approximation to $\ell_0$: A Geometric Explanation](https://www.cs.utep.edu/vladik/2013/tr13-18.pdf).
+
+To use the $L^p$ norm, set `#!python sparsity_loss_type="power"` in `TrainerConfig`. Other parameters include:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `l1_coefficient` | Coefficient $\lambda$ for the sparsity loss term. | `0.00008` |
+| `l1_coefficient_warmup_steps` | Steps (int) or fraction of total steps (float) to warm up the sparsity coefficient from 0. | `0.1` |
+| `p` | The power $p$ for $L^p$ norm. Set to $1$ for $L^1$ norm. | `1` |
+
+### Tanh
+
+One challenge with $L^1$ penalty is _shrinkage_: in addition to encouraging sparsity, the penalty encourages activations to be smaller than they would be otherwise. This causes SAEs to recover a smaller fraction of the model loss than might be expected[^3].
+
+The tanh penalty addresses shrinkage by applying a bounded function to feature activations. For marginal cases where a feature is on the edge of activating, it provides the same gradient towards zero as $L^1$, but for strongly-activating features it provides no penalty and hence no incentive to shrink the activation. The loss is computed as:
+
+$$L_s = \lambda \sum_i \tanh(c \cdot f_i(x) \cdot \| W_{\text{dec},i} \|_2)$$
+
+where $f_i(x)$ is the $i$-th feature activation, $\| W_{\text{dec},i} \|_2$ is the decoder norm for feature $i$, and $c$ is the stretch coefficient. Since $\tanh(x) \to 1$ as $x \to \infty$, this loss approximates counting the number of active features ($L^0$ norm).
+
+While the tanh penalty was found to be a Pareto improvement in the $L^0$/MSE tradeoff, [Anthropic's experiments](https://transformer-circuits.pub/2024/feb-update/index.html#dict-learning-tanh) showed that features trained with tanh were much harder to interpret due to many more high-frequency features (some activating on over 10% of inputs).
+
+[^3]: See [Tanh Penalty in Dictionary Learning](https://transformer-circuits.pub/2024/feb-update/index.html#dict-learning-tanh) for more discussion.
+
+To use the tanh penalty, set `#!python sparsity_loss_type="tanh"` in `TrainerConfig`. Other parameters include:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `l1_coefficient` | Coefficient $\lambda$ for the sparsity loss term. | `0.00008` |
+| `l1_coefficient_warmup_steps` | Steps (int) or fraction of total steps (float) to warm up the sparsity coefficient from 0. | `0.1` |
+| `tanh_stretch_coefficient` | Stretch coefficient $c$ controlling the steepness of the tanh function. | `4.0` |
+
+### Tanh-Quadratic
+
+A key issue with standard sparsity penalties ($L^0$, $L^1$, or tanh) is that they only control the _average_ number of active features, but are indifferent to the _distribution_ of firing frequencies (See [Removing High Frequency Latents from JumpReLU SAEs](https://www.alignmentforum.org/posts/4uXCAJNuPKtKBsi28/negative-results-for-saes-on-downstream-tasks#Removing_High_Frequency_Latents_from_JumpReLU_SAEs) from the GDM Mech Interp Team for a detailed analysis). This allows some features to fire on a large fraction of inputs (>10%), which often leads to uninterpretable high-frequency features.
+
+The tanh-quadratic loss addresses this by adding a quadratic term that specifically penalizes high-frequency features. First, an approximate frequency $\hat{p}_i$ is computed by averaging the tanh scores across samples:
+
+$$\hat{p}_i = \mathbb{E}_{x}\left[\tanh(c \cdot f_i(x) \cdot \| W_{\text{dec},i} \|_2)\right]$$
+
+Then the loss is:
+
+$$L_s = \lambda \sum_i \hat{p}_i \left(1 + \frac{\hat{p}_i}{s}\right)$$
+
+where $s$ is the frequency scale (controlled by `frequency_scale`). The first term $\hat{p}_i$ behaves like a standard sparsity penalty for low-frequency features ($\hat{p}_i \ll s$), while the quadratic term $\hat{p}_i^2 / s$ dominates for high-frequency features ($\hat{p}_i \gtrsim s$), making it increasingly expensive for features to activate on a large fraction of inputs.
+
+This formulation successfully eliminates high-frequency latents with only a modest impact on reconstruction loss, while improving frequency-weighted interpretability scores compared to standard JumpReLU or TopK SAEs.
+
+To use tanh-quadratic, set `#!python sparsity_loss_type="tanh-quad"` in `TrainerConfig`. Other parameters include:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `l1_coefficient` | Coefficient $\lambda$ for the sparsity loss term. | `0.00008` |
+| `l1_coefficient_warmup_steps` | Steps (int) or fraction of total steps (float) to warm up the sparsity coefficient from 0. | `0.1` |
+| `tanh_stretch_coefficient` | Stretch coefficient $c$ controlling the steepness of the tanh function. | `4.0` |
+| `frequency_scale` | Scale factor $s$ for the quadratic penalty. Smaller values penalize high-frequency features more aggressively. Typical values are `0.1` or `0.01` to suppress features firing on >10% of tokens. | `0.01` |
+
+<!-- ### JumpReLU $L^p$ Penalty
+
+For JumpReLU SAEs, an additional $L^p$ penalty can encourage the threshold to stay above the pre-activation values:
+
+$$L_p = \lambda_p \sum_i \text{ReLU}(e^{\theta_i} - h_i) \| W_{\text{dec},i} \|_2$$
+
+where $\theta_i$ is the log-threshold and $h_i$ is the pre-activation. This loss pushes the threshold higher, reducing the number of active features.
+
+To use the JumpReLU $L^p$ penalty, set `lp_coefficient` to a positive value in `TrainerConfig`:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `lp_coefficient` | Coefficient $\lambda_p$ for the JumpReLU $L^p$ penalty. Set to `None` to disable. | `None` | -->
