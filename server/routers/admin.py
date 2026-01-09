@@ -198,6 +198,7 @@ def admin_list_circuits(limit: int = 100, skip: int = 0):
 
 class UpdateCircuitRequest(BaseModel):
     name: Optional[str] = None
+    group: Optional[str] = None
 
 
 @router.put("/circuits/{circuit_id}")
@@ -208,6 +209,8 @@ def admin_update_circuit(circuit_id: str, request: UpdateCircuitRequest):
     update_data = {}
     if request.name is not None:
         update_data["name"] = request.name
+    if request.group is not None:
+        update_data["group"] = request.group
 
     if not update_data:
         return {"message": "No updates provided"}
@@ -221,6 +224,18 @@ def admin_update_circuit(circuit_id: str, request: UpdateCircuitRequest):
         return Response(content=f"Circuit {circuit_id} not found", status_code=404)
 
     return {"message": "Circuit updated successfully"}
+
+
+class BulkGroupRequest(BaseModel):
+    circuit_ids: list[str]
+    group: Optional[str] = None
+
+
+@router.post("/circuits/bulk-group")
+def admin_bulk_group_circuits(request: BulkGroupRequest):
+    """Update the group for multiple circuits."""
+    count = client.update_circuits_group(request.circuit_ids, request.group)
+    return {"message": f"Updated {count} circuits"}
 
 
 @router.get("/stats")

@@ -99,6 +99,7 @@ def create_sae_set(request: CreateSaeSetRequest):
 class GenerateCircuitRequest(BaseModel):
     input: CircuitInput
     name: Optional[str] = None
+    group: Optional[str] = None
     desired_logit_prob: float = 0.98
     max_feature_nodes: int = 256
     qk_tracing_topk: int = 10
@@ -213,6 +214,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         config=config,
         graph_data=graph_data,
         name=request.name,
+        group=request.group,
     )
 
     concretize_graph_data(graph_data)
@@ -221,6 +223,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         {
             "circuit_id": circuit_id,
             "name": request.name,
+            "group": request.group,
             "sae_set_name": sae_set_name,
             "prompt": prompt,
             "config": config.model_dump(),
@@ -232,9 +235,9 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
 
 
 @router.get("/circuits")
-def list_circuits(limit: int = 100, skip: int = 0):
+def list_circuits(limit: int = 100, skip: int = 0, group: Optional[str] = None):
     """List all circuits for the current SAE series."""
-    circuits = client.list_circuits(sae_series=sae_series, limit=limit, skip=skip)
+    circuits = client.list_circuits(sae_series=sae_series, limit=limit, skip=skip, group=group)
 
     results = []
     for circuit in circuits:
@@ -256,6 +259,7 @@ def get_circuit(circuit_id: str):
     result = {
         "circuit_id": circuit.id,
         "name": circuit.name,
+        "group": circuit.group,
         "sae_set_name": circuit.sae_set_name,
         "prompt": circuit.prompt,
         "config": circuit.config.model_dump(),

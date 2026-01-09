@@ -140,6 +140,8 @@ class CircuitRecord(BaseModel):
     id: str
     name: Optional[str] = None
     """Optional custom name/ID for the circuit."""
+    group: Optional[str] = None
+    """Optional group name for the circuit."""
     sae_set_name: str
     sae_series: str
     prompt: str
@@ -778,10 +780,12 @@ class MongoClient:
         config: CircuitConfig,
         graph_data: dict[str, Any],
         name: Optional[str] = None,
+        group: Optional[str] = None,
     ) -> str:
         """Create a new circuit graph record."""
         circuit_data = {
             "name": name,
+            "group": group,
             "sae_set_name": sae_set_name,
             "sae_series": sae_series,
             "prompt": prompt,
@@ -807,6 +811,7 @@ class MongoClient:
     def list_circuits(
         self,
         sae_series: Optional[str] = None,
+        group: Optional[str] = None,
         limit: Optional[int] = None,
         skip: int = 0,
         with_graph_data: bool = False,
@@ -815,6 +820,8 @@ class MongoClient:
         query: dict[str, Any] = {}
         if sae_series is not None:
             query["sae_series"] = sae_series
+        if group is not None:
+            query["group"] = group
 
         projection = {"graph_data": 0} if not with_graph_data else None
 
@@ -830,6 +837,23 @@ class MongoClient:
             circuit["id"] = str(circuit.pop("_id"))
             circuits.append(circuit)
         return circuits
+
+    def update_circuits_group(self, circuit_ids: list[str], group: Optional[str]) -> int:
+        """Update the group for multiple circuits."""
+        try:
+            object_ids = [ObjectId(cid) for cid in circuit_ids]
+        except Exception:
+            return 0
+        result = self.circuit_collection.update_many({"_id": {"$in": object_ids}}, {"$set": {"group": group}})
+        return result.modified_count
+
+    def update_circuit(self, circuit_id: str, update_data: dict[str, Any]) -> bool:
+        """Update a circuit by its ID."""
+        try:
+            result = self.circuit_collection.update_one({"_id": ObjectId(circuit_id)}, {"$set": update_data})
+        except Exception:
+            return False
+        return result.modified_count > 0
 
     def delete_circuit(self, circuit_id: str) -> bool:
         """Delete a circuit by its ID."""

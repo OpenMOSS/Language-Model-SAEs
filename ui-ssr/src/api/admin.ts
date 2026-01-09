@@ -22,10 +22,10 @@ export interface AdminSaeSet {
 export interface AdminCircuit {
   id: string
   name: string | null
+  group: string | null
   saeSetName: string
   saeSeries: string
   prompt: string
-  fullPrompt: string
   config: Record<string, any>
   createdAt: string
   nodeCount: number
@@ -177,20 +177,51 @@ export const fetchAdminCircuits = createServerFn({ method: 'GET' })
   })
 
 export const updateCircuit = createServerFn({ method: 'POST' })
-  .inputValidator((data: { circuitId: string; name?: string }) => data)
-  .handler(async ({ data: { circuitId, name } }) => {
+  .inputValidator(
+    (data: { circuitId: string; name?: string; group?: string | null }) => data,
+  )
+  .handler(async ({ data: { circuitId, name, group } }) => {
     const response = await fetch(
       `${process.env.BACKEND_URL}/admin/circuits/${circuitId}`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name ?? null }),
+        body: JSON.stringify({
+          name: name ?? null,
+          group: group === undefined ? undefined : group,
+        }),
       },
     )
 
     if (!response.ok) {
       throw new Error(`Failed to update circuit: ${await response.text()}`)
     }
+    return await response.json()
+  })
+
+export const bulkGroupCircuits = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (data: { circuitIds: string[]; group: string | null }) => data,
+  )
+  .handler(async ({ data: { circuitIds, group } }) => {
+    const response = await fetch(
+      `${process.env.BACKEND_URL}/admin/circuits/bulk-group`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          circuit_ids: circuitIds,
+          group,
+        }),
+      },
+    )
+
+    if (!response.ok) {
+      throw new Error(`Failed to bulk group circuits: ${await response.text()}`)
+    }
+
     return await response.json()
   })
 

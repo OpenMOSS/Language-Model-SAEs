@@ -34,6 +34,7 @@ export type CircuitInput = PlainTextInput | ChatTemplateInput
 export interface CircuitListItem {
   id: string
   name: string | null
+  group: string | null
   saeSetName: string
   saeSetSeries: string
   prompt: string
@@ -46,6 +47,7 @@ export interface GenerateCircuitParams {
   saeSetName: string
   input: CircuitInput
   name?: string
+  group?: string
   desiredLogitProb?: number
   maxFeatureNodes?: number
   qkTracingTopk?: number
@@ -161,6 +163,7 @@ export const fetchCircuit = createServerFn({ method: 'GET' })
     }) as {
       circuitId: string
       name: string | null
+      group: string | null
       saeSetName: string
       prompt: string
       input: CircuitInput
@@ -181,6 +184,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
       saeSetName,
       input,
       name,
+      group,
       desiredLogitProb,
       maxFeatureNodes,
       qkTracingTopk,
@@ -211,6 +215,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
         body: JSON.stringify({
           input: backendInput,
           name: name || null,
+          group: group || null,
           desired_logit_prob: desiredLogitProb,
           max_feature_nodes: maxFeatureNodes,
           qk_tracing_topk: qkTracingTopk,
@@ -243,6 +248,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
       graphData: CircuitData
       createdAt: string
       name: string | null
+      group: string | null
       saeSetName: string
       prompt: string
       input: CircuitInput
