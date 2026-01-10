@@ -156,8 +156,13 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
     else:
         raise ValueError(f"Invalid input type: {request.input.input_type}")
 
-    lorsas = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, LowRankSparseAttention)}
-    transcoders = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, SparseAutoEncoder)}
+    model_dtype = model.cfg.dtype
+    lorsas = {
+        sae_name: sae.to(model_dtype) for sae_name, sae in saes.items() if isinstance(sae, LowRankSparseAttention)
+    }
+    transcoders = {
+        sae_name: sae.to(model_dtype) for sae_name, sae in saes.items() if isinstance(sae, SparseAutoEncoder)
+    }
 
     plt_set = TranscoderSet(
         TranscoderSetConfig(

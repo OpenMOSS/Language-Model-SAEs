@@ -339,10 +339,10 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
         feature_acts: Float[torch.sparse.Tensor, "seq_len d_sae"],
     ) -> Float[torch.Tensor, "seq_len d_model"]:
         """Decode feature activations back to model space using COO format."""
-        reconstructed = feature_acts @ self.W_D
+        reconstructed = feature_acts.to(torch.float32) @ self.W_D.to(torch.float32)
         if self.cfg.use_decoder_bias:
             reconstructed = reconstructed + self.b_D
-        return reconstructed
+        return reconstructed.to(self.cfg.dtype)
 
     @classmethod
     def from_pretrained(
