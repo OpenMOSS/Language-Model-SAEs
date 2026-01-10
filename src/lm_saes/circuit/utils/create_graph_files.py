@@ -139,6 +139,7 @@ def load_graph_data(file_path) -> Graph:
     logger.info(f"Loading graph data: {time_ms=:.2f} ms")
     return graph
 
+
 def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lorsa, clt_names, lorsa_names):
     """Create all nodes for the graph."""
     start_time = time.time()
@@ -215,16 +216,18 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
             logit_token = graph.logit_tokens[pos]
             if isinstance(logit_token, (tuple, list)):
                 is_feature_tracing = len(logit_token) == 4
-            elif hasattr(logit_token, 'shape'):
+            elif hasattr(logit_token, "shape"):
                 is_feature_tracing = len(logit_token.shape) > 0 and logit_token.shape[0] == 4
             else:
                 is_feature_tracing = False
-            
+
             if is_feature_tracing:
                 continue
-            
+
             # Normal logit case - ensure vocab_idx is an integer
-            vocab_idx = graph.logit_tokens[pos] if isinstance(graph.logit_tokens[pos], int) else graph.logit_tokens[pos].item()
+            vocab_idx = (
+                graph.logit_tokens[pos] if isinstance(graph.logit_tokens[pos], int) else graph.logit_tokens[pos].item()
+            )
             logger.info("create a logit node")
             nodes[node_idx] = Node.logit_node(
                 pos=graph.n_pos - 1,

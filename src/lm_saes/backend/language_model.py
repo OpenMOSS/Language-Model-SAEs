@@ -324,7 +324,7 @@ class TransformerLensLanguageModel(LanguageModel):
         else:
             assert not is_distributed, "Input should not contain DTensor when device_mesh is None"
             return self.model.forward(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)
-    
+
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
