@@ -603,6 +603,16 @@ class ReplacementModel(HookedTransformer):
             yield
         finally:
             self.cfg.output_logits_soft_cap = current_softcap
+    
+    def maybe_zero_bos(self, tokens: torch.Tensor) -> torch.Tensor:
+        special_tokens = []
+        for special_token in self.tokenizer.special_tokens_map.values():
+            if isinstance(special_token, list):
+                special_tokens.extend(special_token)
+            else:
+                special_tokens.append(special_token)
+        special_token_ids = self.tokenizer.convert_tokens_to_ids(special_tokens)
+        return tokens[0].cpu().item() in special_token_ids
 
     @torch.no_grad()
     def setup_attribution(
@@ -630,15 +640,7 @@ class ReplacementModel(HookedTransformer):
             tokenized = self.tokenizer(inputs, return_tensors="pt").input_ids.to(self.cfg.device)
             tokens = tokenized.squeeze(0)
 
-        special_tokens = []
-        for special_token in self.tokenizer.special_tokens_map.values():
-            if isinstance(special_token, list):
-                special_tokens.extend(special_token)
-            else:
-                special_tokens.append(special_token)
-
-        special_token_ids = self.tokenizer.convert_tokens_to_ids(special_tokens)
-        zero_bos = zero_bos and tokens[0].cpu().item() in special_token_ids  # == self.tokenizer.bos_token_id
+        zero_bos = zero_bos and self.maybe_zero_bos(tokens)
 
         # cache activations and MLP in
         (activation_matrix, lorsa_attention_score, lorsa_attention_pattern, z_attention_pattern, activation_hooks) = (
