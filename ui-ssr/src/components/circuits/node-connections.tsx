@@ -1,10 +1,10 @@
 import { memo, useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Send } from 'lucide-react'
+import { ChevronRight, Send } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Info } from '../ui/info'
 import { Button } from '../ui/button'
-import type { Node } from '@/types/circuit'
+import type { Node, QKTracingResults } from '@/types/circuit'
 import type { RawEdgeIndex, RawNodeIndex } from '@/utils/circuit-index'
 import { cn } from '@/lib/utils'
 import { formatFeatureId } from '@/utils/circuit'
@@ -79,6 +79,164 @@ const FeatureRow = memo(
 
 FeatureRow.displayName = 'FeatureRow'
 
+const QKTracingSection = memo(
+  ({
+    results,
+    nodeIndex,
+    onNodeClick,
+    onNodeHover,
+    hoveredId,
+    clickedId,
+  }: {
+    results: QKTracingResults
+    nodeIndex: RawNodeIndex
+    onNodeClick: (nodeId: string, metaKey: boolean) => void
+    onNodeHover: (nodeId: string | null) => void
+    hoveredId: string | null
+    clickedId: string
+  }) => {
+    const renderNodeLabel = (nodeId: string) => {
+      const node = nodeIndex.byId.get(nodeId)
+      if (!node) return <span className="text-xs font-mono">{nodeId}</span>
+
+      return (
+        <div className="flex items-center space-x-2 min-w-0 flex-1">
+          <span className="text-xs font-mono text-gray-600 shrink-0">
+            {formatFeatureId(node, false)}
+          </span>
+          <span className="text-xs font-medium truncate">
+            {node.featureType === 'lorsa' ||
+            node.featureType === 'cross layer transcoder'
+              ? node.feature.interpretation?.text
+              : 'token' in node
+                ? node.token
+                : ''}
+          </span>
+        </div>
+      )
+    }
+
+    return (
+      <>
+        <div className="flex gap-3 min-h-0">
+          <div className="flex flex-col w-1/2 gap-1.5 min-h-0">
+            <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
+              <span>Q MARGINAL</span>
+            </div>
+            <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar max-h-40">
+              {results.topQMarginalContributors.map(([nodeId, score], idx) => (
+                <div
+                  key={`q-${nodeId}-${idx}`}
+                  className={cn(
+                    'py-2 px-2 mx-1 border rounded cursor-pointer transition-colors bg-gray-50 border-gray-200 flex justify-between items-center',
+                    nodeId === hoveredId && 'ring-2 ring-blue-300',
+                    nodeId === clickedId && 'ring-2 ring-blue-500',
+                  )}
+                  style={getWeightStyle(score)}
+                  onClick={() => onNodeClick(nodeId, false)}
+                  onMouseEnter={() => onNodeHover(nodeId)}
+                  onMouseLeave={() => onNodeHover(null)}
+                >
+                  {renderNodeLabel(nodeId)}
+                  <div className="text-right flex flex-col items-end">
+                    <div className="text-xs font-mono">{score.toFixed(3)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col w-1/2 gap-1.5 min-h-0">
+            <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
+              <span>K MARGINAL</span>
+            </div>
+            <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar max-h-40">
+              {results.topKMarginalContributors.map(([nodeId, score], idx) => (
+                <div
+                  key={`k-${nodeId}-${idx}`}
+                  className={cn(
+                    'py-2 px-2 mx-1 border rounded cursor-pointer transition-colors bg-gray-50 border-gray-200 flex justify-between items-center',
+                    nodeId === hoveredId && 'ring-2 ring-blue-300',
+                    nodeId === clickedId && 'ring-2 ring-blue-500',
+                  )}
+                  style={getWeightStyle(score)}
+                  onClick={() => onNodeClick(nodeId, false)}
+                  onMouseEnter={() => onNodeHover(nodeId)}
+                  onMouseLeave={() => onNodeHover(null)}
+                >
+                  {renderNodeLabel(nodeId)}
+                  <div className="text-right flex flex-col items-end">
+                    <div className="text-xs font-mono">{score.toFixed(3)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5 min-h-0">
+          <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
+            <span>TOP PAIRWISE CONTRIBUTORS</span>
+          </div>
+          <div className="flex flex-col gap-1 max-h-40 overflow-y-auto no-scrollbar pr-1">
+            {results.pairWiseContributors.map(([qId, kId, score], idx) => (
+              <div
+                key={`pw-${idx}`}
+                className="mx-1 border rounded transition-colors bg-gray-50 border-gray-200 flex items-stretch"
+                style={getWeightStyle(score)}
+              >
+                <div
+                  className={cn(
+                    'flex-1 min-w-0 cursor-pointer px-2 py-1.5 transition-colors flex items-center gap-1.5',
+                    qId === hoveredId ? 'bg-black/5' : 'hover:bg-black/5',
+                    qId === clickedId &&
+                      'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
+                  )}
+                  onClick={() => onNodeClick(qId, false)}
+                  onMouseEnter={() => onNodeHover(qId)}
+                  onMouseLeave={() => onNodeHover(null)}
+                >
+                  <span className="text-xs font-bold text-slate-400 shrink-0">
+                    Q:
+                  </span>
+                  {renderNodeLabel(qId)}
+                </div>
+
+                <div className="flex items-center justify-center shrink-0">
+                  <ChevronRight className="w-3 h-3 text-slate-400/50" />
+                </div>
+
+                <div
+                  className={cn(
+                    'flex-1 min-w-0 cursor-pointer px-2 py-1.5 transition-colors flex items-center gap-1.5',
+                    kId === hoveredId ? 'bg-black/5' : 'hover:bg-black/5',
+                    kId === clickedId &&
+                      'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
+                  )}
+                  onClick={() => onNodeClick(kId, false)}
+                  onMouseEnter={() => onNodeHover(kId)}
+                  onMouseLeave={() => onNodeHover(null)}
+                >
+                  <span className="text-xs font-bold text-slate-400 shrink-0">
+                    K:
+                  </span>
+                  {renderNodeLabel(kId)}
+                </div>
+
+                <div className="text-right flex flex-col justify-center items-end px-2 shrink-0 border-l border-black/5 bg-white/30">
+                  <div className="text-xs font-mono">{score.toFixed(3)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </>
+    )
+  },
+)
+
+QKTracingSection.displayName = 'QKTracingSection'
+
 interface NodeConnectionsProps {
   nodeIndex: RawNodeIndex
   edgeIndex: RawEdgeIndex
@@ -138,17 +296,24 @@ export const NodeConnections = memo(
       >
         <div className="flex items-center justify-between">
           <div className="flex justify-between items-center space-x-2 w-full">
-            <span className="text-sm font-medium">
-              {clickedNode.featureType === 'cross layer transcoder' ||
-              clickedNode.featureType === 'lorsa'
-                ? clickedNode.feature.interpretation?.text
-                : formatFeatureId(clickedNode, true)}{' '}
+            <div className="flex items-center space-x-3 overflow-hidden">
+              <span className="text-xs font-mono text-gray-500 shrink-0">
+                {formatFeatureId(clickedNode, true)}
+              </span>
+              <span className="text-sm font-semibold truncate">
+                {clickedNode.featureType === 'cross layer transcoder' ||
+                clickedNode.featureType === 'lorsa'
+                  ? clickedNode.feature.interpretation?.text
+                  : 'token' in clickedNode
+                    ? clickedNode.token
+                    : ''}
+              </span>
               {'activation' in clickedNode && (
-                <span className="text-xs font-mono text-orange-500">
+                <span className="text-xs font-mono text-orange-500 shrink-0">
                   ({clickedNode.activation.toFixed(3)})
                 </span>
               )}
-            </span>
+            </div>
             {(clickedNode.featureType === 'cross layer transcoder' ||
               clickedNode.featureType === 'lorsa') && (
               <Link
@@ -216,6 +381,18 @@ export const NodeConnections = memo(
             </div>
           </div>
         </div>
+        {(clickedNode.featureType === 'lorsa' ||
+          clickedNode.featureType === 'cross layer transcoder') &&
+          clickedNode.qkTracingResults && (
+            <QKTracingSection
+              results={clickedNode.qkTracingResults}
+              nodeIndex={nodeIndex}
+              onNodeClick={onNodeClick}
+              onNodeHover={onNodeHover}
+              hoveredId={hoveredId}
+              clickedId={clickedId}
+            />
+          )}
       </Card>
     )
   },

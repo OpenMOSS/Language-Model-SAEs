@@ -1,6 +1,14 @@
 import { z } from 'zod'
 import { FeatureSchema } from './feature'
 
+export const QKTracingResultsSchema = z.object({
+  pairWiseContributors: z.array(z.tuple([z.string(), z.string(), z.number()])),
+  topQMarginalContributors: z.array(z.tuple([z.string(), z.number()])),
+  topKMarginalContributors: z.array(z.tuple([z.string(), z.number()])),
+})
+
+export type QKTracingResults = z.infer<typeof QKTracingResultsSchema>
+
 export const FeatureNodeSchema = z.object({
   featureType: z.enum(['lorsa', 'cross layer transcoder']),
   nodeId: z.string(),
@@ -10,6 +18,7 @@ export const FeatureNodeSchema = z.object({
   saeName: z.string(),
   activation: z.number(),
   feature: FeatureSchema,
+  qkTracingResults: QKTracingResultsSchema.nullish(),
 })
 
 export type FeatureNode = z.infer<typeof FeatureNodeSchema>
