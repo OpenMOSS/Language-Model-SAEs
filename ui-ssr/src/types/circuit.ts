@@ -103,6 +103,7 @@ export type CircuitData = z.infer<typeof CircuitDataSchema>
 export const VisStateSchema = z.object({
   clickedId: z.string().nullable(),
   hoveredId: z.string().nullable(),
+  selectedIds: z.array(z.string()).optional(),
 })
 
 export type VisState = z.infer<typeof VisStateSchema>

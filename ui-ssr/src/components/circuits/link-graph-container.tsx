@@ -5,7 +5,7 @@ import type { CircuitData, VisState } from '@/types/circuit'
 interface LinkGraphContainerProps {
   data: CircuitData
   visState: VisState
-  onNodeClick: (nodeId: string, metaKey: boolean) => void
+  onNodeClick: (nodeId: string, isMultiSelect: boolean) => void
   onNodeHover: (nodeId: string | null) => void
 }
 

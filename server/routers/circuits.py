@@ -106,6 +106,7 @@ class GenerateCircuitRequest(BaseModel):
     node_threshold: float = 0.8
     edge_threshold: float = 0.98
     max_n_logits: int = 1
+    list_of_features: Optional[list[tuple[int, int, int, bool]]] = None
 
 
 def concretize_graph_data(graph_data: dict[str, Any]):
@@ -136,6 +137,8 @@ def concretize_graph_data(graph_data: dict[str, Any]):
 @router.post("/circuits")
 def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
     """Generate and save a circuit graph for a given prompt and SAE set."""
+
+    print(request.model_dump())
 
     sae_set = client.get_sae_set(name=sae_set_name)
     assert sae_set is not None, f"SAE set {sae_set_name} not found"
@@ -192,6 +195,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         sae_series=sae_series,
         qk_tracing_topk=request.qk_tracing_topk,
         use_lorsa=len(lorsas) > 0,
+        list_of_features=request.list_of_features,
     )
     graph.cfg.tokenizer_name = model.cfg.model_from_pretrained_path or model.cfg.model_name
     graph_data = serialize_graph(
@@ -210,6 +214,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         node_threshold=request.node_threshold,
         edge_threshold=request.edge_threshold,
         max_n_logits=request.max_n_logits,
+        list_of_features=request.list_of_features,
     )
     circuit_id = client.create_circuit(
         sae_set_name=sae_set_name,
@@ -265,6 +270,7 @@ def get_circuit(circuit_id: str):
         "circuit_id": circuit.id,
         "name": circuit.name,
         "group": circuit.group,
+        "input": circuit.input.model_dump(),
         "sae_set_name": circuit.sae_set_name,
         "prompt": circuit.prompt,
         "config": circuit.config.model_dump(),

@@ -12,6 +12,7 @@ export interface CircuitConfig {
   nodeThreshold: number
   edgeThreshold: number
   maxNLogits: number
+  listOfFeatures?: (number | boolean)[][]
 }
 
 export interface ChatMessage {
@@ -54,6 +55,7 @@ export interface GenerateCircuitParams {
   nodeThreshold?: number
   edgeThreshold?: number
   maxNLogits?: number
+  listOfFeatures?: (number | boolean)[][]
 }
 
 export const fetchSaeSets = createServerFn({ method: 'GET' }).handler(
@@ -191,6 +193,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
       nodeThreshold,
       edgeThreshold,
       maxNLogits,
+      listOfFeatures,
     } = data
 
     // Convert input to backend format
@@ -222,6 +225,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
           node_threshold: nodeThreshold,
           edge_threshold: edgeThreshold,
           max_n_logits: maxNLogits,
+          list_of_features: listOfFeatures,
         }),
       },
     )

@@ -119,6 +119,7 @@ class CircuitConfig(BaseModel):
     node_threshold: float = 0.8
     edge_threshold: float = 0.98
     max_n_logits: int = 1
+    list_of_features: Optional[list[tuple[int, int, int, bool]]] = None
 
 
 class CircuitTextInput(BaseModel):
