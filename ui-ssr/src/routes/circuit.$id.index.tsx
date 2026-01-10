@@ -149,6 +149,7 @@ function CircuitPage() {
         nodeThreshold: circuitData.config.nodeThreshold,
         edgeThreshold: circuitData.config.edgeThreshold,
         listOfFeatures,
+        parentId: circuitId,
       },
     })
   }, [circuitData, selectedIds, doGenerateCircuit])

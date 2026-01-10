@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, MessageCircle, Trash2 } from 'lucide-react'
+import { ChevronDown, GitBranch, MessageCircle, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CircuitInput, CircuitListItem } from '@/api/circuits'
 import { deleteCircuit } from '@/api/circuits'
@@ -28,6 +28,23 @@ function formatRelativeTime(dateString: string): string {
   }
 
   return date.toLocaleDateString()
+}
+
+function formatFeaturesDisplay(
+  features: (number | boolean)[][] | undefined,
+  maxLength: number,
+): string {
+  if (!features || features.length === 0) return 'No features'
+
+  const featureStrings = features.map((f) => {
+    const [layer, index, pos, isLorsa] = f as [number, number, number, boolean]
+    return `${isLorsa ? 'A' : 'M'}${layer}#${index}@${pos}`
+  })
+
+  const combined = featureStrings.join(', ')
+  return combined.length > maxLength
+    ? `${combined.slice(0, maxLength)}...`
+    : combined
 }
 
 function formatInputDisplay(
@@ -154,17 +171,30 @@ export function GraphSelector({
         {selectedCircuit ? (
           <div className="flex flex-col items-start text-left gap-0.5 overflow-hidden flex-1 mr-2">
             {(() => {
-              const display = formatInputDisplay(
-                selectedCircuit.input,
-                selectedCircuit.prompt,
-                60,
-              )
+              const isSubgraph = !!selectedCircuit.parentId
+              const displayText =
+                isSubgraph && selectedCircuit.config.listOfFeatures
+                  ? formatFeaturesDisplay(
+                      selectedCircuit.config.listOfFeatures,
+                      60,
+                    )
+                  : formatInputDisplay(
+                      selectedCircuit.input,
+                      selectedCircuit.prompt,
+                      60,
+                    ).text
+              const isChatTemplate =
+                !isSubgraph &&
+                selectedCircuit.input?.inputType === 'chat_template'
+
               return (
                 <span className="text-sm font-medium truncate w-full flex items-center gap-1.5">
-                  {display.isChatTemplate && (
+                  {isSubgraph ? (
+                    <GitBranch className="h-3.5 w-3.5 shrink-0 text-slate-400 rotate-180" />
+                  ) : isChatTemplate ? (
                     <MessageCircle className="h-3.5 w-3.5 shrink-0 text-primary" />
-                  )}
-                  {display.text}
+                  ) : null}
+                  {displayText}
                 </span>
               )
             })()}
@@ -208,51 +238,96 @@ export function GraphSelector({
                           {group}
                         </div>
                       ) : null}
-                      {groupItems.map((c) => (
-                        <div
-                          key={c.id}
-                          className={cn(
-                            'flex items-center justify-between gap-2 rounded-sm px-3 py-2 cursor-pointer group',
-                            c.id === selectedCircuitId
-                              ? 'bg-slate-100'
-                              : 'hover:bg-slate-50',
-                          )}
-                          onClick={() => handleSelect(c.id)}
-                        >
-                          <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                            {(() => {
-                              const display = formatInputDisplay(
-                                c.input,
-                                c.prompt,
-                                50,
-                              )
-                              return (
-                                <span className="text-sm font-medium truncate flex items-center gap-1.5">
-                                  {display.isChatTemplate && (
-                                    <MessageCircle className="h-3.5 w-3.5 shrink-0 text-primary" />
-                                  )}
-                                  {display.text}
-                                </span>
-                              )
-                            })()}
-                            <div className="flex items-center gap-2 text-xs text-slate-500">
-                              <span className="truncate">{c.name || c.id}</span>
-                              <span className="shrink-0">·</span>
-                              <span className="shrink-0">
-                                {formatRelativeTime(c.createdAt)}
-                              </span>
+                      {groupItems.map((c) => {
+                        if (
+                          c.parentId &&
+                          groupItems.some((p) => p.id === c.parentId)
+                        ) {
+                          return null
+                        }
+
+                        const renderCircuitItem = (
+                          item: CircuitListItem,
+                          depth = 0,
+                        ) => {
+                          const itemChildren = groupItems.filter(
+                            (child) => child.parentId === item.id,
+                          )
+                          return (
+                            <div key={item.id}>
+                              <div
+                                className={cn(
+                                  'flex items-center justify-between gap-2 rounded-sm px-3 py-2 cursor-pointer group transition-colors',
+                                  item.id === selectedCircuitId
+                                    ? 'bg-slate-100'
+                                    : 'hover:bg-slate-50',
+                                  depth > 0 &&
+                                    'ml-4 border-l-2 border-slate-200 pl-4 py-1.5',
+                                )}
+                                onClick={() => handleSelect(item.id)}
+                              >
+                                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                  {(() => {
+                                    const isSubgraph = !!item.parentId
+                                    const displayText =
+                                      isSubgraph && item.config.listOfFeatures
+                                        ? formatFeaturesDisplay(
+                                            item.config.listOfFeatures,
+                                            depth > 0 ? 40 : 50,
+                                          )
+                                        : formatInputDisplay(
+                                            item.input,
+                                            item.prompt,
+                                            depth > 0 ? 40 : 50,
+                                          ).text
+                                    const isChatTemplate =
+                                      !isSubgraph &&
+                                      item.input?.inputType === 'chat_template'
+
+                                    return (
+                                      <span
+                                        className={cn(
+                                          'text-sm font-medium truncate flex items-center gap-1.5',
+                                          depth > 0 && 'text-slate-600',
+                                        )}
+                                      >
+                                        {isSubgraph ? (
+                                          <GitBranch className="h-3 w-3 shrink-0 rotate-180 text-slate-400" />
+                                        ) : isChatTemplate ? (
+                                          <MessageCircle className="h-3.5 w-3.5 shrink-0 text-primary" />
+                                        ) : null}
+                                        {displayText}
+                                      </span>
+                                    )
+                                  })()}
+                                  <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                                    <span className="truncate">
+                                      {item.name || item.id}
+                                    </span>
+                                    <span className="shrink-0">·</span>
+                                    <span className="shrink-0">
+                                      {formatRelativeTime(item.createdAt)}
+                                    </span>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteCircuit(e, item)}
+                                  className="p-1.5 rounded hover:bg-red-100 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                  title="Delete graph"
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                </button>
+                              </div>
+                              {itemChildren.map((child) =>
+                                renderCircuitItem(child, depth + 1),
+                              )}
                             </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(e) => handleDeleteCircuit(e, c)}
-                            className="p-1.5 rounded hover:bg-red-100 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                            title="Delete graph"
-                          >
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </button>
-                        </div>
-                      ))}
+                          )
+                        }
+
+                        return renderCircuitItem(c)
+                      })}
                     </div>
                   )
                 })}

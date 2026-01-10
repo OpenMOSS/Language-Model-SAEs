@@ -152,6 +152,8 @@ class CircuitRecord(BaseModel):
     graph_data: dict[str, Any]
     """The serialized graph data."""
     created_at: datetime
+    parent_id: Optional[str] = None
+    """Optional ID of the parent circuit."""
 
 
 class MongoClient:
@@ -782,11 +784,13 @@ class MongoClient:
         graph_data: dict[str, Any],
         name: Optional[str] = None,
         group: Optional[str] = None,
+        parent_id: Optional[str] = None,
     ) -> str:
         """Create a new circuit graph record."""
         circuit_data = {
             "name": name,
             "group": group,
+            "parent_id": parent_id,
             "sae_set_name": sae_set_name,
             "sae_series": sae_series,
             "prompt": prompt,

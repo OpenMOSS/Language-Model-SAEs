@@ -107,6 +107,7 @@ class GenerateCircuitRequest(BaseModel):
     edge_threshold: float = 0.98
     max_n_logits: int = 1
     list_of_features: Optional[list[tuple[int, int, int, bool]]] = None
+    parent_id: Optional[str] = None
 
 
 def concretize_graph_data(graph_data: dict[str, Any]):
@@ -225,6 +226,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
         graph_data=graph_data,
         name=request.name,
         group=request.group,
+        parent_id=request.parent_id,
     )
 
     concretize_graph_data(graph_data)
@@ -240,6 +242,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
             "graph_data": graph_data,
             "input": request.input.model_dump(),
             "created_at": datetime.utcnow().isoformat() + "Z",
+            "parent_id": request.parent_id,
         }
     )
 
@@ -276,6 +279,7 @@ def get_circuit(circuit_id: str):
         "config": circuit.config.model_dump(),
         "graph_data": circuit.graph_data,
         "created_at": circuit.created_at.isoformat() + "Z",
+        "parent_id": circuit.parent_id,
     }
 
     return make_serializable(result)
