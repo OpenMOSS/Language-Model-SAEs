@@ -226,6 +226,11 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     def qk_exp_factor(self):
         return self.cfg.n_ov_heads // self.cfg.n_qk_heads
 
+    @property
+    def attn_scale(self) -> float:
+        assert self.cfg.attn_scale is not None, "attn_scale must be initialized during config post initialization"
+        return self.cfg.attn_scale
+
     def init_parameters(self, **kwargs):
         """Initialize parameters."""
         super().init_parameters(**kwargs)
@@ -791,7 +796,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         head_idx: Int[torch.Tensor, " n_active_features"],
     ) -> Float[torch.Tensor, "n_active_features k_pos"]:
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
-        qk_idx = head_idx // self.qk_exp_factor
+        qk_idx = head_idx // self.cfg.ov_group_size
         q, k, v = self._compute_qkv(x)
 
         # (n_active_features, q_pos, k_pos)
@@ -811,7 +816,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
 
         head_idx = torch.arange(self.cfg.d_sae)
-        qk_idx = head_idx // self.qk_exp_factor
+        qk_idx = head_idx // self.cfg.ov_group_size
         q, k, v = self._compute_qkv(x)
 
         # (n_active_features, q_pos, k_pos)
@@ -881,11 +886,8 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         v = einops.rearrange(v, "b seq h -> b h seq")
         if self.cfg.n_qk_heads != self.cfg.n_ov_heads:
             # (batch, n_qk_heads, d_qk_head, seq_len)
-            v = v.view(v.shape[0], self.cfg.n_qk_heads, self.qk_exp_factor, v.shape[2])
-            v = v.permute(1, 0, 2, 3)  # (n_qk_heads, batch, d_qk_head, seq_len)
-            z = torch.einsum("hbqk,hbrk->hbrq", pattern, v)
+            v = v.view(v.shape[0], self.cfg.n_qk_heads, self.cfg.ov_group_size, v.shape[2])
             z = z.permute(1, 0, 2, 3)  # (batch, n_qk_heads, d_qk_head, seq_len)
-            z = z.flatten(start_dim=1, end_dim=2)
         else:
             z = torch.einsum("bhqk,bhk->bhq", pattern, v)
         return z.permute(0, 2, 1)

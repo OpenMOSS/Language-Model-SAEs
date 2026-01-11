@@ -582,17 +582,17 @@ To use the $L^p$ norm, set `#!python sparsity_loss_type="power"` in `TrainerConf
 
 One challenge with $L^1$ penalty is _shrinkage_: in addition to encouraging sparsity, the penalty encourages activations to be smaller than they would be otherwise. This causes SAEs to recover a smaller fraction of the model loss than might be expected[^3].
 
-The tanh penalty addresses shrinkage by applying a bounded function to feature activations. For marginal cases where a feature is on the edge of activating, it provides the same gradient towards zero as $L^1$, but for strongly-activating features it provides no penalty and hence no incentive to shrink the activation. The loss is computed as:
+The $\tanh$ penalty addresses shrinkage by applying a bounded function to feature activations. For marginal cases where a feature is on the edge of activating, it provides the same gradient towards zero as $L^1$, but for strongly-activating features it provides no penalty and hence no incentive to shrink the activation. The loss is computed as:
 
 $$L_s = \lambda \sum_i \tanh(c \cdot f_i(x) \cdot \| W_{\text{dec},i} \|_2)$$
 
 where $f_i(x)$ is the $i$-th feature activation, $\| W_{\text{dec},i} \|_2$ is the decoder norm for feature $i$, and $c$ is the stretch coefficient. Since $\tanh(x) \to 1$ as $x \to \infty$, this loss approximates counting the number of active features ($L^0$ norm).
 
-While the tanh penalty was found to be a Pareto improvement in the $L^0$/MSE tradeoff, [Anthropic's experiments](https://transformer-circuits.pub/2024/feb-update/index.html#dict-learning-tanh) showed that features trained with tanh were much harder to interpret due to many more high-frequency features (some activating on over 10% of inputs).
+While the $\tanh$ penalty was found to be a Pareto improvement in the $L^0$/MSE tradeoff, [Anthropic's experiments](https://transformer-circuits.pub/2024/feb-update/index.html#dict-learning-tanh) showed that features trained with tanh were much harder to interpret due to many more high-frequency features (some activating on over 10% of inputs). However, their [following up experiments](https://transformer-circuits.pub/2024/june-update/index.html#topk-gated-comparison) show that these high density features don’t seem to be pathological as previous thought.
 
-[^3]: See [Tanh Penalty in Dictionary Learning](https://transformer-circuits.pub/2024/feb-update/index.html#dict-learning-tanh) for more discussion.
+[^3]: See [Fixing Feature Suppression in SAEs](https://www.lesswrong.com/posts/3JuSjTZyMzaSeTxKk/fixing-feature-suppression-in-saes-2) for more discussion.
 
-To use the tanh penalty, set `#!python sparsity_loss_type="tanh"` in `TrainerConfig`. Other parameters include:
+To use the $\tanh$ penalty, set `#!python sparsity_loss_type="tanh"` in `TrainerConfig`. Other parameters include:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -602,7 +602,7 @@ To use the tanh penalty, set `#!python sparsity_loss_type="tanh"` in `TrainerCon
 
 ### Tanh-Quadratic
 
-A key issue with standard sparsity penalties ($L^0$, $L^1$, or tanh) is that they only control the _average_ number of active features, but are indifferent to the _distribution_ of firing frequencies (See [Removing High Frequency Latents from JumpReLU SAEs](https://www.alignmentforum.org/posts/4uXCAJNuPKtKBsi28/negative-results-for-saes-on-downstream-tasks#Removing_High_Frequency_Latents_from_JumpReLU_SAEs) from the GDM Mech Interp Team for a detailed analysis). This allows some features to fire on a large fraction of inputs (>10%), which often leads to uninterpretable high-frequency features.
+A key issue with standard sparsity penalties ($L^0$, $L^1$, or $\tanh$) is that they only control the _average_ number of active features, but are indifferent to the _distribution_ of firing frequencies (See [Removing High Frequency Latents from JumpReLU SAEs](https://www.alignmentforum.org/posts/4uXCAJNuPKtKBsi28/negative-results-for-saes-on-downstream-tasks#Removing_High_Frequency_Latents_from_JumpReLU_SAEs) from the GDM Mech Interp Team for a detailed analysis). This allows some features to fire on a large fraction of inputs (>10%), which often leads to uninterpretable high-frequency features.
 
 The tanh-quadratic loss addresses this by adding a quadratic term that specifically penalizes high-frequency features. First, an approximate frequency $\hat{p}_i$ is computed by averaging the tanh scores across samples:
 
@@ -614,7 +614,11 @@ $$L_s = \lambda \sum_i \hat{p}_i \left(1 + \frac{\hat{p}_i}{s}\right)$$
 
 where $s$ is the frequency scale (controlled by `frequency_scale`). The first term $\hat{p}_i$ behaves like a standard sparsity penalty for low-frequency features ($\hat{p}_i \ll s$), while the quadratic term $\hat{p}_i^2 / s$ dominates for high-frequency features ($\hat{p}_i \gtrsim s$), making it increasingly expensive for features to activate on a large fraction of inputs.
 
-This formulation successfully eliminates high-frequency latents with only a modest impact on reconstruction loss, while improving frequency-weighted interpretability scores compared to standard JumpReLU or TopK SAEs.
+This formulation successfully eliminates high-frequency latents with only a modest impact on reconstruction loss, while improving frequency-weighted interpretability scores compared to standard JumpReLU SAEs.
+
+!!! note
+
+    Our implementation of quadratic loss term uses $\tanh$ as differentiable $L^0$ proxies, which is different to the original proposal by GDM which directly use $L^0$ paired with straight-through estimators.
 
 To use tanh-quadratic, set `#!python sparsity_loss_type="tanh-quad"` in `TrainerConfig`. Other parameters include:
 
@@ -625,9 +629,11 @@ To use tanh-quadratic, set `#!python sparsity_loss_type="tanh-quad"` in `Trainer
 | `tanh_stretch_coefficient` | Stretch coefficient $c$ controlling the steepness of the tanh function. | `4.0` |
 | `frequency_scale` | Scale factor $s$ for the quadratic penalty. Smaller values penalize high-frequency features more aggressively. Typical values are `0.1` or `0.01` to suppress features firing on >10% of tokens. | `0.01` |
 
-<!-- ### JumpReLU $L^p$ Penalty
+## Auxiliary Losses
 
-For JumpReLU SAEs, an additional $L^p$ penalty can encourage the threshold to stay above the pre-activation values:
+### JumpReLU Pre-act Loss
+
+For JumpReLU SAEs, an additional $L_p$ penalty proposed by [Anthropic](https://transformer-circuits.pub/2025/january-update/index.html) can encourage the threshold to stay above the pre-activation values:
 
 $$L_p = \lambda_p \sum_i \text{ReLU}(e^{\theta_i} - h_i) \| W_{\text{dec},i} \|_2$$
 
@@ -637,4 +643,12 @@ To use the JumpReLU $L^p$ penalty, set `lp_coefficient` to a positive value in `
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `lp_coefficient` | Coefficient $\lambda_p$ for the JumpReLU $L^p$ penalty. Set to `None` to disable. | `None` | -->
+| `lp_coefficient` | Coefficient $\lambda_p$ for the JumpReLU $L^p$ penalty. Set to `None` to disable. | `None` |
+
+### Aux-K Loss
+
+WIP @Junxuan Wang
+
+## Caching Activations
+
+## Train on HuggingFace Transformers

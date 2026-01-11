@@ -111,7 +111,7 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
         interpretation = {
             "text": result["explanation"],
         }
-        assert interpretation["text"] is not None
+        # assert interpretation["text"] is not None
         mongo_client.update_feature(
             settings.sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
         )

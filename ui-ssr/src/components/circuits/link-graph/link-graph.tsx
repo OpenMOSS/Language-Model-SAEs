@@ -28,7 +28,7 @@ import { useLocalStorage } from '@/hooks/useLocalStorage'
 interface LinkGraphProps {
   data: CircuitData
   visState: VisState
-  onNodeClick: (nodeId: string, metaKey: boolean) => void
+  onNodeClick: (nodeId: string, isMultiSelect: boolean) => void
   onNodeHover: (nodeId: string | null) => void
 }
 
@@ -303,8 +303,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       )
 
       if (nearestNode) {
-        const metaKey = event.metaKey || event.ctrlKey
-        onNodeClick(nearestNode.nodeId, metaKey)
+        onNodeClick(nearestNode.nodeId, event.metaKey || event.ctrlKey)
       }
     },
     [spatialIndex, onNodeClick],
@@ -421,6 +420,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
           visState={{
             clickedId: visState.clickedId,
             hoveredId: visState.hoveredId,
+            selectedIds: visState.selectedIds,
           }}
         />
 

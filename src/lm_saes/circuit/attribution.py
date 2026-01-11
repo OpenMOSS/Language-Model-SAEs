@@ -698,7 +698,11 @@ def _run_attribution(
         logger.info(f"Feature node indices to trace: {feature_node_indices}")
 
         # Use feature activations as starting weights (normalized)
-        logit_p = feature_activations / feature_activations.sum() if feature_activations.sum() > 0 else torch.ones(n_features, device=feature_activations.device, dtype=feature_activations.dtype)
+        logit_p = (
+            feature_activations / feature_activations.sum()
+            if feature_activations.sum() > 0
+            else torch.ones(n_features, device=feature_activations.device, dtype=feature_activations.dtype)
+        )
 
         if offload:
             offload_handles += offload_modules([model.unembed, model.embed], offload)
@@ -709,7 +713,6 @@ def _run_attribution(
             logit_offset = total_active_feats + n_layers * n_pos + n_pos
         n_logits = n_features
         total_nodes = logit_offset + n_logits
-
 
         max_feature_nodes = min(max_feature_nodes or total_active_feats, total_active_feats)
         logger.info(f"Will include {max_feature_nodes} of {total_active_feats} feature nodes")
@@ -790,16 +793,19 @@ def _run_attribution(
             # print("--------------------------------")
 
             # # Assert that the edge matrix value was set correctly
-            assert torch.allclose(edge_matrix[i, feature_row_idx], feature_activations[i].cpu(), rtol=1e-6), \
+            assert torch.allclose(edge_matrix[i, feature_row_idx], feature_activations[i].cpu(), rtol=1e-6), (
                 f"Edge matrix value {edge_matrix[i, feature_row_idx]} != feature activation {feature_activations[i].cpu()}"
+            )
 
             # Assert that feature_row_idx is within valid range
-            assert 0 <= feature_row_idx < total_active_feats, \
+            assert 0 <= feature_row_idx < total_active_feats, (
                 f"Feature row index {feature_row_idx} out of range [0, {total_active_feats})"
+            )
 
             # Assert that logit offset is correct
-            assert row_to_node_index[i] == logit_offset + i, \
+            assert row_to_node_index[i] == logit_offset + i, (
                 f"Row to node index mismatch: {row_to_node_index[i]} != {logit_offset + i}"
+            )
 
             # '''notations end'''
 
@@ -846,13 +852,10 @@ def _run_attribution(
     lorsa_feat_layer, lorsa_feat_pos = lorsa_activation_matrix.indices()[:2] if use_lorsa else (None, None)
     clt_feat_layer, clt_feat_pos = clt_activation_matrix.indices()[:2]
 
-
-    # DEBUGGING:
-    
-    lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = lorsa_activation_matrix.indices() if use_lorsa else (None, None, None)
+    lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = (
+        lorsa_activation_matrix.indices() if use_lorsa else (None, None, None)
+    )
     clt_feat_layer, clt_feat_pos, clt_feat_idx = clt_activation_matrix.indices()
-
-    # END OF DEBUGGING:
 
     def idx_to_layer(idx: torch.Tensor) -> torch.Tensor:
         if use_lorsa:
@@ -909,7 +912,6 @@ def _run_attribution(
         else:
             return torch.nn.functional.one_hot(clt_feat_pos[idx], num_classes=n_pos)
 
-    
     # DEBUGGING:
     # def idx_to_activation_values(idx: torch.Tensor) -> torch.Tensor:
     #     is_lorsa = idx < len(lorsa_feat_layer)
@@ -951,8 +953,7 @@ def _run_attribution(
                 attention_patterns=idx_to_pattern(idx_batch),
                 retain_graph=n_visited < max_feature_nodes or qk_tracing_topk > 0,
             )
-                
-                
+
             # DEBUGGING:
 
             # Print feature information before attention patterns
@@ -978,7 +979,7 @@ def _run_attribution(
             # print("--------------------------------")
             # for param in model._get_requires_grad_bias_params():
             #     param[1].grad = None
-            
+
             # END OF DEBUGGING:
 
             end = min(st + batch_size, st + rows.shape[0])

@@ -12,6 +12,8 @@ export interface CircuitConfig {
   nodeThreshold: number
   edgeThreshold: number
   maxNLogits: number
+  listOfFeatures?: (number | boolean)[][]
+  parentId?: string
 }
 
 export interface ChatMessage {
@@ -41,6 +43,7 @@ export interface CircuitListItem {
   input: CircuitInput
   config: CircuitConfig
   createdAt: string
+  parentId?: string | null
 }
 
 export interface GenerateCircuitParams {
@@ -54,6 +57,8 @@ export interface GenerateCircuitParams {
   nodeThreshold?: number
   edgeThreshold?: number
   maxNLogits?: number
+  listOfFeatures?: (number | boolean)[][]
+  parentId?: string
 }
 
 export const fetchSaeSets = createServerFn({ method: 'GET' }).handler(
@@ -170,6 +175,7 @@ export const fetchCircuit = createServerFn({ method: 'GET' })
       config: CircuitConfig
       graphData: CircuitData
       createdAt: string
+      parentId: string | null
     }
 
     result.graphData = CircuitDataSchema.parse(result.graphData)
@@ -191,6 +197,8 @@ export const generateCircuit = createServerFn({ method: 'POST' })
       nodeThreshold,
       edgeThreshold,
       maxNLogits,
+      listOfFeatures,
+      parentId,
     } = data
 
     // Convert input to backend format
@@ -222,6 +230,8 @@ export const generateCircuit = createServerFn({ method: 'POST' })
           node_threshold: nodeThreshold,
           edge_threshold: edgeThreshold,
           max_n_logits: maxNLogits,
+          list_of_features: listOfFeatures,
+          parent_id: parentId,
         }),
       },
     )
@@ -233,6 +243,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
     const result = await response.json()
 
     const transformedData = {
+      ...result,
       circuitId: result.circuit_id,
       graphData: {
         ...result.graph_data,
@@ -240,6 +251,8 @@ export const generateCircuit = createServerFn({ method: 'POST' })
         links: undefined,
       },
     }
+    delete transformedData.graph_data
+    delete transformedData.circuit_id
 
     const finalResult = camelcaseKeys(transformedData, {
       deep: true,
@@ -253,6 +266,7 @@ export const generateCircuit = createServerFn({ method: 'POST' })
       prompt: string
       input: CircuitInput
       config: CircuitConfig
+      parentId: string | null
     }
 
     finalResult.graphData = CircuitDataSchema.parse(finalResult.graphData)

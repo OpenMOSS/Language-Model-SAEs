@@ -146,13 +146,17 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                 model_dim_index = 0
             else:
                 model_dim_index = mesh_dim_names.index("model") if "model" in mesh_dim_names else 0
-            local_rank = device_mesh.get_local_rank(mesh_dim=model_dim_index) # this rank stands for device rank of this process
+            local_rank = device_mesh.get_local_rank(
+                mesh_dim=model_dim_index
+            )  # this rank stands for device rank of this process
             model_parallel_size = device_mesh.size(mesh_dim=model_dim_index)
 
             self.rank_assignments = cfg.get_local_rank_assignments(model_parallel_size)
 
             for k, v in cfg.rank_counts.items():
-                logger.info(f"Rank {k} has {v} global transforms, device rank {local_rank} has {self.rank_assignments.count(k)} transforms")
+                logger.info(
+                    f"Rank {k} has {v} global transforms, device rank {local_rank} has {self.rank_assignments.count(k)} transforms"
+                )
         else:
             # Non-distributed case
             self.rank_assignments = cfg.generate_rank_assignments()
@@ -216,7 +220,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
                 # Create DTensor with GLOBAL shape
                 self.U_matrices[str(rank)] = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        self.cfg.rank_counts[rank],   # GLOBAL count
+                        self.cfg.rank_counts[rank],  # GLOBAL count
                         cfg.d_model,
                         rank,
                         dtype=cfg.dtype,
@@ -227,7 +231,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
                 self.V_matrices[str(rank)] = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        self.cfg.rank_counts[rank],   # GLOBAL count
+                        self.cfg.rank_counts[rank],  # GLOBAL count
                         rank,
                         cfg.d_model,
                         dtype=cfg.dtype,
@@ -785,7 +789,9 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             rank_str = str(rank)
             if rank_str in self.U_matrices:
                 # Extract features for this rank group
-                end_idx = feature_idx + self.cfg.rank_counts[rank] # rank_counts[rank] is the GLOBAL count of this rank group
+                end_idx = (
+                    feature_idx + self.cfg.rank_counts[rank]
+                )  # rank_counts[rank] is the GLOBAL count of this rank group
                 rank_features = feature_acts[..., feature_idx:end_idx]
 
                 # Count active transforms (l0) for this rank group
