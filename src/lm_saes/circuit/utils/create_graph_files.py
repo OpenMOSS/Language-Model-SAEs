@@ -164,6 +164,10 @@ def append_qk_tracing_results(graph: Graph, used_nodes: List[Node], clt_names, l
             from_qk_tracing_nodes.update(node.qk_tracing_results.get_nodes())
     nodes_to_add = from_qk_tracing_nodes - existing_nodes
     for node in nodes_to_add:
+        if node.feature_type == 'lorsa':
+            node.sae_name = lorsa_names[node.layer // 2]
+        elif node.feature_type == 'cross layer transcoder':
+            node.sae_name = clt_names[node.layer // 2]
         used_nodes.append(node)
     return used_nodes
 
