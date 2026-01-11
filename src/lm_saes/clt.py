@@ -247,10 +247,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 from lm_saes.utils.distributed import distributed_topk
 
                 def topk_activation(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     return distributed_topk(
@@ -263,10 +260,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             else:
 
                 def topk_activation(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     from lm_saes.utils.math import topk
 
@@ -283,10 +277,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 from lm_saes.utils.distributed import distributed_topk
 
                 def layer_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
                     assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
@@ -302,10 +293,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 from lm_saes.utils.math import topk
 
                 def layer_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
                     return topk(
@@ -321,38 +309,29 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 from lm_saes.utils.distributed import distributed_topk
 
                 def batch_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
-                    x = x.transpose(0, -2)
                     assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     result = distributed_topk(
                         x,
                         k=self.current_k * x.size(0),
                         device_mesh=device_mesh,
-                        dim=(-2, -1),
+                        dim=(0, -1),
                     )
-                    result = result.transpose(0, -2)
                     return result
             else:
                 from lm_saes.utils.math import topk
 
                 def batch_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
                     result = topk(
-                        x.transpose(0, -2),
+                        x,
                         k=self.current_k * x.size(0),
-                        dim=(-2, -1),
+                        dim=(0, -1),
                     )
-                    result = result.transpose(0, -2)
                     return result
 
             return batch_topk
@@ -362,49 +341,31 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 from lm_saes.utils.distributed import distributed_topk
 
                 def batch_layer_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
-                    original_shape = None
-                    if x.ndim == 4:
-                        original_shape = (x.size(0), x.size(1))
-                        x = x.flatten(end_dim=1)
                     assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     result = distributed_topk(
                         x,
                         k=self.current_k * x.size(0),
                         device_mesh=device_mesh,
-                        dim=(-3, -2, -1),
+                        dim=(0, -1, -2),
                         mesh_dim_name="model",
                     )
-                    if original_shape is not None:
-                        result = result.unflatten(dim=0, sizes=original_shape)
                     return result
             else:
                 # single-GPU batchtopk
                 from lm_saes.utils.math import topk
 
                 def batch_layer_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
-                    original_shape = None
-                    if x.ndim == 4:
-                        original_shape = (x.size(0), x.size(1))
-                        x = x.flatten(end_dim=1)
                     result = topk(
                         x,
                         k=self.current_k * x.size(0),
-                        dim=(-3, -2, -1),
+                        dim=(0, -1, -2),
                     )
-                    if original_shape is not None:
-                        result = result.unflatten(dim=0, sizes=original_shape)
                     return result
 
             return batch_layer_topk  # type: ignore
