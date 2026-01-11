@@ -98,7 +98,7 @@ function topologicalSort(
 }
 
 const LinkGraphComponent: React.FC<LinkGraphProps> = ({
-  data,
+  data: rawData,
   visState,
   onNodeClick,
   onNodeHover,
@@ -111,6 +111,15 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       height: 600,
     },
   )
+
+  const data = useMemo(() => {
+    const nodes = rawData.nodes.filter((n) => !n.isFromQkTracing)
+    const nodeIds = new Set(nodes.map((n) => n.nodeId))
+    const edges = rawData.edges.filter(
+      (e) => nodeIds.has(e.source) && nodeIds.has(e.target),
+    )
+    return { ...rawData, nodes, edges }
+  }, [rawData])
 
   // 1. Calculate stats about context counts and total units needed
   const { calculatedCtxCounts, totalUnits } = useMemo(() => {
