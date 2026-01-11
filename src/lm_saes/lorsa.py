@@ -216,15 +216,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     @property
     def b_O(self):
         return self.b_D
-    
-    @property
-    def attn_scale(self) -> float:
-        assert self.cfg.attn_scale is not None, "attn_scale must be initialized during config post initialization"
-        return self.cfg.attn_scale
-    
-    @property
-    def qk_exp_factor(self):
-        return self.cfg.n_ov_heads // self.cfg.n_qk_heads
 
     @property
     def attn_scale(self) -> float:
@@ -887,7 +878,10 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         if self.cfg.n_qk_heads != self.cfg.n_ov_heads:
             # (batch, n_qk_heads, d_qk_head, seq_len)
             v = v.view(v.shape[0], self.cfg.n_qk_heads, self.cfg.ov_group_size, v.shape[2])
+            v = v.permute(1, 0, 2, 3)  # (n_qk_heads, batch, d_qk_head, seq_len)
+            z = torch.einsum("hbqk,hbrk->hbrq", pattern, v)
             z = z.permute(1, 0, 2, 3)  # (batch, n_qk_heads, d_qk_head, seq_len)
+            z = z.flatten(start_dim=1, end_dim=2)
         else:
             z = torch.einsum("bhqk,bhk->bhq", pattern, v)
         return z.permute(0, 2, 1)
