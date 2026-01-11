@@ -290,8 +290,3 @@ def prune_graph(graph: Graph, node_threshold: float = 0.8, edge_threshold: float
     final_scores[sorted_indices] = cumulative_scores
 
     return PruneResult(node_mask, edge_mask, final_scores)
-
-
-# @dataclass
-# class QKTracingResults:
-#     lorsa_head
