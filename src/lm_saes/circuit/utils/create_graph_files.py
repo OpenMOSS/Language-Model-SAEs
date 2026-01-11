@@ -141,11 +141,8 @@ def append_qk_tracing_results(graph: Graph, used_nodes: List[Node], clt_names, l
     for node in used_nodes:
         if node.qk_tracing_results is not None:
             from_qk_tracing_nodes.update(node.qk_tracing_results.get_nodes())
-    print(f"{len(from_qk_tracing_nodes)} in QK tracing")
     nodes_to_add = from_qk_tracing_nodes - existing_nodes
-    print(f"{len(nodes_to_add)} to add")
     for node in nodes_to_add:
-        print(node)
         used_nodes.append(node)
     return used_nodes
 
