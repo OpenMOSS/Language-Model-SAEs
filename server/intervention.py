@@ -18,10 +18,11 @@ except ImportError:
     chess = None
 
 try:
-    # 统一“合法走法概率”的口径：复用 src/chess/move.py 的实现
-    from src.chess import get_move_from_policy_output_with_prob
+    from src.chess_utils import get_move_from_policy_output_with_prob
+    from src.chess_utils.move import get_value_from_output
 except Exception:
     get_move_from_policy_output_with_prob = None
+    get_value_from_output = None
 
 # 全局 BT4 配置常量（兼容脚本运行和 package 导入）
 try:
@@ -48,7 +49,7 @@ class PatchingAnalyzer:
             self.tc_WDs[layer] = transcoders[layer].W_D
             self.lorsa_WDs[layer] = lorsas[layer].W_O
     
-    def _get_cache(self, fen: str) -> dict:
+    def _get_cache(self, fen: str):
         """运行模型并返回 cache。"""
         _, cache = self.model.run_with_cache(fen, prepend_bos=False)
         return cache
@@ -125,7 +126,31 @@ class PatchingAnalyzer:
             self.model.reset_hooks()
         except Exception:
             pass
+        print(f"🔍 调用 model.run_with_cache，fen: {fen}")
+        print(f"🔍 fen 类型: {type(fen)}, 长度: {len(fen) if isinstance(fen, str) else 'N/A'}")
+
         original_output, cache = self.model.run_with_cache(fen, prepend_bos=False)
+
+        print(f"🔍 model.run_with_cache 返回:")
+        print(f"📊 original_output 类型: {type(original_output)}")
+        print(f"📊 original_output 长度: {len(original_output) if hasattr(original_output, '__len__') else 'N/A'}")
+        if hasattr(original_output, '__getitem__'):
+            for i in range(min(3, len(original_output))):
+                item = original_output[i]
+                print(f"📊 original_output[{i}] 类型: {type(item)}")
+                if hasattr(item, 'shape'):
+                    print(f"📊 original_output[{i}] 形状: {item.shape}")
+                elif hasattr(item, '__len__'):
+                    print(f"📊 original_output[{i}] 长度: {len(item)}")
+                    if len(item) > 0 and isinstance(item, (list, tuple)):
+                        print(f"📊 original_output[{i}][0] 类型: {type(item[0])}")
+                        if hasattr(item[0], 'shape'):
+                            print(f"📊 original_output[{i}][0] 形状: {item[0].shape}")
+
+        # 检查policy logits的具体形状
+        policy_logits = original_output[0]
+        print(f"📊 policy_logits 形状: {policy_logits.shape}")
+        print(f"📊 policy_logits[:5]: {policy_logits[:5].tolist() if hasattr(policy_logits, 'tolist') else policy_logits[:5]}")
         
         # 定义hook修改函数
         def modify_hook(tensor, hook):
@@ -144,20 +169,52 @@ class PatchingAnalyzer:
             pass
         
         # 计算logit差异
-        logit_diff = original_output[0] - modified_output[0]
-        
-        return {
+        logit_diff = modified_output[0] - original_output[0]
+
+        # 计算value差异 (Win - Loss)
+        original_value = float(original_output[1][0][0] - original_output[1][0][2]) if get_value_from_output else 0.0
+        modified_value = float(modified_output[1][0][0] - modified_output[1][0][2]) if get_value_from_output else 0.0
+        value_diff = modified_value - original_value
+
+        print(f"🔍 steering_analysis 返回数据:")
+        print(f"📊 original_output[0] 形状: {original_output[0].shape}")
+        print(f"📊 modified_output[0] 形状: {modified_output[0].shape}")
+        print(f"📊 logit_diff 形状: {logit_diff.shape}")
+
+        # 确保policy logits是正确的形状
+        policy_original = original_output[0]
+        policy_modified = modified_output[0]
+
+        # 如果是 [1, 1858]，取 [0] 得到 [1858]
+        if policy_original.ndim == 2:
+            policy_original = policy_original[0]
+        if policy_modified.ndim == 2:
+            policy_modified = policy_modified[0]
+
+        print(f"📊 处理后的policy_original 形状: {policy_original.shape}")
+        print(f"📊 处理后的policy_modified 形状: {policy_modified.shape}")
+
+        result = {
             'feature_type': feature_type,
             'layer': layer,
             'pos': pos,
             'feature': feature,
             'activation_value': activation_value,
             'feature_contribution': feature_contribution.detach().cpu().numpy().tolist(),
-            'original_output': original_output[0].detach().cpu().numpy().tolist(),
-            'modified_output': modified_output[0].detach().cpu().numpy().tolist(),
+            'original_output': policy_original.detach().cpu().numpy().tolist(),
+            'modified_output': policy_modified.detach().cpu().numpy().tolist(),
             'logit_diff': logit_diff.detach().cpu().numpy().tolist(),
+            'original_value': float(original_value),
+            'modified_value': float(modified_value),
+            'value_diff': float(value_diff),
             'hook_name': hook_name
         }
+
+        print(f"📋 返回的 original_output 长度: {len(result['original_output'])}")
+        print(f"📋 返回的 modified_output 长度: {len(result['modified_output'])}")
+        print(f"📋 返回的 logit_diff 长度: {len(result['logit_diff'])}")
+
+        return result
 
     def multi_steering_analysis(
         self,
@@ -171,6 +228,9 @@ class PatchingAnalyzer:
             self.model.reset_hooks()
         except Exception:
             pass
+
+        # 对于multi steering，暂时不计算value（避免索引错误）
+        get_value_from_output = None
 
         # 参数校验与规范化
         if not isinstance(nodes, list) or len(nodes) == 0:
@@ -272,31 +332,129 @@ class PatchingAnalyzer:
         except Exception:
             pass
 
-        logit_diff = original_output[0] - modified_output[0]
+        # 计算logit差异，处理不同格式的输出
+        try:
+            # 处理original_output - 可能是张量或列表
+            if isinstance(original_output, torch.Tensor):
+                orig_logits = original_output
+                if orig_logits.ndim == 2 and orig_logits.shape[0] == 1:
+                    orig_logits = orig_logits[0]  # 从 [1, 1858] 变为 [1858]
+            elif isinstance(original_output, (list, tuple)) and len(original_output) > 0:
+                if isinstance(original_output[0], torch.Tensor):
+                    orig_logits = original_output[0]
+                    if orig_logits.ndim == 2 and orig_logits.shape[0] == 1:
+                        orig_logits = orig_logits[0]
+                else:
+                    # 处理嵌套列表的情况
+                    orig_logits = torch.tensor(original_output[0])
+                    if orig_logits.ndim == 2 and orig_logits.shape[0] == 1:
+                        orig_logits = orig_logits[0]
+            else:
+                raise ValueError(f"Unexpected original_output format: {type(original_output)}")
+
+            # 处理modified_output - 可能是张量或列表
+            if isinstance(modified_output, torch.Tensor):
+                mod_logits = modified_output
+                if mod_logits.ndim == 2 and mod_logits.shape[0] == 1:
+                    mod_logits = mod_logits[0]  # 从 [1, 1858] 变为 [1858]
+            elif isinstance(modified_output, (list, tuple)) and len(modified_output) > 0:
+                if isinstance(modified_output[0], torch.Tensor):
+                    mod_logits = modified_output[0]
+                    if mod_logits.ndim == 2 and mod_logits.shape[0] == 1:
+                        mod_logits = mod_logits[0]
+                else:
+                    # 处理嵌套列表的情况
+                    mod_logits = torch.tensor(modified_output[0])
+                    if mod_logits.ndim == 2 and mod_logits.shape[0] == 1:
+                        mod_logits = mod_logits[0]
+            else:
+                raise ValueError(f"Unexpected modified_output format: {type(modified_output)}")
+
+            print(f"Original logits shape: {orig_logits.shape}")
+            print(f"Modified logits shape: {mod_logits.shape}")
+
+            logit_diff = mod_logits - orig_logits
+            print(f"Logit diff shape: {logit_diff.shape}")
+        except (RuntimeError, IndexError, TypeError) as e:
+            print(f"Error computing logit difference: {e}")
+            print(f"Original output type: {type(original_output)}, length: {len(original_output) if hasattr(original_output, '__len__') else 'N/A'}")
+            print(f"Modified output type: {type(modified_output)}, length: {len(modified_output) if hasattr(modified_output, '__len__') else 'N/A'}")
+            if len(original_output) > 0:
+                print(f"original_output[0] type: {type(original_output[0])}, shape: {getattr(original_output[0], 'shape', 'no shape')}")
+            if len(modified_output) > 0:
+                print(f"modified_output[0] type: {type(modified_output[0])}, shape: {getattr(modified_output[0], 'shape', 'no shape')}")
+            raise ValueError(f"Failed to compute logit difference: {e}")
+
+        # 计算value差异 (Win - Loss)，添加安全检查
+        original_value = 0.0
+        modified_value = 0.0
+        value_diff = 0.0
+
+        # 对于multi steering，暂时不计算value（避免索引错误）
+        # if get_value_from_output and len(original_output) > 1 and len(modified_output) > 1:
+        #     try:
+        #         original_value = float(original_output[1][0][0] - original_output[1][0][2])
+        #         modified_value = float(modified_output[1][0][0] - modified_output[1][0][2])
+        #         value_diff = modified_value - original_value
+        #     except (IndexError, TypeError):
+        #         # 如果value输出格式不正确，保持默认值0.0
+        #         pass 
+
+        # 确保输出格式正确
+        def safe_to_numpy(tensor_or_list):
+            if isinstance(tensor_or_list, torch.Tensor):
+                # 确保是一维的 [1858] 形状
+                if tensor_or_list.ndim == 2 and tensor_or_list.shape[0] == 1:
+                    tensor_or_list = tensor_or_list[0]
+                return tensor_or_list.detach().cpu().numpy().tolist()
+            else:
+                # 处理嵌套列表的情况
+                tensor = torch.tensor(tensor_or_list)
+                if tensor.ndim == 2 and tensor.shape[0] == 1:
+                    tensor = tensor[0]
+                return tensor.detach().cpu().numpy().tolist()
+
         return {
             "feature_type": feature_type,
             "layer": layer,
             "nodes": node_details,
-            "original_output": original_output[0].detach().cpu().numpy().tolist(),
-            "modified_output": modified_output[0].detach().cpu().numpy().tolist(),
+            "original_output": safe_to_numpy(orig_logits),
+            "modified_output": safe_to_numpy(mod_logits),
             "logit_diff": logit_diff.detach().cpu().numpy().tolist(),
+            "original_value": float(original_value),
+            "modified_value": float(modified_value),
+            "value_diff": float(value_diff),
             "hook_name": hook_name,
         }
     
-    def analyze_steering_results(self, ablation_result: Dict[str, Any], 
+    def analyze_steering_results(self, ablation_result: Dict[str, Any],
                                fen: str) -> Dict[str, Any]:
         """分析消融结果，返回对合法移动的影响"""
         if ablation_result is None:
             return None
-        
+
         if LeelaBoard is None or chess is None:
             return {'error': 'Chess functionality not available'}
-        
+
+        print(f"🔍 analyze_steering_results 开始")
+        orig_out = ablation_result.get('original_output', [])
+
         logit_diff = torch.tensor(ablation_result['logit_diff'])
         original_output = torch.tensor(ablation_result['original_output'])
         modified_output = torch.tensor(ablation_result['modified_output'])
-        
-        # 获取合法移动
+
+        print(f"🔧 创建tensor后 - original_output 形状: {original_output.shape}")
+
+        # 确保输出是正确的形状 [1858] 而不是 [1, 1858]
+        if original_output.ndim == 2 and original_output.shape[0] == 1:
+            original_output = original_output[0]
+        if modified_output.ndim == 2 and modified_output.shape[0] == 1:
+            modified_output = modified_output[0]
+
+        # 确保 logit_diff 与 original_output 形状一致
+        if logit_diff.ndim == 2 and logit_diff.shape[0] == 1:
+            logit_diff = logit_diff[0]
+
         lboard = LeelaBoard.from_fen(fen, history_synthesis=True)
         chess_board = chess.Board(fen)
         legal_uci_set = set(move.uci() for move in chess_board.legal_moves)
@@ -314,42 +472,82 @@ class PatchingAnalyzer:
                 {
                     "idx": idx,
                     "uci": uci,
-                    "original_logit": float(original_output[0, idx].item()),
-                    "modified_logit": float(modified_output[0, idx].item()),
+                    "original_logit": float(original_output[idx].item()),
+                    "modified_logit": float(modified_output[idx].item()),
                 }
             )
 
-        # 统一概率口径：全部通过 src/chess/move.py 的 get_move_from_policy_output_with_prob 获取 all-legal softmax 概率
+        # 统一概率口径：在所有合法移动中计算softmax概率
         original_prob_by_uci: dict[str, float] = {}
         modified_prob_by_uci: dict[str, float] = {}
-        if get_move_from_policy_output_with_prob is not None:
-            try:
-                orig_logits_last = original_output[0, :].detach().cpu()
-                mod_logits_last = modified_output[0, :].detach().cpu()
-                orig_all = get_move_from_policy_output_with_prob(orig_logits_last.unsqueeze(0), fen, return_list=True)
-                mod_all = get_move_from_policy_output_with_prob(mod_logits_last.unsqueeze(0), fen, return_list=True)
-                if isinstance(orig_all, list):
-                    original_prob_by_uci = {uci: float(prob) for (uci, _logit, prob) in orig_all}
-                if isinstance(mod_all, list):
-                    modified_prob_by_uci = {uci: float(prob) for (uci, _logit, prob) in mod_all}
-            except Exception:
-                original_prob_by_uci = {}
-                modified_prob_by_uci = {}
+
+        # 从policy logits中提取合法移动的概率
+        def get_legal_move_probs(policy_logits: torch.Tensor, fen: str) -> dict[str, float]:
+            """从policy logits中计算所有合法移动的softmax概率"""
+            print(f"🔍 开始计算概率, policy_logits形状: {policy_logits.shape}, 类型: {type(policy_logits)}")
+
+            # 确保policy_logits是正确的形状
+            if policy_logits.ndim == 2:
+                policy_logits = policy_logits[0]  # 移除batch维度
+                print(f"📊 移除batch维度后形状: {policy_logits.shape}")
+
+            # 获取合法移动
+            chess_board = chess.Board(fen)
+            legal_uci_set = set(move.uci() for move in chess_board.legal_moves)
+            print(f"📋 合法移动数量: {len(legal_uci_set)}")
+
+            # 提取合法移动的logits
+            legal_logits = []
+            legal_ucis = []
+            for idx in range(1858):
+                try:
+                    uci = lboard.idx2uci(idx)
+                    if uci in legal_uci_set:
+                        logit_value = float(policy_logits[idx].item())
+                        legal_logits.append(logit_value)
+                        legal_ucis.append(uci)
+                except Exception:
+                    continue
+
+            print(f"📊 提取到的合法移动数量: {len(legal_logits)}")
+            if not legal_logits:
+                return {}
+
+            # 计算softmax概率
+            legal_logits_tensor = torch.tensor(legal_logits)
+            print(f"🔢 logits范围: {min(legal_logits):.3f} - {max(legal_logits):.3f}")
+
+            probs = torch.softmax(legal_logits_tensor, dim=0)
+            prob_by_uci = {uci: float(prob.item()) for uci, prob in zip(legal_ucis, probs)}
+
+            print(f"📈 概率范围: {min(prob_by_uci.values()):.6f} - {max(prob_by_uci.values()):.6f}")
+            return prob_by_uci
+
+        try:
+            original_prob_by_uci = get_legal_move_probs(original_output, fen)
+            modified_prob_by_uci = get_legal_move_probs(modified_output, fen)
+            print(f"✅ 概率计算成功: original_prob_by_uci 有 {len(original_prob_by_uci)} 个移动, modified_prob_by_uci 有 {len(modified_prob_by_uci)} 个移动")
+            if original_prob_by_uci:
+                sample_uci = list(original_prob_by_uci.keys())[0]
+                print(f"示例概率 - {sample_uci}: 原始={original_prob_by_uci[sample_uci]:.6f}, 修改后={modified_prob_by_uci.get(sample_uci, 0):.6f}")
+        except Exception as e:
+            print(f"❌ 计算概率失败: {e}")
+            import traceback
+            print(f"❌ 错误详情: {traceback.format_exc()}")
+            original_prob_by_uci = {}
+            modified_prob_by_uci = {}
         
         # 获取所有合法移动的logit差异和概率差异
-        # 计算 top-k 展示口径：在 all-legal softmax 概率上取 top-k 再归一化（仅用于“Top Moves”展示）
+        # 取前k个最高概率的移动（直接使用原始概率，不重新归一化）
         topk = 5
-        def _topk_renorm(prob_by_uci: dict[str, float], k: int) -> dict[str, float]:
+        def _get_topk_probs(prob_by_uci: dict[str, float], k: int) -> dict[str, float]:
             if not prob_by_uci:
                 return {}
             items = sorted(prob_by_uci.items(), key=lambda x: x[1], reverse=True)[: max(1, int(k))]
-            s = sum(p for _, p in items)
-            if s <= 0:
-                return {uci: 0.0 for uci, _ in items}
-            return {uci: float(p / s) for uci, p in items}
+            return {uci: prob for uci, prob in items}
 
-        original_prob_topk_by_uci = _topk_renorm(original_prob_by_uci, topk)
-        modified_prob_topk_by_uci = _topk_renorm(modified_prob_by_uci, topk)
+        original_prob_topk_by_uci = _get_topk_probs(original_prob_by_uci, topk)
+        modified_prob_topk_by_uci = _get_topk_probs(modified_prob_by_uci, topk)
 
         legal_moves_with_diff: list[dict[str, Any]] = []
         for m in legal_moves:
@@ -359,10 +557,16 @@ class PatchingAnalyzer:
             modified_prob = float(modified_prob_by_uci.get(uci, 0.0))
             original_prob_topk = float(original_prob_topk_by_uci.get(uci, 0.0))
             modified_prob_topk = float(modified_prob_topk_by_uci.get(uci, 0.0))
+            # 根据 logit_diff 的形状选择正确的索引方式
+            if logit_diff.ndim == 2:
+                diff_value = float(logit_diff[0, idx].item())
+            else:
+                diff_value = float(logit_diff[idx].item())
+
             legal_moves_with_diff.append(
                 {
                     "uci": uci,
-                    "diff": float(logit_diff[0, idx].item()),
+                    "diff": diff_value,
                     "original_logit": m["original_logit"],
                     "modified_logit": m["modified_logit"],
                     "prob_diff": float(modified_prob - original_prob),
@@ -418,6 +622,11 @@ class PatchingAnalyzer:
             avg_logit_diff = max_logit_diff = min_logit_diff = 0
             avg_prob_diff = max_prob_diff = min_prob_diff = 0
         
+        # 计算value统计信息
+        original_value = ablation_result.get('original_value', 0.0)
+        modified_value = ablation_result.get('modified_value', 0.0)
+        value_diff = ablation_result.get('value_diff', 0.0)
+
         return {
             # 特征缺失促进的移动（logit下降）
             'promoting_moves': promoting_moves,
@@ -430,7 +639,10 @@ class PatchingAnalyzer:
                 'min_logit_diff': min_logit_diff,
                 'avg_prob_diff': avg_prob_diff,
                 'max_prob_diff': max_prob_diff,
-                'min_prob_diff': min_prob_diff
+                'min_prob_diff': min_prob_diff,
+                'original_value': original_value,
+                'modified_value': modified_value,
+                'value_diff': value_diff
             },
             'ablation_info': {
                 'feature_type': ablation_result.get('feature_type'),
@@ -442,7 +654,7 @@ class PatchingAnalyzer:
                 'nodes': ablation_result.get('nodes'),
                 'hook_name': ablation_result.get('hook_name')
             },
-            # 返回两套“Top moves”：
+            # 返回两套"Top moves"：
             # - top_moves_by_prob: 按修改后概率（all-legal softmax）排序
             # - top_moves_by_prob_topk: 按修改后概率（top-k legal softmax，匹配 logit-lens）排序
             'top_moves_by_prob': sorted_by_modified_prob[:10],

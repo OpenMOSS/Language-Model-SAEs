@@ -387,22 +387,22 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     return getSquareIndex(actualRow, actualCol);
   };
 
-  const getSquareA1Index = (displayRow: number, col: number): number => {
-    const file = getDisplayColLetter(col);
-    const rank = getDisplayRowNumber(displayRow);
-    const fileIdx = file.charCodeAt(0) - 97;
-    const rankIdx = rank - 1;
-    return rankIdx * 8 + fileIdx;
-  };
-
-  const squareA1ToActivationArrayIndex = (squareA1Index: number): number => {
-    const fileIdx = squareA1Index % 8;
-    const rankIdx = Math.floor(squareA1Index / 8);
-    return flip_activation ? (7 - rankIdx) * 8 + fileIdx : squareA1Index;
-  };
-
+  // 激活值索引映射 - 激活值数组按照标准棋盘坐标：a1=0, b1=1, ..., h8=63
   const getActivationIndex = (displayRow: number, col: number): number => {
-    return squareA1ToActivationArrayIndex(getSquareA1Index(displayRow, col));
+    // 先还原到"原始棋盘行"（在是否 flip 之后）
+    const originalRow = flip ? (7 - displayRow) : displayRow;
+    // 只在黑方视角时做了左右镜像：显示列 0 → 实际列 7
+    const actualCol = flip ? (7 - col) : col;
+
+    // 根据 flip_activation 参数决定是否在行方向上再做一次翻转
+    if (flip_activation) {
+      // 翻转激活值索引：FEN第0行对应第1行，FEN第7行对应第8行
+      return originalRow * 8 + actualCol;
+    } else {
+      // 不翻转激活值索引：FEN第0行对应第8行，FEN第7行对应第1行
+      const standardRow = 7 - originalRow;
+      return standardRow * 8 + actualCol;
+    }
   };
 
   // 新增：根据实际索引计算显示位置（考虑上下 flip + 左右镜像）
@@ -438,9 +438,18 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   // 统一的 从索引到标准坐标的命名（不依赖行棋方）
   const getSquareNameFromActivationIndex = (activationIndex: number) => {
-    const row = Math.floor(activationIndex / 8); // 0..7 => rank1..rank8
-    const col = activationIndex % 8; // 0..7 => a..h
-    return `${String.fromCharCode(97 + col)}${row + 1}`;
+    const row = Math.floor(activationIndex / 8);
+    const col = activationIndex % 8;
+    // 根据flip_activation参数决定如何转换行号
+    if (flip_activation) {
+      // 翻转模式：激活索引直接对应FEN棋盘位置
+      // FEN第0行对应第8行，FEN第7行对应第1行
+      return `${String.fromCharCode(97 + col)}${8 - row}`;
+    } else {
+      // 标准模式：激活值数组按照标准棋盘坐标：a1=0, ..., h8=63
+      // 标准行0对应第1行，标准行7对应第8行
+      return `${String.fromCharCode(97 + col)}${row + 1}`;
+    }
   };
 
   // 新增：处理格子点击
@@ -554,28 +563,27 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
               const normalIsLight = (displayRowIndex + colIndex) % 2 === 0;
               const isLight = normalIsLight;
               const squareIndex = getActualSquareIndex(displayRowIndex, colIndex);
-              const squareA1Index = getSquareA1Index(displayRowIndex, colIndex);
               const activationIndex = getActivationIndex(displayRowIndex, colIndex);
               const activation = activations?.[activationIndex] || 0;
               const activationColor = getActivationColor(activation);
               
               // 检查当前格子是否是hover格子的Z模式目标
-              const isZPatternTarget = zPatternTargets.some(target => target.square === squareA1Index);
-              const targetStrength = zPatternTargets.find(target => target.square === squareA1Index)?.strength || 0;
+              const isZPatternTarget = zPatternTargets.some(target => target.square === activationIndex);
+              const targetStrength = zPatternTargets.find(target => target.square === activationIndex)?.strength || 0;
               
               // 检查是否为移动的起点或终点
               const isMoveFromSquare = parsedMove && parsedMove.from.index === squareIndex;
               const isMoveToSquare = parsedMove && parsedMove.to.index === squareIndex;
               
               // 新增：检查是否为选中的格子
-              const isSelectedSquare = selectedSquare === squareA1Index;
+              const isSelectedSquare = selectedSquare === activationIndex;
               
               // 获取基础背景色
               const baseColor = isLight ? 'bg-amber-100' : 'bg-amber-800';
               
               // 确定最终背景色
               let finalBackgroundColor;
-              const isSourceSquare = hoveredSquare === squareA1Index; // 当前格子是否为源格子
+              const isSourceSquare = hoveredSquare === activationIndex; // 当前格子是否为源格子
               
               if (isSelectedSquare) {
                 // 选中的格子用蓝色高亮
@@ -622,13 +630,13 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                   onMouseEnter={() => {
                     // 只有激活值不为0的格子才响应hover
                     if (activation !== 0) {
-                      setHoveredSquare(squareA1Index);
+                      setHoveredSquare(activationIndex);
                     }
                   }}
                   onMouseLeave={() => {
                     setHoveredSquare(null);
                   }}
-                  onClick={() => handleSquareClick(squareA1Index)}
+                  onClick={() => handleSquareClick(activationIndex)}
                   title={`${getDisplayColLetter(colIndex)}${getDisplayRowNumber(displayRowIndex)}${
                     activation !== 0 ? ` (${activation.toFixed(3)})` : ''
                   }${
@@ -698,13 +706,14 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
           )}
         
         {/* 移动箭头覆盖层 */}
-        <svg
-          className="absolute inset-0 pointer-events-none"
-          width={boardPx}
-          height={boardPx}
-          viewBox={`0 0 ${boardPx} ${boardPx}`}
-          style={{ zIndex: 10 }}
-        >
+        {parsedMove && (
+          <svg
+            className="absolute inset-0 pointer-events-none"
+            width={boardPx}
+            height={boardPx}
+            viewBox={`0 0 ${boardPx} ${boardPx}`}
+            style={{ zIndex: 10 }}
+          >
           <defs>
             <marker id="arrow-head" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
               <path d="M0,0 L0,6 L6,3 z" fill={moveColor || '#4b5563'} />
@@ -713,30 +722,28 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
               <path d="M0,0 L0,5 L5,2.5 z" fill="#10b981" />
             </marker>
           </defs>
-
-          {/* 原始移动箭头 */}
-          {parsedMove && (() => {
-            // 使用棋盘朝向映射，保证箭头与格子渲染一致
-            const fromPos = getBoardDisplayPosition(parsedMove.from.index);
-            const toPos = getBoardDisplayPosition(parsedMove.to.index);
-            const sq = squareSizePxMap[size];
-            const fromX = fromPos.col * sq + sq / 2;
-            const fromY = fromPos.row * sq + sq / 2;
-            const toX = toPos.col * sq + sq / 2;
-            const toY = toPos.row * sq + sq / 2;
-            return (
-              <line
-                x1={fromX}
-                y1={fromY}
-                x2={toX}
-                y2={toY}
-                stroke={moveColor || '#4b5563'}
-                strokeWidth={4}
-                strokeOpacity={0.9}
-                markerEnd="url(#arrow-head)"
-              />
-            );
-          })()}
+            {(() => {
+              // 使用棋盘朝向映射，保证箭头与格子渲染一致
+              const fromPos = getBoardDisplayPosition(parsedMove.from.index);
+              const toPos = getBoardDisplayPosition(parsedMove.to.index);
+              const sq = squareSizePxMap[size];
+              const fromX = fromPos.col * sq + sq / 2;
+              const fromY = fromPos.row * sq + sq / 2;
+              const toX = toPos.col * sq + sq / 2;
+              const toY = toPos.row * sq + sq / 2;
+              return (
+                <line
+                  x1={fromX}
+                  y1={fromY}
+                  x2={toX}
+                  y2={toY}
+                  stroke={moveColor || '#4b5563'}
+                  strokeWidth={4}
+                  strokeOpacity={0.9}
+                  markerEnd="url(#arrow-head)"
+                />
+              );
+            })()}
 
           {/* 前向推理移动箭头 */}
           {forwardMoves.map((moveData: any, index: number) => {
@@ -769,6 +776,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             );
           })}
         </svg>
+        )}
       </div>
 
               {/* FEN字符串和移动信息显示 */}
@@ -815,7 +823,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       {/* Hover状态显示Z模式连接详情 */}
       {hoveredSquare !== null && (() => {
         const squareName = getSquareNameFromActivationIndex(hoveredSquare);
-        const activation = activations?.[squareA1ToActivationArrayIndex(hoveredSquare)] || 0;
+        const activation = activations?.[hoveredSquare] || 0;
         
         return (
           <div className="text-xs bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
@@ -1217,7 +1225,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             )}
           </>
         )}
-        </div>
+      </div>
     </div>
   );
 };

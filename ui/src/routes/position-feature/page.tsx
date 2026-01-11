@@ -58,13 +58,44 @@ export const PositionFeaturePage = () => {
     };
   }, [saeComboId]);
 
-  // 解析位置输入（支持逗号分隔的多个位置）
+  // 解析位置输入（支持范围语法如0-5,8）
   const handlePositionsChange = (value: string) => {
     setPositionsInput(value);
-    const parsed = value
-      .split(",")
-      .map((s) => parseInt(s.trim()))
-      .filter((n) => !isNaN(n) && n >= 0 && n < 64);
+
+    // 解析位置字符串，支持范围语法
+    const result: number[] = [];
+    const parts = value.split(',');
+
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed.includes('-')) {
+        // 处理范围，如"0-5"
+        const rangeParts = trimmed.split('-');
+        if (rangeParts.length === 2) {
+          const start = parseInt(rangeParts[0].trim(), 10);
+          const end = parseInt(rangeParts[1].trim(), 10);
+          if (!isNaN(start) && !isNaN(end) && start <= end) {
+            for (let i = start; i <= end; i++) {
+              if (!result.includes(i)) {
+                result.push(i);
+              }
+            }
+          }
+        }
+      } else {
+        // 处理单个数字，如"8"
+        const num = parseInt(trimmed, 10);
+        if (!isNaN(num) && !result.includes(num)) {
+          result.push(num);
+        }
+      }
+    }
+
+    // 过滤并排序
+    const parsed = result
+      .filter(pos => pos >= 0 && pos <= 63)
+      .sort((a, b) => a - b);
+
     setPositions(parsed.length > 0 ? parsed : [0]);
   };
 
@@ -206,12 +237,12 @@ export const PositionFeaturePage = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="positions-input">位置 (0-63，逗号分隔)</Label>
+                <Label htmlFor="positions-input">位置 (0-63，支持范围语法，如0-5,8)</Label>
                 <Input
                   id="positions-input"
                   value={positionsInput}
                   onChange={(e) => handlePositionsChange(e.target.value)}
-                  placeholder="0,1,2"
+                  placeholder="0-7,9,12-15"
                   className="bg-white"
                 />
                 <p className="text-xs text-gray-500">
@@ -291,12 +322,12 @@ export const PositionFeaturePage = () => {
         )}
 
         {/* PosFeatureCard Component */}
-        {fen && positions.length > 0 && (
+        {fen && positionsInput.trim() && (
           <div className="mb-6">
             <PosFeatureCard
               fen={fen}
               layer={layer}
-              positions={positions}
+              positions={positionsInput}  // 传递原始字符串，让组件内部解析范围语法
               componentType={componentType}
               modelName="lc0/BT4-1024x15x32h"
               saeComboId={saeComboId}

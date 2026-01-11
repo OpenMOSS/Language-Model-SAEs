@@ -14,7 +14,7 @@ if str(project_root) not in sys.path:
 
 try:
     # 统一“合法走法概率”的口径：复用 src/chess/move.py 的实现
-    from src.chess import get_move_from_policy_output_with_prob
+    from src.chess_utils import get_move_from_policy_output_with_prob
 except Exception:
     get_move_from_policy_output_with_prob = None
 

@@ -37,8 +37,12 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
   };
 
   const handleNodeClick = useCallback(async (nodeId: string, metaKey: boolean) => {
-    const node = data.nodes.find(n => n.id === nodeId);
-    if (!node) return;
+    // Try both id and nodeId to handle different node formats
+    const node = data.nodes.find(n => n.nodeId === nodeId || n.id === nodeId);
+    if (!node) {
+      console.warn('⚠️ LinkGraphContainer: Node not found for nodeId:', nodeId);
+      return;
+    }
 
     // Always call parent handler first to update global state
     onNodeClick?.(node, metaKey);

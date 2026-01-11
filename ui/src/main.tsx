@@ -20,6 +20,9 @@ import { TacticFeaturesPage } from "./routes/tactic-features/page";
 import { GlobalWeightPage } from "./routes/global-weight/page";
 import { FunctionalMicrocircuitPage } from "./routes/functional-microcircuit/page";
 import { PositionFeaturePage } from "./routes/position-feature/page";
+import { FeatureInteractionPage } from "./routes/feature-interaction/page";
+import { InteractionCircuitPage } from "./routes/interaction-circuit/page";
+
 
 const router = createBrowserRouter([
   {
@@ -81,6 +84,14 @@ const router = createBrowserRouter([
   {
     path: "/position-feature",
     element: <PositionFeaturePage />,
+  },
+  {
+    path: "/feature-interaction",
+    element: <FeatureInteractionPage />,
+  },
+  {
+    path: "/interaction-circuit",
+    element: <InteractionCircuitPage />,
   },
   {
     path: "/",

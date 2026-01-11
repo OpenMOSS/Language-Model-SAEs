@@ -20,14 +20,19 @@ import { Label } from '@/components/ui/label';
 import { Loader2, Trash2, Edit2, Save, X } from 'lucide-react';
 import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 import { ChessBoard } from '@/components/chess/chess-board';
+import { GetFeatureFromFen } from '@/components/feature/get-feature-from-fen';
 import {
   listCircuitAnnotations,
   getCircuitAnnotation,
   CircuitAnnotation,
+  CircuitFeature,
   addEdgeToCircuit,
   removeEdgeFromCircuit,
   updateEdgeWeight,
   setFeatureLevel,
+  createCircuitAnnotation,
+  addFeatureToCircuit,
+  removeFeatureFromCircuit,
 } from '@/utils/api';
 
 interface GlobalWeightData {
@@ -88,16 +93,28 @@ type FeatureNodeData = Record<string, unknown> & {
 
 // Custom node component for features
 const FeatureNode = ({ data, selected }: { 
-  data: FeatureNodeData & { isSecondSelection?: boolean }; 
+  data: FeatureNodeData & { isSecondSelection?: boolean; isSteeringNode?: boolean; isTargetNode?: boolean }; 
   selected?: boolean;
 }) => {
   const isSecondSelection = data.isSecondSelection || false;
-  const borderColor = isSecondSelection 
+  const isSteeringNode = data.isSteeringNode || false;
+  const isTargetNode = data.isTargetNode || false;
+  
+  // Priority: target > steering > second selection > normal selection
+  const borderColor = isTargetNode
+    ? 'border-green-600 border-2'
+    : isSteeringNode
+    ? 'border-blue-600 border-2'
+    : isSecondSelection
     ? 'border-green-500' 
     : selected 
     ? 'border-blue-500' 
     : 'border-gray-300';
-  const bgColor = isSecondSelection
+  const bgColor = isTargetNode
+    ? 'bg-green-100'
+    : isSteeringNode
+    ? 'bg-blue-100'
+    : isSecondSelection
     ? 'bg-green-50'
     : selected
     ? 'bg-blue-50'
@@ -153,6 +170,9 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
   // Interaction state
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedNodeId2, setSelectedNodeId2] = useState<string | null>(null); // Second node for between-features analysis
+  const [selectedSteeringNodeIds, setSelectedSteeringNodeIds] = useState<Set<string>>(new Set()); // Multiple steering nodes
+  const [selectedTargetNodeIds, setSelectedTargetNodeIds] = useState<Set<string>>(new Set()); // Multiple target nodes
+  const [nodeSelectionMode, setNodeSelectionMode] = useState<"steering" | "target" | null>(null); // Selection mode
   const [draggingFrom, setDraggingFrom] = useState<string | null>(null);
 
   // Global Weight state
@@ -171,6 +191,23 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
   // Level editing state
   const [editingLevel, setEditingLevel] = useState<{ featureId: string; level: number } | null>(null);
   const [levelInput, setLevelInput] = useState<string>('0');
+
+  // Node interaction state
+  const [steeringScale, setSteeringScale] = useState<string>('2.0');
+  const [interactionResult, setInteractionResult] = useState<any>(null);
+  const [analyzingInteraction, setAnalyzingInteraction] = useState(false);
+  const [interactionFen, setInteractionFen] = useState<string>('8/p3kpp1/8/3R1r2/8/4P1Q1/PPr4n/6KR b - - 9 32'); // FEN for interaction analysis
+  const [steeringNodePositions, setSteeringNodePositions] = useState<Map<string, number>>(new Map()); // Position for each steering node
+  const [targetNodePositions, setTargetNodePositions] = useState<Map<string, number>>(new Map()); // Position for each target node
+  const [nodeActivations, setNodeActivations] = useState<Map<string, number>>(new Map()); // Activation value for each node at its position
+  const [loadingActivations, setLoadingActivations] = useState<Set<string>>(new Set()); // Loading state for activation fetching
+
+  // Feature from FEN state
+  const [fenForFeatureSelection, setFenForFeatureSelection] = useState<string>('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+  const [layerForFeatureSelection, setLayerForFeatureSelection] = useState<number>(0);
+  const [positionForFeatureSelection, setPositionForFeatureSelection] = useState<number>(0);
+  const [componentTypeForFeatureSelection, setComponentTypeForFeatureSelection] = useState<"attn" | "mlp">("attn");
+  const [autoCreateEdges, setAutoCreateEdges] = useState<boolean>(false); // 默认不自动创建边
 
   // Get SAE combo ID (use useState to avoid re-reading on every render)
   const [saeComboId, setSaeComboId] = useState<string | undefined>(() => {
@@ -387,17 +424,54 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
   // Handle node click
   const onNodeClick = useCallback((_event: React.MouseEvent, node: ReactFlowNode<FeatureNodeData>) => {
-    // If Ctrl/Cmd is pressed, select as second node
-    if (_event.ctrlKey || _event.metaKey) {
+    // If Ctrl/Cmd is pressed, select as second node (for backward compatibility)
+    if (_event.ctrlKey || _event.metaKey && !nodeSelectionMode) {
       setSelectedNodeId2(node.id === selectedNodeId2 ? null : node.id);
+    } else if (nodeSelectionMode === "steering") {
+      // Steering node selection mode
+      setSelectedSteeringNodeIds(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(node.id)) {
+          newSet.delete(node.id);
+          // Remove position when node is deselected
+          setSteeringNodePositions(prevPos => {
+            const newPos = new Map(prevPos);
+            newPos.delete(node.id);
+            return newPos;
+          });
     } else {
+          newSet.add(node.id);
+          // Don't set default position - user must specify it
+        }
+        return newSet;
+      });
+    } else if (nodeSelectionMode === "target") {
+      // Target node selection mode
+      setSelectedTargetNodeIds(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(node.id)) {
+          newSet.delete(node.id);
+          // Remove position when node is deselected
+          setTargetNodePositions(prevPos => {
+            const newPos = new Map(prevPos);
+            newPos.delete(node.id);
+            return newPos;
+          });
+        } else {
+          newSet.add(node.id);
+          // Don't set default position - user must specify it
+        }
+        return newSet;
+      });
+    } else {
+      // Default behavior: single node selection
       setSelectedNodeId(node.id === selectedNodeId ? null : node.id);
       // Clear second selection if clicking first node
       if (node.id === selectedNodeId) {
         setSelectedNodeId2(null);
       }
     }
-  }, [selectedNodeId, selectedNodeId2]);
+  }, [selectedNodeId, selectedNodeId2, nodeSelectionMode]);
 
   // Handle node hover (for future use)
   const onNodeMouseEnter = useCallback((_event: React.MouseEvent, _node: ReactFlowNode<FeatureNodeData>) => {
@@ -634,6 +708,303 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       setLoadingMessage(null);
     }
   }, [saeComboId, preloadModels, buildFeatureName, findFeatureRank]);
+
+  // Fetch activation value for a node at a specific position
+  const fetchNodeActivation = useCallback(async (nodeId: string, position: number) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node || !interactionFen || !saeComboId) {
+      return null;
+    }
+
+    setLoadingActivations(prev => new Set(prev).add(nodeId));
+    try {
+      const componentType = node.data.featureType === 'lorsa' ? 'attn' : 'mlp';
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/activation/get_features_at_position`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          fen: interactionFen.trim(),
+          layer: node.data.layer,
+          pos: position,
+          component_type: componentType,
+          model_name: 'lc0/BT4-1024x15x32h',
+          sae_combo_id: saeComboId,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+
+      const data = await response.json();
+      const features = componentType === 'attn' ? data.attn_features : data.mlp_features;
+      const feature = features?.find((f: any) => f.feature_index === node.data.featureIndex);
+      
+      if (feature) {
+        setNodeActivations(prev => {
+          const newMap = new Map(prev);
+          newMap.set(nodeId, feature.activation_value);
+          return newMap;
+        });
+        return feature.activation_value;
+      }
+      return 0;
+    } catch (error) {
+      console.error('Failed to fetch node activation:', error);
+      return null;
+    } finally {
+      setLoadingActivations(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(nodeId);
+        return newSet;
+      });
+    }
+  }, [nodes, interactionFen, saeComboId]);
+
+  // Analyze interaction between selected nodes
+  const analyzeNodeInteraction = useCallback(async () => {
+    const fen = interactionFen || (selectedCircuit as any)?.original_fen || '8/p3kpp1/8/3R1r2/8/4P1Q1/PPr4n/6KR b - - 9 32';
+    
+    if (!fen) {
+      alert('请先输入 FEN 字符串');
+      return;
+    }
+
+    // Check if using new multi-node selection mode
+    const useMultiNodeMode = selectedSteeringNodeIds.size > 0 && selectedTargetNodeIds.size > 0;
+    
+    if (!useMultiNodeMode) {
+      // Fallback to old two-node mode for backward compatibility
+    if (!selectedNodeId || !selectedNodeId2 || !selectedCircuit) {
+        alert('请选择两个节点来进行交互分析，或者使用多节点选择模式');
+      return;
+    }
+
+    const nodeA = nodes.find(n => n.id === selectedNodeId);
+    const nodeB = nodes.find(n => n.id === selectedNodeId2);
+
+    if (!nodeA || !nodeB) {
+      alert('找不到选中的节点');
+      return;
+    }
+
+      // Check positions
+      const nodeAPos = steeringNodePositions.get(selectedNodeId);
+      const nodeBPos = targetNodePositions.get(selectedNodeId2);
+      
+      if (nodeAPos === undefined) {
+        alert(`请为 steering node (${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeA.data?.layer} #${nodeA.data?.featureIndex}) 指定 position`);
+        return;
+      }
+      if (nodeBPos === undefined) {
+        alert(`请为 target node (${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeB.data?.layer} #${nodeB.data?.featureIndex}) 指定 position`);
+        return;
+      }
+
+      // Check activation values
+      const nodeAActivation = nodeActivations.get(selectedNodeId);
+      const nodeBActivation = nodeActivations.get(selectedNodeId2);
+      
+      if (nodeAActivation === undefined) {
+        // Fetch activation
+        const activation = await fetchNodeActivation(selectedNodeId, nodeAPos);
+        if (activation === null || activation === 0) {
+          alert(`Steering node (${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeA.data?.layer} #${nodeA.data?.featureIndex}) 在 position ${nodeAPos} 的激活值为 0，无法进行分析`);
+          return;
+        }
+      } else if (nodeAActivation === 0) {
+        alert(`Steering node (${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeA.data?.layer} #${nodeA.data?.featureIndex}) 在 position ${nodeAPos} 的激活值为 0，无法进行分析`);
+        return;
+      }
+
+      if (nodeBActivation === undefined) {
+        // Fetch activation
+        const activation = await fetchNodeActivation(selectedNodeId2, nodeBPos);
+        if (activation === null || activation === 0) {
+          alert(`Target node (${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeB.data?.layer} #${nodeB.data?.featureIndex}) 在 position ${nodeBPos} 的激活值为 0，无法进行分析`);
+          return;
+        }
+      } else if (nodeBActivation === 0) {
+        alert(`Target node (${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeB.data?.layer} #${nodeB.data?.featureIndex}) 在 position ${nodeBPos} 的激活值为 0，无法进行分析`);
+        return;
+      }
+
+    setAnalyzingInteraction(true);
+    try {
+        const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/interaction/analyze_node_interaction`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model_name: 'lc0/BT4-1024x15x32h',
+          sae_combo_id: saeComboId,
+            fen: fen,
+            steering_nodes: [{
+            feature_type: nodeA.data.featureType,
+            layer: nodeA.data.layer,
+            feature: nodeA.data.featureIndex,
+              pos: nodeAPos,
+            }],
+            target_nodes: [{
+            feature_type: nodeB.data.featureType,
+            layer: nodeB.data.layer,
+            feature: nodeB.data.featureIndex,
+              pos: nodeBPos,
+            }],
+          steering_scale: parseFloat(steeringScale),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+
+      const result = await response.json();
+      setInteractionResult(result);
+    } catch (error) {
+      console.error('Failed to analyze node interaction:', error);
+      alert(`分析节点交互失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setAnalyzingInteraction(false);
+    }
+      return;
+    }
+
+    // New multi-node mode
+    if (!selectedCircuit) {
+      alert('请先选择一个 Circuit');
+      return;
+    }
+
+    const steeringNodes = Array.from(selectedSteeringNodeIds)
+      .map(id => nodes.find(n => n.id === id))
+      .filter((n): n is ReactFlowNode<FeatureNodeData> => n !== undefined);
+    
+    const targetNodes = Array.from(selectedTargetNodeIds)
+      .map(id => nodes.find(n => n.id === id))
+      .filter((n): n is ReactFlowNode<FeatureNodeData> => n !== undefined);
+
+    if (steeringNodes.length === 0 || targetNodes.length === 0) {
+      alert('请至少选择一个 steering node 和一个 target node');
+      return;
+    }
+
+    // Check all positions are specified
+    for (const node of steeringNodes) {
+      const pos = steeringNodePositions.get(node.id);
+      if (pos === undefined) {
+        alert(`请为 steering node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 指定 position`);
+        return;
+      }
+    }
+
+    for (const node of targetNodes) {
+      const pos = targetNodePositions.get(node.id);
+      if (pos === undefined) {
+        alert(`请为 target node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 指定 position`);
+        return;
+      }
+    }
+
+    // Check all activation values are non-zero
+    for (const node of steeringNodes) {
+      const pos = steeringNodePositions.get(node.id)!;
+      const activation = nodeActivations.get(node.id);
+      
+      if (activation === undefined) {
+        // Fetch activation
+        const fetchedActivation = await fetchNodeActivation(node.id, pos);
+        if (fetchedActivation === null || fetchedActivation === 0) {
+          alert(`Steering node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 在 position ${pos} 的激活值为 0，无法进行分析`);
+          return;
+        }
+      } else if (activation === 0) {
+        alert(`Steering node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 在 position ${pos} 的激活值为 0，无法进行分析`);
+        return;
+      }
+    }
+
+    for (const node of targetNodes) {
+      const pos = targetNodePositions.get(node.id)!;
+      const activation = nodeActivations.get(node.id);
+      
+      if (activation === undefined) {
+        // Fetch activation
+        const fetchedActivation = await fetchNodeActivation(node.id, pos);
+        if (fetchedActivation === null || fetchedActivation === 0) {
+          alert(`Target node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 在 position ${pos} 的激活值为 0，无法进行分析`);
+          return;
+        }
+      } else if (activation === 0) {
+        alert(`Target node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 在 position ${pos} 的激活值为 0，无法进行分析`);
+        return;
+      }
+    }
+
+    setAnalyzingInteraction(true);
+    try {
+      // Get positions for each node
+      const steeringNodesWithPos = steeringNodes.map(node => ({
+        feature_type: node.data.featureType,
+        layer: node.data.layer,
+        feature: node.data.featureIndex,
+        pos: steeringNodePositions.get(node.id)!,
+      }));
+      
+      const targetNodesWithPos = targetNodes.map(node => ({
+        feature_type: node.data.featureType,
+        layer: node.data.layer,
+        feature: node.data.featureIndex,
+        pos: targetNodePositions.get(node.id)!,
+      }));
+      
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/interact/analyze_node_interaction`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model_name: 'lc0/BT4-1024x15x32h',
+          sae_combo_id: saeComboId,
+          fen: fen,
+          steering_nodes: steeringNodesWithPos,
+          target_nodes: targetNodesWithPos,
+          steering_scale: parseFloat(steeringScale),
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json();
+      setInteractionResult(result);
+    } catch (error) {
+      console.error('Failed to analyze node interaction:', error);
+      alert(`分析节点交互失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setAnalyzingInteraction(false);
+    }
+  }, [
+    selectedNodeId,
+    selectedNodeId2,
+    selectedSteeringNodeIds,
+    selectedTargetNodeIds,
+    nodes,
+    selectedCircuit,
+    saeComboId,
+    steeringScale,
+    interactionFen,
+    steeringNodePositions,
+    targetNodePositions,
+    nodeActivations,
+    fetchNodeActivation,
+  ]);
 
   // Fetch Top Activations for a feature
   const fetchTopActivations = useCallback(async (layer: number, featureIndex: number, featureType: string) => {
@@ -992,6 +1363,187 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     return nodes.find(n => n.id === selectedNodeId2);
   }, [selectedNodeId2, nodes]);
 
+  // Helper function to build dictionary name
+  const buildDictionaryName = useCallback((layer: number, featureType: string): string => {
+    const isLorsa = featureType === 'lorsa';
+    const lorsaSuffix = isLorsa ? 'A' : 'M';
+    const baseDict = `BT4_${isLorsa ? 'lorsa' : 'tc'}_L${layer}${lorsaSuffix}`;
+    
+    if (saeComboId && saeComboId !== 'k_128_e_128') {
+      const comboParts = saeComboId.replace(/k_(\d+)_e_(\d+)/, 'k$1_e$2');
+      return `${baseDict}_${comboParts}`;
+    }
+    return baseDict;
+  }, [saeComboId]);
+
+  // Handle adding feature to circuit
+  const handleAddFeatureToCircuit = useCallback(async (
+    featureIndex: number
+  ) => {
+    if (!saeComboId) {
+      alert('请先选择 SAE 组合');
+      return;
+    }
+
+    try {
+      const featureType = componentTypeForFeatureSelection === 'attn' ? 'lorsa' : 'transcoder';
+      const dictionaryName = buildDictionaryName(layerForFeatureSelection, featureType);
+      
+      // Build feature object
+      const newFeatureId = `feature_${layerForFeatureSelection}_${featureIndex}_${featureType}_${Date.now()}`;
+      const newFeature: CircuitFeature = {
+        sae_name: dictionaryName,
+        sae_series: 'BT4-exp128',
+        layer: layerForFeatureSelection,
+        feature_index: featureIndex,
+        feature_type: featureType,
+        feature_id: newFeatureId,
+      };
+
+      if (selectedCircuit) {
+        // Add to existing circuit
+        await addFeatureToCircuit(selectedCircuit.circuit_id, newFeature);
+        
+        // If auto-create edges is enabled, create edges to all existing features
+        if (autoCreateEdges && selectedCircuit.features && selectedCircuit.features.length > 0) {
+          const edgesToCreate: Array<{ source: string; target: string }> = [];
+          
+          // Create edges from new feature to all existing features
+          for (const existingFeature of selectedCircuit.features) {
+            if (existingFeature.feature_id) {
+              edgesToCreate.push({
+                source: newFeatureId,
+                target: existingFeature.feature_id,
+              });
+            }
+          }
+          
+          // Create edges from all existing features to new feature
+          for (const existingFeature of selectedCircuit.features) {
+            if (existingFeature.feature_id) {
+              edgesToCreate.push({
+                source: existingFeature.feature_id,
+                target: newFeatureId,
+              });
+            }
+          }
+          
+          // Add all edges with weight 0
+          for (const edge of edgesToCreate) {
+            try {
+              await addEdgeToCircuit(
+                selectedCircuit.circuit_id,
+                edge.source,
+                edge.target,
+                0.0
+              );
+            } catch (err) {
+              console.warn(`Failed to create edge ${edge.source} -> ${edge.target}:`, err);
+            }
+          }
+        }
+        
+        // Reload circuit to get updated data
+        await loadCircuit(selectedCircuit.circuit_id);
+        
+        alert(`Feature L${layerForFeatureSelection} #${featureIndex} 已添加到 circuit${autoCreateEdges ? '（已自动创建边）' : ''}`);
+      } else {
+        // Create new circuit
+        const circuitInterpretation = prompt('请输入新 Circuit 的名称/解释:');
+        if (!circuitInterpretation) {
+          return; // User cancelled
+        }
+
+        const newCircuit = await createCircuitAnnotation(
+          circuitInterpretation,
+          saeComboId,
+          [newFeature],
+          [], // No edges by default
+          {
+            original_fen: fenForFeatureSelection,
+            created_from: 'feature_selection',
+          }
+        );
+
+        // Load the new circuit
+        await loadCircuit(newCircuit.circuit_id);
+        await loadCircuits(); // Refresh circuit list
+        
+        alert(`已创建新 Circuit: ${circuitInterpretation}`);
+      }
+    } catch (err) {
+      console.error('Failed to add feature to circuit:', err);
+      alert(`添加 Feature 失败: ${err instanceof Error ? err.message : '未知错误'}`);
+    }
+  }, [
+    saeComboId,
+    selectedCircuit,
+    layerForFeatureSelection,
+    componentTypeForFeatureSelection,
+    fenForFeatureSelection,
+    autoCreateEdges,
+    buildDictionaryName,
+    loadCircuit,
+    loadCircuits,
+  ]);
+
+  // Handle removing feature from circuit
+  const handleRemoveFeatureFromCircuit = useCallback(async (
+    featureIndex: number,
+    layer: number,
+    componentType: "attn" | "mlp"
+  ) => {
+    if (!selectedCircuit) {
+      alert('请先选择一个 Circuit');
+      return;
+    }
+
+    if (!saeComboId) {
+      alert('请先选择 SAE 组合');
+      return;
+    }
+
+    if (!confirm(`确定要从 Circuit 中删除 Feature L${layer} #${featureIndex} 吗？`)) {
+      return;
+    }
+
+    try {
+      const featureType = componentType === 'attn' ? 'lorsa' : 'transcoder';
+      const dictionaryName = buildDictionaryName(layer, featureType);
+      
+      // Find sae_series from circuit features or use default
+      const circuitFeature = selectedCircuit.features?.find(
+        f => f.layer === layer && 
+        f.feature_index === featureIndex && 
+        f.feature_type === featureType
+      );
+      
+      const saeSeries = circuitFeature?.sae_series || 'BT4-exp128';
+
+      await removeFeatureFromCircuit(
+        selectedCircuit.circuit_id,
+        dictionaryName,
+        saeSeries,
+        layer,
+        featureIndex,
+        featureType
+      );
+      
+      // Reload circuit to get updated data
+      await loadCircuit(selectedCircuit.circuit_id);
+      
+      alert(`Feature L${layer} #${featureIndex} 已从 circuit 中删除`);
+    } catch (err) {
+      console.error('Failed to remove feature from circuit:', err);
+      alert(`删除 Feature 失败: ${err instanceof Error ? err.message : '未知错误'}`);
+    }
+  }, [
+    selectedCircuit,
+    saeComboId,
+    buildDictionaryName,
+    loadCircuit,
+  ]);
+
   return (
     <div className="space-y-6">
       <SaeComboLoader />
@@ -1063,6 +1615,8 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
             <CardTitle>Circuit Graph</CardTitle>
             <p className="text-sm text-gray-600">
               Drag nodes to create edges. Click nodes to view details. Click edges to edit weight.
+              <br />
+              <strong>For node interaction analysis:</strong> Click first node, then Ctrl+click second node.
             </p>
           </CardHeader>
           <CardContent>
@@ -1070,10 +1624,15 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
               <ReactFlow
                 nodes={nodes.map(node => ({
                   ...node,
-                  selected: node.id === selectedNodeId || node.id === selectedNodeId2,
+                  selected: node.id === selectedNodeId || 
+                           node.id === selectedNodeId2 || 
+                           selectedSteeringNodeIds.has(node.id) ||
+                           selectedTargetNodeIds.has(node.id),
                   data: {
                     ...node.data,
                     isSecondSelection: node.id === selectedNodeId2,
+                    isSteeringNode: selectedSteeringNodeIds.has(node.id),
+                    isTargetNode: selectedTargetNodeIds.has(node.id),
                   },
                 }))}
                 edges={edges}
@@ -1107,6 +1666,8 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
               <CardTitle>Global Weight Analysis (Between Two Features)</CardTitle>
               <p className="text-sm text-gray-600 mt-2">
                 点击节点选择第一个特征，按住 Ctrl/Cmd 点击选择第二个特征
+                <br />
+                <em>选择两个节点后，还可以进行节点交互分析（查看因果影响）</em>
               </p>
             </CardHeader>
             <CardContent>
@@ -1366,28 +1927,761 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
             <CardTitle>Node Actions</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center space-x-4">
-              <Button
-                onClick={() => {
-                  const nodeData = selectedNode.data;
-                  if (nodeData) {
-                    setEditingLevel({
-                      featureId: nodeData.featureId,
-                      level: nodeData.level || nodeData.layer,
-                    });
-                    setLevelInput((nodeData.level || nodeData.layer).toString());
-                  }
-                }}
-                variant="outline"
-                size="sm"
-              >
-                <Edit2 className="w-4 h-4 mr-2" />
-                Edit Level
-              </Button>
+            <div className="flex flex-col space-y-3">
+              <div className="flex items-center space-x-4">
+                <Button
+                  onClick={() => {
+                    const nodeData = selectedNode.data;
+                    if (nodeData) {
+                      setEditingLevel({
+                        featureId: nodeData.featureId,
+                        level: nodeData.level || nodeData.layer,
+                      });
+                      setLevelInput((nodeData.level || nodeData.layer).toString());
+                    }
+                  }}
+                  variant="outline"
+                  size="sm"
+                >
+                  <Edit2 className="w-4 h-4 mr-2" />
+                  Edit Level
+                </Button>
+                <Button
+                  onClick={() => {
+                    const nodeData = selectedNode.data;
+                    if (nodeData && selectedCircuit) {
+                      // Convert featureType to componentType
+                      const componentType: "attn" | "mlp" = nodeData.featureType === 'lorsa' ? 'attn' : 'mlp';
+                      handleRemoveFeatureFromCircuit(
+                        nodeData.featureIndex,
+                        nodeData.layer,
+                        componentType
+                      );
+                    }
+                  }}
+                  variant="destructive"
+                  size="sm"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  从Circuit删除
+                </Button>
+              </div>
+
+              <div className="text-xs text-gray-600 bg-blue-50 p-2 rounded border">
+                💡 <strong>提示：</strong>选择两个节点来进行交互分析：
+                <br />1. 点击选择第一个节点（steering节点）
+                <br />2. 按住 Ctrl/Cmd 点击选择第二个节点（target节点）
+                <br />3. 然后可以使用"节点交互分析"功能
+              </div>
             </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Feature Selection from FEN */}
+      <Card>
+        <CardHeader>
+          <CardTitle>从 FEN 添加 Feature 到 Circuit</CardTitle>
+          <p className="text-sm text-gray-600">
+            选择 FEN、层、位置和组件类型，然后选择要添加的 feature
+            {selectedCircuit ? `（将添加到当前 circuit: ${selectedCircuit.circuit_interpretation}）` : '（将创建新 circuit）'}
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {/* FEN and position configuration */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="fen-for-feature">FEN 字符串</Label>
+                <Input
+                  id="fen-for-feature"
+                  value={fenForFeatureSelection}
+                  onChange={(e) => setFenForFeatureSelection(e.target.value)}
+                  placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                  className="bg-white"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="layer-for-feature">层 (Layer)</Label>
+                <Input
+                  id="layer-for-feature"
+                  type="number"
+                  min="0"
+                  max="14"
+                  value={layerForFeatureSelection}
+                  onChange={(e) => setLayerForFeatureSelection(parseInt(e.target.value) || 0)}
+                  className="bg-white"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="position-for-feature">位置 (Position)</Label>
+                <Input
+                  id="position-for-feature"
+                  type="number"
+                  min="0"
+                  max="63"
+                  value={positionForFeatureSelection}
+                  onChange={(e) => setPositionForFeatureSelection(parseInt(e.target.value) || 0)}
+                  className="bg-white"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="component-type-for-feature">组件类型</Label>
+                <select
+                  id="component-type-for-feature"
+                  value={componentTypeForFeatureSelection}
+                  onChange={(e) => setComponentTypeForFeatureSelection(e.target.value as "attn" | "mlp")}
+                  className="w-full p-2 border rounded bg-white"
+                >
+                  <option value="attn">Attention (LoRSA)</option>
+                  <option value="mlp">MLP (Transcoder)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Auto-create edges option */}
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="auto-create-edges"
+                checked={autoCreateEdges}
+                onChange={(e) => setAutoCreateEdges(e.target.checked)}
+                className="w-4 h-4"
+              />
+              <Label htmlFor="auto-create-edges" className="text-sm">
+                自动为新添加的 feature 创建边（连接到现有 features，权重为 0）
+              </Label>
+            </div>
+
+            {/* GetFeatureFromFen component */}
+            <div className="border rounded-lg p-4">
+              <GetFeatureFromFen
+                fen={fenForFeatureSelection}
+                layer={layerForFeatureSelection}
+                position={positionForFeatureSelection}
+                componentType={componentTypeForFeatureSelection}
+                modelName="lc0/BT4-1024x15x32h"
+                saeComboId={saeComboId}
+                actionTypes={["add_to_steer"]}
+                actionButtonLabels={{
+                  add_to_steer: selectedCircuit ? "加入Circuit" : "创建Circuit",
+                }}
+                showTopActivations={false}
+                showFenActivations={false}
+                onFeatureAction={(action) => {
+                  if (action.type === "add_to_steer") {
+                    handleAddFeatureToCircuit(action.featureIndex);
+                  }
+                }}
+                className="border-0 shadow-none" // Remove card styling since it's inside another card
+              />
+              <div className="mt-2 text-xs text-gray-500">
+                💡 点击 feature 列表中的"{selectedCircuit ? "加入Circuit" : "创建Circuit"}"按钮将 feature {selectedCircuit ? "添加到当前 circuit" : "创建新 circuit"}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Node Interaction Analysis Panel */}
+      {(selectedNodeId && selectedNodeId2) || (selectedSteeringNodeIds.size > 0 && selectedTargetNodeIds.size > 0) ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Node Interaction Analysis</CardTitle>
+            <p className="text-sm text-gray-600">
+              Analyze how steering nodes affect target nodes' activations
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {/* Selection Mode Toggle */}
+              <div className="flex items-center space-x-4 p-3 bg-gray-50 rounded border">
+                <Label className="text-sm font-medium">选择模式:</Label>
+                <Button
+                  onClick={() => {
+                    setNodeSelectionMode("steering");
+                    setSelectedSteeringNodeIds(new Set());
+                    setSelectedTargetNodeIds(new Set());
+                    setSteeringNodePositions(new Map());
+                    setTargetNodePositions(new Map());
+                  }}
+                  variant={nodeSelectionMode === "steering" ? "default" : "outline"}
+                  size="sm"
+                >
+                  选择 Steering Nodes
+                </Button>
+                <Button
+                  onClick={() => {
+                    setNodeSelectionMode("target");
+                    setSelectedSteeringNodeIds(new Set());
+                    setSelectedTargetNodeIds(new Set());
+                    setSteeringNodePositions(new Map());
+                    setTargetNodePositions(new Map());
+                  }}
+                  variant={nodeSelectionMode === "target" ? "default" : "outline"}
+                  size="sm"
+                >
+                  选择 Target Nodes
+                </Button>
+                <Button
+                  onClick={() => {
+                    setNodeSelectionMode(null);
+                    setSelectedSteeringNodeIds(new Set());
+                    setSelectedTargetNodeIds(new Set());
+                    setSteeringNodePositions(new Map());
+                    setTargetNodePositions(new Map());
+                  }}
+                  variant="outline"
+                  size="sm"
+                >
+                  取消选择模式
+                </Button>
+              </div>
+
+              {/* FEN Display with ChessBoard */}
+              <div className="space-y-2">
+                <Label htmlFor="interaction-fen" className="text-sm font-medium">FEN (用于前向传播):</Label>
+                <Input
+                  id="interaction-fen"
+                  type="text"
+                  value={interactionFen}
+                  onChange={(e) => {
+                    setInteractionFen(e.target.value);
+                    // Clear activations when FEN changes
+                    setNodeActivations(new Map());
+                  }}
+                  placeholder={selectedCircuit ? `默认: ${(selectedCircuit as any).original_fen || '无'}` : '输入 FEN 字符串'}
+                  className="w-full"
+                />
+                {selectedCircuit && (selectedCircuit as any).original_fen && (
+                  <Button
+                    onClick={() => {
+                      setInteractionFen((selectedCircuit as any).original_fen || '');
+                      setNodeActivations(new Map());
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                  >
+                    使用 Circuit 的 FEN
+                  </Button>
+                )}
+                {interactionFen && (
+                  <div className="border rounded-lg p-2 bg-white">
+                    <ChessBoard
+                      fen={interactionFen}
+                      size="small"
+                      showCoordinates={true}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Selected Nodes Display */}
+              <div className="space-y-2">
+                <div className="p-2 bg-blue-50 border border-blue-200 rounded">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-xs font-medium text-blue-900">Steering Nodes ({selectedSteeringNodeIds.size > 0 ? selectedSteeringNodeIds.size : (selectedNodeId ? 1 : 0)}):</p>
+                    {selectedSteeringNodeIds.size > 0 && (
+                      <Button
+                        onClick={() => {
+                          setSelectedSteeringNodeIds(new Set());
+                          setSteeringNodePositions(new Map());
+                        }}
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                      >
+                        清空
+                      </Button>
+                    )}
+                  </div>
+                  {selectedSteeringNodeIds.size > 0 ? (
+                    <div className="mt-2 space-y-2">
+                      {Array.from(selectedSteeringNodeIds).map(id => {
+                        const node = nodes.find(n => n.id === id);
+                        const currentPos = steeringNodePositions.get(id);
+                        const activation = nodeActivations.get(id);
+                        const isLoading = loadingActivations.has(id);
+                        return node ? (
+                          <div key={id} className="flex flex-col gap-2 text-sm text-blue-700 bg-white p-2 rounded border border-blue-200">
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium">
+                                {node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L{node.data?.layer} #{node.data?.featureIndex}
+                              </span>
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedSteeringNodeIds(prev => {
+                                    const newSet = new Set(prev);
+                                    newSet.delete(id);
+                                    return newSet;
+                                  });
+                                  setSteeringNodePositions(prev => {
+                                    const newMap = new Map(prev);
+                                    newMap.delete(id);
+                                    return newMap;
+                                  });
+                                  setNodeActivations(prev => {
+                                    const newMap = new Map(prev);
+                                    newMap.delete(id);
+                                    return newMap;
+                                  });
+                                }}
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0"
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Label htmlFor={`steering-pos-${id}`} className="text-xs">Pos:</Label>
+                              <Input
+                                id={`steering-pos-${id}`}
+                                type="number"
+                                min="0"
+                                max="63"
+                                value={currentPos ?? ''}
+                                onChange={(e) => {
+                                  const newPos = parseInt(e.target.value);
+                                  if (!isNaN(newPos)) {
+                                    setSteeringNodePositions(prev => {
+                                      const newMap = new Map(prev);
+                                      newMap.set(id, newPos);
+                                      return newMap;
+                                    });
+                                    // Clear activation when position changes
+                                    setNodeActivations(prev => {
+                                      const newMap = new Map(prev);
+                                      newMap.delete(id);
+                                      return newMap;
+                                    });
+                                  }
+                                }}
+                                placeholder="0-63"
+                                className="w-16 h-7 text-xs"
+                              />
+                              {currentPos !== undefined && interactionFen && (
+                                <Button
+                                  onClick={() => fetchNodeActivation(id, currentPos)}
+                                  disabled={isLoading}
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                >
+                                  {isLoading ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    '获取激活值'
+                                  )}
+                                </Button>
+                              )}
+                              {activation !== undefined && (
+                                <span className={`text-xs font-medium ${activation === 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                  激活值: {activation.toFixed(4)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ) : null;
+                      })}
+                    </div>
+                  ) : selectedNodeId ? (
+                    <div className="mt-2 p-2 bg-white rounded border border-blue-200">
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-blue-700">
+                    {(() => {
+                      const node = nodes.find(n => n.id === selectedNodeId);
+                      return node ? `${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}` : 'Unknown';
+                    })()}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="steering-pos-single" className="text-xs">Pos:</Label>
+                          <Input
+                            id="steering-pos-single"
+                            type="number"
+                            min="0"
+                            max="63"
+                            value={steeringNodePositions.get(selectedNodeId) ?? ''}
+                            onChange={(e) => {
+                              const newPos = parseInt(e.target.value);
+                              if (!isNaN(newPos)) {
+                                setSteeringNodePositions(prev => {
+                                  const newMap = new Map(prev);
+                                  newMap.set(selectedNodeId, newPos);
+                                  return newMap;
+                                });
+                                setNodeActivations(prev => {
+                                  const newMap = new Map(prev);
+                                  newMap.delete(selectedNodeId);
+                                  return newMap;
+                                });
+                              }
+                            }}
+                            placeholder="0-63"
+                            className="w-16 h-7 text-xs"
+                          />
+                          {steeringNodePositions.get(selectedNodeId) !== undefined && interactionFen && (
+                            <Button
+                              onClick={() => fetchNodeActivation(selectedNodeId, steeringNodePositions.get(selectedNodeId)!)}
+                              disabled={loadingActivations.has(selectedNodeId)}
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                            >
+                              {loadingActivations.has(selectedNodeId) ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                '获取激活值'
+                              )}
+                            </Button>
+                          )}
+                          {nodeActivations.get(selectedNodeId) !== undefined && (
+                            <span className={`text-xs font-medium ${nodeActivations.get(selectedNodeId) === 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              激活值: {nodeActivations.get(selectedNodeId)!.toFixed(4)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500">点击"选择 Steering Nodes"按钮，然后点击图中的节点进行选择（再次点击可取消选择）</p>
+                  )}
+                </div>
+                <div className="p-2 bg-green-50 border border-green-200 rounded">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-xs font-medium text-green-900">Target Nodes ({selectedTargetNodeIds.size > 0 ? selectedTargetNodeIds.size : (selectedNodeId2 ? 1 : 0)}):</p>
+                    {selectedTargetNodeIds.size > 0 && (
+                      <Button
+                        onClick={() => {
+                          setSelectedTargetNodeIds(new Set());
+                          setTargetNodePositions(new Map());
+                        }}
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                      >
+                        清空
+                      </Button>
+                    )}
+                  </div>
+                  {selectedTargetNodeIds.size > 0 ? (
+                    <div className="mt-2 space-y-2">
+                      {Array.from(selectedTargetNodeIds).map(id => {
+                        const node = nodes.find(n => n.id === id);
+                        const currentPos = targetNodePositions.get(id);
+                        const activation = nodeActivations.get(id);
+                        const isLoading = loadingActivations.has(id);
+                        return node ? (
+                          <div key={id} className="flex flex-col gap-2 text-sm text-green-700 bg-white p-2 rounded border border-green-200">
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium">
+                                {node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L{node.data?.layer} #{node.data?.featureIndex}
+                              </span>
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTargetNodeIds(prev => {
+                                    const newSet = new Set(prev);
+                                    newSet.delete(id);
+                                    return newSet;
+                                  });
+                                  setTargetNodePositions(prev => {
+                                    const newMap = new Map(prev);
+                                    newMap.delete(id);
+                                    return newMap;
+                                  });
+                                  setNodeActivations(prev => {
+                                    const newMap = new Map(prev);
+                                    newMap.delete(id);
+                                    return newMap;
+                                  });
+                                }}
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0"
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Label htmlFor={`target-pos-${id}`} className="text-xs">Pos:</Label>
+                              <Input
+                                id={`target-pos-${id}`}
+                                type="number"
+                                min="0"
+                                max="63"
+                                value={currentPos ?? ''}
+                                onChange={(e) => {
+                                  const newPos = parseInt(e.target.value);
+                                  if (!isNaN(newPos)) {
+                                    setTargetNodePositions(prev => {
+                                      const newMap = new Map(prev);
+                                      newMap.set(id, newPos);
+                                      return newMap;
+                                    });
+                                    // Clear activation when position changes
+                                    setNodeActivations(prev => {
+                                      const newMap = new Map(prev);
+                                      newMap.delete(id);
+                                      return newMap;
+                                    });
+                                  }
+                                }}
+                                placeholder="0-63"
+                                className="w-16 h-7 text-xs"
+                              />
+                              {currentPos !== undefined && interactionFen && (
+                                <Button
+                                  onClick={() => fetchNodeActivation(id, currentPos)}
+                                  disabled={isLoading}
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                >
+                                  {isLoading ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    '获取激活值'
+                                  )}
+                                </Button>
+                              )}
+                              {activation !== undefined && (
+                                <span className={`text-xs font-medium ${activation === 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                  激活值: {activation.toFixed(4)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ) : null;
+                      })}
+                    </div>
+                  ) : selectedNodeId2 ? (
+                    <div className="mt-2 p-2 bg-white rounded border border-green-200">
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-green-700">
+                    {(() => {
+                      const node = nodes.find(n => n.id === selectedNodeId2);
+                      return node ? `${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}` : 'Unknown';
+                    })()}
+                          </span>
+                </div>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="target-pos-single" className="text-xs">Pos:</Label>
+                          <Input
+                            id="target-pos-single"
+                            type="number"
+                            min="0"
+                            max="63"
+                            value={targetNodePositions.get(selectedNodeId2) ?? ''}
+                            onChange={(e) => {
+                              const newPos = parseInt(e.target.value);
+                              if (!isNaN(newPos)) {
+                                setTargetNodePositions(prev => {
+                                  const newMap = new Map(prev);
+                                  newMap.set(selectedNodeId2, newPos);
+                                  return newMap;
+                                });
+                                setNodeActivations(prev => {
+                                  const newMap = new Map(prev);
+                                  newMap.delete(selectedNodeId2);
+                                  return newMap;
+                                });
+                              }
+                            }}
+                            placeholder="0-63"
+                            className="w-16 h-7 text-xs"
+                          />
+                          {targetNodePositions.get(selectedNodeId2) !== undefined && interactionFen && (
+                            <Button
+                              onClick={() => fetchNodeActivation(selectedNodeId2, targetNodePositions.get(selectedNodeId2)!)}
+                              disabled={loadingActivations.has(selectedNodeId2)}
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                            >
+                              {loadingActivations.has(selectedNodeId2) ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                '获取激活值'
+                              )}
+                            </Button>
+                          )}
+                          {nodeActivations.get(selectedNodeId2) !== undefined && (
+                            <span className={`text-xs font-medium ${nodeActivations.get(selectedNodeId2) === 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              激活值: {nodeActivations.get(selectedNodeId2)!.toFixed(4)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500">点击"选择 Target Nodes"按钮，然后点击图中的节点进行选择（再次点击可取消选择）</p>
+                  )}
+                </div>
+              </div>
+
+              {/* FEN Input */}
+              <div className="space-y-2">
+                <Label htmlFor="interaction-fen" className="text-sm font-medium">FEN (用于前向传播，留空则使用 Circuit 的 FEN):</Label>
+                <Input
+                  id="interaction-fen"
+                  type="text"
+                  value={interactionFen}
+                  onChange={(e) => setInteractionFen(e.target.value)}
+                  placeholder={selectedCircuit ? `默认: ${(selectedCircuit as any).original_fen || '无'}` : '输入 FEN 字符串'}
+                  className="w-full"
+                />
+                {selectedCircuit && (selectedCircuit as any).original_fen && (
+                  <Button
+                    onClick={() => setInteractionFen((selectedCircuit as any).original_fen || '')}
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                  >
+                    使用 Circuit 的 FEN
+                  </Button>
+                )}
+              </div>
+
+              {/* Steering Scale Input */}
+              <div className="flex items-center space-x-2">
+                <Label htmlFor="steering-scale" className="text-sm">Steering Scale:</Label>
+                <Input
+                  id="steering-scale"
+                  type="number"
+                  step="0.1"
+                  value={steeringScale}
+                  onChange={(e) => setSteeringScale(e.target.value)}
+                  className="w-20"
+                />
+              </div>
+
+              {/* Analyze Button */}
+              <Button
+                onClick={analyzeNodeInteraction}
+                disabled={analyzingInteraction || (selectedSteeringNodeIds.size === 0 && !selectedNodeId) || (selectedTargetNodeIds.size === 0 && !selectedNodeId2)}
+                className="w-full"
+              >
+                {analyzingInteraction ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    Analyzing Interaction...
+                  </>
+                ) : (
+                  'Analyze Node Interaction'
+                )}
+              </Button>
+
+              {/* Results Display */}
+              {interactionResult && (
+                <div className="space-y-3 mt-4">
+                  <div className="p-3 bg-purple-50 border border-purple-200 rounded">
+                    <p className="text-sm font-medium text-purple-900 mb-2">Interaction Results:</p>
+                    <div className="space-y-2 text-sm mb-3">
+                      <div>
+                        <span className="font-medium">Steering Scale:</span>
+                        <span className="ml-2">{interactionResult.steering_scale}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium">Steering Nodes Count:</span>
+                        <span className="ml-2">{interactionResult.steering_nodes_count}</span>
+                      </div>
+                    </div>
+                    
+                    {/* Target Nodes Results */}
+                    {interactionResult.target_nodes && Array.isArray(interactionResult.target_nodes) ? (
+                      <div className="space-y-3 mt-3">
+                        <p className="text-xs font-medium text-purple-900 mb-2">Target Nodes Results:</p>
+                        {interactionResult.target_nodes.map((targetResult: any, idx: number) => (
+                          <div key={idx} className="p-2 bg-white border border-purple-200 rounded">
+                            <p className="text-xs font-medium text-purple-800 mb-1">{targetResult.target_node}</p>
+                            <div className="space-y-1 text-xs">
+                              <div>
+                                <span className="font-medium">Original Activation:</span>
+                                <span className="ml-2">{targetResult.original_activation?.toFixed(6)}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium">Modified Activation:</span>
+                                <span className="ml-2">{targetResult.modified_activation?.toFixed(6)}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium">Activation Change:</span>
+                                <span className={`ml-2 ${targetResult.activation_change > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {targetResult.activation_change?.toFixed(6)}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="font-medium">Activation Ratio:</span>
+                                <span className={`ml-2 ${targetResult.activation_ratio > 1 ? 'text-green-600' : targetResult.activation_ratio < 1 ? 'text-red-600' : 'text-gray-600'}`}>
+                                  {targetResult.activation_ratio === null ? 'N/A' :
+                                   targetResult.activation_ratio === Number.POSITIVE_INFINITY ? '∞' :
+                                   targetResult.activation_ratio?.toFixed(4) + 'x'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      // Backward compatibility: single target node result
+                    <div className="space-y-2 text-sm">
+                      <div>
+                        <span className="font-medium">Target Node:</span>
+                        <span className="ml-2">{interactionResult.target_node}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium">Original Activation:</span>
+                        <span className="ml-2">{interactionResult.original_activation?.toFixed(6)}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium">Modified Activation:</span>
+                        <span className="ml-2">{interactionResult.modified_activation?.toFixed(6)}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium">Activation Change:</span>
+                        <span className={`ml-2 ${interactionResult.activation_change > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {interactionResult.activation_change?.toFixed(6)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="font-medium">Activation Ratio:</span>
+                        <span className={`ml-2 ${interactionResult.activation_ratio > 1 ? 'text-green-600' : interactionResult.activation_ratio < 1 ? 'text-red-600' : 'text-gray-600'}`}>
+                          {interactionResult.activation_ratio === null ? 'N/A' :
+                           interactionResult.activation_ratio === Number.POSITIVE_INFINITY ? '∞' :
+                           interactionResult.activation_ratio?.toFixed(4) + 'x'}
+                        </span>
+                      </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Steering Details */}
+                  {interactionResult.steering_details && interactionResult.steering_details.length > 0 && (
+                    <div className="p-3 bg-gray-50 border border-gray-200 rounded">
+                      <p className="text-sm font-medium text-gray-900 mb-2">Steering Details:</p>
+                      <div className="space-y-1 text-xs">
+                        {interactionResult.steering_details.map((detail: any, idx: number) => (
+                          <div key={idx} className="flex justify-between">
+                            <span>{detail.node}</span>
+                            <span className={detail.found ? 'text-green-600' : 'text-red-600'}>
+                              {detail.found ? `✓ ${detail.activation_value?.toFixed(4)}` : '✗ Not found'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 };

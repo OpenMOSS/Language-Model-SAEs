@@ -127,6 +127,24 @@ export const AppNavbar = () => {
           >
             Position Feature
           </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/feature-interaction" && "text-foreground"
+            )}
+            to="/feature-interaction"
+          >
+            Feature Interaction
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/interaction-circuit" && "text-foreground"
+            )}
+            to="/interaction-circuit"
+          >
+            Interaction Circuit
+          </Link>
         </div>
       </div>
     </nav>

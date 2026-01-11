@@ -20,6 +20,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 try:
     from .constants import (
+        BT4_MODEL_NAME,
         BT4_TC_BASE_PATH,
         BT4_LORSA_BASE_PATH,
         BT4_SAE_COMBOS,
@@ -28,6 +29,7 @@ try:
     )
 except ImportError:
     from constants import (
+        BT4_MODEL_NAME,
         BT4_TC_BASE_PATH,
         BT4_LORSA_BASE_PATH,
         BT4_SAE_COMBOS,
@@ -101,6 +103,8 @@ except ImportError:
         update_edge_weight as update_edge_weight_service,
         set_feature_level as set_feature_level_service,
     )
+
+# Interaction functions are now implemented directly in this file
 
 try:
     from tactic_features import analyze_tactic_features, validate_fens
@@ -546,7 +550,8 @@ def get_feature(
             sae_series=sae_series,
             index=feature_index)
     )
-
+    print(f'{feature = }')
+    
     if feature is None:
         return Response(
             content=f"Feature {feature_index} not found in SAE {name}",
@@ -2560,6 +2565,15 @@ except ImportError:
     run_multi_feature_steering_analysis = None
     INTERVENTION_SERVICE_AVAILABLE = False
     print("WARNING: intervention service not found, steering analysis will not be available")
+
+# 导入interaction服务
+try:
+    from interaction import analyze_node_interaction_impl
+    INTERACTION_SERVICE_AVAILABLE = True
+except ImportError:
+    analyze_node_interaction_impl = None
+    INTERACTION_SERVICE_AVAILABLE = False
+    print("WARNING: interaction service not found, node interaction analysis will not be available")
 
 # 导入自对弈服务
 try:
@@ -5112,6 +5126,77 @@ def set_feature_level(circuit_id: str, feature_id: str, request: dict):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"设置feature层级失败: {str(e)}")
+
+
+@app.post("/interaction/analyze_node_interaction")
+def analyze_node_interaction_api(request: dict):
+    """
+    分析节点之间的交互影响（支持多个steering nodes和多个target nodes）
+
+    请求体:
+    {
+        "model_name": "lc0/BT4-1024x15x32h",
+        "sae_combo_id": "k_128_e_128",
+        "fen": "8/p3kpp1/8/3R1r2/8/4P1Q1/PPr4n/6KR b - - 9 32",
+        "steering_nodes": [  # 可以是单个节点对象或节点列表
+            {
+            "feature_type": "lorsa",
+            "layer": 1,
+            "feature": 3026,
+            "pos": 48
+            }
+        ],
+        "target_nodes": [  # 可以是单个节点对象或节点列表，所有target nodes必须在比所有steering nodes更高的层
+            {
+            "feature_type": "transcoder",
+            "layer": 3,
+            "feature": 11305,
+            "pos": 34
+            }
+        ],
+        "steering_scale": 2.0
+    }
+
+    Returns:
+        包含交互分析结果的字典：
+        {
+            "steering_scale": float,
+            "steering_nodes_count": int,
+            "steering_details": list,
+            "target_nodes": [
+                {
+                    "target_node": str,
+                    "original_activation": float,
+                    "modified_activation": float,
+                    "activation_ratio": float,
+                    "activation_change": float
+                },
+                ...
+            ]
+        }
+    """
+    try:
+        if analyze_node_interaction_impl is None:
+            raise HTTPException(status_code=503, detail="Node interaction service not available")
+        return analyze_node_interaction_impl(request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"分析节点交互失败: {str(e)}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"节点交互分析失败: {str(e)}")
+    finally:
+        # Clean up
+        try:
+            if 'model' in locals() and locals()['model'] is not None:
+                locals()['model'].reset_hooks()
+        except:
+            pass
 
 
 # 添加CORS中间件 - 必须在所有路由定义之后

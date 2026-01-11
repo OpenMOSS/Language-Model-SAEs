@@ -24,6 +24,20 @@ interface NodeActivationData {
   clerp?: string;
 }
 
+// 智能显示概率的辅助函数
+const formatProbability = (prob: number): string => {
+  const percentage = prob * 100;
+  if (Math.abs(percentage) >= 0.01) {
+    return `${percentage.toFixed(2)}%`;
+  } else if (Math.abs(percentage) >= 0.0001) {
+    return `${percentage.toFixed(4)}%`;
+  } else if (prob !== 0) {
+    return `${percentage.toExponential(2)}%`;
+  } else {
+    return `${percentage.toFixed(2)}%`; // 对于真正的0，显示0.00%
+  }
+};
+
 export const CircuitVisualization = () => {
   const {
     circuitData: linkGraphData,
@@ -91,6 +105,7 @@ export const CircuitVisualization = () => {
   const [showAllPositions, setShowAllPositions] = useState(false); // 是否显示所有位置的激活
   const [allPositionsActivationData, setAllPositionsActivationData] = useState<NodeActivationData | null>(null); // 所有位置的合并激活数据
   const [loadingAllPositions, setLoadingAllPositions] = useState(false); // 是否正在从后端加载所有位置数据
+  const [multiGraphActivationData, setMultiGraphActivationData] = useState<Record<number, NodeActivationData | null>>({}); // 多图模式的激活数据
 
   // 点击节点时，从后端实时计算/获取 z_pattern（不再信任 JSON 内保存的 z_pattern）
   // 仅用于“单位置模式”（showAllPositions=false）且 LoRSA 节点才会有 z_pattern
@@ -591,6 +606,7 @@ export const CircuitVisualization = () => {
       // 重置激活显示模式
       setShowAllPositions(false);
       setAllPositionsActivationData(null);
+      setMultiGraphActivationData({});
     } catch (err) {
       console.error('Failed to load circuit data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load circuit data');
@@ -678,6 +694,7 @@ export const CircuitVisualization = () => {
       // 重置激活显示模式
       setShowAllPositions(false);
       setAllPositionsActivationData(null);
+      setMultiGraphActivationData({});
     } catch (err) {
       console.error('Failed to load circuit data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load circuit data');
@@ -1403,40 +1420,36 @@ export const CircuitVisualization = () => {
       const data = await response.json();
       console.log('✅ 从后端获取到所有位置数据:', data);
       
-      // 合并所有位置的激活值（取每个格子的最大激活值，不累加）
+      // 在所有位置模式下，聚合所有位置的激活数据
+      // 显示该feature在每个棋盘位置上的激活强度（取最大值）
       const mergedActivations = new Array(64).fill(0);
-      // ⚠️ 注意：z_pattern 语义上是“某个 query position 的 attention pattern”
-      // “所有位置模式”下如果跨 position 聚合 z_pattern 会误导，因此这里不聚合/不返回 z_pattern
-      
+
       if (data.positions && Array.isArray(data.positions)) {
         for (const posData of data.positions) {
           if (posData.activations && Array.isArray(posData.activations) && posData.activations.length === 64) {
-            // 合并激活值：取每个格子的最大激活值（按绝对值，保留符号）
+            // 对每个棋盘位置，保留最大激活值
             for (let i = 0; i < 64; i++) {
               const newValue = posData.activations[i];
-              if (newValue !== 0) {
-                const currentValue = mergedActivations[i];
-                // 如果当前值为0或新值的绝对值更大，则更新为新值
-                if (currentValue === 0 || Math.abs(newValue) > Math.abs(currentValue)) {
-                  mergedActivations[i] = newValue;
-                }
+              if (Math.abs(newValue) > Math.abs(mergedActivations[i])) {
+                mergedActivations[i] = newValue;
               }
             }
           }
-          
         }
       }
-      console.log('✅ 合并完成（所有位置模式）:', {
-        hasActivations: mergedActivations.some(v => v !== 0)
+
+      console.log('✅ 聚合完成（所有位置模式）:', {
+        hasActivations: mergedActivations.some(v => v !== 0),
+        nonZeroCount: mergedActivations.filter(v => v !== 0).length
       });
-      
+
       // 获取节点类型
       const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
       const nodeType = currentNode?.feature_type;
-      
+
       const result = {
         activations: mergedActivations,
-        zPatternIndices: undefined,
+        zPatternIndices: undefined, // 所有位置模式下不显示z_pattern
         zPatternValues: undefined,
         nodeType: nodeType,
         clerp: (currentNode as any)?.clerp,
@@ -1585,28 +1598,66 @@ export const CircuitVisualization = () => {
     const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
     const featureTypeForNode = currentNode?.feature_type;
 
-    // 直接调用后端 analyze_fen 获取“所有位置激活 + z_pattern(若有)”
-    console.log('🔍 所有位置模式：调用 analyze_fen（与 CustomFenInput 一致）');
-    const fen = extractFenFromPrompt();
-    if (!fen) {
-      console.log('❌ 无法提取FEN，无法从后端获取数据');
-      return null;
-    }
-
     const isLorsa = featureTypeForNode?.toLowerCase() === 'lorsa';
     const dictionary = getDictionaryName(parsed.layerForActivation, isLorsa);
 
-    // 使用 AbortController，避免快速切换节点时竞态覆盖
-    const controller = new AbortController();
-    const result = await fetchAnalyzeFenFromBackend(dictionary, parsed.featureOrHead, fen, controller.signal);
-    if (!result) return null;
+    // 检查是否为多图模式
+    const isMultiFile = !!(linkGraphData?.metadata?.sourceFileNames && linkGraphData.metadata.sourceFileNames.length > 1);
 
-    return {
-      ...result,
-      nodeType: featureTypeForNode,
-      clerp: (currentNode as any)?.clerp,
-    };
-  }, [linkGraphData, extractFenFromPrompt, getDictionaryName, fetchAnalyzeFenFromBackend]);
+    if (isMultiFile) {
+      // 多图模式：对每个graph都进行前向推理
+      console.log('🔍 多图所有位置模式：对每个graph进行前向推理');
+      setLoadingAllPositions(true);
+
+      const multiResults: Record<number, NodeActivationData> = {};
+
+      for (let i = 0; i < multiOriginalJsons.length; i++) {
+        const jsonData = multiOriginalJsons[i].json;
+        const fileFen = extractFenFromCircuitJson(jsonData);
+
+        if (fileFen) {
+          console.log(`📊 处理第${i+1}个graph，FEN: ${fileFen}`);
+          const result = await fetchAllPositionsFromBackend(nodeId, fileFen, dictionary, parsed.featureOrHead);
+          if (result) {
+            multiResults[i] = {
+              ...result,
+              nodeType: featureTypeForNode,
+              clerp: (currentNode as any)?.clerp,
+            };
+            console.log(`✅ 第${i+1}个graph处理完成`);
+          } else {
+            console.log(`❌ 第${i+1}个graph处理失败`);
+          }
+        } else {
+          console.log(`⚠️ 第${i+1}个graph无法提取FEN`);
+        }
+      }
+
+      // 更新多图激活数据状态
+      setMultiGraphActivationData(multiResults);
+      setLoadingAllPositions(false);
+      console.log('✅ 所有graph的激活数据已获取完成');
+
+      return null; // 多图模式不返回单个结果
+    } else {
+      // 单图模式：在所有位置模式下调用后端获取所有位置数据
+      console.log('🔍 单图所有位置模式：调用 analyze_fen_all_positions');
+      const fen = extractFenFromPrompt();
+      if (!fen) {
+        console.log('❌ 无法提取FEN，无法从后端获取数据');
+        return null;
+      }
+
+      const result = await fetchAllPositionsFromBackend(nodeId, fen, dictionary, parsed.featureOrHead);
+      if (!result) return null;
+
+      return {
+        ...result,
+        nodeType: featureTypeForNode,
+        clerp: (currentNode as any)?.clerp,
+      };
+    }
+  }, [linkGraphData, extractFenFromPrompt, getDictionaryName, fetchAnalyzeFenFromBackend, multiOriginalJsons, setMultiGraphActivationData, setLoadingAllPositions, extractFenFromCircuitJson]);
 
   // 提取相关数据
   const fen = extractFenFromPrompt();
@@ -1617,6 +1668,7 @@ export const CircuitVisualization = () => {
   useEffect(() => {
     setShowAllPositions(false);
     setAllPositionsActivationData(null);
+    setMultiGraphActivationData({});
   }, [clickedId]);
 
   // 点击节点时：实时从后端拉取该节点的 z_pattern（LoRSA + 单位置模式 + 单文件场景）
@@ -1677,20 +1729,29 @@ export const CircuitVisualization = () => {
   // 当点击节点或切换模式时，更新所有位置的激活数据
   useEffect(() => {
     if (clickedId && showAllPositions) {
-      setLoadingAllPositions(true);
-      getAllPositionsActivationData(clickedId).then((allPosData) => {
-        setAllPositionsActivationData(allPosData);
-        setLoadingAllPositions(false);
-      }).catch((error) => {
-        console.error('获取所有位置数据失败:', error);
-        setAllPositionsActivationData(null);
-        setLoadingAllPositions(false);
-      });
+      const names = (linkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
+      const isMultiFile = !!(names && names.length > 1);
+
+      if (!isMultiFile) {
+        // 单文件模式：调用 getAllPositionsActivationData 获取数据
+        setLoadingAllPositions(true);
+        getAllPositionsActivationData(clickedId).then((allPosData) => {
+          setAllPositionsActivationData(allPosData);
+          setLoadingAllPositions(false);
+        }).catch((error) => {
+          console.error('获取所有位置数据失败:', error);
+          setAllPositionsActivationData(null);
+          setLoadingAllPositions(false);
+        });
+      } else {
+        // 多文件模式：直接调用 getAllPositionsActivationData，它会处理多文件逻辑
+        getAllPositionsActivationData(clickedId);
+      }
     } else {
       setAllPositionsActivationData(null);
       setLoadingAllPositions(false);
     }
-  }, [clickedId, showAllPositions, getAllPositionsActivationData]);
+  }, [clickedId, showAllPositions, linkGraphData, getAllPositionsActivationData]);
 
   // 确定要显示的激活数据
   // - activations：沿用现有逻辑（JSON/后端 all-positions 聚合）
@@ -1730,6 +1791,8 @@ export const CircuitVisualization = () => {
       // 重置所有位置显示模式
       setShowAllPositions(false);
       setAllPositionsActivationData(null);
+      // 同时重置多图激活数据
+      setMultiGraphActivationData({});
     }
   }, [clickedId, nodeActivationData?.clerp, updateCounter]);
 
@@ -3550,13 +3613,17 @@ export const CircuitVisualization = () => {
               
               // 获取该文件的激活数据
               let perFileActivation: NodeActivationData = { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
-              if (clickedId && belongs) {
+              if (clickedId) {
                 if (showAllPositions) {
-                  // 获取所有位置的激活数据（使用该文件的 JSON 数据）
-                  // 注意：这里使用同步版本的函数，只从文件中查找，不调用后端
-                  // 如果需要完整数据，会在单文件模式下通过 useEffect 异步加载
-                  const allPosData = getAllPositionsActivationDataSync(clickedId, entry.json);
-                  perFileActivation = allPosData || perFileActivation;
+                  // 在所有位置模式下，为每个文件都获取该feature的激活数据
+                  const multiGraphData = multiGraphActivationData[idx];
+                  if (multiGraphData) {
+                    perFileActivation = multiGraphData;
+                  } else {
+                    // 回退到从JSON文件中同步获取数据
+                    const allPosData = getAllPositionsActivationDataSync(clickedId, entry.json);
+                    perFileActivation = allPosData || perFileActivation;
+                  }
                 } else {
                   // 获取单个位置的激活数据
                   perFileActivation = getNodeActivationDataFromJson(entry.json, clickedId);
@@ -3581,6 +3648,14 @@ export const CircuitVisualization = () => {
                       输出移动: {fileMove} 🎯
                     </div>
                   )}
+                  {clickedId && belongs && showAllPositions && loadingAllPositions && (
+                    <div className="text-center mb-2 text-sm text-blue-600">
+                      <div className="flex items-center justify-center space-x-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                        <span>正在从后端获取所有位置的激活数据...</span>
+                      </div>
+                    </div>
+                  )}
                   {clickedId && belongs && perFileActivation.activations && (
                     <div className="text-center mb-2 text-sm text-purple-600">
                       {showAllPositions ? (
@@ -3601,9 +3676,9 @@ export const CircuitVisualization = () => {
                     size="medium"
                     showCoordinates={true}
                     move={fileMove || undefined}
-                    activations={belongs ? perFileActivation.activations : undefined}
-                    zPatternIndices={belongs ? perFileActivation.zPatternIndices : undefined}
-                    zPatternValues={belongs ? perFileActivation.zPatternValues : undefined}
+                    activations={perFileActivation.activations}
+                    zPatternIndices={perFileActivation.zPatternIndices}
+                    zPatternValues={perFileActivation.zPatternValues}
                     flip_activation={Boolean(fileFen && fileFen.split(' ')[1] === 'b')}
                     autoFlipWhenBlack={true}
                     sampleIndex={clickedId ? parseInt(clickedId.split('_')[1]) : undefined}
@@ -3895,7 +3970,7 @@ export const CircuitVisualization = () => {
             ) : tokenPredictions ? (
               <div className="space-y-4">
                 <div className="bg-gray-50 rounded-lg p-3 border">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 text-sm">
                     <div>
                       <span className="text-gray-600">steering_scale:</span>
                       <span className="ml-1 font-medium">{Number(steeringScale).toFixed(2)}</span>
@@ -3912,6 +3987,18 @@ export const CircuitVisualization = () => {
                       <span className="text-gray-600">平均Logit差:</span>
                       <span className="ml-1 font-medium">{tokenPredictions.statistics?.avg_logit_diff?.toFixed(4)}</span>
                     </div>
+                    <div>
+                      <span className="text-gray-600">原始Value:</span>
+                      <span className="ml-1 font-medium">{tokenPredictions.statistics?.original_value?.toFixed(4)}</span>
+                    </div>
+                    <div>
+                      <span className={`text-gray-600 ${tokenPredictions.statistics?.value_diff > 0 ? 'text-green-600' : tokenPredictions.statistics?.value_diff < 0 ? 'text-red-600' : ''}`}>
+                        Value变化:
+                        <span className="ml-1 font-medium">
+                          {tokenPredictions.statistics?.value_diff > 0 ? '+' : ''}{tokenPredictions.statistics?.value_diff?.toFixed(4)}
+                        </span>
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -3926,10 +4013,12 @@ export const CircuitVisualization = () => {
                             <div className="text-lg font-bold text-gray-800 mb-1">{move.uci}</div>
                             <div className="text-xs text-gray-600 space-y-1">
                               <div>排名: #{index + 1}</div>
-                              <div>概率差: <span className="font-medium">{(move.prob_diff * 100).toFixed(2)}%</span></div>
-                              <div>原始概率: {(move.original_prob * 100).toFixed(2)}%</div>
-                              <div>修改后概率: {(move.modified_prob * 100).toFixed(2)}%</div>
+                              <div>概率差: <span className="font-medium">{formatProbability(move.prob_diff)}</span></div>
+                              <div>原始概率: {formatProbability(move.original_prob)}</div>
+                              <div>修改后概率: {formatProbability(move.modified_prob)}</div>
                               <div>Logit差: {move.diff?.toFixed(4)}</div>
+                              <div>原始Logit: {move.original_logit?.toFixed(4)}</div>
+                              <div>修改后Logit: {move.modified_logit?.toFixed(4)}</div>
                             </div>
                           </div>
                         </div>
@@ -3949,10 +4038,12 @@ export const CircuitVisualization = () => {
                             <div className="text-lg font-bold text-gray-800 mb-1">{move.uci}</div>
                             <div className="text-xs text-gray-600 space-y-1">
                               <div>排名: #{index + 1}</div>
-                              <div>概率差: <span className="font-medium">{(move.prob_diff * 100).toFixed(2)}%</span></div>
-                              <div>原始概率: {(move.original_prob * 100).toFixed(2)}%</div>
-                              <div>修改后概率: {(move.modified_prob * 100).toFixed(2)}%</div>
+                              <div>概率差: <span className="font-medium">{formatProbability(move.prob_diff)}</span></div>
+                              <div>原始概率: {formatProbability(move.original_prob)}</div>
+                              <div>修改后概率: {formatProbability(move.modified_prob)}</div>
                               <div>Logit差: {move.diff?.toFixed(4)}</div>
+                              <div>原始Logit: {move.original_logit?.toFixed(4)}</div>
+                              <div>修改后Logit: {move.modified_logit?.toFixed(4)}</div>
                             </div>
                           </div>
                         </div>

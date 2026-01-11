@@ -8,11 +8,12 @@ import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Label } from "@/components/ui/label";
+import { GetFeatureFromFen } from "@/components/feature/get-feature-from-fen";
 
 interface PosFeatureCardProps {
   fen: string;
   layer: number;
-  positions: number[]; // 一个或多个位置索引 (0-63)
+  positions: number[] | string; // 一个或多个位置索引 (0-63)，支持数字数组或字符串格式如"0-7,9,12-15"
   componentType: "attn" | "mlp"; // "attn" 或 "mlp"
   modelName?: string;
   saeComboId?: string;
@@ -73,6 +74,9 @@ interface MultiSteeringResult {
     avg_prob_diff?: number;
     max_prob_diff?: number;
     min_prob_diff?: number;
+    original_value?: number;
+    modified_value?: number;
+    value_diff?: number;
   };
   ablation_info?: {
     feature_type?: string;
@@ -99,6 +103,55 @@ interface FenActivationData {
   zPatternValues?: number[];
 }
 
+// 测试函数 - 可以用来验证位置解析逻辑
+export const _testParsePositionsInput = (positionsInput: number[] | string): number[] => {
+  if (Array.isArray(positionsInput)) {
+    return positionsInput;
+  }
+
+  const result: number[] = [];
+  const parts = positionsInput.split(',');
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed.includes('-')) {
+      // 处理范围，如"0-7"
+      const [startStr, endStr] = trimmed.split('-');
+      const start = parseInt(startStr.trim(), 10);
+      const end = parseInt(endStr.trim(), 10);
+
+      if (!isNaN(start) && !isNaN(end) && start <= end) {
+        for (let i = start; i <= end; i++) {
+          if (!result.includes(i)) {
+            result.push(i);
+          }
+        }
+      }
+    } else {
+      // 处理单个数字，如"9"
+      const num = parseInt(trimmed, 10);
+      if (!isNaN(num) && !result.includes(num)) {
+        result.push(num);
+      }
+    }
+  }
+
+  // 排序并确保在有效范围内 (0-63)
+  return result
+    .filter(pos => pos >= 0 && pos <= 63)
+    .sort((a, b) => a - b);
+};
+
+// 简单的测试函数来验证解析逻辑
+if (typeof window !== 'undefined') {
+  console.log('🧪 测试解析逻辑:');
+  console.log('  "0-2,3" ->', _testParsePositionsInput("0-2,3"));
+  console.log('  "0-7" ->', _testParsePositionsInput("0-7"));
+  console.log('  "0,2,4" ->', _testParsePositionsInput("0,2,4"));
+  console.log('  "8-10,15" ->', _testParsePositionsInput("8-10,15"));
+  console.log('  [0,1,2] ->', _testParsePositionsInput([0,1,2]));
+}
+
 export const PosFeatureCard = ({
   fen,
   layer,
@@ -108,6 +161,7 @@ export const PosFeatureCard = ({
   saeComboId,
   onFeatureSelect,
 }: PosFeatureCardProps) => {
+  console.log('🔍 PosFeatureCard 接收到props:', { fen, layer, positions, componentType });
   const [selectedFeatureIndex, setSelectedFeatureIndex] = useState<number | null>(null);
   const [topActivations, setTopActivations] = useState<TopActivationSample[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
@@ -116,21 +170,109 @@ export const PosFeatureCard = ({
   const [defaultSteeringScale, setDefaultSteeringScale] = useState<number>(2.0);
   const [autoSteerThreshold, setAutoSteerThreshold] = useState<number>(1e-6);
 
+  // 监听positions变化，用于调试
+  useEffect(() => {
+    console.log('🔄 positions prop 改变:', positions);
+  }, [positions]);
+
   const parseScaleInput = useCallback((raw: string): number => {
     const v = parseFloat(raw);
     // 允许负数与 0；仅在 NaN 时回退为 0
     return Number.isFinite(v) ? v : 1;
   }, []);
 
+// 解析位置字符串格式，如"0-7,9,12-15" -> [0,1,2,3,4,5,6,7,9,12,13,14,15]
+const parsePositionsInput = useCallback((positionsInput: number[] | string): number[] => {
+  if (Array.isArray(positionsInput)) {
+    return positionsInput;
+  }
+
+  console.log('🔍 开始解析字符串:', positionsInput);
+
+  const result: number[] = [];
+  const parts = positionsInput.split(',');
+
+  console.log('🔍 分割后的parts:', parts);
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    console.log('🔍 处理part:', trimmed);
+
+    if (trimmed.includes('-')) {
+      // 处理范围，如"0-7"
+      const rangeParts = trimmed.split('-');
+      console.log('🔍 范围分割:', rangeParts);
+
+      if (rangeParts.length === 2) {
+        const startStr = rangeParts[0].trim();
+        const endStr = rangeParts[1].trim();
+        const start = parseInt(startStr, 10);
+        const end = parseInt(endStr, 10);
+
+        console.log('🔍 解析范围:', { startStr, endStr, start, end });
+
+        if (!isNaN(start) && !isNaN(end) && start <= end) {
+          console.log('🔍 开始添加范围:', { start, end });
+          for (let i = start; i <= end; i++) {
+            if (!result.includes(i)) {
+              result.push(i);
+              console.log('🔍 添加到结果:', i);
+            }
+          }
+        } else {
+          console.log('🔍 范围无效:', { start, end });
+        }
+      }
+    } else {
+      // 处理单个数字，如"9"
+      const num = parseInt(trimmed, 10);
+      console.log('🔍 解析单个数字:', { trimmed, num });
+
+      if (!isNaN(num) && !result.includes(num)) {
+        result.push(num);
+        console.log('🔍 添加单个数字到结果:', num);
+      }
+    }
+  }
+
+  console.log('🔍 过滤前的结果:', result);
+
+  // 排序并确保在有效范围内 (0-63)
+  const filtered = result
+    .filter(pos => pos >= 0 && pos <= 63)
+    .sort((a, b) => a - b);
+
+  console.log('🔍 最终结果:', filtered);
+  return filtered;
+}, []);
+
+  // 解析位置输入，支持数组或字符串格式
+  const parsedPositions = useMemo(() => {
+    const result = parsePositionsInput(positions);
+    console.log('🔍 解析位置输入:', {
+      input: positions,
+      inputType: typeof positions,
+      isArray: Array.isArray(positions),
+      output: result,
+      outputLength: result.length
+    });
+    console.log('🔍 parsedPositions 详情:', result);
+    return result;
+  }, [positions, parsePositionsInput]);
+
+  // 判断是否为单个位置（使用共享组件）
+  const isSinglePosition = parsedPositions.length === 1;
+  const singlePosition = isSinglePosition ? parsedPositions[0] : null;
+
   // 获取激活的 features
   const [featuresState, fetchFeatures] = useAsyncFn(async () => {
-    if (!fen || positions.length === 0) {
+    if (!fen || parsedPositions.length === 0) {
       return null;
     }
 
     const positionFeatures: PositionFeatures[] = [];
 
-    for (const pos of positions) {
+    for (const pos of parsedPositions) {
       const response = await fetch(
         `${import.meta.env.VITE_BACKEND_URL}/activation/get_features_at_position`,
         {
@@ -175,7 +317,7 @@ export const PosFeatureCard = ({
     }
 
     return positionFeatures;
-  }, [fen, layer, positions, componentType, modelName, saeComboId]);
+  }, [fen, layer, parsedPositions, componentType, modelName, saeComboId]);
 
   const backendFeatureType = componentType === "attn" ? "lorsa" : "transcoder";
 
@@ -603,27 +745,29 @@ export const PosFeatureCard = ({
   }, [selectedFeatureIndex, fen, fetchFenActivationForSelectedFeature]);
 
   return (
-    <Card className="w-full">
+    <Card key={`pos-feature-card-${JSON.stringify(positions)}`} className="w-full">
       <CardHeader>
         <CardTitle>
           位置 Feature 分析
           <div className="text-sm font-normal mt-2 text-gray-600">
             FEN: <code className="bg-gray-100 px-2 py-1 rounded text-xs">{fen}</code>
             <br />
-            层: {layer} | 位置: {positions.join(", ")} | 组件: {componentType === "attn" ? "Attention" : "MLP"}
+            层: {layer} | 位置: {Array.isArray(positions) ? positions.join(", ") : positions} | 组件: {componentType === "attn" ? "Attention" : "MLP"}
           </div>
         </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {/* 刷新按钮 */}
-          <Button
-            onClick={() => fetchFeatures()}
-            disabled={featuresState.loading || !fen || positions.length === 0}
-            className="w-full"
-          >
-            {featuresState.loading ? "加载中..." : "获取激活的 Features"}
-          </Button>
+          {/* 刷新按钮 - 仅在多位置模式下显示（单位置模式由 GetFeatureFromFen 处理） */}
+          {!isSinglePosition && (
+            <Button
+              onClick={() => fetchFeatures()}
+              disabled={featuresState.loading || !fen || parsedPositions.length === 0}
+              className="w-full"
+            >
+              {featuresState.loading ? "加载中..." : "获取激活的 Features"}
+            </Button>
+          )}
 
           {/* 错误显示 */}
           {featuresState.error && (
@@ -632,102 +776,127 @@ export const PosFeatureCard = ({
             </div>
           )}
 
-          {/* Features 列表 - 按位置分组显示 */}
-          {featuresState.value && featuresState.value.length > 0 && (
-            <div className="space-y-4">
-              <h3 className="font-semibold">
-                按位置显示激活的 Features
-              </h3>
-              {featuresState.value.map((posFeatures) => (
-                <div key={posFeatures.position} className="border rounded-lg p-4">
-                  <div className="flex items-center justify-between gap-3 mb-2">
-                    <h4 className="font-medium text-gray-800">
-                      位置 {posFeatures.position}
-                      {posFeatures.features.length > 0 && (
-                        <span className="text-sm text-gray-500 ml-2">
-                          ({posFeatures.features.length} 个激活的 Features)
-                        </span>
-                      )}
-                    </h4>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={posFeatures.features.length === 0}
-                      onClick={() => addAllSteeringNodesAtPosition(posFeatures.position, posFeatures.features)}
-                      title="把该位置激活的所有 Features 一次性加入 Multi Steering（会自动去重）"
-                    >
-                      加入该位置全部 Steer
-                    </Button>
-                  </div>
-                  {posFeatures.features.length > 0 ? (
-                    <div className="max-h-64 overflow-y-auto space-y-2">
-                      {posFeatures.features.map((feature, index) => (
-                        <div
-                          key={`${posFeatures.position}-${feature.feature_index}`}
-                          className={`p-3 border rounded cursor-pointer transition-colors ${
-                            selectedFeatureIndex === feature.feature_index
-                              ? "bg-blue-100 border-blue-500"
-                              : "bg-white hover:bg-gray-50"
-                          }`}
-                          onClick={() => {
-                            const next =
-                              selectedFeatureIndex === feature.feature_index ? null : feature.feature_index;
-                            setSelectedFeatureIndex(next);
-                            setSelectedFeaturePos(next === null ? null : posFeatures.position);
-                            if (onFeatureSelect) {
-                              onFeatureSelect(
-                                next === null ? null : { featureIndex: next, position: posFeatures.position }
-                              );
-                            }
-                          }}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <span className="font-mono text-sm">#{index + 1}</span>
-                              <span className="font-bold">Feature #{feature.feature_index}</span>
-                              <span
-                                className={`text-sm ${
-                                  feature.activation_value > 0 ? "text-green-600" : "text-red-600"
-                                }`}
-                              >
-                                {feature.activation_value > 0 ? "+" : ""}
-                                {feature.activation_value.toFixed(4)}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  addSteeringNode(posFeatures.position, feature.feature_index);
-                                }}
-                              >
-                                加入 Steer
-                              </Button>
-                              <Link
-                                to={`/features?dictionary=${encodeURIComponent(
-                                  getDictionaryName()
-                                )}&featureIndex=${feature.feature_index}`}
-                                target="_blank"
-                                className="text-blue-600 hover:text-blue-800 text-sm"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                查看详情 →
-                              </Link>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-gray-500 text-sm italic">
-                      该位置没有激活的 Features
-                    </div>
-                  )}
+          {/* Features 列表 - 单个位置使用共享组件，多个位置使用原有逻辑 */}
+          {isSinglePosition && singlePosition !== null ? (
+            <GetFeatureFromFen
+              fen={fen}
+              layer={layer}
+              position={singlePosition}
+              componentType={componentType}
+              modelName={modelName}
+              saeComboId={saeComboId}
+              actionTypes={["add_to_steer"]}
+              showTopActivations={true}
+              showFenActivations={true}
+              onFeatureAction={(action) => {
+                if (action.type === "add_to_steer") {
+                  addSteeringNode(singlePosition, action.featureIndex);
+                }
+              }}
+            />
+          ) : (
+            featuresState.value && featuresState.value.length > 0 && (
+              <div className="space-y-4">
+                <h3 className="font-semibold">
+                  按位置显示激活的 Features ({featuresState.value.length} 个位置)
+                </h3>
+                <div className="text-sm text-gray-600">
+                  📊 解析后的位置: [{parsedPositions.join(', ')}]
                 </div>
-              ))}
-            </div>
+                {featuresState.value.map((posFeatures, index) => {
+                  console.log(`🔍 渲染位置 ${index}:`, posFeatures.position, posFeatures.features.length);
+                  return (
+                    <div key={posFeatures.position} className="border rounded-lg p-4">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <h4 className="font-medium text-gray-800">
+                          位置 {posFeatures.position}
+                          {posFeatures.features.length > 0 && (
+                            <span className="text-sm text-gray-500 ml-2">
+                              ({posFeatures.features.length} 个激活的 Features)
+                            </span>
+                          )}
+                        </h4>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={posFeatures.features.length === 0}
+                          onClick={() => addAllSteeringNodesAtPosition(posFeatures.position, posFeatures.features)}
+                          title="把该位置激活的所有 Features 一次性加入 Multi Steering（会自动去重）"
+                        >
+                          加入该位置全部 Steer
+                        </Button>
+                      </div>
+                      {posFeatures.features.length > 0 ? (
+                        <div className="max-h-64 overflow-y-auto space-y-2">
+                          {posFeatures.features.map((feature, index) => (
+                            <div
+                              key={`${posFeatures.position}-${feature.feature_index}`}
+                              className={`p-3 border rounded cursor-pointer transition-colors ${
+                                selectedFeatureIndex === feature.feature_index
+                                  ? "bg-blue-100 border-blue-500"
+                                  : "bg-white hover:bg-gray-50"
+                              }`}
+                              onClick={() => {
+                                const next =
+                                  selectedFeatureIndex === feature.feature_index ? null : feature.feature_index;
+                                setSelectedFeatureIndex(next);
+                                setSelectedFeaturePos(next === null ? null : posFeatures.position);
+                                if (onFeatureSelect) {
+                                  onFeatureSelect(
+                                    next === null ? null : { featureIndex: next, position: posFeatures.position }
+                                  );
+                                }
+                              }}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <span className="font-mono text-sm">#{index + 1}</span>
+                                  <span className="font-bold">Feature #{feature.feature_index}</span>
+                                  <span
+                                    className={`text-sm ${
+                                      feature.activation_value > 0 ? "text-green-600" : "text-red-600"
+                                    }`}
+                                  >
+                                    {feature.activation_value > 0 ? "+" : ""}
+                                    {feature.activation_value.toFixed(4)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      addSteeringNode(posFeatures.position, feature.feature_index);
+                                    }}
+                                  >
+                                    加入 Steer
+                                  </Button>
+                                  <Link
+                                    to={`/features?dictionary=${encodeURIComponent(
+                                      getDictionaryName()
+                                    )}&featureIndex=${feature.feature_index}`}
+                                    target="_blank"
+                                    className="text-blue-600 hover:text-blue-800 text-sm"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    查看详情 →
+                                  </Link>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-gray-500 text-sm italic">
+                          该位置没有激活的 Features
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )
           )}
 
           {/* Multi Steering */}
@@ -863,16 +1032,27 @@ export const PosFeatureCard = ({
 
             {steeringState.value && (
               <div className="space-y-4">
-                <div className="text-sm text-gray-700">
-                  <span className="font-medium">合法走法数:</span> {steeringState.value.statistics.total_legal_moves}{" "}
-                  <span className="font-medium ml-4">avg_logit_diff:</span>{" "}
-                  {steeringState.value.statistics.avg_logit_diff.toFixed(6)}
-                  {typeof steeringState.value.statistics.avg_prob_diff === "number" && (
-                    <>
-                      <span className="font-medium ml-4">avg_prob_diff:</span>{" "}
-                      {steeringState.value.statistics.avg_prob_diff.toFixed(6)}
-                    </>
-                  )}
+                <div className="text-sm text-gray-700 space-y-1">
+                  <div>
+                    <span className="font-medium">合法走法数:</span> {steeringState.value.statistics.total_legal_moves}{" "}
+                    <span className="font-medium ml-4">avg_logit_diff:</span>{" "}
+                    {steeringState.value.statistics.avg_logit_diff.toFixed(6)}
+                    {typeof steeringState.value.statistics.avg_prob_diff === "number" && (
+                      <>
+                        <span className="font-medium ml-4">avg_prob_diff:</span>{" "}
+                        {steeringState.value.statistics.avg_prob_diff.toFixed(6)}
+                      </>
+                    )}
+                  </div>
+                  <div>
+                    <span className="font-medium">原始Value:</span> {steeringState.value.statistics.original_value?.toFixed(6) || "N/A"}{" "}
+                    <span className="font-medium ml-4">修改后Value:</span>{" "}
+                    {steeringState.value.statistics.modified_value?.toFixed(6) || "N/A"}{" "}
+                    <span className="font-medium ml-4">Value差异:</span>{" "}
+                    <span className={(steeringState.value.statistics.value_diff ?? 0) >= 0 ? "text-green-600" : "text-red-600"}>
+                      {((steeringState.value.statistics.value_diff ?? 0) >= 0 ? "+" : "") + (steeringState.value.statistics.value_diff?.toFixed(6) ?? "N/A")}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -962,8 +1142,8 @@ export const PosFeatureCard = ({
             )}
           </div>
 
-          {/* Top Activation 显示 */}
-          {selectedFeatureIndex !== null && (
+          {/* Top Activation 显示 - 仅在多位置模式下显示（单位置模式由 GetFeatureFromFen 处理） */}
+          {!isSinglePosition && selectedFeatureIndex !== null && (
             <Tabs defaultValue="fen-activations" className="w-full">
               <TabsList>
                 <TabsTrigger value="fen-activations">当前 FEN（64格激活）</TabsTrigger>
