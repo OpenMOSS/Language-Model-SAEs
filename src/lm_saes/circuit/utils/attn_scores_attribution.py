@@ -3,14 +3,15 @@
 from dataclasses import dataclass, field
 
 import torch
+from transformers import AutoTokenizer
 
 from lm_saes.circuit.replacement_model import ReplacementModel
-from .graph_file_utils import Node, process_token, QKTracingResults
+
 from .attribution_utils import (
     select_scaled_decoder_vecs_lorsa,
     select_scaled_decoder_vecs_transcoder,
 )
-from transformers import AutoTokenizer
+from .graph_file_utils import Node, QKTracingResults, process_token
 
 
 @dataclass
@@ -88,7 +89,7 @@ class ResStreamComponents:
                 res = Node.token_node(
                     self.pos,
                     input_ids[self.pos],
-                    token = process_token(self.tokenizer.decode(input_ids[self.pos])),
+                    token=process_token(self.tokenizer.decode(input_ids[self.pos])),
                 )
             elif idx < lorsa_end_idx:
                 lorsa_idx = idx - 1
@@ -109,7 +110,7 @@ class ResStreamComponents:
                 )
             elif idx < transcoder_end_idx:
                 tc_idx = idx - lorsa_end_idx
-                
+
                 layer, pos, feature_idx = self.transcoder_activation_matrix.indices()[:, tc_idx]
                 assert pos == self.pos
                 activation = self.transcoder_activation_matrix.values()[tc_idx]
@@ -141,7 +142,7 @@ class ResStreamComponents:
                 res = Node.bias_node(
                     int(layer),
                     self.pos,
-                    bias_name='decoder_bias',
+                    bias_name="decoder_bias",
                     is_from_qk_tracing=True,
                 )
             else:
@@ -431,6 +432,7 @@ def extract_QK_tracing_result(
 
 score_attribution_cache = {}
 
+
 def compute_attn_scores_attribution(
     model: ReplacementModel,
     lorsa_activation_matrix,
@@ -465,7 +467,7 @@ def compute_attn_scores_attribution(
     cache_key = (layer, q_pos, k_pos, qk_idx)
     if cache_key in score_attribution_cache:
         return score_attribution_cache[cache_key]
-    
+
     is_first_token_acts_zeroed_out = model.maybe_zero_bos(input_ids)
     if is_first_token_acts_zeroed_out:
         assert q_pos != 0, "q_pos=0 should not appear in interested heads"

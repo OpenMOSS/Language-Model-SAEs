@@ -5,7 +5,8 @@ from typing import List
 from transformers import AutoTokenizer
 
 from lm_saes.circuit.graph import Graph, prune_graph
-from .graph_file_utils import Node, process_token, Metadata, Model
+
+from .graph_file_utils import Metadata, Model, Node, process_token
 
 logger = logging.getLogger(__name__)
 
@@ -164,12 +165,13 @@ def append_qk_tracing_results(graph: Graph, used_nodes: List[Node], clt_names, l
             from_qk_tracing_nodes.update(node.qk_tracing_results.get_nodes())
     nodes_to_add = from_qk_tracing_nodes - existing_nodes
     for node in nodes_to_add:
-        if node.feature_type == 'lorsa':
+        if node.feature_type == "lorsa":
             node.sae_name = lorsa_names[node.layer // 2]
-        elif node.feature_type == 'cross layer transcoder':
+        elif node.feature_type == "cross layer transcoder":
             node.sae_name = clt_names[node.layer // 2]
         used_nodes.append(node)
     return used_nodes
+
 
 def build_model(
     graph: Graph,
