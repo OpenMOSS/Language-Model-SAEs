@@ -5,27 +5,12 @@ from dataclasses import dataclass, field
 import torch
 
 from lm_saes.circuit.replacement_model import ReplacementModel
-
+from .graph_file_utils import Node, process_token, QKTracingResults
 from .attribution_utils import (
     select_scaled_decoder_vecs_lorsa,
     select_scaled_decoder_vecs_transcoder,
 )
-
-
-@dataclass
-class QKTracingResults:
-    """Results from QK tracing analysis.
-
-    pair_wise_contributors: List of tuples containing (q_node, k_node, score) for top pairwise contributors.
-    top_q_marginal_contributors: List of tuples containing (q_node, score) for top Q marginal contributors.
-    top_k_marginal_contributors: List of tuples containing (k_node, score) for top K marginal contributors.
-    """
-
-    pair_wise_contributors: list[tuple]
-    top_q_marginal_contributors: list[tuple]
-    top_k_marginal_contributors: list[tuple]
-
-    # def get_
+from transformers import AutoTokenizer
 
 
 @dataclass
@@ -35,6 +20,7 @@ class ResStreamComponents:
     components: torch.Tensor
     n_layers: int
     pos: int
+    tokenizer: AutoTokenizer
     bias_names: list[str] = field(default_factory=list)
 
     def sum(self):
@@ -53,6 +39,7 @@ class ResStreamComponents:
             bias_names=self.bias_names,
             n_layers=self.n_layers,
             pos=self.pos,
+            tokenizer=self.tokenizer,
             components=torch.cat(
                 [
                     self.components,
@@ -81,7 +68,7 @@ class ResStreamComponents:
         ), "We might not want to drop bias terms for the second time."
         return self
 
-    def map_idx_to_nodes(self, indices: torch.Tensor, input_ids: torch.Tensor):
+    def map_idx_to_nodes(self, indices: torch.Tensor, input_ids: torch.Tensor) -> list[Node]:
         """Map component indices to node names.
 
         Args:
@@ -89,30 +76,81 @@ class ResStreamComponents:
             input_ids: Input token IDs for generating node names.
 
         Returns:
-            List of node name strings.
+            List of Node objects.
         """
         results = []
-        lorsa_end_idx = self.lorsa_activation_matrix._nnz() + 1
+        lorsa_end_idx = self.lorsa_activation_matrix._nnz() + 1  # +1 for token
         transcoder_end_idx = lorsa_end_idx + self.transcoder_activation_matrix._nnz()
         error_end_idx = transcoder_end_idx + 2 * self.n_layers
         decoder_bias_idx = error_end_idx + 2 * self.n_layers
         for idx in indices.cpu().tolist():
             if idx == 0:
-                res = f"E_{input_ids[self.pos]}_{self.pos}"
+                res = Node.token_node(
+                    self.pos,
+                    input_ids[self.pos],
+                    token = process_token(self.tokenizer.decode(input_ids[self.pos])),
+                )
             elif idx < lorsa_end_idx:
                 lorsa_idx = idx - 1
-                layer, pos, feature_idx = self.lorsa_activation_matrix.coalesce().indices()[:, lorsa_idx]
-                res = f"{layer}_{feature_idx}_{pos}"
+                layer, pos, feat_idx = self.lorsa_activation_matrix.indices()[:, lorsa_idx]
+                assert pos == self.pos
+                activation = self.lorsa_activation_matrix.values()[lorsa_idx]
+                res = Node.feature_node(
+                    layer,
+                    pos,
+                    feat_idx,
+                    is_lorsa=True,
+                    sae_name=None,
+                    influence=0,
+                    activation=activation,
+                    lorsa_pattern=None,
+                    qk_tracing_results=None,
+                    is_from_qk_tracing=True,
+                )
             elif idx < transcoder_end_idx:
                 tc_idx = idx - lorsa_end_idx
-                layer, pos, feature_idx = self.transcoder_activation_matrix.coalesce().indices()[:, tc_idx]
-                res = f"{layer}_{feature_idx}_{pos}"
+                
+                layer, pos, feature_idx = self.transcoder_activation_matrix.indices()[:, tc_idx]
+                assert pos == self.pos
+                activation = self.transcoder_activation_matrix.values()[tc_idx]
+                res = Node.feature_node(
+                    layer,
+                    pos,
+                    feature_idx,
+                    is_lorsa=False,
+                    sae_name=None,
+                    influence=0,
+                    activation=activation,
+                    lorsa_pattern=None,
+                    qk_tracing_results=None,
+                    is_from_qk_tracing=True,
+                )
             elif idx < error_end_idx:
-                res = f"{idx - transcoder_end_idx}_error_{self.pos}"
+                layer, sublayer = divmod(idx - transcoder_end_idx, 2)
+                is_lorsa = not bool(sublayer)
+                res = Node.error_node(
+                    int(layer),
+                    self.pos,
+                    is_lorsa=is_lorsa,
+                    influence=0,
+                    is_from_qk_tracing=True,
+                )
             elif idx < decoder_bias_idx:
-                res = f"{idx - error_end_idx}_decoderbias_{self.pos}"
+                layer, sublayer = divmod(idx - error_end_idx, 2)
+                is_lorsa = not bool(sublayer)
+                res = Node.bias_node(
+                    int(layer),
+                    self.pos,
+                    bias_name='decoder_bias',
+                    is_from_qk_tracing=True,
+                )
             else:
-                res = self.bias_names[idx - decoder_bias_idx]
+                res = Node.bias_node(
+                    int(layer),
+                    self.pos,
+                    bias_name=self.bias_names[idx - decoder_bias_idx],
+                    is_from_qk_tracing=True,
+                )
             results.append(res)
         return results
 
@@ -217,11 +255,12 @@ def get_residual_stream_components(
     ]
 
     return ResStreamComponents(
-        lorsa_activation_matrix=lorsa_components[0],
-        transcoder_activation_matrix=clt_components[0],
+        lorsa_activation_matrix=lorsa_components[0].coalesce(),
+        transcoder_activation_matrix=clt_components[0].coalesce(),
         n_layers=layer_int,
         pos=pos,
         components=torch.cat(l, dim=0),
+        tokenizer=model.tokenizer,
     )
 
 
