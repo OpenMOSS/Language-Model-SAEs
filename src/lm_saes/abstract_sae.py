@@ -755,11 +755,13 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         mesh_dim_name="model",
                     )
                 else:
-                    return topk(
-                        x,
-                        k=self.current_k,
-                        dim=-1,
-                    )
+                    x = torch.clamp(x, min=0.0)
+                    k = x.shape[-1] - self.current_k + 1
+                    
+                    k_th_value, _ = torch.kthvalue(x, k=k, dim=-1)
+                    k_th_value = k_th_value.unsqueeze(dim=-1)
+                    return x * x.ge(k_th_value)
+
 
             return topk_activation
 

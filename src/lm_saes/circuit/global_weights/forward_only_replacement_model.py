@@ -203,16 +203,16 @@ class ForwardOnlyReplacementModel(ReplacementModel):
         self.interested_features = interested_features
         
         lorsa_encoders = torch.stack([
-            self.lorsas[layer].W_E * self.blocks[layer].ln1.w[:, None] for layer in range(self.cfg.n_layers)
-        ])  # n_layers, d_model, d_sae
+            self.lorsas[layer].W_E.to(torch.float32) * self.blocks[layer].ln1.w[:, None] for layer in range(self.cfg.n_layers)
+        ]).to(self.cfg.dtype)  # n_layers, d_model, d_sae
         
         lorsa_decoders = torch.stack([
             self.lorsas[layer].W_D for layer in range(self.cfg.n_layers)
         ])  # n_layers, d_sae, d_model
         
         transcoder_encoders = torch.stack([
-            self.transcoders[layer].W_E * self.blocks[layer].ln2.w[:, None] for layer in range(self.cfg.n_layers)
-        ])  # n_layers, d_model, d_sae
+            self.transcoders[layer].W_E.to(torch.float32) * self.blocks[layer].ln2.w[:, None] for layer in range(self.cfg.n_layers)
+        ]).to(self.cfg.dtype)  # n_layers, d_model, d_sae
         
         transcoder_decoders = self.transcoders.W_D  # n_layers, d_model, d_sae
         
@@ -262,36 +262,42 @@ class ForwardOnlyReplacementModel(ReplacementModel):
             batch_size,
             self.cfg.n_layers,
             self.lorsas[0].cfg.d_sae,
+            dtype=self.cfg.dtype,
             device=self.cfg.device
         )
         self.upstream_transcoder_attribution = torch.zeros(
             batch_size,
             self.cfg.n_layers,
             self.transcoders[0].cfg.d_sae,
+            dtype=self.cfg.dtype,
             device=self.cfg.device
         )
         self.downstream_lorsa_attribution = torch.zeros(
             batch_size,
             self.cfg.n_layers,
             self.lorsas[0].cfg.d_sae,
+            dtype=self.cfg.dtype,
             device=self.cfg.device
         )
         self.downstream_transcoder_attribution = torch.zeros(
             batch_size,
             self.cfg.n_layers,
             self.transcoders[0].cfg.d_sae,
+            dtype=self.cfg.dtype,
             device=self.cfg.device
         )
         
         self.accumulated_lorsa_acts = torch.zeros(
             self.cfg.n_layers,
             self.lorsas[0].cfg.d_sae,
+            dtype=self.cfg.dtype,
             device=self.cfg.device
         )
         
         self.accumulated_transcoder_acts = torch.zeros(
             self.cfg.n_layers,
             self.transcoders[0].cfg.d_sae,
+            dtype=self.cfg.dtype,
             device=self.cfg.device
         )
     
@@ -326,13 +332,13 @@ class ForwardOnlyReplacementModel(ReplacementModel):
 
             upstream_values = torch.cat(
                 [upstream_lorsa_twera_values, upstream_transcoder_twera_values]
-            ) if self.interested_features.layer[i] > 0 else torch.tensor(
+            ) if self.interested_features.sublayer_index()[i] > 0 else torch.tensor(
                 [], device=self.cfg.device
             )
 
             downstream_values = torch.cat(
                 [downstream_lorsa_twera_values, downstream_transcoder_twera_values]
-            ) if self.interested_features.layer[i] < self.cfg.n_layers else torch.tensor(
+            ) if self.interested_features.sublayer_index()[i] <= self.cfg.n_layers - 1 else torch.tensor(
                 [], device=self.cfg.device
             )
 
@@ -419,7 +425,7 @@ class ForwardOnlyReplacementModel(ReplacementModel):
                 )
             else:
                 patterns.append(
-                    torch.eye(n_ctx).to(self.cfg.device)
+                    torch.eye(n_ctx, dtype=self.cfg.dtype, device=self.cfg.device)
                 )
         patterns = torch.stack(patterns)  # batch qpos kpos
         
@@ -451,9 +457,9 @@ class ForwardOnlyReplacementModel(ReplacementModel):
             assert act_matrix.ndim == 3
             return torch.stack([
                 torch.sparse.mm(  # we use sparse mm to sum over pos dim - aij should be summed over token positions
-                    attribution_to_kpos,
-                    act_matrix[layer]
-                )  # batch d_sae
+                    attribution_to_kpos.to(torch.float32),
+                    act_matrix[layer].to(torch.float32)
+                ).to(self.cfg.dtype)  # batch d_sae
                 for layer in range(self.cfg.n_layers)
             ], dim=1).to_dense()  # batch n_layer d_sae
             
@@ -480,8 +486,7 @@ class ForwardOnlyReplacementModel(ReplacementModel):
                 attention_pattern[layer].repeat_interleave(self.lorsas[layer].qk_exp_factor, dim=0)
             )
             # same as above. we divide attn_hook_scale here
-            lorsa_k_pos_contribution = lorsa_k_pos_contribution / attn_hook_scales[layer][None, :]
-            
+            lorsa_k_pos_contribution = lorsa_k_pos_contribution / attn_hook_scales[layer][None, :].to(self.cfg.dtype)
             
             downstream_lorsa_aij.append(
                 torch.einsum(
@@ -497,9 +502,9 @@ class ForwardOnlyReplacementModel(ReplacementModel):
         # 2. downstream transcoders
         downstream_transcoder_aij = torch.stack([
             torch.sparse.mm(
-                acts / mlp_hook_scales[layer],  # this is normal handling of hook scale
-                clt_activation_matrix[layer]
-            )
+                (acts / mlp_hook_scales[layer]).to(torch.float32),  # this is normal handling of hook scale
+                clt_activation_matrix[layer].to(torch.float32)
+            ).to(self.cfg.dtype)
             for layer in range(self.cfg.n_layers)
         ], dim=1)  # batch n_layer d_sae
         
