@@ -85,6 +85,7 @@ class ReplacementModel(HookedTransformer):
     mlp_output_hook: str
     attn_input_hook: str = None
     attn_output_hook: str = None
+    resid_mid_hook: str = None
 
     @classmethod
     def from_config(
@@ -96,6 +97,7 @@ class ReplacementModel(HookedTransformer):
         mlp_output_hook: str = "mlp.hook_out",
         attn_input_hook: str = "attn.hook_in",
         attn_output_hook: str = "attn.hook_out",
+        resid_mid_hook: str = "hook_resid_mid",
         use_lorsa: bool = True,
         **kwargs,
     ) -> "ReplacementModel":
@@ -122,7 +124,14 @@ class ReplacementModel(HookedTransformer):
 
         model = load_model(config).model  # type: ignore[reportAttributeAccessIssue]
         model._configure_replacement_model(
-            transcoders, lorsas, mlp_input_hook, mlp_output_hook, attn_input_hook, attn_output_hook, use_lorsa
+            transcoders,
+            lorsas,
+            mlp_input_hook,
+            mlp_output_hook,
+            attn_input_hook,
+            attn_output_hook,
+            resid_mid_hook,
+            use_lorsa,
         )
         return model
 
@@ -136,6 +145,7 @@ class ReplacementModel(HookedTransformer):
         mlp_output_hook: str = "mlp.hook_out",
         attn_input_hook: str = "attn.hook_in",
         attn_output_hook: str = "attn.hook_out",
+        resid_mid_hook: str = "hook_resid_mid",
         use_lorsa: bool = True,
         **kwargs,
     ) -> "ReplacementModel":
@@ -208,6 +218,7 @@ class ReplacementModel(HookedTransformer):
             mlp_output_hook,
             attn_input_hook,
             attn_output_hook,
+            resid_mid_hook,
             use_lorsa,
         )
         return model
@@ -218,6 +229,7 @@ class ReplacementModel(HookedTransformer):
         model_cfg: LanguageModelConfig,
         transcoders: TranscoderType,
         lorsas: List[LowRankSparseAttention],
+        resid_mid_hook: str = "hook_resid_mid",
         mlp_input_hook: str = "mlp.hook_in",
         mlp_output_hook: str = "mlp.hook_out",
         attn_input_hook: str = "attn.hook_in",
@@ -244,6 +256,7 @@ class ReplacementModel(HookedTransformer):
             transcoders,
             lorsas,
             mlp_input_hook=mlp_input_hook,
+            resid_mid_hook=resid_mid_hook,
             mlp_output_hook=mlp_output_hook,
             attn_input_hook=attn_input_hook,
             attn_output_hook=attn_output_hook,
@@ -259,6 +272,7 @@ class ReplacementModel(HookedTransformer):
         mlp_output_hook: str,
         attn_input_hook: str,
         attn_output_hook: str,
+        resid_mid_hook: str,
         use_lorsa: bool = True,
     ):
         # Configure Transcoders
@@ -266,6 +280,7 @@ class ReplacementModel(HookedTransformer):
         self.add_module("transcoders", transcoders)
         self.d_transcoder = transcoders.cfg.d_sae
         self.mlp_input_hook = mlp_input_hook
+        self.resid_mid_hook = resid_mid_hook
         self.original_mlp_output_hook = mlp_output_hook
         self.mlp_output_hook = mlp_output_hook + ".hook_out_grad"
 

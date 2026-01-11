@@ -80,6 +80,13 @@ class AttributionContext:
             represent a_s * W^dec.
     """
 
+    # Model reference for accessing ln1/ln2 during grad transformation
+    _model_ref: "ReplacementModel | None"
+    # Cached ln1 scales from forward pass: list of (batch_size, n_pos, 1) per layer
+    _ln1_scales: List[torch.Tensor | None] | None
+    # Cached ln2 scales from forward pass: list of (batch_size, n_pos, 1) per layer
+    _ln2_scales: List[torch.Tensor | None] | None
+
     def __init__(
         self,
         lorsa_activation_matrix: torch.sparse.Tensor,
@@ -100,7 +107,7 @@ class AttributionContext:
         n_layers, n_pos, _ = clt_activation_matrix.shape
 
         # Forward-pass cache
-        # L0Ainput, L0Minput, ... L-1Ainput, L-1Minput, pre_unembed
+        # L0_resid_pre, L0_resid_mid, ... L-1_resid_pre, L-1_resid_mid, pre_unembed
         if use_lorsa:
             self._resid_activations: List[torch.Tensor | None] = [None] * (2 * n_layers + 1)
         else:
@@ -109,6 +116,9 @@ class AttributionContext:
         self._batch_buffer: torch.Tensor | None = None
         self.n_layers: int = n_layers
         self.use_lorsa = use_lorsa
+        self._model_ref = None
+        self._ln1_scales = None
+        self._ln2_scales = None
 
         # Assemble all backward hooks up-front
         self._attribution_hooks = self._make_attribution_hooks(
@@ -134,9 +144,14 @@ class AttributionContext:
             self._row_size: int = total_active_feats + n_layers * n_pos + n_pos  # + logits later
 
     def _caching_hooks(
-        self, attn_input_hook: str, mlp_input_hook: str, model: ReplacementModel
+        self, resid_pre_hook: str, resid_mid_hook: str, model: ReplacementModel
     ) -> List[Tuple[str, Callable]]:
-        """Return hooks that store residual activations layer-by-layer."""
+        """Return hooks that store residual activations layer-by-layer.
+
+        Also caches ln1/ln2 scales for backward gradient transformation.
+        For lorsa: hook resid_pre (before ln1), need ln1 backward transform.
+        For CLT: hook resid_mid (before ln2), need ln2 backward transform.
+        """
 
         proxy = weakref.proxy(self)
 
@@ -144,15 +159,31 @@ class AttributionContext:
             proxy._resid_activations[index] = acts
             return acts
 
+        def _cache_ln1_scale(scale: torch.Tensor, hook: HookPoint, *, layer: int) -> torch.Tensor:
+            proxy._ln1_scales[layer] = scale
+            return scale
+
+        def _cache_ln2_scale(scale: torch.Tensor, hook: HookPoint, *, layer: int) -> torch.Tensor:
+            proxy._ln2_scales[layer] = scale
+            return scale
+
         hooks = []
 
         for layer in range(self.n_layers):
             if self.use_lorsa:
-                hooks.append((f"blocks.{layer}.{attn_input_hook}", partial(_cache, index=layer * 2)))
-                hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer * 2 + 1)))
+                # Hook resid_pre for lorsa (before ln1)
+                hooks.append((f"blocks.{layer}.{resid_pre_hook}", partial(_cache, index=layer * 2)))
+                hooks.append((f"blocks.{layer}.{resid_mid_hook}", partial(_cache, index=layer * 2 + 1)))
+                # Cache ln1 scale for lorsa backward gradient transformation
+                hooks.append((f"blocks.{layer}.ln1.hook_scale", partial(_cache_ln1_scale, layer=layer)))
             else:
-                hooks.append((f"blocks.{layer}.{mlp_input_hook}", partial(_cache, index=layer)))
-        hooks.append(("unembed.hook_pre", partial(_cache, index=2 * self.n_layers)))
+                hooks.append((f"blocks.{layer}.{resid_mid_hook}", partial(_cache, index=layer)))
+            # Cache ln2 scale for CLT backward gradient transformation
+            hooks.append((f"blocks.{layer}.ln2.hook_scale", partial(_cache_ln2_scale, layer=layer)))
+
+        # Cache pre-unembed activations (index depends on use_lorsa)
+        pre_unembed_index = 2 * self.n_layers if self.use_lorsa else self.n_layers
+        hooks.append(("unembed.hook_pre", partial(_cache, index=pre_unembed_index)))
 
         return hooks
 
@@ -442,11 +473,57 @@ class AttributionContext:
     @contextlib.contextmanager
     def install_hooks(self, model: "ReplacementModel"):
         """Context manager instruments the hooks for the forward and backward passes."""
+        # Initialize ln scales cache
+        self._ln1_scales = [None] * self.n_layers if self.use_lorsa else None
+        self._ln2_scales = [None] * self.n_layers
+        self._model_ref = model
         with model.hooks(
-            fwd_hooks=self._caching_hooks(model.attn_input_hook, model.mlp_input_hook, model),
+            fwd_hooks=self._caching_hooks("hook_resid_pre", model.resid_mid_hook, model),
             bwd_hooks=self._attribution_hooks,
         ):
             yield
+
+    def _transform_grad_through_ln(
+        self,
+        grad: torch.Tensor,
+        actual_layer: int,
+        positions: torch.Tensor,
+        ln_type: Literal["ln1", "ln2"],
+    ) -> torch.Tensor:
+        """Transform gradient through layernorm backward.
+
+        Since hook_scale is detached, ln backward is linear: grad_out = grad_in * (w / scale).
+
+        Args:
+            grad: `(batch, d_model)` gradient to transform.
+            actual_layer: The actual transformer layer index (not the internal index).
+            positions: `(batch,)` token positions for each grad.
+            ln_type: Which layernorm to use - "ln1" for attention or "ln2" for MLP.
+
+        Returns:
+            `(batch, d_model)` transformed gradient.
+        """
+        assert self._model_ref is not None, "Model reference not set"
+
+        if ln_type == "ln1":
+            assert self._ln1_scales is not None, "ln1 scales not cached"
+            ln = self._model_ref.blocks[actual_layer].ln1
+            ln_scale = self._ln1_scales[actual_layer]
+        else:
+            assert self._ln2_scales is not None, "ln2 scales not cached"
+            ln = self._model_ref.blocks[actual_layer].ln2
+            ln_scale = self._ln2_scales[actual_layer]
+
+        ln_w = ln.w  # (d_model,)
+        # ln_scale shape: (batch_size, n_pos, 1), we need (len(positions), 1)
+        # Since we're using the same forward pass for all batch items, use first batch
+        scale_per_pos = ln_scale[0, positions, :]  # (len(positions), 1)
+
+        # Transform gradient: grad * (w / scale)
+        # For backward through x / scale * w, the gradient is grad_out * w / scale
+        transformed_grad = grad * (ln_w / scale_per_pos)
+
+        return transformed_grad
 
     def compute_batch(
         self,
@@ -458,11 +535,18 @@ class AttributionContext:
     ) -> torch.Tensor:
         """Return attribution rows for a batch of (layer, pos) nodes.
 
-        The routine overrides gradients at **exact** residual-stream locations
+        The routine overrides gradients at **exact** residual-stream locations,
         triggers one backward pass, and copies the rows from the internal buffer.
+
+        Note: Gradients are injected at resid_pre (for lorsa) and resid_mid (for CLT),
+        which are BEFORE the respective layernorms. The inject_values (encoder rows)
+        are automatically transformed through the layernorm backward to account for
+        this difference.
 
         Args:
             layers: 1-D tensor of layer indices *l* for the source nodes.
+                For use_lorsa=True: even indices are lorsa (resid_pre), odd indices are CLT (resid_mid).
+                For use_lorsa=False: indices directly correspond to layers (resid_mid).
             positions: 1-D tensor of token positions *c* for the source nodes.
             inject_values: `(batch, d_model)` tensor with outer product
                 a_s * W^(enc/dec) to inject as custom gradient.
@@ -485,10 +569,27 @@ class AttributionContext:
         # Custom gradient injection (per-layer registration)
         batch_idx = torch.arange(len(layers), device=layers.device)
 
-        def _inject(grads, *, batch_indices, pos_indices, patterns, values):
+        def _inject(grads, *, batch_indices, pos_indices, patterns, values, ln_w=None, ln_scale=None):
+            """Inject gradients at specific positions.
+
+            For lorsa with attention patterns, ln_w and ln_scale are provided to apply
+            ln backward transform per-position (since each position has different scale).
+            """
             grads_out = grads.clone().to(values.dtype)
             if patterns is not None:
-                grads_out.index_put_((batch_indices,), values[:, None, :] * patterns[:, :, None])
+                if ln_w is not None and ln_scale is not None:
+                    # For lorsa: apply ln1 backward transform per position
+                    # values: (batch, d_model) - encoder rows WITHOUT ln transform
+                    # patterns: (batch, n_pos) - attention patterns
+                    # ln_w: (d_model,) - ln weights
+                    # ln_scale: (n_pos, 1) - ln scale for each position (from first batch item)
+                    # grads_out[batch_idx, k] += pattern[k] * values * (ln_w / ln_scale[k])
+                    ln_backward_factor = ln_w / ln_scale  # (n_pos, d_model)
+                    # values[:, None, :] * patterns[:, :, None] * ln_backward_factor[None, :, :]
+                    grad_contribution = values[:, None, :] * patterns[:, :, None] * ln_backward_factor[None, :, :]
+                    grads_out.index_put_((batch_indices,), grad_contribution)
+                else:
+                    grads_out.index_put_((batch_indices,), values[:, None, :] * patterns[:, :, None])
             else:
                 grads_out.index_put_((batch_indices, pos_indices), values)
             return grads_out.to(grads.dtype)
@@ -500,12 +601,62 @@ class AttributionContext:
             mask = layers == layer
             if not mask.any():
                 continue
+
+            # Determine layer type and actual layer index
+            # For use_lorsa=True: even indices are lorsa (resid_pre), odd indices are CLT (resid_mid)
+            # For use_lorsa=False: indices directly correspond to layers (resid_mid for CLT)
+            if self.use_lorsa:
+                is_lorsa_layer = layer % 2 == 0
+                is_clt_layer = layer % 2 == 1
+                actual_layer = layer // 2
+            else:
+                is_lorsa_layer = False
+                is_clt_layer = True
+                actual_layer = layer
+
+            # Transform inject_values through layernorm backward
+            # - For lorsa layers with patterns: defer to _inject (per-position ln1 transform)
+            # - For lorsa layers without patterns: apply ln1 transform here
+            # - For CLT layers: apply ln2 transform here (CLT doesn't use attention patterns)
+            # Skip for the final unembed layer
+            values_to_inject = inject_values[mask]
+            max_layer_idx = 2 * self.n_layers if self.use_lorsa else self.n_layers
+
+            # Prepare ln parameters for lorsa with patterns
+            ln_w_for_inject = None
+            ln_scale_for_inject = None
+            has_patterns = attention_patterns is not None and is_lorsa_layer and layer < max_layer_idx
+
+            if is_lorsa_layer and layer < max_layer_idx:
+                if has_patterns:
+                    # For lorsa with patterns: pass ln params to _inject for per-position transform
+                    assert self._ln1_scales is not None, "ln1 scales not cached"
+                    ln_w_for_inject = self._model_ref.blocks[actual_layer].ln1.w
+                    ln_scale_for_inject = self._ln1_scales[actual_layer][0]  # (n_pos, 1) from first batch
+                else:
+                    # For lorsa without patterns (shouldn't happen normally, but handle it)
+                    values_to_inject = self._transform_grad_through_ln(
+                        values_to_inject,
+                        actual_layer,
+                        positions[mask],
+                        ln_type="ln1",
+                    )
+            elif is_clt_layer and layer < max_layer_idx:
+                values_to_inject = self._transform_grad_through_ln(
+                    values_to_inject,
+                    actual_layer,
+                    positions[mask],
+                    ln_type="ln2",
+                )
+
             fn = partial(
                 _inject,
                 batch_indices=batch_idx[mask],
                 pos_indices=positions[mask],
                 patterns=attention_patterns[mask] if attention_patterns is not None else None,
-                values=inject_values[mask],
+                values=values_to_inject,
+                ln_w=ln_w_for_inject,
+                ln_scale=ln_scale_for_inject,
             )
             handles.append(self._resid_activations[int(layer)].register_hook(fn))
 
