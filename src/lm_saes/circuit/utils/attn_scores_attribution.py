@@ -3,14 +3,15 @@
 from dataclasses import dataclass, field
 
 import torch
+from transformers import AutoTokenizer
 
 from lm_saes.circuit.replacement_model import ReplacementModel
-from .graph_file_utils import Node, process_token, QKTracingResults
+
 from .attribution_utils import (
     select_scaled_decoder_vecs_lorsa,
     select_scaled_decoder_vecs_transcoder,
 )
-from transformers import AutoTokenizer
+from .graph_file_utils import Node, QKTracingResults, process_token
 
 
 @dataclass

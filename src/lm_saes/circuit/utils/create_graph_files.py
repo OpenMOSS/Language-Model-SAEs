@@ -5,7 +5,8 @@ from typing import List
 from transformers import AutoTokenizer
 
 from lm_saes.circuit.graph import Graph, prune_graph
-from .graph_file_utils import Node, process_token, Metadata, Model
+
+from .graph_file_utils import Metadata, Model, Node, process_token
 
 logger = logging.getLogger(__name__)
 

@@ -1,7 +1,7 @@
 """Triton kernels for sparse matrix operations in SAE training."""
 
-from typing import cast
 import math
+from typing import cast
 
 import torch
 import torch.sparse
@@ -1776,7 +1776,10 @@ def flash_attn_forward(q, k, v, causal=False, softmax_scale=None):
     BLOCK_HEADDIM_V = max(triton.next_power_of_2(d_v), 16)
     BLOCK = 128
     num_warps = 4 if d <= 64 else 8
-    grid = lambda META: (triton.cdiv(seqlen_q, META["BLOCK_M"]), batch * nheads)
+
+    def grid(META):
+        return (triton.cdiv(seqlen_q, META["BLOCK_M"]), batch * nheads)
+
     _fwd_kernel[grid](
         q,
         k,
@@ -1832,7 +1835,10 @@ def flash_attn_backward(do, q, k, v, o, lse, dq, dk, dv, causal=False, softmax_s
 
     BLOCK_HEADDIM = max(triton.next_power_of_2(d), 16)
     BLOCK_HEADDIM_V = max(triton.next_power_of_2(d_v), 16)
-    grid = lambda META: (triton.cdiv(seqlen_q, META["BLOCK_M"]), batch * nheads)
+
+    def grid(META):
+        return (triton.cdiv(seqlen_q, META["BLOCK_M"]), batch * nheads)
+
     _bwd_preprocess_do_o_dot[grid](
         o,
         do,
@@ -1851,10 +1857,12 @@ def flash_attn_backward(do, q, k, v, o, lse, dq, dk, dv, causal=False, softmax_s
         BLOCK_HEADDIM_V=BLOCK_HEADDIM_V,
     )
 
-    grid = lambda META: (
-        triton.cdiv(seqlen_k, META["BLOCK_N"]) if META["SEQUENCE_PARALLEL"] else 1,
-        batch * nheads,
-    )
+    def grid(META):
+        return (
+            triton.cdiv(seqlen_k, META["BLOCK_N"]) if META["SEQUENCE_PARALLEL"] else 1,
+            batch * nheads,
+        )
+
     _bwd_kernel[grid](
         q,
         k,

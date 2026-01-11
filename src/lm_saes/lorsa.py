@@ -21,7 +21,6 @@ from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
-from .kernels.entrypoints import flash_attn
 from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
 from .config import LorsaConfig
 from .utils.distributed import DimMap, masked_fill, mesh_dim_size

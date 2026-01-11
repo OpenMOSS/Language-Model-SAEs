@@ -1,6 +1,8 @@
-from pydantic import BaseModel
-from typing import List, Optional
 from dataclasses import dataclass
+from typing import List, Optional
+
+from pydantic import BaseModel
+
 
 class Metadata(BaseModel):
     prompt_tokens: List[str]

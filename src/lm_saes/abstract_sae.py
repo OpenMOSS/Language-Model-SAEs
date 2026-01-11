@@ -20,6 +20,7 @@ import einops
 import safetensors.torch as safe
 import torch
 import torch.distributed.checkpoint as dcp
+import torch.nn.functional as F
 from huggingface_hub import create_repo, snapshot_download, upload_folder
 from jaxtyping import Float
 from safetensors import safe_open
@@ -28,7 +29,6 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
 from torch.nn.attention import SDPBackend, sdpa_kernel
-import torch.nn.functional as F
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.activation_functions import JumpReLU
