@@ -19,6 +19,7 @@ export const FeatureNodeSchema = z.object({
   activation: z.number(),
   feature: FeatureSchema,
   qkTracingResults: QKTracingResultsSchema.nullish(),
+  isFromQkTracing: z.boolean().default(false),
 })
 
 export type FeatureNode = z.infer<typeof FeatureNodeSchema>
@@ -29,6 +30,7 @@ export const TokenNodeSchema = z.object({
   layer: z.number(),
   ctxIdx: z.number(),
   token: z.string(),
+  isFromQkTracing: z.boolean().default(false),
 })
 
 export type TokenNode = z.infer<typeof TokenNodeSchema>
@@ -38,6 +40,7 @@ export const ErrorNodeSchema = z.object({
   nodeId: z.string(),
   layer: z.number(),
   ctxIdx: z.number(),
+  isFromQkTracing: z.boolean().default(false),
 })
 
 export type ErrorNode = z.infer<typeof ErrorNodeSchema>
@@ -49,6 +52,7 @@ export const LogitNodeSchema = z.object({
   ctxIdx: z.number(),
   tokenProb: z.number(),
   token: z.string(),
+  isFromQkTracing: z.boolean().default(false),
 })
 
 export type LogitNode = z.infer<typeof LogitNodeSchema>

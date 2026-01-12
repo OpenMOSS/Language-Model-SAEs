@@ -1,6 +1,8 @@
-from pydantic import BaseModel
-from typing import List, Optional
 from dataclasses import dataclass
+from typing import List, Optional
+
+from pydantic import BaseModel
+
 
 class Metadata(BaseModel):
     prompt_tokens: List[str]
@@ -72,7 +74,7 @@ class Node(BaseModel):
             influence=influence,
             token=token,
         )
-    
+
     @classmethod
     def error_node(cls, layer, pos, is_lorsa, influence=None, is_from_qk_tracing=False):
         """Create an error node."""
@@ -84,7 +86,7 @@ class Node(BaseModel):
             influence=influence,
             is_from_qk_tracing=is_from_qk_tracing,
         )
-    
+
     @classmethod
     def bias_node(cls, layer, pos, bias_name, influence=None, is_from_qk_tracing=False):
         """Create a bias node."""
@@ -119,13 +121,12 @@ class Node(BaseModel):
             token_prob=token_prob,
             is_target_logit=target_logit,
         )
-    
+
     def __eq__(self, other):
         return self.node_id == other.node_id
-    
+
     def __hash__(self):
         return hash(self.node_id)
-
 
 
 class Link(BaseModel):
