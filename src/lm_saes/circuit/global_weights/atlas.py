@@ -4,35 +4,47 @@ from dataclasses import dataclass
 from typing import List
 from lm_saes import MongoClient
 
-
-
 @dataclass
-class Link:
-    source: str
-    target: str
-    weight: float
+class Node:
+    name: str
+    influence: float
+    visited: bool
 
 class Atlas:
     def __init__(self, features: BatchedFeatures):
-        self.nodes = set(features.to_str_nodes())
-        self.links = []
+        assert len(features) == 1
+        self.nodes = {
+            features.to_str_nodes()[0]: Node(
+                    name=features.to_str_nodes()[0],
+                    influence=1.,
+                    visited=True,
+                )
+            }
+        self.links = dict()
+        self.iteration = 0
 
     def add_link(self, source: str, target: str, weight: float):
-        self.links.append(Link(source=source, target=target, weight=weight))
+        if (target, source) in self.links:
+            return
+        self.links[(source, target)] = weight
+        target_influence = self.nodes[source].influence * weight
+        if target not in self.nodes:
+            self.nodes[target] = Node(
+                name=target,
+                influence=target_influence,
+                visited=False,
+            )
+        else:
+            self.nodes[target].influence += target_influence
     
     def update(self, feature_to_explore: BatchedFeatures, connected_features: List[ConnectedFeatures]):
         assert len(feature_to_explore) == len(connected_features)
-        original_nodes = self.nodes.copy()
 
         for i, connected_feature in enumerate(connected_features):
-            upstream_str_nodes = connected_feature.upstream_features.to_str_nodes()
-            downstream_str_nodes = connected_feature.downstream_features.to_str_nodes()
-            self.nodes.update(upstream_str_nodes)
-            self.nodes.update(downstream_str_nodes)
             for j in range(len(connected_feature.upstream_features)):
                 self.add_link(
-                    connected_feature.upstream_features[j].to_str_nodes()[0],
                     feature_to_explore[i].to_str_nodes()[0],
+                    connected_feature.upstream_features[j].to_str_nodes()[0],
                     connected_feature.upstream_values[j].item()
                 )
             for j in range(len(connected_feature.downstream_features)):
@@ -41,13 +53,24 @@ class Atlas:
                     connected_feature.downstream_features[j].to_str_nodes()[0],
                     connected_feature.downstream_values[j].item()
                 )
-
-        added_nodes = list(self.nodes - original_nodes)
-        return BatchedFeatures.from_str_nodes(added_nodes)
+    
+    def select_top_k_nodes_to_visit(self, k: int):
+        unvisited_nodes = [node for node in self.nodes.values() if not node.visited]
+        nodes_to_visit = sorted(unvisited_nodes, key=lambda x: x.influence, reverse=True)[:k]
+        for node in nodes_to_visit:
+            node.visited = True
+        return BatchedFeatures.from_str_nodes([node.name for node in nodes_to_visit])
 
 
     def export_to_json(self):
         return {
-            "nodes": list(self.nodes),
-            "links": [link.__dict__ for link in self.links]
+            "nodes": list(self.nodes.keys()),
+            "links": [
+                {
+                    "source": link[0],
+                    "target": link[1],
+                    "weight": self.links[link]
+                }
+                for link in self.links
+            ]
         }

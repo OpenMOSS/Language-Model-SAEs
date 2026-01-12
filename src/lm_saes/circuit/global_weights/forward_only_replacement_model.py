@@ -420,7 +420,7 @@ class ForwardOnlyReplacementModel(ReplacementModel):
                 patterns.append(
                     attention_pattern[
                         self.interested_features.layer[i],
-                        self.interested_features.index[i] // self.lorsas[0].qk_exp_factor,
+                        self.interested_features.index[i] // self.lorsas[0].cfg.ov_group_size,
                     ]
                 )
             else:
@@ -483,7 +483,7 @@ class ForwardOnlyReplacementModel(ReplacementModel):
             lorsa_k_pos_contribution = torch.einsum(
                 "qs,sqk->sk",
                 lorsa_activation_matrix[layer].to_dense(),
-                attention_pattern[layer].repeat_interleave(self.lorsas[layer].qk_exp_factor, dim=0)
+                attention_pattern[layer].repeat_interleave(self.lorsas[layer].cfg.ov_group_size, dim=0)
             )
             # same as above. we divide attn_hook_scale here
             lorsa_k_pos_contribution = lorsa_k_pos_contribution / attn_hook_scales[layer][None, :].to(self.cfg.dtype)
