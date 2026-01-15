@@ -94,7 +94,7 @@ class Node(BaseModel):
             node_id=f"{layer}_{bias_name}_{pos}",
             layer=layer,
             ctx_idx=pos,
-            feature_type=bias_name,
+            feature_type="bias",
             influence=influence,
             is_from_qk_tracing=is_from_qk_tracing,
         )
@@ -154,9 +154,11 @@ class QKTracingResults:
     top_k_marginal_contributors: List of tuples containing (k_node, score) for top K marginal contributors.
     """
 
-    pair_wise_contributors: list[tuple[Node, Node, float]]
-    top_q_marginal_contributors: list[tuple[Node, float]]
-    top_k_marginal_contributors: list[tuple[Node, float]]
+    NodeType = Node | str
+
+    pair_wise_contributors: list[tuple[NodeType, NodeType, float]]
+    top_q_marginal_contributors: list[tuple[NodeType, float]]
+    top_k_marginal_contributors: list[tuple[NodeType, float]]
 
     def get_nodes(self) -> set[Node]:
         all_relevant_nodes = set()
@@ -168,3 +170,30 @@ class QKTracingResults:
         for k_node, _ in self.top_k_marginal_contributors:
             all_relevant_nodes.add(k_node)
         return all_relevant_nodes
+
+    def stringify_nodes(self):
+        assert all(
+            isinstance(q_node, Node) and isinstance(k_node, Node) for q_node, k_node, _ in self.pair_wise_contributors
+        ) or all(
+            isinstance(q_node, str) and isinstance(k_node, str) for q_node, k_node, _ in self.pair_wise_contributors
+        )
+        assert all(isinstance(q_node, Node) for q_node, _ in self.top_q_marginal_contributors) or all(
+            isinstance(q_node, str) for q_node, _ in self.top_q_marginal_contributors
+        )
+        assert all(isinstance(k_node, Node) for k_node, _ in self.top_k_marginal_contributors) or all(
+            isinstance(k_node, str) for k_node, _ in self.top_k_marginal_contributors
+        )
+
+        if len(self.pair_wise_contributors) > 0 and isinstance(self.pair_wise_contributors[0][0], str):
+            return self
+
+        self.pair_wise_contributors = [
+            (q_node.node_id, k_node.node_id, score) for q_node, k_node, score in self.pair_wise_contributors
+        ]
+        self.top_q_marginal_contributors = [
+            (q_node.node_id, score) for q_node, score in self.top_q_marginal_contributors
+        ]
+        self.top_k_marginal_contributors = [
+            (k_node.node_id, score) for k_node, score in self.top_k_marginal_contributors
+        ]
+        return self

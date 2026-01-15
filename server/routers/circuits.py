@@ -139,8 +139,6 @@ def concretize_graph_data(graph_data: dict[str, Any]):
 def create_circuit(sae_set_name: str, request: GenerateCircuitRequest):
     """Generate and save a circuit graph for a given prompt and SAE set."""
 
-    print(request.model_dump())
-
     sae_set = client.get_sae_set(name=sae_set_name)
     assert sae_set is not None, f"SAE set {sae_set_name} not found"
     sae_names = sae_set.sae_names
