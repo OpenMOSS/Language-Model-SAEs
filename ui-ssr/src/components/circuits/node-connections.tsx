@@ -134,7 +134,7 @@ const QKTracingSection = memo(
                     nodeId === clickedId && 'ring-2 ring-blue-500',
                   )}
                   style={getWeightStyle(score)}
-                  onClick={(e) => onNodeClick(nodeId, e.shiftKey)}
+                  onClick={(e) => onNodeClick(nodeId, e.metaKey || e.ctrlKey)}
                   onMouseEnter={() => onNodeHover(nodeId)}
                   onMouseLeave={() => onNodeHover(null)}
                 >
@@ -161,7 +161,7 @@ const QKTracingSection = memo(
                     nodeId === clickedId && 'ring-2 ring-blue-500',
                   )}
                   style={getWeightStyle(score)}
-                  onClick={(e) => onNodeClick(nodeId, e.shiftKey)}
+                  onClick={(e) => onNodeClick(nodeId, e.metaKey || e.ctrlKey)}
                   onMouseEnter={() => onNodeHover(nodeId)}
                   onMouseLeave={() => onNodeHover(null)}
                 >
@@ -214,7 +214,7 @@ const QKTracingSection = memo(
                     kId === clickedId &&
                       'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
                   )}
-                  onClick={(e) => onNodeClick(kId, e.shiftKey)}
+                  onClick={(e) => onNodeClick(kId, e.metaKey || e.ctrlKey)}
                   onMouseEnter={() => onNodeHover(kId)}
                   onMouseLeave={() => onNodeHover(null)}
                 >
