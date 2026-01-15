@@ -57,11 +57,22 @@ export const LogitNodeSchema = z.object({
 
 export type LogitNode = z.infer<typeof LogitNodeSchema>
 
+export const BiasNodeSchema = z.object({
+  featureType: z.literal('bias'),
+  nodeId: z.string(),
+  layer: z.number(),
+  ctxIdx: z.number(),
+  isFromQkTracing: z.boolean().default(false),
+})
+
+export type BiasNode = z.infer<typeof BiasNodeSchema>
+
 export const NodeSchema = z.union([
   FeatureNodeSchema,
   TokenNodeSchema,
   ErrorNodeSchema,
   LogitNodeSchema,
+  BiasNodeSchema,
 ])
 
 export type Node = z.infer<typeof NodeSchema>
