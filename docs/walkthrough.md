@@ -649,6 +649,287 @@ To use the JumpReLU $L^p$ penalty, set `lp_coefficient` to a positive value in `
 
 WIP @Junxuan Wang
 
+## Legacy Stategies
+
+Early researches on SAEs employ strategies like [Neuron Resampling](https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder-resampling) and [Ghost Grads](https://transformer-circuits.pub/2024/jan-update/index.html#dict-learning-resampling) to make dead neurons live again. However, modern initialization and sparsity losses have largely alleviated dead neurons. Thus, we remove the support for these strategies for simplicity of our internal code structure.
+
 ## Caching Activations
 
-## Train on HuggingFace Transformers
+Training with cached activations is a common workflow in practice. It enables efficient hyperparameter sweeping by reusing pre-generated activations and facilitates parallelized training and analysis (DP/TP). This approach significantly accelerates training; for example, training an 8x expansion SAE on Pythia 160M with 800M tokens typically drops from ~6 hours (on-the-fly) to ~30 minutes (cached). However, caching requires substantial disk space. For 800M tokens of activations from a single Pythia 160M layer ($d_{\text{model}}=768$) stored in FP16, the storage requirement is:
+
+$$ 800 \times 10^6 \times 768 \times 2 \text{ bytes} \approx 1.2 \text{ TB} $$
+
+In this workflow, a separate task caches activations to disk at the output of `ActivationFactory`. When training, we re-configure the `ActivationFactory` to directly read from disk instead of generating activation from the language model on the fly.
+
+To cache activation on disk, you can:
+
+=== "Runner"
+
+    Create the `GenerateActivationsSettings` in Python and call `generate_activations` with it. Configurations except `output_dir` and `total_tokens` should be consistent with on-the-fly settings [above](#using-the-high-level-runner-api). `output_dir` is where you want to place your generated activations. Ensure you have enough space at this directory. `total_tokens` should be equal or greater than the `total_training_tokens` you want to train your SAE on. 
+
+    ```python
+    from lm_saes import (
+        GenerateActivationsSettings,
+        generate_activations,
+        LanguageModelConfig,
+        DatasetConfig,
+        ActivationFactoryTarget,
+        BufferShuffleConfig,
+    )
+
+    settings = GenerateActivationsSettings(
+        model=LanguageModelConfig(
+            model_name="EleutherAI/pythia-160m",
+            device="cuda",
+            dtype="torch.float16",
+        ),
+        model_name="pythia-160m",
+        dataset=DatasetConfig(dataset_name_or_path="Hzfinfdu/SlimPajama-3B"),
+        dataset_name="SlimPajama-3B",
+        hook_points=["blocks.6.hook_resid_post"],
+        output_dir="path/to/activations",
+        total_tokens=800_000_000,
+        context_size=1024,
+        target=ActivationFactoryTarget.ACTIVATIONS_1D,
+        model_batch_size=32,
+        batch_size=4096,
+        buffer_size=16384,
+        buffer_shuffle=BufferShuffleConfig(
+            perm_seed=42,
+            generator_device="cuda",
+        ),
+        device_type="cuda",
+    )
+
+    generate_activations(settings)
+    ```
+
+=== "CLI"
+
+    CLI-based workflow requires a configuration file containing the settings consistent with `GenerateActivationsSettings`. Common configuration file type like TOML, JSON and YAML are supported.
+
+    Create a TOML configuration file (e.g., `generate_config.toml`) with the following content:
+
+    ```toml
+    model_name = "pythia-160m"
+    dataset_name = "SlimPajama-3B"
+    hook_points = ["blocks.6.hook_resid_post"]
+    output_dir = "path/to/activations"
+    total_tokens = 800_000_000
+    context_size = 1024
+    target = "activations-1d"
+    model_batch_size = 32
+    batch_size = 4096
+    buffer_size = 16384
+    device_type = "cuda"
+
+    [model]
+    model_name = "EleutherAI/pythia-160m"
+    device = "cuda"
+    dtype = "torch.float16"
+
+    [dataset]
+    dataset_name_or_path = "Hzfinfdu/SlimPajama-3B"
+
+    [buffer_shuffle]
+    perm_seed = 42
+    generator_device = "cuda"
+    ```
+
+    Then run the generation with:
+
+    ```bash
+    lm-saes generate generate_config.toml
+    ```
+
+=== "Full Script"
+
+    Also, you can directly create `ActivationFactory` and `ActivationWriter` instances to generate and write activations to disk.
+
+    ```python
+    import datasets
+    from lm_saes import (
+        LanguageModelConfig,
+        TransformerLensLanguageModel,
+        ActivationFactory,
+        ActivationFactoryConfig,
+        ActivationFactoryDatasetSource,
+        ActivationFactoryTarget,
+        BufferShuffleConfig,
+        ActivationWriter,
+        ActivationWriterConfig,
+    )
+
+    # Use same way to generate activations
+    model = TransformerLensLanguageModel(
+        LanguageModelConfig(
+            model_name="EleutherAI/pythia-160m",
+            device="cuda",
+            dtype="torch.float16",
+        )
+    )
+
+    dataset = datasets.load_dataset(
+        "Hzfinfdu/SlimPajama-3B",
+        split="train",
+    )
+
+    factory_cfg = ActivationFactoryConfig(
+        sources=[ActivationFactoryDatasetSource(name="SlimPajama-3B")],
+        target=ActivationFactoryTarget.ACTIVATIONS_1D,
+        hook_points=["blocks.6.hook_resid_post"],
+        context_size=1024,
+        model_batch_size=32,
+        batch_size=4096,
+        buffer_size=16384,
+        buffer_shuffle=BufferShuffleConfig(
+            perm_seed=42,
+            generator_device="cuda",
+        ),
+    )
+    factory = ActivationFactory(factory_cfg)
+
+    activations = factory.process(
+        model=model,
+        model_name="pythia-160m",
+        datasets={"SlimPajama-3B": (dataset, None)},
+    )
+
+    # Create an ActivationWriter to write the activation stream to disk
+    writer_cfg = ActivationWriterConfig(
+        hook_points=["blocks.6.hook_resid_post"],
+        total_generating_tokens=800_000_000,
+        cache_dir="path/to/activations",
+    )
+    writer = ActivationWriter(writer_cfg)
+    
+    writer.process(activations)
+    ```
+
+### Training with Cached Activations
+
+Once you have generated and saved activations to disk, you can configure the `ActivationFactory` to read from these files instead of running the language model. This is done by replacing `ActivationFactoryDatasetSource` with `ActivationFactoryActivationsSource` in the configuration.
+
+=== "Runner"
+
+    ```python
+    import torch
+    from lm_saes import (
+        TrainSAESettings,
+        train_sae,
+        SAEConfig,
+        TrainerConfig,
+        ActivationFactoryConfig,
+        ActivationFactoryActivationsSource,
+        ActivationFactoryTarget,
+    )
+
+    settings = TrainSAESettings(
+        sae=SAEConfig(
+            hook_point_in="blocks.6.hook_resid_post",
+            hook_point_out="blocks.6.hook_resid_post",
+            d_model=768,
+            expansion_factor=8,
+            act_fn="relu",
+            dtype=torch.float32,
+            device="cuda",
+        ),
+        trainer=TrainerConfig(
+            amp_dtype=torch.float32,
+            lr=1e-4,
+            total_training_tokens=800_000_000,
+            exp_result_path="results",
+        ),
+        activation_factory=ActivationFactoryConfig(
+            sources=[
+                ActivationFactoryActivationsSource(
+                    path="path/to/activations",
+                    name="pythia-160m-cached",
+                    device="cuda",
+                )
+            ],
+            target=ActivationFactoryTarget.ACTIVATIONS_1D,
+            hook_points=["blocks.6.hook_resid_post"],
+            batch_size=4096,
+        ),
+        sae_name="pythia-160m-sae",
+        sae_series="pythia-sae",
+    )
+
+    train_sae(settings)
+    ```
+
+=== "CLI"
+
+    Update your training configuration to use the `activations` source type:
+
+    ```toml
+    # ... other configurations ...
+
+    [activation_factory]
+    target = "activations-1d"
+    hook_points = ["blocks.6.hook_resid_post"]
+    batch_size = 4096
+
+    [[activation_factory.sources]]
+    type = "activations"
+    name = "pythia-160m-cached"
+    path = "path/to/activations"
+    device = "cuda"
+    ```
+
+=== "Full Script"
+
+    In a full script, you can omit the language model and dataset loading, and directly use `ActivationFactory` with cached sources:
+
+    ```python
+    import torch
+    from lm_saes import (
+        ActivationFactory,
+        ActivationFactoryConfig,
+        ActivationFactoryActivationsSource,
+        ActivationFactoryTarget,
+        SAEConfig,
+        Trainer,
+        TrainerConfig,
+        SparseAutoEncoder,
+    )
+
+    # 1. Configure Activation Factory with Cached Source
+    factory_cfg = ActivationFactoryConfig(
+        sources=[
+            ActivationFactoryActivationsSource(
+                path="path/to/activations",
+                name="pythia-160m-cached",
+                device="cuda",
+            )
+        ],
+        target=ActivationFactoryTarget.ACTIVATIONS_1D,
+        hook_points=["blocks.6.hook_resid_post"],
+        batch_size=4096,
+    )
+
+    factory = ActivationFactory(factory_cfg)
+    activations_stream = factory.process()
+
+    # 2. Initialize SAE and Trainer
+    sae = SparseAutoEncoder(SAEConfig(
+        hook_point_in="blocks.6.hook_resid_post",
+        hook_point_out="blocks.6.hook_resid_post",
+        d_model=768,
+        expansion_factor=8,
+        act_fn="relu",
+        device="cuda",
+    ))
+
+    trainer = Trainer(TrainerConfig(
+        lr=1e-4,
+        total_training_tokens=800_000_000,
+        exp_result_path="results",
+    ))
+
+    # 3. Train
+    trainer.fit(sae=sae, activation_stream=activations_stream)
+    ```
+
+## Use HuggingFace Backend
