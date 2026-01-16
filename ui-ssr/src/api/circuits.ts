@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query'
 import { createServerFn } from '@tanstack/react-start'
 import camelcaseKeys from 'camelcase-keys'
 import { z } from 'zod'
+import { Agent } from 'undici'
 import type { CircuitData } from '@/types/circuit'
 import { CircuitDataSchema } from '@/types/circuit'
 
@@ -220,6 +221,12 @@ export const generateCircuit = createServerFn({ method: 'POST' })
         headers: {
           'Content-Type': 'application/json',
         },
+        // @ts-ignore - dispatcher is supported undici
+        dispatcher: new Agent({
+          headersTimeout: 60 * 60 * 1000, // 1 hour
+          bodyTimeout: 60 * 60 * 1000, // 1 hour
+          connectTimeout: 60 * 1000, // 1 minute
+        }),
         body: JSON.stringify({
           input: backendInput,
           name: name || null,
