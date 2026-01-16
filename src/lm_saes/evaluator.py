@@ -37,6 +37,7 @@ class Evaluator:
     def __init__(self, cfg: EvalConfig):
         self.cfg = cfg
 
+    @torch.no_grad()
     def evaluate(
         self,
         sae: AbstractSparseAutoEncoder,
