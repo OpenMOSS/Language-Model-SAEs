@@ -368,7 +368,7 @@ def get_single_side_QK_components(
     # have to expand to 4-d first and put the interested components to the right pos
     components = components.update_components(
         lorsa._apply_rotary(
-            components.components[:, None, None, :].expand(-1, pos, -1, -1),
+            components.components[:, None, None, :].expand(-1, pos + 1, -1, -1),
         )[:, -1, 0, :]
     )
 
