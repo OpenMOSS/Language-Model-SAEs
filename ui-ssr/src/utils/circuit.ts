@@ -61,6 +61,8 @@ export function formatFeatureId(node: Node, verbose: boolean = true): string {
     return `A${Math.floor(layerIdx / 2)}Error@${node.ctxIdx}`
   } else if (node.featureType === 'logit') {
     return `Logit@${node.ctxIdx}: ${node.token} (${(node.tokenProb * 100).toFixed(1)}%)`
+  } else if (node.featureType === 'bias') {
+    return `Bias@${node.ctxIdx}`
   }
   return 'Unknown feature type'
 }

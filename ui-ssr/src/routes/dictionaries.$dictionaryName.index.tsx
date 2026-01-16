@@ -4,6 +4,7 @@ import { DictionaryCard } from '@/components/dictionary/dictionary-card'
 import { Button } from '@/components/ui/button'
 import { fetchAdminSaes } from '@/api/admin'
 import { DictionarySelect } from '@/components/dictionary/dictionary-select'
+import { LabeledInput } from '@/components/ui/labeled-input'
 
 export const Route = createFileRoute('/dictionaries/$dictionaryName/')({
   component: DictionaryIndexPage,
@@ -23,6 +24,7 @@ function DictionaryIndexPage() {
   const { saes, dictionaryName } = Route.useLoaderData()
 
   const [selectedDictionary, setSelectedDictionary] = useState(dictionaryName)
+  const [selectedFeatureIndex, setSelectedFeatureIndex] = useState('0')
 
   return (
     <div className="h-full overflow-y-auto pt-4 pb-20 px-20 flex flex-col items-center gap-6">
@@ -44,6 +46,31 @@ function DictionaryIndexPage() {
           ) : (
             <Button className="h-12 px-4" disabled>
               Go
+            </Button>
+          )}
+
+          <div className="w-[100px] ml-4">
+            <LabeledInput
+              label="Index"
+              id="feature-input"
+              value={selectedFeatureIndex}
+              onChange={(e) => setSelectedFeatureIndex(e.target.value)}
+            />
+          </div>
+
+          {!isNaN(Number(selectedFeatureIndex)) ? (
+            <Link
+              to="/dictionaries/$dictionaryName/features/$featureIndex"
+              params={{
+                dictionaryName: selectedDictionary,
+                featureIndex: selectedFeatureIndex,
+              }}
+            >
+              <Button className="h-12 px-4">View Feature</Button>
+            </Link>
+          ) : (
+            <Button className="h-12 px-4" disabled>
+              View Feature
             </Button>
           )}
         </div>
