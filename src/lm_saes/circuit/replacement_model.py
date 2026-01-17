@@ -14,6 +14,7 @@ from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_model
 
+from .utils.attribution_utils import ensure_tokenized
 from .utils.transcoder_set import TranscoderSet
 
 # Type definition for transcoders: per-layer (dict) or cross-layer (CLT)
@@ -588,7 +589,7 @@ class ReplacementModel(HookedTransformer):
             yield
         finally:
             self.cfg.output_logits_soft_cap = current_softcap
-    
+
     def maybe_zero_bos(self, tokens: torch.Tensor) -> torch.Tensor:
         special_tokens = []
         for special_token in self.tokenizer.special_tokens_map.values():
@@ -617,14 +618,7 @@ class ReplacementModel(HookedTransformer):
                 bos position
         """
 
-        if isinstance(inputs, torch.Tensor):
-            tokens = inputs.squeeze(0)
-            assert tokens.ndim == 1, "Tokens must be a 1D tensor"
-        else:
-            assert isinstance(inputs, str), "Inputs must be a string"
-            tokenized = self.tokenizer(inputs, return_tensors="pt").input_ids.to(self.cfg.device)
-            tokens = tokenized.squeeze(0)
-
+        tokens = ensure_tokenized(inputs)
         zero_bos = zero_bos and self.maybe_zero_bos(tokens)
 
         # cache activations and MLP in
