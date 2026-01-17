@@ -46,7 +46,6 @@ export const Route = createFileRoute('/circuit/$id/')({
       context.queryClient.ensureQueryData(saeSetsQueryOptions()),
     ])
     if (!circuits.find((c) => c.id === params.id)) {
-      console.log('redirecting to circuits')
       throw redirect({
         to: '/circuits',
       })

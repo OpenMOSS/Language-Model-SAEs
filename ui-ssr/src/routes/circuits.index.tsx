@@ -11,11 +11,6 @@ export const Route = createFileRoute('/circuits/')({
       context.queryClient.ensureQueryData(saeSetsQueryOptions()),
     ])
 
-    console.log(
-      'circuits from circuits index',
-      circuits.map((c) => c.id),
-    )
-
     if (circuits.length > 0) {
       const latestCircuit = [...circuits].sort(
         (a, b) =>

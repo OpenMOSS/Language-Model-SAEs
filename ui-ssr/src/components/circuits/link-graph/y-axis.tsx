@@ -10,11 +10,6 @@ const SIDE_PADDING = 70
 
 export const YAxis: React.FC<YAxisProps> = React.memo(
   ({ positionedNodes, y }) => {
-    console.log(
-      positionedNodes.map((d) => {
-        return { layer: d.layer, type: d.featureType }
-      }),
-    )
     const hasEmbedding = positionedNodes.some(
       (d) => d.featureType === 'embedding',
     )
