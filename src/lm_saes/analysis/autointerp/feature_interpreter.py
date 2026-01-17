@@ -146,7 +146,7 @@ def generate_activating_examples(
     feature_acts_ = torch.sparse_coo_tensor(
         torch.tensor(sampling.feature_acts_indices),
         torch.tensor(sampling.feature_acts_values),
-        (int(np.max(sampling.feature_acts_indices[0])), 2048),
+        (int(np.max(sampling.feature_acts_indices[0])) + 1, 2048),
     )
     feature_acts_ = feature_acts_.to_dense()
 
