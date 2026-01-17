@@ -7,11 +7,7 @@ import type {
   CircuitInput,
   GenerateCircuitParams,
 } from '@/api/circuits'
-import {
-  circuitQueryOptions,
-  generateCircuit,
-  previewInput,
-} from '@/api/circuits'
+import { generateCircuit, previewInput } from '@/api/circuits'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import {
@@ -62,9 +58,6 @@ export function NewGraphDialog({
   const [maxLogits, setMaxLogits] = useState(1)
   const [qkTracingTopk, setQkTracingTopk] = useState(10)
 
-  const [nodeThreshold, setNodeThreshold] = useState(0.8)
-  const [edgeThreshold, setEdgeThreshold] = useState(0.98)
-
   const {
     mutate: mutateGenerateCircuit,
     isPending: isGenerating,
@@ -73,10 +66,6 @@ export function NewGraphDialog({
     mutationFn: generateCircuit,
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['circuits'] })
-      queryClient.setQueryData(
-        circuitQueryOptions(data.circuitId).queryKey,
-        data,
-      )
       onGraphCreated(data.circuitId)
       handleDialogClose()
     },
@@ -171,8 +160,6 @@ export function NewGraphDialog({
       maxFeatureNodes: maxNodes,
       maxNLogits: maxLogits,
       qkTracingTopk,
-      nodeThreshold,
-      edgeThreshold,
     }
 
     mutateGenerateCircuit({ data: params })
@@ -190,8 +177,6 @@ export function NewGraphDialog({
     setMaxNodes(256)
     setMaxLogits(1)
     setQkTracingTopk(10)
-    setNodeThreshold(0.8)
-    setEdgeThreshold(0.98)
   }
 
   const handleDialogClose = () => {
@@ -221,7 +206,8 @@ export function NewGraphDialog({
         <DialogHeader>
           <DialogTitle className="text-xl">Generate New Graph</DialogTitle>
           <DialogDescription>
-            Generate a new attribution graph for a custom prompt.
+            Generate a new attribution graph for a custom prompt. Pruning
+            thresholds can be adjusted after generation.
           </DialogDescription>
         </DialogHeader>
 
@@ -271,15 +257,11 @@ export function NewGraphDialog({
             <div className="space-y-6 border rounded-lg p-4 bg-slate-50">
               <div className="flex items-center gap-2 pb-2 border-b border-slate-200/60">
                 <h4 className="text-sm font-semibold text-slate-700">
-                  Advanced Settings
+                  Attribution Settings
                 </h4>
               </div>
 
-              {/* Attribution Section */}
               <div className="space-y-4">
-                <h4 className="text-xs font-semibold uppercase tracking-tight text-primary">
-                  Attribution
-                </h4>
                 <div className="grid grid-cols-2 gap-4">
                   <Slider
                     label="Desired Logit Probability"
@@ -317,33 +299,6 @@ export function NewGraphDialog({
                     min={0}
                     max={50}
                     step={1}
-                    showValue={false}
-                  />
-                </div>
-              </div>
-
-              {/* Pruning Section */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-semibold uppercase tracking-tight text-primary">
-                  Pruning
-                </h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <Slider
-                    label="Node Threshold"
-                    value={nodeThreshold}
-                    onChange={setNodeThreshold}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    showValue={false}
-                  />
-                  <Slider
-                    label="Edge Threshold"
-                    value={edgeThreshold}
-                    onChange={setEdgeThreshold}
-                    min={0}
-                    max={1}
-                    step={0.01}
                     showValue={false}
                   />
                 </div>
@@ -560,7 +515,7 @@ export function NewGraphDialog({
             {isGenerating ? (
               <>
                 <Spinner isAnimating={true} className="mr-2" />
-                Generating...
+                Starting...
               </>
             ) : (
               'Start Generation'

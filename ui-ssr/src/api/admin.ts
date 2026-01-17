@@ -28,8 +28,10 @@ export interface AdminCircuit {
   prompt: string
   config: Record<string, any>
   createdAt: string
-  nodeCount: number
-  edgeCount: number
+  status: string
+  progress: number
+  progressPhase: string | null
+  errorMessage: string | null
 }
 
 export interface AdminStats {
@@ -38,7 +40,6 @@ export interface AdminStats {
   circuitCount: number
   bookmarkCount: number
   saeSeries: string
-  topSaesByFeatures: { name: string; featureCount: number }[]
 }
 
 // SAEs

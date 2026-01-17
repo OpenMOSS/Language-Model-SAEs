@@ -7,9 +7,14 @@ import { Card } from '@/components/ui/card'
 export const Route = createFileRoute('/circuits/')({
   loader: async ({ context }) => {
     const [circuits, saeSets] = await Promise.all([
-      context.queryClient.ensureQueryData(circuitsQueryOptions()),
+      context.queryClient.fetchQuery(circuitsQueryOptions()),
       context.queryClient.ensureQueryData(saeSetsQueryOptions()),
     ])
+
+    console.log(
+      'circuits from circuits index',
+      circuits.map((c) => c.id),
+    )
 
     if (circuits.length > 0) {
       const latestCircuit = [...circuits].sort(

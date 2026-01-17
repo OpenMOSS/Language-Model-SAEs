@@ -179,19 +179,9 @@ def admin_delete_sae_set(name: str):
 @router.get("/circuits")
 def admin_list_circuits(limit: int = 100, skip: int = 0):
     """List all circuits with full details for admin."""
-    circuits = client.list_circuits(sae_series=sae_series, limit=limit, skip=skip, with_graph_data=True)
+    circuits = client.list_circuits(sae_series=sae_series, limit=limit, skip=skip)
 
     total_count = client.circuit_collection.count_documents({"sae_series": sae_series})
-
-    circuits = [
-        circuit
-        | {
-            "node_count": len(circuit["graph_data"]["nodes"]),
-            "edge_count": len(circuit["graph_data"]["links"]),
-            "graph_data": None,
-        }
-        for circuit in circuits
-    ]
 
     return {"circuits": circuits, "total_count": total_count}
 
@@ -246,20 +236,10 @@ def admin_get_stats():
     circuit_count = client.circuit_collection.count_documents({"sae_series": sae_series})
     bookmark_count = client.bookmark_collection.count_documents({"sae_series": sae_series})
 
-    # Get SAE with most features
-    pipeline = [
-        {"$match": {"sae_series": sae_series}},
-        {"$group": {"_id": "$sae_name", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
-        {"$limit": 5},
-    ]
-    top_saes = list(client.feature_collection.aggregate(pipeline))
-
     return {
         "sae_count": sae_count,
         "sae_set_count": sae_set_count,
         "circuit_count": circuit_count,
         "bookmark_count": bookmark_count,
         "sae_series": sae_series,
-        "top_saes_by_features": [{"name": s["_id"], "feature_count": s["count"]} for s in top_saes],
     }

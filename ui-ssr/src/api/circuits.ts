@@ -2,19 +2,17 @@ import { queryOptions } from '@tanstack/react-query'
 import { createServerFn } from '@tanstack/react-start'
 import camelcaseKeys from 'camelcase-keys'
 import { z } from 'zod'
-import { Agent } from 'undici'
 import type { CircuitData } from '@/types/circuit'
 import { CircuitDataSchema } from '@/types/circuit'
+
+export type CircuitStatus = 'pending' | 'running' | 'completed' | 'failed'
 
 export interface CircuitConfig {
   desiredLogitProb: number
   maxFeatureNodes: number
   qkTracingTopk: number
-  nodeThreshold: number
-  edgeThreshold: number
   maxNLogits: number
   listOfFeatures?: (number | boolean)[][]
-  parentId?: string
 }
 
 export interface ChatMessage {
@@ -45,6 +43,18 @@ export interface CircuitListItem {
   config: CircuitConfig
   createdAt: string
   parentId?: string | null
+  // Status tracking fields
+  status: CircuitStatus
+  progress: number
+  progressPhase: string | null
+  errorMessage: string | null
+}
+
+export interface CircuitStatusResponse {
+  status: CircuitStatus
+  progress: number
+  progressPhase: string | null
+  errorMessage: string | null
 }
 
 export interface GenerateCircuitParams {
@@ -55,11 +65,44 @@ export interface GenerateCircuitParams {
   desiredLogitProb?: number
   maxFeatureNodes?: number
   qkTracingTopk?: number
-  nodeThreshold?: number
-  edgeThreshold?: number
   maxNLogits?: number
   listOfFeatures?: (number | boolean)[][]
   parentId?: string
+}
+
+export interface GenerateCircuitResponse {
+  circuitId: string
+  status: CircuitStatus
+  name: string | null
+  group: string | null
+  saeSetName: string
+  prompt: string
+  config: CircuitConfig
+  input: CircuitInput
+  createdAt: string
+  parentId: string | null
+}
+
+export interface FetchCircuitParams {
+  circuitId: string
+  nodeThreshold?: number
+  edgeThreshold?: number
+}
+
+export interface FetchCircuitResponse {
+  circuitId: string
+  name: string | null
+  group: string | null
+  saeSetName: string
+  prompt: string
+  input: CircuitInput
+  config: CircuitConfig
+  graphData: CircuitData
+  createdAt: string
+  parentId: string | null
+  status: CircuitStatus
+  nodeThreshold: number
+  edgeThreshold: number
 }
 
 export const fetchSaeSets = createServerFn({ method: 'GET' }).handler(
@@ -141,48 +184,69 @@ export const fetchCircuits = createServerFn({ method: 'GET' }).handler(
   },
 )
 
-export const fetchCircuit = createServerFn({ method: 'GET' })
+export const fetchCircuitStatus = createServerFn({ method: 'GET' })
   .inputValidator((data: { circuitId: string }) => data)
   .handler(async ({ data: { circuitId } }) => {
     const response = await fetch(
-      `${process.env.BACKEND_URL}/circuits/${circuitId}`,
+      `${process.env.BACKEND_URL}/circuits/${circuitId}/status`,
     )
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch circuit: ${await response.text()}`)
+      throw new Error(
+        `Failed to fetch circuit status: ${await response.text()}`,
+      )
     }
 
     const data = await response.json()
-
-    const transformedData = {
-      ...data,
-      graphData: {
-        ...data.graph_data,
-        edges: data.graph_data.links,
-        links: undefined,
-      },
-    }
-    delete transformedData.graph_data
-
-    const result = camelcaseKeys(transformedData, {
-      deep: true,
-    }) as {
-      circuitId: string
-      name: string | null
-      group: string | null
-      saeSetName: string
-      prompt: string
-      input: CircuitInput
-      config: CircuitConfig
-      graphData: CircuitData
-      createdAt: string
-      parentId: string | null
-    }
-
-    result.graphData = CircuitDataSchema.parse(result.graphData)
-
-    return result
+    return camelcaseKeys(data, { deep: true }) as CircuitStatusResponse
   })
+
+export const fetchCircuit = createServerFn({ method: 'GET' })
+  .inputValidator((data: FetchCircuitParams) => data)
+  .handler(
+    async ({
+      data: { circuitId, nodeThreshold = 0.8, edgeThreshold = 0.98 },
+    }) => {
+      const params = new URLSearchParams({
+        node_threshold: nodeThreshold.toString(),
+        edge_threshold: edgeThreshold.toString(),
+      })
+
+      const response = await fetch(
+        `${process.env.BACKEND_URL}/circuits/${circuitId}?${params}`,
+      )
+
+      // Handle 202 status for in-progress circuits
+      if (response.status === 202) {
+        const status = response.headers.get('X-Circuit-Status') || 'pending'
+        throw new Error(`Circuit is not ready (status: ${status})`)
+      }
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch circuit: ${await response.text()}`)
+      }
+
+      const data = await response.json()
+
+      const transformedData = {
+        ...data,
+        graphData: {
+          ...data.graph_data,
+          edges: data.graph_data.links,
+          links: undefined,
+        },
+      }
+      delete transformedData.graph_data
+
+      const result = camelcaseKeys(transformedData, {
+        deep: true,
+      }) as FetchCircuitResponse
+
+      result.graphData = CircuitDataSchema.parse(result.graphData)
+
+      return result
+    },
+  )
 
 export const generateCircuit = createServerFn({ method: 'POST' })
   .inputValidator((data: GenerateCircuitParams) => data)
@@ -195,8 +259,6 @@ export const generateCircuit = createServerFn({ method: 'POST' })
       desiredLogitProb,
       maxFeatureNodes,
       qkTracingTopk,
-      nodeThreshold,
-      edgeThreshold,
       maxNLogits,
       listOfFeatures,
       parentId,
@@ -221,12 +283,6 @@ export const generateCircuit = createServerFn({ method: 'POST' })
         headers: {
           'Content-Type': 'application/json',
         },
-        // @ts-ignore - dispatcher is supported undici
-        dispatcher: new Agent({
-          headersTimeout: 60 * 60 * 1000, // 1 hour
-          bodyTimeout: 60 * 60 * 1000, // 1 hour
-          connectTimeout: 60 * 1000, // 1 minute
-        }),
         body: JSON.stringify({
           input: backendInput,
           name: name || null,
@@ -234,8 +290,6 @@ export const generateCircuit = createServerFn({ method: 'POST' })
           desired_logit_prob: desiredLogitProb,
           max_feature_nodes: maxFeatureNodes,
           qk_tracing_topk: qkTracingTopk,
-          node_threshold: nodeThreshold,
-          edge_threshold: edgeThreshold,
           max_n_logits: maxNLogits,
           list_of_features: listOfFeatures,
           parent_id: parentId,
@@ -249,34 +303,10 @@ export const generateCircuit = createServerFn({ method: 'POST' })
 
     const result = await response.json()
 
-    const transformedData = {
-      ...result,
-      circuitId: result.circuit_id,
-      graphData: {
-        ...result.graph_data,
-        edges: result.graph_data.links,
-        links: undefined,
-      },
-    }
-    delete transformedData.graph_data
-    delete transformedData.circuit_id
-
-    const finalResult = camelcaseKeys(transformedData, {
+    // The response now only includes circuit metadata, not graph data
+    const finalResult = camelcaseKeys(result, {
       deep: true,
-    }) as {
-      circuitId: string
-      graphData: CircuitData
-      createdAt: string
-      name: string | null
-      group: string | null
-      saeSetName: string
-      prompt: string
-      input: CircuitInput
-      config: CircuitConfig
-      parentId: string | null
-    }
-
-    finalResult.graphData = CircuitDataSchema.parse(finalResult.graphData)
+    }) as GenerateCircuitResponse
 
     return finalResult
   })
@@ -308,11 +338,32 @@ export const circuitsQueryOptions = () =>
   queryOptions({
     queryKey: ['circuits'],
     queryFn: () => fetchCircuits(),
+    refetchInterval: 2000,
   })
 
-export const circuitQueryOptions = (circuitId: string) =>
+export const circuitStatusQueryOptions = (circuitId: string) =>
   queryOptions({
-    queryKey: ['circuit', circuitId],
-    queryFn: () => fetchCircuit({ data: { circuitId } }),
+    queryKey: ['circuit-status', circuitId],
+    queryFn: () => fetchCircuitStatus({ data: { circuitId } }),
+    enabled: !!circuitId,
+    refetchInterval: (query) => {
+      // Poll every 2 seconds if circuit is pending or running
+      const status = query.state.data?.status
+      if (status === 'pending' || status === 'running') {
+        return 2000
+      }
+      return false
+    },
+  })
+
+export const circuitQueryOptions = (
+  circuitId: string,
+  nodeThreshold: number = 0.8,
+  edgeThreshold: number = 0.98,
+) =>
+  queryOptions({
+    queryKey: ['circuit', circuitId, nodeThreshold, edgeThreshold],
+    queryFn: () =>
+      fetchCircuit({ data: { circuitId, nodeThreshold, edgeThreshold } }),
     enabled: !!circuitId,
   })

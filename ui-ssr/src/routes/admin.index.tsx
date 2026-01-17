@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
+  AlertCircle,
   Bookmark,
   Check,
   ChevronLeft,
@@ -10,6 +11,7 @@ import {
   FolderPlus,
   FolderTree,
   GitBranch,
+  Loader2,
   Search,
   Trash2,
 } from 'lucide-react'
@@ -891,20 +893,41 @@ function CircuitsTab() {
                   <div className="flex items-center gap-6">
                     <div className="flex flex-col">
                       <span className="text-[10px] font-bold uppercase tracking-tight text-slate-400">
-                        Nodes
+                        Status
                       </span>
-                      <span className="text-sm font-semibold text-slate-600">
-                        {circuit.nodeCount}
-                      </span>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        {circuit.status === 'completed' ? (
+                          <div className="flex items-center gap-1 text-emerald-600">
+                            <Check className="h-3.5 w-3.5" />
+                            <span className="text-sm font-semibold">Ready</span>
+                          </div>
+                        ) : circuit.status === 'failed' ? (
+                          <div className="flex items-center gap-1 text-red-600">
+                            <AlertCircle className="h-3.5 w-3.5" />
+                            <span className="text-sm font-semibold">
+                              Failed
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-blue-600">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span className="text-sm font-semibold capitalize">
+                              {circuit.status} ({Math.round(circuit.progress)}%)
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-bold uppercase tracking-tight text-slate-400">
-                        Edges
-                      </span>
-                      <span className="text-sm font-semibold text-slate-600">
-                        {circuit.edgeCount}
-                      </span>
-                    </div>
+                    {circuit.progressPhase && (
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                          Phase
+                        </span>
+                        <span className="text-sm font-semibold text-slate-600">
+                          {circuit.progressPhase}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div className="text-right">
                     <div className="text-[10px] font-bold uppercase tracking-tight text-slate-400">

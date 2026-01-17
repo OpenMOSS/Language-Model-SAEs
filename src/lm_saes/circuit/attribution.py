@@ -544,6 +544,7 @@ def attribute(
     use_lorsa: bool = True,
     qk_tracing_topk: int = 10,
     list_of_features: Optional[List[Tuple[int, int, int, bool]]] = None,
+    progress_callback: Optional[Callable[[float, float, str], None]] = None,
 ) -> Graph:
     """Compute an attribution graph for *prompt*.
 
@@ -559,6 +560,7 @@ def attribute(
                  or None (no offloading).
         verbose: Whether to show progress information.
         update_interval: Number of batches to process before updating the feature ranking.
+        progress_callback: Optional callback for tracking progress (current, total, phase).
 
     Returns:
         Graph: Fully dense adjacency (unpruned).
@@ -580,6 +582,7 @@ def attribute(
             use_lorsa=use_lorsa,
             qk_tracing_topk=qk_tracing_topk,
             list_of_features=list_of_features,
+            progress_callback=progress_callback,
         )
     finally:
         for reload_handle in offload_handles:
@@ -600,6 +603,7 @@ def _run_attribution(
     use_lorsa: bool = True,
     qk_tracing_topk: int = 10,
     list_of_features=None,
+    progress_callback: Optional[Callable[[float, float, str], None]] = None,
 ):
     start_time = time.time()
     # Phase 0: precompute
@@ -990,6 +994,8 @@ def _run_attribution(
             visited[idx_batch] = True
             st = end
             pbar.update(len(idx_batch))
+            if progress_callback:
+                progress_callback(n_visited, max_feature_nodes, "Feature influence computation")
 
     pbar.close()
     logger.info(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
@@ -1024,8 +1030,9 @@ def _run_attribution(
         selected_lorsa_feature_kpos = idx_to_z_pattern(selected_lorsa_feature).argmax(dim=-1)
         selected_lorsa_feature_qk_idx = idx_to_qk_idx(selected_lorsa_feature)
 
-        qk_tracing_results = {
-            idx.item(): compute_attn_scores_attribution(
+        qk_tracing_results = {}
+        for i, idx in enumerate(tqdm(selected_lorsa_feature, desc="Computing attention scores attribution")):
+            qk_tracing_results[idx.item()] = compute_attn_scores_attribution(
                 model,
                 lorsa_activation_matrix,
                 clt_activation_matrix,
@@ -1038,8 +1045,8 @@ def _run_attribution(
                 input_ids,
                 qk_tracing_topk,
             )
-            for i, idx in enumerate(tqdm(selected_lorsa_feature, desc="Computing attention scores attribution"))
-        }
+            if progress_callback:
+                progress_callback(i + 1, len(selected_lorsa_feature), "Computing attention scores attribution")
     else:
         qk_tracing_results = None
 
