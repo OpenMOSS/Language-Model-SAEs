@@ -618,7 +618,7 @@ class ReplacementModel(HookedTransformer):
                 bos position
         """
 
-        tokens = ensure_tokenized(inputs)
+        tokens = ensure_tokenized(inputs, self.tokenizer)
         zero_bos = zero_bos and self.maybe_zero_bos(tokens)
 
         # cache activations and MLP in
