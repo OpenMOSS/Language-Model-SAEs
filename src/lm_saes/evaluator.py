@@ -24,6 +24,7 @@ from lm_saes.metrics import (
     MeanFeatureActMetric,
     Metric,
     ModelSpecificMetric,
+    NormalizedMSEMetric,
 )
 from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.distributed.ops import item
@@ -50,6 +51,7 @@ class Evaluator:
             LossMetric(sae),
             MeanFeatureActMetric(sae),
             ExplainedVarianceMetric(sae),
+            NormalizedMSEMetric(sae),
             L0Metric(sae),
             L2NormErrorMetric(sae),
             ModelSpecificMetric(sae),

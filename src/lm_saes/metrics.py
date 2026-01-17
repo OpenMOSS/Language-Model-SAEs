@@ -176,6 +176,35 @@ class LossMetric(Metric):
         return metrics
 
 
+class NormalizedMSEMetric(Metric):
+    def __init__(self, sae: AbstractSparseAutoEncoder):
+        self.sae = sae
+        self.normalized_mse: Record[Tensor] = Record()
+
+    def update(self, ctx: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        label, reconstructed, mask = ctx["label"], ctx["reconstructed"], ctx.get("mask")
+
+        # Use global mean across all tokens, consistent with ExplainedVarianceMetric
+        label_mean = apply_token_mask(
+            label,
+            self.sae.specs.label(label),
+            mask,
+            reduction="mean",
+        )[0]  # shape: (d_model)
+
+        normalized_mse = apply_token_mask(
+            (reconstructed - label).pow(2).sum(dim=-1), self.sae.specs.label(label)[:-1], mask, "mean"
+        )[0]
+        var_label = apply_token_mask(
+            (label - label_mean).pow(2).sum(dim=-1), self.sae.specs.label(label)[:-1], mask, "mean"
+        )[0]
+        self.normalized_mse.update(normalized_mse / (var_label + 1e-8))
+        return {}
+
+    def compute(self) -> dict[str, Number]:
+        return {"metrics/normalized_mse": item(self.normalized_mse.compute())}
+
+
 class MeanFeatureActMetric(Metric):
     def __init__(self, sae: AbstractSparseAutoEncoder):
         self.sae = sae
