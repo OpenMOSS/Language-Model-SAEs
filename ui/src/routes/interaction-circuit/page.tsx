@@ -5,6 +5,7 @@ import { LinkGraphData, Node, Link } from '@/components/circuits/link-graph/type
 import { Feature } from '@/types/feature';
 import { ChessBoard } from '@/components/chess/chess-board';
 import { FeatureConnections } from '@/components/circuits/feature-connections';
+import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 
 interface CsvRow {
   source_layer: number;
@@ -1143,6 +1144,9 @@ export const InteractionCircuitPage = () => {
     <div className="min-h-screen bg-background">
       <AppNavbar />
       <div className="container mx-auto p-4">
+        {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+        <SaeComboLoader />
+        
         <div className="mb-6">
           <h1 className="text-3xl font-bold">Interaction Circuit Visualization</h1>
           <p className="text-gray-600 mt-2">
