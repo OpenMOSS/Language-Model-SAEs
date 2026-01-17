@@ -338,7 +338,13 @@ export const circuitsQueryOptions = () =>
   queryOptions({
     queryKey: ['circuits'],
     queryFn: () => fetchCircuits(),
-    refetchInterval: 2000,
+    refetchInterval: (query) => {
+      return query.state.data?.some(
+        (c) => c.status === 'pending' || c.status === 'running',
+      )
+        ? 2000
+        : false
+    },
   })
 
 export const circuitStatusQueryOptions = (circuitId: string) =>

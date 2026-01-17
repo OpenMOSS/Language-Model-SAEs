@@ -67,7 +67,7 @@ export const BiasNodeSchema = z.object({
 
 export type BiasNode = z.infer<typeof BiasNodeSchema>
 
-export const NodeSchema = z.union([
+export const NodeSchema = z.discriminatedUnion('featureType', [
   FeatureNodeSchema,
   TokenNodeSchema,
   ErrorNodeSchema,
