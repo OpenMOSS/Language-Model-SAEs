@@ -767,7 +767,11 @@ class FeatureInterpreter:
                 try:
                     if (
                         feature is not None
-                        and (self.cfg.overwrite_existing or feature.interpretation is None)
+                        and (
+                            self.cfg.overwrite_existing
+                            or feature.interpretation is None
+                            or feature.interpretation.get("text") is None
+                        )
                         and feature.analyses[0].act_times > 0
                     ):
                         activating_examples, non_activating_examples = self.get_feature_examples(
