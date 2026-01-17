@@ -3,6 +3,7 @@ import { createServerFn } from '@tanstack/react-start'
 import camelcaseKeys from 'camelcase-keys'
 import type { z } from 'zod'
 import { FeatureCompactSchema } from '@/types/feature'
+import { parseWithPrettify } from '@/utils/zod'
 
 export interface Bookmark {
   saeName: string
@@ -49,7 +50,10 @@ export const fetchBookmarks = createServerFn({ method: 'GET' })
     // Validate and parse feature data if present
     const bookmarks = camelCased.bookmarks.map((bookmark: any) => {
       if (bookmark.feature) {
-        bookmark.feature = FeatureCompactSchema.parse(bookmark.feature)
+        bookmark.feature = parseWithPrettify(
+          FeatureCompactSchema,
+          bookmark.feature,
+        )
       }
       return bookmark
     })

@@ -2,6 +2,7 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { z } from 'zod'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { parseWithPrettify } from '@/utils/zod'
 import { Button } from '@/components/ui/button'
 import { FeatureBookmarkButton } from '@/components/feature/bookmark-button'
 import { FeatureCard } from '@/components/feature/feature-card'
@@ -28,7 +29,7 @@ const searchParamsSchema = z.object({
 export const Route = createFileRoute(
   '/dictionaries/$dictionaryName/features/$featureIndex',
 )({
-  validateSearch: searchParamsSchema,
+  validateSearch: (search) => parseWithPrettify(searchParamsSchema, search),
   staticData: {
     fullScreen: true,
   },

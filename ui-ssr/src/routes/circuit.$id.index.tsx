@@ -9,6 +9,7 @@ import { AlertCircle, Loader2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { z } from 'zod'
 import type { CircuitData, FeatureNode, VisState } from '@/types/circuit'
+import { parseWithPrettify } from '@/utils/zod'
 import {
   circuitQueryOptions,
   circuitStatusQueryOptions,
@@ -35,7 +36,7 @@ const searchParamsSchema = z.object({
 })
 
 export const Route = createFileRoute('/circuit/$id/')({
-  validateSearch: searchParamsSchema,
+  validateSearch: (search) => parseWithPrettify(searchParamsSchema, search),
   staticData: {
     fullScreen: true,
   },

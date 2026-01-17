@@ -2,6 +2,7 @@ import { decode } from '@msgpack/msgpack'
 import camelcaseKeys from 'camelcase-keys'
 import { z } from 'zod'
 import { createServerFn } from '@tanstack/react-start'
+import { parseWithPrettify } from '@/utils/zod'
 import {
   FeatureCompactSchema,
   FeatureSampleCompactSchema,
@@ -12,7 +13,7 @@ export const fetchDictionaries = createServerFn({ method: 'GET' }).handler(
   async () => {
     const response = await fetch(`${process.env.BACKEND_URL}/dictionaries`)
     const data = await response.json()
-    return z.array(z.string()).parse(data)
+    return parseWithPrettify(z.array(z.string()), data)
   },
 )
 
@@ -23,7 +24,8 @@ export const fetchMetrics = createServerFn({ method: 'GET' })
       `${process.env.BACKEND_URL}/dictionaries/${dictionary}/metrics`,
     )
     const data = await response.json()
-    return z.object({ metrics: z.array(z.string()) }).parse(data).metrics
+    return parseWithPrettify(z.object({ metrics: z.array(z.string()) }), data)
+      .metrics
   })
 
 export type MetricFilters = Record<string, { min?: number; max?: number }>
@@ -81,7 +83,7 @@ export const fetchFeature = createServerFn({ method: 'GET' })
       ],
     })
 
-    return FeatureSchema.parse(camelCased)
+    return parseWithPrettify(FeatureSchema, camelCased)
   })
 
 export const fetchSamplings = createServerFn({ method: 'GET' })
@@ -100,9 +102,10 @@ export const fetchSamplings = createServerFn({ method: 'GET' })
       deep: true,
     })
 
-    return z
-      .array(z.object({ name: z.string(), length: z.number() }))
-      .parse(camelCased)
+    return parseWithPrettify(
+      z.array(z.object({ name: z.string(), length: z.number() })),
+      camelCased,
+    )
   })
 
 export const fetchSamples = createServerFn({ method: 'GET' })
@@ -150,7 +153,7 @@ export const fetchSamples = createServerFn({ method: 'GET' })
       const decoded = decode(new Uint8Array(arrayBuffer)) as any
       const camelCased = camelcaseKeys(decoded)
 
-      return z.array(FeatureSampleCompactSchema).parse(camelCased)
+      return parseWithPrettify(z.array(FeatureSampleCompactSchema), camelCased)
     },
   )
 
@@ -188,7 +191,7 @@ export const countFeatures = createServerFn({ method: 'GET' })
     }
 
     const data = await response.json()
-    return z.object({ count: z.number() }).parse(data).count
+    return parseWithPrettify(z.object({ count: z.number() }), data).count
   })
 
 export const fetchFeatures = createServerFn({ method: 'GET' })
@@ -224,7 +227,7 @@ export const fetchFeatures = createServerFn({ method: 'GET' })
       ],
     })
 
-    return z.array(FeatureCompactSchema).parse(camelCased)
+    return parseWithPrettify(z.array(FeatureCompactSchema), camelCased)
   })
 
 export const submitCustomInput = createServerFn({ method: 'POST' })
@@ -257,7 +260,7 @@ export const submitCustomInput = createServerFn({ method: 'POST' })
       stopPaths: ['context'],
     })
 
-    return FeatureSampleCompactSchema.parse(camelCased)
+    return parseWithPrettify(FeatureSampleCompactSchema, camelCased)
   })
 
 export const toggleBookmark = createServerFn({ method: 'POST' })
@@ -343,12 +346,13 @@ export const dictionaryInference = createServerFn({ method: 'POST' })
       ],
     })
 
-    return z
-      .array(
+    return parseWithPrettify(
+      z.array(
         z.object({
           feature: FeatureCompactSchema,
           inference: FeatureSampleCompactSchema,
         }),
-      )
-      .parse(camelCased)
+      ),
+      camelCased,
+    )
   })

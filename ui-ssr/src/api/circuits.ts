@@ -3,6 +3,7 @@ import { createServerFn } from '@tanstack/react-start'
 import camelcaseKeys from 'camelcase-keys'
 import { z } from 'zod'
 import type { CircuitData } from '@/types/circuit'
+import { parseWithPrettify } from '@/utils/zod'
 import { CircuitDataSchema } from '@/types/circuit'
 
 export type CircuitStatus = 'pending' | 'running' | 'completed' | 'failed'
@@ -109,7 +110,7 @@ export const fetchSaeSets = createServerFn({ method: 'GET' }).handler(
   async () => {
     const response = await fetch(`${process.env.BACKEND_URL}/sae-sets`)
     const data = await response.json()
-    return z.array(z.string()).parse(data)
+    return parseWithPrettify(z.array(z.string()), data)
   },
 )
 
@@ -242,7 +243,7 @@ export const fetchCircuit = createServerFn({ method: 'GET' })
         deep: true,
       }) as FetchCircuitResponse
 
-      result.graphData = CircuitDataSchema.parse(result.graphData)
+      result.graphData = parseWithPrettify(CircuitDataSchema, result.graphData)
 
       return result
     },
