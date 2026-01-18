@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import shutil
@@ -20,7 +21,8 @@ import einops
 import safetensors.torch as safe
 import torch
 import torch.distributed.checkpoint as dcp
-from huggingface_hub import create_repo, snapshot_download, upload_folder
+import torch.distributed.tensor
+from huggingface_hub import create_repo, hf_hub_download, snapshot_download, upload_folder
 from jaxtyping import Float
 from safetensors import safe_open
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
@@ -30,25 +32,56 @@ from torch.distributed.tensor.experimental import local_map
 from transformer_lens.hook_points import HookedRootModule
 
 from lm_saes.activation_functions import JumpReLU
-from lm_saes.config import BaseSAEConfig
-from lm_saes.database import MongoClient
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.config import BaseModelConfig
+from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.distributed import DimMap, distributed_topk, item, mesh_dim_size
-from lm_saes.utils.huggingface import parse_pretrained_name_or_path
+from lm_saes.utils.distributed.utils import execute_and_broadcast
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.math import topk
-from lm_saes.utils.misc import is_primary_rank
-from lm_saes.utils.tensor_specs import TensorSpecs
+from lm_saes.utils.misc import (
+    is_primary_rank,
+)
+from lm_saes.utils.tensor_specs import TensorSpecs, apply_token_mask
 from lm_saes.utils.timer import timer
-
-from .utils.tensor_specs import apply_token_mask
 
 logger = get_distributed_logger("abstract_sae")
 
 
-SAE_TYPE_TO_MODEL_CLASS = {}
+SAE_TYPE_TO_CONFIG_CLASS: dict[str, Any] = {}
+SAE_TYPE_TO_MODEL_CLASS: dict[str, Any] = {}
+
+
+def register_sae_config(name: str):
+    """Register a sparse dictionary config class, to make it possible to automatically determine the correct config class based on the type. The registered config class should inherit from `BaseSAEConfig` and have a `sae_type` field that is the same as the name. This function should be used together with `register_sae_model`.
+
+    Example usage:
+    ```python
+    @register_sae_config("custom_sae")
+    class CustomSAEConfig(BaseSAEConfig):
+        sae_type: str = "custom_sae"
+        ...
+    ```
+    """
+
+    def _register(cls):
+        SAE_TYPE_TO_CONFIG_CLASS[name] = cls
+        return cls
+
+    return _register
 
 
 def register_sae_model(name):
+    """Register a sparse dictionary model class, to make it possible to automatically determine the correct model class based on the type. The registered model class should inherit from `AbstractSparseAutoEncoder`. This function should be used together with `register_sae_config`.
+
+    Example usage:
+    ```python
+    @register_sae_model("custom_sae")
+    class CustomSAE(AbstractSparseAutoEncoder):
+        ...
+    ```
+    """
+
     def _register(cls):
         SAE_TYPE_TO_MODEL_CLASS[name] = cls
         return cls
@@ -56,8 +89,110 @@ def register_sae_model(name):
     return _register
 
 
+class BaseSAEConfig(BaseModelConfig, ABC):
+    """
+    Base class for SAE configs with common settings that are able to apply to various SAE variants. This class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
+    """
+
+    sae_type: str
+    """The type of the sparse dictionary. Must be one of the registered SAE types."""
+
+    d_model: int
+    """The dimension of the input/label activation space. In common settings where activations come from a transformer, this is the dimension of the model (may also known as hidden_size)."""
+
+    expansion_factor: float
+    """The expansion factor of the sparse dictionary. The hidden dimension of the sparse dictionary `d_sae` is `d_model * expansion_factor`."""
+
+    use_decoder_bias: bool = True
+    """Whether to use a bias term in the decoder. Including bias term may make it easier to train a better sparse dictionary, in exchange for increased architectural complexity."""
+
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
+    """The activation function to use for the sparse dictionary. Currently supported activation functions are `relu`, `jumprelu`, `topk`, `batchtopk`, `batchlayertopk`, and `layertopk`.
+    
+    - `relu`: ReLU activation function. Used in the most vanilla SAE settings.
+    - `jumprelu`: JumpReLU activation function, adding a trainable element-wise threshold that pre-activations must pass to be activated, which is formally defined as :math:`f(x) = \\max(0, x - \\theta)` where :math:`\\theta` is the threshold. Proposed in [Jumping Ahead: Improving Reconstruction Fidelity with JumpReLU Sparse Autoencoders](https://arxiv.org/abs/2407.14435).
+    - `topk`: TopK activation function. Retains the top K activations per sample, zeroing out the rest. Proposed in [Scaling and evaluating sparse autoencoders](https://openreview.net/forum?id=tcsZt9ZNKD).
+    - `batchtopk`: BatchTopK activation function. Batch TopK relaxes TopK function to batch-level, ing the top `k * batch_size` activations per batch and zeroing out the rest. This allows more adaptive allocation of latents on each sample. Proposed in [BatchTopK Sparse Autoencoders](https://arxiv.org/abs/2412.06410).
+    - `batchlayertopk`: (For CrossLayerTranscoder only) Extension of BatchTopK to layer-and-batch-aware, retaining the top `k * batch_size * n_layers` activations per batch and layer and zeroing out the rest.
+    - `layertopk`: (For CrossLayerTranscoder only) Extension of BatchTopK to layer-aware, retaining the top `k * n_layers` activations per layer and zeroing out the rest. Note that this activation function does not take batch dimension into account.
+    """
+
+    norm_activation: Literal["token-wise", "batch-wise", "dataset-wise", "inference"] = "dataset-wise"
+    """The activation normalization strategy to use for the input/label activations. During call of `normalize_activations` (which will be called by the Trainer during training), the input/label activations will be normalized to an average norm of :math:`\\sqrt{d_{model}}`. This allows easier hyperparameter (mostly learning rate) transfer between different scale of model activations, since the MSE loss without normalization is proportional to the square of the activation norm.
+    
+    Different activation normalization strategy determines in what view the norm is *averaged*, with the following options:
+    - `token-wise`: Norm is directly computed for activation from each token. No averaging is performed.
+    - `batch-wise`: Norm is computed for each batch, then averaged over the batch dimension.
+    - `dataset-wise`: Norm is computed from several samples from the activation. Compared to `batch-wise`, `dataset-wise` gives a fixed value of average norm for all activations, preserving the linearity of pre-activation encoding and decoding.
+    - `inference`: No normalization is performed. A inference mode is produced after calling `standardize_parameters_of_dataset_norm` method, which folds the dataset-wise average norm into the weights and biases of the model. Switching to `inference` mode doesn't affect the encoding and decoding as a whole, that is, the reconstructed activations keep the same as the denormalized reconstructed activations in `dataset-wise` mode. However, the feature activations will reflect the activation scale. This allows real magnitude of feature activations to present during inference.
+    """
+
+    sparsity_include_decoder_norm: bool = True
+    """Whether to include the decoder norm term in feature activation gating. If true, the pre-activation hidden states will be scaled by the decoder norm before applying the activation function, and then scale back after the activation function. Formally, considering activation function :math:`f(x)`, an activation gating function :math:`g(x)` is defined as :math:`g(x) = f(x) / x` (element-wise division). When `sparsity_include_decoder_norm` is True, we replace :math:`f(x)` with :math:`x * g(x * || W_\text{dec} ||)`. This effectively suppresses the training dynamics that model tries to increase the decoder norm in exchange of a smaller feature activation magnitude, resulting in lower sparsity loss (L1 norm)."""
+
+    top_k: int = 50
+    """The k value to use for the topk family of activation functions. For vanilla TopK, the L0 norm of the feature activations will be exactly equal to `top_k`."""
+
+    use_triton_kernel: bool = False
+    """Whether to use the Triton SpMM kernel for the sparse matrix multiplication. Currently only supported for vanilla SAE."""
+
+    sparsity_threshold_for_triton_spmm_kernel: float = 0.996
+    """The sparsity threshold for the Triton SpMM kernel. Only when feature activation sparsity reaches this threshold, the Triton SpMM kernel will be used for the sparse matrix multiplication. This is useful for JumpReLU or TopK with a k annealing schedule, where the sparsity is not guaranteed throughout the training."""
+
+    jumprelu_threshold_window: float = 2.0
+    """The window size for the JumpReLU threshold. When pre-activations are element-wise in the window-neighborhood of the threshold, the threshold will begin to receive gradient. See [Anthropic's Circuits Update - January 2025](https://transformer-circuits.pub/2025/january-update/index.html#DL) for more details on how JumpReLU is optimized (where they refer to this window as :math:`\\epsilon`)."""
+
+    @property
+    def d_sae(self) -> int:
+        """The hidden dimension of the sparse dictionary. Calculated as `d_model * expansion_factor`."""
+        d_sae = int(self.d_model * self.expansion_factor)
+        return d_sae
+
+    @classmethod
+    def from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
+        """Load the config of the sparse dictionary from a pretrained name or path. Config is read from <pretrained_name_or_path>/config.json (for local storage) or <repo_id>/<name>/config.json (for HuggingFace Hub).
+
+        Args:
+            pretrained_name_or_path (str): The path to the pretrained sparse dictionary.
+            **kwargs: Additional keyword arguments to pass to the config constructor.
+        """
+        sae_type = auto_infer_pretrained_sae_type(pretrained_name_or_path)
+        if sae_type == PretrainedSAEType.LOCAL:
+            path = os.path.join(pretrained_name_or_path, "config.json")
+        elif sae_type == PretrainedSAEType.HUGGINGFACE:
+            repo_id, name = pretrained_name_or_path.split(":")
+            path = os.path.join(hf_hub_download(repo_id=repo_id, filename=f"{name}/config.json"), "config.json")
+        elif sae_type == PretrainedSAEType.SAELENS:
+            raise ValueError(
+                "Currently not support directly generating config from SAELens. Try converting the whole model from SAELens through `from_saelens` or `from_pretrained` method instead."
+            )
+        else:
+            raise ValueError(f"Unsupported pretrained type: {sae_type}")
+
+        with open(path, "r") as f:
+            sae_config = json.load(f)
+
+        if cls is BaseSAEConfig:
+            cls = SAE_TYPE_TO_CONFIG_CLASS[sae_config["sae_type"]]
+
+        return cls.model_validate({**sae_config, **kwargs})
+
+    def save_hyperparameters(self, sae_path: str | Path, remove_loading_info: bool = True):
+        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
+        d = self.model_dump()
+
+        with open(os.path.join(sae_path, "config.json"), "w") as f:
+            json.dump(d, f, indent=4)
+
+    @property
+    @abstractmethod
+    def associated_hook_points(self) -> list[str]:
+        """List of hook points used by the SAE, including all input and label hook points. This is used to retrieve useful data from the input activation source."""
+        raise NotImplementedError("Subclasses must implement this method")
+
+
 class AbstractSparseAutoEncoder(HookedRootModule, ABC):
-    """Abstract base class for sparse autoencoder models.
+    """Abstract base class for all sparse dictionary models.
 
     This class defines the public interface for all sparse autoencoder implementations.
     Concrete implementations should inherit from this class and implement the required methods.
@@ -176,9 +311,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def save_pretrained(
         self,
         save_path: Path | str,
-        sae_name: str | None = None,
-        sae_series: str | None = None,
-        mongo_client: MongoClient | None = None,
     ) -> None:
         os.makedirs(Path(save_path), exist_ok=True)
 
@@ -186,17 +318,6 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             self.save_checkpoint(Path(save_path) / "sae_weights.safetensors")
         else:
             self.save_checkpoint(Path(save_path) / "sae_weights.dcp")
-        if is_primary_rank(self.device_mesh):
-            if mongo_client is not None:
-                assert sae_name is not None and sae_series is not None, (
-                    "sae_name and sae_series must be provided when saving to MongoDB"
-                )
-                mongo_client.create_sae(
-                    name=sae_name,
-                    series=sae_series,
-                    path=str(Path(save_path).absolute()),
-                    cfg=self.cfg,
-                )
 
     @overload
     def encode(
@@ -383,38 +504,46 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             {"params": jumprelu_params, "name": "jumprelu"},
         ]
 
-    def load_full_state_dict(self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh | None = None) -> None:
+    def load_full_state_dict(self, state_dict: dict[str, torch.Tensor], strict: bool = True) -> None:
+        """Load the full state dictionary into the model. This includes the model weights and the dataset average activation norm."""
+
         # Extract and set dataset_average_activation_norm if present
         norm_keys = [k for k in state_dict.keys() if k.startswith("dataset_average_activation_norm.")]
+
         if norm_keys:
             dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
             self.set_dataset_average_activation_norm(dataset_norm)
             state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
-        if device_mesh is None:
-            # Non-distributed checkpoint or DCP checkpoint
-            # Load the state dict through torch API
-            self.load_state_dict(state_dict, strict=self.cfg.strict_loading)
-        else:
-            for k, v in state_dict.items():
-                if not isinstance(v, DTensor):
-                    state_dict[k] = DimMap({}).distribute(v, device_mesh)
-            # Full checkpoint (in .safetensors or .pt format) to be loaded distributedly
-            self.load_distributed_state_dict(state_dict, device_mesh)
+
+        self.load_state_dict(state_dict, strict=strict)
 
     @classmethod
-    def from_config(
-        cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None, fold_activation_scale: bool = True
-    ) -> Self:
+    def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None) -> Self:
+        """Construct a sparse dictionary from a config. This method is only used to automatically determine the correct registered subclass of AbstractSparseAutoEncoder based on the sae_type. Otherwise, it's consistent with directly call the constructor of the subclass."""
+
         if cls is AbstractSparseAutoEncoder:
             cls = SAE_TYPE_TO_MODEL_CLASS[cfg.sae_type]
 
         model = cls(cfg, device_mesh)
-        if cfg.sae_pretrained_name_or_path is None:
-            total_params = sum(param.numel() for param in model.parameters()) / 1e9
-            logger.info(f"Initializing {cfg.sae_type} from scratch with {total_params:.2f} B parameters")
-            return model
+        total_params = sum(param.numel() for param in model.parameters()) / 1e9
+        logger.info(f"Initializing {cfg.sae_type} with {total_params:.2f} B parameters")
 
-        path = parse_pretrained_name_or_path(cfg.sae_pretrained_name_or_path)
+        return model
+
+    @classmethod
+    def from_local(
+        cls,
+        path: str,
+        device_mesh: DeviceMesh | None = None,
+        strict_loading: bool = True,
+        fold_activation_scale: bool = False,
+        **kwargs,
+    ):
+        """Load a pretrained sparse dictionary from a local directory."""
+
+        cfg = BaseSAEConfig.from_pretrained(path, **kwargs)
+        model = cls.from_config(cfg, device_mesh=device_mesh)
+
         if path.endswith(".pt") or path.endswith(".safetensors") or path.endswith(".dcp"):
             ckpt_path = path
         else:
@@ -433,7 +562,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 if os.path.exists(ckpt_path):
                     break
             else:
-                raise FileNotFoundError(f"Pretrained model not found at {cfg.sae_pretrained_name_or_path}")
+                raise FileNotFoundError(f"Pretrained model not found at {path}")
 
         if ckpt_path.endswith(".safetensors"):
             if device_mesh is None:
@@ -468,15 +597,83 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         else:
             raise ValueError(f"Unsupported checkpoint format: {ckpt_path}")
 
-        model.load_full_state_dict(state_dict, device_mesh)
+        model.load_full_state_dict(state_dict, strict=strict_loading)
         if fold_activation_scale:
             model.standardize_parameters_of_dataset_norm()
         return model
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
-        """Load a pretrained model."""
-        raise NotImplementedError("Subclasses must implement this method")
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str,
+        *,
+        device_mesh: DeviceMesh | None = None,
+        fold_activation_scale: bool = True,
+        strict_loading: bool = True,
+        **kwargs,
+    ) -> Self:
+        """Load a pretrained sparse dictionary. This method will automatically determine whether pretrained_name_or_path is a path to a local directory or a name on HuggingFace Hub.
+
+        Args:
+            pretrained_name_or_path (str): If loading from local directory, this is the path to the local directory. If loading sparse dictionary from HuggingFace Hub, this is the format <repo_id>:<name>. If loading SAELens compatible format SAE, this is the format <release>:<sae_id>.
+            device_mesh (DeviceMesh | None): The device mesh to use for the model. If None, the model will be loaded on the current device.
+            fold_activation_scale (bool): Whether to fold the dataset-wise average activation norm into the weights and biases of the model. See `standardize_parameters_of_dataset_norm` method for more details.
+            strict_loading (bool): Whether to strictly load the state dictionary. If False, the state dictionary will be loaded with a relaxed strictness, allowing for missing keys or extra keys.
+            **kwargs: Additional keyword arguments to pass to the constructor.
+
+        Loading from a local directory:
+        ```python
+        model = AbstractSparseAutoEncoder.from_pretrained("path/to/local/directory")
+        ```
+
+        Loading from HuggingFace Hub:
+        ```python
+        model = AbstractSparseAutoEncoder.from_pretrained("org/name:name")
+        ```
+
+        Loading SAELens compatible format SAE:
+        ```python
+        model = AbstractSparseAutoEncoder.from_pretrained("release:sae_id")
+        ```
+        """
+
+        sae_type = auto_infer_pretrained_sae_type(pretrained_name_or_path)
+        if sae_type == PretrainedSAEType.LOCAL:
+            return cls.from_local(
+                pretrained_name_or_path,
+                device_mesh=device_mesh,
+                fold_activation_scale=fold_activation_scale,
+                strict_loading=strict_loading,
+                **kwargs,
+            )
+        elif sae_type == PretrainedSAEType.HUGGINGFACE:
+            repo_id, name = pretrained_name_or_path.split(":")
+            return cls.from_hf(
+                repo_id,
+                name,
+                device_mesh=device_mesh,
+                fold_activation_scale=fold_activation_scale,
+                strict_loading=strict_loading,
+                **kwargs,
+            )
+        elif sae_type == PretrainedSAEType.SAELENS:
+            assert device_mesh is None, (
+                "Current does not support distributed loading from SAELens. Try converting later to distributed format."
+            )
+
+            from sae_lens import SAE
+
+            from lm_saes.sae import SparseAutoEncoder
+
+            assert cls is AbstractSparseAutoEncoder or cls is SparseAutoEncoder, (
+                f"SAELens only supports vanilla SAE architecture, but got {cls.__name__}"
+            )
+
+            release, sae_id = pretrained_name_or_path.split(":")
+            sae = SAE.from_pretrained(release, sae_id)
+            return cast(Self, SparseAutoEncoder.from_saelens(sae, **kwargs))
+        else:
+            raise ValueError(f"Unsupported pretrained type: {sae_type}")
 
     @abstractmethod
     def encoder_norm(self, keepdim: bool = False) -> torch.Tensor:
@@ -536,7 +733,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 self.cfg.jumprelu_threshold_window,
                 shape=(self.cfg.d_sae,),
                 device=self.cfg.device,
-                dtype=self.cfg.dtype if self.cfg.promote_act_fn_dtype is None else self.cfg.promote_act_fn_dtype,
+                dtype=self.cfg.dtype,
                 device_mesh=device_mesh,
             )
 
@@ -618,6 +815,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         p: int = 1,
         l1_coefficient: float = 1.0,
         lp_coefficient: float = 0.0,
+        auxk_coefficient: float = 0.0,
+        k_aux: int = 512,
+        update_dead_statistics: Callable[[torch.Tensor, torch.Tensor | None, tuple[str, ...]], torch.Tensor]
+        | None = None,
         return_aux_data: Literal[True] = True,
         **kwargs,
     ) -> dict[str, Any]: ...
@@ -632,6 +833,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         p: int = 1,
         l1_coefficient: float = 1.0,
         lp_coefficient: float = 0.0,
+        auxk_coefficient: float = 0.0,
+        k_aux: int = 512,
+        update_dead_statistics: Callable[[torch.Tensor, torch.Tensor | None, tuple[str, ...]], torch.Tensor]
+        | None = None,
         return_aux_data: Literal[False],
         **kwargs,
     ) -> Float[torch.Tensor, " batch"]: ...
@@ -654,6 +859,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         p: int = 1,
         l1_coefficient: float = 1.0,
         lp_coefficient: float = 0.0,
+        auxk_coefficient: float = 0.0,
+        k_aux: int = 512,
+        update_dead_statistics: Callable[[torch.Tensor, torch.Tensor | None, tuple[str, ...]], torch.Tensor]
+        | None = None,
         return_aux_data: bool = True,
         **kwargs,
     ) -> Union[
@@ -713,6 +922,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                         raise ValueError(f"sparsity_loss_type f{sparsity_loss_type} not supported.")
                     l_s = l1_coefficient * l_s
                     loss_dict["l_s"] = l_s
+                    l_s, _ = apply_token_mask(l_s, self.specs.loss(l_s), batch.get("mask"), "mean")
                     loss = loss + l_s.mean()
             else:
                 loss_dict["l_s"] = None
@@ -724,10 +934,58 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     jumprelu_threshold = self.activation_function.get_jumprelu_threshold()
                     l_p = torch.nn.functional.relu(jumprelu_threshold - hidden_pre) * self.decoder_norm()
                     l_p = lp_coefficient * l_p.sum(dim=-1)
+                    l_p, _ = apply_token_mask(l_p, self.specs.loss(l_p), batch.get("mask"), "mean")
                     loss_dict["l_p"] = l_p
                     loss = loss + l_p.mean()
             else:
                 loss_dict["l_p"] = None
+
+            # Add AuxK auxiliary loss if enabled
+            if auxk_coefficient > 0.0:
+                assert update_dead_statistics is not None, (
+                    "update_dead_statistics must be set when auxk_coefficient > 0.0"
+                )
+                is_dead = update_dead_statistics(feature_acts, batch.get("mask"), self.specs.loss(feature_acts))
+
+                with timer.time("auxk_loss_calculation"):
+                    # Get reconstruction error
+                    e = label - reconstructed  # (batch, d_model) or (batch, seq_len, d_model)
+
+                    # Get the top-k_aux dead latents based on their activation values
+                    current_k = self.current_k
+                    if isinstance(is_dead, DTensor):
+                        self.current_k = min(k_aux, int(item(is_dead.full_tensor().sum())))
+                    else:
+                        self.current_k = min(k_aux, int(item(is_dead.sum())))
+
+                    if self.current_k > 0:
+                        # Scale feature activations by decoder norm if configured
+                        if self.cfg.sparsity_include_decoder_norm:
+                            dead_hidden_pre = hidden_pre * is_dead * self.decoder_norm()
+                        else:
+                            dead_hidden_pre = hidden_pre * is_dead
+
+                        dead_feature_acts = self.activation_function(dead_hidden_pre)
+
+                        if self.cfg.sparsity_include_decoder_norm:
+                            dead_feature_acts = dead_feature_acts / self.decoder_norm()
+                            dead_hidden_pre = dead_hidden_pre / self.decoder_norm()
+
+                        # Decode auxiliary feature activations
+                        aux_reconstructed = dead_feature_acts @ cast(torch.Tensor, self.W_D)
+
+                        if isinstance(aux_reconstructed, DTensor):
+                            aux_reconstructed = DimMap({"data": 0}).redistribute(aux_reconstructed)
+
+                        l_aux = (e - aux_reconstructed).pow(2).sum(dim=-1)
+                    else:
+                        l_aux = torch.zeros_like(l_rec)
+
+                    l_aux, _ = apply_token_mask(l_aux, self.specs.loss(l_aux), batch.get("mask"), "mean")
+                    loss_dict["l_aux"] = l_aux
+                    loss = loss + auxk_coefficient * l_aux.mean()
+
+                    self.current_k = current_k
 
         if return_aux_data:
             return {
@@ -789,121 +1047,80 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         Returns:
             A dictionary mapping parameter names to DimMap objects.
         """
+        sae_maps = {}
         if isinstance(self.activation_function, JumpReLU):
-            return {f"activation_function.{k}": v for k, v in self.activation_function.dim_maps().items()}
-        return {}
+            sae_maps.update({f"activation_function.{k}": v for k, v in self.activation_function.dim_maps().items()})
+        return sae_maps
 
     def override_dtypes(self) -> dict[str, torch.dtype]:
         if isinstance(self.activation_function, JumpReLU):
             return {f"activation_function.{k}": v for k, v in self.activation_function.override_dtypes().items()}
         return {}
 
-    def load_distributed_state_dict(
-        self,
-        state_dict: dict[str, torch.Tensor],
-        device_mesh: DeviceMesh,
-        prefix: str = "",
-    ) -> None:
-        self.device_mesh = device_mesh
-        if isinstance(self.activation_function, JumpReLU):
-            self.activation_function.load_distributed_state_dict(
-                state_dict, device_mesh, f"{prefix}activation_function."
-            )
-
-    @abstractmethod
-    def hf_folder_name(self) -> str:
-        """Return the folder name for the SAE in HuggingFace Hub."""
-        raise NotImplementedError("Subclasses must implement this method")
-
     def upload_to_hf(
         self,
         repo_id: str,
-        commit_message: str = "Upload pretrained SAE",
+        name: str,
+        lm_config: LanguageModelConfig | None = None,
+        *,
         token: Optional[str] = None,
         private: bool = False,
     ) -> None:
-        """Upload the SAE to HuggingFace Hub.
+        """Upload the sparse dictionary to HuggingFace Hub."""
 
-        What gets uploaded (same as `lm_saes/utils/huggingface.py` style):
-        - `sae_weights.*` written by `save_pretrained`
-        - `config.json` written by `cfg.save_hyperparameters`
-
-        Args:
-            repo_id: Hub repo id, e.g. "org/name".
-            Commit_message: Commit message.
-            Token: HF token (or rely on local login).
-            Private: Whether to create repo as private.
-        """
-        # Get the folder name for the SAE in HuggingFace Hub
-        folder_name = self.hf_folder_name()
-
-        # Create a temporary folder to save the SAE
-        tmp_root = Path(tempfile.mkdtemp(prefix="sae_upload_"))
-        local_folder = tmp_root / folder_name
-        local_folder.mkdir(parents=True, exist_ok=True)
+        # Create a temporary folder to save the sparse dictionary
+        tmp_root = execute_and_broadcast(
+            lambda: tempfile.mkdtemp(prefix="sae_upload_"),
+            self.device_mesh,
+        )
 
         try:
-            create_repo(repo_id=repo_id, private=private, exist_ok=True, token=token)
-
             # Save locally then upload the whole folder
-            self.save_pretrained(str(local_folder))
-            self.cfg.save_hyperparameters(str(local_folder))
+            self.save_pretrained(tmp_root)
 
-            upload_folder(
-                folder_path=str(local_folder),
-                repo_id=repo_id,
-                path_in_repo=folder_name,
-                commit_message=commit_message,
-                token=token,
-            )
+            if is_primary_rank(self.device_mesh):
+                self.cfg.save_hyperparameters(tmp_root)
+
+                if lm_config is not None:
+                    lm_config.save_lm_config(tmp_root)
+
+                create_repo(repo_id=repo_id, private=private, exist_ok=True, token=token)
+                upload_folder(
+                    folder_path=tmp_root,
+                    repo_id=repo_id,
+                    path_in_repo=name,
+                    commit_message=f"Upload pretrained sparse dictionary {name}",
+                    token=token,
+                )
         finally:
-            shutil.rmtree(tmp_root, ignore_errors=True)
+            if is_primary_rank(self.device_mesh):
+                shutil.rmtree(tmp_root, ignore_errors=True)
 
     @classmethod
     def from_hf(
         cls,
         repo_id: str,
-        sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"],
-        hook_point_in: str | None = None,
-        hook_point_out: str | None = None,
-        hook_points: list[str] | None = None,
+        name: str,
         *,
+        device_mesh: DeviceMesh | None = None,
         token: str | None = None,
+        strict_loading: bool = True,
         fold_activation_scale: bool = False,
         **kwargs,
     ):
-        """Load the SAE from HuggingFace Hub.
+        """Load the sparse dictionary from HuggingFace Hub."""
 
-        By default we do NOT fold activation scale (i.e. keep dataset-wise behavior),
-        matching the notebook comment.
+        allow_patterns = [f"{name}/*"]
 
-        Args:
-            repo_id: Hub repo id, e.g. "org/name".
-            hook_point: Subfolder in the repo that contains the SAE files.
-            token: HF token (or rely on local login).
-            fold_activation_scale: Passed through to `from_pretrained`.
-            **kwargs: Forwarded to `from_pretrained` (e.g. strict_loading).
-        """
-
-        if sae_type == "crosscoder":
-            assert hook_points is not None, "hook_points must be set for crosscoder"
-            folder_name = f"{sae_type}"
-            for head in hook_points:
-                folder_name += f"-{head}"
-        elif sae_type == "clt":
-            folder_name = "CLT"
-        else:
-            assert hook_point_in is not None and hook_point_out is not None, (
-                "hook_point_in and hook_point_out must be set for non-CLT SAEs"
-            )
-            folder_name = f"{sae_type}-{hook_point_in}-{hook_point_out}"
-
-        allow_patterns = [f"{folder_name}/*"]
-        snapshot_path = snapshot_download(
-            repo_id=repo_id,
-            allow_patterns=allow_patterns,
-            token=token,
+        snapshot_path = execute_and_broadcast(
+            lambda: snapshot_download(repo_id=repo_id, allow_patterns=allow_patterns, token=token),
+            device_mesh,
         )
-        local_path = str(Path(snapshot_path) / folder_name)
-        _cls = SAE_TYPE_TO_MODEL_CLASS[sae_type]
-        return _cls.from_pretrained(local_path, fold_activation_scale=fold_activation_scale, **kwargs)
+        local_path = os.path.join(snapshot_path, name)
+        return cls.from_local(
+            local_path,
+            device_mesh=device_mesh,
+            strict_loading=strict_loading,
+            fold_activation_scale=fold_activation_scale,
+            **kwargs,
+        )

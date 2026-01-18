@@ -4,6 +4,9 @@ repo_url: https://github.com/OpenMOSS/Language-Model-SAEs
 
 theme:
   name: material
+  features:
+    - content.code.copy
+    - content.footnote.tooltips
 
 plugins:
   - search
@@ -29,6 +32,7 @@ plugins:
 
 nav:
   - Home: index.md
+  - Walkthrough: walkthrough.md
   - Key Concepts: concepts.md
   - Style Guide: style-guide.md
   - Code Reference: reference/
@@ -44,6 +48,16 @@ markdown_extensions:
       generic: true
   - admonition
   - pymdownx.details
+  - pymdownx.blocks.caption
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - footnotes
+  - abbr
+  - pymdownx.snippets
 
 extra_javascript:
   - javascripts/katex.js
@@ -52,3 +66,4 @@ extra_javascript:
 
 extra_css:
   - https://unpkg.com/katex@0/dist/katex.min.css
+  - assets/extra.css

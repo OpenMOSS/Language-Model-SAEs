@@ -101,7 +101,7 @@ docs = [
     "mkdocs-gen-files>=0.5.0",
     "mkdocs-glightbox>=0.5.2",
     "mkdocs-literate-nav>=0.6.2",
-    "mkdocs-material>=9.6.22",
+    "mkdocs-material>=9.7.1",
     "mkdocs-section-index>=0.3.10",
     "mkdocstrings[python]>=0.30.1",
 ]
@@ -208,6 +208,6 @@ version_scheme = "pep440"
 version_provider = "uv"
 update_changelog_on_bump = true
 version_files = [
-    "README.md:pip install lm-saes=={version}",
-    "README.md:uv add lm-saes=={version}",
+    "README.md:pip install lm-saes==",
+    "README.md:uv add lm-saes==",
 ]

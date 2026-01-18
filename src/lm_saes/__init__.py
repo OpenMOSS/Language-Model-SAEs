@@ -1,35 +1,31 @@
-from .activation import ActivationFactory, ActivationWriter
-from .activation_functions import JumpReLU
-from .analysis import DirectLogitAttributor, FeatureAnalyzer
-from .circuit import ReplacementModel, attribute
-from .clt import CrossLayerTranscoder
-from .config import (
+from .abstract_sae import BaseSAEConfig
+from .activation import (
+    ActivationFactory,
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
     ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
+    ActivationWriter,
     ActivationWriterConfig,
     BufferShuffleConfig,
-    CLTConfig,
-    CrossCoderConfig,
-    DatasetConfig,
-    DirectLogitAttributorConfig,
-    FeatureAnalyzerConfig,
-    InitializerConfig,
-    LanguageModelConfig,
-    LLaDAConfig,
-    LorsaConfig,
-    MOLTConfig,
-    MongoDBConfig,
-    SAEConfig,
-    TrainerConfig,
-    WandbConfig,
 )
-from .crosscoder import CrossCoder
-from .database import MongoClient
+from .activation_functions import JumpReLU
+from .analysis import (
+    DirectLogitAttributor,
+    DirectLogitAttributorConfig,
+    FeatureAnalyzer,
+    FeatureAnalyzerConfig,
+)
+from .backend.language_model import LanguageModelConfig, LLaDAConfig, TransformerLensLanguageModel
+from .circuit import ReplacementModel, attribute
+from .clt import CLTConfig, CrossLayerTranscoder
+from .config import DatasetConfig
+from .crosscoder import CrossCoder, CrossCoderConfig
+from .database import MongoClient, MongoDBConfig
 from .evaluator import EvalConfig, Evaluator
-from .lorsa import LowRankSparseAttention
-from .molt import MixtureOfLinearTransform
+from .initializer import Initializer, InitializerConfig
+from .lorsa import LorsaConfig, LowRankSparseAttention
+from .molt import MixtureOfLinearTransform, MOLTConfig
 from .resource_loaders import load_dataset, load_model
 from .runners import (
     AnalyzeCrossCoderSettings,
@@ -40,6 +36,7 @@ from .runners import (
     EvaluateCrossCoderSettings,
     EvaluateSAESettings,
     GenerateActivationsSettings,
+    PretrainedSAE,
     SweepingItem,
     SweepSAESettings,
     TrainCLTSettings,
@@ -62,11 +59,14 @@ from .runners import (
     train_molt,
     train_sae,
 )
-from .sae import SparseAutoEncoder
+from .sae import SAEConfig, SparseAutoEncoder
+from .trainer import Trainer, TrainerConfig, WandbConfig
+from .utils.logging import setup_logging
 
 __all__ = [
     "ActivationFactory",
     "ActivationWriter",
+    "BaseSAEConfig",
     "CLTConfig",
     "CrossLayerTranscoder",
     "CrossCoderConfig",
@@ -94,10 +94,14 @@ __all__ = [
     "generate_activations",
     "CheckActivationConsistencySettings",
     "check_activation_consistency",
+    "Initializer",
     "InitializerConfig",
     "SAEConfig",
+    "Trainer",
     "TrainerConfig",
+    "TransformerLensLanguageModel",
     "WandbConfig",
+    "setup_logging",
     "train_sae",
     "TrainSAESettings",
     "TrainCLTSettings",
@@ -131,4 +135,5 @@ __all__ = [
     "train_molt",
     "TrainMOLTSettings",
     "DirectLogitAttributorConfig",
+    "PretrainedSAE",
 ]

@@ -9,13 +9,112 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
-from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
-from .config import MOLTConfig
-from .utils.distributed import DimMap, item
-from .utils.logging import get_distributed_logger
-from .utils.timer import timer
+from lm_saes.abstract_sae import (
+    AbstractSparseAutoEncoder,
+    BaseSAEConfig,
+    register_sae_config,
+    register_sae_model,
+)
+from lm_saes.utils.distributed import DimMap, item
+from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("molt")
+
+
+@register_sae_config("molt")
+class MOLTConfig(BaseSAEConfig):
+    """Configuration for Mixture of Linear Transforms (MOLT).
+
+    MOLT is a more efficient alternative to transcoders that sparsely replaces
+    MLP computation in transformers. It converts dense MLP layers into sparse,
+    interpretable linear transforms.
+    """
+
+    sae_type: str = "molt"
+    hook_point_in: str
+    """Hook point to capture input activations from."""
+    hook_point_out: str
+    """Hook point to output activations to."""
+    rank_counts: dict[int, int]
+    """Dictionary mapping rank values to their integer counts.
+    Example: {4: 128, 8: 256, 16: 128} means 128 transforms of rank 4, 256 transforms of rank 8, and 128 transforms of rank 16.
+    """
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        # Validate counts
+        assert self.rank_counts, "rank_counts cannot be empty"
+
+        for rank, count in self.rank_counts.items():
+            assert rank > 0, f"Rank must be positive, got {rank}"
+            assert count > 0, f"Count for rank {rank} must be positive, got {count}"
+
+        # Workaround: expansion_factor is not used in MOLT, but we keep it for consistency with other SAE variants.
+        assert abs(self.expansion_factor - self.d_sae / self.d_model) < 0.1, (
+            f"Expansion factor {self.expansion_factor} is not close to d_sae / d_model {self.d_sae / self.d_model}"
+        )
+
+    def generate_rank_assignments(self) -> list[int]:
+        """Generate rank assignment for each of the d_sae linear transforms.
+
+        Returns:
+            List of rank assignments for each transform.
+            For example: [1, 1, 1, 1, 2, 2, 4].
+        """
+        assignments = []
+        for rank in sorted(self.rank_counts.keys()):
+            assignments.extend([rank] * self.rank_counts[rank])
+        return assignments
+
+    def get_local_rank_assignments(self, model_parallel_size: int) -> list[int]:
+        """Get rank assignments for a specific local device in distributed running.
+
+        Each device gets all rank groups, with each group evenly divided across devices.
+        This ensures consistent encoder/decoder sharding without feature_acts redistribution.
+
+        Args:
+            model_parallel_size: Number of model parallel devices for training and inference.
+
+        Returns:
+            List of rank assignments for this local device
+            For example:
+            global_rank_assignments = [1, 1, 2, 2], model_parallel_size = 2 -> local_rank_assignments = [1, 2]
+        """
+        local_assignments = []
+        for rank in sorted(self.rank_counts.keys()):
+            global_count = self.rank_counts[rank]
+
+            # Verify even division
+            assert global_count % model_parallel_size == 0, (
+                f"Transform rank {rank} global count {global_count} not divisible by "
+                f"model_parallel_size {model_parallel_size}"
+            )
+
+            local_count = global_count // model_parallel_size
+            local_assignments.extend([rank] * local_count)
+
+        return local_assignments
+
+    @property
+    @override
+    def d_sae(self) -> int:
+        """Calculate d_sae based on total rank counts."""
+        return sum(self.rank_counts.values())
+
+    @property
+    def available_ranks(self) -> list[int]:
+        """Get sorted list of available ranks."""
+        return sorted(self.rank_counts.keys())
+
+    @property
+    def num_rank_types(self) -> int:
+        """Number of different rank types."""
+        return len(self.rank_counts)
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return [self.hook_point_in, self.hook_point_out]
 
 
 @register_sae_model("molt")
@@ -30,7 +129,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     - Decoder: Σᵢ fᵢ · (Uᵢ @ Vᵢ @ x) where fᵢ are feature activations
     - Decoder norm: ||UᵢVᵢ||_F for each transform i
 
-    The rank of each transform is determined by the rank_distribution configuration,
+    The rank of each transform is determined by the rank_counts configuration,
     allowing for adaptive model capacity allocation.
     """
 
@@ -40,24 +139,24 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
         # Generate rank assignment for each linear transform
         if device_mesh is not None:
-            # In distributed training, get local rank assignments
+            # In distributed training/inference, get local rank assignments
             # Use model dimension for tensor parallelism
             mesh_dim_names = device_mesh.mesh_dim_names
             if mesh_dim_names is None:
                 model_dim_index = 0
             else:
                 model_dim_index = mesh_dim_names.index("model") if "model" in mesh_dim_names else 0
-            local_rank = device_mesh.get_local_rank(mesh_dim=model_dim_index)
-            model_parallel_size_running = device_mesh.size(mesh_dim=model_dim_index)
+            local_rank = device_mesh.get_local_rank(
+                mesh_dim=model_dim_index
+            )  # this rank stands for device rank of this process
+            model_parallel_size = device_mesh.size(mesh_dim=model_dim_index)
 
-            self.rank_assignments = cfg.get_local_rank_assignments(local_rank, model_parallel_size_running)
+            self.rank_assignments = cfg.get_local_rank_assignments(model_parallel_size)
 
-            global_assignments = cfg.generate_rank_assignments()
-            self._global_rank_count_map = {r: global_assignments.count(r) for r in cfg.available_ranks}
-            for k, v in self._global_rank_count_map.items():
-                print(f"rank {k} has {v} local ranks")
-            # Turn the rank assignments list into a map of rank values to their integer counts. For example: [1, 1, 1, 1, 2, 2, 4] -> {1: 4, 2: 2, 4: 1}
-
+            for k, v in cfg.rank_counts.items():
+                logger.info(
+                    f"Rank {k} has {v} global transforms, device rank {local_rank} has {self.rank_assignments.count(k)} transforms"
+                )
         else:
             # Non-distributed case
             self.rank_assignments = cfg.generate_rank_assignments()
@@ -115,15 +214,13 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
             self.V_matrices = nn.ParameterDict()
 
             for rank in cfg.available_ranks:
-                global_count = self._global_rank_count_map[rank]
                 local_count = sum(1 for r in self.rank_assignments if r == rank)
-
                 assert local_count > 0, f"Rank {rank} has local_count=0, sharding logic error"
 
                 # Create DTensor with GLOBAL shape
                 self.U_matrices[str(rank)] = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        global_count,
+                        self.cfg.rank_counts[rank],  # GLOBAL count
                         cfg.d_model,
                         rank,
                         dtype=cfg.dtype,
@@ -134,7 +231,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
                 self.V_matrices[str(rank)] = nn.Parameter(
                     torch.distributed.tensor.empty(
-                        global_count,
+                        self.cfg.rank_counts[rank],  # GLOBAL count
                         rank,
                         cfg.d_model,
                         dtype=cfg.dtype,
@@ -279,6 +376,7 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
     @override
     @timer.time("set_decoder_to_fixed_norm")
+    @torch.no_grad()
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool) -> None:
         # Scale all U and V matrices proportionally
         for rank_str in self.U_matrices.keys():
@@ -301,10 +399,12 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
     @torch.no_grad()
     @timer.time("set_encoder_to_fixed_norm")
     def set_encoder_to_fixed_norm(self, value: float) -> None:
+        """Set encoder weights to a fixed norm."""
         self.W_E.mul_(value / self.encoder_norm(keepdim=True))
 
     @override
     @timer.time("transform_to_unit_decoder_norm")
+    @torch.no_grad()
     def transform_to_unit_decoder_norm(self) -> None:
         # Set each transform to unit norm
         for rank_str in self.U_matrices.keys():
@@ -317,8 +417,8 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
 
             # Scale to unit norm (split equally between U and V)
             scale_factors = (1.0 / current_norms) ** 0.5
-            U.data.mul_(scale_factors.view(-1, 1, 1))
-            V.data.mul_(scale_factors.view(-1, 1, 1))
+            U.mul_(scale_factors.view(-1, 1, 1))
+            V.mul_(scale_factors.view(-1, 1, 1))
 
     @override
     @timer.time("standardize_parameters_of_dataset_norm")
@@ -688,103 +788,27 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         for rank in self.cfg.available_ranks:
             rank_str = str(rank)
             if rank_str in self.U_matrices:
-                # Get global count for this rank group
-                if hasattr(self, "_global_rank_count_map"):
-                    # In distributed case, use global count
-                    global_count = self._global_rank_count_map[rank]
-                else:
-                    # Non-distributed case
-                    global_count = self.U_matrices[rank_str].shape[0]
+                # Extract features for this rank group
+                end_idx = (
+                    feature_idx + self.cfg.rank_counts[rank]
+                )  # rank_counts[rank] is the GLOBAL count of this rank group
+                rank_features = feature_acts[..., feature_idx:end_idx]
 
-                if global_count > 0:
-                    # Extract features for this rank group
-                    end_idx = feature_idx + global_count
-                    rank_features = feature_acts[..., feature_idx:end_idx]
+                # Count active transforms (l0) for this rank group
+                rank_l0 = (rank_features > 0).float().sum(-1)
+                rank_l0_mean = item(rank_l0.mean())
 
-                    # Count active transforms (l0) for this rank group
-                    rank_l0 = (rank_features > 0).float().sum(-1)
-                    rank_l0_mean = item(rank_l0.mean())
+                # Record metrics
+                metrics[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean
+                metrics[f"molt_metrics/l0_rank{rank}_ratio"] = rank_l0_mean / self.cfg.rank_counts[rank]
+                total_rank_sum += rank_l0_mean * rank
 
-                    # Record metrics
-                    metrics[f"molt_metrics/l0_rank{rank}"] = rank_l0_mean
-                    metrics[f"molt_metrics/l0_rank{rank}_ratio"] = rank_l0_mean / global_count
-                    total_rank_sum += rank_l0_mean * rank
-
-                    feature_idx += global_count
+                feature_idx += self.cfg.rank_counts[rank]
 
         # Record total rank sum
         metrics["molt_metrics/total_rank_sum"] = total_rank_sum
         return metrics
 
-    @override
-    def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        """Load distributed state dict.
-
-        CRITICAL: This method needs to properly handle DTensor loading.
-        The state_dict contains global tensors that need to be distributed
-        according to our sharding strategy.
-        """
-        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
-        self.device_mesh = device_mesh
-
-        # Load encoder parameters with proper distribution
-        for param_name in ["W_E", "b_E"]:
-            global_tensor = state_dict[f"{prefix}{param_name}"].to(getattr(self, param_name).dtype)
-            if device_mesh is not None:
-                # Distribute global tensor according to dim_maps
-                distributed_tensor = self.dim_maps()[param_name].distribute(global_tensor, device_mesh)
-                self.register_parameter(param_name, nn.Parameter(distributed_tensor))
-            else:
-                self.register_parameter(param_name, nn.Parameter(global_tensor))
-
-        # Load U and V matrices for each rank group with proper distribution
-        for rank_str in self.U_matrices.keys():
-            U_param_name = f"U_matrices.{rank_str}"
-            V_param_name = f"V_matrices.{rank_str}"
-
-            U_global_tensor = state_dict[f"{prefix}{U_param_name}"].to(self.U_matrices[rank_str].dtype)
-            V_global_tensor = state_dict[f"{prefix}{V_param_name}"].to(self.V_matrices[rank_str].dtype)
-
-            if device_mesh is not None:
-                # Distribute according to U/V matrices sharding strategy
-                U_distributed = self.dim_maps()["U_matrices"].distribute(U_global_tensor, device_mesh)
-                V_distributed = self.dim_maps()["V_matrices"].distribute(V_global_tensor, device_mesh)
-                self.U_matrices[rank_str] = nn.Parameter(U_distributed)
-                self.V_matrices[rank_str] = nn.Parameter(V_distributed)
-            else:
-                self.U_matrices[rank_str] = nn.Parameter(U_global_tensor)
-                self.V_matrices[rank_str] = nn.Parameter(V_global_tensor)
-
-        # Load decoder bias with proper distribution
-        if self.cfg.use_decoder_bias:
-            b_D_global = state_dict[f"{prefix}b_D"].to(self.b_D.dtype)
-            if device_mesh is not None:
-                b_D_distributed = self.dim_maps()["b_D"].distribute(b_D_global, device_mesh)
-                self.b_D = nn.Parameter(b_D_distributed)
-            else:
-                self.b_D = nn.Parameter(b_D_global)
-
-    # @classmethod
-    # def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
-    #     cfg = MOLTConfig.from_pretrained(pretrained_name_or_path, fold_activation_scale=fold_activation_scale, strict_loading=strict_loading, **kwargs)
-    #     return cls.from_config(cfg)
-
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str,
-        strict_loading: bool = True,
-        fold_activation_scale: bool = True,
-        device_mesh: DeviceMesh | None = None,
-        **kwargs,
-    ):
-        """Load pretrained model."""
-        cfg = MOLTConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
-        return model
-    
     @override
     @timer.time("forward")
     def forward(
@@ -805,6 +829,3 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         feature_acts = self.encode(x, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, original_x=x)
         return reconstructed
-    
-    def hf_folder_name(self) -> str:
-        return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"

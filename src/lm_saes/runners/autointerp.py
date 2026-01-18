@@ -9,8 +9,8 @@ from pydantic_settings import BaseSettings
 from tqdm.asyncio import tqdm
 
 from lm_saes.analysis.autointerp import AutoInterpConfig, FeatureInterpreter
-from lm_saes.config import LanguageModelConfig, MongoDBConfig
-from lm_saes.database import MongoClient
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.database import MongoClient, MongoDBConfig
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from lm_saes.utils.logging import get_logger
 
@@ -108,10 +108,12 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
         max_concurrent=settings.max_workers,
         progress_callback=progress_callback,
     ):
-        interpretation = {
-            "text": result["explanation"],
-        }
-        assert interpretation["text"] is not None
+        if result["explanation"] is not None:
+            interpretation = {
+                "text": result["explanation"],
+            }
+        else:
+            interpretation = None
         mongo_client.update_feature(
             settings.sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
         )

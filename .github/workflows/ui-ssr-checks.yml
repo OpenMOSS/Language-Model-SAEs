@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   check:
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
     runs-on: ubuntu-latest
     defaults:
       run:

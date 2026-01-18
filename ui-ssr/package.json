@@ -50,18 +50,20 @@
     "d3": "^7.9.0",
     "lucide-react": "^0.544.0",
     "mnemonist": "^0.40.3",
+    "natural-orderby": "^5.0.0",
     "nitro": "latest",
     "nprogress": "^0.2.0",
     "rbush": "^4.0.1",
     "rbush-knn": "^4.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "snakecase-keys": "^9.0.2",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.0.2",
     "tailwindcss": "^4.0.6",
     "tw-animate-css": "^1.3.6",
     "vite-tsconfig-paths": "^5.1.4",
-    "zod": "^3.22.4"
+    "zod": "^4.3.5"
   },
   "devDependencies": {
     "@tanstack/devtools-event-client": "^0.3.2",

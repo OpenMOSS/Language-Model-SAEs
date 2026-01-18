@@ -1,13 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
+  AlertCircle,
   Bookmark,
+  Check,
   ChevronLeft,
   ChevronRight,
   Database,
   Edit2,
+  FolderPlus,
   FolderTree,
   GitBranch,
+  Loader2,
   Search,
   Trash2,
 } from 'lucide-react'
@@ -18,6 +22,7 @@ import {
   adminSaeSetsQueryOptions,
   adminSaesQueryOptions,
   adminStatsQueryOptions,
+  bulkGroupCircuits,
   deleteAdminCircuit,
   deleteSae,
   deleteSaeSet,
@@ -641,7 +646,7 @@ function SaeSetsTab() {
 function CircuitsTab() {
   const queryClient = useQueryClient()
   const [page, setPage] = useState(0)
-  const pageSize = 20
+  const pageSize = 10 // Reduced page size for larger items
 
   const { data, isLoading } = useQuery(
     adminCircuitsQueryOptions(pageSize, page * pageSize),
@@ -654,6 +659,10 @@ function CircuitsTab() {
   const [deleteTarget, setDeleteTarget] = useState<AdminCircuit | null>(null)
   const [editTarget, setEditTarget] = useState<AdminCircuit | null>(null)
   const [editName, setEditName] = useState('')
+  const [editGroup, setEditGroup] = useState('')
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkGroupName, setBulkGroupName] = useState('')
 
   const filteredCircuits = useMemo(() => {
     if (!searchTerm.trim()) return circuits
@@ -662,7 +671,8 @@ function CircuitsTab() {
       (circuit) =>
         circuit.name?.toLowerCase().includes(lower) ||
         circuit.prompt.toLowerCase().includes(lower) ||
-        circuit.saeSetName.toLowerCase().includes(lower),
+        circuit.saeSetName.toLowerCase().includes(lower) ||
+        circuit.group?.toLowerCase().includes(lower),
     )
   }, [circuits, searchTerm])
 
@@ -682,9 +692,19 @@ function CircuitsTab() {
     },
   })
 
+  const bulkGroupMutation = useMutation({
+    mutationFn: bulkGroupCircuits,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin'] })
+      setSelectedIds(new Set())
+      setBulkGroupName('')
+    },
+  })
+
   const handleEdit = (circuit: AdminCircuit) => {
     setEditTarget(circuit)
     setEditName(circuit.name || '')
+    setEditGroup(circuit.group || '')
   }
 
   const handleSaveEdit = () => {
@@ -693,6 +713,38 @@ function CircuitsTab() {
       data: {
         circuitId: editTarget.id,
         name: editName || undefined,
+        group: editGroup || null,
+      },
+    })
+  }
+
+  const toggleSelect = (id: string) => {
+    const newSelected = new Set(selectedIds)
+    if (newSelected.has(id)) {
+      newSelected.delete(id)
+    } else {
+      newSelected.add(id)
+    }
+    setSelectedIds(newSelected)
+  }
+
+  const toggleSelectAll = () => {
+    if (
+      selectedIds.size === filteredCircuits.length &&
+      filteredCircuits.length > 0
+    ) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredCircuits.map((c) => c.id)))
+    }
+  }
+
+  const handleBulkGroup = () => {
+    if (selectedIds.size === 0 || !bulkGroupName.trim()) return
+    bulkGroupMutation.mutate({
+      data: {
+        circuitIds: Array.from(selectedIds),
+        group: bulkGroupName.trim(),
       },
     })
   }
@@ -706,7 +758,7 @@ function CircuitsTab() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center gap-4">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -717,59 +769,102 @@ function CircuitsTab() {
             className="pl-9"
           />
         </div>
-        <span className="text-sm text-slate-500">
-          Showing {page * pageSize + 1}-
-          {Math.min((page + 1) * pageSize, totalCount)} of {totalCount}
-        </span>
+        <div className="flex-1 flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 bg-slate-50 border rounded-md px-2 py-1 shadow-xs">
+              <span className="text-xs font-medium text-slate-600 shrink-0">
+                {selectedIds.size} selected
+              </span>
+              <Input
+                placeholder="Group name..."
+                value={bulkGroupName}
+                onChange={(e) => setBulkGroupName(e.target.value)}
+                className="h-8 text-xs w-48"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 px-3 text-xs"
+                onClick={handleBulkGroup}
+                disabled={!bulkGroupName.trim() || bulkGroupMutation.isPending}
+              >
+                <FolderPlus className="h-3.5 w-3.5 mr-1.5" />
+                Apply Group
+              </Button>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-4 text-sm text-slate-500">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleSelectAll}
+            className="text-xs h-8"
+          >
+            {selectedIds.size === filteredCircuits.length &&
+            filteredCircuits.length > 0
+              ? 'Deselect All'
+              : 'Select All'}
+          </Button>
+          <span>
+            Showing {page * pageSize + 1}-
+            {Math.min((page + 1) * pageSize, totalCount)} of {totalCount}
+          </span>
+        </div>
       </div>
 
-      <Card className="overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-slate-50">
-              <TableHead>Name / ID</TableHead>
-              <TableHead>SAE Set</TableHead>
-              <TableHead>Prompt</TableHead>
-              <TableHead className="text-right">Nodes</TableHead>
-              <TableHead className="text-right">Edges</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-24">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredCircuits.map((circuit) => (
-              <TableRow key={circuit.id}>
-                <TableCell>
-                  <div className="font-medium">
-                    {circuit.name || (
-                      <span className="text-slate-400">Unnamed</span>
-                    )}
+      <div className="grid grid-cols-1 gap-4">
+        {filteredCircuits.map((circuit) => (
+          <Card
+            key={circuit.id}
+            className={cn(
+              'relative p-5 transition-all border-l-4 group',
+              selectedIds.has(circuit.id)
+                ? 'bg-slate-50 border-primary shadow-sm'
+                : 'hover:bg-slate-50 border-l-slate-200',
+            )}
+          >
+            <div className="flex gap-4">
+              <div
+                className={cn(
+                  'mt-1 h-5 w-5 rounded border border-slate-300 flex items-center justify-center transition-colors cursor-pointer shrink-0',
+                  selectedIds.has(circuit.id)
+                    ? 'bg-primary border-primary text-white'
+                    : 'bg-white hover:border-slate-400',
+                )}
+                onClick={() => toggleSelect(circuit.id)}
+              >
+                {selectedIds.has(circuit.id) && (
+                  <Check className="h-3.5 w-3.5 stroke-3" />
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0 space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-bold text-slate-800">
+                        {circuit.name || 'Unnamed Circuit'}
+                      </h3>
+                      {circuit.group && (
+                        <span className="px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-purple-100 text-purple-700 rounded-full">
+                          {circuit.group}
+                        </span>
+                      )}
+                      <span className="px-2 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-600 rounded-md">
+                        {circuit.saeSetName}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono">
+                      ID: {circuit.id}
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-400 font-mono">
-                    {circuit.id.slice(0, 8)}...
-                  </div>
-                </TableCell>
-                <TableCell className="text-slate-600">
-                  {circuit.saeSetName}
-                </TableCell>
-                <TableCell className="max-w-[200px] truncate text-slate-500 text-sm">
-                  {circuit.prompt}
-                </TableCell>
-                <TableCell className="text-right">
-                  {circuit.nodeCount}
-                </TableCell>
-                <TableCell className="text-right">
-                  {circuit.edgeCount}
-                </TableCell>
-                <TableCell className="text-slate-500 text-sm">
-                  {new Date(circuit.createdAt).toLocaleDateString()}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1">
+
+                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
+                      className="h-8 w-8 hover:bg-slate-200"
                       onClick={() => handleEdit(circuit)}
                     >
                       <Edit2 className="h-4 w-4 text-slate-500" />
@@ -777,28 +872,82 @@ function CircuitsTab() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
+                      className="h-8 w-8 hover:bg-red-100"
                       onClick={() => setDeleteTarget(circuit)}
                     >
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
                   </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {filteredCircuits.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="text-center text-slate-500 py-8"
-                >
-                  No Circuits found
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Card>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                    Prompt
+                  </label>
+                  <div className="p-3 bg-white border rounded-md text-sm text-slate-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed">
+                    {circuit.prompt}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center gap-6">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                        Status
+                      </span>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        {circuit.status === 'completed' ? (
+                          <div className="flex items-center gap-1 text-emerald-600">
+                            <Check className="h-3.5 w-3.5" />
+                            <span className="text-sm font-semibold">Ready</span>
+                          </div>
+                        ) : circuit.status === 'failed' ? (
+                          <div className="flex items-center gap-1 text-red-600">
+                            <AlertCircle className="h-3.5 w-3.5" />
+                            <span className="text-sm font-semibold">
+                              Failed
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-blue-600">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span className="text-sm font-semibold capitalize">
+                              {circuit.status} ({Math.round(circuit.progress)}%)
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {circuit.progressPhase && (
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                          Phase
+                        </span>
+                        <span className="text-sm font-semibold text-slate-600">
+                          {circuit.progressPhase}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] font-bold uppercase tracking-tight text-slate-400">
+                      Created
+                    </div>
+                    <div className="text-sm text-slate-500 font-medium">
+                      {new Date(circuit.createdAt).toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+        ))}
+        {filteredCircuits.length === 0 && (
+          <Card className="p-12 text-center text-slate-500">
+            No Circuits found matching your criteria
+          </Card>
+        )}
+      </div>
 
       {totalPages > 1 && (
         <div className="flex justify-center items-center gap-2">
@@ -857,11 +1006,13 @@ function CircuitsTab() {
             </div>
             <div>
               <label className="text-sm font-medium text-slate-700 block mb-1.5">
-                Full Prompt
+                Group
               </label>
-              <div className="p-3 bg-slate-50 rounded-md text-sm text-slate-600 max-h-[200px] overflow-y-auto whitespace-pre-wrap">
-                {editTarget?.fullPrompt}
-              </div>
+              <Input
+                value={editGroup}
+                onChange={(e) => setEditGroup(e.target.value)}
+                placeholder="Group name (leave empty for ungrouped)"
+              />
             </div>
           </div>
           <DialogFooter>

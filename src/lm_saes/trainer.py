@@ -2,11 +2,19 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Annotated, Any, Callable, Iterable, Literal, Tuple
 
 import torch
 import torch.distributed.checkpoint as dcp
+import torch.distributed.tensor
 import torch.optim.lr_scheduler as lr_scheduler
+from pydantic import (
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    WithJsonSchema,
+)
 from torch import Tensor
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.optim import Adam, Optimizer
@@ -14,7 +22,7 @@ from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
-from lm_saes.config import TrainerConfig
+from lm_saes.config import BaseConfig
 from lm_saes.metrics import (
     ExplainedVarianceMetric,
     FrequencyMetric,
@@ -29,10 +37,95 @@ from lm_saes.metrics import (
 from lm_saes.optim import SparseAdam, clip_grad_norm, get_scheduler
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
-from lm_saes.utils.misc import is_primary_rank
+from lm_saes.utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
+    is_primary_rank,
+)
+from lm_saes.utils.tensor_specs import apply_token_mask
 from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("trainer")
+
+
+class TrainerConfig(BaseConfig):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    l1_coefficient: float | None = 0.00008
+    l1_coefficient_warmup_steps: int | float = 0.1
+    lp_coefficient: float | None = None
+    auxk_coefficient: float | None = None
+    amp_dtype: Annotated[
+        torch.dtype | None,
+        BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),
+        PlainSerializer(convert_torch_dtype_to_str),
+        WithJsonSchema(
+            {
+                "type": ["string", "null"],
+            },
+            mode="serialization",
+        ),
+    ] = Field(default=torch.bfloat16, exclude=True, validate_default=False)
+    sparsity_loss_type: Literal["power", "tanh", "tanh-quad", None] = None
+    tanh_stretch_coefficient: float = 4.0
+    frequency_scale: float = 0.01
+    p: int = 1
+    initial_k: int | float | None = None
+    k_warmup_steps: int | float = 0.1
+    k_cold_booting_steps: int | float = 0
+    k_schedule_type: Literal["linear", "exponential"] = "linear"
+    k_exponential_factor: float = 3.0
+    k_aux: int = 512
+    dead_threshold: float = 10_000_000
+    skip_metrics_calculation: bool = False
+    gradient_accumulation_steps: int = 1
+
+    lr: float | dict[str, float] = 0.0004
+    betas: Tuple[float, float] = (0.9, 0.999)
+    optimizer_class: Literal["adam", "sparseadam"] = "adam"
+    optimizer_foreach: bool = True
+    lr_scheduler_name: Literal[
+        "constant",
+        "constantwithwarmup",
+        "linearwarmupdecay",
+        "cosineannealing",
+        "cosineannealingwarmup",
+        "exponentialwarmup",
+    ] = "constantwithwarmup"
+    lr_end_ratio: float = 1 / 32
+    lr_warm_up_steps: int | float = 5000
+    lr_cool_down_steps: int | float = 0.2
+    jumprelu_lr_factor: float = 1.0
+    clip_grad_norm: float = 0.0
+    feature_sampling_window: int = 1000
+    total_training_tokens: int = 300_000_000
+
+    log_frequency: int = 1000
+    eval_frequency: int = 1000
+    n_checkpoints: int = 10
+    check_point_save_mode: Literal["log", "linear"] = "log"
+
+    from_pretrained_path: str | None = None
+    exp_result_path: str = "results"
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        Path(self.exp_result_path).mkdir(parents=True, exist_ok=True)
+        Path(self.exp_result_path, "checkpoints").mkdir(parents=True, exist_ok=True)
+        assert self.lr_end_ratio <= 1, "lr_end_ratio must be in 0 to 1 (inclusive)."
+
+        if self.from_pretrained_path is not None:
+            assert os.path.exists(self.from_pretrained_path), (
+                f"from_pretrained_path {self.from_pretrained_path} does not exist"
+            )
+
+
+class WandbConfig(BaseConfig):
+    wandb_project: str = "gpt2-sae-training"
+    exp_name: str | None = None
+    wandb_entity: str | None = None
+    wandb_run_id: str | None = None
+    wandb_resume: Literal["allow", "must", "never", "auto"] = "never"
 
 
 class Trainer:
@@ -51,6 +144,9 @@ class Trainer:
         self.scheduler: lr_scheduler.LRScheduler | None = None
         self.wandb_logger: Run | None = None
         self.metrics: list[Metric] = []
+        # Dead statistics for auxk loss
+        self.tokens_since_last_activation: Tensor | None = None
+        self.is_dead: Tensor | None = None
 
     def save_checkpoint(self, sae: AbstractSparseAutoEncoder, checkpoint_path: Path | str) -> None:
         """
@@ -300,6 +396,59 @@ class Trainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
+    def _initialize_dead_statistics(self, sae: AbstractSparseAutoEncoder) -> None:
+        """Initialize the dead statistics tracking variables for auxk loss.
+
+        Args:
+            sae: The sparse autoencoder model to get the d_sae dimension from.
+        """
+        if sae.device_mesh is None:
+            self.tokens_since_last_activation = torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=torch.long)
+            self.is_dead = torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=torch.bool)
+        else:
+            from lm_saes.utils.distributed import DimMap
+
+            self.tokens_since_last_activation = torch.distributed.tensor.zeros(
+                sae.cfg.d_sae,
+                dtype=torch.long,
+                device_mesh=sae.device_mesh,
+                placements=DimMap({"model": 0}).placements(sae.device_mesh),
+            )
+            self.is_dead = torch.distributed.tensor.zeros(
+                sae.cfg.d_sae,
+                dtype=torch.bool,
+                device_mesh=sae.device_mesh,
+                placements=DimMap({"model": 0}).placements(sae.device_mesh),
+            )
+
+    @torch.no_grad()
+    def update_dead_statistics(self, feature_acts: Tensor, mask: Tensor | None, specs: tuple[str, ...]) -> Tensor:
+        """Update the dead latents tracking based on current feature activations.
+
+        Args:
+            feature_acts: Feature activations tensor of shape (batch, d_sae) or (batch, seq_len, d_sae)
+
+        Returns:
+            is_dead: Boolean tensor indicating which features are dead.
+        """
+        assert self.tokens_since_last_activation is not None, (
+            "tokens_since_last_activation must be initialized before calling update_dead_statistics"
+        )
+        assert self.is_dead is not None, "is_dead must be initialized before calling update_dead_statistics"
+
+        valid_tokens = mask.sum() if mask is not None else feature_acts[..., 0].numel()
+
+        feature_acts_sum, _ = apply_token_mask(feature_acts, specs, mask, "sum")
+        activated = feature_acts_sum.gt(0)
+
+        self.tokens_since_last_activation = torch.where(
+            activated,
+            torch.zeros_like(self.tokens_since_last_activation),
+            self.tokens_since_last_activation + valid_tokens,
+        )
+        self.is_dead = self.tokens_since_last_activation >= self.cfg.dead_threshold
+        return self.is_dead
+
     @timer.time("training_step")
     def _training_step(
         self,
@@ -339,6 +488,8 @@ class Trainer:
 
         lp_coefficient = self.cfg.lp_coefficient if self.cfg.lp_coefficient is not None else 0.0
 
+        auxk_coefficient = self.cfg.auxk_coefficient if self.cfg.auxk_coefficient is not None else 0.0
+
         ctx = sae.compute_loss(
             batch,
             sparsity_loss_type=self.cfg.sparsity_loss_type,
@@ -347,7 +498,10 @@ class Trainer:
             return_aux_data=True,
             l1_coefficient=l1_coefficient,
             lp_coefficient=lp_coefficient,
+            auxk_coefficient=auxk_coefficient,
             frequency_scale=self.cfg.frequency_scale,
+            k_aux=self.cfg.k_aux,
+            update_dead_statistics=self.update_dead_statistics if auxk_coefficient > 0.0 else None,
         )
         return ctx
 
@@ -388,6 +542,7 @@ class Trainer:
                     "details/n_training_tokens": self.cur_tokens,
                     "details/l1_coefficient": ctx.get("l1_coefficient"),
                     "details/lp_coefficient": ctx.get("lp_coefficient"),
+                    "details/auxk_coefficient": ctx.get("auxk_coefficient"),
                 }
             )
 
@@ -428,6 +583,10 @@ class Trainer:
             logger.info("Initializing trainer and optimizer")
             self._initialize_trainer(sae, activation_stream, wandb_logger)
             self._initialize_optimizer(sae)
+
+        # Initialize dead statistics for auxk loss
+        if self.cfg.auxk_coefficient is not None and self.cfg.auxk_coefficient > 0.0:
+            self._initialize_dead_statistics(sae)
 
         assert self.optimizer is not None and self.scheduler is not None, (
             "Optimizer and scheduler should be already initialized"

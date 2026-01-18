@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
@@ -10,15 +11,16 @@ from bson import ObjectId
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
-from lm_saes.config import (
-    BaseSAEConfig,
-    DatasetConfig,
-    LanguageModelConfig,
-    MongoDBConfig,
-    SAEConfig,
-)
+from lm_saes.abstract_sae import BaseSAEConfig
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.config import DatasetConfig
+from lm_saes.sae import SAEConfig
+from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
 
-from .utils.bytes import bytes_to_np, np_to_bytes
+
+class MongoDBConfig(BaseModel):
+    mongo_uri: str = Field(default_factory=lambda: os.environ.get("MONGO_URI", "mongodb://localhost:27017/"))
+    mongo_db: str = Field(default_factory=lambda: os.environ.get("MONGO_DB", "mechinterp"))
 
 
 class DatasetRecord(BaseModel):
@@ -108,15 +110,27 @@ class BookmarkRecord(BaseModel):
     notes: Optional[str] = None
 
 
+class CircuitStatus(str):
+    """Status of circuit generation."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class CircuitConfig(BaseModel):
-    """Configuration used to generate a circuit graph."""
+    """Configuration used to generate a circuit graph.
+
+    Note: node_threshold and edge_threshold are no longer stored here.
+    They are now query-time parameters for dynamic pruning.
+    """
 
     desired_logit_prob: float = 0.98
     max_feature_nodes: int = 256
     qk_tracing_topk: int = 10
-    node_threshold: float = 0.8
-    edge_threshold: float = 0.98
     max_n_logits: int = 1
+    list_of_features: Optional[list[tuple[int, int, int, bool]]] = None
 
 
 class CircuitTextInput(BaseModel):
@@ -138,15 +152,39 @@ class CircuitRecord(BaseModel):
     id: str
     name: Optional[str] = None
     """Optional custom name/ID for the circuit."""
+    group: Optional[str] = None
+    """Optional group name for the circuit."""
     sae_set_name: str
     sae_series: str
     prompt: str
     """The prompt used to generate the circuit."""
     input: CircuitInput
     config: CircuitConfig
-    graph_data: dict[str, Any]
-    """The serialized graph data."""
     created_at: datetime
+    parent_id: Optional[str] = None
+    """Optional ID of the parent circuit."""
+
+    # Status tracking fields
+    status: str = CircuitStatus.PENDING
+    """Current status of circuit generation."""
+    progress: float = 0.0
+    """Progress percentage (0-100)."""
+    progress_phase: Optional[str] = None
+    """Current phase description (e.g., 'Computing attribution 50/200')."""
+    error_message: Optional[str] = None
+    """Error message if status is 'failed'."""
+
+    # Raw graph storage (replaces graph_data)
+    raw_graph_id: Optional[str] = None
+    """GridFS ObjectId for the raw Graph object."""
+
+    # CLT and LORSA names needed for serialization
+    clt_names: Optional[list[str]] = None
+    """Names of the CLT SAEs used in this circuit."""
+    lorsa_names: Optional[list[str]] = None
+    """Names of the LORSA SAEs used in this circuit."""
+    use_lorsa: bool = True
+    """Whether LORSA was used in this circuit."""
 
 
 class MongoClient:
@@ -257,6 +295,64 @@ class MongoClient:
         return self.analysis_collection.insert_one(
             {"name": name, "sae_name": sae_name, "sae_series": sae_series}
         ).inserted_id
+
+    def update_sae(self, name: str, series: str, update_data: dict[str, Any]):
+        """Update an SAE and all its references.
+
+        If the name is updated, all references in other collections are also updated within a transaction.
+        """
+        new_name = update_data.get("name")
+        if new_name and new_name != name:
+            with self.client.start_session() as session:
+                with session.start_transaction():
+                    self.feature_collection.update_many(
+                        {"sae_name": name, "sae_series": series}, {"$set": {"sae_name": new_name}}, session=session
+                    )
+                    self.analysis_collection.update_many(
+                        {"sae_name": name, "sae_series": series}, {"$set": {"sae_name": new_name}}, session=session
+                    )
+                    self.bookmark_collection.update_many(
+                        {"sae_name": name, "sae_series": series}, {"$set": {"sae_name": new_name}}, session=session
+                    )
+                    self.sae_set_collection.update_many(
+                        {"sae_names": name, "sae_series": series},
+                        {"$set": {"sae_names.$[elem]": new_name}},
+                        array_filters=[{"elem": name}],
+                        session=session,
+                    )
+                    self.circuit_collection.update_many(
+                        {"clt_names": name, "sae_series": series},
+                        {"$set": {"clt_names.$[elem]": new_name}},
+                        array_filters=[{"elem": name}],
+                        session=session,
+                    )
+                    self.circuit_collection.update_many(
+                        {"lorsa_names": name, "sae_series": series},
+                        {"$set": {"lorsa_names.$[elem]": new_name}},
+                        array_filters=[{"elem": name}],
+                        session=session,
+                    )
+                    self.sae_collection.update_one(
+                        {"name": name, "series": series}, {"$set": update_data}, session=session
+                    )
+        else:
+            self.sae_collection.update_one({"name": name, "series": series}, {"$set": update_data})
+
+    def update_sae_set(self, name: str, update_data: dict[str, Any]):
+        """Update an SAE set and all its references.
+
+        If the name is updated, all references in other collections are also updated within a transaction.
+        """
+        new_name = update_data.get("name")
+        if new_name and new_name != name:
+            with self.client.start_session() as session:
+                with session.start_transaction():
+                    self.circuit_collection.update_many(
+                        {"sae_set_name": name}, {"$set": {"sae_set_name": new_name}}, session=session
+                    )
+                    self.sae_set_collection.update_one({"name": name}, {"$set": update_data}, session=session)
+        else:
+            self.sae_set_collection.update_one({"name": name}, {"$set": update_data})
 
     def remove_sae(self, sae_name: str, sae_series: str | None = None):
         self.analysis_collection.delete_many({"sae_name": sae_name, "sae_series": sae_series})
@@ -774,19 +870,49 @@ class MongoClient:
         prompt: str,
         input: CircuitInput,
         config: CircuitConfig,
-        graph_data: dict[str, Any],
         name: Optional[str] = None,
+        group: Optional[str] = None,
+        parent_id: Optional[str] = None,
+        clt_names: Optional[list[str]] = None,
+        lorsa_names: Optional[list[str]] = None,
+        use_lorsa: bool = True,
     ) -> str:
-        """Create a new circuit graph record."""
+        """Create a new circuit graph record with pending status.
+
+        Args:
+            sae_set_name: Name of the SAE set used.
+            sae_series: Series of the SAE.
+            prompt: The prompt used for generation.
+            input: The circuit input configuration.
+            config: The circuit configuration.
+            name: Optional custom name for the circuit.
+            group: Optional group name.
+            parent_id: Optional parent circuit ID.
+            clt_names: Names of CLT SAEs used.
+            lorsa_names: Names of LORSA SAEs used.
+            use_lorsa: Whether LORSA was used.
+
+        Returns:
+            The ID of the created circuit.
+        """
         circuit_data = {
             "name": name,
+            "group": group,
+            "parent_id": parent_id,
             "sae_set_name": sae_set_name,
             "sae_series": sae_series,
             "prompt": prompt,
             "input": input.model_dump(),
             "config": config.model_dump(),
-            "graph_data": graph_data,
             "created_at": datetime.utcnow(),
+            "status": CircuitStatus.PENDING,
+            "progress": 0.0,
+            "progress_phase": None,
+            "error_message": None,
+            "raw_graph_id": None,
+            "clt_names": clt_names,
+            "lorsa_names": lorsa_names,
+            "use_lorsa": use_lorsa,
         }
         result = self.circuit_collection.insert_one(circuit_data)
         return str(result.inserted_id)
@@ -805,16 +931,22 @@ class MongoClient:
     def list_circuits(
         self,
         sae_series: Optional[str] = None,
+        group: Optional[str] = None,
         limit: Optional[int] = None,
         skip: int = 0,
-        with_graph_data: bool = False,
     ) -> list[dict[str, Any]]:
-        """List circuits with optional filtering."""
+        """List circuits with optional filtering.
+
+        Note: raw_graph_id is excluded from the listing for efficiency.
+        """
         query: dict[str, Any] = {}
         if sae_series is not None:
             query["sae_series"] = sae_series
+        if group is not None:
+            query["group"] = group
 
-        projection = {"graph_data": 0} if not with_graph_data else None
+        # Exclude raw_graph_id from listing
+        projection = {"raw_graph_id": 0}
 
         cursor = self.circuit_collection.find(query, projection=projection).sort("created_at", pymongo.DESCENDING)
 
@@ -829,10 +961,196 @@ class MongoClient:
             circuits.append(circuit)
         return circuits
 
-    def delete_circuit(self, circuit_id: str) -> bool:
-        """Delete a circuit by its ID."""
+    def update_circuits_group(self, circuit_ids: list[str], group: Optional[str]) -> int:
+        """Update the group for multiple circuits."""
         try:
+            object_ids = [ObjectId(cid) for cid in circuit_ids]
+        except Exception:
+            return 0
+        result = self.circuit_collection.update_many({"_id": {"$in": object_ids}}, {"$set": {"group": group}})
+        return result.modified_count
+
+    def update_circuit(self, circuit_id: str, update_data: dict[str, Any]) -> bool:
+        """Update a circuit by its ID."""
+        try:
+            result = self.circuit_collection.update_one({"_id": ObjectId(circuit_id)}, {"$set": update_data})
+        except Exception:
+            return False
+        return result.modified_count > 0
+
+    def delete_circuit(self, circuit_id: str) -> bool:
+        """Delete a circuit by its ID.
+
+        Also deletes the associated raw graph from GridFS if it exists.
+        """
+        try:
+            # First get the circuit to find raw_graph_id
+            circuit = self.circuit_collection.find_one({"_id": ObjectId(circuit_id)})
+            if circuit and circuit.get("raw_graph_id") and self.fs:
+                try:
+                    self.fs.delete(ObjectId(circuit["raw_graph_id"]))
+                except Exception:
+                    pass  # Ignore errors when deleting GridFS file
+
             result = self.circuit_collection.delete_one({"_id": ObjectId(circuit_id)})
         except Exception:
             return False
         return result.deleted_count > 0
+
+    def update_circuit_progress(
+        self,
+        circuit_id: str,
+        progress: float,
+        progress_phase: Optional[str] = None,
+    ) -> bool:
+        """Update the progress of a circuit generation.
+
+        Args:
+            circuit_id: The circuit ID.
+            progress: Progress percentage (0-100).
+            progress_phase: Optional phase description.
+
+        Returns:
+            True if update was successful.
+        """
+        update_data: dict[str, Any] = {"progress": progress}
+        if progress_phase is not None:
+            update_data["progress_phase"] = progress_phase
+
+        try:
+            result = self.circuit_collection.update_one(
+                {"_id": ObjectId(circuit_id)},
+                {"$set": update_data},
+            )
+        except Exception:
+            return False
+        return result.modified_count > 0
+
+    def update_circuit_status(
+        self,
+        circuit_id: str,
+        status: str,
+        error_message: Optional[str] = None,
+    ) -> bool:
+        """Update the status of a circuit.
+
+        Args:
+            circuit_id: The circuit ID.
+            status: New status (pending, running, completed, failed).
+            error_message: Optional error message for failed status.
+
+        Returns:
+            True if update was successful.
+        """
+        update_data: dict[str, Any] = {"status": status}
+        if error_message is not None:
+            update_data["error_message"] = error_message
+
+        try:
+            result = self.circuit_collection.update_one(
+                {"_id": ObjectId(circuit_id)},
+                {"$set": update_data},
+            )
+        except Exception:
+            return False
+        return result.modified_count > 0
+
+    def store_raw_graph(self, circuit_id: str, graph_data: dict[str, Any]) -> bool:
+        """Store raw graph data to GridFS and update circuit record.
+
+        Args:
+            circuit_id: The circuit ID.
+            graph_data: The raw graph data dictionary with numpy arrays.
+
+        Returns:
+            True if storage was successful.
+        """
+        if not self.is_gridfs_enabled():
+            self.enable_gridfs()
+
+        assert self.fs is not None
+
+        try:
+            # Convert numpy arrays to GridFS references
+            processed_data = self._to_gridfs(graph_data)
+
+            # Store in GridFS as a single document
+            import pickle
+
+            # Use pickle for complex data with GridFS references
+            graph_bytes = pickle.dumps(processed_data)
+            graph_id = self.fs.put(graph_bytes, filename=f"circuit_{circuit_id}_graph")
+
+            # Update circuit record with graph ID
+            result = self.circuit_collection.update_one(
+                {"_id": ObjectId(circuit_id)},
+                {"$set": {"raw_graph_id": str(graph_id)}},
+            )
+            return result.modified_count > 0
+        except Exception:
+            return False
+
+    def load_raw_graph(self, circuit_id: str) -> Optional[dict[str, Any]]:
+        """Load raw graph data from GridFS.
+
+        Args:
+            circuit_id: The circuit ID.
+
+        Returns:
+            The raw graph data dictionary with numpy arrays, or None if not found.
+        """
+        if not self.is_gridfs_enabled():
+            self.enable_gridfs()
+
+        assert self.fs is not None
+
+        try:
+            circuit = self.circuit_collection.find_one({"_id": ObjectId(circuit_id)})
+            if circuit is None or circuit.get("raw_graph_id") is None:
+                return None
+
+            graph_id = ObjectId(circuit["raw_graph_id"])
+            if not self.fs.exists(graph_id):
+                return None
+
+            import pickle
+
+            graph_bytes = self.fs.get(graph_id).read()
+            processed_data = pickle.loads(graph_bytes)
+
+            # Convert GridFS references back to numpy arrays
+            return self._from_gridfs(processed_data)
+        except Exception:
+            return None
+
+    def get_circuit_status(self, circuit_id: str) -> Optional[dict[str, Any]]:
+        """Get just the status information for a circuit.
+
+        Args:
+            circuit_id: The circuit ID.
+
+        Returns:
+            Dict with status, progress, progress_phase, and error_message.
+        """
+        try:
+            circuit = self.circuit_collection.find_one(
+                {"_id": ObjectId(circuit_id)},
+                projection={
+                    "status": 1,
+                    "progress": 1,
+                    "progress_phase": 1,
+                    "error_message": 1,
+                },
+            )
+        except Exception:
+            return None
+
+        if circuit is None:
+            return None
+
+        return {
+            "status": circuit.get("status", CircuitStatus.PENDING),
+            "progress": circuit.get("progress", 0.0),
+            "progress_phase": circuit.get("progress_phase"),
+            "error_message": circuit.get("error_message"),
+        }

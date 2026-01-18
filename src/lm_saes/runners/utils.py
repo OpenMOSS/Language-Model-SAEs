@@ -2,6 +2,7 @@
 
 from typing import Literal, Optional, TypeVar, overload
 
+from lm_saes.config import BaseModelConfig
 from lm_saes.database import MongoClient
 from lm_saes.utils.logging import get_logger
 
@@ -63,3 +64,9 @@ def load_config(
     if required:
         assert config is not None, f"{config_type} config not provided and not found in database"
     return config
+
+
+class PretrainedSAE(BaseModelConfig):
+    pretrained_name_or_path: str
+    fold_activation_scale: bool = True
+    strict_loading: bool = True

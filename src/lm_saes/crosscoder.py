@@ -11,8 +11,12 @@ from torch.distributed.tensor import DTensor, Partial, Shard
 from torch.distributed.tensor.experimental import local_map
 from typing_extensions import override
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder, register_sae_model
-from lm_saes.config import CrossCoderConfig
+from lm_saes.abstract_sae import (
+    AbstractSparseAutoEncoder,
+    BaseSAEConfig,
+    register_sae_config,
+    register_sae_model,
+)
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.distributed.ops import full_tensor, item
 from lm_saes.utils.distributed.utils import replace_placements
@@ -45,6 +49,20 @@ class CrossCoderSpecs(TensorSpecs):
     @staticmethod
     def label(tensor: torch.Tensor) -> tuple[str, ...]:
         return CrossCoderSpecs.reconstructed(tensor)
+
+
+@register_sae_config("crosscoder")
+class CrossCoderConfig(BaseSAEConfig):
+    sae_type: str = "crosscoder"
+    hook_points: list[str]
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        return self.hook_points
+
+    @property
+    def n_heads(self) -> int:
+        return len(self.hook_points)
 
 
 @register_sae_model("crosscoder")
@@ -655,18 +673,6 @@ class CrossCoder(AbstractSparseAutoEncoder):
         }
         return parent_maps | crosscoder_maps
 
-    @override
-    @timer.time("load_distributed_state_dict")
-    def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
-        for name in ["W_E", "W_D", "b_E", "b_D"]:
-            self.register_parameter(
-                name,
-                nn.Parameter(state_dict[f"{prefix}{name}"].to(getattr(self, name).dtype)),
-            )
-
     @torch.no_grad()
     @timer.time("decoder_inner_product_matrices")
     def decoder_inner_product_matrices(self) -> Float[torch.Tensor, "d_sae n_head n_head"]:
@@ -681,23 +687,3 @@ class CrossCoder(AbstractSparseAutoEncoder):
         decoder_norms = self.decoder_norm()
         decoder_norm_products = einops.einsum(decoder_norms, decoder_norms, "i d_sae, j d_sae -> d_sae i j")
         return inner_product_matrices / decoder_norm_products
-
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str,
-        strict_loading: bool = True,
-        fold_activation_scale: bool = True,
-        device_mesh: DeviceMesh | None = None,
-        **kwargs,
-    ):
-        """Load pretrained model."""
-        cfg = CrossCoderConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
-        return model
-
-    def hf_folder_name(self) -> str:
-        folder_name = self.cfg.sae_type
-        for hook_point in self.cfg.hook_points:
-            folder_name += f"-{hook_point}"
-        return folder_name

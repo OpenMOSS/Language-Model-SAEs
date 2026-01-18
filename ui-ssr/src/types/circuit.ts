@@ -1,6 +1,14 @@
 import { z } from 'zod'
 import { FeatureSchema } from './feature'
 
+export const QKTracingResultsSchema = z.object({
+  pairWiseContributors: z.array(z.tuple([z.string(), z.string(), z.number()])),
+  topQMarginalContributors: z.array(z.tuple([z.string(), z.number()])),
+  topKMarginalContributors: z.array(z.tuple([z.string(), z.number()])),
+})
+
+export type QKTracingResults = z.infer<typeof QKTracingResultsSchema>
+
 export const FeatureNodeSchema = z.object({
   featureType: z.enum(['lorsa', 'cross layer transcoder']),
   nodeId: z.string(),
@@ -10,6 +18,8 @@ export const FeatureNodeSchema = z.object({
   saeName: z.string(),
   activation: z.number(),
   feature: FeatureSchema,
+  qkTracingResults: QKTracingResultsSchema.nullish(),
+  isFromQkTracing: z.boolean().default(false),
 })
 
 export type FeatureNode = z.infer<typeof FeatureNodeSchema>
@@ -20,6 +30,7 @@ export const TokenNodeSchema = z.object({
   layer: z.number(),
   ctxIdx: z.number(),
   token: z.string(),
+  isFromQkTracing: z.boolean().default(false),
 })
 
 export type TokenNode = z.infer<typeof TokenNodeSchema>
@@ -29,6 +40,7 @@ export const ErrorNodeSchema = z.object({
   nodeId: z.string(),
   layer: z.number(),
   ctxIdx: z.number(),
+  isFromQkTracing: z.boolean().default(false),
 })
 
 export type ErrorNode = z.infer<typeof ErrorNodeSchema>
@@ -40,15 +52,27 @@ export const LogitNodeSchema = z.object({
   ctxIdx: z.number(),
   tokenProb: z.number(),
   token: z.string(),
+  isFromQkTracing: z.boolean().default(false),
 })
 
 export type LogitNode = z.infer<typeof LogitNodeSchema>
 
-export const NodeSchema = z.union([
+export const BiasNodeSchema = z.object({
+  featureType: z.literal('bias'),
+  nodeId: z.string(),
+  layer: z.number(),
+  ctxIdx: z.number(),
+  isFromQkTracing: z.boolean().default(false),
+})
+
+export type BiasNode = z.infer<typeof BiasNodeSchema>
+
+export const NodeSchema = z.discriminatedUnion('featureType', [
   FeatureNodeSchema,
   TokenNodeSchema,
   ErrorNodeSchema,
   LogitNodeSchema,
+  BiasNodeSchema,
 ])
 
 export type Node = z.infer<typeof NodeSchema>
@@ -94,6 +118,7 @@ export type CircuitData = z.infer<typeof CircuitDataSchema>
 export const VisStateSchema = z.object({
   clickedId: z.string().nullable(),
   hoveredId: z.string().nullable(),
+  selectedIds: z.array(z.string()).optional(),
 })
 
 export type VisState = z.infer<typeof VisStateSchema>

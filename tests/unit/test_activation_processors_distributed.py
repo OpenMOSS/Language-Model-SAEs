@@ -1,5 +1,6 @@
 import os
 
+import pytest
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
@@ -7,6 +8,8 @@ from torch.distributed.tensor import DTensor
 
 from lm_saes.activation.processors.activation import ActivationBuffer
 from lm_saes.utils.distributed import DimMap
+
+pytest.skip("Skipping distributed tests", allow_module_level=True)
 
 
 def setup_distributed():

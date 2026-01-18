@@ -1,7 +1,19 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, MessageCircle, Trash2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
-import type { CircuitInput, CircuitListItem } from '@/api/circuits'
+import {
+  AlertCircle,
+  ChevronDown,
+  GitBranch,
+  Loader2,
+  MessageCircle,
+  Trash2,
+} from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from '@tanstack/react-router'
+import type {
+  CircuitInput,
+  CircuitListItem,
+  CircuitStatus,
+} from '@/api/circuits'
 import { deleteCircuit } from '@/api/circuits'
 import { cn } from '@/lib/utils'
 
@@ -28,6 +40,23 @@ function formatRelativeTime(dateString: string): string {
   }
 
   return date.toLocaleDateString()
+}
+
+function formatFeaturesDisplay(
+  features: (number | boolean)[][] | undefined,
+  maxLength: number,
+): string {
+  if (!features || features.length === 0) return 'No features'
+
+  const featureStrings = features.map((f) => {
+    const [layer, index, pos, isLorsa] = f as [number, number, number, boolean]
+    return `${isLorsa ? 'A' : 'M'}${layer}#${index}@${pos}`
+  })
+
+  const combined = featureStrings.join(', ')
+  return combined.length > maxLength
+    ? `${combined.slice(0, maxLength)}...`
+    : combined
 }
 
 function formatInputDisplay(
@@ -68,6 +97,40 @@ function formatInputDisplay(
   }
 }
 
+function StatusIndicator({
+  status,
+  progress,
+}: {
+  status: CircuitStatus
+  progress: number
+}) {
+  if (status === 'completed') {
+    return null
+  }
+
+  if (status === 'pending' || status === 'running') {
+    return (
+      <div className="flex items-center gap-1.5 text-blue-600">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        <span className="text-[10px] font-medium">
+          {status === 'pending' ? 'Pending...' : `${Math.round(progress)}%`}
+        </span>
+      </div>
+    )
+  }
+
+  if (status === 'failed') {
+    return (
+      <div className="flex items-center gap-1 text-red-600">
+        <AlertCircle className="h-3.5 w-3.5" />
+        <span className="text-[10px] font-medium">Failed</span>
+      </div>
+    )
+  }
+
+  return null
+}
+
 interface GraphSelectorProps {
   circuits: CircuitListItem[]
   selectedCircuitId: string
@@ -79,6 +142,7 @@ export function GraphSelector({
   selectedCircuitId,
   onSelect,
 }: GraphSelectorProps) {
+  const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
@@ -87,8 +151,11 @@ export function GraphSelector({
     mutationFn: deleteCircuit,
     onSuccess: async (_, variables) => {
       await queryClient.invalidateQueries({ queryKey: ['circuits'] })
+      router.invalidate()
       if (variables.data.circuitId === selectedCircuitId) {
-        onSelect('')
+        router.navigate({
+          to: '/circuits',
+        })
       }
     },
   })
@@ -103,10 +170,34 @@ export function GraphSelector({
     mutateDeleteCircuit({ data: { circuitId: circuit.id } })
   }
 
-  const handleSelect = (circuitId: string) => {
-    onSelect(circuitId)
+  const handleSelect = (circuit: CircuitListItem) => {
+    // Don't allow selection of non-completed circuits
+    if (circuit.status !== 'completed') {
+      return
+    }
+    onSelect(circuit.id)
     setIsOpen(false)
   }
+
+  const groupedCircuits = useMemo(() => {
+    const groups: Record<string, CircuitListItem[]> = {}
+    circuits.forEach((c) => {
+      const g = c.group || 'Ungrouped'
+      if (!groups[g]) groups[g] = []
+      groups[g].push(c)
+    })
+    return groups
+  }, [circuits])
+
+  const groupOrder = useMemo(() => {
+    const groups = Object.keys(groupedCircuits).sort()
+    const ungroupedIdx = groups.indexOf('Ungrouped')
+    if (ungroupedIdx !== -1) {
+      groups.splice(ungroupedIdx, 1)
+      groups.push('Ungrouped')
+    }
+    return groups
+  }, [groupedCircuits])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -134,17 +225,30 @@ export function GraphSelector({
         {selectedCircuit ? (
           <div className="flex flex-col items-start text-left gap-0.5 overflow-hidden flex-1 mr-2">
             {(() => {
-              const display = formatInputDisplay(
-                selectedCircuit.input,
-                selectedCircuit.prompt,
-                60,
-              )
+              const isSubgraph = !!selectedCircuit.parentId
+              const displayText =
+                isSubgraph && selectedCircuit.config.listOfFeatures
+                  ? formatFeaturesDisplay(
+                      selectedCircuit.config.listOfFeatures,
+                      60,
+                    )
+                  : formatInputDisplay(
+                      selectedCircuit.input,
+                      selectedCircuit.prompt,
+                      60,
+                    ).text
+              const isChatTemplate =
+                !isSubgraph &&
+                selectedCircuit.input?.inputType === 'chat_template'
+
               return (
                 <span className="text-sm font-medium truncate w-full flex items-center gap-1.5">
-                  {display.isChatTemplate && (
+                  {isSubgraph ? (
+                    <GitBranch className="h-3.5 w-3.5 shrink-0 text-slate-400 rotate-180" />
+                  ) : isChatTemplate ? (
                     <MessageCircle className="h-3.5 w-3.5 shrink-0 text-primary" />
-                  )}
-                  {display.text}
+                  ) : null}
+                  {displayText}
                 </span>
               )
             })()}
@@ -170,56 +274,143 @@ export function GraphSelector({
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-[400px] overflow-auto rounded-md border bg-white shadow-md">
-          {circuits.length === 0 ? (
-            <div className="py-4 px-3 text-sm text-slate-500 text-center">
-              No graphs available. Create one to get started.
-            </div>
-          ) : (
-            <div className="p-1">
-              {circuits.map((c) => (
-                <div
-                  key={c.id}
-                  className={cn(
-                    'flex items-center justify-between gap-2 rounded-sm px-3 py-2 cursor-pointer group',
-                    c.id === selectedCircuitId
-                      ? 'bg-slate-100'
-                      : 'hover:bg-slate-50',
-                  )}
-                  onClick={() => handleSelect(c.id)}
-                >
-                  <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                    {(() => {
-                      const display = formatInputDisplay(c.input, c.prompt, 50)
-                      return (
-                        <span className="text-sm font-medium truncate flex items-center gap-1.5">
-                          {display.isChatTemplate && (
-                            <MessageCircle className="h-3.5 w-3.5 shrink-0 text-primary" />
-                          )}
-                          {display.text}
-                        </span>
-                      )
-                    })()}
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
-                      <span className="truncate">{c.name || c.id}</span>
-                      <span className="shrink-0">·</span>
-                      <span className="shrink-0">
-                        {formatRelativeTime(c.createdAt)}
-                      </span>
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-[500px] flex flex-col rounded-md border bg-white shadow-md">
+          <div className="overflow-auto flex-1">
+            {circuits.length === 0 ? (
+              <div className="py-4 px-3 text-sm text-slate-500 text-center">
+                No graphs available. Create one to get started.
+              </div>
+            ) : (
+              <div className="p-1">
+                {groupOrder.map((group) => {
+                  const groupItems = groupedCircuits[group]
+                  return (
+                    <div key={group}>
+                      {group !== 'Ungrouped' ||
+                      Object.keys(groupedCircuits).length > 1 ? (
+                        <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50/50">
+                          {group}
+                        </div>
+                      ) : null}
+                      {groupItems.map((c) => {
+                        if (
+                          c.parentId &&
+                          groupItems.some((p) => p.id === c.parentId)
+                        ) {
+                          return null
+                        }
+
+                        const renderCircuitItem = (
+                          item: CircuitListItem,
+                          depth = 0,
+                        ) => {
+                          const itemChildren = groupItems.filter(
+                            (child) => child.parentId === item.id,
+                          )
+                          const isSelectable = item.status === 'completed'
+                          const isInProgress =
+                            item.status === 'pending' ||
+                            item.status === 'running'
+                          const isFailed = item.status === 'failed'
+
+                          return (
+                            <div key={item.id}>
+                              <div
+                                className={cn(
+                                  'flex items-center justify-between gap-2 rounded-sm px-3 py-2 group transition-colors',
+                                  isSelectable && 'cursor-pointer',
+                                  !isSelectable && 'cursor-not-allowed',
+                                  item.id === selectedCircuitId
+                                    ? 'bg-slate-100'
+                                    : isSelectable
+                                      ? 'hover:bg-slate-50'
+                                      : 'opacity-70',
+                                  depth > 0 &&
+                                    'ml-4 border-l-2 border-slate-200 pl-4 py-1.5',
+                                  isInProgress && 'bg-blue-50/50',
+                                  isFailed && 'bg-red-50/50',
+                                )}
+                                onClick={() => handleSelect(item)}
+                              >
+                                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                  {(() => {
+                                    const isSubgraph = !!item.parentId
+                                    const displayText =
+                                      isSubgraph && item.config.listOfFeatures
+                                        ? formatFeaturesDisplay(
+                                            item.config.listOfFeatures,
+                                            depth > 0 ? 40 : 50,
+                                          )
+                                        : formatInputDisplay(
+                                            item.input,
+                                            item.prompt,
+                                            depth > 0 ? 40 : 50,
+                                          ).text
+                                    const isChatTemplate =
+                                      !isSubgraph &&
+                                      item.input?.inputType === 'chat_template'
+
+                                    return (
+                                      <span
+                                        className={cn(
+                                          'text-sm font-medium truncate flex items-center gap-1.5',
+                                          depth > 0 && 'text-slate-600',
+                                          isInProgress && 'text-blue-700',
+                                          isFailed && 'text-red-700',
+                                        )}
+                                      >
+                                        {isSubgraph ? (
+                                          <GitBranch className="h-3 w-3 shrink-0 rotate-180 text-slate-400" />
+                                        ) : isChatTemplate ? (
+                                          <MessageCircle className="h-3.5 w-3.5 shrink-0 text-primary" />
+                                        ) : null}
+                                        {displayText}
+                                      </span>
+                                    )
+                                  })()}
+                                  <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                                    <span className="truncate">
+                                      {item.name || item.id}
+                                    </span>
+                                    <span className="shrink-0">·</span>
+                                    <span className="shrink-0">
+                                      {formatRelativeTime(item.createdAt)}
+                                    </span>
+                                    {item.status !== 'completed' && (
+                                      <>
+                                        <span className="shrink-0">·</span>
+                                        <StatusIndicator
+                                          status={item.status}
+                                          progress={item.progress}
+                                        />
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteCircuit(e, item)}
+                                  className="p-1.5 rounded hover:bg-red-100 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                  title="Delete graph"
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                </button>
+                              </div>
+                              {itemChildren.map((child) =>
+                                renderCircuitItem(child, depth + 1),
+                              )}
+                            </div>
+                          )
+                        }
+
+                        return renderCircuitItem(c)
+                      })}
                     </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => handleDeleteCircuit(e, c)}
-                    className="p-1.5 rounded hover:bg-red-100 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                    title="Delete graph"
-                  >
-                    <Trash2 className="h-4 w-4 text-red-500" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+                  )
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

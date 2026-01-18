@@ -2,127 +2,13 @@ import logging
 import time
 from typing import List
 
-from pydantic import BaseModel
 from transformers import AutoTokenizer
 
-from ..graph import Graph, prune_graph
-from .attn_scores_attribution import QKTracingResults
+from lm_saes.circuit.graph import Graph, prune_graph
+
+from .graph_file_utils import Metadata, Model, Node, process_token
 
 logger = logging.getLogger(__name__)
-
-
-class Metadata(BaseModel):
-    prompt_tokens: List[str]
-    prompt: str
-
-    schema_version: int | None = 1
-
-
-class Node(BaseModel):
-    node_id: str
-    feature: int | None = None
-    layer: int
-    ctx_idx: int
-    feature_type: str
-    token: str | None = None
-    token_prob: float | None = None
-    sae_name: str | None = None
-    is_target_logit: bool = False
-    influence: float | None = None
-    activation: float | None = None
-    lorsa_pattern: list | None = None
-    qk_tracing_results: QKTracingResults | None = None
-
-    @classmethod
-    def feature_node(
-        cls,
-        layer,
-        pos,
-        feat_idx,
-        is_lorsa,
-        influence=None,
-        activation=None,
-        lorsa_pattern=None,
-        qk_tracing_results=None,
-        sae_name=None,
-    ):
-        """Create a feature node."""
-
-        layer = 2 * layer + int(not is_lorsa)
-        return cls(
-            node_id=f"{layer}_{feat_idx}_{pos}",
-            feature=feat_idx,
-            layer=layer,
-            ctx_idx=pos,
-            feature_type="lorsa" if is_lorsa else "cross layer transcoder",
-            influence=influence,
-            activation=activation,
-            lorsa_pattern=lorsa_pattern.tolist(),
-            qk_tracing_results=qk_tracing_results,
-            sae_name=sae_name,
-        )
-
-    @classmethod
-    def error_node(cls, layer, pos, is_lorsa, influence=None):
-        """Create an error node."""
-        return cls(
-            node_id=f"{layer}_error_{pos}",
-            layer=layer,
-            ctx_idx=pos,
-            feature_type="lorsa error" if is_lorsa else "mlp reconstruction error",
-            influence=influence,
-        )
-
-    @classmethod
-    def token_node(cls, pos, vocab_idx, token, influence=None):
-        """Create a token node."""
-        return cls(
-            node_id=f"E_{vocab_idx}_{pos}",
-            layer=-1,
-            ctx_idx=pos,
-            feature_type="embedding",
-            influence=influence,
-            token=token,
-        )
-
-    @classmethod
-    def logit_node(
-        cls,
-        pos,
-        vocab_idx,
-        token,
-        num_layers,
-        target_logit,
-        token_prob,
-    ):
-        """Create a logit node."""
-        layer = 2 * num_layers
-        return cls(
-            node_id=f"{layer}_{vocab_idx}_{pos}",
-            feature=vocab_idx,
-            layer=layer,
-            ctx_idx=pos,
-            feature_type="logit",
-            token=token,
-            token_prob=token_prob,
-            is_target_logit=target_logit,
-        )
-
-
-class Link(BaseModel):
-    source: str
-    target: str
-    weight: float
-
-
-class Model(BaseModel):
-    metadata: Metadata
-    nodes: List[Node]
-    links: List[dict]
-
-
-def process_token(token: str) -> str:
-    return token.replace("\n", "⏎").replace("\t", "→").replace("\r", "↵")
 
 
 def load_graph_data(file_path) -> Graph:
@@ -149,19 +35,22 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
         if node_idx in range(n_features):
             orig_feature_idx = graph.selected_features[node_idx]
             if use_lorsa:
-                is_lorsa = orig_feature_idx < len(graph.lorsa_active_features)
+                is_lorsa = bool(orig_feature_idx < len(graph.lorsa_active_features))
                 if is_lorsa:
-                    layer, pos, feat_idx = graph.lorsa_active_features[orig_feature_idx].tolist()
+                    feature_tensor = graph.lorsa_active_features[orig_feature_idx]
+                    layer, pos, feat_idx = feature_tensor.tolist()
                     interested_activation = graph.lorsa_activation_values
                     sae_name = lorsa_names[layer]
                 else:
                     orig_feature_idx = orig_feature_idx - len(graph.lorsa_active_features)
-                    layer, pos, feat_idx = graph.clt_active_features[orig_feature_idx].tolist()
+                    feature_tensor = graph.clt_active_features[orig_feature_idx]
+                    layer, pos, feat_idx = feature_tensor.tolist()
                     interested_activation = graph.clt_activation_values
                     sae_name = clt_names[layer]
             else:
                 is_lorsa = False
-                layer, pos, feat_idx = graph.clt_active_features[orig_feature_idx].tolist()
+                feature_tensor = graph.clt_active_features[orig_feature_idx]
+                layer, pos, feat_idx = feature_tensor.tolist()
                 interested_activation = graph.clt_activation_values
                 sae_name = clt_names[layer]
             nodes[node_idx] = Node.feature_node(
@@ -202,10 +91,28 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, use_lors
             )
         elif node_idx in range(token_end_idx, len(cumulative_scores)):
             pos = node_idx - token_end_idx
+
+            # Check if this is feature tracing (logit_tokens contains feature info instead of real tokens)
+            logit_token = graph.logit_tokens[pos]
+            if isinstance(logit_token, (tuple, list)):
+                is_feature_tracing = len(logit_token) == 4
+            elif hasattr(logit_token, "shape"):
+                is_feature_tracing = len(logit_token.shape) > 0 and logit_token.shape[0] == 4
+            else:
+                is_feature_tracing = False
+
+            if is_feature_tracing:
+                continue
+
+            # Normal logit case - ensure vocab_idx is an integer
+            vocab_idx = (
+                graph.logit_tokens[pos] if isinstance(graph.logit_tokens[pos], int) else graph.logit_tokens[pos].item()
+            )
+            logger.info("create a logit node")
             nodes[node_idx] = Node.logit_node(
                 pos=graph.n_pos - 1,
-                vocab_idx=graph.logit_tokens[pos],
-                token=process_token(tokenizer.decode(graph.logit_tokens[pos])),
+                vocab_idx=vocab_idx,
+                token=process_token(tokenizer.decode(vocab_idx)),
                 target_logit=pos == 0,
                 token_prob=graph.logit_probabilities[pos],
                 num_layers=layers,
@@ -249,6 +156,28 @@ def create_used_nodes_and_edges(graph: Graph, nodes, edge_mask):
     return used_nodes, used_edges
 
 
+def append_qk_tracing_results(graph: Graph, used_nodes: List[Node], clt_names, lorsa_names):
+    """Append QK tracing results to the graph."""
+    existing_nodes = set(used_nodes)
+    from_qk_tracing_nodes = set()
+    for node in used_nodes:
+        if node.qk_tracing_results is not None:
+            from_qk_tracing_nodes.update(node.qk_tracing_results.get_nodes())
+
+    nodes_to_add = from_qk_tracing_nodes - existing_nodes
+    for node in nodes_to_add:
+        if node.feature_type == "lorsa":
+            node.sae_name = lorsa_names[node.layer // 2]
+        elif node.feature_type == "cross layer transcoder":
+            node.sae_name = clt_names[node.layer // 2]
+        used_nodes.append(node)
+
+    for node in used_nodes:
+        if node.qk_tracing_results is not None:
+            node.qk_tracing_results.stringify_nodes()
+    return used_nodes
+
+
 def build_model(
     graph: Graph,
     used_nodes,
@@ -288,6 +217,7 @@ def serialize_graph(
     node_mask, edge_mask, cumulative_scores = prune_graph(graph, node_threshold, edge_threshold)
 
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
+
     nodes = create_nodes(
         graph,
         node_mask,
@@ -298,6 +228,8 @@ def serialize_graph(
         lorsa_names=lorsa_names,
     )
     used_nodes, used_edges = create_used_nodes_and_edges(graph, nodes, edge_mask)
+    if use_lorsa:
+        used_nodes = append_qk_tracing_results(graph, used_nodes, clt_names, lorsa_names)
     model = build_model(
         graph,
         used_nodes,

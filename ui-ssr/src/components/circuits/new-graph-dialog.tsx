@@ -7,11 +7,7 @@ import type {
   CircuitInput,
   GenerateCircuitParams,
 } from '@/api/circuits'
-import {
-  circuitQueryOptions,
-  generateCircuit,
-  previewInput,
-} from '@/api/circuits'
+import { generateCircuit, previewInput } from '@/api/circuits'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import {
@@ -39,31 +35,58 @@ import { useDebounce } from '@/hooks/use-debounce'
 interface NewGraphDialogProps {
   saeSets: string[]
   onGraphCreated: (circuitId: string) => void
+  initialConfig?: {
+    saeSetName?: string
+    input?: CircuitInput
+    desiredLogitProb?: number
+    maxFeatureNodes?: number
+    maxNLogits?: number
+    qkTracingTopk?: number
+    name?: string
+  }
+  trigger?: React.ReactNode
 }
 
 export function NewGraphDialog({
   saeSets,
   onGraphCreated,
+  initialConfig,
+  trigger,
 }: NewGraphDialogProps) {
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  const [selectedSaeSet, setSelectedSaeSet] = useState<string>('')
-  const [customGraphId, setCustomGraphId] = useState('')
-  const [useChatTemplate, setUseChatTemplate] = useState(false)
-  const [prompt, setPrompt] = useState('')
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { role: 'user', content: '' },
-    { role: 'assistant', content: '' },
-  ])
+  const [selectedSaeSet, setSelectedSaeSet] = useState<string>(
+    initialConfig?.saeSetName ?? '',
+  )
+  const [customGraphId, setCustomGraphId] = useState(initialConfig?.name ?? '')
+  const [useChatTemplate, setUseChatTemplate] = useState(
+    initialConfig?.input?.inputType === 'chat_template',
+  )
+  const [prompt, setPrompt] = useState(
+    initialConfig?.input?.inputType === 'plain_text'
+      ? initialConfig.input.text
+      : '',
+  )
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(
+    initialConfig?.input?.inputType === 'chat_template'
+      ? initialConfig.input.messages
+      : [
+          { role: 'user', content: '' },
+          { role: 'assistant', content: '' },
+        ],
+  )
 
-  const [desiredLogitProb, setDesiredLogitProb] = useState(0.98)
-  const [maxNodes, setMaxNodes] = useState(256)
-  const [maxLogits, setMaxLogits] = useState(1)
-  const [qkTracingTopk, setQkTracingTopk] = useState(10)
-
-  const [nodeThreshold, setNodeThreshold] = useState(0.8)
-  const [edgeThreshold, setEdgeThreshold] = useState(0.98)
+  const [desiredLogitProb, setDesiredLogitProb] = useState(
+    initialConfig?.desiredLogitProb ?? 0.98,
+  )
+  const [maxNodes, setMaxNodes] = useState(
+    initialConfig?.maxFeatureNodes ?? 256,
+  )
+  const [maxLogits, setMaxLogits] = useState(initialConfig?.maxNLogits ?? 1)
+  const [qkTracingTopk, setQkTracingTopk] = useState(
+    initialConfig?.qkTracingTopk ?? 10,
+  )
 
   const {
     mutate: mutateGenerateCircuit,
@@ -73,10 +96,6 @@ export function NewGraphDialog({
     mutationFn: generateCircuit,
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['circuits'] })
-      queryClient.setQueryData(
-        circuitQueryOptions(data.circuitId).queryKey,
-        data,
-      )
       onGraphCreated(data.circuitId)
       handleDialogClose()
     },
@@ -171,27 +190,34 @@ export function NewGraphDialog({
       maxFeatureNodes: maxNodes,
       maxNLogits: maxLogits,
       qkTracingTopk,
-      nodeThreshold,
-      edgeThreshold,
     }
 
     mutateGenerateCircuit({ data: params })
   }
 
   const handleReset = () => {
-    setCustomGraphId('')
-    setUseChatTemplate(false)
-    setPrompt('')
-    setChatMessages([
-      { role: 'user', content: '' },
-      { role: 'assistant', content: '' },
-    ])
-    setDesiredLogitProb(0.98)
-    setMaxNodes(256)
-    setMaxLogits(1)
-    setQkTracingTopk(10)
-    setNodeThreshold(0.8)
-    setEdgeThreshold(0.98)
+    if (initialConfig?.saeSetName !== undefined) {
+      setSelectedSaeSet(initialConfig.saeSetName)
+    }
+    setCustomGraphId(initialConfig?.name ?? '')
+    setUseChatTemplate(initialConfig?.input?.inputType === 'chat_template')
+    setPrompt(
+      initialConfig?.input?.inputType === 'plain_text'
+        ? initialConfig.input.text
+        : '',
+    )
+    setChatMessages(
+      initialConfig?.input?.inputType === 'chat_template'
+        ? initialConfig.input.messages
+        : [
+            { role: 'user', content: '' },
+            { role: 'assistant', content: '' },
+          ],
+    )
+    setDesiredLogitProb(initialConfig?.desiredLogitProb ?? 0.98)
+    setMaxNodes(initialConfig?.maxFeatureNodes ?? 256)
+    setMaxLogits(initialConfig?.maxNLogits ?? 1)
+    setQkTracingTopk(initialConfig?.qkTracingTopk ?? 10)
   }
 
   const handleDialogClose = () => {
@@ -202,6 +228,7 @@ export function NewGraphDialog({
   const handleDialogOpenChange = (open: boolean) => {
     if (open) {
       setDialogOpen(true)
+      handleReset()
     } else {
       handleDialogClose()
     }
@@ -212,16 +239,19 @@ export function NewGraphDialog({
   return (
     <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
       <DialogTrigger asChild>
-        <Button className="h-12 px-4 gap-2">
-          <Plus className="h-4 w-4" />
-          New Graph
-        </Button>
+        {trigger || (
+          <Button className="h-14 px-4 gap-2 font-semibold">
+            <Plus className="h-4 w-4" />
+            New Graph
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="max-w-6xl max-h-[90vh]">
         <DialogHeader>
           <DialogTitle className="text-xl">Generate New Graph</DialogTitle>
           <DialogDescription>
-            Generate a new attribution graph for a custom prompt.
+            Generate a new attribution graph for a custom prompt. Pruning
+            thresholds can be adjusted after generation.
           </DialogDescription>
         </DialogHeader>
 
@@ -271,15 +301,11 @@ export function NewGraphDialog({
             <div className="space-y-6 border rounded-lg p-4 bg-slate-50">
               <div className="flex items-center gap-2 pb-2 border-b border-slate-200/60">
                 <h4 className="text-sm font-semibold text-slate-700">
-                  Advanced Settings
+                  Attribution Settings
                 </h4>
               </div>
 
-              {/* Attribution Section */}
               <div className="space-y-4">
-                <h4 className="text-xs font-semibold uppercase tracking-tight text-primary">
-                  Attribution
-                </h4>
                 <div className="grid grid-cols-2 gap-4">
                   <Slider
                     label="Desired Logit Probability"
@@ -317,33 +343,6 @@ export function NewGraphDialog({
                     min={0}
                     max={50}
                     step={1}
-                    showValue={false}
-                  />
-                </div>
-              </div>
-
-              {/* Pruning Section */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-semibold uppercase tracking-tight text-primary">
-                  Pruning
-                </h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <Slider
-                    label="Node Threshold"
-                    value={nodeThreshold}
-                    onChange={setNodeThreshold}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    showValue={false}
-                  />
-                  <Slider
-                    label="Edge Threshold"
-                    value={edgeThreshold}
-                    onChange={setEdgeThreshold}
-                    min={0}
-                    max={1}
-                    step={0.01}
                     showValue={false}
                   />
                 </div>
@@ -560,7 +559,7 @@ export function NewGraphDialog({
             {isGenerating ? (
               <>
                 <Spinner isAnimating={true} className="mr-2" />
-                Generating...
+                Starting...
               </>
             ) : (
               'Start Generation'

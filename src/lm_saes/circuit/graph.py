@@ -1,5 +1,6 @@
-from typing import List, NamedTuple, Optional, Union
+from typing import Any, List, NamedTuple, Optional, Union
 
+import numpy as np
 import torch
 from transformer_lens import HookedTransformerConfig
 
@@ -169,6 +170,82 @@ class Graph:
         d = torch.load(path, weights_only=False, map_location=map_location)
         return Graph(**d)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert Graph to a dictionary with numpy arrays for GridFS storage.
+
+        This method converts all tensors to numpy arrays and serializes complex
+        objects like cfg and qk_tracing_results using pickle.
+
+        Returns:
+            Dictionary representation of the Graph suitable for MongoDB/GridFS storage.
+        """
+        import pickle
+
+        def tensor_to_numpy(t: Optional[torch.Tensor]) -> Optional[np.ndarray]:
+            if t is None:
+                return None
+            return t.cpu().numpy()
+
+        return {
+            "input_string": self.input_string,
+            "adjacency_matrix": tensor_to_numpy(self.adjacency_matrix),
+            "cfg": pickle.dumps(self.cfg),  # Serialize HookedTransformerConfig
+            "lorsa_active_features": tensor_to_numpy(self.lorsa_active_features),
+            "lorsa_activation_values": tensor_to_numpy(self.lorsa_activation_values),
+            "clt_active_features": tensor_to_numpy(self.clt_active_features),
+            "clt_activation_values": tensor_to_numpy(self.clt_activation_values),
+            "logit_tokens": tensor_to_numpy(self.logit_tokens),
+            "logit_probabilities": tensor_to_numpy(self.logit_probabilities),
+            "input_tokens": tensor_to_numpy(self.input_tokens),
+            "selected_features": tensor_to_numpy(self.selected_features),
+            "sae_series": self.sae_series,
+            "slug": self.slug,
+            "use_lorsa": self.use_lorsa,
+            "lorsa_pattern": tensor_to_numpy(self.lorsa_pattern),
+            "z_pattern": tensor_to_numpy(self.z_pattern),
+            "qk_tracing_results": pickle.dumps(self.qk_tracing_results),  # Serialize QKTracingResults
+        }
+
+    @staticmethod
+    def from_dict(d: dict[str, Any]) -> "Graph":
+        """Reconstruct a Graph from a dictionary (created by to_dict).
+
+        Args:
+            d: Dictionary representation from to_dict().
+
+        Returns:
+            Reconstructed Graph object.
+        """
+        import pickle
+
+        def numpy_to_tensor(arr: Optional[np.ndarray]) -> Optional[torch.Tensor]:
+            if arr is None:
+                return None
+            return torch.from_numpy(arr)
+
+        cfg = pickle.loads(d["cfg"])
+        qk_tracing_results = pickle.loads(d["qk_tracing_results"])
+
+        return Graph(
+            input_string=d["input_string"],
+            input_tokens=numpy_to_tensor(d["input_tokens"]),
+            logit_tokens=numpy_to_tensor(d["logit_tokens"]),
+            logit_probabilities=numpy_to_tensor(d["logit_probabilities"]),
+            lorsa_active_features=numpy_to_tensor(d["lorsa_active_features"]),
+            lorsa_activation_values=numpy_to_tensor(d["lorsa_activation_values"]),
+            clt_active_features=numpy_to_tensor(d["clt_active_features"]),
+            clt_activation_values=numpy_to_tensor(d["clt_activation_values"]),
+            selected_features=numpy_to_tensor(d["selected_features"]),
+            adjacency_matrix=numpy_to_tensor(d["adjacency_matrix"]),
+            qk_tracing_results=qk_tracing_results,
+            cfg=cfg,
+            slug=d.get("slug", "untitled"),
+            sae_series=d.get("sae_series"),
+            use_lorsa=d.get("use_lorsa", True),
+            lorsa_pattern=numpy_to_tensor(d.get("lorsa_pattern")),
+            z_pattern=numpy_to_tensor(d.get("z_pattern")),
+        )
+
 
 def normalize_matrix(matrix: torch.Tensor) -> torch.Tensor:
     normalized = matrix.abs()
@@ -290,8 +367,3 @@ def prune_graph(graph: Graph, node_threshold: float = 0.8, edge_threshold: float
     final_scores[sorted_indices] = cumulative_scores
 
     return PruneResult(node_mask, edge_mask, final_scores)
-
-
-# @dataclass
-# class QKTracingResults:
-#     lorsa_head

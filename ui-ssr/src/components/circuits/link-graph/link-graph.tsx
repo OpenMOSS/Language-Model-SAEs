@@ -28,7 +28,7 @@ import { useLocalStorage } from '@/hooks/useLocalStorage'
 interface LinkGraphProps {
   data: CircuitData
   visState: VisState
-  onNodeClick: (nodeId: string, metaKey: boolean) => void
+  onNodeClick: (nodeId: string, isMultiSelect: boolean) => void
   onNodeHover: (nodeId: string | null) => void
 }
 
@@ -98,7 +98,7 @@ function topologicalSort(
 }
 
 const LinkGraphComponent: React.FC<LinkGraphProps> = ({
-  data,
+  data: rawData,
   visState,
   onNodeClick,
   onNodeHover,
@@ -111,6 +111,15 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       height: 600,
     },
   )
+
+  const data = useMemo(() => {
+    const nodes = rawData.nodes.filter((n) => !n.isFromQkTracing)
+    const nodeIds = new Set(nodes.map((n) => n.nodeId))
+    const edges = rawData.edges.filter(
+      (e) => nodeIds.has(e.source) && nodeIds.has(e.target),
+    )
+    return { ...rawData, nodes, edges }
+  }, [rawData])
 
   // 1. Calculate stats about context counts and total units needed
   const { calculatedCtxCounts, totalUnits } = useMemo(() => {
@@ -303,8 +312,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       )
 
       if (nearestNode) {
-        const metaKey = event.metaKey || event.ctrlKey
-        onNodeClick(nearestNode.nodeId, metaKey)
+        onNodeClick(nearestNode.nodeId, event.metaKey || event.ctrlKey)
       }
     },
     [spatialIndex, onNodeClick],
@@ -421,6 +429,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
           visState={{
             clickedId: visState.clickedId,
             hoveredId: visState.hoveredId,
+            selectedIds: visState.selectedIds,
           }}
         />
 

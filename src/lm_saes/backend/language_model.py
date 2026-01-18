@@ -1,13 +1,16 @@
+import json
+import os
 import re
 import warnings
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from itertools import accumulate
-from typing import Any, Callable, Optional, Union, cast
+from typing import Any, Callable, Literal, Optional, Union, cast
 
 import torch
 import torch.distributed as dist
 import torch.utils._pytree as pytree
+from huggingface_hub import hf_hub_download
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
@@ -20,9 +23,12 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from lm_saes.config import LanguageModelConfig, LLaDAConfig
+from lm_saes.config import BaseModelConfig
+from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.misc import pad_and_truncate_tokens
+from lm_saes.utils.misc import (
+    pad_and_truncate_tokens,
+)
 from lm_saes.utils.timer import timer
 
 
@@ -102,6 +108,78 @@ def _get_layer_indices_from_hook_points(hook_points: list[str]) -> list[int]:
     assert all(match is not None for match in matches), "hook_points must be residual stream hook points"
     layer_indices = [int(cast(re.Match[str], match).group(1)) for match in matches]
     return layer_indices
+
+
+class LanguageModelConfig(BaseModelConfig):
+    model_name: str = "gpt2"
+    """ The name of the model to use. """
+    model_from_pretrained_path: str | None = None
+    """ The path to the pretrained model. If `None`, will use the model from HuggingFace. """
+    use_flash_attn: bool = False
+    """ Whether to use Flash Attention. """
+    cache_dir: str | None = None
+    """ The directory of the HuggingFace cache. Should have the same effect as `HF_HOME`. """
+    local_files_only: bool = False
+    """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
+    max_length: int = 2048
+    """ The maximum length of the input. """
+    backend: Literal["huggingface", "transformer_lens", "auto"] = "auto"
+    """ The backend to use for the language model. """
+    load_ckpt: bool = True
+    tokenizer_only: bool = False
+    """ Whether to only load the tokenizer. """
+    prepend_bos: bool = True
+    """ Whether to prepend the BOS token to the input. """
+    bos_token_id: int | None = None
+    """ The ID of the BOS token. If `None`, will use the default BOS token. """
+    eos_token_id: int | None = None
+    """ The ID of the EOS token. If `None`, will use the default EOS token. """
+    pad_token_id: int | None = None
+    """ The ID of the padding token. If `None`, will use the default padding token. """
+
+    @staticmethod
+    def from_pretrained_sae(pretrained_name_or_path: str, **kwargs):
+        """Load the LanguageModelConfig from a pretrained SAE name or path. Config is read from <pretrained_name_or_path>/lm_config.json (for local storage), <repo_id>/<name>/lm_config.json (for HuggingFace Hub), or constructed from model name (for SAELens).
+
+        Args:
+            pretrained_name_or_path (str): The path to the pretrained SAE.
+            **kwargs: Additional keyword arguments to pass to the LanguageModelConfig constructor.
+        """
+        sae_type = auto_infer_pretrained_sae_type(pretrained_name_or_path.split(":")[0])
+        if sae_type == PretrainedSAEType.LOCAL:
+            path = os.path.join(os.path.dirname(pretrained_name_or_path), "lm_config.json")
+        elif sae_type == PretrainedSAEType.HUGGINGFACE:
+            repo_id, name = pretrained_name_or_path.split(":")
+            path = hf_hub_download(repo_id=repo_id, filename=f"{name}/lm_config.json")
+        elif sae_type == PretrainedSAEType.SAELENS:
+            from sae_lens.loading.pretrained_saes_directory import get_pretrained_saes_directory
+
+            repo_id, name = pretrained_name_or_path.split(":")
+            lookups = get_pretrained_saes_directory()
+            assert lookups.get(repo_id) is not None and lookups[repo_id].saes_map.get(name) is not None, (
+                f"Pretrained SAE {pretrained_name_or_path} not found in SAELens. This might indicate bugs in `auto_infer_pretrained_sae_type`."
+            )
+            model_name = lookups[repo_id].model
+            return LanguageModelConfig(model_name=model_name, **kwargs)
+        else:
+            raise ValueError(f"Unsupported pretrained type: {sae_type}")
+        with open(os.path.join(path, "lm_config.json"), "r") as f:
+            lm_config = json.load(f)
+        return LanguageModelConfig.model_validate(lm_config, **kwargs)
+
+    def save_lm_config(self, sae_path: str):
+        assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save LanguageModelConfig."
+
+        d = self.model_dump()
+        with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
+            json.dump(d, f, indent=4)
+
+
+class LLaDAConfig(LanguageModelConfig):
+    mask_ratio: float = 0.0
+    mdm_mask_token_id: int = 126336
+    prepend_bos: bool = False
+    calculate_logits: bool = False
 
 
 class LanguageModel(ABC):
@@ -242,10 +320,13 @@ class TransformerLensLanguageModel(LanguageModel):
             return local_map(
                 self.model.forward,
                 out_placements=DimMap({"data": 0}).placements(self.device_mesh),
-            )(*args, **kwargs)
+            )(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)  # type: ignore
         else:
             assert not is_distributed, "Input should not contain DTensor when device_mesh is None"
-            return self.model.forward(*args, **kwargs)
+            return self.model.forward(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
 
     def _to_tensor(self, input: torch.Tensor) -> torch.Tensor:
         if isinstance(input, DTensor):

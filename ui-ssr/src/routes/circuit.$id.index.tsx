@@ -1,29 +1,43 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import {
+  createFileRoute,
+  redirect,
+  useNavigate,
+  useRouter,
+} from '@tanstack/react-router'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AlertCircle, GitFork, Loader2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { z } from 'zod'
-import type { CircuitData, VisState } from '@/types/circuit'
+import type { CircuitData, FeatureNode, VisState } from '@/types/circuit'
+import { parseWithPrettify } from '@/utils/zod'
 import {
   circuitQueryOptions,
+  circuitStatusQueryOptions,
   circuitsQueryOptions,
+  generateCircuit,
   saeSetsQueryOptions,
 } from '@/api/circuits'
 import { GraphSelector } from '@/components/circuits/graph-selector'
 import { NewGraphDialog } from '@/components/circuits/new-graph-dialog'
 import { LinkGraphContainer } from '@/components/circuits/link-graph-container'
+import { SelectedFeaturesList } from '@/components/circuits/selected-features-list'
 import { NodeConnections } from '@/components/circuits/node-connections'
+import { ThresholdControls } from '@/components/circuits/threshold-controls'
 import { FeatureCardHorizontal } from '@/components/feature/feature-card-horizontal'
 import { Card } from '@/components/ui/card'
-import { Spinner } from '@/components/ui/spinner'
+import { Button } from '@/components/ui/button'
 import { createRawEdgeIndex, createRawNodeIndex } from '@/utils/circuit-index'
 
 const searchParamsSchema = z.object({
   clickedId: z.string().optional(),
   hiddenIds: z.string().optional(),
+  selectedIds: z.string().optional(),
+  nodeThreshold: z.coerce.number().optional(),
+  edgeThreshold: z.coerce.number().optional(),
 })
 
 export const Route = createFileRoute('/circuit/$id/')({
-  validateSearch: searchParamsSchema,
+  validateSearch: (search) => parseWithPrettify(searchParamsSchema, search),
   staticData: {
     fullScreen: true,
   },
@@ -33,28 +47,153 @@ export const Route = createFileRoute('/circuit/$id/')({
       context.queryClient.ensureQueryData(circuitsQueryOptions()),
       context.queryClient.ensureQueryData(saeSetsQueryOptions()),
     ])
-    context.queryClient.prefetchQuery(circuitQueryOptions(params.id))
+    if (!circuits.find((c) => c.id === params.id)) {
+      if (circuits.length > 0) {
+        throw redirect({
+          to: '/circuit/$id',
+          params: { id: circuits[0].id },
+        })
+      }
+      throw redirect({
+        to: '/circuits',
+      })
+    }
     return { circuits, saeSets, circuitId: params.id }
   },
+  gcTime: 0,
 })
 
 function CircuitPage() {
-  const navigate = useNavigate()
-  const { circuits, saeSets, circuitId } = Route.useLoaderData()
+  const navigate = useNavigate({ from: Route.fullPath })
+  const { circuits: loaderCircuits, saeSets, circuitId } = Route.useLoaderData()
   const search = Route.useSearch()
+  const router = useRouter()
 
-  const clickedId = search.clickedId || null
-  const hiddenIds = useMemo(
-    () => (search.hiddenIds ? search.hiddenIds.split(',') : []),
-    [search.hiddenIds],
-  )
   const [hoveredId, setHoveredId] = useState<string | null>(null)
 
+  const nodeThreshold = search.nodeThreshold ?? 0.8
+  const edgeThreshold = search.edgeThreshold ?? 0.98
+
+  const { data: statusData, isLoading: isLoadingStatus } = useQuery(
+    circuitStatusQueryOptions(circuitId),
+  )
+  const { data: queryCircuits } = useQuery(circuitsQueryOptions())
+  const circuits = queryCircuits ?? loaderCircuits
+
+  // Only fetch circuit data when it's ready
   const {
     data: circuitData,
     isLoading: isLoadingCircuit,
+    isFetching: isFetchingCircuit,
     error: circuitError,
-  } = useQuery(circuitQueryOptions(circuitId))
+  } = useQuery({
+    ...circuitQueryOptions(circuitId, nodeThreshold, edgeThreshold),
+    enabled: statusData?.status === 'completed',
+  })
+
+  // Get clickedId, hiddenIds, and selectedIds and filter them to only include nodes that exist in the graph data
+  const clickedId = useMemo(
+    () =>
+      circuitData?.graphData.nodes.find((n) => n.nodeId === search.clickedId)
+        ?.nodeId || null,
+    [search.clickedId, circuitData],
+  )
+  const hiddenIds = useMemo(
+    () =>
+      search.hiddenIds
+        ? search.hiddenIds
+            .split(',')
+            .filter((id) =>
+              circuitData?.graphData.nodes.find((n) => n.nodeId === id),
+            )
+        : [],
+    [search.hiddenIds, circuitData?.graphData.nodes],
+  )
+  const selectedIds = useMemo(
+    () =>
+      search.selectedIds
+        ? search.selectedIds
+            .split(',')
+            .filter((id) =>
+              circuitData?.graphData.nodes.find((n) => n.nodeId === id),
+            )
+        : [],
+    [search.selectedIds, circuitData?.graphData.nodes],
+  )
+
+  const queryClient = useQueryClient()
+
+  const { mutate: doGenerateCircuit, isPending: isGenerating } = useMutation({
+    mutationFn: generateCircuit,
+    onSuccess: async (data) => {
+      handleGraphCreated(data.circuitId)
+    },
+  })
+
+  const handleThresholdsChange = useCallback(
+    (nodeThreshold: number, edgeThreshold: number) => {
+      navigate({
+        search: (prev) => ({
+          ...prev,
+          nodeThreshold,
+          edgeThreshold,
+        }),
+        replace: true,
+      })
+    },
+    [navigate],
+  )
+
+  const handleClearSelected = useCallback(() => {
+    navigate({
+      search: (prev) => ({
+        ...prev,
+        selectedIds: undefined,
+      }),
+      replace: true,
+    })
+  }, [navigate])
+
+  const handleRemoveSelected = useCallback(
+    (idToRemove: string) => {
+      navigate({
+        search: (prev) => ({
+          ...prev,
+          selectedIds: selectedIds.filter((id) => id !== idToRemove).join(','),
+        }),
+        replace: true,
+      })
+    },
+    [selectedIds, navigate],
+  )
+
+  const handleTraceSelected = useCallback(() => {
+    if (!circuitData || selectedIds.length === 0) return
+
+    const circuit = circuitData.graphData
+    const listOfFeatures: (number | boolean)[][] = selectedIds.map((id) => {
+      const node = circuit.nodes.find((n) => n.nodeId === id) as FeatureNode
+      return [
+        Math.floor(node.layer / 2),
+        node.feature.featureIndex,
+        node.ctxIdx,
+        node.featureType === 'lorsa',
+      ]
+    })
+
+    doGenerateCircuit({
+      data: {
+        saeSetName: circuitData.saeSetName,
+        input: circuitData.input,
+        desiredLogitProb: circuitData.config.desiredLogitProb,
+        maxFeatureNodes: circuitData.config.maxFeatureNodes,
+        maxNLogits: circuitData.config.maxNLogits,
+        qkTracingTopk: circuitData.config.qkTracingTopk,
+        listOfFeatures,
+        parentId: circuitId,
+      },
+    })
+  }, [circuitData, selectedIds, doGenerateCircuit, circuitId])
 
   const circuit: CircuitData | undefined = circuitData?.graphData
 
@@ -68,32 +207,11 @@ function CircuitPage() {
     [circuit],
   )
 
-  const updateSearchParams = useCallback(
-    (updates: { clickedId?: string | null; hiddenIds?: string[] }) => {
-      navigate({
-        to: '/circuit/$id',
-        params: { id: circuitId },
-        search: (prev) => ({
-          ...prev,
-          clickedId:
-            updates.clickedId === null
-              ? undefined
-              : (updates.clickedId ?? prev.clickedId),
-          hiddenIds:
-            updates.hiddenIds !== undefined
-              ? updates.hiddenIds.length > 0
-                ? updates.hiddenIds.join(',')
-                : undefined
-              : prev.hiddenIds,
-        }),
-        replace: true,
-      })
-    },
-    [navigate, circuitId],
-  )
-
   const handleGraphCreated = (newCircuitId: string) => {
-    navigate({
+    queryClient.invalidateQueries({ queryKey: ['circuits'] })
+    router.invalidate()
+
+    router.navigate({
       to: '/circuit/$id',
       params: { id: newCircuitId },
     })
@@ -104,8 +222,9 @@ function CircuitPage() {
     () => ({
       clickedId,
       hoveredId,
+      selectedIds,
     }),
-    [clickedId, hoveredId],
+    [clickedId, hoveredId, selectedIds],
   )
 
   const featureData = useMemo(() => {
@@ -123,11 +242,39 @@ function CircuitPage() {
   }, [clickedId, circuit])
 
   const handleNodeClick = useCallback(
-    (nodeId: string) => {
-      const newClickedId = clickedId === nodeId ? null : nodeId
-      updateSearchParams({ clickedId: newClickedId })
+    (nodeId: string, isMultiSelect: boolean) => {
+      if (isMultiSelect) {
+        if (!circuit) return
+        const node = circuit.nodes.find((n) => n.nodeId === nodeId)
+        if (
+          !node ||
+          (node.featureType !== 'cross layer transcoder' &&
+            node.featureType !== 'lorsa')
+        )
+          return
+
+        const newSelectedIds = selectedIds.includes(nodeId)
+          ? selectedIds.filter((id) => id !== nodeId)
+          : [...selectedIds, nodeId]
+        navigate({
+          search: (prev) => ({
+            ...prev,
+            selectedIds: newSelectedIds.join(','),
+          }),
+          replace: true,
+        })
+      } else {
+        const newClickedId = clickedId === nodeId ? null : nodeId
+        navigate({
+          search: (prev) => ({
+            ...prev,
+            clickedId: newClickedId ?? undefined,
+          }),
+          replace: true,
+        })
+      }
     },
-    [clickedId, updateSearchParams],
+    [circuit, clickedId, selectedIds, navigate],
   )
 
   const handleNodeHover = useCallback((nodeId: string | null) => {
@@ -135,16 +282,30 @@ function CircuitPage() {
   }, [])
 
   const handleCircuitSelect = (selectedCircuitId: string) => {
-    navigate({
+    router.navigate({
       to: '/circuit/$id',
       params: { id: selectedCircuitId },
+      search: {
+        nodeThreshold: 0.8,
+        edgeThreshold: 0.98,
+      },
     })
     setHoveredId(null)
   }
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-slate-50/50">
-      <div className="pt-4 pb-6 px-20 flex justify-center items-center">
+      <div className="pt-4 pb-6 px-20 flex items-center">
+        <div className="flex-1">
+          {statusData?.status === 'completed' && (
+            <ThresholdControls
+              nodeThreshold={nodeThreshold}
+              edgeThreshold={edgeThreshold}
+              onThresholdsChange={handleThresholdsChange}
+              isLoading={isFetchingCircuit}
+            />
+          )}
+        </div>
         <div className="flex justify-center items-center gap-3">
           <div className="w-[500px]">
             <GraphSelector
@@ -153,14 +314,106 @@ function CircuitPage() {
               onSelect={handleCircuitSelect}
             />
           </div>
-          <NewGraphDialog
-            saeSets={saeSets}
-            onGraphCreated={handleGraphCreated}
-          />
+          <div className="flex gap-2">
+            <NewGraphDialog
+              saeSets={saeSets}
+              onGraphCreated={handleGraphCreated}
+            />
+            {circuitData && (
+              <NewGraphDialog
+                saeSets={saeSets}
+                onGraphCreated={handleGraphCreated}
+                initialConfig={{
+                  saeSetName: circuitData.saeSetName,
+                  input: circuitData.input,
+                  desiredLogitProb: circuitData.config.desiredLogitProb,
+                  maxFeatureNodes: circuitData.config.maxFeatureNodes,
+                  maxNLogits: circuitData.config.maxNLogits,
+                  qkTracingTopk: circuitData.config.qkTracingTopk,
+                  name: circuitData.name
+                    ? `${circuitData.name}-remix`
+                    : undefined,
+                }}
+                trigger={
+                  <Button
+                    variant="outline"
+                    className="h-14 px-4 gap-2 text-blue-700 border-blue-200 bg-blue-50 hover:bg-blue-100 hover:border-blue-300 transition-colors font-semibold"
+                  >
+                    <GitFork className="h-4 w-4" />
+                    Remix
+                  </Button>
+                }
+              />
+            )}
+          </div>
         </div>
+        <div className="flex-1" />
       </div>
 
-      {circuitError ? (
+      {isLoadingStatus ? (
+        <div className="flex-1 flex flex-col items-center justify-center pb-20">
+          <div className="flex flex-col items-center gap-6 w-[400px]">
+            <div className="p-4 rounded-full bg-blue-50/50 text-blue-600">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+            <div className="w-full space-y-4">
+              <div className="text-center space-y-1">
+                <h3 className="text-base font-medium text-slate-900">
+                  Loading Circuit
+                </h3>
+                <p className="text-sm text-slate-500">Checking status...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : statusData?.status === 'pending' ||
+        statusData?.status === 'running' ? (
+        <div className="flex-1 flex flex-col items-center justify-center pb-20">
+          <div className="flex flex-col items-center gap-6 w-[400px]">
+            <div className="p-4 rounded-full bg-blue-50/50 text-blue-600">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+
+            <div className="w-full space-y-4">
+              <div className="text-center space-y-1">
+                <h3 className="text-base font-medium text-slate-900">
+                  Generating Circuit
+                </h3>
+                <p className="text-sm text-slate-500">
+                  This may take a few minutes depending on the complexity
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-medium text-slate-700">
+                  <span>{statusData?.progressPhase || 'Initializing...'}</span>
+                  <span>{Math.round(statusData?.progress ?? 0)}%</span>
+                </div>
+                <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 rounded-full transition-all duration-500 ease-out"
+                    style={{ width: `${statusData?.progress ?? 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : statusData?.status === 'failed' ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="flex justify-center mb-4">
+              <AlertCircle className="h-12 w-12 text-red-500" />
+            </div>
+            <h3 className="text-lg font-semibold text-red-600 mb-2">
+              Circuit Generation Failed
+            </h3>
+            <p className="text-gray-600 max-w-md">
+              {statusData?.errorMessage || 'An unknown error occurred'}
+            </p>
+          </div>
+        </div>
+      ) : circuitError ? (
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <h3 className="text-lg font-semibold text-red-600 mb-2">
@@ -172,9 +425,20 @@ function CircuitPage() {
           </div>
         </div>
       ) : isLoadingCircuit ? (
-        <div className="flex flex-col items-center justify-center gap-4 pt-10">
-          <Spinner isAnimating={true} />
-          <p className="text-gray-600">Loading circuit visualization...</p>
+        <div className="flex-1 flex flex-col items-center justify-center pb-20">
+          <div className="flex flex-col items-center gap-6 w-[400px]">
+            <div className="p-4 rounded-full bg-blue-50/50 text-blue-600">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+            <div className="w-full space-y-4">
+              <div className="text-center space-y-1">
+                <h3 className="text-base font-medium text-slate-900">
+                  Loading Visualization
+                </h3>
+                <p className="text-sm text-slate-500">Fetching graph data...</p>
+              </div>
+            </div>
+          </div>
         </div>
       ) : circuit ? (
         <div className="flex-1 flex flex-col overflow-hidden px-20 pb-20">
@@ -191,27 +455,45 @@ function CircuitPage() {
               )}
             </div>
 
-            {clickedId && rawNodeIndex && rawEdgeIndex && (
-              <NodeConnections
-                nodeIndex={rawNodeIndex}
-                edgeIndex={rawEdgeIndex}
-                clickedId={clickedId}
-                hoveredId={hoveredId}
-                hiddenIds={hiddenIds}
-                onNodeClick={handleNodeClick}
-                onNodeHover={handleNodeHover}
-              />
-            )}
-            {!clickedId && (
-              <Card className="flex flex-col basis-1/2 min-w-10 gap-4 p-6 items-center justify-center text-slate-500 text-xl">
-                <div className="flex flex-col items-center justify-center">
-                  <span>No node selected</span>
-                  <span className="text-sm text-slate-500">
-                    Click a node on the left to see its connections
-                  </span>
-                </div>
-              </Card>
-            )}
+            <div className="flex flex-col flex-1 gap-4 min-w-0 h-full overflow-hidden">
+              {clickedId && rawNodeIndex && rawEdgeIndex && (
+                <NodeConnections
+                  nodeIndex={rawNodeIndex}
+                  edgeIndex={rawEdgeIndex}
+                  clickedId={clickedId}
+                  hoveredId={hoveredId}
+                  hiddenIds={hiddenIds}
+                  onNodeClick={handleNodeClick}
+                  onNodeHover={handleNodeHover}
+                  className={
+                    selectedIds.length > 0
+                      ? 'flex-[3] min-h-0'
+                      : 'flex-1 min-h-0'
+                  }
+                />
+              )}
+              {selectedIds.length > 0 && circuit && (
+                <SelectedFeaturesList
+                  className={clickedId ? 'flex-[2] min-h-0' : 'flex-1 min-h-0'}
+                  selectedIds={selectedIds}
+                  circuit={circuit}
+                  isGenerating={isGenerating}
+                  onRemove={handleRemoveSelected}
+                  onClear={handleClearSelected}
+                  onTrace={handleTraceSelected}
+                />
+              )}
+              {!clickedId && selectedIds.length === 0 && (
+                <Card className="flex flex-col h-full gap-4 p-6 items-center justify-center text-slate-500 text-xl">
+                  <div className="flex flex-col items-center justify-center">
+                    <span>No node selected</span>
+                    <span className="text-sm text-slate-500">
+                      Click a node on the left to see its connections
+                    </span>
+                  </div>
+                </Card>
+              )}
+            </div>
           </div>
         </div>
       ) : null}

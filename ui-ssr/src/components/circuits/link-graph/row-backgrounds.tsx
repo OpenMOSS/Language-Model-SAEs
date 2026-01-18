@@ -3,7 +3,7 @@ import * as d3 from 'd3'
 
 interface RowBackgroundsProps {
   dimensions: { width: number; height: number }
-  positionedNodes: { layer: number }[]
+  positionedNodes: { layer: number; featureType: string }[]
   y: d3.ScaleBand<number>
 }
 
@@ -11,6 +11,10 @@ const SIDE_PADDING = 70
 
 export const RowBackgrounds: React.FC<RowBackgroundsProps> = React.memo(
   ({ dimensions, positionedNodes, y }) => {
+    const hasEmbedding = positionedNodes.some(
+      (d) => d.featureType === 'embedding',
+    )
+    const hasLogit = positionedNodes.some((d) => d.featureType === 'logit')
     const yNumTicks = (d3.max(positionedNodes, (d) => d.layer) || 0) + 2
 
     return (
@@ -20,11 +24,11 @@ export const RowBackgrounds: React.FC<RowBackgroundsProps> = React.memo(
           const rowHeight = y.bandwidth() - 1
 
           let backgroundColor: string
-          if (layerIdx === 0) {
+          if (hasEmbedding && layerIdx === 0) {
             backgroundColor = '#e5e7eb' // Embedding - slate with slight purple tint
-          } else if (layerIdx === yNumTicks - 1) {
+          } else if (hasLogit && layerIdx === yNumTicks - 1) {
             backgroundColor = '#e8e4e0' // Logits - slate with slight warm tint
-          } else if (layerIdx % 2 === 0) {
+          } else if ((layerIdx - (hasEmbedding ? 1 : 0)) % 2 === 1) {
             backgroundColor = '#e2e8f0' // MLP - original slate
           } else {
             backgroundColor = '#e0e7ef' // Attention - slate with slight blue tint

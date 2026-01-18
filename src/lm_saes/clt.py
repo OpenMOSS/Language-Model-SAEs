@@ -21,9 +21,13 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder, register_sae_model
+from lm_saes.abstract_sae import (
+    AbstractSparseAutoEncoder,
+    BaseSAEConfig,
+    register_sae_config,
+    register_sae_model,
+)
 from lm_saes.activation_functions import JumpReLU
-from lm_saes.config import CLTConfig
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
@@ -57,6 +61,54 @@ class CrossLayerTranscoderSpecs(TensorSpecs):
     @staticmethod
     def label(tensor: torch.Tensor) -> tuple[str, ...]:
         return CrossLayerTranscoderSpecs.reconstructed(tensor)
+
+
+@register_sae_config("clt")
+class CLTConfig(BaseSAEConfig):
+    """Configuration for Cross Layer Transcoder (CLT).
+
+    A CLT consists of L encoders and L(L+1)/2 decoders where each encoder at layer L
+    reads from the residual stream at that layer and can decode to layers L through L-1.
+    """
+
+    sae_type: str = "clt"
+
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
+
+    init_cross_layer_decoder_all_zero: bool = False
+
+    hook_points_in: list[str]
+    """List of hook points to capture input activations from, one for each layer."""
+
+    hook_points_out: list[str]
+    """List of hook points to capture output activations from, one for each layer."""
+
+    decode_with_csr: bool = False
+    """Whether to decode with CSR matrices. If `True`, will use CSR matrices for decoding. If `False`, will use dense matrices for decoding."""
+
+    sparsity_threshold_for_csr: float = 0.05
+    """The sparsity threshold for the CSR matrices. If the sparsity of the feature activations reaches this threshold, the CSR matrices will be used for decoding. The current conditioning for sparsity is dependent on usage of TopK family of activation functions, so this will not work with other activation functions like `relu` or `jumprelu`."""
+
+    @property
+    def n_layers(self) -> int:
+        """Number of layers in the CLT."""
+        return len(self.hook_points_in)
+
+    @property
+    def n_decoders(self) -> int:
+        """Number of decoders in the CLT."""
+        return self.n_layers * (self.n_layers + 1) // 2
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        """All hook points used by the CLT."""
+        return self.hook_points_in + self.hook_points_out
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        assert len(self.hook_points_in) == len(self.hook_points_out), (
+            "Number of input and output hook points must match"
+        )
 
 
 @register_sae_model("clt")
@@ -186,7 +238,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 ),
                 dims_to_keep_in_bwd=(-2, -1),
                 device=self.cfg.device,
-                dtype=self.cfg.dtype if self.cfg.promote_act_fn_dtype is None else self.cfg.promote_act_fn_dtype,
+                dtype=self.cfg.dtype,
                 device_mesh=device_mesh,
             )
 
@@ -195,10 +247,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 from lm_saes.utils.distributed import distributed_topk
 
                 def topk_activation(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     return distributed_topk(
@@ -211,10 +260,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             else:
 
                 def topk_activation(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     from lm_saes.utils.math import topk
 
@@ -231,10 +277,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 from lm_saes.utils.distributed import distributed_topk
 
                 def layer_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
                     assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
@@ -250,10 +293,7 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 from lm_saes.utils.math import topk
 
                 def layer_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
                     return topk(
@@ -269,38 +309,29 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 from lm_saes.utils.distributed import distributed_topk
 
                 def batch_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
-                    x = x.transpose(0, -2)
                     assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     result = distributed_topk(
                         x,
                         k=self.current_k * x.size(0),
                         device_mesh=device_mesh,
-                        dim=(-2, -1),
+                        dim=(0, -1),
                     )
-                    result = result.transpose(0, -2)
                     return result
             else:
                 from lm_saes.utils.math import topk
 
                 def batch_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
                     result = topk(
-                        x.transpose(0, -2),
+                        x,
                         k=self.current_k * x.size(0),
-                        dim=(-2, -1),
+                        dim=(0, -1),
                     )
-                    result = result.transpose(0, -2)
                     return result
 
             return batch_topk
@@ -310,49 +341,31 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
                 from lm_saes.utils.distributed import distributed_topk
 
                 def batch_layer_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
-                    original_shape = None
-                    if x.ndim == 4:
-                        original_shape = (x.size(0), x.size(1))
-                        x = x.flatten(end_dim=1)
                     assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     result = distributed_topk(
                         x,
                         k=self.current_k * x.size(0),
                         device_mesh=device_mesh,
-                        dim=(-3, -2, -1),
+                        dim=(0, -1, -2),
                         mesh_dim_name="model",
                     )
-                    if original_shape is not None:
-                        result = result.unflatten(dim=0, sizes=original_shape)
                     return result
             else:
                 # single-GPU batchtopk
                 from lm_saes.utils.math import topk
 
                 def batch_layer_topk(
-                    x: Union[
-                        Float[torch.Tensor, "batch n_layer d_sae"],
-                        Float[torch.Tensor, "batch seq_len n_layer d_sae"],
-                    ],
+                    x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
                     x = x * x.gt(0).to(x.dtype)
-                    original_shape = None
-                    if x.ndim == 4:
-                        original_shape = (x.size(0), x.size(1))
-                        x = x.flatten(end_dim=1)
                     result = topk(
                         x,
                         k=self.current_k * x.size(0),
-                        dim=(-3, -2, -1),
+                        dim=(0, -1, -2),
                     )
-                    if original_shape is not None:
-                        result = result.unflatten(dim=0, sizes=original_shape)
                     return result
 
             return batch_layer_topk  # type: ignore
@@ -1109,52 +1122,3 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
         }
 
         return base_maps | clt_maps
-
-    @override
-    def load_distributed_state_dict(
-        self, state_dict: "dict[str, torch.Tensor]", device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        """Load distributed state dict."""
-        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
-        self.device_mesh = device_mesh
-
-        # Load encoder parameters
-        for param_name in ["W_E", "b_E"]:
-            self.register_parameter(
-                param_name,
-                nn.Parameter(state_dict[f"{prefix}{param_name}"].to(getattr(self, param_name).dtype)),
-            )
-
-        # Load W_D ModuleList parameters
-        for layer_to in range(self.cfg.n_layers):
-            param_name = f"W_D.{layer_to}"
-            self.W_D[layer_to] = nn.Parameter(state_dict[f"{prefix}{param_name}"].to(self.W_D[layer_to].dtype))
-
-        # Load b_D parameters
-        for layer_to in range(self.cfg.n_layers):
-            param_name = f"b_D.{layer_to}"
-            self.b_D[layer_to] = nn.Parameter(state_dict[f"{prefix}{param_name}"].to(self.b_D[layer_to].dtype))
-
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str,
-        strict_loading: bool = True,
-        fold_activation_scale: bool = True,
-        device_mesh: DeviceMesh | None = None,
-        **kwargs,
-    ):
-        cfg = CLTConfig.from_pretrained(
-            pretrained_name_or_path,
-            strict_loading=strict_loading,
-            **kwargs,
-        )
-        model = cls.from_config(
-            cfg,
-            fold_activation_scale=fold_activation_scale,
-            device_mesh=device_mesh,
-        )
-        return model
-    
-    def hf_folder_name(self) -> str:
-        return "CLT"

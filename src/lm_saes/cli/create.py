@@ -3,7 +3,12 @@ from typing import Annotated
 
 import typer
 
-from lm_saes.cli.common import (
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.config import DatasetConfig
+from lm_saes.database import MongoClient, MongoDBConfig
+from lm_saes.sae import SAEConfig
+
+from .common import (
     DEFAULT_MONGO_DB,
     DEFAULT_MONGO_URI,
     DEFAULT_SAE_SERIES,
@@ -11,9 +16,7 @@ from lm_saes.cli.common import (
     MongoURIOption,
     SAESeriesOption,
 )
-from lm_saes.cli.utils import load_config
-from lm_saes.config import DatasetConfig, LanguageModelConfig, MongoDBConfig, SAEConfig
-from lm_saes.database import MongoClient
+from .utils import load_config
 
 app = typer.Typer(help="Create database records for datasets, models, or SAEs.")
 

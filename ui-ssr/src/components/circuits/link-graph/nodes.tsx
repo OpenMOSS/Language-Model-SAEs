@@ -10,6 +10,7 @@ interface NodesProps {
   visState: {
     clickedId: string | null
     hoveredId: string | null
+    selectedIds?: string[]
   }
 }
 
@@ -53,9 +54,17 @@ export const Nodes: React.FC<NodesProps> = React.memo(
             cy={d.pos[1]}
             r={3}
             fill={getNodeColor(d.featureType)}
-            stroke={d.nodeId === visState.clickedId ? '#ef4444' : '#000'}
+            stroke={
+              d.nodeId === visState.clickedId
+                ? '#ef4444'
+                : visState.selectedIds?.includes(d.nodeId)
+                  ? '#22c55e'
+                  : '#000'
+            }
             strokeWidth={
-              d.nodeId === visState.clickedId || isConnected(d.nodeId)
+              d.nodeId === visState.clickedId ||
+              visState.selectedIds?.includes(d.nodeId) ||
+              isConnected(d.nodeId)
                 ? '1.5'
                 : '0.5'
             }
@@ -75,9 +84,17 @@ export const Nodes: React.FC<NodesProps> = React.memo(
             width={6}
             height={6}
             fill={getNodeColor(d.featureType)}
-            stroke={d.nodeId === visState.clickedId ? '#ef4444' : '#000'}
+            stroke={
+              d.nodeId === visState.clickedId
+                ? '#ef4444'
+                : visState.selectedIds?.includes(d.nodeId)
+                  ? '#22c55e'
+                  : '#000'
+            }
             strokeWidth={
-              d.nodeId === visState.clickedId || isConnected(d.nodeId)
+              d.nodeId === visState.clickedId ||
+              visState.selectedIds?.includes(d.nodeId) ||
+              isConnected(d.nodeId)
                 ? '1.5'
                 : '0.5'
             }

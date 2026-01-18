@@ -4,7 +4,6 @@ from datasets import Dataset
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend import LanguageModel
-from lm_saes.config import BaseSAEConfig
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from server.config import client, device, sae_series, tokenizer_only
 from server.utils.common import synchronized
@@ -37,8 +36,6 @@ def get_sae(*, name: str) -> AbstractSparseAutoEncoder:
     """Load and cache a sparse autoencoder."""
     path = client.get_sae_path(name, sae_series)
     assert path is not None, f"SAE {name} not found"
-    cfg = BaseSAEConfig.from_pretrained(path)
-    cfg.device = device
-    sae = AbstractSparseAutoEncoder.from_config(cfg)
+    sae = AbstractSparseAutoEncoder.from_pretrained(path, device=device)
     sae.eval()
     return sae

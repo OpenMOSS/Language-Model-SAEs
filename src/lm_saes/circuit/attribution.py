@@ -33,8 +33,8 @@ from tqdm import tqdm
 from transformer_lens.hook_points import HookPoint
 
 from lm_saes.clt import CrossLayerTranscoder
+from lm_saes.utils.logging import get_distributed_logger
 
-from ..utils.logging import get_distributed_logger
 from .graph import Graph
 from .replacement_model import ReplacementModel
 from .utils.attn_scores_attribution import compute_attn_scores_attribution
@@ -44,6 +44,7 @@ from .utils.attribution_utils import (
     ensure_tokenized,
     select_encoder_rows,
     select_encoder_rows_lorsa,
+    select_feature_activations,
     select_scaled_decoder_vecs_lorsa,
     select_scaled_decoder_vecs_transcoder,
 )
@@ -542,6 +543,8 @@ def attribute(
     sae_series: Optional[Union[str, List[str]]] = None,
     use_lorsa: bool = True,
     qk_tracing_topk: int = 10,
+    list_of_features: Optional[List[Tuple[int, int, int, bool]]] = None,
+    progress_callback: Optional[Callable[[float, float, str], None]] = None,
 ) -> Graph:
     """Compute an attribution graph for *prompt*.
 
@@ -557,6 +560,7 @@ def attribute(
                  or None (no offloading).
         verbose: Whether to show progress information.
         update_interval: Number of batches to process before updating the feature ranking.
+        progress_callback: Optional callback for tracking progress (current, total, phase).
 
     Returns:
         Graph: Fully dense adjacency (unpruned).
@@ -577,6 +581,8 @@ def attribute(
             sae_series=sae_series,
             use_lorsa=use_lorsa,
             qk_tracing_topk=qk_tracing_topk,
+            list_of_features=list_of_features,
+            progress_callback=progress_callback,
         )
     finally:
         for reload_handle in offload_handles:
@@ -596,6 +602,8 @@ def _run_attribution(
     sae_series=None,
     use_lorsa: bool = True,
     qk_tracing_topk: int = 10,
+    list_of_features=None,
+    progress_callback: Optional[Callable[[float, float, str], None]] = None,
 ):
     start_time = time.time()
     # Phase 0: precompute
@@ -667,77 +675,191 @@ def _run_attribution(
     else:
         total_active_feats = clt_activation_matrix._nnz()
 
-    logit_idx, logit_p, logit_vecs = compute_salient_logits(
-        logits[0, -1],
-        model.unembed.W_U,
-        max_n_logits=max_n_logits,
-        desired_logit_prob=desired_logit_prob,
-    )
-    logger.info(f"Selected {len(logit_idx)} logits with cumulative probability {logit_p.sum().item():.4f}")
+    if list_of_features is not None:
+        # Feature tracing: start from specific features instead of logits
+        n_features = len(list_of_features)
+        feature_activations = select_feature_activations(
+            list_of_features, lorsa_activation_matrix, clt_activation_matrix
+        )
+        logger.info(f"Selected {n_features} features for tracing with activations: {feature_activations}")
 
-    if offload:
-        offload_handles += offload_modules([model.unembed, model.embed], offload)
+        # Find the node indices of the features we want to trace
+        feature_node_indices = []
+        for layer, feature_idx, pos, is_lorsa in list_of_features:
+            if is_lorsa:
+                indices = lorsa_activation_matrix.indices()
+                mask = (indices[0] == layer) & (indices[1] == pos) & (indices[2] == feature_idx)
+                if mask.any():
+                    feature_node_idx = torch.where(mask)[0][0]
+                    feature_node_indices.append(feature_node_idx.item())
+            else:
+                indices = clt_activation_matrix.indices()
+                mask = (indices[0] == layer) & (indices[1] == pos) & (indices[2] == feature_idx)
+                if mask.any():
+                    feature_node_idx = torch.where(mask)[0][0] + (lorsa_activation_matrix._nnz() if use_lorsa else 0)
+                    feature_node_indices.append(feature_node_idx.item())
 
-    if use_lorsa:
-        logit_offset = total_active_feats + 2 * n_layers * n_pos + n_pos
-    else:
-        logit_offset = total_active_feats + n_layers * n_pos + n_pos
-    n_logits = len(logit_idx)
-    total_nodes = logit_offset + n_logits
+        logger.info(f"Feature node indices to trace: {feature_node_indices}")
 
-    max_feature_nodes = min(max_feature_nodes or total_active_feats, total_active_feats)
-    logger.info(f"Will include {max_feature_nodes} of {total_active_feats} feature nodes")
-
-    edge_matrix = torch.zeros(max_feature_nodes + n_logits, total_nodes)
-    # if use_lorsa:
-    lorsa_pattern = torch.zeros(max_feature_nodes + n_logits, n_pos)
-    z_pattern = torch.zeros(max_feature_nodes + n_logits, n_pos)
-    # Maps row indices in edge_matrix to original feature/node indices
-    # First populated with logit node IDs, then feature IDs in attribution order
-    row_to_node_index = torch.zeros(max_feature_nodes + n_logits, dtype=torch.int32)
-    logger.info(f"Input vectors built in {time.time() - phase_start:.2f}s")
-
-    # Phase 3: logit attribution
-    logger.info("Phase 3: Computing logit attributions")
-    phase_start = time.time()
-    for i in range(0, len(logit_idx), batch_size):
-        batch = logit_vecs[i : i + batch_size]
-        rows = ctx.compute_batch(
-            layers=torch.full((batch.shape[0],), 2 * n_layers if use_lorsa else n_layers),
-            positions=torch.full((batch.shape[0],), n_pos - 1),
-            inject_values=batch,
+        # Use feature activations as starting weights (normalized)
+        logit_p = (
+            feature_activations / feature_activations.sum()
+            if feature_activations.sum() > 0
+            else torch.ones(n_features, device=feature_activations.device, dtype=feature_activations.dtype)
         )
 
-        # '''notations begin'''
-        # bias_attributions = []
-        # for param in model._get_requires_grad_bias_params():
-        #     try:
-        #         attribution = (param[1].data * param[1].grad).sum()
-        #         bias_attributions.append(attribution)
-        #     except TypeError as e:
-        #         pass
-        # print(f'bias contribution: {sum(bias_attributions)}')
-        # print(f'feature contribution: {rows[0, :total_active_feats].sum()}')
-        # print(f'error contribution: {rows[0, total_active_feats: total_active_feats + 2 * n_layers * n_pos].sum()}')
-        # print(f'token contribution: {rows[0, total_active_feats + 2 * n_layers * n_pos: logit_offset].sum()}')
-        # print(f'logits[0, -1].max() - logits[0, -1].mean(): {logits[0, -1].max() - logits[0, -1].mean()}')
-        # print("--------------------------------")
-        # if n_logits == 1:
-        #     assert torch.allclose(sum(bias_attributions) + rows[0].sum(), logits[0, -1].max() - logits[0, -1].mean(), rtol=1e-3), f"{sum(bias_attributions) + rows[0].sum()} != {logits[0, -1].max() - logits[0, -1].mean()}"
-        # assert total_active_feats + (2 * n_layers + 1) * n_pos == rows.shape[1]
-        # for param in model._get_requires_grad_bias_params():
-        #     param[1].grad = None
-        # '''notations end'''
+        if offload:
+            offload_handles += offload_modules([model.unembed, model.embed], offload)
 
-        edge_matrix[i : i + batch.shape[0], :logit_offset] = rows.cpu()
-        row_to_node_index[i : i + batch.shape[0]] = torch.arange(i, i + batch.shape[0]) + logit_offset
-    logger.info(f"Logit attributions completed in {time.time() - phase_start:.2f}s")
+        if use_lorsa:
+            logit_offset = total_active_feats + 2 * n_layers * n_pos + n_pos
+        else:
+            logit_offset = total_active_feats + n_layers * n_pos + n_pos
+        n_logits = n_features
+        total_nodes = logit_offset + n_logits
+
+        max_feature_nodes = min(max_feature_nodes or total_active_feats, total_active_feats)
+        logger.info(f"Will include {max_feature_nodes} of {total_active_feats} feature nodes")
+
+        edge_matrix = torch.zeros(max_feature_nodes + n_features, total_nodes)
+        # if use_lorsa:
+        lorsa_pattern = torch.zeros(max_feature_nodes + n_features, n_pos)
+        z_pattern = torch.zeros(max_feature_nodes + n_features, n_pos)
+        # Maps row indices in edge_matrix to original feature/node indices
+        # First populated with feature node IDs (dummy), then feature IDs in attribution order
+        row_to_node_index = torch.zeros(max_feature_nodes + n_features, dtype=torch.int32)
+    else:
+        logit_idx, logit_p, logit_vecs = compute_salient_logits(
+            logits[0, -1],
+            model.unembed.W_U,
+            max_n_logits=max_n_logits,
+            desired_logit_prob=desired_logit_prob,
+        )
+        logger.info(f"Selected {len(logit_idx)} logits with cumulative probability {logit_p.sum().item():.4f}")
+
+        if offload:
+            offload_handles += offload_modules([model.unembed, model.embed], offload)
+
+        if use_lorsa:
+            logit_offset = total_active_feats + 2 * n_layers * n_pos + n_pos
+        else:
+            logit_offset = total_active_feats + n_layers * n_pos + n_pos
+        n_logits = len(logit_idx)
+        total_nodes = logit_offset + n_logits
+
+        max_feature_nodes = min(max_feature_nodes or total_active_feats, total_active_feats)
+        logger.info(f"Will include {max_feature_nodes} of {total_active_feats} feature nodes")
+
+        edge_matrix = torch.zeros(max_feature_nodes + n_logits, total_nodes)
+        # if use_lorsa:
+        lorsa_pattern = torch.zeros(max_feature_nodes + n_logits, n_pos)
+        z_pattern = torch.zeros(max_feature_nodes + n_logits, n_pos)
+        # Maps row indices in edge_matrix to original feature/node indices
+        # First populated with logit node IDs, then feature IDs in attribution order
+        row_to_node_index = torch.zeros(max_feature_nodes + n_logits, dtype=torch.int32)
+    logger.info(f"Input vectors built in {time.time() - phase_start:.2f}s")
+
+    # Phase 3: logit/feature attribution
+    if list_of_features is not None:
+        logger.info("Phase 3: Computing feature attributions (dummy logit)")
+        phase_start = time.time()
+        # Create dummy logit row with feature activations
+        for i, (layer, feature_idx, pos, is_lorsa) in enumerate(list_of_features):
+            # Find the row index for this feature in the total nodes
+            if is_lorsa:
+                # For LORSA, find the index in lorsa_activation_matrix
+                indices = lorsa_activation_matrix.indices()
+                mask = (indices[0] == layer) & (indices[1] == pos) & (indices[2] == feature_idx)
+                if mask.any():
+                    feature_row_idx = torch.where(mask)[0][0]
+                    edge_matrix[i, feature_row_idx] = feature_activations[i].cpu()
+            else:
+                # For CLT, find the index in clt_activation_matrix
+                indices = clt_activation_matrix.indices()
+                mask = (indices[0] == layer) & (indices[1] == pos) & (indices[2] == feature_idx)
+                if mask.any():
+                    feature_row_idx = torch.where(mask)[0][0] + (lorsa_activation_matrix._nnz() if use_lorsa else 0)
+                    edge_matrix[i, feature_row_idx] = feature_activations[i].cpu()
+            row_to_node_index[i] = logit_offset + i
+
+            # # '''notations begin'''
+            # print(f'Feature {i}: layer={layer}, feature_idx={feature_idx}, pos={pos}, is_lorsa={is_lorsa}')
+            # print(f'Feature activation value: {feature_activations[i]}')
+            # print(f'Feature row index in edge_matrix: {feature_row_idx}')
+            # print(f'Edge matrix value set: {edge_matrix[i, feature_row_idx]}')
+            # print(f'Logit offset for this feature: {logit_offset + i}')
+
+            # # Debug token sequence
+            # input_ids = ensure_tokenized(prompt, model.tokenizer)
+            # print(f'Input tokens: {input_ids}')
+            # print(f'Token at pos {pos}: {input_ids[pos] if pos < len(input_ids) else "OUT_OF_RANGE"}')
+            # print(f'Decoded token at pos {pos}: {model.tokenizer.decode(input_ids[pos]) if pos < len(input_ids) else "OUT_OF_RANGE"}')
+            # print("--------------------------------")
+
+            # # Assert that the edge matrix value was set correctly
+            assert torch.allclose(edge_matrix[i, feature_row_idx], feature_activations[i].cpu(), rtol=1e-6), (
+                f"Edge matrix value {edge_matrix[i, feature_row_idx]} != feature activation {feature_activations[i].cpu()}"
+            )
+
+            # Assert that feature_row_idx is within valid range
+            assert 0 <= feature_row_idx < total_active_feats, (
+                f"Feature row index {feature_row_idx} out of range [0, {total_active_feats})"
+            )
+
+            # Assert that logit offset is correct
+            assert row_to_node_index[i] == logit_offset + i, (
+                f"Row to node index mismatch: {row_to_node_index[i]} != {logit_offset + i}"
+            )
+
+            # '''notations end'''
+
+        logger.info(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
+    else:
+        logger.info("Phase 3: Computing logit attributions")
+        phase_start = time.time()
+        for i in range(0, len(logit_idx), batch_size):
+            batch = logit_vecs[i : i + batch_size]
+            rows = ctx.compute_batch(
+                layers=torch.full((batch.shape[0],), 2 * n_layers if use_lorsa else n_layers),
+                positions=torch.full((batch.shape[0],), n_pos - 1),
+                inject_values=batch,
+            )
+
+            # '''notations begin'''
+            # bias_attributions = []
+            # for param in model._get_requires_grad_bias_params():
+            #     try:
+            #         attribution = (param[1].data * param[1].grad).sum()
+            #         bias_attributions.append(attribution)
+            #     except TypeError as e:
+            #         pass
+            # print(f'bias contribution: {sum(bias_attributions)}')
+            # print(f'feature contribution: {rows[0, :total_active_feats].sum()}')
+            # print(f'error contribution: {rows[0, total_active_feats: total_active_feats + 2 * n_layers * n_pos].sum()}')
+            # print(f'token contribution: {rows[0, total_active_feats + 2 * n_layers * n_pos: logit_offset].sum()}')
+            # print(f'logits[0, -1].max() - logits[0, -1].mean(): {logits[0, -1].max() - logits[0, -1].mean()}')
+            # print("--------------------------------")
+            # if n_logits == 1:
+            #     assert torch.allclose(sum(bias_attributions) + rows[0].sum(), logits[0, -1].max() - logits[0, -1].mean(), rtol=1e-3), f"{sum(bias_attributions) + rows[0].sum()} != {logits[0, -1].max() - logits[0, -1].mean()}"
+            # assert total_active_feats + (2 * n_layers + 1) * n_pos == rows.shape[1]
+            # for param in model._get_requires_grad_bias_params():
+            #     param[1].grad = None
+            # '''notations end'''
+
+            edge_matrix[i : i + batch.shape[0], :logit_offset] = rows.cpu()
+            row_to_node_index[i : i + batch.shape[0]] = torch.arange(i, i + batch.shape[0]) + logit_offset
+        logger.info(f"Logit attributions completed in {time.time() - phase_start:.2f}s")
 
     # Phase 4: feature attribution
     logger.info("Phase 4: Computing feature attributions")
 
     lorsa_feat_layer, lorsa_feat_pos = lorsa_activation_matrix.indices()[:2] if use_lorsa else (None, None)
     clt_feat_layer, clt_feat_pos = clt_activation_matrix.indices()[:2]
+
+    lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = (
+        lorsa_activation_matrix.indices() if use_lorsa else (None, None, None)
+    )
+    clt_feat_layer, clt_feat_pos, clt_feat_idx = clt_activation_matrix.indices()
 
     def idx_to_layer(idx: torch.Tensor) -> torch.Tensor:
         if use_lorsa:
@@ -794,6 +916,7 @@ def _run_attribution(
         else:
             return torch.nn.functional.one_hot(clt_feat_pos[idx], num_classes=n_pos)
 
+    # DEBUGGING:
     # def idx_to_activation_values(idx: torch.Tensor) -> torch.Tensor:
     #     is_lorsa = idx < len(lorsa_feat_layer)
     #     if is_lorsa.squeeze().item():
@@ -801,7 +924,10 @@ def _run_attribution(
     #         return lorsa_activation_matrix.values()[idx]
     #     else:
     #         layer, feat_idx = clt_feat_layer[idx - len(lorsa_feat_layer)], clt_feat_idx[idx - len(lorsa_feat_layer)]
-    #         return clt_activation_matrix.values()[idx - len(lorsa_feat_layer)] - model.transcoders.b_E[layer, feat_idx]
+    #         print(f'tc activation: {clt_activation_matrix.values()[idx - len(lorsa_feat_layer)]}')
+    #         return clt_activation_matrix.values()[idx - len(lorsa_feat_layer)] - model.transcoders[layer].b_E[feat_idx]
+
+    # END OF DEBUGGING:
 
     phase_start = time.time()
     st = n_logits
@@ -831,6 +957,15 @@ def _run_attribution(
                 attention_patterns=idx_to_pattern(idx_batch),
                 retain_graph=n_visited < max_feature_nodes or qk_tracing_topk > 0,
             )
+
+            # DEBUGGING:
+
+            # Print feature information before attention patterns
+            # for i, idx in enumerate(idx_batch):
+            #     layer = idx_to_layer(idx.unsqueeze(0)).item()
+            #     pos = idx_to_pos(idx.unsqueeze(0)).item()
+            #     is_lorsa = idx < len(lorsa_feat_layer) if use_lorsa else False
+
             # print(f'attention_patterns {idx_batch} {idx_to_pattern(idx_batch)}')
             # bias_attributions = []
             # for param in model._get_requires_grad_bias_params():
@@ -844,10 +979,12 @@ def _run_attribution(
             # print(f'error_contribution: {rows[0, total_active_feats: total_active_feats + 2 * n_layers * n_pos].sum()}')
             # print(f'token_contribution: {rows[0, total_active_feats + 2 * n_layers * n_pos: logit_offset].sum()}')
             # print(f'overall_activation: {idx_to_activation_values(idx_batch)}')
-            # print(idx_batch.squeeze().item() < len(lorsa_feat_layer), torch.allclose(idx_to_activation_values(idx_batch), rows[0, :logit_offset].sum() + sum(bias_attributions), rtol=1e-3))
+            # print(idx_batch.squeeze().item() < len(lorsa_feat_layer), torch.allclose(idx_to_activation_values(idx_batch), rows[0, :logit_offset].sum() + sum(bias_attributions), rtol=1e-1))
             # print("--------------------------------")
             # for param in model._get_requires_grad_bias_params():
             #     param[1].grad = None
+
+            # END OF DEBUGGING:
 
             end = min(st + batch_size, st + rows.shape[0])
             edge_matrix[st:end, :logit_offset] = rows.cpu()
@@ -857,6 +994,8 @@ def _run_attribution(
             visited[idx_batch] = True
             st = end
             pbar.update(len(idx_batch))
+            if progress_callback:
+                progress_callback(n_visited, max_feature_nodes, "Feature influence computation")
 
     pbar.close()
     logger.info(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
@@ -891,8 +1030,9 @@ def _run_attribution(
         selected_lorsa_feature_kpos = idx_to_z_pattern(selected_lorsa_feature).argmax(dim=-1)
         selected_lorsa_feature_qk_idx = idx_to_qk_idx(selected_lorsa_feature)
 
-        qk_tracing_results = {
-            idx.item(): compute_attn_scores_attribution(
+        qk_tracing_results = {}
+        for i, idx in enumerate(tqdm(selected_lorsa_feature, desc="Computing attention scores attribution")):
+            qk_tracing_results[idx.item()] = compute_attn_scores_attribution(
                 model,
                 lorsa_activation_matrix,
                 clt_activation_matrix,
@@ -905,8 +1045,8 @@ def _run_attribution(
                 input_ids,
                 qk_tracing_topk,
             )
-            for i, idx in enumerate(tqdm(selected_lorsa_feature, desc="Computing attention scores attribution"))
-        }
+            if progress_callback:
+                progress_callback(i + 1, len(selected_lorsa_feature), "Computing attention scores attribution")
     else:
         qk_tracing_results = None
 
@@ -922,11 +1062,12 @@ def _run_attribution(
     full_edge_matrix[:max_feature_nodes] = edge_matrix[:max_feature_nodes]
     full_edge_matrix[-n_logits:] = edge_matrix[max_feature_nodes:]
 
+    # modified for list_of_features
     graph = Graph(
         input_string=model.tokenizer.decode(input_ids),
         input_tokens=input_ids,
-        logit_tokens=logit_idx,
-        logit_probabilities=logit_p,
+        logit_tokens=torch.tensor(list_of_features) if list_of_features is not None else logit_idx,
+        logit_probabilities=feature_activations if list_of_features is not None else logit_p,
         lorsa_active_features=lorsa_activation_matrix.indices().T if use_lorsa else None,
         lorsa_activation_values=lorsa_activation_matrix.values() if use_lorsa else None,
         clt_active_features=clt_activation_matrix.indices().T,

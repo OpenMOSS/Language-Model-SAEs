@@ -9,11 +9,12 @@ from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.config import LanguageModelConfig
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_model
 
+from .utils.attribution_utils import ensure_tokenized
 from .utils.transcoder_set import TranscoderSet
 
 # Type definition for transcoders: per-layer (dict) or cross-layer (CLT)
@@ -589,6 +590,16 @@ class ReplacementModel(HookedTransformer):
         finally:
             self.cfg.output_logits_soft_cap = current_softcap
 
+    def maybe_zero_bos(self, tokens: torch.Tensor) -> torch.Tensor:
+        special_tokens = []
+        for special_token in self.tokenizer.special_tokens_map.values():
+            if isinstance(special_token, list):
+                special_tokens.extend(special_token)
+            else:
+                special_tokens.append(special_token)
+        special_token_ids = self.tokenizer.convert_tokens_to_ids(special_tokens)
+        return tokens[0].cpu().item() in special_token_ids
+
     @torch.no_grad()
     def setup_attribution(
         self,
@@ -607,23 +618,8 @@ class ReplacementModel(HookedTransformer):
                 bos position
         """
 
-        if isinstance(inputs, torch.Tensor):
-            tokens = inputs.squeeze(0)
-            assert tokens.ndim == 1, "Tokens must be a 1D tensor"
-        else:
-            assert isinstance(inputs, str), "Inputs must be a string"
-            tokenized = self.tokenizer(inputs, return_tensors="pt").input_ids.to(self.cfg.device)
-            tokens = tokenized.squeeze(0)
-
-        special_tokens = []
-        for special_token in self.tokenizer.special_tokens_map.values():
-            if isinstance(special_token, list):
-                special_tokens.extend(special_token)
-            else:
-                special_tokens.append(special_token)
-
-        special_token_ids = self.tokenizer.convert_tokens_to_ids(special_tokens)
-        zero_bos = zero_bos and tokens[0].cpu().item() in special_token_ids  # == self.tokenizer.bos_token_id
+        tokens = ensure_tokenized(inputs, self.tokenizer)
+        zero_bos = zero_bos and self.maybe_zero_bos(tokens)
 
         # cache activations and MLP in
         (activation_matrix, lorsa_attention_score, lorsa_attention_pattern, z_attention_pattern, activation_hooks) = (

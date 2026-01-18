@@ -70,25 +70,13 @@ def admin_update_sae(name: str, request: UpdateSaeRequest):
             return Response(content=f"SAE with name '{request.new_name}' already exists", status_code=409)
 
         update_data["name"] = request.new_name
-
-        # Update all related collections
-        client.feature_collection.update_many(
-            {"sae_name": name, "sae_series": sae_series}, {"$set": {"sae_name": request.new_name}}
-        )
-        client.analysis_collection.update_many(
-            {"sae_name": name, "sae_series": sae_series}, {"$set": {"sae_name": request.new_name}}
-        )
-        client.bookmark_collection.update_many(
-            {"sae_name": name, "sae_series": sae_series}, {"$set": {"sae_name": request.new_name}}
-        )
-
         # Clear cache
         get_sae.cache_clear()
 
     if not update_data:
         return {"message": "No updates provided"}
 
-    client.sae_collection.update_one({"name": name, "series": sae_series}, {"$set": update_data})
+    client.update_sae(name, sae_series, update_data)
 
     new_name = request.new_name if request.new_name else name
     return {"message": f"SAE '{new_name}' updated successfully"}
@@ -153,13 +141,10 @@ def admin_update_sae_set(name: str, request: UpdateSaeSetRequest):
 
         update_data["name"] = request.new_name
 
-        # Update circuits that reference this SAE set
-        client.circuit_collection.update_many({"sae_set_name": name}, {"$set": {"sae_set_name": request.new_name}})
-
     if not update_data:
         return {"message": "No updates provided"}
 
-    client.sae_set_collection.update_one({"name": name}, {"$set": update_data})
+    client.update_sae_set(name, update_data)
 
     new_name = request.new_name if request.new_name else name
     return {"message": f"SAE set '{new_name}' updated successfully"}
@@ -179,25 +164,16 @@ def admin_delete_sae_set(name: str):
 @router.get("/circuits")
 def admin_list_circuits(limit: int = 100, skip: int = 0):
     """List all circuits with full details for admin."""
-    circuits = client.list_circuits(sae_series=sae_series, limit=limit, skip=skip, with_graph_data=True)
+    circuits = client.list_circuits(sae_series=sae_series, limit=limit, skip=skip)
 
     total_count = client.circuit_collection.count_documents({"sae_series": sae_series})
-
-    circuits = [
-        circuit
-        | {
-            "node_count": len(circuit["graph_data"]["nodes"]),
-            "edge_count": len(circuit["graph_data"]["links"]),
-            "graph_data": None,
-        }
-        for circuit in circuits
-    ]
 
     return {"circuits": circuits, "total_count": total_count}
 
 
 class UpdateCircuitRequest(BaseModel):
     name: Optional[str] = None
+    group: Optional[str] = None
 
 
 @router.put("/circuits/{circuit_id}")
@@ -208,6 +184,8 @@ def admin_update_circuit(circuit_id: str, request: UpdateCircuitRequest):
     update_data = {}
     if request.name is not None:
         update_data["name"] = request.name
+    if request.group is not None:
+        update_data["group"] = request.group
 
     if not update_data:
         return {"message": "No updates provided"}
@@ -223,6 +201,18 @@ def admin_update_circuit(circuit_id: str, request: UpdateCircuitRequest):
     return {"message": "Circuit updated successfully"}
 
 
+class BulkGroupRequest(BaseModel):
+    circuit_ids: list[str]
+    group: Optional[str] = None
+
+
+@router.post("/circuits/bulk-group")
+def admin_bulk_group_circuits(request: BulkGroupRequest):
+    """Update the group for multiple circuits."""
+    count = client.update_circuits_group(request.circuit_ids, request.group)
+    return {"message": f"Updated {count} circuits"}
+
+
 @router.get("/stats")
 def admin_get_stats():
     """Get overall statistics for the admin dashboard."""
@@ -231,20 +221,10 @@ def admin_get_stats():
     circuit_count = client.circuit_collection.count_documents({"sae_series": sae_series})
     bookmark_count = client.bookmark_collection.count_documents({"sae_series": sae_series})
 
-    # Get SAE with most features
-    pipeline = [
-        {"$match": {"sae_series": sae_series}},
-        {"$group": {"_id": "$sae_name", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
-        {"$limit": 5},
-    ]
-    top_saes = list(client.feature_collection.aggregate(pipeline))
-
     return {
         "sae_count": sae_count,
         "sae_set_count": sae_set_count,
         "circuit_count": circuit_count,
         "bookmark_count": bookmark_count,
         "sae_series": sae_series,
-        "top_saes_by_features": [{"name": s["_id"], "feature_count": s["count"]} for s in top_saes],
     }

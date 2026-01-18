@@ -1,10 +1,11 @@
 import { memo, useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Send } from 'lucide-react'
+import { ArrowLeftRight, ChevronRight, Send, Target } from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
 import { Card } from '../ui/card'
 import { Info } from '../ui/info'
 import { Button } from '../ui/button'
-import type { Node } from '@/types/circuit'
+import type { Node, QKTracingResults } from '@/types/circuit'
 import type { RawEdgeIndex, RawNodeIndex } from '@/utils/circuit-index'
 import { cn } from '@/lib/utils'
 import { formatFeatureId } from '@/utils/circuit'
@@ -17,7 +18,7 @@ interface FeatureRowProps {
   isHidden: boolean
   isHovered: boolean
   isClicked: boolean
-  onNodeClick: (nodeId: string, metaKey: boolean) => void
+  onNodeClick: (nodeId: string, isMultiSelect: boolean) => void
   onNodeHover: (nodeId: string | null) => void
 }
 
@@ -42,7 +43,7 @@ const FeatureRow = memo(
           isClicked && 'ring-2 ring-blue-500',
         )}
         style={weightStyle}
-        onClick={() => onNodeClick(node.nodeId, false)}
+        onClick={(e) => onNodeClick(node.nodeId, e.metaKey || e.ctrlKey)}
         onMouseEnter={() => onNodeHover(node.nodeId)}
         onMouseLeave={() => onNodeHover(null)}
       >
@@ -79,6 +80,164 @@ const FeatureRow = memo(
 
 FeatureRow.displayName = 'FeatureRow'
 
+const QKTracingSection = memo(
+  ({
+    results,
+    nodeIndex,
+    onNodeClick,
+    onNodeHover,
+    hoveredId,
+    clickedId,
+  }: {
+    results: QKTracingResults
+    nodeIndex: RawNodeIndex
+    onNodeClick: (nodeId: string, isMultiSelect: boolean) => void
+    onNodeHover: (nodeId: string | null) => void
+    hoveredId: string | null
+    clickedId: string
+  }) => {
+    const renderNodeLabel = (nodeId: string) => {
+      const node = nodeIndex.byId.get(nodeId)
+      if (!node) return <span className="text-xs font-mono">{nodeId}</span>
+
+      return (
+        <div className="flex items-center space-x-2 min-w-0 flex-1">
+          <span className="text-xs font-mono text-gray-600 shrink-0">
+            {formatFeatureId(node, false)}
+          </span>
+          <span className="text-xs font-medium truncate">
+            {node.featureType === 'lorsa' ||
+            node.featureType === 'cross layer transcoder'
+              ? node.feature.interpretation?.text
+              : 'token' in node
+                ? node.token
+                : ''}
+          </span>
+        </div>
+      )
+    }
+
+    return (
+      <>
+        <div className="flex gap-3 min-h-0">
+          <div className="flex flex-col w-1/2 gap-1.5 min-h-0">
+            <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
+              <span>Q MARGINAL</span>
+            </div>
+            <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar max-h-40">
+              {results.topQMarginalContributors.map(([nodeId, score], idx) => (
+                <div
+                  key={`q-${nodeId}-${idx}`}
+                  className={cn(
+                    'py-2 px-2 mx-1 border rounded cursor-pointer transition-colors bg-gray-50 border-gray-200 flex justify-between items-center',
+                    nodeId === hoveredId && 'ring-2 ring-blue-300',
+                    nodeId === clickedId && 'ring-2 ring-blue-500',
+                  )}
+                  style={getWeightStyle(score)}
+                  onClick={(e) => onNodeClick(nodeId, e.metaKey || e.ctrlKey)}
+                  onMouseEnter={() => onNodeHover(nodeId)}
+                  onMouseLeave={() => onNodeHover(null)}
+                >
+                  {renderNodeLabel(nodeId)}
+                  <div className="text-right flex flex-col items-end">
+                    <div className="text-xs font-mono">{score.toFixed(3)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col w-1/2 gap-1.5 min-h-0">
+            <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
+              <span>K MARGINAL</span>
+            </div>
+            <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar max-h-40">
+              {results.topKMarginalContributors.map(([nodeId, score], idx) => (
+                <div
+                  key={`k-${nodeId}-${idx}`}
+                  className={cn(
+                    'py-2 px-2 mx-1 border rounded cursor-pointer transition-colors bg-gray-50 border-gray-200 flex justify-between items-center',
+                    nodeId === hoveredId && 'ring-2 ring-blue-300',
+                    nodeId === clickedId && 'ring-2 ring-blue-500',
+                  )}
+                  style={getWeightStyle(score)}
+                  onClick={(e) => onNodeClick(nodeId, e.metaKey || e.ctrlKey)}
+                  onMouseEnter={() => onNodeHover(nodeId)}
+                  onMouseLeave={() => onNodeHover(null)}
+                >
+                  {renderNodeLabel(nodeId)}
+                  <div className="text-right flex flex-col items-end">
+                    <div className="text-xs font-mono">{score.toFixed(3)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5 min-h-0">
+          <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
+            <span>TOP PAIRWISE CONTRIBUTORS</span>
+          </div>
+          <div className="flex flex-col gap-1 max-h-40 overflow-y-auto no-scrollbar pr-1">
+            {results.pairWiseContributors.map(([qId, kId, score], idx) => (
+              <div
+                key={`pw-${idx}`}
+                className="mx-1 border rounded transition-colors bg-gray-50 border-gray-200 flex items-stretch"
+                style={getWeightStyle(score)}
+              >
+                <div
+                  className={cn(
+                    'flex-1 min-w-0 cursor-pointer px-2 py-1.5 transition-colors flex items-center gap-1.5',
+                    qId === hoveredId ? 'bg-black/5' : 'hover:bg-black/5',
+                    qId === clickedId &&
+                      'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
+                  )}
+                  onClick={(e) => onNodeClick(qId, e.metaKey || e.ctrlKey)}
+                  onMouseEnter={() => onNodeHover(qId)}
+                  onMouseLeave={() => onNodeHover(null)}
+                >
+                  <span className="text-xs font-bold text-slate-400 shrink-0">
+                    Q:
+                  </span>
+                  {renderNodeLabel(qId)}
+                </div>
+
+                <div className="flex items-center justify-center shrink-0">
+                  <ChevronRight className="w-3 h-3 text-slate-400/50" />
+                </div>
+
+                <div
+                  className={cn(
+                    'flex-1 min-w-0 cursor-pointer px-2 py-1.5 transition-colors flex items-center gap-1.5',
+                    kId === hoveredId ? 'bg-black/5' : 'hover:bg-black/5',
+                    kId === clickedId &&
+                      'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
+                  )}
+                  onClick={(e) => onNodeClick(kId, e.metaKey || e.ctrlKey)}
+                  onMouseEnter={() => onNodeHover(kId)}
+                  onMouseLeave={() => onNodeHover(null)}
+                >
+                  <span className="text-xs font-bold text-slate-400 shrink-0">
+                    K:
+                  </span>
+                  {renderNodeLabel(kId)}
+                </div>
+
+                <div className="text-right flex flex-col justify-center items-end px-2 shrink-0 border-l border-black/5 bg-white/30">
+                  <div className="text-xs font-mono">{score.toFixed(3)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </>
+    )
+  },
+)
+
+QKTracingSection.displayName = 'QKTracingSection'
+
 interface NodeConnectionsProps {
   nodeIndex: RawNodeIndex
   edgeIndex: RawEdgeIndex
@@ -86,7 +245,7 @@ interface NodeConnectionsProps {
   hoveredId: string | null
   hiddenIds: string[]
   className?: string
-  onNodeClick: (nodeId: string, metaKey: boolean) => void
+  onNodeClick: (nodeId: string, isMultiSelect: boolean) => void
   onNodeHover: (nodeId: string | null) => void
 }
 
@@ -132,23 +291,35 @@ export const NodeConnections = memo(
 
     const hiddenIdsSet = useMemo(() => new Set(hiddenIds), [hiddenIds])
 
+    const hasQKResults =
+      (clickedNode.featureType === 'lorsa' ||
+        clickedNode.featureType === 'cross layer transcoder') &&
+      !!clickedNode.qkTracingResults
+
     return (
       <Card
         className={cn('flex flex-col basis-1/2 min-w-0 gap-4 p-4', className)}
       >
         <div className="flex items-center justify-between">
           <div className="flex justify-between items-center space-x-2 w-full">
-            <span className="text-sm font-medium">
-              {clickedNode.featureType === 'cross layer transcoder' ||
-              clickedNode.featureType === 'lorsa'
-                ? clickedNode.feature.interpretation?.text
-                : formatFeatureId(clickedNode, true)}{' '}
+            <div className="flex items-center space-x-3 overflow-hidden">
+              <span className="text-xs font-mono text-gray-500 shrink-0">
+                {formatFeatureId(clickedNode, true)}
+              </span>
+              <span className="text-sm font-semibold truncate">
+                {clickedNode.featureType === 'cross layer transcoder' ||
+                clickedNode.featureType === 'lorsa'
+                  ? clickedNode.feature.interpretation?.text
+                  : 'token' in clickedNode
+                    ? clickedNode.token
+                    : ''}
+              </span>
               {'activation' in clickedNode && (
-                <span className="text-xs font-mono text-orange-500">
+                <span className="text-xs font-mono text-orange-500 shrink-0">
                   ({clickedNode.activation.toFixed(3)})
                 </span>
               )}
-            </span>
+            </div>
             {(clickedNode.featureType === 'cross layer transcoder' ||
               clickedNode.featureType === 'lorsa') && (
               <Link
@@ -170,52 +341,89 @@ export const NodeConnections = memo(
             )}
           </div>
         </div>
-        <div className="flex gap-4 flex-1 overflow-hidden">
-          <div className="flex flex-col w-1/2 gap-2 min-h-0">
-            <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
-              <span>INPUT NODES</span>
-              <Info iconSize={14}>
-                Nodes (features/embeddings) that influence the clicked node.
-              </Info>
+
+        <Tabs defaultValue="ov" className="flex flex-col flex-1 min-h-0">
+          <TabsList className="w-full justify-start rounded-none border-b bg-transparent p-0 h-auto gap-6 px-1">
+            <TabsTrigger
+              value="ov"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:bg-transparent data-[state=active]:shadow-none px-2 py-2 text-xs font-semibold transition-all hover:text-blue-600"
+            >
+              <ArrowLeftRight className="h-3.5 w-3.5 mr-2" />
+              OV Inputs/Outputs
+            </TabsTrigger>
+            <TabsTrigger
+              value="qk"
+              disabled={!hasQKResults}
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-purple-500 data-[state=active]:bg-transparent data-[state=active]:shadow-none px-2 py-2 text-xs font-semibold transition-all hover:text-purple-600 disabled:opacity-30"
+            >
+              <Target className="h-3.5 w-3.5 mr-2" />
+              QK Tracing
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="ov" className="flex-1 min-h-0 mt-4">
+            <div className="flex gap-4 h-full">
+              <div className="flex flex-col w-1/2 gap-2 min-h-0 h-full">
+                <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
+                  <span>INPUT NODES</span>
+                  <Info iconSize={14}>
+                    Nodes (features/embeddings) that influence the clicked node.
+                  </Info>
+                </div>
+                <div className="flex flex-col gap-2 overflow-y-auto no-scrollbar flex-1">
+                  {inputNodes.map((item) => (
+                    <FeatureRow
+                      key={item.node.nodeId}
+                      node={item.node}
+                      weight={item.weight}
+                      isHidden={hiddenIdsSet.has(item.node.nodeId)}
+                      isHovered={item.node.nodeId === hoveredId}
+                      isClicked={item.node.nodeId === clickedId}
+                      onNodeClick={onNodeClick}
+                      onNodeHover={onNodeHover}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col w-1/2 gap-2 min-h-0 h-full">
+                <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
+                  <span>OUTPUT NODES</span>
+                  <Info iconSize={14}>
+                    Nodes (features/logits) that the clicked node influences.
+                  </Info>
+                </div>
+                <div className="flex flex-col gap-2 overflow-y-auto no-scrollbar flex-1">
+                  {outputNodes.map((item) => (
+                    <FeatureRow
+                      key={item.node.nodeId}
+                      node={item.node}
+                      weight={item.weight}
+                      isHidden={hiddenIdsSet.has(item.node.nodeId)}
+                      isHovered={item.node.nodeId === hoveredId}
+                      isClicked={item.node.nodeId === clickedId}
+                      onNodeClick={onNodeClick}
+                      onNodeHover={onNodeHover}
+                    />
+                  ))}
+                </div>
+              </div>
             </div>
-            <div className="flex flex-col gap-2 overflow-y-auto no-scrollbar">
-              {inputNodes.map((item) => (
-                <FeatureRow
-                  key={item.node.nodeId}
-                  node={item.node}
-                  weight={item.weight}
-                  isHidden={hiddenIdsSet.has(item.node.nodeId)}
-                  isHovered={item.node.nodeId === hoveredId}
-                  isClicked={item.node.nodeId === clickedId}
-                  onNodeClick={onNodeClick}
-                  onNodeHover={onNodeHover}
-                />
-              ))}
-            </div>
-          </div>
-          <div className="flex flex-col w-1/2 gap-2 min-h-0">
-            <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
-              <span>OUTPUT NODES</span>
-              <Info iconSize={14}>
-                Nodes (features/logits) that the clicked node influences.
-              </Info>
-            </div>
-            <div className="flex flex-col gap-2 overflow-y-auto no-scrollbar">
-              {outputNodes.map((item) => (
-                <FeatureRow
-                  key={item.node.nodeId}
-                  node={item.node}
-                  weight={item.weight}
-                  isHidden={hiddenIdsSet.has(item.node.nodeId)}
-                  isHovered={item.node.nodeId === hoveredId}
-                  isClicked={item.node.nodeId === clickedId}
-                  onNodeClick={onNodeClick}
-                  onNodeHover={onNodeHover}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+          </TabsContent>
+          {hasQKResults && clickedNode.qkTracingResults && (
+            <TabsContent
+              value="qk"
+              className="flex-1 min-h-0 mt-2 overflow-y-auto"
+            >
+              <QKTracingSection
+                results={clickedNode.qkTracingResults}
+                nodeIndex={nodeIndex}
+                onNodeClick={onNodeClick}
+                onNodeHover={onNodeHover}
+                hoveredId={hoveredId}
+                clickedId={clickedId}
+              />
+            </TabsContent>
+          )}
+        </Tabs>
       </Card>
     )
   },

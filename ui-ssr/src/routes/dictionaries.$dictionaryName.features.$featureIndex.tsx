@@ -2,17 +2,18 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { z } from 'zod'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { parseWithPrettify } from '@/utils/zod'
 import { Button } from '@/components/ui/button'
 import { FeatureBookmarkButton } from '@/components/feature/bookmark-button'
 import { FeatureCard } from '@/components/feature/feature-card'
 import { FeatureInterpretation } from '@/components/feature/feature-interpretation'
 import { LabeledInput } from '@/components/ui/labeled-input'
-import { LabeledSelect } from '@/components/ui/labeled-select'
+import { DictionarySelect } from '@/components/dictionary/dictionary-select'
 import { InferenceCard } from '@/components/feature/inference-card'
 import { IframeIntegrationCard } from '@/components/feature/iframe-integration-card'
+import { fetchAdminSaes } from '@/api/admin'
 
 import {
-  dictionariesQueryOptions,
   featureQueryOptions,
   samplingsQueryOptions,
   useFeatures,
@@ -28,14 +29,17 @@ const searchParamsSchema = z.object({
 export const Route = createFileRoute(
   '/dictionaries/$dictionaryName/features/$featureIndex',
 )({
-  validateSearch: searchParamsSchema,
+  validateSearch: (search) => parseWithPrettify(searchParamsSchema, search),
   staticData: {
     fullScreen: true,
   },
   component: FeaturesPage,
   loader: async ({ context, params }) => {
-    const [dictionaries, samplings, feature] = await Promise.all([
-      await context.queryClient.ensureQueryData(dictionariesQueryOptions()),
+    const [{ saes }, samplings, feature] = await Promise.all([
+      await context.queryClient.ensureQueryData({
+        queryKey: ['admin', 'saes', { limit: 1000 }],
+        queryFn: () => fetchAdminSaes({ data: { limit: 1000 } }),
+      }),
       await context.queryClient.ensureQueryData(
         samplingsQueryOptions({
           dictionary: params.dictionaryName,
@@ -50,7 +54,7 @@ export const Route = createFileRoute(
       ),
     ])
     return {
-      dictionaries,
+      saes,
       samplings,
       feature,
       dictionaryName: params.dictionaryName,
@@ -62,8 +66,7 @@ export const Route = createFileRoute(
 function FeaturesPage() {
   const navigate = useNavigate()
 
-  const { dictionaries, feature, dictionaryName, featureIndex } =
-    Route.useLoaderData()
+  const { saes, feature, dictionaryName, featureIndex } = Route.useLoaderData()
 
   const [selectedDictionary, setSelectedDictionary] =
     useState<string>(dictionaryName)
@@ -166,14 +169,11 @@ function FeaturesPage() {
                   </Button>
                 </Link>
               </div>
-              <div className="w-[300px]">
-                <LabeledSelect
-                  label="Dictionary"
-                  placeholder="Select a dictionary"
-                  value={selectedDictionary}
-                  onValueChange={setSelectedDictionary}
-                  options={dictionaries.map((d) => ({ value: d, label: d }))}
-                  triggerClassName="bg-white w-full"
+              <div>
+                <DictionarySelect
+                  saes={saes}
+                  selectedDictionary={selectedDictionary}
+                  onSelect={setSelectedDictionary}
                 />
               </div>
               <div className="w-[100px]">

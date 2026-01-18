@@ -2,7 +2,7 @@ import React from 'react'
 import * as d3 from 'd3'
 
 interface YAxisProps {
-  positionedNodes: { layer: number }[]
+  positionedNodes: { layer: number; featureType: string }[]
   y: d3.ScaleBand<number>
 }
 
@@ -10,6 +10,10 @@ const SIDE_PADDING = 70
 
 export const YAxis: React.FC<YAxisProps> = React.memo(
   ({ positionedNodes, y }) => {
+    const hasEmbedding = positionedNodes.some(
+      (d) => d.featureType === 'embedding',
+    )
+    const hasLogit = positionedNodes.some((d) => d.featureType === 'logit')
     const yNumTicks = (d3.max(positionedNodes, (d) => d.layer) || 0) + 2
 
     return (
@@ -19,17 +23,17 @@ export const YAxis: React.FC<YAxisProps> = React.memo(
 
           let label: string
           let textColor: string
-          if (layerIdx === 0) {
+          if (hasEmbedding && layerIdx === 0) {
             label = 'Emb'
             textColor = '#6b21a8' // Embedding - purple
-          } else if (layerIdx === yNumTicks - 1) {
+          } else if (hasLogit && layerIdx === yNumTicks - 1) {
             label = 'Logit'
             textColor = '#9a3412' // Logits - orange
-          } else if (layerIdx % 2 === 0) {
-            label = `M${Math.floor(layerIdx / 2) - 1}`
+          } else if ((layerIdx - (hasEmbedding ? 1 : 0)) % 2 === 1) {
+            label = `M${Math.floor((layerIdx - (hasEmbedding ? 1 : 0)) / 2)}`
             textColor = '#166534' // MLP - green
           } else {
-            label = `A${Math.floor(layerIdx / 2)}`
+            label = `A${Math.floor((layerIdx - (hasEmbedding ? 1 : 0)) / 2)}`
             textColor = '#1e40af' // Attention - blue
           }
 

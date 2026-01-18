@@ -1,6 +1,7 @@
 """Module for sweeping SAE experiments."""
 
 import os
+from pathlib import Path
 from typing import Optional
 
 import torch
@@ -9,29 +10,23 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.config import (
-    ActivationFactoryConfig,
-    BaseSAEConfig,
-    CLTConfig,
-    CrossCoderConfig,
-    DatasetConfig,
-    InitializerConfig,
-    LanguageModelConfig,
-    LorsaConfig,
-    MOLTConfig,
-    MongoDBConfig,
-    TrainerConfig,
-    WandbConfig,
-)
-from lm_saes.database import MongoClient
-from lm_saes.initializer import Initializer
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder, BaseSAEConfig
+from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.clt import CLTConfig
+from lm_saes.config import DatasetConfig
+from lm_saes.crosscoder import CrossCoderConfig
+from lm_saes.database import MongoClient, MongoDBConfig
+from lm_saes.initializer import Initializer, InitializerConfig
+from lm_saes.lorsa import LorsaConfig
+from lm_saes.molt import MOLTConfig
 from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.runners.utils import load_config
-from lm_saes.trainer import Trainer
+from lm_saes.trainer import Trainer, TrainerConfig, WandbConfig
 from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from lm_saes.utils.misc import is_primary_rank
+
+from .utils import PretrainedSAE, load_config
 
 logger = get_distributed_logger("runners.train")
 
@@ -39,8 +34,8 @@ logger = get_distributed_logger("runners.train")
 class TrainSAESettings(BaseSettings):
     """Settings for training a Sparse Autoencoder (SAE)."""
 
-    sae: BaseSAEConfig
-    """Configuration for the SAE model architecture and parameters"""
+    sae: BaseSAEConfig | PretrainedSAE
+    """Configuration for the SAE model architecture and parameters, or the path to a pretrained SAE."""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -48,8 +43,8 @@ class TrainSAESettings(BaseSettings):
     sae_series: str
     """Series of the SAE model. Use as identifier for the SAE model in the database."""
 
-    initializer: InitializerConfig
-    """Configuration for model initialization"""
+    initializer: InitializerConfig | None = None
+    """Configuration for model initialization. Should be None for a pretrained SAE."""
 
     trainer: TrainerConfig
     """Configuration for training process"""
@@ -158,7 +153,6 @@ def train_sae(settings: TrainSAESettings) -> None:
     )
 
     logger.info("Initializing SAE")
-    initializer = Initializer(settings.initializer)
 
     wandb_logger = (
         wandb.init(
@@ -174,13 +168,31 @@ def train_sae(settings: TrainSAESettings) -> None:
         if settings.wandb is not None and (device_mesh is None or mesh_rank(device_mesh) == 0)
         else None
     )
-    sae = initializer.initialize_sae_from_config(
-        settings.sae,
-        activation_stream=activations_stream,
-        device_mesh=device_mesh,
-        wandb_logger=wandb_logger,
-        model=model,
+
+    assert settings.initializer is None or not isinstance(settings.initializer, str), (
+        "Cannot use an initializer for a pretrained SAE"
     )
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+        )
+    elif settings.initializer is not None:
+        initializer = Initializer(settings.initializer)
+        sae = initializer.initialize_sae_from_config(
+            settings.sae,
+            activation_stream=activations_stream,
+            device_mesh=device_mesh,
+            wandb_logger=wandb_logger,
+            model=model,
+        )
+    else:
+        sae = AbstractSparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+
     if settings.trainer.from_pretrained_path is not None:
         trainer = Trainer.from_checkpoint(
             sae,
@@ -213,10 +225,17 @@ def train_sae(settings: TrainSAESettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
         )
+        if is_primary_rank(device_mesh) and mongo_client is not None:
+            assert settings.sae_name is not None and settings.sae_series is not None, (
+                "sae_name and sae_series must be provided when saving to MongoDB"
+            )
+            mongo_client.create_sae(
+                name=settings.sae_name,
+                series=settings.sae_series,
+                path=str(Path(settings.trainer.exp_result_path).absolute()),
+                cfg=sae.cfg,
+            )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -228,8 +247,8 @@ def train_sae(settings: TrainSAESettings) -> None:
 class TrainCrossCoderSettings(BaseSettings):
     """Settings for training a CrossCoder. The main difference to TrainSAESettings is that the activation factory is a list of ActivationFactoryConfig, one for each head."""
 
-    sae: CrossCoderConfig
-    """Configuration for the CrossCoder model architecture and parameters"""
+    sae: CrossCoderConfig | PretrainedSAE
+    """Configuration for the CrossCoder model architecture and parameters, or the path to a pretrained CrossCoder."""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -237,7 +256,7 @@ class TrainCrossCoderSettings(BaseSettings):
     sae_series: str
     """Series of the SAE model. Use as identifier for the SAE model in the database."""
 
-    initializer: InitializerConfig
+    initializer: InitializerConfig | None = None
     """Configuration for model initialization"""
 
     trainer: TrainerConfig
@@ -358,15 +377,6 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         datasets=datasets,
     )
 
-    logger.info("Initializing CrossCoder")
-    initializer = Initializer(settings.initializer)
-
-    sae = initializer.initialize_sae_from_config(
-        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh
-    )
-
-    logger.info("CrossCoder initialized")
-
     wandb_logger = (
         wandb.init(
             project=settings.wandb.wandb_project,
@@ -384,6 +394,33 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
 
     if wandb_logger is not None:
         logger.info("WandB logger initialized")
+
+    logger.info("Initializing CrossCoder")
+    assert settings.initializer is None or not isinstance(settings.initializer, str), (
+        "Cannot use an initializer for a pretrained CrossCoder"
+    )
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+        )
+    elif settings.initializer is not None:
+        initializer = Initializer(settings.initializer)
+        sae = initializer.initialize_sae_from_config(
+            settings.sae,
+            activation_stream=activations_stream,
+            device_mesh=device_mesh,
+            wandb_logger=wandb_logger,
+            model=model,
+        )
+    else:
+        sae = AbstractSparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+
+    logger.info("CrossCoder initialized")
 
     # TODO: implement eval_fn
     eval_fn = (lambda x: None) if settings.eval else None
@@ -412,10 +449,17 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
         )
+        if is_primary_rank(device_mesh) and mongo_client is not None:
+            assert settings.sae_name is not None and settings.sae_series is not None, (
+                "sae_name and sae_series must be provided when saving to MongoDB"
+            )
+            mongo_client.create_sae(
+                name=settings.sae_name,
+                series=settings.sae_series,
+                path=str(Path(settings.trainer.exp_result_path).absolute()),
+                cfg=settings.sae,
+            )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -427,8 +471,8 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
 class TrainCLTSettings(BaseSettings):
     """Settings for training a Cross Layer Transcoder (CLT). CLT works with multiple layers and their corresponding hook points."""
 
-    sae: CLTConfig
-    """Configuration for the CLT model architecture and parameters"""
+    sae: CLTConfig | PretrainedSAE
+    """Configuration for the CLT model architecture and parameters, or the path to a pretrained CLT."""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -436,7 +480,7 @@ class TrainCLTSettings(BaseSettings):
     sae_series: str
     """Series of the SAE model. Use as identifier for the SAE model in the database."""
 
-    initializer: InitializerConfig
+    initializer: InitializerConfig | None = None
     """Configuration for model initialization"""
 
     trainer: TrainerConfig
@@ -542,9 +586,6 @@ def train_clt(settings: TrainCLTSettings) -> None:
         datasets=datasets,
     )
 
-    logger.info("Initializing CLT")
-    initializer = Initializer(settings.initializer)
-
     wandb_logger = (
         wandb.init(
             project=settings.wandb.wandb_project,
@@ -560,13 +601,30 @@ def train_clt(settings: TrainCLTSettings) -> None:
         else None
     )
 
-    sae = initializer.initialize_sae_from_config(
-        settings.sae,
-        activation_stream=activations_stream,
-        device_mesh=device_mesh,
-        wandb_logger=wandb_logger,
-        fold_activation_scale=False,
+    logger.info("Initializing CLT")
+    assert settings.initializer is None or not isinstance(settings.initializer, str), (
+        "Cannot use an initializer for a pretrained CLT"
     )
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+        )
+    elif settings.initializer is not None:
+        initializer = Initializer(settings.initializer)
+        sae = initializer.initialize_sae_from_config(
+            settings.sae,
+            activation_stream=activations_stream,
+            device_mesh=device_mesh,
+            wandb_logger=wandb_logger,
+            model=model,
+        )
+    else:
+        sae = AbstractSparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
 
     n_params = sum(p.numel() for p in sae.parameters())
     logger.info(f"CLT initialized with {n_params / 1e9:.2f}B parameters")
@@ -600,10 +658,17 @@ def train_clt(settings: TrainCLTSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
         )
+        if is_primary_rank(device_mesh) and mongo_client is not None:
+            assert settings.sae_name is not None and settings.sae_series is not None, (
+                "sae_name and sae_series must be provided when saving to MongoDB"
+            )
+            mongo_client.create_sae(
+                name=settings.sae_name,
+                series=settings.sae_series,
+                path=str(Path(settings.trainer.exp_result_path).absolute()),
+                cfg=sae.cfg,
+            )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -613,18 +678,18 @@ def train_clt(settings: TrainCLTSettings) -> None:
 
 
 class TrainLorsaSettings(BaseSettings):
-    """Settings for training a LORSA (Low-Rank Sparse Autoencoder) model."""
+    """Settings for training a Lorsa (Low-Rank Sparse Autoencoder) model."""
 
-    sae: LorsaConfig
-    """Configuration for the LORSA model architecture and parameters"""
+    sae: LorsaConfig | PretrainedSAE
+    """Configuration for the Lorsa model architecture and parameters, or the path to a pretrained Lorsa."""
 
     sae_name: str
-    """Name of the LORSA model. Use as identifier for the LORSA model in the database."""
+    """Name of the Lorsa model. Use as identifier for the Lorsa model in the database."""
 
     sae_series: str
-    """Series of the LORSA model. Use as identifier for the LORSA model in the database."""
+    """Series of the Lorsa model. Use as identifier for the Lorsa model in the database."""
 
-    initializer: InitializerConfig
+    initializer: InitializerConfig | None = None
     """Configuration for model initialization"""
 
     trainer: TrainerConfig
@@ -731,7 +796,6 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
     )
 
     logger.info("Initializing lorsa")
-    initializer = Initializer(settings.initializer)
 
     wandb_logger = (
         wandb.init(
@@ -748,13 +812,29 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
         else None
     )
 
-    sae = initializer.initialize_sae_from_config(
-        settings.sae,
-        activation_stream=activations_stream,
-        device_mesh=device_mesh,
-        wandb_logger=wandb_logger,
-        model=model,
+    assert settings.initializer is None or not isinstance(settings.initializer, str), (
+        "Cannot use an initializer for a pretrained Lorsa"
     )
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+        )
+    elif settings.initializer is not None:
+        initializer = Initializer(settings.initializer)
+        sae = initializer.initialize_sae_from_config(
+            settings.sae,
+            activation_stream=activations_stream,
+            device_mesh=device_mesh,
+            wandb_logger=wandb_logger,
+            model=model,
+        )
+    else:
+        sae = AbstractSparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
 
     n_params = sum(p.numel() for p in sae.parameters())
     logger.info(f"lorsa initialized with {n_params / 1e9:.2f}B parameters")
@@ -789,10 +869,17 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
         )
+        if is_primary_rank(device_mesh) and mongo_client is not None:
+            assert settings.sae_name is not None and settings.sae_series is not None, (
+                "sae_name and sae_series must be provided when saving to MongoDB"
+            )
+            mongo_client.create_sae(
+                name=settings.sae_name,
+                series=settings.sae_series,
+                path=str(Path(settings.trainer.exp_result_path).absolute()),
+                cfg=sae.cfg,
+            )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -804,7 +891,7 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
 class TrainMOLTSettings(BaseSettings):
     """Settings for training a Mixture of Linear Transforms (MOLT). MOLT is a more efficient alternative to transcoders that sparsely replaces MLP computation in transformers."""
 
-    sae: MOLTConfig
+    sae: MOLTConfig | PretrainedSAE
     """Configuration for the MOLT model architecture and parameters"""
 
     sae_name: str
@@ -813,8 +900,8 @@ class TrainMOLTSettings(BaseSettings):
     sae_series: str
     """Series of the SAE model. Use as identifier for the SAE model in the database."""
 
-    initializer: InitializerConfig
-    """Configuration for model initialization"""
+    initializer: InitializerConfig | None = None
+    """Configuration for model initialization. Should be None for a pretrained MOLT."""
 
     trainer: TrainerConfig
     """Configuration for training process"""
@@ -884,11 +971,6 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         required=False,
     )
 
-    assert settings.model_parallel_size == settings.sae.model_parallel_size_training, (
-        "model_parallel_size_training config and model_parallel_size for training are not aligned"
-    )
-    # model_parallel_size_training is needed for getting the shape of molt
-
     dataset_cfgs = (
         {
             dataset_name: load_config(
@@ -924,9 +1006,6 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         datasets=datasets,
     )
 
-    logger.info("Initializing MOLT")
-    initializer = Initializer(settings.initializer)
-
     wandb_logger = (
         wandb.init(
             project=settings.wandb.wandb_project,
@@ -942,9 +1021,31 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         else None
     )
 
-    sae = initializer.initialize_sae_from_config(
-        settings.sae, activation_stream=activations_stream, device_mesh=device_mesh, wandb_logger=wandb_logger
+    logger.info("Initializing MOLT")
+
+    assert settings.initializer is None or not isinstance(settings.initializer, str), (
+        "Cannot use an initializer for a pretrained MOLT"
     )
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+        )
+    elif settings.initializer is not None:
+        initializer = Initializer(settings.initializer)
+        sae = initializer.initialize_sae_from_config(
+            settings.sae,
+            activation_stream=activations_stream,
+            device_mesh=device_mesh,
+            wandb_logger=wandb_logger,
+            model=model,
+        )
+    else:
+        sae = AbstractSparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
 
     logger.info(f"MOLT initialized: {type(sae).__name__}")
 
@@ -978,10 +1079,17 @@ def train_molt(settings: TrainMOLTSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
-            sae_name=settings.sae_name,
-            sae_series=settings.sae_series,
-            mongo_client=mongo_client,
         )
+        if is_primary_rank(device_mesh) and mongo_client is not None:
+            assert settings.sae_name is not None and settings.sae_series is not None, (
+                "sae_name and sae_series must be provided when saving to MongoDB"
+            )
+            mongo_client.create_sae(
+                name=settings.sae_name,
+                series=settings.sae_series,
+                path=str(Path(settings.trainer.exp_result_path).absolute()),
+                cfg=sae.cfg,
+            )
 
     if wandb_logger is not None:
         wandb_logger.finish()
@@ -993,8 +1101,8 @@ def train_molt(settings: TrainMOLTSettings) -> None:
 class SweepingItem(BaseModel):
     """A single item in a sweeping configuration."""
 
-    sae: BaseSAEConfig
-    """Configuration for the SAE model architecture and parameters"""
+    sae: BaseSAEConfig | PretrainedSAE
+    """Configuration for the SAE model architecture and parameters, or the path to a pretrained SAE."""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -1002,8 +1110,8 @@ class SweepingItem(BaseModel):
     sae_series: str
     """Series of the SAE model. Use as identifier for the SAE model in the database."""
 
-    initializer: InitializerConfig
-    """Configuration for model initialization"""
+    initializer: InitializerConfig | None = None
+    """Configuration for model initialization. Should be None for a pretrained SAE."""
 
     trainer: TrainerConfig
     """Configuration for training process"""
@@ -1140,12 +1248,30 @@ def sweep_sae(settings: SweepSAESettings) -> None:
 
     activations_stream = convert_activations_to_2d_mesh(activations_stream, sae_device_mesh)
 
-    initializer = Initializer(item.initializer)
-
     logger.info("Initializing SAE on 2D sub-mesh")
-    sae = initializer.initialize_sae_from_config(
-        item.sae, activation_stream=activations_stream, device_mesh=sae_device_mesh, model=model
+
+    assert item.initializer is None or not isinstance(item.initializer, str), (
+        "Cannot use an initializer for a pretrained SAE"
     )
+    if isinstance(item.sae, PretrainedSAE):
+        sae = AbstractSparseAutoEncoder.from_pretrained(
+            item.sae.pretrained_name_or_path,
+            device_mesh=sae_device_mesh,
+            fold_activation_scale=item.sae.fold_activation_scale,
+            strict_loading=item.sae.strict_loading,
+            device=item.sae.device,
+            dtype=item.sae.dtype,
+        )
+    elif item.initializer is not None:
+        initializer = Initializer(item.initializer)
+        sae = initializer.initialize_sae_from_config(
+            item.sae,
+            activation_stream=activations_stream,
+            device_mesh=sae_device_mesh,
+            model=model,
+        )
+    else:
+        sae = AbstractSparseAutoEncoder.from_config(item.sae, device_mesh=sae_device_mesh)
 
     wandb_logger = (
         wandb.init(
@@ -1170,10 +1296,17 @@ def sweep_sae(settings: SweepSAESettings) -> None:
     logger.info("Training completed, saving sweep item")
     sae.save_pretrained(
         save_path=item.trainer.exp_result_path,
-        sae_name=item.sae_name,
-        sae_series=item.sae_series,
-        mongo_client=mongo_client,
     )
+    if is_primary_rank(device_mesh) and mongo_client is not None:
+        assert item.sae_name is not None and item.sae_series is not None, (
+            "sae_name and sae_series must be provided when saving to MongoDB"
+        )
+        mongo_client.create_sae(
+            name=item.sae_name,
+            series=item.sae_series,
+            path=str(Path(item.trainer.exp_result_path).absolute()),
+            cfg=sae.cfg,
+        )
 
     if wandb_logger is not None:
         wandb_logger.finish()

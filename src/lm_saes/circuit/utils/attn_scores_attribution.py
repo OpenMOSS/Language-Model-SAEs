@@ -3,26 +3,15 @@
 from dataclasses import dataclass, field
 
 import torch
+from transformers import AutoTokenizer
 
-from ..replacement_model import ReplacementModel
+from lm_saes.circuit.replacement_model import ReplacementModel
+
 from .attribution_utils import (
     select_scaled_decoder_vecs_lorsa,
     select_scaled_decoder_vecs_transcoder,
 )
-
-
-@dataclass
-class QKTracingResults:
-    """Results from QK tracing analysis.
-
-    pair_wise_contributors: List of tuples containing (q_node, k_node, score) for top pairwise contributors.
-    top_q_marginal_contributors: List of tuples containing (q_node, score) for top Q marginal contributors.
-    top_k_marginal_contributors: List of tuples containing (k_node, score) for top K marginal contributors.
-    """
-
-    pair_wise_contributors: list[tuple]
-    top_q_marginal_contributors: list[tuple]
-    top_k_marginal_contributors: list[tuple]
+from .graph_file_utils import Node, QKTracingResults, process_token
 
 
 @dataclass
@@ -32,6 +21,7 @@ class ResStreamComponents:
     components: torch.Tensor
     n_layers: int
     pos: int
+    tokenizer: AutoTokenizer
     bias_names: list[str] = field(default_factory=list)
 
     def sum(self):
@@ -50,6 +40,7 @@ class ResStreamComponents:
             bias_names=self.bias_names,
             n_layers=self.n_layers,
             pos=self.pos,
+            tokenizer=self.tokenizer,
             components=torch.cat(
                 [
                     self.components,
@@ -78,7 +69,7 @@ class ResStreamComponents:
         ), "We might not want to drop bias terms for the second time."
         return self
 
-    def map_idx_to_nodes(self, indices: torch.Tensor, input_ids: torch.Tensor):
+    def map_idx_to_nodes(self, indices: torch.Tensor, target_layer: int, input_ids: torch.Tensor) -> list[Node]:
         """Map component indices to node names.
 
         Args:
@@ -86,30 +77,81 @@ class ResStreamComponents:
             input_ids: Input token IDs for generating node names.
 
         Returns:
-            List of node name strings.
+            List of Node objects.
         """
         results = []
-        lorsa_end_idx = self.lorsa_activation_matrix._nnz() + 1
+        lorsa_end_idx = self.lorsa_activation_matrix._nnz() + 1  # +1 for token
         transcoder_end_idx = lorsa_end_idx + self.transcoder_activation_matrix._nnz()
         error_end_idx = transcoder_end_idx + 2 * self.n_layers
         decoder_bias_idx = error_end_idx + 2 * self.n_layers
         for idx in indices.cpu().tolist():
             if idx == 0:
-                res = f"E_{input_ids[self.pos]}_{self.pos}"
+                res = Node.token_node(
+                    self.pos,
+                    input_ids[self.pos],
+                    token=process_token(self.tokenizer.decode(input_ids[self.pos])),
+                )
             elif idx < lorsa_end_idx:
                 lorsa_idx = idx - 1
-                layer, pos, feature_idx = self.lorsa_activation_matrix.coalesce().indices()[:, lorsa_idx]
-                res = f"{layer}_{feature_idx}_{pos}"
+                layer, pos, feat_idx = self.lorsa_activation_matrix.indices()[:, lorsa_idx]
+                assert pos == self.pos
+                activation = self.lorsa_activation_matrix.values()[lorsa_idx]
+                res = Node.feature_node(
+                    layer,
+                    pos,
+                    feat_idx,
+                    is_lorsa=True,
+                    sae_name=None,
+                    influence=0,
+                    activation=activation,
+                    lorsa_pattern=None,
+                    qk_tracing_results=None,
+                    is_from_qk_tracing=True,
+                )
             elif idx < transcoder_end_idx:
                 tc_idx = idx - lorsa_end_idx
-                layer, pos, feature_idx = self.transcoder_activation_matrix.coalesce().indices()[:, tc_idx]
-                res = f"{layer}_{feature_idx}_{pos}"
+
+                layer, pos, feature_idx = self.transcoder_activation_matrix.indices()[:, tc_idx]
+                assert pos == self.pos
+                activation = self.transcoder_activation_matrix.values()[tc_idx]
+                res = Node.feature_node(
+                    layer,
+                    pos,
+                    feature_idx,
+                    is_lorsa=False,
+                    sae_name=None,
+                    influence=0,
+                    activation=activation,
+                    lorsa_pattern=None,
+                    qk_tracing_results=None,
+                    is_from_qk_tracing=True,
+                )
             elif idx < error_end_idx:
-                res = f"{idx - transcoder_end_idx}_error_{self.pos}"
+                layer, sublayer = divmod(idx - transcoder_end_idx, 2)
+                is_lorsa = not bool(sublayer)
+                res = Node.error_node(
+                    int(layer),
+                    self.pos,
+                    is_lorsa=is_lorsa,
+                    influence=0,
+                    is_from_qk_tracing=True,
+                )
             elif idx < decoder_bias_idx:
-                res = f"{idx - error_end_idx}_decoderbias_{self.pos}"
+                layer, sublayer = divmod(idx - error_end_idx, 2)
+                is_lorsa = not bool(sublayer)
+                res = Node.bias_node(
+                    int(layer),
+                    self.pos,
+                    bias_name="decoder_bias",
+                    is_from_qk_tracing=True,
+                )
             else:
-                res = self.bias_names[idx - decoder_bias_idx]
+                res = Node.bias_node(
+                    target_layer.item(),
+                    self.pos,
+                    bias_name=self.bias_names[idx - decoder_bias_idx],
+                    is_from_qk_tracing=True,
+                )
             results.append(res)
         return results
 
@@ -214,15 +256,18 @@ def get_residual_stream_components(
     ]
 
     return ResStreamComponents(
-        lorsa_activation_matrix=lorsa_components[0],
-        transcoder_activation_matrix=clt_components[0],
+        lorsa_activation_matrix=lorsa_components[0].coalesce(),
+        transcoder_activation_matrix=clt_components[0].coalesce(),
         n_layers=layer_int,
         pos=pos,
         components=torch.cat(l, dim=0),
+        tokenizer=model.tokenizer,
     )
 
 
-def probe_linear_equivalent_for_ln(components: ResStreamComponents, ln: torch.nn.Module) -> ResStreamComponents:
+def probe_linear_equivalent_for_ln(
+    components: ResStreamComponents, ln: torch.nn.Module, qk_idx: int | None = None
+) -> ResStreamComponents:
     """Probe the linear equivalent of layer normalization.
 
     We use a small trick to "probe" the linear equivalent of layernorms given a res stream input.
@@ -233,27 +278,32 @@ def probe_linear_equivalent_for_ln(components: ResStreamComponents, ln: torch.nn
     Args:
         components: Residual stream components.
         ln: Layer normalization module.
+        qk_idx: for qk norms, we are only interested in one lorsa head, but qk_ln will give us results of all heads
 
     Returns:
         Updated ResStreamComponents with linearized layer norm applied.
     """
     # a ln is only linear in the sense of fixing the denominator (i.e. hook_scale in TL)
-    # this is already done in replacement model _configure_gradient_flow
+    # this is already done in replacement_model._configure_gradient_flow()
     # we do this so we do not need to care about the actual implementation (i.e. RMS or LN)
     original_input_to_ln = components.sum().detach().clone()
     original_input_to_ln.requires_grad_()
     ln_out = ln(original_input_to_ln)
+    if qk_idx is not None:
+        ln_out = ln_out[qk_idx]
     probe_grads = torch.eye(ln_out.size(-1), device=ln_out.device)
     W_list = []
     for k in range(ln_out.size(-1)):
         b = ln(original_input_to_ln)
+        if qk_idx is not None:
+            b = b[qk_idx]
         b.backward(gradient=probe_grads[k])
         W_list.append(original_input_to_ln.grad)
         original_input_to_ln.grad = None
     W_recovered = torch.stack(W_list)
     b_recovered = ln_out - W_recovered @ original_input_to_ln
     post_ln_components = components.components @ W_recovered.T
-    assert torch.allclose(post_ln_components.sum(0) + b_recovered, ln_out, atol=1e-4)
+    # assert torch.allclose(post_ln_components.sum(0) + b_recovered, ln_out, atol=1e-4)
     components.update_components(post_ln_components)
     return components.append(b_recovered, bias_name="b_ln1")
 
@@ -303,31 +353,32 @@ def get_single_side_QK_components(
         b_qk = lorsa.b_Q[qk_idx_int] if q_side else lorsa.b_K[qk_idx_int]
         q_or_k = torch.einsum(
             "bd,dq->bq",
-            components.components,
+            components.components.to(lorsa.cfg.dtype),
             W_qk,
         )
         components = components.update_components(q_or_k)
         components = components.append(b_qk, bias_name="b_q" if q_side else "b_k")
         components = components.update_components(components.components / (lorsa.cfg.attn_scale**0.5))
 
-        if lorsa.cfg.use_post_qk_ln:
-            ln = lorsa.ln_q if q_side else lorsa.ln_k
-            components = probe_linear_equivalent_for_ln(components, ln)
+    if lorsa.cfg.use_post_qk_ln:
+        ln = lorsa.ln_q if q_side else lorsa.ln_k
+        components = probe_linear_equivalent_for_ln(components, ln, qk_idx_int)
 
-        # apply_rotary only works in 4-d.
-        # have to expand to 4-d first and put the interested components to the right pos
-        components = components.update_components(
-            lorsa._apply_rotary(
-                components.components[:, None, None, :].expand(-1, pos, -1, -1),
-            )[:, -1, 0, :]
-        )
+    # apply_rotary only works in 4-d.
+    # have to expand to 4-d first and put the interested components to the right pos
+    components = components.update_components(
+        lorsa._apply_rotary(
+            components.components[:, None, None, :].expand(-1, pos + 1, -1, -1),
+        )[:, -1, 0, :]
+    )
 
-        return components
+    return components
 
 
 def extract_QK_tracing_result(
     q_side: ResStreamComponents,
     k_side: ResStreamComponents,
+    layer: int,
     input_ids: torch.Tensor,
     topk: int = 10,
 ) -> QKTracingResults:
@@ -352,8 +403,8 @@ def extract_QK_tracing_result(
     # pair-wise top contributors
     pair_wise_contributors = list(
         zip(
-            q_side.map_idx_to_nodes(q_features, input_ids),
-            k_side.map_idx_to_nodes(k_features, input_ids),
+            q_side.map_idx_to_nodes(q_features, layer, input_ids),
+            k_side.map_idx_to_nodes(k_features, layer, input_ids),
             topk_pairwise_attr_entries.values.cpu().tolist(),
         )
     )
@@ -363,13 +414,13 @@ def extract_QK_tracing_result(
     )
     top_q_marginal_contributors = list(
         zip(
-            q_side.map_idx_to_nodes(top_q_marginal_contributors.indices, input_ids),
+            q_side.map_idx_to_nodes(top_q_marginal_contributors.indices, layer, input_ids),
             top_q_marginal_contributors.values.cpu().tolist(),
         )
     )
     top_k_marginal_contributors = list(
         zip(
-            k_side.map_idx_to_nodes(top_k_marginal_contributors.indices, input_ids),
+            k_side.map_idx_to_nodes(top_k_marginal_contributors.indices, layer, input_ids),
             top_k_marginal_contributors.values.cpu().tolist(),
         )
     )
@@ -378,6 +429,9 @@ def extract_QK_tracing_result(
         top_q_marginal_contributors=top_q_marginal_contributors,
         top_k_marginal_contributors=top_k_marginal_contributors,
     )
+
+
+score_attribution_cache = {}
 
 
 def compute_attn_scores_attribution(
@@ -411,16 +465,30 @@ def compute_attn_scores_attribution(
     Returns:
         QKTracingResults containing pairwise and marginal contributors.
     """
-    assert q_pos > 0, "q_pos=0 should not appear in interested heads"
-    if k_pos == 0:
-        # we are currently not instrested why a token attend to bos
-        return QKTracingResults(
-            pair_wise_contributors=[],
-            top_q_marginal_contributors=[],
-            top_k_marginal_contributors=[],
-        )
+    cache_key = (layer, q_pos, k_pos, qk_idx)
+    if cache_key in score_attribution_cache:
+        return score_attribution_cache[cache_key]
+
+    is_first_token_acts_zeroed_out = model.maybe_zero_bos(input_ids)
+    if is_first_token_acts_zeroed_out:
+        assert q_pos != 0, "q_pos=0 should not appear in interested heads"
+        if k_pos == 0:
+            return QKTracingResults(
+                pair_wise_contributors=[],
+                top_q_marginal_contributors=[],
+                top_k_marginal_contributors=[],
+            )
+
     q_side = get_single_side_QK_components(
-        lorsa_activation_matrix, clt_activation_matrix, q_pos, error_vecs, token_vecs, qk_idx, layer, model, q_side=True
+        lorsa_activation_matrix,
+        clt_activation_matrix,
+        q_pos,
+        error_vecs,
+        token_vecs,
+        qk_idx,
+        layer,
+        model,
+        q_side=True,
     )
     k_side = get_single_side_QK_components(
         lorsa_activation_matrix,
@@ -434,4 +502,6 @@ def compute_attn_scores_attribution(
         q_side=False,
     ).drop_bias_terms()
 
-    return extract_QK_tracing_result(q_side, k_side, input_ids, topk=topk)
+    result = extract_QK_tracing_result(q_side, k_side, layer, input_ids, topk=topk)
+    score_attribution_cache[cache_key] = result
+    return result

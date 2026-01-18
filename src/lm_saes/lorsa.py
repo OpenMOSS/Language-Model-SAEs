@@ -21,12 +21,71 @@ from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
-from .abstract_sae import AbstractSparseAutoEncoder, register_sae_model
-from .config import LorsaConfig
-from .utils.distributed import DimMap, masked_fill, mesh_dim_size
-from .utils.logging import get_distributed_logger
+from lm_saes.abstract_sae import (
+    AbstractSparseAutoEncoder,
+    BaseSAEConfig,
+    register_sae_config,
+    register_sae_model,
+)
+from lm_saes.utils.distributed import DimMap, masked_fill, mesh_dim_size
+from lm_saes.utils.logging import get_distributed_logger
 
 logger = get_distributed_logger("lorsa")
+
+
+@register_sae_config("lorsa")
+class LorsaConfig(BaseSAEConfig):
+    """Configuration for Low Rank Sparse Attention."""
+
+    sae_type: str = "lorsa"
+
+    hook_point_in: str
+    hook_point_out: str
+
+    # Attention dimensions
+    n_qk_heads: int
+    d_qk_head: int
+    positional_embedding_type: Literal["rotary", "none"] = "rotary"
+    rotary_dim: int
+    rotary_base: int = 10000
+    rotary_adjacent_pairs: bool = True
+    rotary_scale: int = 1
+    use_NTK_by_parts_rope: bool = False
+    NTK_by_parts_factor: float = 1.0
+    NTK_by_parts_low_freq_factor: float = 1.0
+    NTK_by_parts_high_freq_factor: float = 1.0
+    old_context_len: int = 2048
+    n_ctx: int
+
+    # Attention settings
+    attn_scale: float | None = None
+    use_post_qk_ln: bool = False
+    normalization_type: Literal["LN", "RMS"] | None = None
+    eps: float = 1e-6
+
+    @property
+    def n_ov_heads(self) -> int:
+        return self.d_sae
+
+    @property
+    def ov_group_size(self) -> int:
+        return self.n_ov_heads // self.n_qk_heads
+
+    @property
+    def associated_hook_points(self) -> list[str]:
+        """All hook points used by Lorsa."""
+        return [self.hook_point_in, self.hook_point_out]
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        assert self.hook_point_in is not None and self.hook_point_out is not None, (
+            "hook_point_in and hook_point_out must be set"
+        )
+        assert self.hook_point_in != self.hook_point_out, "hook_point_in and hook_point_out must be different"
+        assert self.n_ov_heads % self.n_qk_heads == 0, "n_ov_heads must be divisible by n_qk_heads"
+
+        if self.attn_scale is None:
+            self.attn_scale = self.d_qk_head**0.5
 
 
 @register_sae_model("lorsa")
@@ -147,13 +206,21 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             self.register_buffer("rotary_cos", cos)
 
     @property
-    def attn_scale(self) -> float:
-        assert self.cfg.attn_scale is not None, "attn_scale must be initialized during config post initialization"
-        return self.cfg.attn_scale
+    def W_D(self) -> torch.Tensor:
+        return self.W_O
+
+    @property
+    def W_E(self) -> torch.Tensor:
+        return self.W_V.T
 
     @property
     def b_O(self):
         return self.b_D
+
+    @property
+    def attn_scale(self) -> float:
+        assert self.cfg.attn_scale is not None, "attn_scale must be initialized during config post initialization"
+        return self.cfg.attn_scale
 
     def init_parameters(self, **kwargs):
         """Initialize parameters."""
@@ -720,7 +787,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         head_idx: Int[torch.Tensor, " n_active_features"],
     ) -> Float[torch.Tensor, "n_active_features k_pos"]:
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
-        qk_idx = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
+        qk_idx = head_idx // self.cfg.ov_group_size
         q, k, v = self._compute_qkv(x)
 
         # (n_active_features, q_pos, k_pos)
@@ -740,7 +807,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         assert x.size(0) == 1, f"x must be of shape (1, seq_len, d_model), but got {x.shape}"
 
         head_idx = torch.arange(self.cfg.d_sae)
-        qk_idx = head_idx // (self.cfg.n_ov_heads // self.cfg.n_qk_heads)
+        qk_idx = head_idx // self.cfg.ov_group_size
         q, k, v = self._compute_qkv(x)
 
         # (n_active_features, q_pos, k_pos)
@@ -810,7 +877,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         v = einops.rearrange(v, "b seq h -> b h seq")
         if self.cfg.n_qk_heads != self.cfg.n_ov_heads:
             # (batch, n_qk_heads, d_qk_head, seq_len)
-            v = v.view(v.shape[0], self.cfg.n_qk_heads, self.cfg.n_ov_heads // self.cfg.n_qk_heads, v.shape[2])
+            v = v.view(v.shape[0], self.cfg.n_qk_heads, self.cfg.ov_group_size, v.shape[2])
             v = v.permute(1, 0, 2, 3)  # (n_qk_heads, batch, d_qk_head, seq_len)
             z = torch.einsum("hbqk,hbrk->hbrq", pattern, v)
             z = z.permute(1, 0, 2, 3)  # (batch, n_qk_heads, d_qk_head, seq_len)
@@ -829,7 +896,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         return torch.where(mask, scores, ignore_value)  # type: ignore
 
     @override
+    @torch.no_grad()
     def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
+        """Set decoder weights to a fixed norm."""
         if force_exact:
             self.W_O.mul_(value / self.decoder_norm(keepdim=True).mean())
         else:
@@ -842,31 +911,26 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for lorsa")
 
     @override
-    def load_distributed_state_dict(
-        self, state_dict: dict[str, torch.Tensor], device_mesh: DeviceMesh, prefix: str = ""
-    ) -> None:
-        super().load_distributed_state_dict(state_dict, device_mesh, prefix)
-        self.device_mesh = device_mesh
-        for name in ["W_Q", "W_K", "W_V", "W_O", "b_Q", "b_K", "b_V", "b_D"]:
-            self.register_parameter(name, nn.Parameter(state_dict[f"{prefix}{name}"].to(getattr(self, name).dtype)))
+    def load_full_state_dict(self, state_dict: dict[str, torch.Tensor], strict: bool = True) -> None:
+        # Extract and set dataset_average_activation_norm if present
+        norm_keys = [k for k in state_dict.keys() if k.startswith("dataset_average_activation_norm.")]
 
-        if self.cfg.use_post_qk_ln:
-            self.ln_q.register_parameter("w", nn.Parameter(state_dict[f"{prefix}ln_q.w"].to(self.ln_q.w.dtype)))
-            self.ln_k.register_parameter("w", nn.Parameter(state_dict[f"{prefix}ln_k.w"].to(self.ln_k.w.dtype)))
+        if norm_keys:
+            dataset_norm = {key.split(".", 1)[1]: state_dict[key].item() for key in norm_keys}
+            self.set_dataset_average_activation_norm(dataset_norm)
+            state_dict = {k: v for k, v in state_dict.items() if not k.startswith("dataset_average_activation_norm.")}
 
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str,
-        strict_loading: bool = True,
-        fold_activation_scale: bool = True,
-        device_mesh: DeviceMesh | None = None,
-        **kwargs,
-    ):
-        """Load pretrained model."""
-        cfg = LorsaConfig.from_pretrained(pretrained_name_or_path, strict_loading=strict_loading, **kwargs)
-        model = cls.from_config(cfg, fold_activation_scale=fold_activation_scale, device_mesh=device_mesh)
-        return model
+        ckpt_n_qk_heads = state_dict["W_Q"].size(0)
+        if self.cfg.n_qk_heads != ckpt_n_qk_heads:
+            assert self.cfg.n_qk_heads % ckpt_n_qk_heads == 0
+            qk_exp_factor = self.cfg.n_qk_heads // ckpt_n_qk_heads
+            for k in ["W_Q", "W_K", "b_Q", "b_K"]:
+                state_dict[k] = torch.repeat_interleave(state_dict[k], qk_exp_factor, dim=0)
+            if self.cfg.use_post_qk_ln:
+                for k in ["ln_q.w", "ln_k.w"]:
+                    state_dict[k] = torch.repeat_interleave(state_dict[k], qk_exp_factor, dim=0)
+
+        self.load_state_dict(state_dict, strict=strict)
 
     @override
     def dim_maps(self) -> dict[str, DimMap]:
@@ -901,9 +965,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         """Prepare label tensor."""
         label = batch[self.cfg.hook_point_out]
         return label
-
-    def hf_folder_name(self) -> str:
-        return f"{self.cfg.sae_type}-{self.cfg.hook_point_in}-{self.cfg.hook_point_out}"
 
 
 class RMSNormPerHead(nn.Module):
