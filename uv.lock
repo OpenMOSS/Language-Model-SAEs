@@ -1561,6 +1561,7 @@ dependencies = [
     { name = "torchvision" },
     { name = "transformer-lens" },
     { name = "transformers" },
+    { name = "typeguard" },
     { name = "typer" },
     { name = "typing-extensions" },
     { name = "uvicorn" },
@@ -1604,7 +1605,6 @@ dev = [
     { name = "sqlalchemy" },
     { name = "tabulate" },
     { name = "transformer-lens" },
-    { name = "typeguard" },
 ]
 docs = [
     { name = "mkdocs-gen-files" },
@@ -1648,6 +1648,7 @@ requires-dist = [
     { name = "transformer-lens", editable = "TransformerLens" },
     { name = "transformers", specifier = ">=4.57.1" },
     { name = "triton", marker = "extra == 'triton'" },
+    { name = "typeguard", specifier = ">=4.4.1" },
     { name = "typer", specifier = ">=0.15.0" },
     { name = "typing-extensions", specifier = ">=4.13.2" },
     { name = "uvicorn", specifier = ">=0.32.0" },
@@ -1680,7 +1681,6 @@ dev = [
     { name = "sqlalchemy", specifier = ">=2.0.44" },
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "transformer-lens", editable = "TransformerLens" },
-    { name = "typeguard", specifier = ">=4.4.1" },
 ]
 docs = [
     { name = "mkdocs-gen-files", specifier = ">=0.5.0" },
