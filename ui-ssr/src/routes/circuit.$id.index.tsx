@@ -5,7 +5,7 @@ import {
   useRouter,
 } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, Loader2 } from 'lucide-react'
+import { AlertCircle, GitFork, Loader2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { z } from 'zod'
 import type { CircuitData, FeatureNode, VisState } from '@/types/circuit'
@@ -25,6 +25,7 @@ import { NodeConnections } from '@/components/circuits/node-connections'
 import { ThresholdControls } from '@/components/circuits/threshold-controls'
 import { FeatureCardHorizontal } from '@/components/feature/feature-card-horizontal'
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { createRawEdgeIndex, createRawNodeIndex } from '@/utils/circuit-index'
 
 const searchParamsSchema = z.object({
@@ -313,10 +314,38 @@ function CircuitPage() {
               onSelect={handleCircuitSelect}
             />
           </div>
-          <NewGraphDialog
-            saeSets={saeSets}
-            onGraphCreated={handleGraphCreated}
-          />
+          <div className="flex gap-2">
+            <NewGraphDialog
+              saeSets={saeSets}
+              onGraphCreated={handleGraphCreated}
+            />
+            {circuitData && (
+              <NewGraphDialog
+                saeSets={saeSets}
+                onGraphCreated={handleGraphCreated}
+                initialConfig={{
+                  saeSetName: circuitData.saeSetName,
+                  input: circuitData.input,
+                  desiredLogitProb: circuitData.config.desiredLogitProb,
+                  maxFeatureNodes: circuitData.config.maxFeatureNodes,
+                  maxNLogits: circuitData.config.maxNLogits,
+                  qkTracingTopk: circuitData.config.qkTracingTopk,
+                  name: circuitData.name
+                    ? `${circuitData.name}-remix`
+                    : undefined,
+                }}
+                trigger={
+                  <Button
+                    variant="outline"
+                    className="h-14 px-4 gap-2 text-blue-700 border-blue-200 bg-blue-50 hover:bg-blue-100 hover:border-blue-300 transition-colors font-semibold"
+                  >
+                    <GitFork className="h-4 w-4" />
+                    Remix
+                  </Button>
+                }
+              />
+            )}
+          </div>
         </div>
         <div className="flex-1" />
       </div>

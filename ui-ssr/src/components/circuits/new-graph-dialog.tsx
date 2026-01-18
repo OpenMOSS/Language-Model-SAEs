@@ -35,28 +35,58 @@ import { useDebounce } from '@/hooks/use-debounce'
 interface NewGraphDialogProps {
   saeSets: string[]
   onGraphCreated: (circuitId: string) => void
+  initialConfig?: {
+    saeSetName?: string
+    input?: CircuitInput
+    desiredLogitProb?: number
+    maxFeatureNodes?: number
+    maxNLogits?: number
+    qkTracingTopk?: number
+    name?: string
+  }
+  trigger?: React.ReactNode
 }
 
 export function NewGraphDialog({
   saeSets,
   onGraphCreated,
+  initialConfig,
+  trigger,
 }: NewGraphDialogProps) {
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  const [selectedSaeSet, setSelectedSaeSet] = useState<string>('')
-  const [customGraphId, setCustomGraphId] = useState('')
-  const [useChatTemplate, setUseChatTemplate] = useState(false)
-  const [prompt, setPrompt] = useState('')
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { role: 'user', content: '' },
-    { role: 'assistant', content: '' },
-  ])
+  const [selectedSaeSet, setSelectedSaeSet] = useState<string>(
+    initialConfig?.saeSetName ?? '',
+  )
+  const [customGraphId, setCustomGraphId] = useState(initialConfig?.name ?? '')
+  const [useChatTemplate, setUseChatTemplate] = useState(
+    initialConfig?.input?.inputType === 'chat_template',
+  )
+  const [prompt, setPrompt] = useState(
+    initialConfig?.input?.inputType === 'plain_text'
+      ? initialConfig.input.text
+      : '',
+  )
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(
+    initialConfig?.input?.inputType === 'chat_template'
+      ? initialConfig.input.messages
+      : [
+          { role: 'user', content: '' },
+          { role: 'assistant', content: '' },
+        ],
+  )
 
-  const [desiredLogitProb, setDesiredLogitProb] = useState(0.98)
-  const [maxNodes, setMaxNodes] = useState(256)
-  const [maxLogits, setMaxLogits] = useState(1)
-  const [qkTracingTopk, setQkTracingTopk] = useState(10)
+  const [desiredLogitProb, setDesiredLogitProb] = useState(
+    initialConfig?.desiredLogitProb ?? 0.98,
+  )
+  const [maxNodes, setMaxNodes] = useState(
+    initialConfig?.maxFeatureNodes ?? 256,
+  )
+  const [maxLogits, setMaxLogits] = useState(initialConfig?.maxNLogits ?? 1)
+  const [qkTracingTopk, setQkTracingTopk] = useState(
+    initialConfig?.qkTracingTopk ?? 10,
+  )
 
   const {
     mutate: mutateGenerateCircuit,
@@ -166,17 +196,28 @@ export function NewGraphDialog({
   }
 
   const handleReset = () => {
-    setCustomGraphId('')
-    setUseChatTemplate(false)
-    setPrompt('')
-    setChatMessages([
-      { role: 'user', content: '' },
-      { role: 'assistant', content: '' },
-    ])
-    setDesiredLogitProb(0.98)
-    setMaxNodes(256)
-    setMaxLogits(1)
-    setQkTracingTopk(10)
+    if (initialConfig?.saeSetName !== undefined) {
+      setSelectedSaeSet(initialConfig.saeSetName)
+    }
+    setCustomGraphId(initialConfig?.name ?? '')
+    setUseChatTemplate(initialConfig?.input?.inputType === 'chat_template')
+    setPrompt(
+      initialConfig?.input?.inputType === 'plain_text'
+        ? initialConfig.input.text
+        : '',
+    )
+    setChatMessages(
+      initialConfig?.input?.inputType === 'chat_template'
+        ? initialConfig.input.messages
+        : [
+            { role: 'user', content: '' },
+            { role: 'assistant', content: '' },
+          ],
+    )
+    setDesiredLogitProb(initialConfig?.desiredLogitProb ?? 0.98)
+    setMaxNodes(initialConfig?.maxFeatureNodes ?? 256)
+    setMaxLogits(initialConfig?.maxNLogits ?? 1)
+    setQkTracingTopk(initialConfig?.qkTracingTopk ?? 10)
   }
 
   const handleDialogClose = () => {
@@ -187,6 +228,7 @@ export function NewGraphDialog({
   const handleDialogOpenChange = (open: boolean) => {
     if (open) {
       setDialogOpen(true)
+      handleReset()
     } else {
       handleDialogClose()
     }
@@ -197,10 +239,12 @@ export function NewGraphDialog({
   return (
     <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
       <DialogTrigger asChild>
-        <Button className="h-12 px-4 gap-2">
-          <Plus className="h-4 w-4" />
-          New Graph
-        </Button>
+        {trigger || (
+          <Button className="h-14 px-4 gap-2 font-semibold">
+            <Plus className="h-4 w-4" />
+            New Graph
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="max-w-6xl max-h-[90vh]">
         <DialogHeader>
