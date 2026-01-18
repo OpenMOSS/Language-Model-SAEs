@@ -296,6 +296,64 @@ class MongoClient:
             {"name": name, "sae_name": sae_name, "sae_series": sae_series}
         ).inserted_id
 
+    def update_sae(self, name: str, series: str, update_data: dict[str, Any]):
+        """Update an SAE and all its references.
+
+        If the name is updated, all references in other collections are also updated within a transaction.
+        """
+        new_name = update_data.get("name")
+        if new_name and new_name != name:
+            with self.client.start_session() as session:
+                with session.start_transaction():
+                    self.feature_collection.update_many(
+                        {"sae_name": name, "sae_series": series}, {"$set": {"sae_name": new_name}}, session=session
+                    )
+                    self.analysis_collection.update_many(
+                        {"sae_name": name, "sae_series": series}, {"$set": {"sae_name": new_name}}, session=session
+                    )
+                    self.bookmark_collection.update_many(
+                        {"sae_name": name, "sae_series": series}, {"$set": {"sae_name": new_name}}, session=session
+                    )
+                    self.sae_set_collection.update_many(
+                        {"sae_names": name, "sae_series": series},
+                        {"$set": {"sae_names.$[elem]": new_name}},
+                        array_filters=[{"elem": name}],
+                        session=session,
+                    )
+                    self.circuit_collection.update_many(
+                        {"clt_names": name, "sae_series": series},
+                        {"$set": {"clt_names.$[elem]": new_name}},
+                        array_filters=[{"elem": name}],
+                        session=session,
+                    )
+                    self.circuit_collection.update_many(
+                        {"lorsa_names": name, "sae_series": series},
+                        {"$set": {"lorsa_names.$[elem]": new_name}},
+                        array_filters=[{"elem": name}],
+                        session=session,
+                    )
+                    self.sae_collection.update_one(
+                        {"name": name, "series": series}, {"$set": update_data}, session=session
+                    )
+        else:
+            self.sae_collection.update_one({"name": name, "series": series}, {"$set": update_data})
+
+    def update_sae_set(self, name: str, update_data: dict[str, Any]):
+        """Update an SAE set and all its references.
+
+        If the name is updated, all references in other collections are also updated within a transaction.
+        """
+        new_name = update_data.get("name")
+        if new_name and new_name != name:
+            with self.client.start_session() as session:
+                with session.start_transaction():
+                    self.circuit_collection.update_many(
+                        {"sae_set_name": name}, {"$set": {"sae_set_name": new_name}}, session=session
+                    )
+                    self.sae_set_collection.update_one({"name": name}, {"$set": update_data}, session=session)
+        else:
+            self.sae_set_collection.update_one({"name": name}, {"$set": update_data})
+
     def remove_sae(self, sae_name: str, sae_series: str | None = None):
         self.analysis_collection.delete_many({"sae_name": sae_name, "sae_series": sae_series})
         self.feature_collection.delete_many({"sae_name": sae_name, "sae_series": sae_series})

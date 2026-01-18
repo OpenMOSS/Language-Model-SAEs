@@ -70,25 +70,13 @@ def admin_update_sae(name: str, request: UpdateSaeRequest):
             return Response(content=f"SAE with name '{request.new_name}' already exists", status_code=409)
 
         update_data["name"] = request.new_name
-
-        # Update all related collections
-        client.feature_collection.update_many(
-            {"sae_name": name, "sae_series": sae_series}, {"$set": {"sae_name": request.new_name}}
-        )
-        client.analysis_collection.update_many(
-            {"sae_name": name, "sae_series": sae_series}, {"$set": {"sae_name": request.new_name}}
-        )
-        client.bookmark_collection.update_many(
-            {"sae_name": name, "sae_series": sae_series}, {"$set": {"sae_name": request.new_name}}
-        )
-
         # Clear cache
         get_sae.cache_clear()
 
     if not update_data:
         return {"message": "No updates provided"}
 
-    client.sae_collection.update_one({"name": name, "series": sae_series}, {"$set": update_data})
+    client.update_sae(name, sae_series, update_data)
 
     new_name = request.new_name if request.new_name else name
     return {"message": f"SAE '{new_name}' updated successfully"}
@@ -153,13 +141,10 @@ def admin_update_sae_set(name: str, request: UpdateSaeSetRequest):
 
         update_data["name"] = request.new_name
 
-        # Update circuits that reference this SAE set
-        client.circuit_collection.update_many({"sae_set_name": name}, {"$set": {"sae_set_name": request.new_name}})
-
     if not update_data:
         return {"message": "No updates provided"}
 
-    client.sae_set_collection.update_one({"name": name}, {"$set": update_data})
+    client.update_sae_set(name, update_data)
 
     new_name = request.new_name if request.new_name else name
     return {"message": f"SAE set '{new_name}' updated successfully"}
