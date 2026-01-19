@@ -512,8 +512,8 @@ class AttributionContext:
 
         try:
             last_layer = max(layers_in_batch)
-            self._resid_activations[last_layer].backward(
-                gradient=torch.zeros_like(self._resid_activations[last_layer]),
+            sum(self._resid_activations[: last_layer + 1]).backward(
+                gradient=torch.zeros_like(self._resid_activations[0]),
                 retain_graph=retain_graph,
             )
         finally:
