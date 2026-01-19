@@ -32,7 +32,7 @@ plugins:
 
 nav:
   - Home: index.md
-  - Walkthrough: walkthrough.md
+  - Train SAEs: train-saes.md
   - Key Concepts: concepts.md
   - Style Guide: style-guide.md
   - Code Reference: reference/
