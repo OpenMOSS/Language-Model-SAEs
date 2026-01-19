@@ -933,3 +933,60 @@ Once you have generated and saved activations to disk, you can configure the `Ac
     ```
 
 ## Use HuggingFace Backend
+
+While TransformerLens provides a unified set of hook points across numerous Transformer variants, there are compelling reasons to use the Hugging Face Transformers library directly for generating activations:
+
+- Provides a wider range of model architectures. Almost every frontier model is released with official Hugging Face-compatible modeling code, ensuring immediate support for the latest architectures.
+- Integrates GPU accelerate kernels, e.g. Flash Attention, for faster activation generation.
+- Reduces numerical errors. TransformerLens re-implements model logic using more semantic linear algebraic operation (primarily [Einsum](https://github.com/arogozhnikov/einops)), which will inevitably introduce subtle numerical discrepancies. Direct usage of Huggingface ensures the activation used for training sparse dictionaries is just the same as whatever you use for other purpose.
+
+To use the HuggingFace backend, you simply need to change the `backend` field in `LanguageModelConfig` to `"huggingface"`, or (in full script) load the model with `HuggingFaceLanguageModel` wrapper.
+
+=== "Runner"
+
+    ```python
+    # ...
+
+    settings = TrainSAESettings(
+        # ...
+        model=LanguageModelConfig(
+            model_name="EleutherAI/pythia-160m",
+            device="cuda",
+            dtype="torch.float16",
+            backend="huggingface",  # Set backend to huggingface
+        ),
+        # ...
+    )
+
+    train_sae(settings)
+    ```
+
+=== "CLI"
+
+    ```toml
+    # ...
+
+    [model]
+    model_name = "EleutherAI/pythia-160m"
+    device = "cuda"
+    dtype = "torch.float16"
+    backend = "huggingface"
+
+    # The rest of the configuration remains the same
+    ```
+
+=== "Full Script"
+
+    ```python
+    from lm_saes import HuggingFaceLanguageModel, LanguageModelConfig
+
+    model = HuggingFaceLanguageModel(
+        LanguageModelConfig(
+            model_name="EleutherAI/pythia-160m",
+            device="cuda",
+            dtype="torch.float16",
+        )
+    )
+    
+    # The rest of the script remains the same
+    ```
