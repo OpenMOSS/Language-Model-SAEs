@@ -380,7 +380,7 @@ function CircuitPage() {
                   Generating Circuit
                 </h3>
                 <p className="text-sm text-slate-500">
-                  This may take a few minutes depending on the complexity
+                  This may take a few minutes depending on graph complexity
                 </p>
               </div>
 
