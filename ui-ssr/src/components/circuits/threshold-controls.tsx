@@ -1,5 +1,5 @@
 import { Loader2, Settings2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Info } from '@/components/ui/info'
 import { Slider } from '@/components/ui/slider'
@@ -23,12 +23,37 @@ export function ThresholdControls({
   const [isExpanded, setIsExpanded] = useState(false)
   const [localNodeThreshold, setLocalNodeThreshold] = useState(nodeThreshold)
   const [localEdgeThreshold, setLocalEdgeThreshold] = useState(edgeThreshold)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   // Sync local state when props change (e.g., when switching circuits)
   useEffect(() => {
     setLocalNodeThreshold(nodeThreshold)
     setLocalEdgeThreshold(edgeThreshold)
   }, [nodeThreshold, edgeThreshold])
+
+  // Close panel when clicking outside
+  useEffect(() => {
+    if (!isExpanded) return
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setIsExpanded(false)
+      }
+    }
+
+    // Add event listener with a slight delay to avoid immediate closure
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('mousedown', handleClickOutside)
+    }, 0)
+
+    return () => {
+      clearTimeout(timeoutId)
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isExpanded])
 
   const hasChanges =
     localNodeThreshold !== nodeThreshold || localEdgeThreshold !== edgeThreshold
@@ -44,7 +69,7 @@ export function ThresholdControls({
   }
 
   return (
-    <div className={cn('relative', className)}>
+    <div ref={containerRef} className={cn('relative', className)}>
       {/* Collapsed view / Trigger button */}
       <button
         type="button"
