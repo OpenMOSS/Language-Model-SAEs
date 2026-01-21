@@ -661,10 +661,9 @@ def _run_attribution(
     logger.info(f"Forward pass completed in {time.time() - phase_start:.2f}s")
 
     if offload:
-        offload_handles += offload_modules(
-            [block.mlp for block in model.blocks] + [block.attn for block in model.blocks],
-            offload,
-        )
+        offload_handles += offload_modules([block.mlp for block in model.blocks], offload)
+        if use_lorsa:
+            offload_handles += offload_modules([block.attn for block in model.blocks], offload)
 
     # Phase 2: build input vector list
     logger.info("Phase 2: Building input vectors")
@@ -1010,7 +1009,7 @@ def _run_attribution(
     # ***** New Phase Begin *****
     # Phase 6: attribute attention scores
     # trace attention scores for every visited lorsa feature
-    if qk_tracing_topk > 0:
+    if use_lorsa and qk_tracing_topk > 0:
 
         def idx_to_qk_idx(idx: torch.Tensor) -> torch.Tensor:
             ov_idx = lorsa_activation_matrix.indices()[2][idx]
@@ -1084,5 +1083,8 @@ def _run_attribution(
 
     total_time = time.time() - start_time
     logger.info(f"Attribution completed in {total_time:.2f}s")
+
+    for name, param in model._get_requires_grad_bias_params():
+        param.grad = None
 
     return graph
