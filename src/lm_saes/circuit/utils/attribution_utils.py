@@ -91,7 +91,9 @@ def select_encoder_rows(activations: torch.sparse.Tensor, transcoders: Transcode
     rows: List[torch.Tensor] = []
     for layer, row in enumerate(activations):
         _, feat_idx = row.coalesce().indices()
-        rows.append(transcoders.W_E[layer].T[feat_idx])
+
+        # this is only for list of plts. We do this for now to reduce mem overhead
+        rows.append(transcoders[layer].W_E.T[feat_idx])
     return torch.cat(rows)
 
 
