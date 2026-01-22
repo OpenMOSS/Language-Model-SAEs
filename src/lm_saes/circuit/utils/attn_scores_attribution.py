@@ -69,7 +69,7 @@ class ResStreamComponents:
         ), "We might not want to drop bias terms for the second time."
         return self
 
-    def map_idx_to_nodes(self, indices: torch.Tensor, input_ids: torch.Tensor) -> list[Node]:
+    def map_idx_to_nodes(self, indices: torch.Tensor, target_layer: int, input_ids: torch.Tensor) -> list[Node]:
         """Map component indices to node names.
 
         Args:
@@ -147,7 +147,7 @@ class ResStreamComponents:
                 )
             else:
                 res = Node.bias_node(
-                    int(layer),
+                    target_layer.item(),
                     self.pos,
                     bias_name=self.bias_names[idx - decoder_bias_idx],
                     is_from_qk_tracing=True,
@@ -368,7 +368,7 @@ def get_single_side_QK_components(
     # have to expand to 4-d first and put the interested components to the right pos
     components = components.update_components(
         lorsa._apply_rotary(
-            components.components[:, None, None, :].expand(-1, pos, -1, -1),
+            components.components[:, None, None, :].expand(-1, pos + 1, -1, -1),
         )[:, -1, 0, :]
     )
 
@@ -378,6 +378,7 @@ def get_single_side_QK_components(
 def extract_QK_tracing_result(
     q_side: ResStreamComponents,
     k_side: ResStreamComponents,
+    layer: int,
     input_ids: torch.Tensor,
     topk: int = 10,
 ) -> QKTracingResults:
@@ -402,8 +403,8 @@ def extract_QK_tracing_result(
     # pair-wise top contributors
     pair_wise_contributors = list(
         zip(
-            q_side.map_idx_to_nodes(q_features, input_ids),
-            k_side.map_idx_to_nodes(k_features, input_ids),
+            q_side.map_idx_to_nodes(q_features, layer, input_ids),
+            k_side.map_idx_to_nodes(k_features, layer, input_ids),
             topk_pairwise_attr_entries.values.cpu().tolist(),
         )
     )
@@ -413,13 +414,13 @@ def extract_QK_tracing_result(
     )
     top_q_marginal_contributors = list(
         zip(
-            q_side.map_idx_to_nodes(top_q_marginal_contributors.indices, input_ids),
+            q_side.map_idx_to_nodes(top_q_marginal_contributors.indices, layer, input_ids),
             top_q_marginal_contributors.values.cpu().tolist(),
         )
     )
     top_k_marginal_contributors = list(
         zip(
-            k_side.map_idx_to_nodes(top_k_marginal_contributors.indices, input_ids),
+            k_side.map_idx_to_nodes(top_k_marginal_contributors.indices, layer, input_ids),
             top_k_marginal_contributors.values.cpu().tolist(),
         )
     )
@@ -501,6 +502,6 @@ def compute_attn_scores_attribution(
         q_side=False,
     ).drop_bias_terms()
 
-    result = extract_QK_tracing_result(q_side, k_side, input_ids, topk=topk)
+    result = extract_QK_tracing_result(q_side, k_side, layer, input_ids, topk=topk)
     score_attribution_cache[cache_key] = result
     return result

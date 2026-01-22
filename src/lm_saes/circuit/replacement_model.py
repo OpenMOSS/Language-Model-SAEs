@@ -9,11 +9,12 @@ from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.config import LanguageModelConfig
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.resource_loaders import load_model
 
+from .utils.attribution_utils import ensure_tokenized
 from .utils.transcoder_set import TranscoderSet
 
 # Type definition for transcoders: per-layer (dict) or cross-layer (CLT)
@@ -85,7 +86,6 @@ class ReplacementModel(HookedTransformer):
     mlp_output_hook: str
     attn_input_hook: str = None
     attn_output_hook: str = None
-    resid_mid_hook: str = None
 
     @classmethod
     def from_config(
@@ -97,7 +97,6 @@ class ReplacementModel(HookedTransformer):
         mlp_output_hook: str = "mlp.hook_out",
         attn_input_hook: str = "attn.hook_in",
         attn_output_hook: str = "attn.hook_out",
-        resid_mid_hook: str = "hook_resid_mid",
         use_lorsa: bool = True,
         **kwargs,
     ) -> "ReplacementModel":
@@ -124,14 +123,7 @@ class ReplacementModel(HookedTransformer):
 
         model = load_model(config).model  # type: ignore[reportAttributeAccessIssue]
         model._configure_replacement_model(
-            transcoders,
-            lorsas,
-            mlp_input_hook,
-            mlp_output_hook,
-            attn_input_hook,
-            attn_output_hook,
-            resid_mid_hook,
-            use_lorsa,
+            transcoders, lorsas, mlp_input_hook, mlp_output_hook, attn_input_hook, attn_output_hook, use_lorsa
         )
         return model
 
@@ -145,7 +137,6 @@ class ReplacementModel(HookedTransformer):
         mlp_output_hook: str = "mlp.hook_out",
         attn_input_hook: str = "attn.hook_in",
         attn_output_hook: str = "attn.hook_out",
-        resid_mid_hook: str = "hook_resid_mid",
         use_lorsa: bool = True,
         **kwargs,
     ) -> "ReplacementModel":
@@ -218,7 +209,6 @@ class ReplacementModel(HookedTransformer):
             mlp_output_hook,
             attn_input_hook,
             attn_output_hook,
-            resid_mid_hook,
             use_lorsa,
         )
         return model
@@ -229,7 +219,6 @@ class ReplacementModel(HookedTransformer):
         model_cfg: LanguageModelConfig,
         transcoders: TranscoderType,
         lorsas: List[LowRankSparseAttention],
-        resid_mid_hook: str = "hook_resid_mid",
         mlp_input_hook: str = "mlp.hook_in",
         mlp_output_hook: str = "mlp.hook_out",
         attn_input_hook: str = "attn.hook_in",
@@ -256,7 +245,6 @@ class ReplacementModel(HookedTransformer):
             transcoders,
             lorsas,
             mlp_input_hook=mlp_input_hook,
-            resid_mid_hook=resid_mid_hook,
             mlp_output_hook=mlp_output_hook,
             attn_input_hook=attn_input_hook,
             attn_output_hook=attn_output_hook,
@@ -272,7 +260,6 @@ class ReplacementModel(HookedTransformer):
         mlp_output_hook: str,
         attn_input_hook: str,
         attn_output_hook: str,
-        resid_mid_hook: str,
         use_lorsa: bool = True,
     ):
         # Configure Transcoders
@@ -280,7 +267,6 @@ class ReplacementModel(HookedTransformer):
         self.add_module("transcoders", transcoders)
         self.d_transcoder = transcoders.cfg.d_sae
         self.mlp_input_hook = mlp_input_hook
-        self.resid_mid_hook = resid_mid_hook
         self.original_mlp_output_hook = mlp_output_hook
         self.mlp_output_hook = mlp_output_hook + ".hook_out_grad"
 
@@ -603,7 +589,7 @@ class ReplacementModel(HookedTransformer):
             yield
         finally:
             self.cfg.output_logits_soft_cap = current_softcap
-    
+
     def maybe_zero_bos(self, tokens: torch.Tensor) -> torch.Tensor:
         special_tokens = []
         for special_token in self.tokenizer.special_tokens_map.values():
@@ -632,14 +618,7 @@ class ReplacementModel(HookedTransformer):
                 bos position
         """
 
-        if isinstance(inputs, torch.Tensor):
-            tokens = inputs.squeeze(0)
-            assert tokens.ndim == 1, "Tokens must be a 1D tensor"
-        else:
-            assert isinstance(inputs, str), "Inputs must be a string"
-            tokenized = self.tokenizer(inputs, return_tensors="pt").input_ids.to(self.cfg.device)
-            tokens = tokenized.squeeze(0)
-
+        tokens = ensure_tokenized(inputs, self.tokenizer)
         zero_bos = zero_bos and self.maybe_zero_bos(tokens)
 
         # cache activations and MLP in
@@ -725,7 +704,7 @@ class ReplacementModel(HookedTransformer):
     def setup_intervention_with_freeze(
         self,
         inputs: str | torch.Tensor,
-        constrained_layers: range | None = None,
+        constrained_layers: list[int] | None = None,
         use_lorsa: bool = True,
     ) -> tuple[torch.Tensor, list[tuple[str, Callable]]]:
         """Sets up an intervention with either frozen attention + LayerNorm(default) or frozen
@@ -733,7 +712,7 @@ class ReplacementModel(HookedTransformer):
 
         Args:
             inputs (Union[str, torch.Tensor]): The inputs to intervene on
-            constrained_layers (range | None): whether to apply interventions only to a certain
+            constrained_layers (list[int] | None): whether to apply interventions only to a certain
                 range. Mostly applicable to CLTs. If the given range includes all model layers,
                 we also freeze layernorm denominators, computing direct effects. None means no
                 constraints (iterative patching)
@@ -794,9 +773,9 @@ class ReplacementModel(HookedTransformer):
         self,
         inputs: str | torch.Tensor,
         interventions: list[Intervention],
-        constrained_layers: range | None = None,
+        constrained_layers: list[int] | None = None,
         apply_activation_function: bool = True,
-        sparse: bool = False,
+        sparse: bool = True,
         using_past_kv_cache: bool = False,
         use_lorsa: bool = True,
     ):
@@ -826,11 +805,12 @@ class ReplacementModel(HookedTransformer):
 
         interventions_by_layer_mlp = defaultdict(list)
         interventions_by_layer_lorsa = defaultdict(list)
-        for layer, pos, feature_idx, value, sae_type in interventions:
-            if sae_type == "clt":
-                interventions_by_layer_mlp[layer].append((pos, feature_idx, value))
-            else:
-                interventions_by_layer_lorsa[layer].append((pos, feature_idx, value))
+        if isinstance(interventions, list):
+            for layer, pos, feature_idx, value, sae_type in interventions:
+                if sae_type == "clt":
+                    interventions_by_layer_mlp[layer].append((pos, feature_idx, value))
+                else:
+                    interventions_by_layer_lorsa[layer].append((pos, feature_idx, value))
 
         # We're generating one token at a time
         original_activations, freeze_hooks = self.setup_intervention_with_freeze(
@@ -868,14 +848,19 @@ class ReplacementModel(HookedTransformer):
                     transcoder_activations = original_activations[self.cfg.n_layers :]
                 else:
                     transcoder_activations = original_activations
-                transcoder_activations = transcoder_activations.permute(1, 0, 2)
+                # transcoder_activations = transcoder_activations.permute(1, 0, 2)
             for i in range(len(transcoder_activations)):
                 if transcoder_activations[i] is None:
                     transcoder_activations[i] = torch.zeros_like(transcoder_activations[0])
 
             activation_deltas = transcoder_activations.clone().detach()
             for pos, feature_idx, value in layer_interventions:
-                activation_deltas[pos, layer, feature_idx] = value
+                activation_deltas[layer, pos, feature_idx] = value
+
+            transcoder_activations = [
+                transcoder_activation.to_sparse() for transcoder_activation in transcoder_activations
+            ]
+            activation_deltas = [activation_delta.to_sparse() for activation_delta in activation_deltas]
 
             # calculate delta value from the change of activation
             # Use unified decode interface
@@ -937,7 +922,7 @@ class ReplacementModel(HookedTransformer):
                 for layer, layer_interventions in interventions_by_layer_lorsa.items()
             ]
 
-        intervention_range = constrained_layers if constrained_layers else range(self.cfg.n_layers)
+        intervention_range = constrained_layers if constrained_layers else list(range(self.cfg.n_layers))
         intervention_hooks = [
             (f"blocks.{layer}.{self.mlp_output_hook}", partial(intervention_hook_mlp, layer=layer))
             for layer in range(self.cfg.n_layers)
@@ -957,10 +942,10 @@ class ReplacementModel(HookedTransformer):
     def feature_intervention(
         self,
         inputs: str | torch.Tensor,
-        intervention: list[Intervention],
-        constrained_layers: range | None = None,
+        intervention: list[Intervention] | None,
+        constrained_layers: list[int] | None = None,
         apply_activation_function: bool = True,
-        sparse: bool = False,
+        sparse: bool = True,
         use_lorsa: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Given the input, and a dictionary of features to intervene on, performs the
