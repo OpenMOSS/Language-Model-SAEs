@@ -303,9 +303,9 @@ export const NodeConnections = memo(
         <div className="flex items-center justify-between">
           <div className="flex justify-between items-center space-x-2 w-full">
             <div className="flex items-center space-x-3 overflow-hidden">
-              <span className="text-xs font-mono text-gray-500 shrink-0">
+              {/* <span className="text-xs font-mono text-gray-500 shrink-0">
                 {formatFeatureId(clickedNode, true)}
-              </span>
+              </span> */}
               <span className="text-sm font-semibold truncate">
                 {clickedNode.featureType === 'cross layer transcoder' ||
                 clickedNode.featureType === 'lorsa'
