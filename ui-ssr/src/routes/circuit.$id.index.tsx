@@ -71,8 +71,8 @@ function CircuitPage() {
 
   const [hoveredId, setHoveredId] = useState<string | null>(null)
 
-  const nodeThreshold = search.nodeThreshold ?? 0.8
-  const edgeThreshold = search.edgeThreshold ?? 0.98
+  const nodeThreshold = search.nodeThreshold ?? 0.6
+  const edgeThreshold = search.edgeThreshold ?? 0.8
 
   const { data: statusData, isLoading: isLoadingStatus } = useQuery(
     circuitStatusQueryOptions(circuitId),
@@ -286,8 +286,8 @@ function CircuitPage() {
       to: '/circuit/$id',
       params: { id: selectedCircuitId },
       search: {
-        nodeThreshold: 0.8,
-        edgeThreshold: 0.98,
+        nodeThreshold: 0.6,
+        edgeThreshold: 0.8,
       },
     })
     setHoveredId(null)

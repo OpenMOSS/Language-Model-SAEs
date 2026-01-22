@@ -364,7 +364,7 @@ def get_circuit_status(circuit_id: str):
 
 
 @router.get("/circuits/{circuit_id}")
-def get_circuit(circuit_id: str, node_threshold: float = 0.8, edge_threshold: float = 0.98):
+def get_circuit(circuit_id: str, node_threshold: float = 0.6, edge_threshold: float = 0.8):
     """Get a circuit by its ID with dynamic pruning.
 
     The raw graph is pruned on-the-fly using the provided threshold parameters.
