@@ -207,8 +207,8 @@ def build_model(
 def serialize_graph(
     graph: Graph,
     *,
-    node_threshold=0.8,
-    edge_threshold=0.98,
+    node_threshold=0.6,
+    edge_threshold=0.8,
     use_lorsa: bool = True,
     clt_names: list[str],
     lorsa_names: list[str] | None = None,

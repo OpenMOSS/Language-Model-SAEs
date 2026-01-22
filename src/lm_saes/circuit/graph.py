@@ -298,7 +298,7 @@ class PruneResult(NamedTuple):
     cumulative_scores: torch.Tensor  # Tensor of cumulative influence scores for each node
 
 
-def prune_graph(graph: Graph, node_threshold: float = 0.8, edge_threshold: float = 0.98) -> PruneResult:
+def prune_graph(graph: Graph, node_threshold: float = 0.6, edge_threshold: float = 0.8) -> PruneResult:
     """Prunes a graph by removing nodes and edges with low influence on the output logits.
 
     Args:
