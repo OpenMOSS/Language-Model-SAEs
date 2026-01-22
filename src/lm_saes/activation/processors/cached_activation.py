@@ -195,8 +195,8 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             "chunk_idx": chunk_idx,
         }
         # 单卡时在 worker 中移动到 GPU；多卡时需要在主进程中移动（NCCL 通信要求）
-        if self.device_mesh is None:
-            return_dict = move_dict_of_tensor_to_device(return_dict, device=self.device)
+        # if self.device_mesh is None:
+        #     return_dict = move_dict_of_tensor_to_device(return_dict, device=self.device)
         return return_dict
 
     def _get_sorted_chunks(self, hook_point: str) -> list[ChunkInfo]:
@@ -290,7 +290,7 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             shuffle=False,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
-            pin_memory=True if self.device_mesh is not None else False,
+            pin_memory=True,
             collate_fn=first_data_collate_fn,
             sampler=DistributedSampler(
                 cached_activation_dataset,
@@ -307,9 +307,10 @@ class CachedActivationLoader(BaseActivationProcessor[None, Iterable[dict[str, An
             desc="Processing activation chunks",
             disable=not is_master(),
         ):
+            data = move_dict_of_tensor_to_device(data, device=self.device)
             if self.device_mesh is not None:
                 # 多卡时在主进程中移动到 GPU（NCCL 通信要求张量在主进程中创建）
-                data = move_dict_of_tensor_to_device(data, device=self.device)
+
                 gathered = all_gather_dict(data, group=self.device_mesh.get_group("model"))
                 if mesh_dim_size(self.device_mesh, "sweep") > 1:
                     yield from (
