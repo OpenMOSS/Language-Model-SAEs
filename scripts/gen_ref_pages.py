@@ -25,7 +25,7 @@ nav = mkdocs_gen_files.Nav()
 root = Path(__file__).parent.parent
 src = root / "src"
 
-for path in sorted(src.rglob("*.py")):
+for path in [root / "src/lm_saes/__init__.py"]:
     # Skip files that are not in valid Python packages
     if not is_valid_python_package_path(path, src):
         continue
