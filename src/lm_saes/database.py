@@ -863,6 +863,10 @@ class MongoClient:
     def list_sae_sets(self) -> list[SAESetRecord]:
         return [SAESetRecord.model_validate(sae_set) for sae_set in self.sae_set_collection.find()]
 
+    def remove_sae_set(self, name: str, sae_series: str):
+        self.sae_set_collection.delete_one({"name": name, "sae_series": sae_series})
+        self.circuit_collection.delete_many({"sae_set_name": name, "sae_series": sae_series})
+
     def create_circuit(
         self,
         sae_set_name: str,
