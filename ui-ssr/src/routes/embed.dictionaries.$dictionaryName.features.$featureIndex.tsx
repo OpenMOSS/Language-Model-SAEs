@@ -1,7 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { z } from 'zod'
 import type { FeatureCompact } from '@/types/feature'
 import { FeatureCardCompactForEmbed } from '@/components/feature/feature-card'
 import { featureQueryOptions, samplesQueryOptions } from '@/hooks/useFeatures'
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute(
   '/embed/dictionaries/$dictionaryName/features/$featureIndex',
@@ -9,6 +11,12 @@ export const Route = createFileRoute(
   staticData: {
     embed: true,
   },
+  validateSearch: (search) =>
+    z
+      .object({
+        plain: z.boolean().optional().catch(false),
+      })
+      .parse(search),
   component: EmbedFeaturePage,
   loader: async ({ context, params }) => {
     const [feature, samples] = await Promise.all([
@@ -35,11 +43,17 @@ export const Route = createFileRoute(
 
 function EmbedFeaturePage() {
   const { feature } = Route.useLoaderData()
+  const { plain } = Route.useSearch()
 
   return (
-    <div className="min-h-screen bg-linear-to-b from-slate-50 to-slate-100/50 p-4 sm:p-6">
-      <div className="max-w-3xl mx-auto">
-        <FeatureCardCompactForEmbed feature={feature} />
+    <div
+      className={cn(
+        'min-h-screen',
+        !plain && 'bg-linear-to-b from-slate-50 to-slate-100/50 p-4 sm:p-6',
+      )}
+    >
+      <div className={cn('max-w-3xl mx-auto', plain && 'max-w-none')}>
+        <FeatureCardCompactForEmbed feature={feature} plain={plain} />
       </div>
     </div>
   )
