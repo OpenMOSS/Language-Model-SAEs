@@ -151,11 +151,20 @@ export const FeatureCardWithSamples = memo(
 )
 
 export const FeatureCardCompactForEmbed = memo(
-  ({ feature, className }: { feature: FeatureCompact; className?: string }) => {
+  ({
+    feature,
+    className,
+    plain = false,
+  }: {
+    feature: FeatureCompact
+    className?: string
+    plain?: boolean
+  }) => {
     return (
       <div
         className={cn(
-          'flex flex-col bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden',
+          'flex flex-col bg-white overflow-hidden',
+          !plain && 'rounded-xl border border-slate-200/80 shadow-sm',
           className,
         )}
       >
