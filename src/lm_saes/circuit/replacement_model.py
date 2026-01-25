@@ -938,7 +938,7 @@ class ReplacementModel(HookedTransformer):
 
         return all_hooks, cached_logits, activation_cache
 
-    @torch.no_grad
+    @torch.no_grad()
     def feature_intervention(
         self,
         inputs: str | torch.Tensor,
