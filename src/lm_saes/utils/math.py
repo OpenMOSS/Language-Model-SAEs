@@ -48,6 +48,7 @@ def topk(
     dim: Union[int, Tuple[int, ...]] = -1,
     *,
     return_threshold: Literal[False] = False,
+    abs: bool = False,
 ) -> Union[
     Float[torch.Tensor, "batch d_sae"],
     Float[torch.Tensor, "batch n_layers d_sae"],
@@ -66,6 +67,7 @@ def topk(
     dim: Union[int, Tuple[int, ...]] = -1,
     *,
     return_threshold: Literal[True],
+    abs: bool = False,
 ) -> tuple[
     Union[
         Float[torch.Tensor, "batch d_sae"],
@@ -86,6 +88,7 @@ def topk(
     dim: Union[int, Tuple[int, ...]] = -1,
     *,
     return_threshold: bool = False,
+    abs: bool = False,
 ) -> Union[
     Union[
         Float[torch.Tensor, "batch d_sae"],
@@ -109,6 +112,7 @@ def topk(
         k: Target number of top elements to keep
         dim: Dimension(s) along which to perform topk operation
         return_threshold: If True, return both the result tensor and the threshold value
+        abs: If True, select topk based on absolute values (but return original values with signs)
 
     Returns:
         If return_threshold is False, returns the filtered tensor with non-topk values zeroed out.
@@ -135,10 +139,15 @@ def topk(
         # Flatten the topk dimensions into a single dimension
         x_flat = x_permuted.flatten(start_dim=len(constant_dims))
 
-        topk_values, topk_indices = torch.topk(x_flat, k=k, dim=-1, sorted=False)
+        x_flat_for_topk = x_flat.abs() if abs else x_flat
 
+        topk_values, topk_indices = torch.topk(x_flat_for_topk, k=k, dim=-1, sorted=False)
+
+        # Use original values (with signs) for the result
         result_flat = torch.zeros_like(x_flat)
-        result_flat.scatter_(dim=-1, index=topk_indices, src=topk_values)
+        # Gather original values at topk indices
+        original_topk_values = torch.gather(x_flat, dim=-1, index=topk_indices)
+        result_flat.scatter_(dim=-1, index=topk_indices, src=original_topk_values)
 
         # Restore the original shape
         result_permuted = result_flat.view(*constant_shape, *topk_shape)
@@ -150,6 +159,7 @@ def topk(
         result = result_permuted.permute(inv_perm)
 
         if return_threshold:
+            # Threshold is based on the values used for topk selection
             threshold = topk_values.min(dim=-1).values
             return result, threshold
         else:
