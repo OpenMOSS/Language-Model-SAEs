@@ -526,12 +526,9 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     def activation_function_factory(
         self, device_mesh: DeviceMesh | None = None
     ) -> Callable[[torch.Tensor], torch.Tensor] | JumpReLU:
-        assert self.cfg.act_fn.lower() in [
-            "relu",
-            "topk",
-            "jumprelu",
-            "batchtopk",
-        ], f"Not implemented activation function {self.cfg.act_fn}"
+        assert self.cfg.act_fn.lower() in ["relu", "topk", "jumprelu", "batchtopk", "abstopk"], (
+            f"Not implemented activation function {self.cfg.act_fn}"
+        )
         if self.cfg.act_fn.lower() == "relu":
             return lambda x: x * x.gt(0).to(x.dtype)
         elif self.cfg.act_fn.lower() == "jumprelu":
@@ -568,6 +565,19 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     )
 
             return topk_activation
+
+        elif self.cfg.act_fn.lower() == "abstopk":
+            assert self.device_mesh is None, "abstopk is only supported for non-distributed setting"
+
+            def abstopk_activation(
+                x: Union[
+                    Float[torch.Tensor, "batch d_sae"],
+                    Float[torch.Tensor, "batch seq_len d_sae"],
+                ],
+            ):
+                return topk(x, k=self.current_k, dim=-1, abs=True)
+
+            return abstopk_activation
 
         elif self.cfg.act_fn.lower() == "batchtopk":
 
