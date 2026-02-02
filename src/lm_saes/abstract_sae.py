@@ -923,7 +923,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     l_s = l1_coefficient * l_s
                     loss_dict["l_s"] = l_s
                     l_s, _ = apply_token_mask(l_s, self.specs.loss(l_s), batch.get("mask"), "mean")
-                    loss = loss + l_s.mean()
+                    loss = loss + l_s
             else:
                 loss_dict["l_s"] = None
 
@@ -936,7 +936,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                     l_p = lp_coefficient * l_p.sum(dim=-1)
                     l_p, _ = apply_token_mask(l_p, self.specs.loss(l_p), batch.get("mask"), "mean")
                     loss_dict["l_p"] = l_p
-                    loss = loss + l_p.mean()
+                    loss = loss + l_p
             else:
                 loss_dict["l_p"] = None
 
@@ -979,9 +979,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
                         l_aux = (e - aux_reconstructed).pow(2).sum(dim=-1)
 
+                        l_aux = auxk_coefficient * l_aux
                         l_aux, _ = apply_token_mask(l_aux, self.specs.loss(l_aux), batch.get("mask"), "mean")
                         loss_dict["l_aux"] = l_aux
-                        loss = loss + auxk_coefficient * l_aux.mean()
+                        loss = loss + l_aux
                     elif auxk_coefficient > 0.0:
                         loss_dict["l_aux"] = torch.zeros_like(l_rec)
                     else:
