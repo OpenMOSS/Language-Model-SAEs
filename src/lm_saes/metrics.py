@@ -151,9 +151,10 @@ class LossMetric(Metric):
         self.l_rec: Record[Tensor] = Record()
         self.l_s: Record[Tensor] = Record()
         self.l_p: Record[Tensor] = Record()
+        self.l_aux: Record[Tensor] = Record()
 
     def update(self, ctx: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        loss, l_rec, l_s, l_p = ctx["loss"], ctx["l_rec"], ctx.get("l_s"), ctx.get("l_p")
+        loss, l_rec, l_s, l_p, l_aux = ctx["loss"], ctx["l_rec"], ctx.get("l_s"), ctx.get("l_p"), ctx.get("l_aux")
 
         self.loss.update(loss)
         self.l_rec.update(l_rec.mean())
@@ -161,7 +162,8 @@ class LossMetric(Metric):
             self.l_s.update(l_s.mean())
         if l_p is not None:
             self.l_p.update(l_p.mean())
-
+        if l_aux is not None:
+            self.l_aux.update(l_aux.mean())
         return {}
 
     def compute(self) -> dict[str, Number]:
@@ -173,6 +175,8 @@ class LossMetric(Metric):
             metrics["losses/sparsity_loss"] = item(self.l_s.compute())
         if self.l_p.value is not None:
             metrics["losses/lp_loss"] = item(self.l_p.compute())
+        if self.l_aux.value is not None:
+            metrics["losses/aux_loss"] = item(self.l_aux.compute())
         return metrics
 
 
