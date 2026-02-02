@@ -945,7 +945,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 assert update_dead_statistics is not None, (
                     "update_dead_statistics must be set when auxk_coefficient > 0.0"
                 )
-                is_dead = update_dead_statistics(feature_acts, batch.get("mask"), self.specs.loss(feature_acts))
+                is_dead = update_dead_statistics(feature_acts, batch.get("mask"), self.specs.feature_acts(feature_acts))
 
                 with timer.time("auxk_loss_calculation"):
                     # Get reconstruction error
@@ -978,12 +978,14 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                             aux_reconstructed = DimMap({"data": 0}).redistribute(aux_reconstructed)
 
                         l_aux = (e - aux_reconstructed).pow(2).sum(dim=-1)
-                    else:
-                        l_aux = torch.zeros_like(l_rec)
 
-                    l_aux, _ = apply_token_mask(l_aux, self.specs.loss(l_aux), batch.get("mask"), "mean")
-                    loss_dict["l_aux"] = l_aux
-                    loss = loss + auxk_coefficient * l_aux.mean()
+                        l_aux, _ = apply_token_mask(l_aux, self.specs.loss(l_aux), batch.get("mask"), "mean")
+                        loss_dict["l_aux"] = l_aux
+                        loss = loss + auxk_coefficient * l_aux.mean()
+                    elif auxk_coefficient > 0.0:
+                        loss_dict["l_aux"] = torch.zeros_like(l_rec)
+                    else:
+                        loss_dict["l_aux"] = None
 
                     self.current_k = current_k
 
@@ -999,6 +1001,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
                 "hidden_pre": hidden_pre,
                 "l1_coefficient": l1_coefficient,
                 "lp_coefficient": lp_coefficient,
+                "auxk_coefficient": auxk_coefficient,
             }
         return loss
 

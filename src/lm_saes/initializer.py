@@ -110,7 +110,7 @@ class Initializer:
             return best_norm
 
         if self.cfg.grid_search_init_norm:
-            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 1, 10).numpy().tolist())
+            best_norm_coarse = grid_search_best_init_norm(torch.linspace(0.1, 5.0, 50).numpy().tolist())
             best_norm_fine_grained = grid_search_best_init_norm(
                 torch.linspace(best_norm_coarse - 0.09, best_norm_coarse + 0.1, 20).numpy().tolist()
             )
