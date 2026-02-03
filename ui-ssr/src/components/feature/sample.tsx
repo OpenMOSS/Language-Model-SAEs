@@ -398,7 +398,10 @@ export const FeatureActivationSample = memo(
             return hoveredOrigin === highlight.origin
           })
 
-        if (containsHoveredToken) {
+        if (
+          containsHoveredToken &&
+          contribution.reduce((a, b) => a + b, 0) === 0
+        ) {
           return segment.maxSegmentAct > 0
             ? {
                 style: getAccentStyle(
@@ -479,7 +482,7 @@ export const FeatureActivationSample = memo(
 
       // Adjust vertical position if tooltip goes off screen
       if (y + tooltipHeight > viewportHeight - padding) {
-        y = tooltipState.y - tooltipHeight - 4
+        y = tooltipState.y - tooltipHeight - 40
       }
       if (y < padding) {
         y = padding
