@@ -181,7 +181,7 @@ function EmbedCircuitPage() {
       ) : circuit ? (
         <div className="flex-1 flex flex-col overflow-hidden p-4">
           <div className="flex gap-4 flex-1 overflow-hidden">
-            <div className="flex flex-col gap-4 min-w-0 w-3/5 shrink-0">
+            <div className="flex flex-col gap-4 min-w-3/5 flex-1 shrink-0">
               <LinkGraphContainer
                 data={circuit}
                 visState={visState}
@@ -193,7 +193,7 @@ function EmbedCircuitPage() {
               )}
             </div>
 
-            <div className="flex flex-col flex-1 gap-4 min-w-0 h-full overflow-hidden">
+            <div className="flex flex-col flex-1 gap-4 min-w-0 h-full overflow-hidden max-w-[500px]">
               {clickedId && rawNodeIndex && rawEdgeIndex && (
                 <NodeConnections
                   nodeIndex={rawNodeIndex}
