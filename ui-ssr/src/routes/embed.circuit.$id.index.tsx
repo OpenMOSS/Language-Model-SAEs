@@ -122,7 +122,7 @@ function EmbedCircuitPage() {
   }, [])
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-slate-50/50">
+    <div className="h-screen flex flex-col overflow-hidden bg-slate-50/50 justify-center items-center">
       {isLoadingStatus ? (
         <div className="flex-1 flex flex-col items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
@@ -179,7 +179,7 @@ function EmbedCircuitPage() {
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
         </div>
       ) : circuit ? (
-        <div className="flex-1 flex flex-col overflow-hidden p-4">
+        <div className="flex-1 flex flex-col overflow-hidden p-4 max-w-8xl">
           <div className="flex gap-4 flex-1 overflow-hidden">
             <div className="flex flex-col gap-4 min-w-3/5 flex-1 shrink-0">
               <LinkGraphContainer
