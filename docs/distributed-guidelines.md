@@ -33,8 +33,14 @@ DTensor requires your code to follow the SPMD (Single Program, Multiple Data) pa
 
 When using regular tensors in distributed settings, these per-process tensors exist independently with no explicit relationship or coordination between them. DTensor addresses this by providing a unified, global view: it logically represents a single large tensor containing all the data across all processes, which is then automatically sharded and distributed to each process according to its `Placement` specifications.
 
+### Determine the Placements of DTensor
+
+The term "dimension" is indeed overloaded. It can refer to a column or a row in a DeviceMesh, or in a tensor in its mathematical meaning. When it comes to "sharding" a DTensor, it actually relates to both of the interpretations. For each of the dimension of DeviceMesh we want the DTensor to shard across, we must select a tensor dimension to perform the sharding.
+
+However, we cannot random pick tensor dimensions to shard the tensors on. Suppose we are to perform distributed matrix multiplication with tensors $a \in M \times K$ and $b \in K \times N$. It's only possible to efficiently accelerate the computation when both the tensors are sharded on the middle dimension $K$ or both are sharded in the outer dimension $M$ and $N$, in which case every local device have the required data to perform its block matrix multiplication
+
 ### Application in Language-Model-SAEs
 
-It does make the life easier to organize multi-dimensional parallelism with the help of DeviceMesh and DTensor. In most cases we just want to apply DP and TP. And that should be simple: DP is to add a `data` dimension to the DeviceMesh, and shard all the input data along the `data` dimension of the DeviceMesh and along the `batch` dimension of the data tensor. TP is to add another `model` dimension to the DeviceMesh, and shard all the parameters along the `model` dimension of the DeviceMesh and along the `sae` dimension of each parameter.
+It does make the life easier to organize multi-dimensional parallelism with the help of DeviceMesh and DTensor. In most cases we just want to apply DP and TP. And that should be simple: DP is to shard all the input data along the `data` dimension of the DeviceMesh and along the `batch` dimension of the data tensor. TP is to shard all the parameters along the `model` dimension of the DeviceMesh and along the `sae` dimension of each parameter.
 
-Ideally this should already work. But in practice, this cannot be the full story. Often a primitive of PyTorch does not know how it should deal with DTensor properly, or the implementation is not performant in distributed cases (not efficient or costs unnecessary extra GPU memory).
+Ideally this should already work. But in practice, this cannot be the full story. Often a primitive of PyTorch does not know how it should deal with DTensor properly, or the implementation is not performant in distributed cases (not efficient or costs unnecessary extra GPU memory). So there're still plenty of corner cases we need to convert the DTensors back to local tensor and operate on them manually.
