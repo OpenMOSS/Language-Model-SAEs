@@ -26,8 +26,12 @@ export const FeatureCardHorizontal = memo(
             {feature.logits && (
               <FeatureLogits
                 logits={{
-                  topNegative: feature.logits.topNegative.slice(0, 5),
-                  topPositive: feature.logits.topPositive.slice(0, 5),
+                  topNegative: hidePlots
+                    ? feature.logits.topNegative
+                    : feature.logits.topNegative.slice(0, 5),
+                  topPositive: hidePlots
+                    ? feature.logits.topPositive
+                    : feature.logits.topPositive.slice(0, 5),
                 }}
               />
             )}

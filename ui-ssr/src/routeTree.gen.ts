@@ -19,6 +19,7 @@ import { Route as CircuitIdIndexRouteImport } from './routes/circuit.$id.index'
 import { Route as EmbedCircuitIdIndexRouteImport } from './routes/embed.circuit.$id.index'
 import { Route as DictionariesDictionaryNameFeaturesFeatureIndexRouteImport } from './routes/dictionaries.$dictionaryName.features.$featureIndex'
 import { Route as EmbedDictionariesDictionaryNameFeaturesFeatureIndexRouteImport } from './routes/embed.dictionaries.$dictionaryName.features.$featureIndex'
+import { Route as EmbedCircuitIdQkNodeIdRouteImport } from './routes/embed.circuit.$id.qk.$nodeId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -73,6 +74,11 @@ const EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute =
     path: '/embed/dictionaries/$dictionaryName/features/$featureIndex',
     getParentRoute: () => rootRouteImport,
   } as any)
+const EmbedCircuitIdQkNodeIdRoute = EmbedCircuitIdQkNodeIdRouteImport.update({
+  id: '/embed/circuit/$id/qk/$nodeId',
+  path: '/embed/circuit/$id/qk/$nodeId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -84,6 +90,7 @@ export interface FileRoutesByFullPath {
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
   '/embed/circuit/$id': typeof EmbedCircuitIdIndexRoute
+  '/embed/circuit/$id/qk/$nodeId': typeof EmbedCircuitIdQkNodeIdRoute
   '/embed/dictionaries/$dictionaryName/features/$featureIndex': typeof EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 export interface FileRoutesByTo {
@@ -96,6 +103,7 @@ export interface FileRoutesByTo {
   '/dictionaries/$dictionaryName': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
   '/embed/circuit/$id': typeof EmbedCircuitIdIndexRoute
+  '/embed/circuit/$id/qk/$nodeId': typeof EmbedCircuitIdQkNodeIdRoute
   '/embed/dictionaries/$dictionaryName/features/$featureIndex': typeof EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 export interface FileRoutesById {
@@ -109,6 +117,7 @@ export interface FileRoutesById {
   '/dictionaries/$dictionaryName/': typeof DictionariesDictionaryNameIndexRoute
   '/dictionaries/$dictionaryName/features/$featureIndex': typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
   '/embed/circuit/$id/': typeof EmbedCircuitIdIndexRoute
+  '/embed/circuit/$id/qk/$nodeId': typeof EmbedCircuitIdQkNodeIdRoute
   '/embed/dictionaries/$dictionaryName/features/$featureIndex': typeof EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 export interface FileRouteTypes {
@@ -123,6 +132,7 @@ export interface FileRouteTypes {
     | '/dictionaries/$dictionaryName'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
     | '/embed/circuit/$id'
+    | '/embed/circuit/$id/qk/$nodeId'
     | '/embed/dictionaries/$dictionaryName/features/$featureIndex'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -135,6 +145,7 @@ export interface FileRouteTypes {
     | '/dictionaries/$dictionaryName'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
     | '/embed/circuit/$id'
+    | '/embed/circuit/$id/qk/$nodeId'
     | '/embed/dictionaries/$dictionaryName/features/$featureIndex'
   id:
     | '__root__'
@@ -147,6 +158,7 @@ export interface FileRouteTypes {
     | '/dictionaries/$dictionaryName/'
     | '/dictionaries/$dictionaryName/features/$featureIndex'
     | '/embed/circuit/$id/'
+    | '/embed/circuit/$id/qk/$nodeId'
     | '/embed/dictionaries/$dictionaryName/features/$featureIndex'
   fileRoutesById: FileRoutesById
 }
@@ -160,6 +172,7 @@ export interface RootRouteChildren {
   DictionariesDictionaryNameIndexRoute: typeof DictionariesDictionaryNameIndexRoute
   DictionariesDictionaryNameFeaturesFeatureIndexRoute: typeof DictionariesDictionaryNameFeaturesFeatureIndexRoute
   EmbedCircuitIdIndexRoute: typeof EmbedCircuitIdIndexRoute
+  EmbedCircuitIdQkNodeIdRoute: typeof EmbedCircuitIdQkNodeIdRoute
   EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute: typeof EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute
 }
 
@@ -235,6 +248,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EmbedDictionariesDictionaryNameFeaturesFeatureIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/embed/circuit/$id/qk/$nodeId': {
+      id: '/embed/circuit/$id/qk/$nodeId'
+      path: '/embed/circuit/$id/qk/$nodeId'
+      fullPath: '/embed/circuit/$id/qk/$nodeId'
+      preLoaderRoute: typeof EmbedCircuitIdQkNodeIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -249,6 +269,7 @@ const rootRouteChildren: RootRouteChildren = {
   DictionariesDictionaryNameFeaturesFeatureIndexRoute:
     DictionariesDictionaryNameFeaturesFeatureIndexRoute,
   EmbedCircuitIdIndexRoute: EmbedCircuitIdIndexRoute,
+  EmbedCircuitIdQkNodeIdRoute: EmbedCircuitIdQkNodeIdRoute,
   EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute:
     EmbedDictionariesDictionaryNameFeaturesFeatureIndexRoute,
 }
