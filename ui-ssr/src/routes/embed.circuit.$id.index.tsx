@@ -179,9 +179,9 @@ function EmbedCircuitPage() {
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
         </div>
       ) : circuit ? (
-        <div className="flex-1 flex flex-col overflow-hidden p-4 max-w-8xl">
-          <div className="flex gap-4 flex-1 overflow-hidden">
-            <div className="flex flex-col gap-4 min-w-3/5 flex-1 shrink-0">
+        <div className="flex-1 flex flex-col overflow-hidden p-4 max-w-[1800px] w-full h-full">
+          <div className="flex gap-4 overflow-hidden h-full">
+            <div className="flex flex-col gap-4 min-w-3/5 flex-1 grow shrink-0">
               <LinkGraphContainer
                 data={circuit}
                 visState={visState}
