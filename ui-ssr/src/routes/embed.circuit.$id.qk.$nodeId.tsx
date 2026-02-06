@@ -91,7 +91,8 @@ function EmbedQKTracingPage() {
 
   const renderNodeLabel = useCallback(
     (nodeId: string) => {
-      if (!rawNodeIndex) return <span className="text-xs font-mono">{nodeId}</span>
+      if (!rawNodeIndex)
+        return <span className="text-xs font-mono">{nodeId}</span>
       const node = rawNodeIndex.byId.get(nodeId)
       if (!node) return <span className="text-xs font-mono">{nodeId}</span>
 

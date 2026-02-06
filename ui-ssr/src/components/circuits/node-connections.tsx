@@ -107,7 +107,7 @@ const QKTracingSection = memo(
           </span>
           <span className="text-xs font-medium truncate">
             {node.featureType === 'lorsa' ||
-              node.featureType === 'cross layer transcoder'
+            node.featureType === 'cross layer transcoder'
               ? node.feature.interpretation?.text
               : 'token' in node
                 ? node.token
@@ -191,7 +191,7 @@ const QKTracingSection = memo(
                     'flex-1 min-w-0 cursor-pointer px-2 py-1.5 transition-colors flex items-center gap-1.5',
                     qId === hoveredId ? 'bg-black/5' : 'hover:bg-black/5',
                     qId === clickedId &&
-                    'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
+                      'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
                   )}
                   onClick={(e) => onNodeClick(qId, e.metaKey || e.ctrlKey)}
                   onMouseEnter={() => onNodeHover(qId)}
@@ -212,7 +212,7 @@ const QKTracingSection = memo(
                     'flex-1 min-w-0 cursor-pointer px-2 py-1.5 transition-colors flex items-center gap-1.5',
                     kId === hoveredId ? 'bg-black/5' : 'hover:bg-black/5',
                     kId === clickedId &&
-                    'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
+                      'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
                   )}
                   onClick={(e) => onNodeClick(kId, e.metaKey || e.ctrlKey)}
                   onMouseEnter={() => onNodeHover(kId)}
@@ -297,7 +297,7 @@ export const NodeConnections = memo(
     const hiddenIdsSet = useMemo(() => new Set(hiddenIds), [hiddenIds])
 
     const hasQKResults =
-      (clickedNode.featureType === 'lorsa') && !!clickedNode.qkTracingResults
+      clickedNode.featureType === 'lorsa' && !!clickedNode.qkTracingResults
 
     return (
       <Card
@@ -311,7 +311,7 @@ export const NodeConnections = memo(
               </span> */}
               <span className="text-sm font-semibold truncate">
                 {clickedNode.featureType === 'cross layer transcoder' ||
-                  clickedNode.featureType === 'lorsa'
+                clickedNode.featureType === 'lorsa'
                   ? clickedNode.feature.interpretation?.text
                   : 'token' in clickedNode
                     ? clickedNode.token
@@ -325,27 +325,27 @@ export const NodeConnections = memo(
             </div>
             {(clickedNode.featureType === 'cross layer transcoder' ||
               clickedNode.featureType === 'lorsa') && (
-                <Link
-                  to="/dictionaries/$dictionaryName/features/$featureIndex"
-                  params={{
-                    dictionaryName: clickedNode.saeName,
-                    featureIndex: clickedNode.feature.featureIndex.toString(),
-                  }}
-                  {...(isEmbed && {
-                    target: '_blank',
-                    rel: 'noopener noreferrer',
-                  })}
-                >
-                  <Button size="sm" className="h-8 px-4 text-xs">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs font-mono text-gray-600">
-                        {formatFeatureId(clickedNode, true)}
-                      </span>
-                      <Send className="w-3.5 h-3.5 text-gray-400" />
-                    </div>
-                  </Button>
-                </Link>
-              )}
+              <Link
+                to="/dictionaries/$dictionaryName/features/$featureIndex"
+                params={{
+                  dictionaryName: clickedNode.saeName,
+                  featureIndex: clickedNode.feature.featureIndex.toString(),
+                }}
+                {...(isEmbed && {
+                  target: '_blank',
+                  rel: 'noopener noreferrer',
+                })}
+              >
+                <Button size="sm" className="h-8 px-4 text-xs">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-mono text-gray-600">
+                      {formatFeatureId(clickedNode, true)}
+                    </span>
+                    <Send className="w-3.5 h-3.5 text-gray-400" />
+                  </div>
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
 
