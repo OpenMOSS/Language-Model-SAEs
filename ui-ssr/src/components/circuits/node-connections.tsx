@@ -260,6 +260,7 @@ export const NodeConnections = memo(
     onNodeHover,
     className,
   }: NodeConnectionsProps) => {
+    console.log('clickedId', clickedId)
     const clickedNode = useMemo(
       () => nodeIndex.byId.get(clickedId)!,
       [nodeIndex, clickedId],
@@ -292,9 +293,7 @@ export const NodeConnections = memo(
     const hiddenIdsSet = useMemo(() => new Set(hiddenIds), [hiddenIds])
 
     const hasQKResults =
-      (clickedNode.featureType === 'lorsa' ||
-        clickedNode.featureType === 'cross layer transcoder') &&
-      !!clickedNode.qkTracingResults
+      (clickedNode.featureType === 'lorsa') && !!clickedNode.qkTracingResults
 
     return (
       <Card

@@ -189,7 +189,11 @@ function EmbedCircuitPage() {
                 onNodeHover={handleNodeHover}
               />
               {featureData && (
-                <FeatureCardHorizontal className="grow" feature={featureData} />
+                <FeatureCardHorizontal
+                  className="grow"
+                  feature={featureData}
+                  hidePlots={true}
+                />
               )}
             </div>
 
