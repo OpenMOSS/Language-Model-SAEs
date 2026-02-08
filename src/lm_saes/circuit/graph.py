@@ -184,8 +184,8 @@ class Graph:
         def tensor_to_numpy(t: Optional[torch.Tensor]) -> Optional[np.ndarray]:
             if t is None:
                 return None
-            if t.dtype == torch.bfloat16:
-                return t.cpu().to(torch.float32).numpy()
+            if isinstance(t, torch.Tensor) and t.dtype == torch.bfloat16:
+                t = t.to(torch.float32)
             return t.cpu().numpy()
 
         return {
