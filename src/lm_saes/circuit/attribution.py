@@ -560,6 +560,7 @@ def attribute(
                  or None (no offloading).
         verbose: Whether to show progress information.
         update_interval: Number of batches to process before updating the feature ranking.
+        list_of_features: list of (layer, feature_idx, pos, is_lorsa) tuples
         progress_callback: Optional callback for tracking progress (current, total, phase).
 
     Returns:
