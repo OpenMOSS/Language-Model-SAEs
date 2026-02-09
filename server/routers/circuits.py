@@ -22,7 +22,7 @@ from lm_saes.sae import SparseAutoEncoder
 from server.config import client, sae_series
 from server.logic.loaders import get_model, get_sae
 from server.logic.samples import list_feature_data
-from server.utils.common import make_serializable
+from server.utils.common import make_serializable, synchronized
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,33 @@ def concretize_graph_data(graph_data: dict[str, Any]):
                     content=f"Feature {node['feature']} not found in SAE {node['sae_name']}", status_code=404
                 )
             node["feature"] = features[(node["sae_name"], node["feature"])]
+
+
+@synchronized
+@functools.lru_cache(maxsize=16)
+def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold: float) -> dict[str, Any]:
+    """Load, prune, and concretize a circuit graph. Cached for repeated access."""
+    circuit = client.get_circuit(circuit_id)
+    if circuit is None:
+        raise ValueError(f"Circuit {circuit_id} not found")
+    if circuit.status != CircuitStatus.COMPLETED:
+        raise ValueError(f"Circuit {circuit_id} is not completed (status: {circuit.status})")
+
+    raw_graph_dict = client.load_raw_graph(circuit_id)
+    if raw_graph_dict is None:
+        raise ValueError(f"Raw graph data not found for circuit {circuit_id}")
+
+    graph = Graph.from_dict(raw_graph_dict)
+    graph_data = serialize_graph(
+        graph=graph,
+        node_threshold=node_threshold,
+        edge_threshold=edge_threshold,
+        clt_names=circuit.clt_names or [],
+        lorsa_names=circuit.lorsa_names,
+        use_lorsa=circuit.use_lorsa,
+    )
+    concretize_graph_data(graph_data)
+    return graph_data
 
 
 def run_circuit_attribution(
@@ -386,26 +413,12 @@ def get_circuit(circuit_id: str, node_threshold: float = 0.6, edge_threshold: fl
             headers={"X-Circuit-Status": circuit.status},
         )
 
-    # Load raw graph from GridFS
-    raw_graph_dict = client.load_raw_graph(circuit_id)
-    if raw_graph_dict is None:
-        return Response(content=f"Raw graph data not found for circuit {circuit_id}", status_code=404)
-
-    # Reconstruct Graph object
-    graph = Graph.from_dict(raw_graph_dict)
-
-    # Serialize with dynamic thresholds
-    graph_data = serialize_graph(
-        graph=graph,
-        node_threshold=node_threshold,
-        edge_threshold=edge_threshold,
-        clt_names=circuit.clt_names or [],
-        lorsa_names=circuit.lorsa_names,
-        use_lorsa=circuit.use_lorsa,
-    )
-
-    # Concretize feature data
-    concretize_graph_data(graph_data)
+    try:
+        graph_data = load_circuit_graph(
+            circuit_id=circuit_id, node_threshold=node_threshold, edge_threshold=edge_threshold
+        )
+    except ValueError as e:
+        return Response(content=str(e), status_code=404)
 
     result = {
         "circuit_id": circuit.id,
@@ -424,6 +437,58 @@ def get_circuit(circuit_id: str, node_threshold: float = 0.6, edge_threshold: fl
     }
 
     return make_serializable(result)
+
+
+@router.get("/circuits/{circuit_id}/qk/{node_id}")
+def get_circuit_qk_node(circuit_id: str, node_id: str, node_threshold: float = 0.6, edge_threshold: float = 0.8):
+    """Get QK tracing data for a specific node, returning only the target node and referenced nodes."""
+    circuit = client.get_circuit(circuit_id)
+    if circuit is None:
+        return Response(content=f"Circuit {circuit_id} not found", status_code=404)
+
+    if circuit.status != CircuitStatus.COMPLETED:
+        return Response(
+            content=f"Circuit {circuit_id} is not ready (status: {circuit.status})",
+            status_code=202,
+            headers={"X-Circuit-Status": circuit.status},
+        )
+
+    try:
+        graph_data = load_circuit_graph(
+            circuit_id=circuit_id, node_threshold=node_threshold, edge_threshold=edge_threshold
+        )
+    except ValueError as e:
+        return Response(content=str(e), status_code=404)
+
+    nodes_by_id = {node["node_id"]: node for node in graph_data["nodes"]}
+
+    target_node = nodes_by_id.get(node_id)
+    if target_node is None:
+        return Response(content=f"Node {node_id} not found in circuit {circuit_id}", status_code=404)
+
+    qk_results = target_node.get("qk_tracing_results")
+    if qk_results is None:
+        return Response(content=f"Node {node_id} has no QK tracing results", status_code=404)
+
+    # Collect all node IDs referenced in QK tracing results
+    referenced_ids: set[str] = set()
+    for ref_id, _ in qk_results.get("top_q_marginal_contributors", []):
+        referenced_ids.add(ref_id)
+    for ref_id, _ in qk_results.get("top_k_marginal_contributors", []):
+        referenced_ids.add(ref_id)
+    for q_id, k_id, _ in qk_results.get("pair_wise_contributors", []):
+        referenced_ids.add(q_id)
+        referenced_ids.add(k_id)
+    referenced_ids.discard(node_id)
+
+    referenced_nodes = [nodes_by_id[nid] for nid in referenced_ids if nid in nodes_by_id]
+
+    return make_serializable(
+        {
+            "target_node": target_node,
+            "referenced_nodes": referenced_nodes,
+        }
+    )
 
 
 @router.delete("/circuits/{circuit_id}")

@@ -9,7 +9,16 @@ import { nitro } from 'nitro/vite'
 const config = defineConfig({
   plugins: [
     devtools(),
-    nitro(),
+    nitro({
+      routeRules: {
+        '/embed/**': {
+          headers: {
+            'Cache-Control':
+              'public, max-age=3600, stale-while-revalidate=86400',
+          },
+        },
+      },
+    }),
     // this is the plugin that enables path aliases
     viteTsConfigPaths({
       projects: ['./tsconfig.json'],

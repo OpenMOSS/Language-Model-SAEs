@@ -115,6 +115,13 @@ export const CircuitDataSchema = z.object({
 
 export type CircuitData = z.infer<typeof CircuitDataSchema>
 
+export const QKNodeDataSchema = z.object({
+  targetNode: NodeSchema,
+  referencedNodes: z.array(NodeSchema),
+})
+
+export type QKNodeData = z.infer<typeof QKNodeDataSchema>
+
 export const VisStateSchema = z.object({
   clickedId: z.string().nullable(),
   hoveredId: z.string().nullable(),

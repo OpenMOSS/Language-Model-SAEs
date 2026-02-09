@@ -2,9 +2,9 @@ import { queryOptions } from '@tanstack/react-query'
 import { createServerFn } from '@tanstack/react-start'
 import camelcaseKeys from 'camelcase-keys'
 import { z } from 'zod'
-import type { CircuitData } from '@/types/circuit'
+import type { CircuitData, QKNodeData } from '@/types/circuit'
 import { parseWithPrettify } from '@/utils/zod'
-import { CircuitDataSchema } from '@/types/circuit'
+import { CircuitDataSchema, QKNodeDataSchema } from '@/types/circuit'
 
 export type CircuitStatus = 'pending' | 'running' | 'completed' | 'failed'
 
@@ -372,5 +372,69 @@ export const circuitQueryOptions = (
     queryKey: ['circuit', circuitId, nodeThreshold, edgeThreshold],
     queryFn: () =>
       fetchCircuit({ data: { circuitId, nodeThreshold, edgeThreshold } }),
+    staleTime: (query) => {
+      return query.state.data?.status === 'completed' ? Infinity : 0
+    },
     enabled: !!circuitId,
+  })
+
+export const fetchCircuitQKNode = createServerFn({ method: 'GET' })
+  .inputValidator(
+    (data: {
+      circuitId: string
+      nodeId: string
+      nodeThreshold?: number
+      edgeThreshold?: number
+    }) => data,
+  )
+  .handler(
+    async ({
+      data: { circuitId, nodeId, nodeThreshold = 0.6, edgeThreshold = 0.8 },
+    }) => {
+      const params = new URLSearchParams({
+        node_threshold: nodeThreshold.toString(),
+        edge_threshold: edgeThreshold.toString(),
+      })
+
+      const response = await fetch(
+        `${process.env.BACKEND_URL}/circuits/${circuitId}/qk/${encodeURIComponent(nodeId)}?${params}`,
+      )
+
+      if (response.status === 202) {
+        const status = response.headers.get('X-Circuit-Status') || 'pending'
+        throw new Error(`Circuit is not ready (status: ${status})`)
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          `Failed to fetch QK node data: ${await response.text()}`,
+        )
+      }
+
+      const data = await response.json()
+      const result = camelcaseKeys(data, { deep: true }) as QKNodeData
+      return parseWithPrettify(QKNodeDataSchema, result)
+    },
+  )
+
+export const circuitQKNodeQueryOptions = (
+  circuitId: string,
+  nodeId: string,
+  nodeThreshold: number = 0.6,
+  edgeThreshold: number = 0.8,
+) =>
+  queryOptions({
+    queryKey: [
+      'circuit-qk-node',
+      circuitId,
+      nodeId,
+      nodeThreshold,
+      edgeThreshold,
+    ],
+    queryFn: () =>
+      fetchCircuitQKNode({
+        data: { circuitId, nodeId, nodeThreshold, edgeThreshold },
+      }),
+    staleTime: Infinity,
+    enabled: !!circuitId && !!nodeId,
   })
