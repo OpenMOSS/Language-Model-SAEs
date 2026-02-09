@@ -1,12 +1,14 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { AlertCircle, ChevronRight, Loader2, Target } from 'lucide-react'
+import { AlertCircle, ChevronRight, Loader2 } from 'lucide-react'
 import React, { useCallback, useMemo, useState } from 'react'
 import { z } from 'zod'
-import type { CircuitData, QKTracingResults } from '@/types/circuit'
+import type { QKTracingResults } from '@/types/circuit'
 import { parseWithPrettify } from '@/utils/zod'
-import { circuitQueryOptions, circuitStatusQueryOptions } from '@/api/circuits'
-import { Card } from '@/components/ui/card'
+import {
+  circuitQKNodeQueryOptions,
+  circuitStatusQueryOptions,
+} from '@/api/circuits'
 import { createRawNodeIndex } from '@/utils/circuit-index'
 import { cn } from '@/lib/utils'
 import { formatFeatureId } from '@/utils/circuit'
@@ -15,6 +17,7 @@ import { getWeightStyle } from '@/utils/style'
 const searchParamsSchema = z.object({
   nodeThreshold: z.coerce.number().optional(),
   edgeThreshold: z.coerce.number().optional(),
+  plain: z.boolean().optional().catch(false),
 })
 
 export const Route = createFileRoute('/embed/circuit/$id/qk/$nodeId')({
@@ -35,31 +38,38 @@ function EmbedQKTracingPage() {
 
   const nodeThreshold = search.nodeThreshold ?? 0.6
   const edgeThreshold = search.edgeThreshold ?? 0.8
+  const plain = search.plain
 
   const { data: statusData, isLoading: isLoadingStatus } = useQuery(
     circuitStatusQueryOptions(circuitId),
   )
 
   const {
-    data: circuitData,
-    isLoading: isLoadingCircuit,
-    error: circuitError,
+    data: qkNodeData,
+    isLoading: isLoadingQKNode,
+    error: qkNodeError,
   } = useQuery({
-    ...circuitQueryOptions(circuitId, nodeThreshold, edgeThreshold),
+    ...circuitQKNodeQueryOptions(
+      circuitId,
+      nodeId,
+      nodeThreshold,
+      edgeThreshold,
+    ),
     enabled: statusData?.status === 'completed',
   })
 
-  const circuit: CircuitData | undefined = circuitData?.graphData
+  const targetNode = qkNodeData?.targetNode ?? null
 
   const rawNodeIndex = useMemo(
-    () => (circuit ? createRawNodeIndex(circuit.nodes) : null),
-    [circuit],
+    () =>
+      qkNodeData
+        ? createRawNodeIndex([
+            qkNodeData.targetNode,
+            ...qkNodeData.referencedNodes,
+          ])
+        : null,
+    [qkNodeData],
   )
-
-  const targetNode = useMemo(() => {
-    if (!circuit) return null
-    return circuit.nodes.find((n) => n.nodeId === nodeId) || null
-  }, [circuit, nodeId])
 
   const qkTracingResults = useMemo(() => {
     if (
@@ -116,14 +126,19 @@ function EmbedQKTracingPage() {
   )
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-slate-50/50 justify-center items-center p-4">
+    <div
+      className={cn(
+        'min-h-screen p-4 flex flex-col justify-center items-center',
+        !plain && 'h-screen overflow-hidden bg-slate-50/50',
+      )}
+    >
       {isLoadingStatus ? (
-        <div className="flex-1 flex flex-col items-center justify-center">
+        <div className="flex-1 flex flex-col items-center justify-center h-full">
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
         </div>
       ) : statusData?.status === 'pending' ||
         statusData?.status === 'running' ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-8">
+        <div className="flex-1 flex flex-col items-center justify-center p-8 h-full">
           <div className="flex flex-col items-center gap-4 w-full max-w-md">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
             <div className="text-center space-y-2 w-full">
@@ -157,18 +172,18 @@ function EmbedQKTracingPage() {
             </p>
           </div>
         </div>
-      ) : circuitError ? (
+      ) : qkNodeError ? (
         <div className="flex items-center justify-center h-full p-8">
           <div className="text-center">
             <h3 className="text-lg font-semibold text-red-600 mb-2">
-              Failed to load circuit
+              Failed to load QK tracing data
             </h3>
             <p className="text-gray-600">
-              {circuitError.message || 'Failed to load circuit'}
+              {qkNodeError.message || 'Failed to load QK tracing data'}
             </p>
           </div>
         </div>
-      ) : isLoadingCircuit ? (
+      ) : isLoadingQKNode ? (
         <div className="flex-1 flex flex-col items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
         </div>
@@ -204,31 +219,14 @@ function EmbedQKTracingPage() {
           </div>
         </div>
       ) : (
-        <div className="w-full max-w-4xl">
-          <Card className="flex flex-col gap-4 p-6">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b pb-3">
-              <div className="flex items-center space-x-3">
-                <Target className="h-5 w-5 text-purple-600" />
-                <div className="flex flex-col">
-                  <h2 className="text-lg font-semibold text-slate-900">
-                    QK Tracing
-                  </h2>
-                  <div className="flex items-center space-x-2 mt-1">
-                    <span className="text-xs font-mono text-gray-500">
-                      {formatFeatureId(targetNode, true)}
-                    </span>
-                    {targetNode.featureType === 'lorsa' ||
-                    targetNode.featureType === 'cross layer transcoder' ? (
-                      <span className="text-xs text-slate-600">
-                        {targetNode.feature.interpretation?.text}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            </div>
-
+        <div className={cn('w-full', !plain && 'max-w-4xl')}>
+          <div
+            className={cn(
+              'flex flex-col gap-4',
+              !plain &&
+                'rounded-xl border bg-card text-card-foreground shadow p-6',
+            )}
+          >
             {/* QK Tracing Content */}
             <QKTracingContent
               results={qkTracingResults}
@@ -238,7 +236,7 @@ function EmbedQKTracingPage() {
               clickedId={nodeId}
               renderNodeLabel={renderNodeLabel}
             />
-          </Card>
+          </div>
         </div>
       )}
     </div>
@@ -280,7 +278,6 @@ function QKTracingContent({
                   nodeId === clickedId && 'ring-2 ring-blue-500',
                 )}
                 style={getWeightStyle(score)}
-                onClick={(e) => onNodeClick(nodeId, e.metaKey || e.ctrlKey)}
                 onMouseEnter={() => onNodeHover(nodeId)}
                 onMouseLeave={() => onNodeHover(null)}
               >
@@ -307,7 +304,6 @@ function QKTracingContent({
                   nodeId === clickedId && 'ring-2 ring-blue-500',
                 )}
                 style={getWeightStyle(score)}
-                onClick={(e) => onNodeClick(nodeId, e.metaKey || e.ctrlKey)}
                 onMouseEnter={() => onNodeHover(nodeId)}
                 onMouseLeave={() => onNodeHover(null)}
               >
@@ -361,7 +357,6 @@ function QKTracingContent({
                   kId === clickedId &&
                     'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
                 )}
-                onClick={(e) => onNodeClick(kId, e.metaKey || e.ctrlKey)}
                 onMouseEnter={() => onNodeHover(kId)}
                 onMouseLeave={() => onNodeHover(null)}
               >

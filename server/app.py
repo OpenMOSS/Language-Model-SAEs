@@ -8,6 +8,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from server.logic.loaders import get_dataset, get_model, get_sae
 from server.routers import admin, bookmarks, circuits, dictionaries
+from server.routers.circuits import load_circuit_graph
 
 
 @asynccontextmanager
@@ -20,11 +21,22 @@ async def lifespan(app: FastAPI):
     for sae in preload_saes:
         get_sae(name=sae)
 
+    # Format: "circuit_id:node_threshold:edge_threshold,..."
+    # Thresholds default to 0.6 and 0.8 if omitted.
+    preload_circuits = os.environ["PRELOAD_CIRCUITS"].strip().split(",") if os.environ.get("PRELOAD_CIRCUITS") else []
+    for entry in preload_circuits:
+        parts = entry.strip().split(":")
+        circuit_id = parts[0]
+        node_threshold = float(parts[1]) if len(parts) > 1 else 0.6
+        edge_threshold = float(parts[2]) if len(parts) > 2 else 0.8
+        load_circuit_graph(circuit_id=circuit_id, node_threshold=node_threshold, edge_threshold=edge_threshold)
+
     yield
 
     get_model.cache_clear()
     get_dataset.cache_clear()
     get_sae.cache_clear()
+    load_circuit_graph.cache_clear()
 
 
 app = FastAPI(lifespan=lifespan)
