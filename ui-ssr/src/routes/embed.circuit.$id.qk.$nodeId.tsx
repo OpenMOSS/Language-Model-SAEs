@@ -356,7 +356,6 @@ function QKTracingContent({
                   qId === clickedId &&
                     'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
                 )}
-                onClick={(e) => onNodeClick(qId, e.metaKey || e.ctrlKey)}
                 onMouseEnter={() => onNodeHover(qId)}
                 onMouseLeave={() => onNodeHover(null)}
               >
