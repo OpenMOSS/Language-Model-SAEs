@@ -25,9 +25,9 @@ export function getNodeColor(featureType: string): string {
     case 'embedding':
       return '#69b3a2'
     case 'cross layer transcoder':
-      return '#4ecdc4'
+      return '#f59f00'
     case 'lorsa':
-      return '#7a4cff'
+      return '#339af0'
     default:
       return '#95a5a6'
   }
