@@ -122,12 +122,12 @@ const QKTracingSection = memo(
         <div className="flex gap-3 min-h-0">
           <div className="flex flex-col w-1/2 gap-1.5 min-h-0">
             <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
-              <span>Q MARGINAL</span>
+              <span>K MARGINAL</span>
             </div>
             <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar max-h-40">
-              {results.topQMarginalContributors.map(([nodeId, score], idx) => (
+              {results.topKMarginalContributors.map(([nodeId, score], idx) => (
                 <div
-                  key={`q-${nodeId}-${idx}`}
+                  key={`k-${nodeId}-${idx}`}
                   className={cn(
                     'py-2 px-2 mx-1 border rounded cursor-pointer transition-colors bg-gray-50 border-gray-200 flex justify-between items-center',
                     nodeId === hoveredId && 'ring-2 ring-blue-300',
@@ -149,12 +149,12 @@ const QKTracingSection = memo(
 
           <div className="flex flex-col w-1/2 gap-1.5 min-h-0">
             <div className="font-semibold tracking-tight flex items-center text-sm text-slate-700 gap-1 cursor-default shrink-0">
-              <span>K MARGINAL</span>
+              <span>Q MARGINAL</span>
             </div>
             <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar max-h-40">
-              {results.topKMarginalContributors.map(([nodeId, score], idx) => (
+              {results.topQMarginalContributors.map(([nodeId, score], idx) => (
                 <div
-                  key={`k-${nodeId}-${idx}`}
+                  key={`q-${nodeId}-${idx}`}
                   className={cn(
                     'py-2 px-2 mx-1 border rounded cursor-pointer transition-colors bg-gray-50 border-gray-200 flex justify-between items-center',
                     nodeId === hoveredId && 'ring-2 ring-blue-300',
@@ -189,27 +189,6 @@ const QKTracingSection = memo(
                 <div
                   className={cn(
                     'flex-1 min-w-0 cursor-pointer px-2 py-1.5 transition-colors flex items-center gap-1.5',
-                    qId === hoveredId ? 'bg-black/5' : 'hover:bg-black/5',
-                    qId === clickedId &&
-                      'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
-                  )}
-                  onClick={(e) => onNodeClick(qId, e.metaKey || e.ctrlKey)}
-                  onMouseEnter={() => onNodeHover(qId)}
-                  onMouseLeave={() => onNodeHover(null)}
-                >
-                  <span className="text-xs font-bold text-slate-400 shrink-0">
-                    Q:
-                  </span>
-                  {renderNodeLabel(qId)}
-                </div>
-
-                <div className="flex items-center justify-center shrink-0">
-                  <ChevronRight className="w-3 h-3 text-slate-400/50" />
-                </div>
-
-                <div
-                  className={cn(
-                    'flex-1 min-w-0 cursor-pointer px-2 py-1.5 transition-colors flex items-center gap-1.5',
                     kId === hoveredId ? 'bg-black/5' : 'hover:bg-black/5',
                     kId === clickedId &&
                       'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
@@ -222,6 +201,27 @@ const QKTracingSection = memo(
                     K:
                   </span>
                   {renderNodeLabel(kId)}
+                </div>
+
+                <div className="flex items-center justify-center shrink-0">
+                  <ChevronRight className="w-3 h-3 text-slate-400/50" />
+                </div>
+
+                <div
+                  className={cn(
+                    'flex-1 min-w-0 cursor-pointer px-2 py-1.5 transition-colors flex items-center gap-1.5',
+                    qId === hoveredId ? 'bg-black/5' : 'hover:bg-black/5',
+                    qId === clickedId &&
+                      'bg-blue-100/50 shadow-[inset_0_0_0_1px_#3b82f6]',
+                  )}
+                  onClick={(e) => onNodeClick(qId, e.metaKey || e.ctrlKey)}
+                  onMouseEnter={() => onNodeHover(qId)}
+                  onMouseLeave={() => onNodeHover(null)}
+                >
+                  <span className="text-xs font-bold text-slate-400 shrink-0">
+                    Q:
+                  </span>
+                  {renderNodeLabel(qId)}
                 </div>
 
                 <div className="text-right flex flex-col justify-center items-end px-2 shrink-0 border-l border-black/5 bg-white/30">
