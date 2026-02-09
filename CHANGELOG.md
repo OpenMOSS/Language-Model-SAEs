@@ -1,3 +1,33 @@
+## v2.0.0b9 (2026-02-09)
+
+### Feat
+
+- **circuits**: implement loading and querying of circuit QK node data
+- **ui**: target blank for embedded pages
+- **ui**: add new route for embedded circuit QK tracing and update related components
+- **ui/embed**: add circuit page for embedded iframe
+- **ui/embed**: enhance FeatureCardCompactForEmbed with plain mode
+- **database**: support removing SAE sets
+- **ui/circuits**: implement click outside to close functionality in threshold controls
+
+### Fix
+
+- **ui**: update defaultVisibleRange handling and adjust node colors
+- **ui/embed**: remove click effect
+- **ui**: swap Q and K labels in QKTracing components for consistency
+- **ui**: adjust layout
+- **ui**: adjust layout
+- **graph**: handle bfloat16 tensor conversion to numpy
+- **auxk**: fix log of l_auxk
+- **auxk**: fix train and log of auxk
+- **math**: topk grad backprop
+- **circuit**: adjust default thresholds for graph pruning and circuit retrieval
+- **ui/circuits**: remove redundant feature ID display for better narrow screen experience
+- **circuit**: minor improvements in attribution
+- **circuit**: support batched tracing.
+- **feature_interpreter**: correct tensor dimensions in generate_activating_examples
+- **ui/circuits**: clarify message regarding circuit generation time
+
 ## v2.0.0b8 (2026-01-18)
 
 ## v2.0.0b7 (2026-01-18)
