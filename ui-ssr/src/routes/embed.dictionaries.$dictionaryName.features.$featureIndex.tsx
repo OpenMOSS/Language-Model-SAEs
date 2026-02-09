@@ -15,6 +15,7 @@ export const Route = createFileRoute(
     z
       .object({
         plain: z.boolean().optional().catch(false),
+        visibleRange: z.coerce.number().optional(),
       })
       .parse(search),
   component: EmbedFeaturePage,
@@ -43,7 +44,7 @@ export const Route = createFileRoute(
 
 function EmbedFeaturePage() {
   const { feature } = Route.useLoaderData()
-  const { plain } = Route.useSearch()
+  const { plain, visibleRange } = Route.useSearch()
 
   return (
     <div
@@ -53,7 +54,11 @@ function EmbedFeaturePage() {
       )}
     >
       <div className={cn('max-w-3xl mx-auto', plain && 'max-w-none')}>
-        <FeatureCardCompactForEmbed feature={feature} plain={plain} />
+        <FeatureCardCompactForEmbed
+          feature={feature}
+          plain={plain}
+          defaultVisibleRange={visibleRange}
+        />
       </div>
     </div>
   )

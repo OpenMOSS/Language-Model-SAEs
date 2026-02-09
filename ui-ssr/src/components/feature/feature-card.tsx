@@ -155,10 +155,12 @@ export const FeatureCardCompactForEmbed = memo(
     feature,
     className,
     plain = false,
+    defaultVisibleRange = 20,
   }: {
     feature: FeatureCompact
     className?: string
     plain?: boolean
+    defaultVisibleRange?: number
   }) => {
     return (
       <div
@@ -207,7 +209,7 @@ export const FeatureCardCompactForEmbed = memo(
             samplingName="top_activations"
             totalLength={feature.samples.length}
             initialSamples={feature.samples}
-            defaultVisibleRange={20}
+            defaultVisibleRange={defaultVisibleRange}
             hideTitle={true}
             className="mt-0"
           />
