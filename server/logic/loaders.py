@@ -5,12 +5,20 @@ from datasets import Dataset
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.backend import LanguageModel
 from lm_saes.resource_loaders import load_dataset_shard, load_model
-from server.config import client, device, sae_series, tokenizer_only
+from server.config import (
+    LRU_CACHE_SIZE_DATASETS,
+    LRU_CACHE_SIZE_MODELS,
+    LRU_CACHE_SIZE_SAES,
+    client,
+    device,
+    sae_series,
+    tokenizer_only,
+)
 from server.utils.common import synchronized
 
 
 @synchronized
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=LRU_CACHE_SIZE_MODELS)
 def get_model(*, name: str) -> LanguageModel:
     """Load and cache a language model."""
     cfg = client.get_model_cfg(name)
@@ -22,7 +30,7 @@ def get_model(*, name: str) -> LanguageModel:
 
 
 @synchronized
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=LRU_CACHE_SIZE_DATASETS)
 def get_dataset(*, name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
     """Load and cache a dataset shard."""
     cfg = client.get_dataset_cfg(name)
@@ -31,7 +39,7 @@ def get_dataset(*, name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
 
 
 @synchronized
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=LRU_CACHE_SIZE_SAES)
 def get_sae(*, name: str) -> AbstractSparseAutoEncoder:
     """Load and cache a sparse autoencoder."""
     path = client.get_sae_path(name, sae_series)

@@ -19,7 +19,7 @@ from lm_saes.circuit.utils.transcoder_set import TranscoderSet, TranscoderSetCon
 from lm_saes.database import CircuitConfig, CircuitInput, CircuitStatus
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sae import SparseAutoEncoder
-from server.config import client, sae_series
+from server.config import LRU_CACHE_SIZE_CIRCUITS, client, sae_series
 from server.logic.loaders import get_model, get_sae
 from server.logic.samples import list_feature_data
 from server.utils.common import make_serializable, synchronized
@@ -146,7 +146,7 @@ def concretize_graph_data(graph_data: dict[str, Any]):
 
 
 @synchronized
-@functools.lru_cache(maxsize=64)
+@functools.lru_cache(maxsize=LRU_CACHE_SIZE_CIRCUITS)
 def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold: float) -> dict[str, Any]:
     """Load, prune, and concretize a circuit graph. Cached for repeated access."""
     circuit = client.get_circuit(circuit_id)

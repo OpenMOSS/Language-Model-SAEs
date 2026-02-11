@@ -4,11 +4,11 @@ from typing import Any, Generator
 import numpy as np
 
 from lm_saes.database import FeatureAnalysisSampling
-from server.config import client, sae_series
+from server.config import LRU_CACHE_SIZE_SAMPLES, client, sae_series
 from server.logic.loaders import get_dataset, get_model
 
 
-@lru_cache(maxsize=128)
+@lru_cache(maxsize=LRU_CACHE_SIZE_SAMPLES)
 def cached_extract_samples(
     sae_name: str,
     sae_series: str,
@@ -211,7 +211,13 @@ def list_feature_data(
             )
             samples = (
                 cached_extract_samples(
-                    sae_name, sae_series, feature.index, sampling.name, 0, sampling_size, visible_range=sampling_visible_range
+                    sae_name,
+                    sae_series,
+                    feature.index,
+                    sampling.name,
+                    0,
+                    sampling_size,
+                    visible_range=sampling_visible_range,
                 )
                 if sampling is not None
                 else []
