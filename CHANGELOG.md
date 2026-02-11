@@ -1,3 +1,94 @@
+## v2.0.0b9 (2026-02-09)
+
+### Feat
+
+- **circuits**: implement loading and querying of circuit QK node data
+- **ui**: target blank for embedded pages
+- **ui**: add new route for embedded circuit QK tracing and update related components
+- **ui/embed**: add circuit page for embedded iframe
+- **ui/embed**: enhance FeatureCardCompactForEmbed with plain mode
+- **database**: support removing SAE sets
+- **ui/circuits**: implement click outside to close functionality in threshold controls
+
+### Fix
+
+- **ui**: update defaultVisibleRange handling and adjust node colors
+- **ui/embed**: remove click effect
+- **ui**: swap Q and K labels in QKTracing components for consistency
+- **ui**: adjust layout
+- **ui**: adjust layout
+- **graph**: handle bfloat16 tensor conversion to numpy
+- **auxk**: fix log of l_auxk
+- **auxk**: fix train and log of auxk
+- **math**: topk grad backprop
+- **circuit**: adjust default thresholds for graph pruning and circuit retrieval
+- **ui/circuits**: remove redundant feature ID display for better narrow screen experience
+- **circuit**: minor improvements in attribution
+- **circuit**: support batched tracing.
+- **feature_interpreter**: correct tensor dimensions in generate_activating_examples
+- **ui/circuits**: clarify message regarding circuit generation time
+
+## v2.0.0b8 (2026-01-18)
+
+## v2.0.0b7 (2026-01-18)
+
+### Feat
+
+- **ui/circuits**: add remix button to fill NewGraphDialog with initial configs
+- **circuit**: implement circuit generation status tracking and dynamic pruning
+- **ui/circuits**: enhance SAE set creation dialog with filtering and search functionality
+- **ui/dictionary**: add feature index input and update dictionary select styling
+- **ui/circuits**: add BiasNodeSchema and update NodeSchema
+- **ui/circuits**: add isFromQkTracing field for filtering (untested)
+- **ui**: support dictionary selection filtering
+- **ui/circuits**: support logical subgraph
+- **ui/circuits**: trace features
+- **ui/circuits**: add QK tracing section to node connections
+- **ui/circuit**: show new graph dialog when no circuit available
+- **ui**: support grouping circuits
+- **train**: add auxiliary loss for topk (#164)
+- **lorsa**: add auto expand when load from pretrain
+- add capability of tracing from features to attribution graphs (#163)
+
+### Fix
+
+- **feature_interpreter**: handle None interpretation in feature analysis
+- **ui/circuits**: specify timeout for circuit generation in undici
+- **attn_scores_attribution**: correct component expansion for QK calculations
+- **ui/circuits**: use ctrl/cmd to multiselect features
+- **topk**: improve topk in single card situation
+- **graph**: assign sae_name based on feature type in append_qk_tracing_results function
+- **circuit**: support tracing in bf16 precision
+- **autointerp**: comment out assertion for interpretation text in interpret_feature function
+- handle 0-d tensors in feature tracing detection (#170)
+- **auxk**: fix function signature for compute_loss
+- **auxk**: add valid token mask for dead statistics
+- **lorsa**: remove useless overide method for lorsa
+- **circuit**: fix probe equiv for ln for qk norms, fix a gradient control bug
+- **ui**: fix preview logic. Now consistent with tracing results
+- **ui**: fix preview logic. Now consistent with tracing results
+- **examples**: adapt to new from_pretrained method
+- **runners**: support setting from_pretrained args
+- pass device in from_pretrained
+
+### Refactor
+
+- **admin**: use transaction to update sae/sae set name
+- **ui/circuits**: improve circuit query options and navigation handling
+- **replacement_model**: enhance tokenization by passing tokenizer to ensure_tokenized function
+- **replacement_model**: simplify input tokenization by utilizing ensure_tokenized function
+- **ui**: remove debug console logs
+- **circuit**: enhance node mapping and tracing result handling
+- **graph**: remove argument_graph_file.py
+- **graph**: remove debug print statements in append_qk_tracing_results function
+- **graph**: reorganize graph-related classes and functions
+- **attribution**: improve readability and structure in _run_attribution function
+- **lorsa**: replace qk_exp_factor with ov_group_size for attention calculations
+- integrate local/HF/SAELens loading into `from_pretrained` (#159)
+- relocate configs and enforce import rules (#158)
+- move distributed testing utils into the main library
+- remove distributed state dict loading; directly use nn.Module.load_state_dict instead
+
 ## v2.0.0b6 (2025-12-30)
 
 ### Fix
