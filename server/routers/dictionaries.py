@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from lm_saes.database import FeatureRecord
 from server.config import client, sae_series
 from server.logic.loaders import get_model, get_sae
-from server.logic.samples import extract_samples, list_feature_data
+from server.logic.samples import cached_extract_samples, list_feature_data
 from server.utils.common import make_serializable, natural_sort_key
 
 router = APIRouter(prefix="/dictionaries", tags=["dictionaries"])
@@ -110,7 +110,12 @@ def get_feature(
 
     sample_groups = (
         [
-            {"analysis_name": sampling.name, "samples": extract_samples(sampling, 0, len(sampling.context_idx))}
+            {
+                "analysis_name": sampling.name,
+                "samples": cached_extract_samples(
+                    name, sae_series, feature.index, sampling.name, 0, len(sampling.context_idx)
+                ),
+            }
             for sampling in analysis.samplings
         ]
         if not no_samplings
@@ -164,7 +169,11 @@ def list_features(
         )
 
         samples = (
-            extract_samples(sampling, 0, sample_length, visible_range=visible_range) if sampling is not None else None
+            cached_extract_samples(
+                name, sae_series, feature.index, sampling.name, 0, sample_length, visible_range=visible_range
+            )
+            if sampling is not None
+            else None
         )
 
         return {
@@ -209,25 +218,9 @@ def get_samples(
     visible_range: int | None = None,
 ):
     """Get all samples for a feature."""
-    feature = client.get_feature(sae_name=name, sae_series=sae_series, index=feature_index)
-    if feature is None:
-        return Response(content=f"Feature {feature_index} not found in SAE {name}", status_code=404)
-
-    analysis = next(
-        (a for a in feature.analyses if a.name == analysis_name or analysis_name is None),
-        None,
+    samples = cached_extract_samples(
+        name, sae_series, feature_index, sampling_name, start, None if length is None else start + length, visible_range=visible_range
     )
-    if analysis is None:
-        return Response(content=f"Analysis {analysis_name} not found in SAE {name}", status_code=404)
-
-    sampling = next(
-        (s for s in analysis.samplings if s.name == sampling_name),
-        None,
-    )
-    if sampling is None:
-        return Response(content=f"Sampling {sampling_name} not found in Analysis {analysis_name}", status_code=404)
-
-    samples = extract_samples(sampling, start, None if length is None else start + length, visible_range=visible_range)
     return Response(
         content=msgpack.packb(make_serializable(samples)),
         media_type="application/x-msgpack",

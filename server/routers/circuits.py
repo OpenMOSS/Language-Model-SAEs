@@ -146,7 +146,7 @@ def concretize_graph_data(graph_data: dict[str, Any]):
 
 
 @synchronized
-@functools.lru_cache(maxsize=16)
+@functools.lru_cache(maxsize=64)
 def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold: float) -> dict[str, Any]:
     """Load, prune, and concretize a circuit graph. Cached for repeated access."""
     circuit = client.get_circuit(circuit_id)

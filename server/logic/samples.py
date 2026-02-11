@@ -1,3 +1,4 @@
+from functools import lru_cache
 from typing import Any, Generator
 
 import numpy as np
@@ -5,6 +6,31 @@ import numpy as np
 from lm_saes.database import FeatureAnalysisSampling
 from server.config import client, sae_series
 from server.logic.loaders import get_dataset, get_model
+
+
+@lru_cache(maxsize=128)
+def cached_extract_samples(
+    sae_name: str,
+    sae_series: str,
+    feature_index: int,
+    sampling_name: str,
+    start: int | None = None,
+    end: int | None = None,
+    visible_range: int | None = None,
+) -> list[dict[str, Any]]:
+    """LRU-cached ``extract_samples``, keyed by feature identifiers.
+
+    Fetches the feature from the database, locates the matching sampling by
+    *sampling_name*, and delegates to :func:`extract_samples`.
+    """
+    feature = client.get_feature(sae_name=sae_name, sae_series=sae_series, index=feature_index)
+    if feature is None:
+        return []
+    for analysis in feature.analyses:
+        sampling = next((s for s in analysis.samplings if s.name == sampling_name), None)
+        if sampling is not None:
+            return extract_samples(sampling, start, end, visible_range)
+    return []
 
 
 def extract_samples(
@@ -184,7 +210,9 @@ def list_feature_data(
                 None,
             )
             samples = (
-                extract_samples(sampling, 0, sampling_size, visible_range=sampling_visible_range)
+                cached_extract_samples(
+                    sae_name, sae_series, feature.index, sampling.name, 0, sampling_size, visible_range=sampling_visible_range
+                )
                 if sampling is not None
                 else []
             )
